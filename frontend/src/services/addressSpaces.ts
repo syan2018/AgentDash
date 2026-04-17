@@ -142,6 +142,7 @@ export async function listMountEntries(params: {
   storyId?: string;
   ownerType?: string;
   ownerId?: string;
+  agentId?: string;
   mountId: string;
   path?: string;
   pattern?: string;
@@ -152,6 +153,7 @@ export async function listMountEntries(params: {
   if (params.storyId) sp.set("story_id", params.storyId);
   if (params.ownerType) sp.set("owner_type", params.ownerType);
   if (params.ownerId) sp.set("owner_id", params.ownerId);
+  if (params.agentId) sp.set("agent_id", params.agentId);
   if (params.path) sp.set("path", params.path);
   if (params.pattern) sp.set("pattern", params.pattern);
   if (params.recursive !== undefined) sp.set("recursive", String(params.recursive));
@@ -166,6 +168,7 @@ export async function readMountFile(params: {
   storyId?: string;
   ownerType?: string;
   ownerId?: string;
+  agentId?: string;
   mountId: string;
   path: string;
 }): Promise<ReadMountFileResponse> {
@@ -174,6 +177,7 @@ export async function readMountFile(params: {
     story_id: params.storyId,
     owner_type: params.ownerType,
     owner_id: params.ownerId,
+    agent_id: params.agentId,
     mount_id: params.mountId,
     path: params.path,
   });
@@ -184,6 +188,7 @@ export async function previewAddressSpace(params: {
   storyId?: string;
   ownerType?: string;
   ownerId?: string;
+  agentId?: string;
   target?: "project" | "story" | "task";
 }): Promise<PreviewAddressSpaceResponse> {
   return api.post<PreviewAddressSpaceResponse>("/address-spaces/preview", {
@@ -191,6 +196,7 @@ export async function previewAddressSpace(params: {
     story_id: params.storyId,
     owner_type: params.ownerType,
     owner_id: params.ownerId,
+    agent_id: params.agentId,
     target: params.target ?? "project",
   });
 }
@@ -200,6 +206,7 @@ export async function writeMountFile(params: {
   storyId?: string;
   ownerType?: string;
   ownerId?: string;
+  agentId?: string;
   mountId: string;
   path: string;
   content: string;
@@ -209,6 +216,7 @@ export async function writeMountFile(params: {
     story_id: params.storyId,
     owner_type: params.ownerType,
     owner_id: params.ownerId,
+    agent_id: params.agentId,
     mount_id: params.mountId,
     path: params.path,
     content: params.content,

@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
-use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
+};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
     agent::ProjectAgentLink,
@@ -22,6 +24,7 @@ pub(crate) const CONTEXT_OWNER_SCOPE_PROJECT: &str = "project";
 pub(crate) const CONTEXT_OWNER_SCOPE_STORY: &str = "story";
 pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
+pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextContainerOwnerScope {
@@ -98,36 +101,87 @@ pub fn build_derived_address_space(
     })
 }
 
-/// 为 Agent 知识容器构建 mounts
-pub fn build_agent_knowledge_mounts(
-    link: &ProjectAgentLink,
-) -> Result<Vec<Mount>, String> {
-    let mut mounts = Vec::new();
-    for container in &link.knowledge_containers {
-        let mut mount = build_context_container_mount(container)?;
-        annotate_context_mount_owner(
-            &mut mount,
-            InlineFileOwnerKind::ProjectAgentLink.as_str(),
-            link.id,
-        );
-        mounts.push(mount);
-    }
-    Ok(mounts)
+/// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
+///
+/// 知识容器定义由系统自动派生：mount_id = "agent-knowledge"，
+/// container_id = "knowledge"，按 ProjectAgentLink 隔离。
+fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String> {
+    let container = ContextContainerDefinition {
+        id: "knowledge".to_string(),
+        mount_id: "agent-knowledge".to_string(),
+        display_name: "Agent 知识库".to_string(),
+        provider: ContextContainerProvider::InlineFiles { files: vec![] },
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: false,
+        exposure: ContextContainerExposure::default(),
+    };
+    let mut mount = build_context_container_mount(&container)?;
+    annotate_context_mount_owner(
+        &mut mount,
+        InlineFileOwnerKind::ProjectAgentLink.as_str(),
+        link.id,
+    );
+    Ok(mount)
 }
 
-/// 将 Agent 知识 mounts 追加到已有 address space
+/// 将 Agent 知识 mount 追加到已有 address space（仅当 knowledge_enabled=true）
 pub fn append_agent_knowledge_mounts(
     address_space: &mut AddressSpace,
     link: &ProjectAgentLink,
 ) -> Result<(), String> {
-    let knowledge_mounts = build_agent_knowledge_mounts(link)?;
-    for mount in knowledge_mounts {
-        // 避免 mount_id 冲突：如果已存在同名 mount，跳过
-        if !address_space.mounts.iter().any(|m| m.id == mount.id) {
-            address_space.mounts.push(mount);
-        }
+    if !link.knowledge_enabled {
+        return Ok(());
+    }
+    let mount = build_agent_knowledge_mount(link)?;
+    if !address_space.mounts.iter().any(|m| m.id == mount.id) {
+        address_space.mounts.push(mount);
     }
     Ok(())
+}
+
+/// 按白名单过滤 address space 中的项目级容器
+///
+/// 仅保留 `link.project_container_ids` 中列出的项目容器 mount。
+/// 非项目级容器（workspace / canvas / lifecycle 等）不受影响。
+pub fn filter_project_containers_by_whitelist(
+    address_space: &mut AddressSpace,
+    link: &ProjectAgentLink,
+) {
+    if link.project_container_ids.is_empty() {
+        // 空白名单 = 移除所有项目级容器
+        address_space.mounts.retain(|mount| {
+            mount
+                .metadata
+                .get("agentdash_context_owner_kind")
+                .map_or(true, |kind| kind != "project")
+        });
+    } else {
+        let allowed: BTreeSet<&str> = link
+            .project_container_ids
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        address_space.mounts.retain(|mount| {
+            let is_project_container = mount
+                .metadata
+                .get("agentdash_context_owner_kind")
+                .map_or(false, |kind| kind == "project");
+            if !is_project_container {
+                return true;
+            }
+            // 检查 container_id metadata 是否在白名单中
+            mount
+                .metadata
+                .get(CONTEXT_CONTAINER_ID_METADATA_KEY)
+                .and_then(|v| v.as_str())
+                .map_or(false, |cid| allowed.contains(cid))
+        });
+    }
 }
 
 /// 为 Workspace 创建简易单 mount Address Space
@@ -273,12 +327,14 @@ pub fn build_context_container_mount(
         container.capabilities.to_vec()
     };
 
+    let container_id_trimmed = container.id.trim();
     let (provider, root_ref, metadata) = match &container.provider {
         ContextContainerProvider::InlineFiles { .. } => (
             PROVIDER_INLINE_FS.to_string(),
-            format!("context://inline/{}", container.id.trim()),
+            format!("context://inline/{container_id_trimmed}"),
             serde_json::json!({
-                "container_id": container.id.trim(),
+                "container_id": container_id_trimmed,
+                CONTEXT_CONTAINER_ID_METADATA_KEY: container_id_trimmed,
             }),
         ),
         ContextContainerProvider::ExternalService {
@@ -290,6 +346,7 @@ pub fn build_context_container_mount(
             serde_json::json!({
                 "service_id": service_id.trim(),
                 "root_ref": root_ref.trim(),
+                CONTEXT_CONTAINER_ID_METADATA_KEY: container_id_trimmed,
             }),
         ),
     };

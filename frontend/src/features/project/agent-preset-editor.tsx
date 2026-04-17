@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
-import type { ContextContainerDefinition } from "../../types/context";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
-import { ContextContainersEditor } from "../../components/context-config-editor";
+import { AddressSpaceBrowser } from "../address-space";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -1010,41 +1009,61 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
   );
 }
 
-// ─── Agent 知识库折叠区 ─────────────────────────────────────
+// ─── Agent 知识库区域 ─────────────────────────────────────
 
 function KnowledgeSection({
-  containers,
-  onSave,
-  isSaving,
+  enabled,
+  onToggle,
+  projectId,
+  agentId,
 }: {
-  containers: ContextContainerDefinition[];
-  onSave: (next: ContextContainerDefinition[]) => Promise<unknown>;
-  isSaving: boolean;
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+  projectId?: string;
+  agentId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="mt-6 rounded-lg border border-border">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-foreground hover:bg-muted/50"
-      >
-        <span>知识库 ({containers.length} 个容器)</span>
-        <span className="text-xs text-muted-foreground">{isOpen ? "收起" : "展开"}</span>
-      </button>
-      {isOpen && (
-        <div className="border-t border-border px-4 py-3">
-          <p className="mb-3 text-xs text-muted-foreground">
-            Agent 在 session 中积累的通用知识，跨 session 持久化。
-          </p>
-          <ContextContainersEditor
-            value={containers}
-            domain="agent-knowledge"
-            isSaving={isSaving}
-            addLabel="添加知识容器"
-            emptyText="暂无知识容器"
-            onSave={onSave}
+    <div className="mt-4 rounded-[12px] border border-border/70 bg-secondary/15">
+      {/* ── 开关行 ── */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <label className="flex cursor-pointer items-center gap-2.5">
+          <span className="relative inline-flex h-[18px] w-[32px] shrink-0">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => onToggle(e.target.checked)}
+              className="peer sr-only"
+            />
+            <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+            <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
+          </span>
+          <span className="text-xs font-medium text-foreground">启用知识库</span>
+        </label>
+        <span className="text-[10px] text-muted-foreground">
+          {enabled ? "Agent 会在 session 间积累知识" : "Agent 无状态运行（默认）"}
+        </span>
+        {enabled && projectId && agentId && (
+          <button
+            type="button"
+            onClick={() => setIsOpen((v) => !v)}
+            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            {isOpen ? "收起" : "浏览知识库"}
+          </button>
+        )}
+      </div>
+
+      {/* ── Address Space 浏览器 ── */}
+      {enabled && isOpen && projectId && agentId && (
+        <div className="border-t border-border px-2 py-3">
+          <AddressSpaceBrowser
+            preview={{
+              projectId,
+              agentId,
+            }}
+            initialMountId="agent-knowledge"
           />
         </div>
       )}
@@ -1060,10 +1079,13 @@ export interface SinglePresetDialogProps {
   onClose: () => void;
   isSaving?: boolean;
   siblingAgents?: Array<{ name: string; display_name: string }>;
-  /** Agent 知识容器（来自 ProjectAgentLink） */
-  knowledgeContainers?: ContextContainerDefinition[];
-  /** 保存知识容器变更 */
-  onSaveKnowledge?: (containers: ContextContainerDefinition[]) => Promise<unknown>;
+  /** 是否启用 Agent 知识库 */
+  knowledgeEnabled?: boolean;
+  /** 切换知识库开关 */
+  onToggleKnowledge?: (enabled: boolean) => void;
+  /** 用于加载知识库文件的 project/agent ID */
+  knowledgeProjectId?: string;
+  knowledgeAgentId?: string;
 }
 
 export function SinglePresetDialog({
@@ -1074,8 +1096,10 @@ export function SinglePresetDialog({
   onClose,
   isSaving = false,
   siblingAgents,
-  knowledgeContainers,
-  onSaveKnowledge,
+  knowledgeEnabled,
+  onToggleKnowledge,
+  knowledgeProjectId,
+  knowledgeAgentId,
 }: SinglePresetDialogProps) {
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
@@ -1125,12 +1149,13 @@ export function SinglePresetDialog({
               siblingAgents={siblingAgents}
             />
 
-            {/* ── 知识库区域 ── */}
-            {knowledgeContainers && onSaveKnowledge && (
+            {/* ── 知识库 ── */}
+            {knowledgeEnabled !== undefined && onToggleKnowledge && (
               <KnowledgeSection
-                containers={knowledgeContainers}
-                onSave={onSaveKnowledge}
-                isSaving={isSaving}
+                enabled={knowledgeEnabled}
+                onToggle={onToggleKnowledge}
+                projectId={knowledgeProjectId}
+                agentId={knowledgeAgentId}
               />
             )}
 

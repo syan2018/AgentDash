@@ -774,7 +774,8 @@ pub struct ProjectAgentLinkResponse {
     pub default_lifecycle_key: Option<String>,
     pub is_default_for_story: bool,
     pub is_default_for_task: bool,
-    pub knowledge_containers: Vec<agentdash_domain::context_container::ContextContainerDefinition>,
+    pub knowledge_enabled: bool,
+    pub project_container_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -791,7 +792,8 @@ fn build_link_response(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentLi
         default_lifecycle_key: link.default_lifecycle_key.clone(),
         is_default_for_story: link.is_default_for_story,
         is_default_for_task: link.is_default_for_task,
-        knowledge_containers: link.knowledge_containers.clone(),
+        knowledge_enabled: link.knowledge_enabled,
+        project_container_ids: link.project_container_ids.clone(),
         created_at: link.created_at.to_rfc3339(),
         updated_at: link.updated_at.to_rfc3339(),
     }
@@ -898,28 +900,12 @@ pub async fn create_project_agent_link(
     link.is_default_for_story = req.is_default_for_story;
     link.is_default_for_task = req.is_default_for_task;
 
-    // 自动创建默认知识容器
-    if link.knowledge_containers.is_empty() {
-        link.knowledge_containers =
-            vec![default_knowledge_container(&agent.name, &agent.agent_type)];
-    }
-
     state
         .repos
         .agent_link_repo
         .create(&link)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    // 同步知识容器内联文件到独立存储
-    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::ProjectAgentLink,
-        link.id,
-        &link.knowledge_containers,
-    )
-    .await
-    .map_err(ApiError::Internal)?;
 
     Ok(Json(build_link_response(&agent, &link)))
 }
@@ -937,7 +923,9 @@ pub struct UpdateProjectAgentLinkRequest {
     #[serde(default)]
     pub is_default_for_task: Option<bool>,
     #[serde(default)]
-    pub knowledge_containers: Option<Vec<agentdash_domain::context_container::ContextContainerDefinition>>,
+    pub knowledge_enabled: Option<bool>,
+    #[serde(default)]
+    pub project_container_ids: Option<Vec<String>>,
 }
 
 /// PUT /projects/{id}/agent-links/{agent_id} — 更新项目-Agent 关联
@@ -990,8 +978,11 @@ pub async fn update_project_agent_link(
     if let Some(v) = req.is_default_for_task {
         link.is_default_for_task = v;
     }
-    if let Some(kc) = req.knowledge_containers {
-        link.knowledge_containers = kc;
+    if let Some(v) = req.knowledge_enabled {
+        link.knowledge_enabled = v;
+    }
+    if let Some(ids) = req.project_container_ids {
+        link.project_container_ids = ids;
     }
     link.updated_at = chrono::Utc::now();
 
@@ -1001,16 +992,6 @@ pub async fn update_project_agent_link(
         .update(&link)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    // 同步知识容器内联文件到独立存储
-    agentdash_application::address_space::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::ProjectAgentLink,
-        link.id,
-        &link.knowledge_containers,
-    )
-    .await
-    .map_err(ApiError::Internal)?;
 
     Ok(Json(build_link_response(&agent, &link)))
 }
@@ -1122,35 +1103,6 @@ async fn resolve_lifecycle_key_for_link(
     }
 
     Ok(None)
-}
-
-/// 为 ProjectAgentLink 创建默认知识容器
-fn default_knowledge_container(
-    agent_name: &str,
-    agent_type: &str,
-) -> agentdash_domain::context_container::ContextContainerDefinition {
-    use agentdash_domain::context_container::{
-        ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
-    };
-    ContextContainerDefinition {
-        id: "knowledge".to_string(),
-        mount_id: "agent-knowledge".to_string(),
-        display_name: format!("{agent_name} 知识库"),
-        provider: ContextContainerProvider::InlineFiles { files: vec![] },
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::Write,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
-        default_write: false,
-        exposure: ContextContainerExposure {
-            include_in_project_sessions: true,
-            include_in_task_sessions: true,
-            include_in_story_sessions: true,
-            allowed_agent_types: vec![agent_type.to_string()],
-        },
-    }
 }
 
 /// 从 Agent + Link 构建 ProjectAgentBridge（新模型）

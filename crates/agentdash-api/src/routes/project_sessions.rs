@@ -8,7 +8,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::address_space::{SessionMountTarget, append_agent_knowledge_mounts};
+use agentdash_application::address_space::{
+    SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
+};
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::bootstrap::{
@@ -159,8 +161,9 @@ pub(crate) async fn build_project_session_context_response(
             )
             .map_err(ApiError::BadRequest)?;
 
-        // 注入 Agent 知识容器 mounts
+        // Agent 级容器管控：白名单过滤 + 知识库注入
         if let Some(link) = &agent_link {
+            filter_project_containers_by_whitelist(&mut address_space, link);
             append_agent_knowledge_mounts(&mut address_space, link)
                 .map_err(ApiError::Internal)?;
         }

@@ -27,6 +27,7 @@ export interface AddressSpaceBrowserProps {
     storyId?: string;
     ownerType?: string;
     ownerId?: string;
+    agentId?: string;
     target?: "project" | "story" | "task";
   };
   /** 初始选中的 mount id */
@@ -81,6 +82,7 @@ export function AddressSpaceBrowser({
 
   const previewOwnerType = preview?.ownerType;
   const previewOwnerId = preview?.ownerId;
+  const previewAgentId = preview?.agentId;
 
   // 加载 mounts：优先用 preview API（可获取最新 lifecycle mount），否则用 addressSpace 快照
   useEffect(() => {
@@ -96,6 +98,7 @@ export function AddressSpaceBrowser({
             storyId: previewStoryId,
             ownerType: previewOwnerType,
             ownerId: previewOwnerId,
+            agentId: previewAgentId,
             target: previewTarget,
           });
           if (cancelled) return;
@@ -131,7 +134,7 @@ export function AddressSpaceBrowser({
       setSelectedMountId((current) => current ?? addressSpace.default_mount_id ?? addressSpace.mounts[0]?.id ?? null);
       return;
     }
-  }, [addressSpace, previewProjectId, previewStoryId, previewOwnerType, previewOwnerId, previewTarget]);
+  }, [addressSpace, previewProjectId, previewStoryId, previewOwnerType, previewOwnerId, previewAgentId, previewTarget]);
 
   const selectedMount = useMemo(
     () => mounts.find((m) => m.id === selectedMountId) ?? null,
@@ -180,6 +183,7 @@ export function AddressSpaceBrowser({
           storyId={preview.storyId}
           ownerType={preview.ownerType}
           ownerId={preview.ownerId}
+          agentId={preview.agentId}
         />
       )}
     </div>
@@ -295,12 +299,14 @@ function MountFileBrowser({
   storyId,
   ownerType,
   ownerId,
+  agentId,
 }: {
   mount: MountInfo;
   projectId: string;
   storyId?: string;
   ownerType?: string;
   ownerId?: string;
+  agentId?: string;
 }) {
   const [currentPath, setCurrentPath] = useState(".");
   const [entries, setEntries] = useState<MountEntry[]>([]);
@@ -329,6 +335,7 @@ function MountFileBrowser({
           storyId,
           ownerType,
           ownerId,
+          agentId,
           mountId: mount.id,
           path,
           pattern: pattern || undefined,
@@ -342,7 +349,7 @@ function MountFileBrowser({
         setLoading(false);
       }
     },
-    [projectId, storyId, ownerType, ownerId, mount.id],
+    [projectId, storyId, ownerType, ownerId, agentId, mount.id],
   );
 
   useEffect(() => {
@@ -386,6 +393,7 @@ function MountFileBrowser({
           storyId,
           ownerType,
           ownerId,
+          agentId,
           mountId: mount.id,
           path: entry.path,
         });
@@ -404,7 +412,7 @@ function MountFileBrowser({
         setPreviewLoading(false);
       }
     },
-    [projectId, storyId, ownerType, ownerId, mount.id, handleNavigate],
+    [projectId, storyId, ownerType, ownerId, agentId, mount.id, handleNavigate],
   );
 
   const handleSave = useCallback(async () => {
@@ -415,6 +423,7 @@ function MountFileBrowser({
       await writeMountFile({
         projectId,
         storyId,
+        agentId,
         mountId: mount.id,
         path: previewFile.path,
         content: editContent,
@@ -426,7 +435,7 @@ function MountFileBrowser({
     } finally {
       setSaving(false);
     }
-  }, [previewFile, editContent, projectId, storyId, mount.id]);
+  }, [previewFile, editContent, projectId, storyId, agentId, mount.id]);
 
   const handleStartEdit = useCallback(() => {
     if (!previewFile) return;

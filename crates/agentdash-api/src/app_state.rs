@@ -149,6 +149,10 @@ impl AppState {
         let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
 
         let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
+        agent_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("agents 表初始化失败: {e}"))?;
 
         let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
         routine_repo

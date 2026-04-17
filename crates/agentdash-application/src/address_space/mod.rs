@@ -20,10 +20,11 @@ pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_conte
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     SessionMountTarget, append_agent_knowledge_mounts, append_canvas_mounts,
-    build_agent_knowledge_mounts, build_canvas_mount, build_canvas_mount_id,
+    build_canvas_mount, build_canvas_mount_id,
     build_context_container_mount, build_derived_address_space, build_lifecycle_mount,
     build_lifecycle_mount_with_ports,
     build_workspace_address_space, container_visible_for_target, effective_context_containers,
+    filter_project_containers_by_whitelist,
     list_inline_entries, normalize_inline_files,
     parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
 };

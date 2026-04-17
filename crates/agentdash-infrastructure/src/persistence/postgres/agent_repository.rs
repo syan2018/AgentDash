@@ -16,18 +16,23 @@ impl PostgresAgentRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
+        // 每条 DDL 独立 prepared statement（PG 不允许多条命令合并）
         sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS agents (
+            "CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 agent_type TEXT NOT NULL,
                 base_config TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
-            );
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-            CREATE TABLE IF NOT EXISTS project_agent_links (
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS project_agent_links (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
@@ -35,23 +40,35 @@ impl PostgresAgentRepository {
                 default_lifecycle_key TEXT,
                 is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
                 is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
-                knowledge_containers TEXT NOT NULL DEFAULT '[]',
+                knowledge_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                project_container_ids TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(project_id, agent_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_pal_project ON project_agent_links(project_id);
-            CREATE INDEX IF NOT EXISTS idx_pal_agent ON project_agent_links(agent_id);
-            "#,
+            )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        // 为已有数据库补齐 knowledge_containers 列
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_pal_project ON project_agent_links(project_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_pal_agent ON project_agent_links(agent_id)")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        // 为已有数据库补齐新列
         sqlx::query(
-            "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS knowledge_containers TEXT NOT NULL DEFAULT '[]'"
+            "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS knowledge_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query(
+            "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS project_container_ids TEXT NOT NULL DEFAULT '[]'"
         )
         .execute(&self.pool)
         .await
@@ -163,7 +180,8 @@ struct LinkRow {
     default_lifecycle_key: Option<String>,
     is_default_for_story: bool,
     is_default_for_task: bool,
-    knowledge_containers: String,
+    knowledge_enabled: bool,
+    project_container_ids: String,
     created_at: String,
     updated_at: String,
 }
@@ -189,9 +207,10 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
             default_lifecycle_key: row.default_lifecycle_key,
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
-            knowledge_containers: parse_json_column(
-                &row.knowledge_containers,
-                "project_agent_links.knowledge_containers",
+            knowledge_enabled: row.knowledge_enabled,
+            project_container_ids: parse_json_column(
+                &row.project_container_ids,
+                "project_agent_links.project_container_ids",
             )?,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
@@ -205,7 +224,7 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
     }
 }
 
-const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_containers, created_at, updated_at";
+const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at";
 
 #[async_trait::async_trait]
 impl ProjectAgentLinkRepository for PostgresAgentRepository {
@@ -214,13 +233,13 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             link.config_override.as_ref(),
             "project_agent_links.config_override",
         )?;
-        let knowledge_containers_json = serialize_json_column(
-            &link.knowledge_containers,
-            "project_agent_links.knowledge_containers",
+        let project_container_ids_json = serialize_json_column(
+            &link.project_container_ids,
+            "project_agent_links.project_container_ids",
         )?;
         sqlx::query(
-            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_containers, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(link.id.to_string())
         .bind(link.project_id.to_string())
@@ -229,7 +248,8 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
-        .bind(knowledge_containers_json)
+        .bind(link.knowledge_enabled)
+        .bind(project_container_ids_json)
         .bind(link.created_at.to_rfc3339())
         .bind(link.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -297,18 +317,19 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             link.config_override.as_ref(),
             "project_agent_links.config_override",
         )?;
-        let knowledge_containers_json = serialize_json_column(
-            &link.knowledge_containers,
-            "project_agent_links.knowledge_containers",
+        let project_container_ids_json = serialize_json_column(
+            &link.project_container_ids,
+            "project_agent_links.project_container_ids",
         )?;
         sqlx::query(
-            "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, knowledge_containers = $5, updated_at = $6 WHERE id = $7",
+            "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, knowledge_enabled = $5, project_container_ids = $6, updated_at = $7 WHERE id = $8",
         )
         .bind(config_override_json)
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
-        .bind(knowledge_containers_json)
+        .bind(link.knowledge_enabled)
+        .bind(project_container_ids_json)
         .bind(link.updated_at.to_rfc3339())
         .bind(link.id.to_string())
         .execute(&self.pool)

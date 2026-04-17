@@ -2,8 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::context_container::ContextContainerDefinition;
-
 /// Agent — 独立的 Agent 实体
 ///
 /// 与 Project 通过 `ProjectAgentLink` 建立多对多关系。
@@ -56,9 +54,14 @@ pub struct ProjectAgentLink {
     /// 是否为此 Project 的 Task 默认 Agent
     #[serde(default)]
     pub is_default_for_task: bool,
-    /// Agent 跨 session 知识库 — 按 Project × Agent 隔离
+    /// 是否启用 Agent 跨 session 知识库（按 Project × Agent 隔离）
+    /// 默认 false — 大多数 Agent 是无状态的
     #[serde(default)]
-    pub knowledge_containers: Vec<ContextContainerDefinition>,
+    pub knowledge_enabled: bool,
+    /// 白名单：允许此 Agent 访问的项目级容器 ID
+    /// 空 = 不继承任何项目级容器
+    #[serde(default)]
+    pub project_container_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -74,7 +77,8 @@ impl ProjectAgentLink {
             default_lifecycle_key: None,
             is_default_for_story: false,
             is_default_for_task: false,
-            knowledge_containers: vec![],
+            knowledge_enabled: false,
+            project_container_ids: vec![],
             created_at: now,
             updated_at: now,
         }

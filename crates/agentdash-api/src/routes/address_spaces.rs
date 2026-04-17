@@ -17,6 +17,7 @@ use crate::rpc::ApiError;
 use agentdash_application::address_space::selected_workspace_binding;
 use agentdash_application::address_space::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, SessionMountTarget,
+    append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
     normalize_mount_relative_path,
 };
 
@@ -177,6 +178,8 @@ pub struct ListMountEntriesQuery {
     #[serde(default)]
     pub owner_id: Option<String>,
     #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
     pub pattern: Option<String>,
@@ -215,6 +218,7 @@ pub async fn list_mount_entries(
         &query.story_id,
         &query.owner_type,
         &query.owner_id,
+        &query.agent_id,
         ProjectPermission::View,
     )
     .await?;
@@ -271,6 +275,8 @@ pub struct ReadMountFileRequest {
     pub owner_type: Option<String>,
     #[serde(default)]
     pub owner_id: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub mount_id: String,
     pub path: String,
 }
@@ -298,6 +304,7 @@ pub async fn read_mount_file(
         &req.story_id,
         &req.owner_type,
         &req.owner_id,
+        &req.agent_id,
         ProjectPermission::View,
     )
     .await?;
@@ -339,6 +346,8 @@ pub struct WriteMountFileRequest {
     pub owner_type: Option<String>,
     #[serde(default)]
     pub owner_id: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub mount_id: String,
     pub path: String,
     pub content: String,
@@ -367,6 +376,7 @@ pub async fn write_mount_file(
         &req.story_id,
         &req.owner_type,
         &req.owner_id,
+        &req.agent_id,
         ProjectPermission::Edit,
     )
     .await?;
@@ -448,6 +458,8 @@ pub struct ApplyMountPatchRequest {
     pub owner_type: Option<String>,
     #[serde(default)]
     pub owner_id: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub mount_id: String,
     pub patch: String,
 }
@@ -475,6 +487,7 @@ pub async fn apply_mount_patch(
         &req.story_id,
         &req.owner_type,
         &req.owner_id,
+        &req.agent_id,
         ProjectPermission::Edit,
     )
     .await?;
@@ -552,6 +565,8 @@ pub struct PreviewAddressSpaceRequest {
     pub owner_id: Option<String>,
     #[serde(default = "default_preview_target")]
     pub target: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 fn default_preview_target() -> String {
@@ -615,6 +630,21 @@ pub async fn preview_address_space(
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(&state, binding_kind, binding_id, &mut address_space).await;
+    }
+
+    // Agent 级容器管控
+    if let Some(agent_id_str) = &req.agent_id {
+        if let Ok(agent_uuid) = Uuid::parse_str(agent_id_str) {
+            if let Ok(Some(link)) = state
+                .repos
+                .agent_link_repo
+                .find_by_project_and_agent(project_id, agent_uuid)
+                .await
+            {
+                filter_project_containers_by_whitelist(&mut address_space, &link);
+                let _ = append_agent_knowledge_mounts(&mut address_space, &link);
+            }
+        }
     }
 
     let mut mounts = Vec::new();
@@ -701,6 +731,7 @@ async fn resolve_address_space(
     story_id: &Option<String>,
     owner_type: &Option<String>,
     owner_id: &Option<String>,
+    agent_id: &Option<String>,
     permission: ProjectPermission,
 ) -> Result<AddressSpace, ApiError> {
     let pid_str = project_id
@@ -727,6 +758,21 @@ async fn resolve_address_space(
         .map_err(|e| ApiError::Internal(format!("构建 address space 失败: {e}")))?;
     if let Some((binding_kind, binding_id)) = parsed_owner {
         inject_lifecycle_mount(state, binding_kind, binding_id, &mut address_space).await;
+    }
+
+    // Agent 级容器管控
+    if let Some(agent_id_str) = agent_id {
+        if let Ok(agent_uuid) = Uuid::parse_str(agent_id_str) {
+            if let Ok(Some(link)) = state
+                .repos
+                .agent_link_repo
+                .find_by_project_and_agent(pid, agent_uuid)
+                .await
+            {
+                filter_project_containers_by_whitelist(&mut address_space, &link);
+                let _ = append_agent_knowledge_mounts(&mut address_space, &link);
+            }
+        }
     }
 
     Ok(address_space)

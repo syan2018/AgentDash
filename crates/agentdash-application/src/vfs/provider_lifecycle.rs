@@ -360,10 +360,7 @@ impl MountProvider for LifecycleMountProvider {
             }
         };
 
-        Ok(ReadResult {
-            path: path_norm,
-            content,
-        })
+        Ok(ReadResult::new(path_norm, content))
     }
 
     async fn write_text(
@@ -438,57 +435,26 @@ impl MountProvider for LifecycleMountProvider {
 
         let entries: Vec<RuntimeFileEntry> = match segs.as_slice() {
             [] => vec![
-                RuntimeFileEntry {
-                    path: "active".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
-                RuntimeFileEntry {
-                    path: "artifacts".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
-                RuntimeFileEntry {
-                    path: "nodes".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
-                RuntimeFileEntry {
-                    path: "runs".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
+                RuntimeFileEntry::dir("active").as_virtual(),
+                RuntimeFileEntry::dir("artifacts"),
+                RuntimeFileEntry::dir("nodes").as_virtual(),
+                RuntimeFileEntry::dir("runs").as_virtual(),
             ],
             ["active"] => vec![
-                RuntimeFileEntry {
-                    path: "active/steps".to_string(),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                },
-                RuntimeFileEntry {
-                    path: "active/log".to_string(),
-                    size: Some(
+                RuntimeFileEntry::dir("active/steps").as_virtual(),
+                RuntimeFileEntry::file("active/log")
+                    .with_size(
                         serde_json::to_string(&active.execution_log)
                             .map(|s| s.len() as u64)
                             .unwrap_or(0),
-                    ),
-                    modified_at: None,
-                    is_dir: false,
-                },
+                    )
+                    .as_virtual(),
             ],
             ["active", "steps"] => active
                 .step_states
                 .iter()
-                .map(|s| RuntimeFileEntry {
-                    path: format!("active/steps/{}", s.step_key),
-                    size: None,
-                    modified_at: None,
-                    is_dir: false,
+                .map(|s| {
+                    RuntimeFileEntry::file(format!("active/steps/{}", s.step_key)).as_virtual()
                 })
                 .collect(),
             // ── artifacts/: port output 文件列表（从 inline_fs_files 查询）──
@@ -501,11 +467,9 @@ impl MountProvider for LifecycleMountProvider {
                     .map_err(map_domain_err)?;
                 files
                     .iter()
-                    .map(|f| RuntimeFileEntry {
-                        path: format!("artifacts/{}", f.path),
-                        size: Some(f.content.len() as u64),
-                        modified_at: None,
-                        is_dir: false,
+                    .map(|f| {
+                        RuntimeFileEntry::file(format!("artifacts/{}", f.path))
+                            .with_size(f.content.len() as u64)
                     })
                     .collect()
             }
@@ -513,12 +477,7 @@ impl MountProvider for LifecycleMountProvider {
             ["nodes"] => active
                 .step_states
                 .iter()
-                .map(|s| RuntimeFileEntry {
-                    path: format!("nodes/{}", s.step_key),
-                    size: None,
-                    modified_at: None,
-                    is_dir: true,
-                })
+                .map(|s| RuntimeFileEntry::dir(format!("nodes/{}", s.step_key)).as_virtual())
                 .collect(),
             ["nodes", key] => {
                 let step = active.step_states.iter().find(|s| s.step_key == *key);
@@ -526,19 +485,13 @@ impl MountProvider for LifecycleMountProvider {
                     Vec::new()
                 } else {
                     let step = step.unwrap();
-                    let mut entries = vec![RuntimeFileEntry {
-                        path: format!("nodes/{key}/state"),
-                        size: None,
-                        modified_at: None,
-                        is_dir: false,
-                    }];
+                    let mut entries = vec![
+                        RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual(),
+                    ];
                     if step.session_id.is_some() {
-                        entries.push(RuntimeFileEntry {
-                            path: format!("nodes/{key}/session"),
-                            size: None,
-                            modified_at: None,
-                            is_dir: true,
-                        });
+                        entries.push(
+                            RuntimeFileEntry::dir(format!("nodes/{key}/session")).as_virtual(),
+                        );
                     }
                     entries
                 }
@@ -549,30 +502,12 @@ impl MountProvider for LifecycleMountProvider {
                     Vec::new()
                 } else {
                     vec![
-                        RuntimeFileEntry {
-                            path: format!("nodes/{key}/session/meta"),
-                            size: None,
-                            modified_at: None,
-                            is_dir: false,
-                        },
-                        RuntimeFileEntry {
-                            path: format!("nodes/{key}/session/summary"),
-                            size: None,
-                            modified_at: None,
-                            is_dir: false,
-                        },
-                        RuntimeFileEntry {
-                            path: format!("nodes/{key}/session/conclusions"),
-                            size: None,
-                            modified_at: None,
-                            is_dir: false,
-                        },
-                        RuntimeFileEntry {
-                            path: format!("nodes/{key}/session/turns"),
-                            size: None,
-                            modified_at: None,
-                            is_dir: true,
-                        },
+                        RuntimeFileEntry::file(format!("nodes/{key}/session/meta")).as_virtual(),
+                        RuntimeFileEntry::file(format!("nodes/{key}/session/summary"))
+                            .as_virtual(),
+                        RuntimeFileEntry::file(format!("nodes/{key}/session/conclusions"))
+                            .as_virtual(),
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/turns")).as_virtual(),
                     ]
                 }
             }
@@ -584,12 +519,7 @@ impl MountProvider for LifecycleMountProvider {
                     .await
                     .map_err(map_domain_err)?;
                 runs.iter()
-                    .map(|r| RuntimeFileEntry {
-                        path: format!("runs/{}", r.id),
-                        size: None,
-                        modified_at: None,
-                        is_dir: false,
-                    })
+                    .map(|r| RuntimeFileEntry::file(format!("runs/{}", r.id)).as_virtual())
                     .collect()
             }
             _ => Vec::new(),

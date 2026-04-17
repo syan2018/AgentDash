@@ -99,6 +99,7 @@ pub fn build_derived_vfs(
         default_mount_id,
         source_project_id: Some(project.id.to_string()),
         source_story_id: story.map(|s| s.id.to_string()),
+        links: Vec::new(),
     })
 }
 
@@ -156,6 +157,7 @@ pub fn build_project_agent_knowledge_vfs(
         default_mount_id: None,
         source_project_id: Some(link.project_id.to_string()),
         source_story_id: None,
+        links: Vec::new(),
     };
     append_agent_knowledge_mounts(&mut vfs, link)?;
     vfs.default_mount_id = vfs.mounts.first().map(|mount| mount.id.clone());
@@ -209,6 +211,7 @@ pub fn build_workspace_vfs(workspace: &Workspace) -> Result<Vfs, String> {
         default_mount_id: Some("main".to_string()),
         source_project_id: None,
         source_story_id: None,
+        links: Vec::new(),
     })
 }
 
@@ -817,6 +820,8 @@ pub fn list_inline_entries(
                 size: None,
                 modified_at: None,
                 is_dir: true,
+                is_virtual: false,
+                attributes: None,
             });
         }
     }
@@ -827,6 +832,8 @@ pub fn list_inline_entries(
                 size: Some(size),
                 modified_at: None,
                 is_dir: false,
+                is_virtual: false,
+                attributes: None,
             });
         }
     }

@@ -17,6 +17,8 @@ pub fn relay_file_entry_to_runtime(entry: &FileEntryRelay) -> RuntimeFileEntry {
         size: entry.size,
         modified_at: entry.modified_at,
         is_dir: entry.is_dir,
+        is_virtual: false,
+        attributes: None,
     }
 }
 

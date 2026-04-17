@@ -13,7 +13,7 @@ pub mod skill;
 pub mod tool;
 
 pub use agentdash_domain::common::{
-    Vfs, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
+    Vfs, AgentConfig, Mount, MountCapability, MountLink, SystemPromptMode, ThinkingLevel,
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,

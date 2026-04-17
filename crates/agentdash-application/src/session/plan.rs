@@ -546,6 +546,7 @@ fn render_capability(capability: &MountCapability) -> &'static str {
         MountCapability::List => "list",
         MountCapability::Search => "search",
         MountCapability::Exec => "exec",
+        MountCapability::Watch => "watch",
     }
 }
 

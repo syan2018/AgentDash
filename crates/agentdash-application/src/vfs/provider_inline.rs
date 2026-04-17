@@ -74,7 +74,7 @@ impl MountProvider for InlineFsMountProvider {
         let content = file
             .map(|f| f.content)
             .ok_or_else(|| MountError::NotFound(format!("文件不存在: {path}")))?;
-        Ok(ReadResult { path, content })
+        Ok(ReadResult::new(path, content))
     }
 
     async fn write_text(

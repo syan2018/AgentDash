@@ -36,10 +36,31 @@ impl std::error::Error for MountError {}
 // I/O types
 // ============================================================================
 
-#[derive(Debug, Clone)]
+/// 单文件读取结果。
+///
+/// `attributes` 是可选的扩展元数据（xattr 风格），由 provider 按需填充。
+/// 例如 KM 插件可以放 `author` / `tags` / `url`，relay_fs 可以放 `git_author`。
+/// Agent 工具侧负责与 `content` 分通道展示，避免污染文件正文。
+#[derive(Debug, Clone, Default)]
 pub struct ReadResult {
     pub path: String,
     pub content: String,
+    pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl ReadResult {
+    pub fn new(path: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: content.into(),
+            attributes: None,
+        }
+    }
+
+    pub fn with_attributes(mut self, attrs: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.attributes = Some(attrs);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -83,12 +104,61 @@ pub struct ListResult {
     pub entries: Vec<RuntimeFileEntry>,
 }
 
-#[derive(Debug, Clone)]
+/// 文件条目摘要。
+///
+/// - `is_virtual = true` 表示该条目是 provider 动态投影（/proc 风格），
+///   物理存储中不存在。对这类条目，`size` 和 `modified_at` 通常为 `None`。
+/// - `attributes` 是 xattr 风格的扩展元数据，由 provider 按需填充；
+///   `list` 调用可以选择是否填充（按性能成本决定）。
+#[derive(Debug, Clone, Default)]
 pub struct RuntimeFileEntry {
     pub path: String,
     pub size: Option<u64>,
     pub modified_at: Option<i64>,
     pub is_dir: bool,
+    pub is_virtual: bool,
+    pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl RuntimeFileEntry {
+    /// 构造一个普通文件条目。
+    pub fn file(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            is_dir: false,
+            ..Self::default()
+        }
+    }
+
+    /// 构造一个目录条目。
+    pub fn dir(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            is_dir: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    pub fn with_modified_at(mut self, mtime: i64) -> Self {
+        self.modified_at = Some(mtime);
+        self
+    }
+
+    /// 标记为 projection 虚拟条目。
+    pub fn as_virtual(mut self) -> Self {
+        self.is_virtual = true;
+        self
+    }
+
+    pub fn with_attributes(mut self, attrs: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.attributes = Some(attrs);
+        self
+    }
 }
 
 // ============================================================================
@@ -130,6 +200,55 @@ pub struct ExecResult {
     pub stdout: String,
     pub stderr: String,
 }
+
+// ============================================================================
+// Watch / events
+// ============================================================================
+
+/// 文件变更事件 kind。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountEventKind {
+    Created,
+    Modified,
+    Deleted,
+    /// 重命名/移动。并非所有 provider 都能精确区分此类别，
+    /// 不支持时应降级为 Deleted + Created。
+    Renamed,
+}
+
+/// 单次 mount 内容变更事件。
+///
+/// 由 `MountProvider::watch` 返回的通道推送。供编排引擎、UI、hook
+/// 等消费者响应存储变更，替代轮询。
+#[derive(Debug, Clone)]
+pub struct MountEvent {
+    pub mount_id: String,
+    pub path: String,
+    pub kind: MountEventKind,
+    /// Unix 毫秒时间戳。
+    pub timestamp_ms: i64,
+}
+
+impl MountEvent {
+    pub fn new(mount_id: impl Into<String>, path: impl Into<String>, kind: MountEventKind) -> Self {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        Self {
+            mount_id: mount_id.into(),
+            path: path.into(),
+            kind,
+            timestamp_ms: now_ms,
+        }
+    }
+}
+
+/// 事件订阅句柄。
+///
+/// 基于 tokio broadcast channel：多订阅者共享同一事件流，掉队的订阅者
+/// 会收到 `RecvError::Lagged`（由消费侧自行处理）。
+pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
 
 // ============================================================================
 // Context
@@ -269,6 +388,44 @@ pub trait MountProvider: Send + Sync {
         let _ = (mount, request, ctx);
         Err(MountError::NotSupported(format!(
             "provider `{}` does not support exec",
+            self.provider_id()
+        )))
+    }
+
+    /// 查询文件元数据（不读取内容）。
+    ///
+    /// 类比 POSIX `stat()`：只返回 path/size/mtime/attributes 等属性，
+    /// 不读取 content。适合需要元数据但不需要正文的场景。
+    /// 默认实现回退为 `list` + 过滤。插件 provider 如果有更高效的元数据通道
+    /// （例如 KM 的 metadata API），应覆盖此方法。
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support stat",
+            self.provider_id()
+        )))
+    }
+
+    /// 订阅 mount 内容变更事件。
+    ///
+    /// 返回一个 broadcast receiver；调用方可通过 `.recv().await` 消费事件。
+    /// `path` 为空串表示订阅整个 mount；非空则表示订阅该子树。
+    ///
+    /// 该能力与 `MountCapability::Watch` 对应。默认返回 `NotSupported`。
+    async fn watch(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<MountEventReceiver, MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support watch",
             self.provider_id()
         )))
     }

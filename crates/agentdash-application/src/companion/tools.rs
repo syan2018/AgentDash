@@ -1965,6 +1965,7 @@ fn filter_vfs_capabilities(
         default_mount_id,
         source_project_id: vfs.source_project_id.clone(),
         source_story_id: vfs.source_story_id.clone(),
+        links: vfs.links.clone(),
     }
 }
 

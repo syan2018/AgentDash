@@ -490,6 +490,7 @@ fn describe_mount(mount: &Mount) -> String {
             MountCapability::List => "list",
             MountCapability::Search => "search",
             MountCapability::Exec => "exec",
+            MountCapability::Watch => "watch",
         })
         .collect::<Vec<_>>()
         .join(", ");

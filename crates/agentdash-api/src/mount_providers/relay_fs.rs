@@ -85,6 +85,7 @@ impl MountProvider for RelayFsMountProvider {
             } => Ok(ReadResult {
                 path,
                 content: payload.content,
+                attributes: None,
             }),
             RelayMessage::ResponseToolFileRead {
                 error: Some(error), ..

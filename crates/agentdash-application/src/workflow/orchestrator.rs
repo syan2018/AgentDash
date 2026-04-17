@@ -471,6 +471,7 @@ impl LifecycleOrchestrator {
             default_mount_id: None,
             source_project_id: None,
             source_story_id: None,
+            links: Vec::new(),
         };
 
         let mut req =

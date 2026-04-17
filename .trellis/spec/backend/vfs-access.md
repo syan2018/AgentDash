@@ -363,3 +363,125 @@ relay_fs / local_fs / km / snapshot
 - 更利于权限控制和错误矩阵定义
 - 更适合与 context provider 共享实现
 
+
+---
+
+## 8. 内核能力拓展（2026-04-17）
+
+以下是 04-17 落地的四项 VFS 内核能力拓展，对应任务 `04-17-address-space-kernel-extensions`。
+
+### 8.1 Extended Attributes（文件级元数据分通道）
+
+**动机**：外部 provider（如 KM 插件）有丰富的文件元数据。之前没有标准通道，只能以 YAML frontmatter 嵌入文件正文开头，导致内容污染、搜索干扰、写回困难。
+
+**契约**：
+
+```rust
+pub struct ReadResult {
+    pub path: String,
+    pub content: String,
+    pub attributes: Option<serde_json::Map<String, Value>>,  // 新增
+}
+
+pub struct RuntimeFileEntry {
+    pub path: String,
+    pub size: Option<u64>,
+    pub modified_at: Option<i64>,
+    pub is_dir: bool,
+    pub is_virtual: bool,                                     // 新增
+    pub attributes: Option<serde_json::Map<String, Value>>,   // 新增
+}
+
+// MountProvider trait 新增可选方法（默认 NotSupported）
+async fn stat(&self, mount: &Mount, path: &str, ctx: &MountOperationContext)
+    -> Result<RuntimeFileEntry, MountError>;
+```
+
+**约定**：
+
+- `read_text` 返回时可附带 `attributes`（如果 provider 支持）
+- `stat` 只返回元数据，不读内容（轻量查询）；`list` 返回的 entries 可以带 attributes
+- Agent tool `fs.read` 输出中，metadata 与 content 应分区展示
+- **不再接受**：在 content 开头嵌入 YAML frontmatter 作为元数据来源
+
+### 8.2 Projection 约定（/proc 风格虚拟文件）
+
+**契约**：`RuntimeFileEntry.is_virtual = true` 标记该条目是 provider 动态投影的内容（物理存储中不存在）。
+
+**约定**：
+
+- Provider 的 `read_text` 可以返回动态内容（不要求同路径多次读结果一致）
+- `list` 可以返回不存在于物理存储的虚拟条目
+- 对 projection 条目，`size` 和 `modified_at` 通常为 `None`（内容是动态的，size 无意义）
+
+**当前实现**：
+
+- `lifecycle_vfs` 的 `active/*`、`nodes/*`、`runs/*` 路径已标记 `is_virtual = true`
+- `lifecycle_vfs` 的 `artifacts/*` 是真实 inline_file 存储，不是 virtual
+
+### 8.3 Mount Link（声明式 symlink alias）
+
+**契约**：
+
+```rust
+pub struct MountLink {
+    pub from_mount_id: String,
+    pub from_path: String,
+    pub to_mount_id: String,
+    pub to_path: String,
+}
+
+pub struct Vfs {
+    pub mounts: Vec<Mount>,
+    pub default_mount_id: Option<String>,
+    pub links: Vec<MountLink>,  // 新增
+    // ...
+}
+```
+
+**语义**：
+
+- Link 是 VFS 构建时声明式定义的 mount 级重定向，不是通用 symlink（避免循环检测、权限穿透等复杂性）
+- `parse_mount_uri` 在返回 `ResourceRef` 前自动跳转 link
+- 匹配规则：`from_mount_id` 相等，且 path 等于 `from_path` 或以 `from_path/` 为前缀（目录级别透明重定向，尾部保留）
+- 最大跳转深度 5 层，超过报错（防循环）
+
+**典型场景**：
+
+- Workflow step input 声明为 link → 上游 step output mount 的某路径
+- Agent knowledge 引用 project 级别的共享文档（不复制）
+- Canvas 引用 workspace 文件（只读视图）
+
+### 8.4 Watch / 事件通知
+
+**契约**：
+
+```rust
+pub enum MountCapability {
+    Read, Write, List, Search, Exec,
+    Watch,  // 新增
+}
+
+pub enum MountEventKind { Created, Modified, Deleted, Renamed }
+
+pub struct MountEvent {
+    pub mount_id: String,
+    pub path: String,
+    pub kind: MountEventKind,
+    pub timestamp_ms: i64,
+}
+
+pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
+
+// MountProvider trait 新增可选方法（默认 NotSupported）
+async fn watch(&self, mount: &Mount, path: &str, ctx: &MountOperationContext)
+    -> Result<MountEventReceiver, MountError>;
+```
+
+**当前实现**：
+
+- `InlineContentOverlay` 在 write/delete 时通过 broadcast channel 推送 `MountEvent`
+- 订阅方式：`overlay.subscribe_events() -> MountEventReceiver`
+- 事件 kind 根据前后状态区分 `Created`/`Modified`/`Deleted`
+
+**消费侧定位**：暂不在 Agent tool 层暴露（Agent 无需主动 watch），主要供 Application 层内部的 Workflow 编排引擎、Hook runtime 消费，替代轮询。

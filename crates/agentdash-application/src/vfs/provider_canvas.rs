@@ -75,7 +75,7 @@ impl MountProvider for CanvasFsMountProvider {
             .find(|file| file.path == path)
             .map(|file| file.content.clone())
             .ok_or_else(|| MountError::NotFound(format!("Canvas 文件不存在: {path}")))?;
-        Ok(ReadResult { path, content })
+        Ok(ReadResult::new(path, content))
     }
 
     async fn write_text(

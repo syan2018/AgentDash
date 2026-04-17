@@ -75,7 +75,7 @@ impl RelayVfsService {
             && let Some(override_state) = ov.read_override(&mount.id, &path).await
         {
             return match override_state {
-                Some(content) => Ok(ReadResult { path, content }),
+                Some(content) => Ok(ReadResult::new(path, content)),
                 None => Err(format!("文件不存在: {}", target.path)),
             };
         }

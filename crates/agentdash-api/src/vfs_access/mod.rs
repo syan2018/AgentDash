@@ -477,6 +477,7 @@ mod tests {
             default_mount_id: Some("brief".to_string()),
             source_project_id: Some(owner_id.to_string()),
             source_story_id: None,
+            links: Vec::new(),
         };
         let overlay = InlineContentOverlay::new(Arc::new(MemoryInlinePersister));
 

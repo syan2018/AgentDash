@@ -10,4 +10,6 @@ pub enum MountCapability {
     List,
     Search,
     Exec,
+    /// 订阅内容变更事件。
+    Watch,
 }

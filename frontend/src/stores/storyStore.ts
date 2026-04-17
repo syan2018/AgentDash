@@ -241,9 +241,6 @@ const toBackendTaskStatus = (status: Task["status"]): string => {
 };
 
 const defaultContext: StoryContext = {
-  prd_doc: null,
-  spec_refs: [],
-  resource_list: [],
   source_refs: [],
   context_containers: [],
   disabled_container_ids: [],
@@ -295,12 +292,6 @@ const mapStory = (raw: Record<string, unknown>): Story => {
       throw new Error('Story context 必须是对象');
     }
     const ctx = raw.context as Record<string, unknown>;
-    if (ctx.spec_refs != null && !Array.isArray(ctx.spec_refs)) {
-      throw new Error('Story context.spec_refs 必须是数组');
-    }
-    if (ctx.resource_list != null && !Array.isArray(ctx.resource_list)) {
-      throw new Error('Story context.resource_list 必须是数组');
-    }
     if (ctx.source_refs != null && !Array.isArray(ctx.source_refs)) {
       throw new Error('Story context.source_refs 必须是数组');
     }
@@ -311,9 +302,6 @@ const mapStory = (raw: Record<string, unknown>): Story => {
       throw new Error('Story context.disabled_container_ids 必须是数组');
     }
     context = {
-      prd_doc: ctx.prd_doc == null ? null : requireStringField({ prd_doc: ctx.prd_doc }, 'prd_doc'),
-      spec_refs: ctx.spec_refs == null ? [] : ctx.spec_refs as string[],
-      resource_list: ctx.resource_list == null ? [] : ctx.resource_list as StoryContext['resource_list'],
       source_refs: ctx.source_refs == null ? [] : ctx.source_refs as ContextSourceRef[],
       context_containers: ctx.context_containers == null
         ? []

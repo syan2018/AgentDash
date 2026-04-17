@@ -3,7 +3,7 @@ use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
-    ContextComposer, build_owner_prompt_blocks, clean_text, resolve_declared_sources, trim_or_dash,
+    ContextComposer, build_owner_prompt_blocks, resolve_declared_sources, trim_or_dash,
     workspace_context_fragment,
 };
 use crate::runtime::{Vfs, RuntimeMcpServer};
@@ -75,54 +75,6 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
     });
     for fragment in session_plan.fragments {
         composer.push_fragment(fragment);
-    }
-
-    if let Some(prd) = clean_text(input.story.context.prd_doc.as_deref()) {
-        composer.push(
-            "story_context",
-            "story_prd",
-            40,
-            MergeStrategy::Append,
-            format!("## Story PRD\n{prd}"),
-        );
-    }
-    if !input.story.context.spec_refs.is_empty() {
-        composer.push(
-            "story_context",
-            "story_spec_refs",
-            41,
-            MergeStrategy::Append,
-            format!(
-                "## Spec Refs\n{}",
-                input
-                    .story
-                    .context
-                    .spec_refs
-                    .iter()
-                    .map(|item| format!("- {item}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-        );
-    }
-    if !input.story.context.resource_list.is_empty() {
-        composer.push(
-            "story_context",
-            "story_resources",
-            42,
-            MergeStrategy::Append,
-            format!(
-                "## Resources\n{}",
-                input
-                    .story
-                    .context
-                    .resource_list
-                    .iter()
-                    .map(|item| format!("- [{}] {} ({})", item.resource_type, item.name, item.uri))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
-        );
     }
 
     let resolvable_sources = input

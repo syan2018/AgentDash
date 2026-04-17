@@ -203,52 +203,6 @@ impl ContextContributor for CoreContextContributor {
             ),
         });
 
-        if let Some(prd) = clean_text(input.story.context.prd_doc.as_deref()) {
-            fragments.push(ContextFragment {
-                slot: "story_context",
-                label: "story_prd",
-                order: 30,
-                strategy: MergeStrategy::Append,
-                content: format!("## Story PRD\n{prd}"),
-            });
-        }
-
-        if !input.story.context.spec_refs.is_empty() {
-            let refs = input
-                .story
-                .context
-                .spec_refs
-                .iter()
-                .map(|item| format!("- {item}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            fragments.push(ContextFragment {
-                slot: "story_context",
-                label: "story_spec_refs",
-                order: 31,
-                strategy: MergeStrategy::Append,
-                content: format!("## Spec Refs\n{refs}"),
-            });
-        }
-
-        if !input.story.context.resource_list.is_empty() {
-            let resources = input
-                .story
-                .context
-                .resource_list
-                .iter()
-                .map(|res| format!("- [{}] {} ({})", res.resource_type, res.name, res.uri))
-                .collect::<Vec<_>>()
-                .join("\n");
-            fragments.push(ContextFragment {
-                slot: "story_context",
-                label: "story_resources",
-                order: 32,
-                strategy: MergeStrategy::Append,
-                content: format!("## Resources\n{resources}"),
-            });
-        }
-
         fragments.push(ContextFragment {
             slot: "project",
             label: "project_config",

@@ -20,9 +20,6 @@ pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
 pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
-pub(crate) const CONTEXT_OWNER_SCOPE_METADATA_KEY: &str = "agentdash_context_owner_scope";
-pub(crate) const CONTEXT_OWNER_SCOPE_PROJECT: &str = "project";
-pub(crate) const CONTEXT_OWNER_SCOPE_STORY: &str = "story";
 pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
@@ -31,15 +28,6 @@ pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_co
 enum ContextContainerOwnerScope {
     Project,
     Story,
-}
-
-impl ContextContainerOwnerScope {
-    fn as_metadata_value(self) -> &'static str {
-        match self {
-            Self::Project => CONTEXT_OWNER_SCOPE_PROJECT,
-            Self::Story => CONTEXT_OWNER_SCOPE_STORY,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,8 +71,6 @@ pub fn build_derived_vfs(
             ContextContainerOwnerScope::Story => ("story", story.expect("story scope 但 story 为 None").id),
         };
         annotate_context_mount_owner(&mut mount, owner_kind_str, owner_id);
-        // 兼容：同时写入旧的 owner_scope metadata
-        annotate_context_mount_owner_scope(&mut mount, owner_scope);
         mounts.push(mount);
     }
 
@@ -384,22 +370,7 @@ pub fn build_context_container_mount(
     })
 }
 
-fn annotate_context_mount_owner_scope(mount: &mut Mount, owner_scope: ContextContainerOwnerScope) {
-    let mut metadata = match std::mem::take(&mut mount.metadata) {
-        serde_json::Value::Object(object) => object,
-        serde_json::Value::Null => serde_json::Map::new(),
-        other => {
-            let mut object = serde_json::Map::new();
-            object.insert("raw_metadata".to_string(), other);
-            object
-        }
-    };
-    metadata.insert(
-        CONTEXT_OWNER_SCOPE_METADATA_KEY.to_string(),
-        serde_json::Value::String(owner_scope.as_metadata_value().to_string()),
-    );
-    mount.metadata = serde_json::Value::Object(metadata);
-}
+
 
 /// 为 context container mount 写入 owner_kind + owner_id metadata（新 API）
 pub(crate) fn annotate_context_mount_owner(mount: &mut Mount, owner_kind: &str, owner_id: Uuid) {
@@ -597,13 +568,6 @@ mod tests {
             mount.metadata.get("container_id").and_then(|v| v.as_str()),
             Some("brief")
         );
-        // 兼容旧 owner_scope
-        assert_eq!(
-            mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
-            Some(&serde_json::Value::String(
-                CONTEXT_OWNER_SCOPE_STORY.to_string()
-            ))
-        );
     }
 
     #[test]
@@ -638,13 +602,6 @@ mod tests {
                 .get(CONTEXT_OWNER_ID_METADATA_KEY)
                 .and_then(|v| v.as_str()),
             Some(project.id.to_string()).as_deref()
-        );
-        // 兼容旧 owner_scope
-        assert_eq!(
-            mount.metadata.get(CONTEXT_OWNER_SCOPE_METADATA_KEY),
-            Some(&serde_json::Value::String(
-                CONTEXT_OWNER_SCOPE_PROJECT.to_string()
-            ))
         );
     }
 }

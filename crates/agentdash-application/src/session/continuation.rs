@@ -23,7 +23,7 @@ struct CompactionCheckpoint {
     summary: String,
     tokens_before: u64,
     messages_compacted: u32,
-    compacted_until_ref: Option<MessageRef>,
+    compacted_until_ref: MessageRef,
     timestamp_ms: Option<u64>,
 }
 
@@ -644,10 +644,8 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
         return None;
     }
     let data = agent_event.data?;
-    // 解析 compacted_until_ref（新字段，向后兼容）
-    let compacted_until_ref = data
-        .get("compacted_until_ref")
-        .and_then(|v| serde_json::from_value::<MessageRef>(v.clone()).ok());
+    let compacted_until_ref =
+        serde_json::from_value::<MessageRef>(data.get("compacted_until_ref")?.clone()).ok()?;
     Some(CompactionCheckpoint {
         summary: data.get("summary")?.as_str()?.to_string(),
         tokens_before: data
@@ -665,8 +663,6 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
 }
 
 /// 在 ProjectedEntry 列表上应用 compaction checkpoint。
-///
-/// 优先使用 `compacted_until_ref` 做 ref-based cut，fallback 到 `messages_compacted` 计数。
 fn apply_compaction_checkpoint_projected(
     raw_entries: Vec<ProjectedEntry>,
     checkpoint: Option<CompactionCheckpoint>,
@@ -682,26 +678,17 @@ fn apply_compaction_checkpoint_projected(
         };
     }
 
-    // 优先 ref-based cut：找到 compacted_until_ref 对应的位置
-    let cut = if let Some(ref until_ref) = checkpoint.compacted_until_ref {
-        raw_entries
-            .iter()
-            .position(|e| e.message_ref == *until_ref)
-            .map(|pos| pos + 1) // 含这条消息本身
-            .unwrap_or_else(|| {
-                // ref 不匹配（数据迁移场景），fallback 到计数
-                usize::min(checkpoint.messages_compacted as usize, raw_entries.len())
-            })
-    } else {
-        // 旧数据没有 ref，用计数 fallback
-        usize::min(checkpoint.messages_compacted as usize, raw_entries.len())
-    };
+    let cut = raw_entries
+        .iter()
+        .position(|e| e.message_ref == checkpoint.compacted_until_ref)
+        .map(|pos| pos + 1)
+        .unwrap_or(0);
 
-    // 从 cut boundary 回推 compacted_until_ref（即使原始 checkpoint 没有）
+    // 从 cut boundary 回推 compacted_until_ref（保留已 persisted 的 ref 做审计）
     let derived_ref = if cut > 0 {
         Some(raw_entries[cut - 1].message_ref.clone())
     } else {
-        checkpoint.compacted_until_ref.clone()
+        Some(checkpoint.compacted_until_ref.clone())
     };
 
     let summary_ref = MessageRef {

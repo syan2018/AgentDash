@@ -557,11 +557,6 @@ export function StoryPage() {
                     </span>
                   );
                 })}
-                {story.context.prd_doc && (
-                  <span className="rounded-full border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px]">
-                    PRD
-                  </span>
-                )}
                 {story.context.context_containers.length > 0 && (
                   <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
                     {story.context.context_containers.length} 容器

@@ -27,12 +27,6 @@ use agentdash_domain::session_composition::{SessionComposition, validate_session
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateStoryContextParams {
-    #[schemars(description = "PRD 文档内容（覆盖更新）")]
-    pub prd_doc: Option<String>,
-    #[schemars(description = "追加的规范引用列表")]
-    pub add_spec_refs: Option<Vec<String>>,
-    #[schemars(description = "追加的资源清单项 [{name, uri, resource_type}]")]
-    pub add_resources: Option<Vec<ResourceInput>>,
     #[schemars(description = "追加的声明式上下文来源")]
     pub add_source_refs: Option<Vec<ContextSourceRefInput>>,
     #[schemars(description = "完整替换声明式上下文来源")]
@@ -54,13 +48,6 @@ pub struct UpdateStoryDetailsParams {
     pub priority: Option<String>,
     pub story_type: Option<String>,
     pub tags: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ResourceInput {
-    pub name: String,
-    pub uri: String,
-    pub resource_type: String,
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -220,7 +207,7 @@ impl StoryMcpServer {
 
 #[tool_router]
 impl StoryMcpServer {
-    #[tool(description = "获取当前 Story 的完整上下文信息（PRD、规范引用、资源清单）")]
+    #[tool(description = "获取当前 Story 的完整上下文信息（声明式来源与容器）")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         let story = self.load_story().await?;
 
@@ -230,9 +217,6 @@ impl StoryMcpServer {
             "description": story.description,
             "status": story.status,
             "context": {
-                "prd_doc": story.context.prd_doc,
-                "spec_refs": story.context.spec_refs,
-                "resource_list": story.context.resource_list,
                 "source_refs": story.context.source_refs,
                 "context_containers": story.context.context_containers,
                 "disabled_container_ids": story.context.disabled_container_ids,
@@ -245,34 +229,13 @@ impl StoryMcpServer {
         )]))
     }
 
-    #[tool(description = "更新 Story 上下文：可设置 PRD、追加规范引用和资源清单")]
+    #[tool(description = "更新 Story 上下文：声明式 source_refs / 容器 / 会话编排")]
     async fn update_story_context(
         &self,
         Parameters(params): Parameters<UpdateStoryContextParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let mut story = self.load_story().await?;
         let project = self.load_project().await?;
-
-        if let Some(prd) = params.prd_doc {
-            story.context.prd_doc = Some(prd);
-        }
-
-        if let Some(refs) = params.add_spec_refs {
-            story.context.spec_refs.extend(refs);
-        }
-
-        if let Some(resources) = params.add_resources {
-            for r in resources {
-                story
-                    .context
-                    .resource_list
-                    .push(agentdash_domain::story::Resource {
-                        name: r.name,
-                        uri: r.uri,
-                        resource_type: r.resource_type,
-                    });
-            }
-        }
 
         if let Some(source_refs) = params.replace_source_refs {
             story.context.source_refs = source_refs
@@ -330,10 +293,9 @@ impl StoryMcpServer {
             .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Story {} 上下文已更新（spec_refs: {} 项, resources: {} 项, containers: {} 项, session_composition: {}）",
+            "Story {} 上下文已更新（source_refs: {} 项, containers: {} 项, session_composition: {}）",
             self.story_id,
-            story.context.spec_refs.len(),
-            story.context.resource_list.len(),
+            story.context.source_refs.len(),
             story.context.context_containers.len(),
             if story.context.session_composition.is_some() {
                 "yes"

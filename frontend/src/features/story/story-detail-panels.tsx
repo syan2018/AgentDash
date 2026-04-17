@@ -164,8 +164,6 @@ export function ContextPanel({
     setNewTextContent("");
   }, [story.id]);
 
-  const hasLegacyContent = ctx.prd_doc || ctx.spec_refs.length > 0 || ctx.resource_list.length > 0;
-
   const persistStoryContext = useCallback(async (
     payload: Parameters<typeof updateStory>[1],
     successMsg: string,
@@ -221,40 +219,6 @@ export function ContextPanel({
 
   return (
     <div className="space-y-2">
-
-      {/* Legacy：PRD */}
-      {ctx.prd_doc && (
-        <div>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">PRD</p>
-          <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-[8px] bg-background/60 px-2.5 py-2 text-xs leading-5 text-foreground">{ctx.prd_doc}</pre>
-        </div>
-      )}
-
-      {/* Legacy：规格引用 */}
-      {ctx.spec_refs.length > 0 && (
-        <div>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">规格引用</p>
-          <div className="flex flex-wrap gap-1.5">
-            {ctx.spec_refs.map((ref, index) => (
-              <span key={index} className="rounded-[6px] bg-background/60 px-2 py-1 text-xs text-foreground">{ref}</span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Legacy：资源列表 */}
-      {ctx.resource_list.length > 0 && (
-        <div>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">资源</p>
-          {ctx.resource_list.map((resource, index) => (
-            <div key={index} className="flex items-center gap-2 py-1 text-xs">
-              <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">{resource.resource_type}</span>
-              <span className="font-medium text-foreground">{resource.name}</span>
-              <span className="truncate text-muted-foreground">{resource.uri}</span>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* 条目列表 */}
       {sourceRefs.length > 0 && (
@@ -363,7 +327,6 @@ export function ContextPanel({
 
       {/* 空态 */}
       {sourceRefs.length === 0
-        && !hasLegacyContent
         && ctx.context_containers.length === 0
         && ctx.disabled_container_ids.length === 0
         && !ctx.session_composition && (

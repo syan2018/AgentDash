@@ -5,9 +5,9 @@ use uuid::Uuid;
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowCheckKind,
-    WorkflowContract, WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, node_deps_from_edges,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
+    WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    node_deps_from_edges,
     validate_lifecycle_definition, validate_workflow_definition,
 };
 
@@ -473,65 +473,20 @@ pub fn build_effective_contract(
     primary_workflow: Option<&WorkflowDefinition>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
-        Some(w) => {
-            let hook_rules = if w.contract.hook_rules.is_empty() {
-                migrate_legacy_to_hook_rules(&w.contract)
-            } else {
-                w.contract.hook_rules.clone()
-            };
-            EffectiveSessionContract {
-                lifecycle_key: Some(lifecycle_key.to_string()),
-                active_step_key: Some(active_step_key.to_string()),
-                injection: w.contract.injection.clone(),
-                hook_rules,
-                constraints: w.contract.constraints.clone(),
-                completion: w.contract.completion.clone(),
-            }
-        }
+        Some(w) => EffectiveSessionContract {
+            lifecycle_key: Some(lifecycle_key.to_string()),
+            active_step_key: Some(active_step_key.to_string()),
+            injection: w.contract.injection.clone(),
+            hook_rules: w.contract.hook_rules.clone(),
+            constraints: w.contract.constraints.clone(),
+            completion: w.contract.completion.clone(),
+        },
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
             active_step_key: Some(active_step_key.to_string()),
             ..Default::default()
         },
     }
-}
-
-/// Preset key constants referencing implementations in agentdash-application/src/hooks/presets.rs.
-/// If a preset is renamed in the application layer, update these constants accordingly.
-const PRESET_SESSION_TERMINAL_ADVANCE: &str = "session_terminal_advance";
-
-/// When a WorkflowContract has no `hook_rules` but uses legacy `constraints`/`checks`,
-/// synthesize equivalent hook_rules so the new evaluation path can handle them.
-///
-/// NOTE: `stop_gate_checks_pending` 不再自动迁移。该 hook 必须由 workflow
-/// 定义方在 `hook_rules` 中显式声明，而不是从 constraint/check 隐式派生。
-fn migrate_legacy_to_hook_rules(contract: &WorkflowContract) -> Vec<WorkflowHookRuleSpec> {
-    let mut rules: Vec<WorkflowHookRuleSpec> = Vec::new();
-
-    for check in &contract.completion.checks {
-        let (preset_key, trigger) = match check.kind {
-            WorkflowCheckKind::SessionTerminalIn => (
-                PRESET_SESSION_TERMINAL_ADVANCE,
-                WorkflowHookTrigger::BeforeStop,
-            ),
-            _ => continue,
-        };
-        let key = format!("migrated:{}", check.key);
-        if rules.iter().any(|r| r.key == key) {
-            continue;
-        }
-        rules.push(WorkflowHookRuleSpec {
-            key,
-            trigger,
-            description: check.description.clone(),
-            preset: Some(preset_key.to_string()),
-            params: None,
-            script: None,
-            enabled: true,
-        });
-    }
-
-    rules
 }
 
 #[cfg(test)]

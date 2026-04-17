@@ -227,9 +227,6 @@ impl TaskMcpServer {
             "title": story.title,
             "description": story.description,
             "context": {
-                "prd_doc": story.context.prd_doc,
-                "spec_refs": story.context.spec_refs,
-                "resource_list": story.context.resource_list,
                 "source_refs": story.context.source_refs,
             },
         });

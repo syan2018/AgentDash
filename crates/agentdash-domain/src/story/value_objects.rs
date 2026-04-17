@@ -47,14 +47,6 @@ pub enum StoryType {
 /// 结构化 Story 上下文
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StoryContext {
-    /// PRD 文档内容或路径
-    pub prd_doc: Option<String>,
-    /// 规范文档引用列表
-    #[serde(default)]
-    pub spec_refs: Vec<String>,
-    /// 资源清单
-    #[serde(default)]
-    pub resource_list: Vec<Resource>,
     /// 声明式上下文来源
     #[serde(default)]
     pub source_refs: Vec<ContextSourceRef>,
@@ -67,14 +59,6 @@ pub struct StoryContext {
     /// Story 级会话编排配置
     #[serde(default)]
     pub session_composition: Option<SessionComposition>,
-}
-
-/// 资源引用
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Resource {
-    pub name: String,
-    pub uri: String,
-    pub resource_type: String,
 }
 
 /// 状态变更类型

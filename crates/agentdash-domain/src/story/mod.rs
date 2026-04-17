@@ -7,5 +7,5 @@ pub use entity::Story;
 pub use repository::StoryRepository;
 pub use state_change_repository::StateChangeRepository;
 pub use value_objects::{
-    ChangeKind, Resource, StateChange, StoryContext, StoryPriority, StoryStatus, StoryType,
+    ChangeKind, StateChange, StoryContext, StoryPriority, StoryStatus, StoryType,
 };

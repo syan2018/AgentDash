@@ -330,12 +330,6 @@ export type StoryPriority = "p0" | "p1" | "p2" | "p3";
 
 export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";
 
-export interface ResourceRef {
-  name: string;
-  uri: string;
-  resource_type: string;
-}
-
 export type ContextSourceKind =
   | "manual_text"
   | "file"
@@ -358,9 +352,6 @@ export interface ContextSourceRef {
 }
 
 export interface StoryContext {
-  prd_doc?: string | null;
-  spec_refs: string[];
-  resource_list: ResourceRef[];
   source_refs: ContextSourceRef[];
   context_containers: ContextContainerDefinition[];
   disabled_container_ids: string[];

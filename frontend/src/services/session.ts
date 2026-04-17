@@ -7,6 +7,7 @@ import type {
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
   ProjectSessionEntry,
+  ResolvedAddressSpaceSurface,
   SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
@@ -177,6 +178,7 @@ export interface SessionContextPayload {
   workspace_id: string | null;
   agent_binding: AgentBinding | null;
   address_space: ExecutionAddressSpace | null;
+  runtime_surface: ResolvedAddressSpaceSurface | null;
   context_snapshot: SessionContextSnapshot | null;
   session_capabilities: SessionBaselineCapabilities | null;
 }
@@ -194,6 +196,7 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
     workspace_id: raw.workspace_id != null ? String(raw.workspace_id) : null,
     agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
     address_space: (raw.address_space as ExecutionAddressSpace | undefined) ?? null,
+    runtime_surface: (raw.runtime_surface as ResolvedAddressSpaceSurface | undefined) ?? null,
     context_snapshot: (raw.context_snapshot as SessionContextSnapshot | undefined) ?? null,
     session_capabilities: (raw.session_capabilities as SessionBaselineCapabilities | undefined) ?? null,
   };

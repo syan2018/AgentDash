@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::path::normalize_mount_relative_path;
 use crate::runtime::{AddressSpace, Mount, MountCapability, RuntimeFileEntry};
+use crate::address_space::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{
     ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
 };
@@ -142,6 +143,23 @@ pub fn append_agent_knowledge_mounts(
         address_space.mounts.push(mount);
     }
     Ok(())
+}
+
+/// 构建仅包含 Agent 私有知识库的 Address Space。
+///
+/// 该 surface 只用于 Agent 页知识库浏览，不混入 project/workspace/lifecycle/canvas mounts。
+pub fn build_project_agent_knowledge_address_space(
+    link: &ProjectAgentLink,
+) -> Result<AddressSpace, String> {
+    let mut address_space = AddressSpace {
+        mounts: Vec::new(),
+        default_mount_id: None,
+        source_project_id: Some(link.project_id.to_string()),
+        source_story_id: None,
+    };
+    append_agent_knowledge_mounts(&mut address_space, link)?;
+    address_space.default_mount_id = address_space.mounts.first().map(|mount| mount.id.clone());
+    Ok(address_space)
 }
 
 /// 按白名单过滤 address space 中的项目级容器
@@ -439,6 +457,68 @@ pub fn parse_inline_mount_owner(mount: &Mount) -> Result<(InlineFileOwnerKind, U
         .ok_or_else(|| format!("mount {} 缺少 container_id", mount.id))?
         .to_string();
     Ok((owner_kind, owner_id, container_id))
+}
+
+pub fn mount_container_id(mount: &Mount) -> Option<&str> {
+    mount
+        .metadata
+        .get(CONTEXT_CONTAINER_ID_METADATA_KEY)
+        .and_then(|value| value.as_str())
+}
+
+pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
+    if mount.provider == PROVIDER_RELAY_FS {
+        return ResolvedMountOwnerKind::Workspace;
+    }
+    if mount.provider == PROVIDER_LIFECYCLE_VFS {
+        return ResolvedMountOwnerKind::Session;
+    }
+    if mount.provider == PROVIDER_CANVAS_FS {
+        return ResolvedMountOwnerKind::Canvas;
+    }
+    match mount
+        .metadata
+        .get(CONTEXT_OWNER_KIND_METADATA_KEY)
+        .and_then(|value| value.as_str())
+    {
+        Some("project") => ResolvedMountOwnerKind::Project,
+        Some("story") => ResolvedMountOwnerKind::Story,
+        Some("task") => ResolvedMountOwnerKind::Task,
+        Some("session") => ResolvedMountOwnerKind::Session,
+        Some(value) if value == InlineFileOwnerKind::ProjectAgentLink.as_str() => {
+            ResolvedMountOwnerKind::ProjectAgentLink
+        }
+        Some("canvas") => ResolvedMountOwnerKind::Canvas,
+        Some("workspace") => ResolvedMountOwnerKind::Workspace,
+        _ => ResolvedMountOwnerKind::External,
+    }
+}
+
+pub fn mount_owner_id(mount: &Mount) -> String {
+    mount
+        .metadata
+        .get(CONTEXT_OWNER_ID_METADATA_KEY)
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
+    if mount.id == "agent-knowledge" {
+        return ResolvedMountPurpose::AgentKnowledge;
+    }
+    match mount.provider.as_str() {
+        PROVIDER_RELAY_FS => ResolvedMountPurpose::Workspace,
+        PROVIDER_LIFECYCLE_VFS => ResolvedMountPurpose::Lifecycle,
+        PROVIDER_CANVAS_FS => ResolvedMountPurpose::Canvas,
+        PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
+            ResolvedMountOwnerKind::Project => ResolvedMountPurpose::ProjectContainer,
+            ResolvedMountOwnerKind::Story => ResolvedMountPurpose::StoryContainer,
+            ResolvedMountOwnerKind::ProjectAgentLink => ResolvedMountPurpose::AgentKnowledge,
+            _ => ResolvedMountPurpose::ExternalService,
+        },
+        _ => ResolvedMountPurpose::ExternalService,
+    }
 }
 
 fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {

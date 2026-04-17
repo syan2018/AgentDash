@@ -3,12 +3,8 @@ use std::sync::Arc;
 use agent_client_protocol::{
     EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
 };
-use agentdash_application::address_space::{
-    SessionMountTarget, container_visible_for_target, effective_context_containers,
-};
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
-    common::MountCapability,
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
@@ -43,13 +39,6 @@ pub(crate) struct ProjectAgentBridge {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProjectAgentWritebackMode {
-    ReadOnly,
-    ConfirmBeforeWrite,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub struct ProjectAgentExecutorResponse {
     pub executor: String,
     pub provider_id: Option<String>,
@@ -57,15 +46,6 @@ pub struct ProjectAgentExecutorResponse {
     pub agent_id: Option<String>,
     pub thinking_level: Option<agentdash_spi::ThinkingLevel>,
     pub permission_policy: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentMountResponse {
-    pub container_id: String,
-    pub mount_id: String,
-    pub display_name: String,
-    pub writable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,8 +66,6 @@ pub struct ProjectAgentSummaryResponse {
     pub executor: ProjectAgentExecutorResponse,
     pub preset_name: Option<String>,
     pub source: String,
-    pub writeback_mode: ProjectAgentWritebackMode,
-    pub shared_context_mounts: Vec<ProjectAgentMountResponse>,
     pub session: Option<ProjectAgentSessionResponse>,
 }
 
@@ -120,13 +98,6 @@ mod tests {
             },
             preset_name: None,
             source: "project.config.default_agent_type".to_string(),
-            writeback_mode: ProjectAgentWritebackMode::ReadOnly,
-            shared_context_mounts: vec![ProjectAgentMountResponse {
-                container_id: "project-spec".to_string(),
-                mount_id: "spec".to_string(),
-                display_name: "项目规范".to_string(),
-                writable: false,
-            }],
             session: Some(ProjectAgentSessionResponse {
                 binding_id: "binding-1".to_string(),
                 session_id: "sess-1".to_string(),
@@ -137,10 +108,8 @@ mod tests {
         .expect("serialize project agent summary");
 
         assert!(value.get("display_name").is_some());
-        assert!(value.get("shared_context_mounts").is_some());
         assert!(value.get("preset_name").is_some());
         assert!(value.get("displayName").is_none());
-        assert!(value.get("sharedContextMounts").is_none());
         assert!(value.get("presetName").is_none());
     }
 
@@ -418,18 +387,10 @@ pub(crate) fn parse_project_agent_session_label(label: &str) -> Option<&str> {
 }
 
 fn build_project_agent_summary(
-    project: &Project,
+    _project: &Project,
     agent: &ProjectAgentBridge,
     session: Option<ProjectAgentSessionResponse>,
 ) -> ProjectAgentSummaryResponse {
-    let visible_containers = build_project_agent_visible_mounts(project, &agent.executor_config);
-
-    let writeback_mode = if visible_containers.iter().any(|item| item.writable) {
-        ProjectAgentWritebackMode::ConfirmBeforeWrite
-    } else {
-        ProjectAgentWritebackMode::ReadOnly
-    };
-
     ProjectAgentSummaryResponse {
         key: agent.key.clone(),
         display_name: agent.display_name.clone(),
@@ -444,47 +405,8 @@ fn build_project_agent_summary(
         },
         preset_name: agent.preset_name.clone(),
         source: agent.source.clone(),
-        writeback_mode,
-        shared_context_mounts: visible_containers,
         session,
     }
-}
-
-pub(crate) fn build_project_agent_visible_mounts(
-    project: &Project,
-    executor_config: &AgentConfig,
-) -> Vec<ProjectAgentMountResponse> {
-    effective_context_containers(project, None)
-        .into_iter()
-        .filter(|container| {
-            container_visible_for_target(
-                container,
-                SessionMountTarget::Project,
-                Some(executor_config.executor.as_str()),
-            )
-        })
-        .map(|container| {
-            let container_id = container.id;
-            let mount_id = container.mount_id;
-            let display_name = if container.display_name.trim().is_empty() {
-                container_id.clone()
-            } else {
-                container.display_name
-            };
-            let writable = container.default_write
-                || container
-                    .capabilities
-                    .iter()
-                    .any(|capability| matches!(capability, MountCapability::Write));
-
-            ProjectAgentMountResponse {
-                container_id,
-                mount_id,
-                display_name,
-                writable,
-            }
-        })
-        .collect::<Vec<_>>()
 }
 
 async fn find_project_agent_session(

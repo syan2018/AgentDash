@@ -252,8 +252,6 @@ export interface ProjectSubjectGrant {
   updated_at: string;
 }
 
-export type ProjectAgentWritebackMode = "read_only" | "confirm_before_write";
-
 export interface ProjectAgentExecutor {
   executor: string;
   provider_id?: string | null;
@@ -261,13 +259,6 @@ export interface ProjectAgentExecutor {
   agent_id?: string | null;
   thinking_level?: ThinkingLevel | null;
   permission_policy?: string | null;
-}
-
-export interface ProjectAgentMount {
-  container_id: string;
-  mount_id: string;
-  display_name: string;
-  writable: boolean;
 }
 
 export interface ProjectAgentSession {
@@ -284,8 +275,6 @@ export interface ProjectAgentSummary {
   executor: ProjectAgentExecutor;
   preset_name?: string | null;
   source: string;
-  writeback_mode: ProjectAgentWritebackMode;
-  shared_context_mounts: ProjectAgentMount[];
   session?: ProjectAgentSession | null;
 }
 

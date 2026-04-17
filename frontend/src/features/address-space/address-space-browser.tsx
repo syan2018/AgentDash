@@ -1,40 +1,36 @@
 /**
  * 统一 Address Space 浏览器
  *
- * 在 Project / Story / Session 三个层级展示 mount 列表，
- * 支持按目录浏览文件树和预览文件内容。
+ * 浏览器本身只消费已解析好的 surface，或在必要时根据 source 先向后端解析 surface。
+ * 它不再接收 project/story/owner/agent 等业务坐标来二次推导 address space。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ExecutionAddressSpace } from "../../types";
+import type {
+  ExecutionAddressSpace,
+  ResolvedAddressSpaceSurface,
+  ResolvedAddressSpaceSurfaceSource,
+} from "../../types";
 import {
-  listMountEntries,
-  previewAddressSpace,
-  readMountFile,
-  writeMountFile,
-  type MountEntry,
-  type PreviewAddressSpaceResponse,
+  listSurfaceMountEntries,
+  readSurfaceFile,
+  resolveAddressSpaceSurface,
+  writeSurfaceFile,
+  type SurfaceMountEntry,
 } from "../../services/addressSpaces";
 
-// ─── Props ─────────────────────────────────────────────────
-
 export interface AddressSpaceBrowserProps {
-  /** 直接传入已有的 address space（会话页场景） */
+  /** 已解析好的 runtime / preview surface（优先使用） */
+  surface?: ResolvedAddressSpaceSurface | null;
+  /** 在组件内部先 resolve surface（Project/Story/Agent Knowledge 预览入口） */
+  source?: ResolvedAddressSpaceSurfaceSource;
+  /** 仅展示 mount 摘要；若未提供 surface/source，则无法进行文件浏览 */
   addressSpace?: ExecutionAddressSpace | null;
-  /** 预览模式参数（项目/Story 设置页场景） */
-  preview?: {
-    projectId: string;
-    storyId?: string;
-    ownerType?: string;
-    ownerId?: string;
-    agentId?: string;
-    target?: "project" | "story" | "task";
-  };
+  /** 限制当前入口可见的 mount，适用于 Agent 知识库等专用入口 */
+  visibleMountIds?: string[];
   /** 初始选中的 mount id */
   initialMountId?: string;
 }
-
-// ─── 内部类型 ──────────────────────────────────────────────
 
 interface MountInfo {
   id: string;
@@ -52,6 +48,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   relay_fs: "工作区文件",
   inline_fs: "内联文件",
   lifecycle_vfs: "Lifecycle 记录",
+  canvas_fs: "Canvas",
   external_service: "外部服务",
 };
 
@@ -63,81 +60,94 @@ const CAPABILITY_ICONS: Record<string, string> = {
   exec: "执行",
 };
 
-// ─── 组件 ──────────────────────────────────────────────────
-
 export function AddressSpaceBrowser({
+  surface,
+  source,
   addressSpace,
-  preview,
+  visibleMountIds,
   initialMountId,
 }: AddressSpaceBrowserProps) {
-  const previewProjectId = preview?.projectId;
-  const previewStoryId = preview?.storyId;
-  const previewTarget = preview?.target;
-  const [mounts, setMounts] = useState<MountInfo[]>([]);
-  const [defaultMountId, setDefaultMountId] = useState<string | null>(null);
+  const [resolvedSurface, setResolvedSurface] = useState<ResolvedAddressSpaceSurface | null>(surface ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
 
-  const previewOwnerType = preview?.ownerType;
-  const previewOwnerId = preview?.ownerId;
-  const previewAgentId = preview?.agentId;
-
-  // 加载 mounts：优先用 preview API（可获取最新 lifecycle mount），否则用 addressSpace 快照
   useEffect(() => {
-    if (previewProjectId) {
-      let cancelled = false;
-      setLoading(true);
-      setError(null);
+    setResolvedSurface(surface ?? null);
+  }, [surface]);
 
-      void (async () => {
-        try {
-          const result: PreviewAddressSpaceResponse = await previewAddressSpace({
-            projectId: previewProjectId,
-            storyId: previewStoryId,
-            ownerType: previewOwnerType,
-            ownerId: previewOwnerId,
-            agentId: previewAgentId,
-            target: previewTarget,
-          });
-          if (cancelled) return;
-          setMounts(result.mounts);
-          setDefaultMountId(result.default_mount_id ?? null);
-          setSelectedMountId((current) => current ?? result.default_mount_id ?? result.mounts[0]?.id ?? null);
-        } catch (err) {
-          if (cancelled) return;
-          setError(err instanceof Error ? err.message : String(err));
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-      })();
+  useEffect(() => {
+    if (surface || !source) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const nextSurface = await resolveAddressSpaceSurface(source);
+        if (!cancelled) setResolvedSurface(nextSurface);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [surface, source]);
 
-      return () => { cancelled = true; };
+  const mounts = useMemo<MountInfo[]>(() => {
+    const visible = visibleMountIds ? new Set(visibleMountIds) : null;
+
+    if (resolvedSurface) {
+      return resolvedSurface.mounts
+        .filter((mount) => !visible || visible.has(mount.id))
+        .map((mount) => ({
+          id: mount.id,
+          provider: mount.provider,
+          backend_id: mount.backend_id,
+          root_ref: mount.root_ref,
+          capabilities: mount.capabilities,
+          default_write: mount.default_write,
+          display_name: mount.display_name,
+          backend_online: mount.backend_online ?? null,
+          file_count: mount.file_count ?? null,
+        }));
     }
 
     if (addressSpace) {
-      setMounts(
-        addressSpace.mounts.map((m) => ({
-          id: m.id,
-          provider: m.provider,
-          backend_id: m.backend_id,
-          root_ref: m.root_ref,
-          capabilities: m.capabilities,
-          default_write: m.default_write,
-          display_name: m.display_name,
+      return addressSpace.mounts
+        .filter((mount) => !visible || visible.has(mount.id))
+        .map((mount) => ({
+          id: mount.id,
+          provider: mount.provider,
+          backend_id: mount.backend_id,
+          root_ref: mount.root_ref,
+          capabilities: mount.capabilities,
+          default_write: mount.default_write,
+          display_name: mount.display_name,
           backend_online: null,
           file_count: null,
-        })),
-      );
-      setDefaultMountId(addressSpace.default_mount_id ?? null);
-      setSelectedMountId((current) => current ?? addressSpace.default_mount_id ?? addressSpace.mounts[0]?.id ?? null);
-      return;
+        }));
     }
-  }, [addressSpace, previewProjectId, previewStoryId, previewOwnerType, previewOwnerId, previewAgentId, previewTarget]);
+
+    return [];
+  }, [resolvedSurface, addressSpace, visibleMountIds]);
+
+  const defaultMountId = useMemo(() => {
+    const rawDefault = resolvedSurface?.default_mount_id ?? addressSpace?.default_mount_id ?? null;
+    if (!rawDefault) return null;
+    return mounts.some((mount) => mount.id === rawDefault) ? rawDefault : mounts[0]?.id ?? null;
+  }, [resolvedSurface, addressSpace, mounts]);
+
+  useEffect(() => {
+    setSelectedMountId((current) => {
+      if (current && mounts.some((mount) => mount.id === current)) return current;
+      if (initialMountId && mounts.some((mount) => mount.id === initialMountId)) return initialMountId;
+      return defaultMountId ?? mounts[0]?.id ?? null;
+    });
+  }, [mounts, initialMountId, defaultMountId]);
 
   const selectedMount = useMemo(
-    () => mounts.find((m) => m.id === selectedMountId) ?? null,
+    () => mounts.find((mount) => mount.id === selectedMountId) ?? null,
     [mounts, selectedMountId],
   );
 
@@ -160,14 +170,15 @@ export function AddressSpaceBrowser({
   if (mounts.length === 0) {
     return (
       <div className="rounded-[10px] border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
-        当前配置下没有可用的 Mount。请先配置工作空间或上下文容器。
+        当前配置下没有可用的 Mount。
       </div>
     );
   }
 
+  const canBrowseFiles = Boolean(resolvedSurface?.surface_ref);
+
   return (
     <div className="space-y-3">
-      {/* Mount 选择器 */}
       <MountSelector
         mounts={mounts}
         selectedId={selectedMountId}
@@ -175,22 +186,21 @@ export function AddressSpaceBrowser({
         onSelect={setSelectedMountId}
       />
 
-      {/* 文件浏览区 */}
-      {selectedMount && preview && (
+      {selectedMount && resolvedSurface?.surface_ref && (
         <MountFileBrowser
+          surfaceRef={resolvedSurface.surface_ref}
           mount={selectedMount}
-          projectId={preview.projectId}
-          storyId={preview.storyId}
-          ownerType={preview.ownerType}
-          ownerId={preview.ownerId}
-          agentId={preview.agentId}
         />
+      )}
+
+      {!canBrowseFiles && (
+        <div className="rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground">
+          当前入口只提供 mount 摘要，未附带可浏览的 resolved surface。
+        </div>
       )}
     </div>
   );
 }
-
-// ─── MountSelector ─────────────────────────────────────────
 
 function MountSelector({
   mounts,
@@ -243,9 +253,8 @@ function MountSelector({
         })}
       </div>
 
-      {/* 选中 mount 的详细信息 */}
-      {mounts.find((m) => m.id === selectedId) && (
-        <MountDetailBar mount={mounts.find((m) => m.id === selectedId)!} />
+      {mounts.find((mount) => mount.id === selectedId) && (
+        <MountDetailBar mount={mounts.find((mount) => mount.id === selectedId)!} />
       )}
     </div>
   );
@@ -274,16 +283,14 @@ function MountDetailBar({ mount }: { mount: MountInfo }) {
       <span>
         路径: <span className="font-mono text-foreground/70">{mount.root_ref}</span>
       </span>
-      {mount.file_count != null && (
-        <span>{mount.file_count} 个文件</span>
-      )}
+      {mount.file_count != null && <span>{mount.file_count} 个文件</span>}
       <span className="flex gap-1">
-        {mount.capabilities.map((cap) => (
+        {mount.capabilities.map((capability) => (
           <span
-            key={cap}
+            key={capability}
             className="rounded-full border border-border bg-background px-1 py-0.5"
           >
-            {CAPABILITY_ICONS[cap] ?? cap}
+            {CAPABILITY_ICONS[capability] ?? capability}
           </span>
         ))}
       </span>
@@ -291,25 +298,15 @@ function MountDetailBar({ mount }: { mount: MountInfo }) {
   );
 }
 
-// ─── MountFileBrowser ──────────────────────────────────────
-
 function MountFileBrowser({
+  surfaceRef,
   mount,
-  projectId,
-  storyId,
-  ownerType,
-  ownerId,
-  agentId,
 }: {
+  surfaceRef: string;
   mount: MountInfo;
-  projectId: string;
-  storyId?: string;
-  ownerType?: string;
-  ownerId?: string;
-  agentId?: string;
 }) {
   const [currentPath, setCurrentPath] = useState(".");
-  const [entries, setEntries] = useState<MountEntry[]>([]);
+  const [entries, setEntries] = useState<SurfaceMountEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchPattern, setSearchPattern] = useState("");
@@ -322,7 +319,6 @@ function MountFileBrowser({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const canWrite = mount.capabilities.includes("write");
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadEntries = useCallback(
@@ -330,12 +326,8 @@ function MountFileBrowser({
       setLoading(true);
       setError(null);
       try {
-        const result = await listMountEntries({
-          projectId,
-          storyId,
-          ownerType,
-          ownerId,
-          agentId,
+        const result = await listSurfaceMountEntries({
+          surfaceRef,
           mountId: mount.id,
           path,
           pattern: pattern || undefined,
@@ -349,7 +341,7 @@ function MountFileBrowser({
         setLoading(false);
       }
     },
-    [projectId, storyId, ownerType, ownerId, agentId, mount.id],
+    [surfaceRef, mount.id],
   );
 
   useEffect(() => {
@@ -357,73 +349,58 @@ function MountFileBrowser({
     setSearchPattern("");
     setPreviewFile(null);
     void loadEntries(".");
-  }, [mount.id, loadEntries]);
+  }, [mount.id, surfaceRef, loadEntries]);
 
-  const handleNavigate = useCallback(
-    (path: string) => {
-      setCurrentPath(path);
-      setSearchPattern("");
-      setPreviewFile(null);
-      void loadEntries(path);
-    },
-    [loadEntries],
-  );
+  const handleNavigate = useCallback((path: string) => {
+    setCurrentPath(path);
+    setSearchPattern("");
+    setPreviewFile(null);
+    void loadEntries(path);
+  }, [loadEntries]);
 
-  const handleSearch = useCallback(
-    (pattern: string) => {
-      setSearchPattern(pattern);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        void loadEntries(currentPath, pattern);
-      }, 250);
-    },
-    [currentPath, loadEntries],
-  );
+  const handleSearch = useCallback((pattern: string) => {
+    setSearchPattern(pattern);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void loadEntries(currentPath, pattern);
+    }, 250);
+  }, [currentPath, loadEntries]);
 
-  const handleFileClick = useCallback(
-    async (entry: MountEntry) => {
-      if (entry.is_dir) {
-        handleNavigate(entry.path);
-        return;
-      }
-      setPreviewLoading(true);
-      try {
-        const result = await readMountFile({
-          projectId,
-          storyId,
-          ownerType,
-          ownerId,
-          agentId,
-          mountId: mount.id,
-          path: entry.path,
-        });
-        setPreviewFile({
-          path: result.path,
-          content: result.content,
-          size: result.size,
-        });
-      } catch (err) {
-        setPreviewFile({
-          path: entry.path,
-          content: `读取失败: ${err instanceof Error ? err.message : "未知错误"}`,
-          size: 0,
-        });
-      } finally {
-        setPreviewLoading(false);
-      }
-    },
-    [projectId, storyId, ownerType, ownerId, agentId, mount.id, handleNavigate],
-  );
+  const handleFileClick = useCallback(async (entry: SurfaceMountEntry) => {
+    if (entry.is_dir) {
+      handleNavigate(entry.path);
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const result = await readSurfaceFile({
+        surfaceRef,
+        mountId: mount.id,
+        path: entry.path,
+      });
+      setPreviewFile({
+        path: result.path,
+        content: result.content,
+        size: result.size,
+      });
+    } catch (err) {
+      setPreviewFile({
+        path: entry.path,
+        content: `读取失败: ${err instanceof Error ? err.message : "未知错误"}`,
+        size: 0,
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [surfaceRef, mount.id, handleNavigate]);
 
   const handleSave = useCallback(async () => {
     if (!previewFile) return;
     setSaving(true);
     setSaveError(null);
     try {
-      await writeMountFile({
-        projectId,
-        storyId,
-        agentId,
+      await writeSurfaceFile({
+        surfaceRef,
         mountId: mount.id,
         path: previewFile.path,
         content: editContent,
@@ -435,7 +412,7 @@ function MountFileBrowser({
     } finally {
       setSaving(false);
     }
-  }, [previewFile, editContent, projectId, storyId, agentId, mount.id]);
+  }, [previewFile, editContent, surfaceRef, mount.id]);
 
   const handleStartEdit = useCallback(() => {
     if (!previewFile) return;
@@ -453,7 +430,7 @@ function MountFileBrowser({
     if (currentPath === ".") return [{ label: mount.display_name, path: "." }];
     const parts = currentPath.split("/");
     const segments = [{ label: mount.display_name, path: "." }];
-    for (let i = 0; i < parts.length; i++) {
+    for (let i = 0; i < parts.length; i += 1) {
       segments.push({
         label: parts[i],
         path: parts.slice(0, i + 1).join("/"),
@@ -463,29 +440,28 @@ function MountFileBrowser({
   }, [currentPath, mount.display_name]);
 
   const sortedEntries = useMemo(() => {
-    const dirs = entries.filter((e) => e.is_dir).sort((a, b) => a.path.localeCompare(b.path));
-    const files = entries.filter((e) => !e.is_dir).sort((a, b) => a.path.localeCompare(b.path));
+    const dirs = entries.filter((entry) => entry.is_dir).sort((a, b) => a.path.localeCompare(b.path));
+    const files = entries.filter((entry) => !entry.is_dir).sort((a, b) => a.path.localeCompare(b.path));
     return [...dirs, ...files];
   }, [entries]);
 
   return (
     <div className="rounded-[10px] border border-border bg-background/60">
-      {/* 面包屑 + 搜索 */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto text-xs">
-          {pathSegments.map((seg, i) => (
-            <span key={seg.path} className="flex shrink-0 items-center">
-              {i > 0 && <span className="mx-1 text-muted-foreground/40">/</span>}
+          {pathSegments.map((segment, index) => (
+            <span key={segment.path} className="flex shrink-0 items-center">
+              {index > 0 && <span className="mx-1 text-muted-foreground/40">/</span>}
               <button
                 type="button"
-                onClick={() => handleNavigate(seg.path)}
+                onClick={() => handleNavigate(segment.path)}
                 className={`rounded-[4px] px-1 py-0.5 transition-colors hover:bg-secondary ${
-                  i === pathSegments.length - 1
+                  index === pathSegments.length - 1
                     ? "font-medium text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {seg.label}
+                {segment.label}
               </button>
             </span>
           ))}
@@ -493,13 +469,12 @@ function MountFileBrowser({
         <input
           type="text"
           value={searchPattern}
-          onChange={(e) => handleSearch(e.target.value)}
+          onChange={(event) => handleSearch(event.target.value)}
           placeholder="搜索…"
           className="w-32 shrink-0 rounded-[6px] border border-border bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/40 focus:outline-none"
         />
       </div>
 
-      {/* 文件列表 */}
       <div className="max-h-[320px] overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
@@ -512,11 +487,6 @@ function MountFileBrowser({
               {error.includes("不在线") ? "🔌" : "⚠️"}
             </span>
             <p className="text-xs text-muted-foreground">{error}</p>
-            {error.includes("不在线") && (
-              <p className="text-[11px] text-muted-foreground/60">
-                Backend 连接后即可浏览文件
-              </p>
-            )}
             {!error.includes("不在线") && (
               <button
                 type="button"
@@ -533,36 +503,31 @@ function MountFileBrowser({
             {searchPattern ? "没有匹配的文件" : "空目录"}
           </div>
         )}
-        {!loading &&
-          !error &&
-          sortedEntries.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              onClick={() => void handleFileClick(entry)}
-              className={`flex w-full items-center gap-2 border-b border-border/50 px-3 py-1.5 text-left text-xs transition-colors hover:bg-secondary/30 last:border-0 ${
-                previewFile?.path === entry.path ? "bg-primary/5" : ""
-              }`}
-            >
-              <span className="shrink-0 text-muted-foreground/60">
-                {entry.is_dir ? "📁" : "📄"}
+        {!loading && !error && sortedEntries.map((entry) => (
+          <button
+            key={entry.path}
+            type="button"
+            onClick={() => void handleFileClick(entry)}
+            className={`flex w-full items-center gap-2 border-b border-border/50 px-3 py-1.5 text-left text-xs transition-colors hover:bg-secondary/30 last:border-0 ${
+              previewFile?.path === entry.path ? "bg-primary/5" : ""
+            }`}
+          >
+            <span className="shrink-0 text-muted-foreground/60">
+              {entry.is_dir ? "📁" : "📄"}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-foreground/85">
+              {extractFileName(entry.path)}
+            </span>
+            {!entry.is_dir && entry.size != null && (
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {formatFileSize(entry.size)}
               </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-foreground/85">
-                {extractFileName(entry.path)}
-              </span>
-              {!entry.is_dir && entry.size != null && (
-                <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {formatFileSize(entry.size)}
-                </span>
-              )}
-              {entry.is_dir && (
-                <span className="shrink-0 text-[10px] text-muted-foreground">→</span>
-              )}
-            </button>
-          ))}
+            )}
+            {entry.is_dir && <span className="shrink-0 text-[10px] text-muted-foreground">→</span>}
+          </button>
+        ))}
       </div>
 
-      {/* 文件预览 / 编辑 */}
       {previewLoading && (
         <div className="border-t border-border px-3 py-3 text-xs text-muted-foreground">
           正在读取文件…
@@ -626,7 +591,7 @@ function MountFileBrowser({
           {editing ? (
             <textarea
               value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
+              onChange={(event) => setEditContent(event.target.value)}
               disabled={saving}
               className="block max-h-[300px] min-h-[200px] w-full resize-y bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 focus:outline-none disabled:opacity-50"
             />
@@ -640,8 +605,6 @@ function MountFileBrowser({
     </div>
   );
 }
-
-// ─── 工具函数 ──────────────────────────────────────────────
 
 function extractFileName(path: string): string {
   const parts = path.split("/");

@@ -4,6 +4,7 @@ import type {
   ContextContainerDefinition,
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
+  ResolvedAddressSpaceSurface,
   SessionBaselineCapabilities,
   SessionComposition,
   SessionContextSnapshot,
@@ -96,17 +97,25 @@ function resolveEffectiveStoryContextFolders(
 }
 
 function resolveProjectContextFolders(
-  contextSnapshot?: SessionContextSnapshot | null,
+  addressSpace?: ExecutionAddressSpace | null,
 ): ContextFolderItem[] {
-  const mounts = contextSnapshot?.owner_context.owner_level === "project"
-    ? contextSnapshot.owner_context.shared_context_mounts
-    : [];
-  return mounts.map((mount) => ({
-    id: mount.container_id || mount.mount_id,
-    title: mount.display_name || mount.mount_id || mount.container_id,
-    mount: mount.mount_id,
-    writable: mount.writable,
-  }));
+  if (!addressSpace) return [];
+
+  return addressSpace.mounts
+    .filter((mount) => (
+      mount.provider !== "relay_fs"
+      && mount.provider !== "lifecycle_vfs"
+      && mount.provider !== "canvas_fs"
+    ))
+    .map((mount) => ({
+      id:
+        typeof mount.metadata?.container_id === "string"
+          ? mount.metadata.container_id
+          : mount.id,
+      title: mount.display_name || mount.id,
+      mount: mount.id,
+      writable: mount.default_write || mount.capabilities.includes("write"),
+    }));
 }
 
 function hasCompositionContent(composition: SessionComposition): boolean {
@@ -237,14 +246,14 @@ function SharedFoldersSurfaceCard({
   folders,
   emptyText,
   helperText,
+  surface,
   addressSpace,
-  preview,
 }: {
   folders: ContextFolderItem[];
   emptyText: string;
   helperText: string;
+  surface?: ResolvedAddressSpaceSurface | null;
   addressSpace?: ExecutionAddressSpace | null;
-  preview?: { projectId: string; storyId?: string; ownerType?: string; ownerId?: string; target?: "project" | "story" | "task" };
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -269,7 +278,7 @@ function SharedFoldersSurfaceCard({
         <p className="text-xs text-muted-foreground">{emptyText}</p>
       )}
 
-      {(preview?.projectId || (addressSpace && addressSpace.mounts.length > 0)) && (
+      {((surface && surface.mounts.length > 0) || (addressSpace && addressSpace.mounts.length > 0)) && (
         <div className="mt-2">
           <button
             type="button"
@@ -281,8 +290,8 @@ function SharedFoldersSurfaceCard({
           {browserOpen && (
             <div className="mt-2">
               <AddressSpaceBrowser
+                surface={surface}
                 addressSpace={addressSpace}
-                preview={preview}
               />
             </div>
           )}
@@ -490,22 +499,20 @@ export function StorySessionContextPanel({
   story,
   contextSnapshot,
   executorSummary,
+  runtimeSurface,
   addressSpace,
   hookRuntime,
   sessionCapabilities,
-  ownerType,
-  ownerId,
   isOpen,
   onToggle,
 }: {
   story: Story;
   contextSnapshot?: SessionContextSnapshot | null;
   executorSummary?: TaskSessionExecutorSummary | null;
+  runtimeSurface?: ResolvedAddressSpaceSurface | null;
   addressSpace?: ExecutionAddressSpace | null;
   hookRuntime?: HookSessionRuntimeInfo | null;
   sessionCapabilities?: SessionBaselineCapabilities | null;
-  ownerType?: string;
-  ownerId?: string;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -539,8 +546,8 @@ export function StorySessionContextPanel({
           folders={folders}
           emptyText="当前 Story 还没有整理出额外共享资料目录。"
           helperText="这些目录才是对用户真正可见的上下文表面，底层 provider / mount 细节默认不直接暴露。"
+          surface={runtimeSurface}
           addressSpace={addressSpace}
-          preview={{ projectId: story.project_id, storyId: story.id, ownerType, ownerId, target: "story" }}
         />
         <SessionBehaviorSurfaceCard
           composition={effectiveComposition}
@@ -614,23 +621,19 @@ export function StorySessionContextPanel({
 // ─── Project Session Context Panel ─────────────────────
 
 export function ProjectSessionContextPanel({
-  projectId,
   projectName,
   contextSnapshot,
+  runtimeSurface,
   addressSpace,
   hookRuntime,
   sessionCapabilities,
-  ownerType,
-  ownerId,
   isOpen,
   onToggle,
 }: {
-  projectId: string;
   projectName: string;
   contextSnapshot: SessionContextSnapshot;
+  runtimeSurface?: ResolvedAddressSpaceSurface | null;
   addressSpace?: ExecutionAddressSpace | null;
-  ownerType?: string;
-  ownerId?: string;
   hookRuntime?: HookSessionRuntimeInfo | null;
   sessionCapabilities?: SessionBaselineCapabilities | null;
   isOpen: boolean;
@@ -638,7 +641,7 @@ export function ProjectSessionContextPanel({
 }) {
   const snapshot = contextSnapshot;
   const projectOwner = snapshot.owner_context.owner_level === "project" ? snapshot.owner_context : null;
-  const folders = resolveProjectContextFolders(contextSnapshot);
+  const folders = resolveProjectContextFolders(addressSpace);
   const badges = [
     projectOwner?.agent_display_name ? `Agent · ${projectOwner.agent_display_name}` : "",
     `${folders.length} 个共享目录`,
@@ -662,8 +665,8 @@ export function ProjectSessionContextPanel({
           folders={folders}
           emptyText="当前 Project Session 还没有对用户暴露可用共享目录。"
           helperText="共享上下文默认表达成近似文件系统的目录，而不是 provider、mount policy 或权限矩阵。"
+          surface={runtimeSurface}
           addressSpace={addressSpace}
-          preview={{ projectId, ownerType, ownerId, target: "project" }}
         />
       </div>
 

@@ -17,14 +17,15 @@ use agentdash_application::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
 };
-use agentdash_application::session::context::{SessionContextSnapshot, SharedContextMount};
+use agentdash_application::session::context::SessionContextSnapshot;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    routes::address_space_surfaces::build_surface_summary,
     routes::project_agents::{
-        build_project_agent_visible_mounts, parse_project_agent_session_label,
-        resolve_project_agent_bridge_async, resolve_project_workspace,
+        parse_project_agent_session_label, resolve_project_agent_bridge_async,
+        resolve_project_workspace,
     },
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
@@ -40,6 +41,8 @@ pub struct ProjectSessionDetailResponse {
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_spi::AddressSpace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
@@ -94,14 +97,29 @@ pub async fn get_project_session(
         &binding.label,
     )
     .await?;
+    let response_session_id = binding.session_id.clone();
 
     Ok(Json(ProjectSessionDetailResponse {
         binding_id,
-        session_id: binding.session_id,
+        session_id: response_session_id.clone(),
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
         address_space: built_context.address_space.clone(),
+        runtime_surface: if let Some(space) = built_context.address_space.as_ref() {
+            Some(
+                build_surface_summary(
+                    &state,
+                    &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        session_id: response_session_id,
+                    },
+                    space,
+                )
+                .await?,
+            )
+        } else {
+            None
+        },
         context_snapshot: built_context.context_snapshot,
     }))
 }
@@ -196,20 +214,6 @@ pub(crate) async fn build_project_session_context_response(
         project_agent.source.clone()
     };
 
-    let shared_mounts: Vec<SharedContextMount> = resolved_config
-        .as_ref()
-        .map(|config| {
-            build_project_agent_visible_mounts(project, config)
-                .into_iter()
-                .map(|m| SharedContextMount {
-                    container_id: m.container_id,
-                    mount_id: m.mount_id,
-                    display_name: m.display_name,
-                    writable: m.writable,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     let runtime_address_space = address_space.clone();
 
     let plan = build_bootstrap_plan(BootstrapPlanInput {
@@ -226,7 +230,6 @@ pub(crate) async fn build_project_session_context_response(
         owner_variant: BootstrapOwnerVariant::Project {
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,
-            shared_context_mounts: shared_mounts,
         },
         workflow: None,
     });

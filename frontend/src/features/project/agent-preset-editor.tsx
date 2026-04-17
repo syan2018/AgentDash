@@ -1016,11 +1016,13 @@ function KnowledgeSection({
   onToggle,
   projectId,
   agentId,
+  linkId,
 }: {
   enabled: boolean;
   onToggle: (next: boolean) => void;
   projectId?: string;
   agentId?: string;
+  linkId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -1056,13 +1058,16 @@ function KnowledgeSection({
       </div>
 
       {/* ── Address Space 浏览器 ── */}
-      {enabled && isOpen && projectId && agentId && (
+      {enabled && isOpen && projectId && agentId && linkId && (
         <div className="border-t border-border px-2 py-3">
           <AddressSpaceBrowser
-            preview={{
-              projectId,
-              agentId,
+            source={{
+              source_type: "project_agent_knowledge",
+              project_id: projectId,
+              agent_id: agentId,
+              link_id: linkId,
             }}
+            visibleMountIds={["agent-knowledge"]}
             initialMountId="agent-knowledge"
           />
         </div>
@@ -1086,6 +1091,7 @@ export interface SinglePresetDialogProps {
   /** 用于加载知识库文件的 project/agent ID */
   knowledgeProjectId?: string;
   knowledgeAgentId?: string;
+  knowledgeLinkId?: string;
 }
 
 export function SinglePresetDialog({
@@ -1100,6 +1106,7 @@ export function SinglePresetDialog({
   onToggleKnowledge,
   knowledgeProjectId,
   knowledgeAgentId,
+  knowledgeLinkId,
 }: SinglePresetDialogProps) {
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
@@ -1156,6 +1163,7 @@ export function SinglePresetDialog({
                 onToggle={onToggleKnowledge}
                 projectId={knowledgeProjectId}
                 agentId={knowledgeAgentId}
+                linkId={knowledgeLinkId}
               />
             )}
 

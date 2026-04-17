@@ -1,5 +1,6 @@
 pub mod acp_sessions;
 pub mod address_spaces;
+pub mod address_space_surfaces;
 pub mod agents;
 pub mod auth_routes;
 pub mod backends;
@@ -388,31 +389,35 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/mount-providers",
             get(address_spaces::list_configurable_mount_providers),
         )
+        .route(
+            "/address-space-surfaces/resolve",
+            post(address_space_surfaces::resolve_surface),
+        )
+        .route(
+            "/address-space-surfaces/{surface_ref}",
+            get(address_space_surfaces::get_surface),
+        )
+        .route(
+            "/address-space-surfaces/{surface_ref}/mounts/{mount_id}/entries",
+            get(address_space_surfaces::list_surface_mount_entries),
+        )
+        .route(
+            "/address-space-surfaces/read-file",
+            post(address_space_surfaces::read_surface_file),
+        )
+        .route(
+            "/address-space-surfaces/write-file",
+            post(address_space_surfaces::write_surface_file),
+        )
+        .route(
+            "/address-space-surfaces/apply-patch",
+            post(address_space_surfaces::apply_surface_patch),
+        )
         // Address Spaces（统一寻址空间能力发现与条目检索）
         .route("/address-spaces", get(address_spaces::list_address_spaces))
         .route(
             "/address-spaces/{space_id}/entries",
             get(address_spaces::list_address_entries),
-        )
-        .route(
-            "/address-spaces/mounts/{mount_id}/entries",
-            get(address_spaces::list_mount_entries),
-        )
-        .route(
-            "/address-spaces/read-file",
-            post(address_spaces::read_mount_file),
-        )
-        .route(
-            "/address-spaces/write-file",
-            post(address_spaces::write_mount_file),
-        )
-        .route(
-            "/address-spaces/apply-patch",
-            post(address_spaces::apply_mount_patch),
-        )
-        .route(
-            "/address-spaces/preview",
-            post(address_spaces::preview_address_space),
         )
         // File Picker（@ 文件引用选择器 API，走 Address Space 统一访问层）
         .route("/file-picker", get(file_picker::list_files))

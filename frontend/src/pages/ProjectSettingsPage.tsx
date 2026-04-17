@@ -18,7 +18,8 @@ import { AddressSpaceBrowser } from "../features/address-space";
 import {
   ContextContainersEditor,
 } from "../components/context-config-editor";
-import { previewAddressSpace, type MountSummary } from "../services/addressSpaces";
+import { resolveAddressSpaceSurface } from "../services/addressSpaces";
+import type { ResolvedMountSummary } from "../types";
 import {
   DangerConfirmDialog,
 } from "../components/ui/detail-panel";
@@ -161,7 +162,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
 };
 
 function MountOverviewList({ projectId, refreshKey }: { projectId: string; refreshKey?: number }) {
-  const [mounts, setMounts] = useState<MountSummary[]>([]);
+  const [mounts, setMounts] = useState<ResolvedMountSummary[]>([]);
   const [defaultMountId, setDefaultMountId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +173,10 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
     setError(null);
     void (async () => {
       try {
-        const result = await previewAddressSpace({ projectId, target: "project" });
+        const result = await resolveAddressSpaceSurface({
+          source_type: "project_preview",
+          project_id: projectId,
+        });
         if (cancelled) return;
         setMounts(result.mounts);
         setDefaultMountId(result.default_mount_id ?? null);
@@ -826,7 +830,7 @@ export function ProjectSettingsPage() {
                     title="Runtime Preview"
                     description="Address Space 预览明确作为派生结果展示，用来解释当前默认配置会解析出什么挂载。"
                   >
-                    <AddressSpaceBrowser preview={{ projectId: project.id, target: "project" }} />
+                    <AddressSpaceBrowser source={{ source_type: "project_preview", project_id: project.id }} />
                   </SectionCard>
                 </>
               )}

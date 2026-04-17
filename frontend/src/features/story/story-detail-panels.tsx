@@ -357,7 +357,7 @@ export function ContextPanel({
           </p>
         </div>
         <AddressSpaceBrowser
-          preview={{ projectId: story.project_id, storyId: story.id, target: "story" }}
+          source={{ source_type: "story_preview", project_id: story.project_id, story_id: story.id }}
         />
       </div>
 

@@ -4,7 +4,7 @@ use agentdash_domain::workspace::Workspace;
 
 use super::context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
-    SessionProjectDefaults, SessionStoryOverrides, SharedContextMount,
+    SessionProjectDefaults, SessionStoryOverrides,
     build_session_executor_summary, normalize_optional_string,
 };
 use super::plan::{
@@ -54,7 +54,6 @@ pub enum BootstrapOwnerVariant {
     Project {
         agent_key: String,
         agent_display_name: String,
-        shared_context_mounts: Vec<SharedContextMount>,
     },
 }
 
@@ -152,11 +151,9 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
         BootstrapOwnerVariant::Project {
             agent_key,
             agent_display_name,
-            shared_context_mounts,
         } => SessionOwnerContext::Project {
             agent_key: agent_key.clone(),
             agent_display_name: agent_display_name.clone(),
-            shared_context_mounts: shared_context_mounts.clone(),
         },
     };
 
@@ -222,7 +219,6 @@ mod tests {
             owner_variant: BootstrapOwnerVariant::Project {
                 agent_key: "default".to_string(),
                 agent_display_name: "Default Agent".to_string(),
-                shared_context_mounts: vec![],
             },
             workflow: None,
         });
@@ -249,7 +245,6 @@ mod tests {
             owner_variant: BootstrapOwnerVariant::Project {
                 agent_key: "default".to_string(),
                 agent_display_name: "Default Agent".to_string(),
-                shared_context_mounts: vec![],
             },
             workflow: None,
         });

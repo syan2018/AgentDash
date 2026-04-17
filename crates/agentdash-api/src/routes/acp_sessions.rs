@@ -49,6 +49,7 @@ use crate::auth::{
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
 use crate::routes::{project_sessions, story_sessions, task_execution};
+use crate::routes::address_space_surfaces::build_surface_summary;
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::task_agent_context::resolve_workspace_declared_sources;
 use agentdash_application::session::context::apply_workspace_defaults;
@@ -544,6 +545,8 @@ pub struct SessionContextResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_spi::AddressSpace>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_capabilities: Option<agentdash_spi::SessionBaselineCapabilities>,
@@ -603,6 +606,7 @@ pub async fn get_session_context(
             workspace_id: None,
             agent_binding: None,
             address_space: None,
+            runtime_surface: None,
             context_snapshot: None,
             session_capabilities: None,
         }));
@@ -652,10 +656,25 @@ pub async fn get_session_context(
                 resolved_address_space.as_ref(),
             )
             .await;
+            let runtime_surface = if let Some(space) = resolved_address_space.as_ref() {
+                Some(
+                    build_surface_summary(
+                        &state,
+                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                            session_id: session_id.clone(),
+                        },
+                        space,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             Ok(Json(SessionContextResponse {
                 workspace_id: task.workspace_id.map(|id| id.to_string()),
                 agent_binding: Some(result.agent_binding),
                 address_space: resolved_address_space,
+                runtime_surface,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
                 session_capabilities: capabilities,
             }))
@@ -681,10 +700,25 @@ pub async fn get_session_context(
                 resolved_address_space.as_ref(),
             )
             .await;
+            let runtime_surface = if let Some(space) = resolved_address_space.as_ref() {
+                Some(
+                    build_surface_summary(
+                        &state,
+                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                            session_id: session_id.clone(),
+                        },
+                        space,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
                 address_space: resolved_address_space,
+                runtime_surface,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
                 session_capabilities: capabilities,
             }))
@@ -711,10 +745,25 @@ pub async fn get_session_context(
                 built_context.address_space.as_ref(),
             )
             .await;
+            let runtime_surface = if let Some(space) = built_context.address_space.as_ref() {
+                Some(
+                    build_surface_summary(
+                        &state,
+                        &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                            session_id: session_id.clone(),
+                        },
+                        space,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
             Ok(Json(SessionContextResponse {
                 workspace_id: None,
                 agent_binding: None,
                 address_space: built_context.address_space.clone(),
+                runtime_surface,
                 context_snapshot: built_context.context_snapshot,
                 session_capabilities: capabilities,
             }))
@@ -722,7 +771,7 @@ pub async fn get_session_context(
     }
 }
 
-fn pick_primary_session_binding(
+pub(crate) fn pick_primary_session_binding(
     bindings: &[agentdash_domain::session_binding::SessionBinding],
 ) -> Option<&agentdash_domain::session_binding::SessionBinding> {
     // 与 `SessionPage.tsx` 中 `sessionOwnerBinding` 一致：project → story → task → 首个
@@ -1899,7 +1948,7 @@ async fn authorize_owner_scope(
     Ok(())
 }
 
-async fn ensure_session_permission(
+pub(crate) async fn ensure_session_permission(
     state: &AppState,
     current_user: &AuthIdentity,
     session_id: &str,

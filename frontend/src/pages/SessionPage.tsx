@@ -17,6 +17,7 @@ import type {
   ExecutionAddressSpace,
   HookSessionRuntimeInfo,
   ProjectSessionAgentContext,
+  ResolvedAddressSpaceSurface,
   SessionBaselineCapabilities,
   SessionBindingOwner,
   SessionContextSnapshot,
@@ -57,6 +58,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workspace_id: string | null;
     task_agent_binding: AgentBinding | null;
     address_space: ExecutionAddressSpace | null;
+    runtime_surface: ResolvedAddressSpaceSurface | null;
     context_snapshot: SessionContextSnapshot | null;
     session_capabilities: SessionBaselineCapabilities | null;
   } | null>(null);
@@ -233,6 +235,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         workspace_id: ctx?.workspace_id ?? null,
         task_agent_binding: ctx?.agent_binding ?? null,
         address_space: ctx?.address_space ?? null,
+        runtime_surface: ctx?.runtime_surface ?? null,
         context_snapshot: ctx?.context_snapshot ?? null,
         session_capabilities: ctx?.session_capabilities ?? null,
       });
@@ -250,6 +253,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ?? null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
   const sessionAddressSpace = activeSessionContext?.address_space ?? null;
+  const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
   const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
   const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
@@ -575,14 +579,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
       {sessionContextSnapshot?.owner_context.owner_level === "project" && (
         <ProjectSessionContextPanel
-          projectId={sessionOwnerBinding?.project_id ?? ""}
           projectName={ownerProjectName}
           contextSnapshot={sessionContextSnapshot}
+          runtimeSurface={sessionRuntimeSurface}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
           sessionCapabilities={sessionCapabilities}
-          ownerType={sessionOwnerBinding?.owner_type}
-          ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />
@@ -597,11 +599,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           story={ownerStory}
           contextSnapshot={sessionContextSnapshot}
           executorSummary={taskExecutorSummary}
+          runtimeSurface={sessionRuntimeSurface}
           addressSpace={sessionAddressSpace}
           hookRuntime={activeHookRuntime}
           sessionCapabilities={sessionCapabilities}
-          ownerType={sessionOwnerBinding?.owner_type}
-          ownerId={sessionOwnerBinding?.owner_id}
           isOpen={isContextPanelOpen}
           onToggle={() => setIsContextPanelOpen((value) => !value)}
         />

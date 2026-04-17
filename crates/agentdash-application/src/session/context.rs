@@ -33,7 +33,6 @@ pub enum SessionOwnerContext {
     Project {
         agent_key: String,
         agent_display_name: String,
-        shared_context_mounts: Vec<SharedContextMount>,
     },
 }
 
@@ -71,15 +70,6 @@ pub struct SessionEffectiveContext {
     pub session_composition: SessionComposition,
     pub tool_visibility: SessionToolVisibilitySummary,
     pub runtime_policy: SessionRuntimePolicySummary,
-}
-
-/// Project agent 级别 session 可见的 context mount 条目。
-#[derive(Debug, Clone, Serialize)]
-pub struct SharedContextMount {
-    pub container_id: String,
-    pub mount_id: String,
-    pub display_name: String,
-    pub writable: bool,
 }
 
 // ─── Shared utility functions ────────────────────────

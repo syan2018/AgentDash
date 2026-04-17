@@ -1,4 +1,4 @@
-import type { ProjectAgentMount, ThinkingLevel } from "./index";
+import type { ThinkingLevel } from "./index";
 
 // ─── 上下文容器 / 挂载策略 / 会话编排 ──────────────────
 
@@ -62,6 +62,55 @@ export interface ExecutionAddressSpace {
   default_mount_id?: string | null;
 }
 
+export type ResolvedMountPurpose =
+  | "workspace"
+  | "project_container"
+  | "story_container"
+  | "agent_knowledge"
+  | "lifecycle"
+  | "canvas"
+  | "external_service";
+
+export type ResolvedMountOwnerKind =
+  | "project"
+  | "story"
+  | "task"
+  | "session"
+  | "project_agent_link"
+  | "canvas"
+  | "workspace"
+  | "external";
+
+export type ResolvedAddressSpaceSurfaceSource =
+  | { source_type: "project_preview"; project_id: string }
+  | { source_type: "story_preview"; project_id: string; story_id: string }
+  | { source_type: "task_preview"; project_id: string; task_id: string }
+  | { source_type: "session_runtime"; session_id: string }
+  | { source_type: "project_agent_knowledge"; project_id: string; agent_id: string; link_id: string };
+
+export interface ResolvedMountSummary {
+  id: string;
+  display_name: string;
+  provider: string;
+  backend_id: string;
+  root_ref: string;
+  capabilities: ExecutionMountCapability[];
+  default_write: boolean;
+  purpose: ResolvedMountPurpose;
+  owner_kind: ResolvedMountOwnerKind;
+  owner_id: string;
+  container_id?: string | null;
+  backend_online?: boolean | null;
+  file_count?: number | null;
+}
+
+export interface ResolvedAddressSpaceSurface {
+  surface_ref: string;
+  source: ResolvedAddressSpaceSurfaceSource;
+  mounts: ResolvedMountSummary[];
+  default_mount_id?: string | null;
+}
+
 export interface TaskSessionMcpServerSummary {
   name: string;
   transport: string;
@@ -121,7 +170,7 @@ export interface SessionEffectiveContext {
 export type SessionOwnerContext =
   | { owner_level: "task"; story_overrides: SessionStoryOverrides }
   | { owner_level: "story"; story_overrides: SessionStoryOverrides }
-  | { owner_level: "project"; agent_key: string; agent_display_name: string; shared_context_mounts: ProjectAgentMount[] };
+  | { owner_level: "project"; agent_key: string; agent_display_name: string };
 
 export interface SessionContextSnapshot {
   executor: TaskSessionExecutorSummary;
@@ -156,6 +205,7 @@ export interface StorySessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
+  runtime_surface: ResolvedAddressSpaceSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }
 
@@ -165,5 +215,6 @@ export interface ProjectSessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
+  runtime_surface: ResolvedAddressSpaceSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }

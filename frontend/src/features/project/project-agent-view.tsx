@@ -841,6 +841,11 @@ export function ProjectAgentView({
         }
         knowledgeProjectId={editingAgent ? project.id : undefined}
         knowledgeAgentId={editingAgent?.agentId}
+        knowledgeLinkId={
+          editingAgent
+            ? agentLinks.find((l) => l.agent_id === editingAgent.agentId)?.id
+            : undefined
+        }
       />
     </>
   );

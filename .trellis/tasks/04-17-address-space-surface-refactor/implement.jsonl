@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "统一 Address Space Surface 与 mount+path 契约的核心规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "前端浏览器组件需要回归通用 UI 职责"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 surface DTO 重构与 mapper 收敛"}
+层集中"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证前端展示的 runtime surface 与后端真实生效一致"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "跨层 API/application 重构时保持错误边界清晰"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "跨层 DTO 与 snake_case 契约必须单一真相"}

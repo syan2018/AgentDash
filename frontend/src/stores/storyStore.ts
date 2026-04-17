@@ -9,6 +9,7 @@ import type {
   ContextSourceRef,
   ContextContainerDefinition,
   ExecutionAddressSpace,
+  ResolvedAddressSpaceSurface,
   SessionComposition,
   StorySessionInfo,
   SessionContextSnapshot,
@@ -33,6 +34,7 @@ export interface TaskSessionInfo {
   session_title: string | null;
   last_activity: number | null;
   address_space: ExecutionAddressSpace | null;
+  runtime_surface: ResolvedAddressSpaceSurface | null;
   context_snapshot: SessionContextSnapshot | null;
 }
 
@@ -759,6 +761,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
         address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
+        runtime_surface: (raw.runtime_surface as ResolvedAddressSpaceSurface | undefined) ?? null,
         context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
       };
     } catch (e) {
@@ -776,6 +779,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         session_title: readNullableStringField(raw, 'session_title'),
         last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
         address_space: (raw.address_space as ExecutionAddressSpace) ?? null,
+        runtime_surface: (raw.runtime_surface as StorySessionInfo['runtime_surface']) ?? null,
         context_snapshot: (raw.context_snapshot as StorySessionInfo['context_snapshot']) ?? null,
       };
     } catch (e) {

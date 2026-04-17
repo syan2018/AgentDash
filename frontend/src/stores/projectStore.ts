@@ -85,10 +85,6 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
   const rawSession = raw.session && typeof raw.session === 'object'
     ? raw.session as Record<string, unknown>
     : null;
-  const rawMountsSource = raw.shared_context_mounts;
-  const rawMounts = Array.isArray(rawMountsSource)
-    ? rawMountsSource as Record<string, unknown>[]
-    : [];
   const thinkingLevel = isThinkingLevel(rawExecutor.thinking_level)
     ? rawExecutor.thinking_level
     : null;
@@ -109,13 +105,6 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
       ? String(raw.preset_name)
       : null,
     source: String(raw.source ?? ''),
-    writeback_mode: raw.writeback_mode === 'confirm_before_write' ? 'confirm_before_write' : 'read_only',
-    shared_context_mounts: rawMounts.map((mount) => ({
-      container_id: String(mount.container_id ?? ''),
-      mount_id: String(mount.mount_id ?? ''),
-      display_name: String(mount.display_name ?? mount.mount_id ?? ''),
-      writable: Boolean(mount.writable),
-    })),
     session: rawSession
       ? {
           binding_id: requireStringField(rawSession, 'binding_id'),
@@ -163,6 +152,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
     address_space: (raw.address_space as ProjectSessionInfo['address_space']) ?? null,
+    runtime_surface: (raw.runtime_surface as ProjectSessionInfo['runtime_surface']) ?? null,
     context_snapshot: contextSnapshot,
   };
 }

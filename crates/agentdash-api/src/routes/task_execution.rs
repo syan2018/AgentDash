@@ -17,6 +17,7 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
     dto::TaskResponse,
+    routes::address_space_surfaces::build_surface_summary,
     rpc::ApiError,
 };
 
@@ -70,6 +71,8 @@ pub struct TaskSessionResponse {
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_spi::AddressSpace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
@@ -209,6 +212,28 @@ pub async fn get_task_session(
     )
     .await;
 
+    let resolved_address_space = built_context
+        .as_ref()
+        .and_then(|context| context.address_space.clone());
+    let runtime_surface = if let Some(session_id) = result.session_id.as_ref() {
+        if let Some(space) = resolved_address_space.as_ref() {
+            Some(
+                build_surface_summary(
+                    &state,
+                    &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        session_id: session_id.clone(),
+                    },
+                    space,
+                )
+                .await?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     Ok(Json(TaskSessionResponse {
         task_id: result.task_id,
         workspace_id: task.workspace_id,
@@ -219,9 +244,8 @@ pub async fn get_task_session(
         agent_binding: result.agent_binding,
         session_title: result.session_title,
         last_activity: result.last_activity,
-        address_space: built_context
-            .as_ref()
-            .and_then(|context| context.address_space.clone()),
+        address_space: resolved_address_space,
+        runtime_surface,
         context_snapshot: built_context.and_then(|context| context.context_snapshot),
     }))
 }

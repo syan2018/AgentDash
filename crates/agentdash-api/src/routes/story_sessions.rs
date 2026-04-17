@@ -19,6 +19,7 @@ use agentdash_application::session::context::{
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
+    routes::address_space_surfaces::build_surface_summary,
     routes::project_agents::resolve_project_workspace,
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
@@ -36,6 +37,8 @@ pub struct StorySessionDetailResponse {
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address_space: Option<agentdash_spi::AddressSpace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_surface: Option<agentdash_application::address_space::ResolvedAddressSpaceSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
@@ -157,16 +160,34 @@ pub async fn get_story_session(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let built_context =
         build_story_session_context_response(&state, &story, &binding.session_id).await?;
+    let response_session_id = binding.session_id.clone();
 
     Ok(Json(StorySessionDetailResponse {
         binding_id,
-        session_id: binding.session_id,
+        session_id: response_session_id.clone(),
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
         address_space: built_context
             .as_ref()
             .and_then(|context| context.address_space.clone()),
+        runtime_surface: if let Some(space) = built_context
+            .as_ref()
+            .and_then(|context| context.address_space.as_ref())
+        {
+            Some(
+                build_surface_summary(
+                    &state,
+                    &agentdash_application::address_space::ResolvedAddressSpaceSurfaceSource::SessionRuntime {
+                        session_id: response_session_id,
+                    },
+                    space,
+                )
+                .await?,
+            )
+        } else {
+            None
+        },
         context_snapshot: built_context.and_then(|context| context.context_snapshot),
     }))
 }

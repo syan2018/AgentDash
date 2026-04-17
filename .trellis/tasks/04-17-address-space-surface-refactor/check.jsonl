@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/address-space-access.md", "reason": "检查最终接口与 mount 语义是否统一"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 mapper 与 surface 类型是否收敛"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查展示面与 runtime 真相是否一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 DTO、snake_case 与单一真相要求"}

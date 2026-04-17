@@ -135,6 +135,8 @@ mod tests {
             description: "执行实现工作".to_string(),
             workflow_key: Some(definition.key.clone()),
             node_type: Default::default(),
+            output_ports: vec![],
+            input_ports: vec![],
         };
         let lifecycle = LifecycleDefinition::new(
             "trellis_dev_task",

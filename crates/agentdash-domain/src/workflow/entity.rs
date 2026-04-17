@@ -571,6 +571,8 @@ mod tests {
             description: String::new(),
             workflow_key: Some(workflow_key.to_string()),
             node_type: Default::default(),
+            output_ports: vec![],
+            input_ports: vec![],
         }
     }
 

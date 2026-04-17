@@ -94,6 +94,8 @@ mod tests {
             description: "实现并记录结果".to_string(),
             workflow_key: Some(definition.key.clone()),
             node_type: Default::default(),
+            output_ports: vec![],
+            input_ports: vec![],
         };
         let lifecycle = LifecycleDefinition::new(
             "trellis_dev_task",

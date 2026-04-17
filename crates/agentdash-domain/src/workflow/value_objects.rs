@@ -754,6 +754,8 @@ mod tests {
             description: String::new(),
             workflow_key: Some("wf_start".to_string()),
             node_type: Default::default(),
+            output_ports: vec![],
+            input_ports: vec![],
         }];
 
         let error =
@@ -770,18 +772,24 @@ mod tests {
                 description: String::new(),
                 workflow_key: None,
                 node_type: Default::default(),
+                output_ports: vec![],
+                input_ports: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
                 description: String::new(),
                 workflow_key: None,
                 node_type: Default::default(),
+                output_ports: vec![],
+                input_ports: vec![],
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
                 description: String::new(),
                 workflow_key: None,
                 node_type: Default::default(),
+                output_ports: vec![],
+                input_ports: vec![],
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -818,12 +826,16 @@ mod tests {
                 description: String::new(),
                 workflow_key: None,
                 node_type: Default::default(),
+                output_ports: vec![],
+                input_ports: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
                 description: String::new(),
                 workflow_key: None,
                 node_type: Default::default(),
+                output_ports: vec![],
+                input_ports: vec![],
             },
         ];
         let edges = vec![LifecycleEdge {

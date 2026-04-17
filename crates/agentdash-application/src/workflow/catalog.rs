@@ -592,7 +592,7 @@ mod tests {
         input_ports: &[&str],
     ) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            output_ports: output_ports
+            recommended_output_ports: output_ports
                 .iter()
                 .map(|port_key| OutputPortDefinition {
                     key: (*port_key).to_string(),
@@ -601,7 +601,7 @@ mod tests {
                     gate_params: None,
                 })
                 .collect(),
-            input_ports: input_ports
+            recommended_input_ports: input_ports
                 .iter()
                 .map(|port_key| InputPortDefinition {
                     key: (*port_key).to_string(),
@@ -637,18 +637,24 @@ mod tests {
                     description: "research".to_string(),
                     workflow_key: Some("wf_research".to_string()),
                     node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![],
+                    input_ports: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
                     workflow_key: Some("wf_implement".to_string()),
                     node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![],
+                    input_ports: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
                     description: "check".to_string(),
                     workflow_key: Some("wf_check".to_string()),
                     node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![],
+                    input_ports: vec![],
                 },
             ],
             edges,
@@ -668,20 +674,80 @@ mod tests {
         let service =
             WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo, &assignment_repo);
 
-        let lifecycle = lifecycle_with_edges(vec![
-            LifecycleEdge {
-                from_node: "research".to_string(),
-                from_port: "missing_output".to_string(),
-                to_node: "implement".to_string(),
-                to_port: "research_input".to_string(),
-            },
-            LifecycleEdge {
-                from_node: "check".to_string(),
-                from_port: "shared_output".to_string(),
-                to_node: "implement".to_string(),
-                to_port: "research_input".to_string(),
-            },
-        ]);
+        let lifecycle = LifecycleDefinition::new(
+            "dag",
+            "dag",
+            "desc",
+            WorkflowBindingKind::Task,
+            WorkflowDefinitionSource::UserAuthored,
+            "research",
+            vec![
+                LifecycleStepDefinition {
+                    key: "research".to_string(),
+                    description: "research".to_string(),
+                    workflow_key: Some("wf_research".to_string()),
+                    node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![OutputPortDefinition {
+                        key: "research_report".to_string(),
+                        description: "research output".to_string(),
+                        gate_strategy: GateStrategy::Existence,
+                        gate_params: None,
+                    }],
+                    input_ports: vec![],
+                },
+                LifecycleStepDefinition {
+                    key: "implement".to_string(),
+                    description: "implement".to_string(),
+                    workflow_key: Some("wf_implement".to_string()),
+                    node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![OutputPortDefinition {
+                        key: "shared_output".to_string(),
+                        description: "shared".to_string(),
+                        gate_strategy: GateStrategy::Existence,
+                        gate_params: None,
+                    }],
+                    input_ports: vec![InputPortDefinition {
+                        key: "research_input".to_string(),
+                        description: "input".to_string(),
+                        context_strategy: ContextStrategy::Full,
+                        context_template: None,
+                    }],
+                },
+                LifecycleStepDefinition {
+                    key: "check".to_string(),
+                    description: "check".to_string(),
+                    workflow_key: Some("wf_check".to_string()),
+                    node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![OutputPortDefinition {
+                        key: "shared_output".to_string(),
+                        description: "shared".to_string(),
+                        gate_strategy: GateStrategy::Existence,
+                        gate_params: None,
+                    }],
+                    input_ports: vec![InputPortDefinition {
+                        key: "review_input".to_string(),
+                        description: "input".to_string(),
+                        context_strategy: ContextStrategy::Full,
+                        context_template: None,
+                    }],
+                },
+            ],
+            vec![
+                LifecycleEdge {
+                    from_node: "research".to_string(),
+                    from_port: "missing_output".to_string(),
+                    to_node: "implement".to_string(),
+                    to_port: "research_input".to_string(),
+                },
+                LifecycleEdge {
+                    from_node: "check".to_string(),
+                    from_port: "shared_output".to_string(),
+                    to_node: "implement".to_string(),
+                    to_port: "research_input".to_string(),
+                },
+            ],
+        )
+        .expect("lifecycle definition");
 
         let issues = service
             .validate_lifecycle_definition(&lifecycle)

@@ -20,7 +20,7 @@ pub use workflow_snapshot::WorkflowSnapshotBuilder;
 
 // Re-exports consumed by child modules (rules.rs, snapshot_helpers.rs, etc.)
 // so that `super::xxx` references from those children remain valid.
-use completion::ActiveWorkflowLocator;
+use crate::workflow::tools::ActiveWorkflowLocator;
 use helpers::shell_exec_rewritten_args;
 
 fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
@@ -34,12 +34,7 @@ fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
 fn lifecycle_step_advance_label(
     step: &agentdash_domain::workflow::LifecycleStepDefinition,
 ) -> &'static str {
-    match step
-        .workflow_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    match step.effective_workflow_key() {
         Some(_) => "auto",
         None => "manual",
     }

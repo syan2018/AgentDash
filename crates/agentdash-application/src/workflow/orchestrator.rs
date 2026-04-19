@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
@@ -157,11 +157,8 @@ impl LifecycleOrchestrator {
             match step_def.node_type {
                 LifecycleNodeType::AgentNode => {
                     // 尝试加载 node 关联的 workflow definition（用于 port 定义）
-                    let node_workflow = if let Some(wk) = step_def
-                        .workflow_key
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
+                    let node_workflow = if let Some(wk) =
+                        step_def.effective_workflow_key()
                     {
                         self.workflow_definition_repo
                             .get_by_key(wk)
@@ -200,7 +197,6 @@ impl LifecycleOrchestrator {
                 }
                 LifecycleNodeType::PhaseNode => {
                     let service = LifecycleRunService::new(
-                        self.workflow_definition_repo.as_ref(),
                         self.lifecycle_definition_repo.as_ref(),
                         self.lifecycle_run_repo.as_ref(),
                     );
@@ -413,15 +409,11 @@ impl LifecycleOrchestrator {
         let input_section = if input_ports.is_empty() {
             String::new()
         } else {
-            // Load port outputs from inline_fs
-            let port_output_files = self.inline_file_repo
-                .list_files(InlineFileOwnerKind::LifecycleRun, run.id, "port_outputs")
-                .await
-                .unwrap_or_default();
-            let port_output_map: std::collections::BTreeMap<String, String> = port_output_files
-                .into_iter()
-                .map(|f| (f.path, f.content))
-                .collect();
+            let port_output_map = crate::workflow::load_port_output_map(
+                self.inline_file_repo.as_ref(),
+                run.id,
+            )
+            .await;
 
             let mut items = Vec::new();
             for ip in input_ports {
@@ -438,8 +430,7 @@ impl LifecycleOrchestrator {
                     ));
                 } else {
                     for edge in source_edges {
-                        let content = port_output_map.get(&edge.from_port);
-                        let status = if content.is_some_and(|c| !c.trim().is_empty()) {
+                        let status = if port_output_map.contains_key(&edge.from_port) {
                             "已就绪"
                         } else {
                             "未就绪"

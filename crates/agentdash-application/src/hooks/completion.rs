@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 use agentdash_spi::{
     HookCompletionStatus, HookDiagnosticEntry, HookError, HookResolution, HookStepAdvanceRequest,
     SessionHookSnapshot,
@@ -11,11 +9,6 @@ use crate::workflow::{
 };
 
 use super::snapshot_helpers::*;
-
-pub(super) struct ActiveWorkflowLocator {
-    pub(super) run_id: Uuid,
-    pub(super) step_key: String,
-}
 
 impl super::provider::AppExecutionHookProvider {
     pub(super) async fn apply_completion_decision(

@@ -9,6 +9,10 @@ use crate::session_binding::SessionOwnerType;
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 owner。
 /// 这里只描述绑定范围，不表达 workflow 自身的业务主语。
+///
+/// 当前与 `WorkflowBindingRole` 1:1 同构——预留扩展点：
+/// 未来若引入跨 owner 共享 workflow（如 Story-bound workflow 推荐给 Task），
+/// Kind 保持不变，Role 可引入新变体。
 pub enum WorkflowBindingKind {
     Project,
     Story,
@@ -19,6 +23,8 @@ pub enum WorkflowBindingKind {
 #[serde(rename_all = "snake_case")]
 /// Workflow 建议由哪一类 owner/session 使用。
 /// 它是绑定层提示，不是 workflow 内建业务角色。
+///
+/// 当前与 `WorkflowBindingKind` 1:1 同构——见 Kind 注释说明预留扩展理由。
 pub enum WorkflowBindingRole {
     Project,
     Story,
@@ -350,6 +356,16 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
+}
+
+impl LifecycleStepDefinition {
+    /// 返回修剪后的 workflow_key（去空白、过滤空串）。
+    pub fn effective_workflow_key(&self) -> Option<&str> {
+        self.workflow_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

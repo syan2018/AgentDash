@@ -1,13 +1,15 @@
-//! Lifecycle execution log recording pipeline.
+//! Lifecycle run data I/O helpers.
 //!
-//! Provides helpers to build `PendingExecutionLogEntry` items and flush them
-//! to `LifecycleRun.execution_log` after each hook evaluation cycle.
+//! - Execution log recording (`PendingExecutionLogEntry` → `LifecycleRun.execution_log`)
+//! - Step summary materialization (→ inline_fs `session_records/{step_key}/summary`)
+//! - Port output map loading (← inline_fs `port_outputs/`)
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::Utc;
 use uuid::Uuid;
 
+use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunRepository,
 };
@@ -147,4 +149,35 @@ pub fn artifact_appended_entry(
             "title": title,
         })),
     }
+}
+
+/// 将 step summary 物化到 inline_fs（`session_records/{step_key}/summary`）。
+pub async fn materialize_step_summary(
+    repo: &dyn InlineFileRepository,
+    run_id: Uuid,
+    step_key: &str,
+    summary: &str,
+) {
+    let file = InlineFile::new(
+        InlineFileOwnerKind::LifecycleRun,
+        run_id,
+        "session_records",
+        format!("{step_key}/summary"),
+        summary.to_string(),
+    );
+    let _ = repo.upsert_file(&file).await;
+}
+
+/// 加载 lifecycle run 的 port output map（仅含非空内容）。
+pub async fn load_port_output_map(
+    repo: &dyn InlineFileRepository,
+    run_id: Uuid,
+) -> BTreeMap<String, String> {
+    repo.list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| !f.content.trim().is_empty())
+        .map(|f| (f.path, f.content))
+        .collect()
 }

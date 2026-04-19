@@ -2,8 +2,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus, LifecycleStepDefinition, WorkflowDefinition,
-    WorkflowDefinitionRepository,
+    LifecycleRunStatus,
 };
 
 use super::error::WorkflowApplicationError;
@@ -56,21 +55,18 @@ fn active_run_status_priority(status: LifecycleRunStatus) -> i32 {
     }
 }
 
-pub struct LifecycleRunService<'a, D: ?Sized, L: ?Sized, R: ?Sized> {
-    definition_repo: &'a D,
+pub struct LifecycleRunService<'a, L: ?Sized, R: ?Sized> {
     lifecycle_repo: &'a L,
     run_repo: &'a R,
 }
 
-impl<'a, D: ?Sized, L: ?Sized, R: ?Sized> LifecycleRunService<'a, D, L, R>
+impl<'a, L: ?Sized, R: ?Sized> LifecycleRunService<'a, L, R>
 where
-    D: WorkflowDefinitionRepository,
     L: LifecycleDefinitionRepository,
     R: LifecycleRunRepository,
 {
-    pub fn new(definition_repo: &'a D, lifecycle_repo: &'a L, run_repo: &'a R) -> Self {
+    pub fn new(lifecycle_repo: &'a L, run_repo: &'a R) -> Self {
         Self {
-            definition_repo,
             lifecycle_repo,
             run_repo,
         }
@@ -124,17 +120,6 @@ where
         cmd: ActivateLifecycleStepCommand,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let mut run = self.load_run(cmd.run_id).await?;
-        let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
-        let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
-        if let Some(wk) = step_definition
-            .workflow_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let _ = self.load_workflow_by_key(wk).await?;
-        }
-
         run.activate_step(&cmd.step_key)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
@@ -147,25 +132,6 @@ where
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let mut run = self.load_run(cmd.run_id).await?;
         let lifecycle = self.load_lifecycle(run.lifecycle_id).await?;
-        let step_definition = find_step_definition(&lifecycle, &cmd.step_key)?;
-        if let Some(wk) = step_definition
-            .workflow_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let _ = self.load_workflow_by_key(wk).await?;
-        }
-        let _step_state = run
-            .step_states
-            .iter()
-            .find(|step| step.step_key == cmd.step_key)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle run step 不存在: {}",
-                    cmd.step_key
-                ))
-            })?;
 
         run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.edges)
             .map_err(WorkflowApplicationError::Conflict)?;
@@ -198,21 +164,6 @@ where
         }
     }
 
-    async fn load_workflow_by_key(
-        &self,
-        workflow_key: &str,
-    ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
-        self.definition_repo
-            .get_by_key(workflow_key)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "workflow_definition 不存在: {}",
-                    workflow_key
-                ))
-            })
-    }
-
     async fn load_lifecycle(
         &self,
         lifecycle_id: Uuid,
@@ -235,18 +186,3 @@ where
     }
 }
 
-fn find_step_definition<'a>(
-    lifecycle: &'a LifecycleDefinition,
-    step_key: &str,
-) -> Result<&'a LifecycleStepDefinition, WorkflowApplicationError> {
-    lifecycle
-        .steps
-        .iter()
-        .find(|step| step.key == step_key)
-        .ok_or_else(|| {
-            WorkflowApplicationError::NotFound(format!(
-                "lifecycle_definition `{}` 不存在 step `{}`",
-                lifecycle.key, step_key
-            ))
-        })
-}

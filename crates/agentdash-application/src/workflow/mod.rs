@@ -27,6 +27,7 @@ pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection,
     resolve_active_workflow_projection_for_session, resolve_workflow_projection_by_run,
 };
+pub use execution_log::{load_port_output_map, materialize_step_summary};
 pub use run::{
     ActivateLifecycleStepCommand, CompleteLifecycleStepCommand, LifecycleRunService,
     StartLifecycleRunCommand, select_active_run,

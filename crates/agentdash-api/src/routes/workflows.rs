@@ -293,7 +293,6 @@ pub async fn start_lifecycle_run(
     )
     .await?;
     let service = LifecycleRunService::new(
-        state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     );
@@ -392,7 +391,6 @@ pub async fn activate_workflow_step(
     )
     .await?;
     let service = LifecycleRunService::new(
-        state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     );
@@ -418,7 +416,6 @@ pub async fn complete_workflow_step(
     )
     .await?;
     let service = LifecycleRunService::new(
-        state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     );

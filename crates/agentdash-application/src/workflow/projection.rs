@@ -31,58 +31,11 @@ pub async fn resolve_active_workflow_projection(
     let Some(run) = super::run::select_active_run(runs) else {
         return Ok(None);
     };
-    let Some(current_step_key) = run.current_step_key() else {
+    let Some(current_step_key) = run.current_step_key().map(str::to_string) else {
         return Ok(None);
     };
 
-    let lifecycle = lifecycle_repo
-        .get_by_id(run.lifecycle_id)
-        .await
-        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))?
-        .filter(|definition| definition.is_active());
-    let Some(lifecycle) = lifecycle else {
-        return Ok(None);
-    };
-
-    let Some(active_step) = lifecycle
-        .steps
-        .iter()
-        .find(|step| step.key == current_step_key)
-        .cloned()
-    else {
-        return Ok(None);
-    };
-
-    let primary_workflow = match active_step
-        .workflow_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        Some(wk) => {
-            let Some(wf) = definition_repo
-                .get_by_key(wk)
-                .await
-                .map_err(|e| format!("加载 workflow 失败: {e}"))?
-                .filter(|definition| definition.is_active())
-            else {
-                return Ok(None);
-            };
-            Some(wf)
-        }
-        None => None,
-    };
-
-    let effective_contract =
-        build_effective_contract(&lifecycle.key, &active_step.key, primary_workflow.as_ref());
-
-    Ok(Some(ActiveWorkflowProjection {
-        run,
-        lifecycle,
-        active_step,
-        primary_workflow,
-        effective_contract,
-    }))
+    build_projection_from_run(run, &current_step_key, definition_repo, lifecycle_repo).await
 }
 
 /// 解析任意 session 的 active workflow projection（兼容 lifecycle node 子 session）。
@@ -177,6 +130,17 @@ pub async fn resolve_workflow_projection_by_run(
         return Ok(None);
     };
 
+    build_projection_from_run(run, node_key, definition_repo, lifecycle_repo).await
+}
+
+/// 共享的 projection 构建核心：从已确定的 run + step_key 出发，
+/// 加载 lifecycle → 查找 step → 加载 workflow → 构建 effective_contract。
+async fn build_projection_from_run(
+    run: LifecycleRun,
+    step_key: &str,
+    definition_repo: &dyn WorkflowDefinitionRepository,
+    lifecycle_repo: &dyn LifecycleDefinitionRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
     let lifecycle = lifecycle_repo
         .get_by_id(run.lifecycle_id)
         .await
@@ -189,18 +153,13 @@ pub async fn resolve_workflow_projection_by_run(
     let Some(active_step) = lifecycle
         .steps
         .iter()
-        .find(|step| step.key == node_key)
+        .find(|step| step.key == step_key)
         .cloned()
     else {
         return Ok(None);
     };
 
-    let primary_workflow = match active_step
-        .workflow_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    let primary_workflow = match active_step.effective_workflow_key() {
         Some(wk) => {
             let Some(wf) = definition_repo
                 .get_by_key(wk)

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
-use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
@@ -349,23 +349,15 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             }
                         },
                         fulfilled_port_keys: {
-                            let fulfilled: Vec<String> = self
-                                .inline_file_repo
-                                .list_files(
-                                    InlineFileOwnerKind::LifecycleRun,
-                                    workflow.run.id,
-                                    "port_outputs",
-                                )
-                                .await
-                                .unwrap_or_default()
-                                .into_iter()
-                                .filter(|f| !f.content.trim().is_empty())
-                                .map(|f| f.path)
-                                .collect();
-                            if fulfilled.is_empty() {
+                            let map = crate::workflow::load_port_output_map(
+                                self.inline_file_repo.as_ref(),
+                                workflow.run.id,
+                            )
+                            .await;
+                            if map.is_empty() {
                                 None
                             } else {
-                                Some(fulfilled)
+                                Some(map.into_keys().collect())
                             }
                         },
                         gate_collision_count: workflow

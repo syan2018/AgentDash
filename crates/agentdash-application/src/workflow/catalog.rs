@@ -132,12 +132,7 @@ where
             .collect();
 
         for (step_index, step) in lifecycle.steps.iter().enumerate() {
-            let Some(workflow_key) = step
-                .workflow_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
+            let Some(workflow_key) = step.effective_workflow_key() else {
                 continue;
             };
 

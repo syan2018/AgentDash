@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
@@ -81,7 +81,6 @@ impl WorkflowSnapshotBuilder {
         let summary = request.summary.clone();
 
         let service = LifecycleRunService::new(
-            self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         );
@@ -94,16 +93,14 @@ impl WorkflowSnapshotBuilder {
             .await
             .map_err(|e| HookError::Runtime(format!("advance_workflow_step: {e}")))?;
 
-        // 物化 session summary 到 inline_fs
         if let Some(summary_text) = &summary {
-            let file = InlineFile::new(
-                InlineFileOwnerKind::LifecycleRun,
+            crate::workflow::materialize_step_summary(
+                self.inline_file_repo.as_ref(),
                 run_id,
-                "session_records",
-                format!("{}/summary", step_key),
-                summary_text.clone(),
-            );
-            let _ = self.inline_file_repo.upsert_file(&file).await;
+                &step_key,
+                summary_text,
+            )
+            .await;
         }
 
         Ok(())

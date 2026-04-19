@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleStepExecutionStatus,
@@ -164,16 +164,14 @@ impl AgentTool for CompleteLifecycleNodeTool {
                     AgentToolError::ExecutionFailed(format!("标记 Failed 失败: {e}"))
                 })?;
 
-            // Still materialize summary
             if let Some(summary) = &params.summary {
-                let file = InlineFile::new(
-                    InlineFileOwnerKind::LifecycleRun,
+                crate::workflow::materialize_step_summary(
+                    self.inline_file_repo.as_ref(),
                     locator.run_id,
-                    "session_records",
-                    format!("{}/summary", locator.step_key),
-                    summary.clone(),
-                );
-                let _ = self.inline_file_repo.upsert_file(&file).await;
+                    &locator.step_key,
+                    summary,
+                )
+                .await;
             }
 
             // Refresh hook snapshot
@@ -227,23 +225,15 @@ impl AgentTool for CompleteLifecycleNodeTool {
             .unwrap_or_default();
 
         if !required_output_keys.is_empty() {
-            // Load port outputs from inline_fs for gate check
-            let port_output_files = self.inline_file_repo
-                .list_files(InlineFileOwnerKind::LifecycleRun, current_run.id, "port_outputs")
-                .await
-                .map_err(|e| AgentToolError::ExecutionFailed(format!("加载 port outputs 失败: {e}")))?;
-            let port_output_map: std::collections::HashMap<String, String> = port_output_files
-                .into_iter()
-                .map(|f| (f.path, f.content))
-                .collect();
+            let port_output_map = crate::workflow::load_port_output_map(
+                self.inline_file_repo.as_ref(),
+                current_run.id,
+            )
+            .await;
 
             let missing: Vec<&String> = required_output_keys
                 .iter()
-                .filter(|key| {
-                    !port_output_map
-                        .get(key.as_str())
-                        .is_some_and(|v| !v.trim().is_empty())
-                })
+                .filter(|key| !port_output_map.contains_key(key.as_str()))
                 .collect();
 
             if !missing.is_empty() {
@@ -320,7 +310,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
         }
 
         let service = LifecycleRunService::new(
-            self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         );
@@ -334,16 +323,14 @@ impl AgentTool for CompleteLifecycleNodeTool {
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(format!("推进失败: {e}")))?;
 
-        // ── 物化 session summary 到 inline_fs ──
         if let Some(summary) = &params.summary {
-            let file = InlineFile::new(
-                InlineFileOwnerKind::LifecycleRun,
+            crate::workflow::materialize_step_summary(
+                self.inline_file_repo.as_ref(),
                 locator.run_id,
-                "session_records",
-                format!("{}/summary", locator.step_key),
-                summary.clone(),
-            );
-            let _ = self.inline_file_repo.upsert_file(&file).await;
+                &locator.step_key,
+                summary,
+            )
+            .await;
         }
 
         // 刷新 hook snapshot 使后续 hook evaluation 看到最新状态

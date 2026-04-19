@@ -11,13 +11,14 @@ pub use repository::{
     WorkflowDefinitionRepository,
 };
 pub use value_objects::{
-    ContextStrategy, EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge,
-    LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
-    OutputPortDefinition, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
-    WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
-    WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec, WorkflowSessionTerminalState, node_deps_from_edges,
-    validate_lifecycle_definition, validate_workflow_definition,
+    CapabilityDirective, ContextStrategy, EffectiveSessionContract, GateStrategy,
+    InputPortDefinition, LifecycleEdge, LifecycleExecutionEntry, LifecycleExecutionEventKind,
+    LifecycleNodeType, LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus,
+    LifecycleStepState, OutputPortDefinition, ValidationIssue, ValidationSeverity,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec,
+    WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec,
+    WorkflowContextBinding, WorkflowContract, WorkflowDefinitionSource, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowSessionTerminalState,
+    compute_effective_capabilities, node_deps_from_edges, validate_lifecycle_definition,
+    validate_workflow_definition,
 };

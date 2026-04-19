@@ -30,6 +30,8 @@ pub struct PromptSessionRequest {
     pub relay_mcp_server_names: std::collections::HashSet<String>,
     pub vfs: Option<Vfs>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
+    /// 已解析的 capability string key 集合（用于 hook runtime 初始化 capability tracking）
+    pub effective_capability_keys: Option<std::collections::BTreeSet<String>>,
     pub system_context: Option<String>,
     /// Session 模型判定出的 bootstrap 动作。
     /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
@@ -52,6 +54,7 @@ impl PromptSessionRequest {
             relay_mcp_server_names: Default::default(),
             vfs: None,
             flow_capabilities: None,
+            effective_capability_keys: None,
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,

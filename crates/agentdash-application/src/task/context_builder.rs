@@ -1,6 +1,7 @@
 use agent_client_protocol::McpServer;
 use uuid::Uuid;
 
+use crate::platform_config::PlatformConfig;
 use crate::vfs::RelayVfsService;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::repository_set::RepositorySet;
@@ -26,7 +27,7 @@ pub struct BuiltTaskSessionContext {
 pub async fn build_task_session_context(
     repos: &RepositorySet,
     vfs_service: &RelayVfsService,
-    mcp_base_url: Option<&str>,
+    platform_config: &PlatformConfig,
     task_id: Uuid,
     session_meta: Option<&crate::session::SessionMeta>,
 ) -> Option<BuiltTaskSessionContext> {
@@ -42,7 +43,7 @@ pub async fn build_task_session_context(
     let session_runtime_inputs = build_task_session_runtime_inputs(
         repos,
         vfs_service,
-        mcp_base_url,
+        platform_config,
         &task,
         &story,
         &project,

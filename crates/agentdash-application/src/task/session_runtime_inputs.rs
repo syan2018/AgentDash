@@ -4,6 +4,7 @@ use agentdash_domain::{
 };
 
 use crate::capability::{CapabilityResolver, CapabilityResolverInput};
+use crate::platform_config::PlatformConfig;
 use crate::vfs::{
     RelayVfsService, ResolveBindingsOutput, SessionMountTarget,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
@@ -30,7 +31,7 @@ pub struct TaskSessionRuntimeInputs {
 pub async fn build_task_session_runtime_inputs(
     repos: &RepositorySet,
     vfs_service: &RelayVfsService,
-    mcp_base_url: Option<&str>,
+    platform_config: &PlatformConfig,
     task: &Task,
     story: &Story,
     project: &Project,
@@ -52,16 +53,16 @@ pub async fn build_task_session_runtime_inputs(
     // ── CapabilityResolver 统一计算 MCP server 列表 ──
     let cap_input = CapabilityResolverInput {
         owner_type: SessionOwnerType::Task,
-        mcp_base_url: mcp_base_url.map(|s| s.to_string()),
         project_id: task.project_id,
         story_id: Some(task.story_id),
         task_id: Some(task.id),
         agent_declared_capabilities: None,
         has_active_workflow: workflow.is_some(),
-        workflow_capabilities: vec![],
+        workflow_capabilities: None,
         agent_mcp_servers: vec![],
+        companion_slice_mode: None,
     };
-    let cap_output = CapabilityResolver::resolve(&cap_input);
+    let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
     let mcp_servers: Vec<RuntimeMcpServer> = cap_output
         .platform_mcp_configs
         .iter()

@@ -26,7 +26,6 @@ use crate::{
 };
 use agentdash_application::vfs::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-use agentdash_mcp::injection::McpInjectionConfig;
 
 #[derive(Debug, Serialize)]
 pub struct StorySessionDetailResponse {
@@ -435,17 +434,27 @@ pub(crate) async fn build_story_session_context_response(
     } else {
         None
     };
-    let effective_mcp_servers = state
-        .config
-        .mcp_base_url
-        .as_ref()
-        .map(|base_url| {
-            vec![
-                McpInjectionConfig::for_story(base_url.clone(), story.project_id, story.id)
-                    .to_acp_mcp_server(),
-            ]
-        })
-        .unwrap_or_default();
+    // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
+    let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
+        &agentdash_application::capability::CapabilityResolverInput {
+            owner_type: SessionOwnerType::Story,
+            project_id: story.project_id,
+            story_id: Some(story.id),
+            task_id: None,
+            agent_declared_capabilities: None,
+            has_active_workflow: false,
+            workflow_capabilities: None,
+            agent_mcp_servers: vec![],
+            companion_slice_mode: None,
+        },
+        &state.config.platform_config,
+    );
+    let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = cap_output
+        .platform_mcp_configs
+        .iter()
+        .map(|c| c.to_acp_mcp_server())
+        .collect();
+    effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
 
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config"

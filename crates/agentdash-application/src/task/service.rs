@@ -55,7 +55,7 @@ pub struct TaskLifecycleService {
     pub hub: SessionHub,
     pub vfs_service: Arc<RelayVfsService>,
     pub contributor_registry: Arc<ContextContributorRegistry>,
-    pub mcp_base_url: Option<String>,
+    pub platform_config: crate::platform_config::SharedPlatformConfig,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub restart_tracker: Arc<RestartTracker>,
@@ -404,7 +404,7 @@ impl TaskLifecycleService {
             availability: self.backend_availability.as_ref(),
             vfs_service: &self.vfs_service,
             contributor_registry: &self.contributor_registry,
-            mcp_base_url: self.mcp_base_url.as_deref(),
+            platform_config: &self.platform_config,
         };
         let mut ctx = prepare_task_turn_context(
             &svc,

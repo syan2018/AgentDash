@@ -47,7 +47,7 @@ pub struct RoutineExecutor {
     session_hub: SessionHub,
     vfs_service: Arc<RelayVfsService>,
     connector: Arc<dyn AgentConnector>,
-    mcp_base_url: Option<String>,
+    platform_config: crate::platform_config::SharedPlatformConfig,
 }
 
 struct RoutineAgentContext {
@@ -66,14 +66,14 @@ impl RoutineExecutor {
         session_hub: SessionHub,
         vfs_service: Arc<RelayVfsService>,
         connector: Arc<dyn AgentConnector>,
-        mcp_base_url: Option<String>,
+        platform_config: crate::platform_config::SharedPlatformConfig,
     ) -> Self {
         Self {
             repos,
             session_hub,
             vfs_service,
             connector,
-            mcp_base_url,
+            platform_config,
         }
     }
 
@@ -473,7 +473,6 @@ impl RoutineExecutor {
 
         let cap_input = CapabilityResolverInput {
             owner_type: SessionOwnerType::Project,
-            mcp_base_url: self.mcp_base_url.clone(),
             project_id: agent_context.project.id,
             story_id: None,
             task_id: None,
@@ -487,10 +486,11 @@ impl RoutineExecutor {
                     clusters.clone()
                 }),
             has_active_workflow: false,
-            workflow_capabilities: vec![],
+            workflow_capabilities: None,
             agent_mcp_servers: agent_mcp_entries,
+            companion_slice_mode: None,
         };
-        let cap_output = CapabilityResolver::resolve(&cap_input);
+        let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
 
         let mut effective_mcp_servers: Vec<McpServer> = cap_output
             .platform_mcp_configs

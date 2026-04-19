@@ -535,7 +535,7 @@ pub(crate) async fn resolve_surface_bundle(
                         agentdash_application::task::context_builder::build_task_session_context(
                             &state.repos,
                             &state.services.vfs_service,
-                            state.config.mcp_base_url.as_deref(),
+                            &state.config.platform_config,
                             task.id,
                             session_meta.as_ref(),
                         )

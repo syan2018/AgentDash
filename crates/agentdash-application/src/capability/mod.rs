@@ -12,4 +12,5 @@ mod resolver;
 
 pub use resolver::{
     AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, CapabilityResolverOutput,
+    CompanionSliceMode,
 };

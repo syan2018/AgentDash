@@ -54,7 +54,7 @@ pub async fn list_vfs(
         false
     };
 
-    let has_mcp = state.config.mcp_base_url.is_some();
+    let has_mcp = state.config.platform_config.mcp_base_url.is_some();
     let ctx = VfsContext {
         workspace_available,
         has_mcp,

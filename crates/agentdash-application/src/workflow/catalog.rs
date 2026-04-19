@@ -555,6 +555,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capabilities: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -563,6 +564,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capabilities: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -571,6 +573,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capabilities: vec![],
                 },
             ],
             edges,
@@ -609,6 +612,7 @@ mod tests {
                         gate_params: None,
                     }],
                     input_ports: vec![],
+                    capabilities: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -627,6 +631,7 @@ mod tests {
                         context_strategy: ContextStrategy::Full,
                         context_template: None,
                     }],
+                    capabilities: vec![],
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -645,6 +650,7 @@ mod tests {
                         context_strategy: ContextStrategy::Full,
                         context_template: None,
                     }],
+                    capabilities: vec![],
                 },
             ],
             vec![

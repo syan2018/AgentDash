@@ -31,7 +31,6 @@ use crate::{
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-use agentdash_mcp::injection::McpInjectionConfig;
 #[derive(Debug, Serialize)]
 pub struct ProjectSessionDetailResponse {
     pub binding_id: String,
@@ -198,17 +197,46 @@ pub(crate) async fn build_project_session_context_response(
     } else {
         None
     };
-    let mut effective_mcp_servers = state
-        .config
-        .mcp_base_url
-        .as_ref()
-        .map(|base_url| {
-            vec![
-                McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server(),
-                McpInjectionConfig::for_workflow(base_url.clone(), project.id).to_acp_mcp_server(),
-            ]
-        })
-        .unwrap_or_default();
+    let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
+        project_agent
+            .preset_mcp_servers
+            .iter()
+            .filter_map(|server| {
+                let name = match server {
+                    agent_client_protocol::McpServer::Http(http) => http.name.clone(),
+                    agent_client_protocol::McpServer::Sse(sse) => sse.name.clone(),
+                    agent_client_protocol::McpServer::Stdio(stdio) => stdio.name.clone(),
+                    _ => return None,
+                };
+                Some(agentdash_application::capability::AgentMcpServerEntry {
+                    name,
+                    server: server.clone(),
+                })
+            })
+            .collect();
+    // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
+    let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
+        &agentdash_application::capability::CapabilityResolverInput {
+            owner_type: SessionOwnerType::Project,
+            project_id: project.id,
+            story_id: None,
+            task_id: None,
+            agent_declared_capabilities: resolved_config
+                .as_ref()
+                .and_then(|config| config.tool_clusters.clone()),
+            has_active_workflow: false,
+            workflow_capabilities: None,
+            agent_mcp_servers: agent_mcp_entries,
+            companion_slice_mode: None,
+        },
+        &state.config.platform_config,
+    );
+    let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = cap_output
+        .platform_mcp_configs
+        .iter()
+        .map(|c| c.to_acp_mcp_server())
+        .collect();
+    effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
     let executor_source = if session_meta.executor_config.is_some() {

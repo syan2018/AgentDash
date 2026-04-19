@@ -1,13 +1,15 @@
+use std::collections::BTreeSet;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicU64, Ordering},
 };
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
-    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionSnapshotMetadata,
+    CapabilityDelta, ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError,
+    HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess,
+    HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -22,6 +24,7 @@ pub struct HookSessionRuntime {
     trace: RwLock<Vec<HookTraceEntry>>,
     pending_actions: RwLock<Vec<HookPendingAction>>,
     token_stats: RwLock<ContextTokenStats>,
+    capabilities: RwLock<BTreeSet<String>>,
     revision: AtomicU64,
     trace_sequence: AtomicU64,
     trace_broadcast: broadcast::Sender<HookTraceEntry>,
@@ -55,6 +58,7 @@ impl HookSessionRuntime {
             trace: RwLock::new(Vec::new()),
             pending_actions: RwLock::new(Vec::new()),
             token_stats: RwLock::new(ContextTokenStats::default()),
+            capabilities: RwLock::new(BTreeSet::new()),
             revision: AtomicU64::new(1),
             trace_sequence: AtomicU64::new(0),
             trace_broadcast,
@@ -250,6 +254,30 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
         }
         drop(guard);
         let _ = self.trace_broadcast.send(trace);
+    }
+
+    fn current_capabilities(&self) -> BTreeSet<String> {
+        self.capabilities
+            .read()
+            .expect("capabilities read lock poisoned")
+            .clone()
+    }
+
+    fn update_capabilities(
+        &self,
+        new_caps: BTreeSet<String>,
+    ) -> Option<CapabilityDelta> {
+        let mut guard = self
+            .capabilities
+            .write()
+            .expect("capabilities write lock poisoned");
+        let delta = CapabilityDelta::compute(&guard, &new_caps);
+        if delta.is_empty() {
+            return None;
+        }
+        *guard = new_caps;
+        self.revision.fetch_add(1, Ordering::SeqCst);
+        Some(delta)
     }
 
     fn subscribe_traces(&self) -> Option<broadcast::Receiver<HookTraceEntry>> {

@@ -15,6 +15,7 @@ use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::relay_service::RelayVfsService;
 use crate::vfs::tools::fs::{
@@ -39,6 +40,7 @@ pub struct RelayRuntimeToolProvider {
     inline_file_repo: Arc<dyn InlineFileRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
+    platform_config: SharedPlatformConfig,
 }
 
 impl RelayRuntimeToolProvider {
@@ -54,6 +56,7 @@ impl RelayRuntimeToolProvider {
         inline_file_repo: Arc<dyn InlineFileRepository>,
         session_hub_handle: SharedSessionHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
+        platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             service,
@@ -67,6 +70,7 @@ impl RelayRuntimeToolProvider {
             inline_file_repo,
             session_hub_handle,
             inline_persister,
+            platform_config,
         }
     }
 }
@@ -182,6 +186,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.inline_file_repo.clone(),
                 session_hub.clone(),
                 context,
+                self.platform_config.clone(),
             )));
         }
 

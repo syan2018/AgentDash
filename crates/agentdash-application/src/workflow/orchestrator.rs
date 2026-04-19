@@ -16,11 +16,14 @@ use agentdash_domain::session_binding::{
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun,
-    LifecycleRunRepository, LifecycleStepExecutionStatus, WorkflowDefinition,
-    WorkflowDefinitionRepository,
+    LifecycleRunRepository, LifecycleStepDefinition, LifecycleStepExecutionStatus,
+    WorkflowDefinitionRepository, compute_effective_capabilities,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
+
+use crate::capability::{CapabilityResolver, CapabilityResolverInput};
+use crate::platform_config::SharedPlatformConfig;
 
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
@@ -35,6 +38,9 @@ use crate::workflow::{ActivateLifecycleStepCommand, LifecycleRunService};
 pub struct OrchestrationResult {
     pub run_id: Uuid,
     pub activated_nodes: Vec<ActivatedNode>,
+    /// PhaseNode 激活不产生新 session，仅标记步骤为 active。
+    /// 调用方据此计算 capability delta 并通知当前 session。
+    pub activated_phase_nodes: Vec<ActivatedPhaseNode>,
 }
 
 #[derive(Debug)]
@@ -43,13 +49,21 @@ pub struct ActivatedNode {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ActivatedPhaseNode {
+    pub node_key: String,
+    /// 该 step 的 CapabilityDirective 列表（从 LifecycleStepDefinition 中拷贝）
+    pub capability_directives: Vec<agentdash_domain::workflow::CapabilityDirective>,
+}
+
 pub struct LifecycleOrchestrator {
     session_hub: SessionHub,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    _workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    platform_config: SharedPlatformConfig,
 }
 
 impl LifecycleOrchestrator {
@@ -60,14 +74,16 @@ impl LifecycleOrchestrator {
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             session_hub,
             session_binding_repo,
-            workflow_definition_repo,
+            _workflow_definition_repo: workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
+            platform_config,
         }
     }
 
@@ -140,6 +156,7 @@ impl LifecycleOrchestrator {
         }
 
         let mut activated = Vec::new();
+        let mut activated_phases = Vec::new();
 
         for node_state in ready_nodes {
             let step_def = lifecycle
@@ -156,27 +173,12 @@ impl LifecycleOrchestrator {
 
             match step_def.node_type {
                 LifecycleNodeType::AgentNode => {
-                    // 尝试加载 node 关联的 workflow definition（用于 port 定义）
-                    let node_workflow = if let Some(wk) =
-                        step_def.effective_workflow_key()
-                    {
-                        self.workflow_definition_repo
-                            .get_by_key(wk)
-                            .await
-                            .ok()
-                            .flatten()
-                    } else {
-                        None
-                    };
-
                     match self
                         .create_agent_node_session(
                             &run,
                             &lifecycle,
                             project_id,
-                            &node_state.step_key,
-                            &step_def.description,
-                            node_workflow.as_ref(),
+                            step_def,
                         )
                         .await
                     {
@@ -212,18 +214,24 @@ impl LifecycleOrchestrator {
                             error = %e,
                             "Orchestrator: failed to activate phase node"
                         );
+                    } else {
+                        activated_phases.push(ActivatedPhaseNode {
+                            node_key: node_state.step_key.clone(),
+                            capability_directives: step_def.capabilities.clone(),
+                        });
                     }
                 }
             }
         }
 
-        if activated.is_empty() {
+        if activated.is_empty() && activated_phases.is_empty() {
             return Ok(None);
         }
 
         Ok(Some(OrchestrationResult {
             run_id,
             activated_nodes: activated,
+            activated_phase_nodes: activated_phases,
         }))
     }
 
@@ -233,10 +241,9 @@ impl LifecycleOrchestrator {
         run: &LifecycleRun,
         lifecycle: &LifecycleDefinition,
         project_id: Uuid,
-        node_key: &str,
-        node_description: &str,
-        node_workflow: Option<&WorkflowDefinition>,
+        step_def: &LifecycleStepDefinition,
     ) -> Result<String, String> {
+        let node_key = &step_def.key;
         let run_id = run.id;
         let parent_session_id = &run.session_id;
         let lifecycle_key = &lifecycle.key;
@@ -297,12 +304,12 @@ impl LifecycleOrchestrator {
         if let Some(state) = updated_run
             .step_states
             .iter_mut()
-            .find(|s| s.step_key == node_key)
+            .find(|s| s.step_key == *node_key)
         {
             state.session_id = Some(session_id.clone());
         }
         updated_run
-            .activate_step(node_key)
+            .activate_step(node_key.as_str())
             .map_err(|e| format!("activate step 失败: {e}"))?;
         self.lifecycle_run_repo
             .update(&updated_run)
@@ -329,9 +336,8 @@ impl LifecycleOrchestrator {
                 &session_id,
                 run,
                 lifecycle,
-                node_key,
-                node_description,
-                node_workflow,
+                project_id,
+                step_def,
                 parent_executor_config,
             )
             .await
@@ -361,11 +367,12 @@ impl LifecycleOrchestrator {
         session_id: &str,
         run: &LifecycleRun,
         lifecycle: &LifecycleDefinition,
-        node_key: &str,
-        node_description: &str,
-        node_workflow: Option<&WorkflowDefinition>,
+        project_id: Uuid,
+        step_def: &LifecycleStepDefinition,
         executor_config: Option<agentdash_spi::AgentConfig>,
     ) -> Result<(), String> {
+        let node_key = &step_def.key;
+        let node_description = &step_def.description;
         self.session_hub
             .mark_owner_bootstrap_pending(session_id)
             .await
@@ -379,8 +386,7 @@ impl LifecycleOrchestrator {
         };
 
         // ── output port 交付要求（从 step 级 ports 读取） ──
-        let step_def = lifecycle.steps.iter().find(|s| s.key == node_key);
-        let output_ports = step_def.map(|s| &s.output_ports[..]).unwrap_or_default();
+        let output_ports = &step_def.output_ports[..];
         let writable_port_keys: Vec<String> =
             output_ports.iter().map(|p| p.key.clone()).collect();
 
@@ -405,7 +411,7 @@ impl LifecycleOrchestrator {
         };
 
         // ── input port 上下文引用（从 step 级 ports + edges 推导前驱 port output） ──
-        let input_ports = step_def.map(|s| &s.input_ports[..]).unwrap_or_default();
+        let input_ports = &step_def.input_ports[..];
         let input_section = if input_ports.is_empty() {
             String::new()
         } else {
@@ -421,7 +427,7 @@ impl LifecycleOrchestrator {
                 let source_edges: Vec<_> = lifecycle
                     .edges
                     .iter()
-                    .filter(|e| e.to_node == node_key && e.to_port == ip.key)
+                    .filter(|e| e.to_node == *node_key && e.to_port == ip.key)
                     .collect();
                 if source_edges.is_empty() {
                     items.push(format!(
@@ -469,6 +475,56 @@ impl LifecycleOrchestrator {
             PromptSessionRequest::from_user_input(UserPromptInput::from_text(kickoff_prompt));
         req.user_input.executor_config = executor_config;
         req.vfs = Some(vfs);
+
+        // ── step capability resolution ──
+        let workflow_baseline_caps: Vec<String> = self
+            .session_hub
+            .get_hook_session_runtime(&run.session_id)
+            .await
+            .map(|runtime| runtime.current_capabilities().into_iter().collect())
+            .unwrap_or_default();
+        let step_effective_caps =
+            compute_effective_capabilities(&workflow_baseline_caps, &step_def.capabilities);
+        if !step_effective_caps.is_empty() || self.platform_config.mcp_base_url.is_some() {
+            let parent_bindings = self
+                .session_binding_repo
+                .list_by_session(&run.session_id)
+                .await
+                .unwrap_or_default();
+            let owner_type = parent_bindings
+                .first()
+                .map(|b| b.owner_type)
+                .unwrap_or(SessionOwnerType::Project);
+
+            let cap_input = CapabilityResolverInput {
+                owner_type,
+                project_id,
+                story_id: None,
+                task_id: None,
+                agent_declared_capabilities: None,
+                has_active_workflow: true,
+                workflow_capabilities: Some(step_effective_caps),
+                agent_mcp_servers: vec![],
+                companion_slice_mode: None,
+            };
+            let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
+            req.flow_capabilities = Some(cap_output.flow_capabilities);
+            req.effective_capability_keys = Some(
+                cap_output
+                    .effective_capabilities
+                    .iter()
+                    .map(|c| c.key().to_string())
+                    .collect(),
+            );
+
+            let mcp_configs: Vec<_> = cap_output
+                .platform_mcp_configs
+                .into_iter()
+                .map(|c| c.to_acp_mcp_server())
+                .collect();
+            req.mcp_servers.extend(mcp_configs);
+            req.mcp_servers.extend(cap_output.custom_mcp_servers);
+        }
 
         self.session_hub
             .start_prompt(session_id, req)

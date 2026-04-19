@@ -3,6 +3,7 @@ use agentdash_domain::task::Task;
 
 use crate::vfs::RelayVfsService;
 use crate::capability::{CapabilityResolver, CapabilityResolverInput};
+use crate::platform_config::PlatformConfig;
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
@@ -23,7 +24,7 @@ pub struct TaskTurnServices<'a> {
     pub availability: &'a dyn BackendAvailability,
     pub vfs_service: &'a RelayVfsService,
     pub contributor_registry: &'a ContextContributorRegistry,
-    pub mcp_base_url: Option<&'a str>,
+    pub platform_config: &'a PlatformConfig,
 }
 
 /// 准备好的 turn 上下文 — 包含 dispatch 所需的所有数据
@@ -33,6 +34,10 @@ pub struct PreparedTurnContext {
     pub resolved_config: Option<AgentConfig>,
     pub use_cloud_native_agent: bool,
     pub workspace: Option<agentdash_domain::workspace::Workspace>,
+    /// CapabilityResolver 产出的内置工具簇（dispatcher 直接使用，不再硬编码）。
+    pub flow_capabilities: agentdash_spi::FlowCapabilities,
+    /// CapabilityResolver 产出的有效 capability key（用于 hook runtime 追踪）。
+    pub effective_capability_keys: std::collections::BTreeSet<String>,
     /// 发起本次 task 执行的用户身份（由 HTTP handler 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
     /// Hook effect 回调（cloud-native 路径取代 TurnMonitor）。
@@ -117,16 +122,21 @@ pub async fn prepare_task_turn_context(
 
     let cap_input = CapabilityResolverInput {
         owner_type: SessionOwnerType::Task,
-        mcp_base_url: svc.mcp_base_url.map(|s| s.to_string()),
         project_id: story.project_id,
         story_id: Some(task.story_id),
         task_id: Some(task.id),
         agent_declared_capabilities: None,
         has_active_workflow,
-        workflow_capabilities: vec![],
+        workflow_capabilities: None,
         agent_mcp_servers: vec![],
+        companion_slice_mode: None,
     };
-    let cap_output = CapabilityResolver::resolve(&cap_input);
+    let cap_output = CapabilityResolver::resolve(&cap_input, svc.platform_config);
+    let effective_capability_keys: std::collections::BTreeSet<String> = cap_output
+        .effective_capabilities
+        .iter()
+        .map(|cap| cap.key().to_string())
+        .collect();
 
     for mcp_config in &cap_output.platform_mcp_configs {
         extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
@@ -135,7 +145,7 @@ pub async fn prepare_task_turn_context(
     let session_runtime_inputs = build_task_session_runtime_inputs(
         svc.repos,
         svc.vfs_service,
-        svc.mcp_base_url,
+        svc.platform_config,
         task,
         &story,
         &project,
@@ -188,6 +198,8 @@ pub async fn prepare_task_turn_context(
         resolved_config,
         use_cloud_native_agent,
         workspace,
+        flow_capabilities: cap_output.flow_capabilities,
+        effective_capability_keys,
         identity: None,
         post_turn_handler: None,
     })

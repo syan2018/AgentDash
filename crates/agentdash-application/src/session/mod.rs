@@ -13,6 +13,7 @@ mod hub_support;
 mod memory_persistence;
 pub mod persistence;
 pub mod plan;
+pub mod plan_builder;
 pub mod post_turn_handler;
 mod prompt_vfs;
 mod prompt_pipeline;

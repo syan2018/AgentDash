@@ -367,4 +367,15 @@ pub trait AgentConnector: Send + Sync {
         tool_call_id: &str,
         reason: Option<String>,
     ) -> Result<(), ConnectorError>;
+
+    /// Phase Node 切换时热更新 session 的 MCP server 列表。
+    /// 语义为“目标集合替换”（replace-set），而非增量追加。
+    /// 默认 no-op — 仅 PiAgentConnector 等 in-process connector 需要实现。
+    async fn update_session_mcp_servers(
+        &self,
+        _session_id: &str,
+        _mcp_servers: Vec<McpServer>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
 }

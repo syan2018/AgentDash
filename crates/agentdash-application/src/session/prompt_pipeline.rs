@@ -156,6 +156,7 @@ impl SessionHub {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.hook_session = hook_session.clone();
+                runtime.active_mcp_servers = req.mcp_servers.clone();
             }
         }
 
@@ -336,6 +337,14 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
+                let initial_caps: std::collections::BTreeSet<String> = req
+                    .effective_capability_keys
+                    .clone()
+                    .unwrap_or_default();
+                if !initial_caps.is_empty() {
+                    let _ = hook_session.update_capabilities(initial_caps.clone());
+                }
+
                 let _start_effects = self
                     .emit_session_hook_trigger(
                         hook_session.as_ref(),
@@ -346,6 +355,7 @@ impl SessionHub {
                             payload: Some(serde_json::json!({
                                 "text_prompt": resolved_payload.text_prompt,
                                 "user_block_count": resolved_payload.user_blocks.len(),
+                                "capabilities": initial_caps.iter().collect::<Vec<_>>(),
                             })),
                             refresh_reason: "trigger:session_start",
                             source: source.clone(),

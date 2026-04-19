@@ -323,6 +323,60 @@ pub struct InputPortDefinition {
     pub context_template: Option<String>,
 }
 
+/// Step 级能力指令 — 在 workflow 基线上执行增减运算。
+///
+/// `Add(key)` 追加能力，`Remove(key)` 移除能力。
+/// key 为开放 string，平台 well-known key 如 `file_system`，
+/// 用户自定义 MCP 使用 `mcp:<server_name>` 格式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityDirective {
+    Add(String),
+    Remove(String),
+}
+
+impl CapabilityDirective {
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Add(k) | Self::Remove(k) => k,
+        }
+    }
+
+    pub fn is_add(&self) -> bool {
+        matches!(self, Self::Add(_))
+    }
+}
+
+/// 在 workflow 基线能力集上应用 step 指令，产出 effective capability key 集合。
+///
+/// 规则：
+/// - step 无指令 → 完全继承 baseline
+/// - Add(key) → 追加到集合
+/// - Remove(key) → 从集合中移除
+pub fn compute_effective_capabilities(
+    baseline: &[String],
+    directives: &[CapabilityDirective],
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    if directives.is_empty() {
+        return baseline.to_vec();
+    }
+
+    let mut effective: BTreeSet<String> = baseline.iter().cloned().collect();
+    for directive in directives {
+        match directive {
+            CapabilityDirective::Add(key) => {
+                effective.insert(key.clone());
+            }
+            CapabilityDirective::Remove(key) => {
+                effective.remove(key);
+            }
+        }
+    }
+    effective.into_iter().collect()
+}
+
 /// Port 级别的 DAG 边——唯一的拓扑数据源。
 /// node 级别依赖通过 `node_deps_from_edges()` 运行时计算。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -348,6 +402,10 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
+    /// Step 级能力指令：在 workflow 基线上增减能力。
+    /// 空 vec 表示完全继承 workflow 级 capabilities。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<CapabilityDirective>,
 }
 
 impl LifecycleStepDefinition {
@@ -764,6 +822,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capabilities: vec![],
         }];
 
         let error =
@@ -782,6 +841,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -790,6 +850,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
@@ -798,6 +859,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capabilities: vec![],
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -836,6 +898,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -844,6 +907,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capabilities: vec![],
             },
         ];
         let edges = vec![LifecycleEdge {
@@ -881,5 +945,103 @@ mod tests {
             "story"
         );
         assert_eq!(WorkflowBindingKind::Task.binding_scope_key(), "task");
+    }
+
+    #[test]
+    fn capability_directive_add_remove() {
+        let add = CapabilityDirective::Add("file_system".to_string());
+        assert!(add.is_add());
+        assert_eq!(add.key(), "file_system");
+
+        let remove = CapabilityDirective::Remove("canvas".to_string());
+        assert!(!remove.is_add());
+        assert_eq!(remove.key(), "canvas");
+    }
+
+    #[test]
+    fn capability_directive_serde_roundtrip() {
+        let directives = vec![
+            CapabilityDirective::Add("file_system".to_string()),
+            CapabilityDirective::Remove("canvas".to_string()),
+            CapabilityDirective::Add("mcp:code_analyzer".to_string()),
+        ];
+        let json = serde_json::to_string(&directives).unwrap();
+        let deserialized: Vec<CapabilityDirective> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, directives);
+    }
+
+    #[test]
+    fn compute_effective_empty_directives_inherits_baseline() {
+        let baseline = vec!["file_system".to_string(), "canvas".to_string()];
+        let effective = compute_effective_capabilities(&baseline, &[]);
+        assert_eq!(effective, vec!["file_system", "canvas"]);
+    }
+
+    #[test]
+    fn compute_effective_add_extends_baseline() {
+        let baseline = vec!["file_system".to_string()];
+        let directives = vec![
+            CapabilityDirective::Add("canvas".to_string()),
+            CapabilityDirective::Add("mcp:analyzer".to_string()),
+        ];
+        let effective = compute_effective_capabilities(&baseline, &directives);
+        assert_eq!(effective, vec!["canvas", "file_system", "mcp:analyzer"]);
+    }
+
+    #[test]
+    fn compute_effective_remove_shrinks_baseline() {
+        let baseline = vec![
+            "file_system".to_string(),
+            "canvas".to_string(),
+            "collaboration".to_string(),
+        ];
+        let directives = vec![CapabilityDirective::Remove("canvas".to_string())];
+        let effective = compute_effective_capabilities(&baseline, &directives);
+        assert_eq!(effective, vec!["collaboration", "file_system"]);
+    }
+
+    #[test]
+    fn compute_effective_add_and_remove_combined() {
+        let baseline = vec!["file_system".to_string(), "canvas".to_string()];
+        let directives = vec![
+            CapabilityDirective::Remove("canvas".to_string()),
+            CapabilityDirective::Add("workflow".to_string()),
+        ];
+        let effective = compute_effective_capabilities(&baseline, &directives);
+        assert_eq!(effective, vec!["file_system", "workflow"]);
+    }
+
+    #[test]
+    fn compute_effective_remove_nonexistent_is_noop() {
+        let baseline = vec!["file_system".to_string()];
+        let directives = vec![CapabilityDirective::Remove("nonexistent".to_string())];
+        let effective = compute_effective_capabilities(&baseline, &directives);
+        assert_eq!(effective, vec!["file_system"]);
+    }
+
+    #[test]
+    fn lifecycle_step_definition_capabilities_default_empty() {
+        let json = r#"{"key":"test","description":"","node_type":"agent_node"}"#;
+        let step: LifecycleStepDefinition = serde_json::from_str(json).unwrap();
+        assert!(step.capabilities.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_step_definition_capabilities_roundtrip() {
+        let step = LifecycleStepDefinition {
+            key: "implement".to_string(),
+            description: "implement step".to_string(),
+            workflow_key: None,
+            node_type: LifecycleNodeType::PhaseNode,
+            output_ports: vec![],
+            input_ports: vec![],
+            capabilities: vec![
+                CapabilityDirective::Add("file_system".to_string()),
+                CapabilityDirective::Remove("canvas".to_string()),
+            ],
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let deserialized: LifecycleStepDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.capabilities, step.capabilities);
     }
 }

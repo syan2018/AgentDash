@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleStepExecutionStatus,
-    WorkflowDefinitionRepository,
+    WorkflowDefinitionRepository, compute_effective_capabilities,
 };
+use agentdash_spi::hooks::SessionHookSnapshot;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use agentdash_spi::{ExecutionContext, SessionHookRefreshQuery};
@@ -13,8 +15,11 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::active_workflow_locator_from_snapshot;
+use crate::capability::{AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput};
+use crate::platform_config::SharedPlatformConfig;
 use crate::session::SessionHub;
 use crate::workflow::{
     CompleteLifecycleStepCommand, LifecycleOrchestrator, LifecycleRunService,
@@ -34,6 +39,7 @@ pub struct CompleteLifecycleNodeTool {
     session_hub: Option<SessionHub>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    platform_config: SharedPlatformConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -67,6 +73,7 @@ impl CompleteLifecycleNodeTool {
         inline_file_repo: Arc<dyn InlineFileRepository>,
         session_hub: Option<SessionHub>,
         context: &ExecutionContext,
+        platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             session_binding_repo,
@@ -77,6 +84,7 @@ impl CompleteLifecycleNodeTool {
             session_hub,
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
+            platform_config,
         }
     }
 }
@@ -345,18 +353,114 @@ impl AgentTool for CompleteLifecycleNodeTool {
 
         let orchestration_warning = if let Some(session_hub) = self.session_hub.clone() {
             let orchestrator = LifecycleOrchestrator::new(
-                session_hub,
+                session_hub.clone(),
                 self.session_binding_repo.clone(),
                 self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
                 self.inline_file_repo.clone(),
+                self.platform_config.clone(),
             );
             match orchestrator
                 .after_node_advanced(run.id, run.project_id)
                 .await
             {
-                Ok(_) => None,
+                Ok(Some(result)) => {
+                    if !result.activated_phase_nodes.is_empty() {
+                        let snapshot = hook_session.snapshot();
+                        let (owner_type, project_id, story_id, task_id) =
+                            resolve_owner_scope(&snapshot, run.project_id);
+                        let mut baseline_caps: Vec<String> = hook_session
+                            .current_capabilities()
+                            .into_iter()
+                            .collect();
+                        for phase in &result.activated_phase_nodes {
+                            let new_caps = compute_effective_capabilities(
+                                &baseline_caps,
+                                &phase.capability_directives,
+                            );
+                            let new_caps_set: std::collections::BTreeSet<String> =
+                                new_caps.into_iter().collect();
+                            if let Some(delta) =
+                                hook_session.update_capabilities(new_caps_set.clone())
+                            {
+                                let runtime_mcp_servers = session_hub
+                                    .get_runtime_mcp_servers(hook_session.session_id())
+                                    .await;
+                                let cap_output = CapabilityResolver::resolve(
+                                    &CapabilityResolverInput {
+                                        owner_type,
+                                        project_id,
+                                        story_id,
+                                        task_id,
+                                        agent_declared_capabilities: None,
+                                        has_active_workflow: true,
+                                        workflow_capabilities: Some(
+                                            new_caps_set
+                                                .iter()
+                                                .cloned()
+                                                .collect(),
+                                        ),
+                                        agent_mcp_servers: mcp_entries_from_servers(
+                                            &runtime_mcp_servers,
+                                        ),
+                                        companion_slice_mode: None,
+                                    },
+                                    &self.platform_config,
+                                );
+                                let mut next_mcp_servers: Vec<agent_client_protocol::McpServer> =
+                                    cap_output
+                                        .platform_mcp_configs
+                                        .iter()
+                                        .map(|cfg| cfg.to_acp_mcp_server())
+                                        .collect();
+                                next_mcp_servers
+                                    .extend(cap_output.custom_mcp_servers.into_iter());
+                                dedupe_mcp_servers(&mut next_mcp_servers);
+
+                                if let Err(error) = session_hub
+                                    .replace_runtime_mcp_servers(
+                                        hook_session.session_id(),
+                                        next_mcp_servers.clone(),
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        session_id = %hook_session.session_id(),
+                                        phase_node = %phase.node_key,
+                                        error = %error,
+                                        "Phase node MCP 热更新失败"
+                                    );
+                                }
+
+                                let added = delta.added.clone();
+                                let removed = delta.removed.clone();
+                                tracing::info!(
+                                    phase_node = %phase.node_key,
+                                    added = ?added,
+                                    removed = ?removed,
+                                    "Phase node capability delta detected"
+                                );
+                                session_hub
+                                    .emit_capability_changed_hook(
+                                        hook_session.session_id(),
+                                        Some(self.current_turn_id.as_str()),
+                                        serde_json::json!({
+                                            "phase_node": phase.node_key,
+                                            "added": added,
+                                            "removed": removed,
+                                            "capabilities": new_caps_set.iter().cloned().collect::<Vec<_>>(),
+                                            "mcp_server_count": next_mcp_servers.len(),
+                                        }),
+                                    )
+                                    .await;
+                            }
+                            baseline_caps = new_caps_set.into_iter().collect();
+                        }
+                    }
+                    None
+                }
+                Ok(None) => None,
                 Err(error) => Some(format!("node 已完成，但后继编排触发失败：{error}")),
             }
         } else {
@@ -400,5 +504,73 @@ impl AgentTool for CompleteLifecycleNodeTool {
             })),
         })
     }
+}
+
+fn resolve_owner_scope(
+    snapshot: &SessionHookSnapshot,
+    fallback_project_id: Uuid,
+) -> (SessionOwnerType, Uuid, Option<Uuid>, Option<Uuid>) {
+    let Some(owner) = snapshot.owners.first() else {
+        return (SessionOwnerType::Project, fallback_project_id, None, None);
+    };
+
+    let owner_type = match owner.owner_type.as_str() {
+        "story" => SessionOwnerType::Story,
+        "task" => SessionOwnerType::Task,
+        _ => SessionOwnerType::Project,
+    };
+    let project_id = owner
+        .project_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .unwrap_or(fallback_project_id);
+    let story_id = owner
+        .story_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok());
+    let task_id = owner
+        .task_id
+        .as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok());
+    (owner_type, project_id, story_id, task_id)
+}
+
+fn mcp_entries_from_servers(
+    servers: &[agent_client_protocol::McpServer],
+) -> Vec<AgentMcpServerEntry> {
+    servers
+        .iter()
+        .filter_map(|server| {
+            let name = match server {
+                agent_client_protocol::McpServer::Http(http) => http.name.clone(),
+                agent_client_protocol::McpServer::Sse(sse) => sse.name.clone(),
+                agent_client_protocol::McpServer::Stdio(stdio) => stdio.name.clone(),
+                _ => return None,
+            };
+            Some(AgentMcpServerEntry {
+                name,
+                server: server.clone(),
+            })
+        })
+        .collect()
+}
+
+fn mcp_server_name(server: &agent_client_protocol::McpServer) -> Option<&str> {
+    match server {
+        agent_client_protocol::McpServer::Http(http) => Some(http.name.as_str()),
+        agent_client_protocol::McpServer::Sse(sse) => Some(sse.name.as_str()),
+        agent_client_protocol::McpServer::Stdio(stdio) => Some(stdio.name.as_str()),
+        _ => None,
+    }
+}
+
+fn dedupe_mcp_servers(servers: &mut Vec<agent_client_protocol::McpServer>) {
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    servers.retain(|server| {
+        let Some(name) = mcp_server_name(server) else {
+            return true;
+        };
+        seen.insert(name.to_string())
+    });
 }
 

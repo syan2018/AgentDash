@@ -214,6 +214,7 @@ impl CommandHandler {
             relay_mcp_server_names: Default::default(),
             vfs: Some(vfs),
             flow_capabilities: None,
+            effective_capability_keys: None,
             system_context: None,
             bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
             identity: None,

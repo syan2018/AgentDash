@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agent_client_protocol::{McpServer, SessionNotification, SessionUpdate};
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_agent_types::AgentMessage;
 use tokio::sync::{Mutex, broadcast};
@@ -10,13 +10,14 @@ use super::continuation::{
     build_companion_human_response_notification, build_continuation_system_context_from_events,
     build_restored_session_messages_from_events,
 };
+use super::event_bridge::HookTriggerInput;
 use super::hook_messages as msg;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
 pub use super::types::*;
 use agentdash_spi::hooks::{
-    ExecutionHookProvider, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    ExecutionHookProvider, HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 use agentdash_spi::{Vfs, AgentConnector, ConnectorError};
 
@@ -308,6 +309,75 @@ impl SessionHub {
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.hook_session.clone())
+    }
+
+    /// 触发 `CapabilityChanged` hook（PhaseNode 等动态能力更新路径使用）。
+    pub async fn emit_capability_changed_hook(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        payload: serde_json::Value,
+    ) {
+        let (hook_session, tx) = {
+            let sessions = self.sessions.lock().await;
+            let Some(runtime) = sessions.get(session_id) else {
+                return;
+            };
+            let Some(hook_session) = runtime.hook_session.clone() else {
+                return;
+            };
+            (hook_session, runtime.tx.clone())
+        };
+
+        let connector_type = match self.connector.connector_type() {
+            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
+            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
+
+        let _ = self
+            .emit_session_hook_trigger(
+                hook_session.as_ref(),
+                &HookTriggerInput {
+                    session_id,
+                    turn_id,
+                    trigger: HookTrigger::CapabilityChanged,
+                    payload: Some(payload),
+                    refresh_reason: "trigger:capability_changed",
+                    source,
+                },
+                &tx,
+            )
+            .await;
+    }
+
+    /// 读取 session 当前记录的 MCP server 列表（由 prompt pipeline 维护）。
+    pub async fn get_runtime_mcp_servers(
+        &self,
+        session_id: &str,
+    ) -> Vec<McpServer> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .map(|runtime| runtime.active_mcp_servers.clone())
+            .unwrap_or_default()
+    }
+
+    /// 替换运行中 session 的 MCP server 列表并同步 connector。
+    pub async fn replace_runtime_mcp_servers(
+        &self,
+        session_id: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<(), ConnectorError> {
+        self.connector
+            .update_session_mcp_servers(session_id, mcp_servers.clone())
+            .await?;
+
+        let mut sessions = self.sessions.lock().await;
+        if let Some(runtime) = sessions.get_mut(session_id) {
+            runtime.active_mcp_servers = mcp_servers;
+        }
+        Ok(())
     }
 
     pub async fn has_live_runtime(&self, session_id: &str) -> bool {
@@ -688,6 +758,7 @@ mod tests {
             relay_mcp_server_names: Default::default(),
             vfs: None,
             flow_capabilities: None,
+            effective_capability_keys: None,
             system_context: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,
@@ -1686,6 +1757,7 @@ mod tests {
                 relay_mcp_server_names: Default::default(),
                 vfs: Some(local_workspace_vfs(workspace.path())),
                 flow_capabilities: None,
+                effective_capability_keys: None,
                 system_context: None,
                 bootstrap_action: SessionBootstrapAction::None,
                 identity: None,

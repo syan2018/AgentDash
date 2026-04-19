@@ -206,7 +206,7 @@ pub async fn get_task_session(
     let built_context = build_task_session_context(
         &state.repos,
         &state.services.vfs_service,
-        state.config.mcp_base_url.as_deref(),
+        &state.config.platform_config,
         task_id,
         session_meta.as_ref(),
     )

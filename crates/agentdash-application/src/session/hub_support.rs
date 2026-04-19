@@ -156,6 +156,7 @@ pub(super) fn build_session_runtime(
         current_turn_id: None,
         cancel_requested: false,
         hook_session: None,
+        active_mcp_servers: Vec::new(),
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
         processor_tx: None,
@@ -168,6 +169,8 @@ pub(super) struct SessionRuntime {
     pub current_turn_id: Option<String>,
     pub cancel_requested: bool,
     pub hook_session: Option<SharedHookSessionRuntime>,
+    /// 当前 session 生效的 MCP server 列表（用于 phase 动态热更新）。
+    pub active_mcp_servers: Vec<agent_client_protocol::McpServer>,
     /// Counter for hook-driven auto-resumes (prevents infinite loops).
     pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
@@ -286,6 +289,7 @@ pub(super) fn session_hook_trace_decision(
                 "terminal_observed"
             }
         }
+        HookTrigger::CapabilityChanged => "capability_changed",
         _ => "noop",
     }
 }

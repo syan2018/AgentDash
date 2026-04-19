@@ -16,26 +16,24 @@ use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::vfs::SessionMountTarget;
 use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::project::context_builder::{
-    ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
-};
+use agentdash_application::project::context_builder::build_project_owner_prompt_blocks;
 use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_application::session::plan_builder::{
+    SessionOwnerVariant, SessionPlanBuilder, SessionPlanInput, SessionPlanServices,
+};
 use agentdash_application::session::{
     PromptSessionRequest, SessionBootstrapAction, SessionExecutionState, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
 };
-use agentdash_application::story::context_builder::{
-    StoryContextBuildInput, build_story_context_markdown, build_story_owner_prompt_blocks,
-};
+use agentdash_application::story::context_builder::build_story_owner_prompt_blocks;
 use agentdash_application::task::execution::ExecutionPhase;
 use agentdash_application::task::gateway::{TaskTurnServices, prepare_task_turn_context};
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
-use agentdash_mcp::injection::McpInjectionConfig;
+
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
 use serde::Serialize;
@@ -50,8 +48,7 @@ use crate::auth::{
 };
 use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::routes::vfs_surfaces::build_surface_summary;
-use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
-use crate::task_agent_context::resolve_workspace_declared_sources;
+use crate::runtime_bridge::runtime_mcp_servers_to_acp;
 use agentdash_application::session::context::apply_workspace_defaults;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -642,7 +639,7 @@ pub async fn get_session_context(
                 agentdash_application::task::context_builder::build_task_session_context(
                     &state.repos,
                     &state.services.vfs_service,
-                    state.config.mcp_base_url.as_deref(),
+                    &state.config.platform_config,
                     task_id,
                     session_meta.as_ref(),
                 )
@@ -1110,6 +1107,7 @@ fn finalize_augmented_request(
     vfs: Option<agentdash_spi::Vfs>,
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
+    effective_capability_keys: std::collections::BTreeSet<String>,
     bootstrap_action: SessionBootstrapAction,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
@@ -1126,6 +1124,15 @@ fn finalize_augmented_request(
     }
     req.mcp_servers = effective_mcp_servers;
     req.flow_capabilities = Some(flow_capabilities);
+    req.effective_capability_keys = Some(effective_capability_keys);
+}
+
+fn session_plan_services(state: &AppState) -> SessionPlanServices<'_> {
+    SessionPlanServices {
+        vfs_service: state.services.vfs_service.as_ref(),
+        canvas_repo: state.repos.canvas_repo.as_ref(),
+        availability: state.services.backend_registry.as_ref(),
+    }
 }
 
 fn apply_plain_lifecycle_request(
@@ -1174,55 +1181,25 @@ async fn build_story_owner_prompt_request(
                     .to_string(),
             )
         })?;
-    let mut vfs = match req.vfs.clone() {
-        Some(vfs) => Some(vfs),
-        None => Some(
-            state
-                .services
-                .vfs_service
-                .build_vfs(
-                    project,
-                    Some(story),
-                    workspace,
-                    SessionMountTarget::Story,
-                    Some(effective_executor_config.executor.as_str()),
-                )
-                .map_err(ApiError::BadRequest)?,
-        ),
-    };
-    if let Some(space) = vfs.as_mut() {
-        append_visible_canvas_mounts(
-            state.repos.canvas_repo.as_ref(),
-            project.id,
-            space,
+
+    let plan = SessionPlanBuilder::build(
+        &session_plan_services(state),
+        SessionPlanInput {
+            owner: SessionOwnerVariant::Story { story, project, workspace },
+            effective_agent_type: Some(effective_executor_config.executor.as_str()),
+            platform_config: &state.config.platform_config,
             visible_canvas_mount_ids,
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-    let effective_agent_type = Some(effective_executor_config.executor.as_str());
-    let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = required_mcp_base_url(state.as_ref())?;
-    effective_mcp_servers
-        .push(McpInjectionConfig::for_story(base_url, project.id, story.id).to_acp_mcp_server());
-    let runtime_vfs = vfs.clone();
-    let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
+            has_active_workflow: false,
+            workflow_capabilities: None,
+            agent_mcp_servers: vec![],
+            request_mcp_servers: req.mcp_servers.clone(),
+            existing_vfs: req.vfs.clone(),
+            agent_declared_capabilities: None,
+        },
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
 
-    let resolved_workspace_sources =
-        resolve_workspace_declared_sources(state, &story.context.source_refs, workspace, 60)
-            .await
-            .map_err(ApiError::BadRequest)?;
-
-    let (context_markdown, _) = build_story_context_markdown(StoryContextBuildInput {
-        story,
-        project,
-        workspace,
-        vfs: runtime_vfs.as_ref(),
-        mcp_servers: &runtime_mcp_servers,
-        effective_agent_type,
-        workspace_source_fragments: resolved_workspace_sources.fragments,
-        workspace_source_warnings: resolved_workspace_sources.warnings,
-    });
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
@@ -1230,8 +1207,8 @@ async fn build_story_owner_prompt_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     let (system_context, prompt_blocks, bootstrap_action) = match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => (
-            Some(context_markdown.clone()),
-            build_story_owner_prompt_blocks(story.id, context_markdown.clone(), user_prompt_blocks),
+            Some(plan.context_markdown.clone()),
+            build_story_owner_prompt_blocks(story.id, plan.context_markdown.clone(), user_prompt_blocks),
             SessionBootstrapAction::OwnerContext,
         ),
         SessionPromptLifecycle::RepositoryRehydrate(
@@ -1240,7 +1217,7 @@ async fn build_story_owner_prompt_request(
             state
                 .services
                 .session_hub
-                .build_continuation_system_context(session_id, Some(&context_markdown))
+                .build_continuation_system_context(session_id, Some(&plan.context_markdown))
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?,
             user_prompt_blocks,
@@ -1249,7 +1226,7 @@ async fn build_story_owner_prompt_request(
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => (
-            Some(context_markdown.clone()),
+            Some(plan.context_markdown.clone()),
             user_prompt_blocks,
             SessionBootstrapAction::None,
         ),
@@ -1262,21 +1239,14 @@ async fn build_story_owner_prompt_request(
         system_context,
         prompt_blocks,
         workspace,
-        vfs,
-        effective_mcp_servers,
-        agentdash_spi::FlowCapabilities::all(),
+        plan.vfs,
+        plan.effective_mcp_servers,
+        plan.flow_capabilities,
+        plan.effective_capability_keys,
         bootstrap_action,
     );
 
     Ok(req)
-}
-
-fn required_mcp_base_url(state: &AppState) -> Result<String, ApiError> {
-    state
-        .config
-        .mcp_base_url
-        .clone()
-        .ok_or_else(|| ApiError::Internal("服务端未配置 MCP relay base_url".to_string()))
 }
 
 async fn build_project_owner_prompt_request(
@@ -1315,52 +1285,53 @@ async fn build_project_owner_prompt_request(
         }
         None => project_agent.executor_config.clone(),
     };
-    let effective_agent_type = Some(effective_executor_config.executor.as_str());
-    let mut vfs = match req.vfs.clone() {
-        Some(vfs) => Some(vfs),
-        None => Some(
-            state
-                .services
-                .vfs_service
-                .build_vfs(
-                    project,
-                    None,
-                    workspace.as_ref(),
-                    SessionMountTarget::Project,
-                    effective_agent_type,
-                )
-                .map_err(ApiError::BadRequest)?,
-        ),
-    };
-    if let Some(space) = vfs.as_mut() {
-        append_visible_canvas_mounts(
-            state.repos.canvas_repo.as_ref(),
-            project.id,
-            space,
-            visible_canvas_mount_ids,
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-    let mut effective_mcp_servers = req.mcp_servers.clone();
-    let base_url = required_mcp_base_url(state.as_ref())?;
-    effective_mcp_servers
-        .push(McpInjectionConfig::for_relay(base_url, project.id).to_acp_mcp_server());
-    effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
-    req.relay_mcp_server_names
-        .extend(project_agent.relay_mcp_server_names.iter().cloned());
-    let runtime_vfs = vfs.clone();
-    let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
+    let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
+        project_agent
+            .preset_mcp_servers
+            .iter()
+            .filter_map(|s| {
+                let name = match s {
+                    agent_client_protocol::McpServer::Http(h) => h.name.clone(),
+                    agent_client_protocol::McpServer::Sse(h) => h.name.clone(),
+                    agent_client_protocol::McpServer::Stdio(h) => h.name.clone(),
+                    _ => return None,
+                };
+                Some(agentdash_application::capability::AgentMcpServerEntry {
+                    name,
+                    server: s.clone(),
+                })
+            })
+            .collect();
 
-    let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
-        project,
-        workspace: workspace.as_ref(),
-        vfs: runtime_vfs.as_ref(),
-        mcp_servers: &runtime_mcp_servers,
-        effective_agent_type,
-        preset_name: project_agent.preset_name.as_deref(),
-        agent_display_name: project_agent.display_name.as_str(),
-    });
+    let plan = SessionPlanBuilder::build(
+        &session_plan_services(state),
+        SessionPlanInput {
+            owner: SessionOwnerVariant::Project {
+                project,
+                workspace: workspace.as_ref(),
+                agent_display_name: project_agent.display_name.clone(),
+                preset_name: project_agent.preset_name.clone(),
+                preset_mcp_servers: project_agent.preset_mcp_servers.clone(),
+                relay_mcp_server_names: project_agent.relay_mcp_server_names.clone(),
+            },
+            effective_agent_type: Some(effective_executor_config.executor.as_str()),
+            platform_config: &state.config.platform_config,
+            visible_canvas_mount_ids,
+            has_active_workflow: false,
+            workflow_capabilities: None,
+            agent_mcp_servers: agent_mcp_entries,
+            request_mcp_servers: req.mcp_servers.clone(),
+            existing_vfs: req.vfs.clone(),
+            agent_declared_capabilities: effective_executor_config
+                .tool_clusters
+                .as_ref()
+                .cloned(),
+        },
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+
+    req.relay_mcp_server_names.extend(plan.relay_mcp_server_names);
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
@@ -1368,10 +1339,10 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     let (system_context, prompt_blocks, bootstrap_action) = match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => (
-            Some(context_markdown.clone()),
+            Some(plan.context_markdown.clone()),
             build_project_owner_prompt_blocks(
                 project.id,
-                context_markdown.clone(),
+                plan.context_markdown.clone(),
                 user_prompt_blocks,
             ),
             SessionBootstrapAction::OwnerContext,
@@ -1382,7 +1353,7 @@ async fn build_project_owner_prompt_request(
             state
                 .services
                 .session_hub
-                .build_continuation_system_context(session_id, Some(&context_markdown))
+                .build_continuation_system_context(session_id, Some(&plan.context_markdown))
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?,
             user_prompt_blocks,
@@ -1391,7 +1362,7 @@ async fn build_project_owner_prompt_request(
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => (
-            Some(context_markdown.clone()),
+            Some(plan.context_markdown.clone()),
             user_prompt_blocks,
             SessionBootstrapAction::None,
         ),
@@ -1405,15 +1376,10 @@ async fn build_project_owner_prompt_request(
         system_context,
         prompt_blocks,
         workspace.as_ref(),
-        vfs,
-        effective_mcp_servers,
-        agentdash_spi::FlowCapabilities::from_clusters([
-            agentdash_spi::ToolCluster::Read,
-            agentdash_spi::ToolCluster::Write,
-            agentdash_spi::ToolCluster::Execute,
-            agentdash_spi::ToolCluster::Collaboration,
-            agentdash_spi::ToolCluster::Canvas,
-        ]),
+        plan.vfs,
+        plan.effective_mcp_servers,
+        plan.flow_capabilities,
+        plan.effective_capability_keys,
         bootstrap_action,
     );
 
@@ -1447,7 +1413,7 @@ async fn build_task_owner_prompt_request(
         availability: state.services.backend_registry.as_ref(),
         vfs_service: state.services.vfs_service.as_ref(),
         contributor_registry: state.services.contributor_registry.as_ref(),
-        mcp_base_url: state.config.mcp_base_url.as_deref(),
+        platform_config: &state.config.platform_config,
     };
     let prepared = prepare_task_turn_context(
         &services,
@@ -1525,14 +1491,8 @@ async fn build_task_owner_prompt_request(
         prepared.workspace.as_ref(),
         vfs,
         runtime_mcp_servers_to_acp(&prepared.built.mcp_servers),
-        agentdash_spi::FlowCapabilities::from_clusters([
-            agentdash_spi::ToolCluster::Read,
-            agentdash_spi::ToolCluster::Write,
-            agentdash_spi::ToolCluster::Execute,
-            agentdash_spi::ToolCluster::Workflow,
-            agentdash_spi::ToolCluster::Collaboration,
-            agentdash_spi::ToolCluster::Canvas,
-        ]),
+        prepared.flow_capabilities,
+        prepared.effective_capability_keys,
         bootstrap_action,
     );
 

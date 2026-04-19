@@ -109,6 +109,7 @@ pub fn hook_trigger_key(trigger: &HookTrigger) -> &'static str {
         HookTrigger::BeforeCompact => "before_compact",
         HookTrigger::AfterCompact => "after_compact",
         HookTrigger::BeforeProviderRequest => "before_provider_request",
+        HookTrigger::CapabilityChanged => "capability_changed",
     }
 }
 

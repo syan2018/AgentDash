@@ -226,6 +226,30 @@ impl HookPendingAction {
     }
 }
 
+/// 能力变更增量 — 记录 step transition 前后的能力集差异。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct CapabilityDelta {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl CapabilityDelta {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+
+    /// 比较旧能力集和新能力集，产出 delta。
+    pub fn compute(
+        old_caps: &std::collections::BTreeSet<String>,
+        new_caps: &std::collections::BTreeSet<String>,
+    ) -> Self {
+        let added: Vec<String> = new_caps.difference(old_caps).cloned().collect();
+        let removed: Vec<String> = old_caps.difference(new_caps).cloned().collect();
+        Self { added, removed }
+    }
+}
+
 /// Hook Session 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
 /// 具体实现（`HookSessionRuntime`）位于 application 层。
 #[async_trait]
@@ -264,6 +288,19 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn update_token_stats(&self, stats: ContextTokenStats);
     /// 读取当前 token 统计。
     fn token_stats(&self) -> ContextTokenStats;
+
+    /// 读取当前生效的能力 key 集合。
+    fn current_capabilities(&self) -> std::collections::BTreeSet<String> {
+        Default::default()
+    }
+
+    /// 更新当前能力集并返回 delta（若有变更）。
+    fn update_capabilities(
+        &self,
+        _new_caps: std::collections::BTreeSet<String>,
+    ) -> Option<CapabilityDelta> {
+        None
+    }
 
     /// 订阅实时 trace 事件流。返回 None 表示此实现不支持 trace 广播。
     fn subscribe_traces(&self) -> Option<broadcast::Receiver<HookTraceEntry>> {
@@ -308,6 +345,8 @@ pub enum HookTrigger {
     AfterCompact,
     /// LLM API 请求发出前（仅观测，不改写 payload）
     BeforeProviderRequest,
+    /// 能力集发生变更（step transition / 动态注入后触发）
+    CapabilityChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

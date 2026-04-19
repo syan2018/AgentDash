@@ -259,6 +259,7 @@ pub async fn start_lifecycle_run(
         state.repos.lifecycle_definition_repo.clone(),
         state.repos.lifecycle_run_repo.clone(),
         state.repos.inline_file_repo.clone(),
+        state.config.platform_config.clone(),
     );
     if let Err(error) = orchestrator
         .after_node_advanced(run.id, run.project_id)

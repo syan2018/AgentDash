@@ -19,7 +19,7 @@ use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
     Vfs, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
-    HookTrigger, MountCapability, SessionHookRefreshQuery, ToolCluster,
+    HookTrigger, MountCapability, SessionHookRefreshQuery,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -373,6 +373,7 @@ impl CompanionRequestTool {
                     relay_mcp_server_names: Default::default(),
                     vfs: execution_slice.vfs.clone(),
                     flow_capabilities: Some(build_companion_flow_capabilities(slice_mode)),
+                    effective_capability_keys: None,
                     system_context: self.system_context.clone(),
                     bootstrap_action: crate::session::SessionBootstrapAction::OwnerContext,
                     identity: None,
@@ -1321,6 +1322,7 @@ impl CompanionRespondTool {
                                 relay_mcp_server_names: Default::default(),
                                 vfs: resume_vfs,
                                 flow_capabilities: None,
+                                effective_capability_keys: None,
                                 system_context: None,
                                 bootstrap_action: crate::session::SessionBootstrapAction::None,
                                 identity: None,
@@ -1908,17 +1910,14 @@ fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) 
 }
 
 fn build_companion_flow_capabilities(mode: CompanionSliceMode) -> FlowCapabilities {
-    match mode {
-        CompanionSliceMode::Full => FlowCapabilities::all(),
-        CompanionSliceMode::Compact => FlowCapabilities::from_clusters([
-            ToolCluster::Read,
-            ToolCluster::Execute,
-            ToolCluster::Collaboration,
-        ]),
-        CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
-            FlowCapabilities::from_clusters([ToolCluster::Read, ToolCluster::Collaboration])
-        }
-    }
+    use crate::capability::{CapabilityResolver, CompanionSliceMode as ResolverSliceMode};
+    let resolver_mode = match mode {
+        CompanionSliceMode::Full => ResolverSliceMode::Full,
+        CompanionSliceMode::Compact => ResolverSliceMode::Compact,
+        CompanionSliceMode::WorkflowOnly => ResolverSliceMode::WorkflowOnly,
+        CompanionSliceMode::ConstraintsOnly => ResolverSliceMode::ConstraintsOnly,
+    };
+    CapabilityResolver::resolve_companion_caps(resolver_mode)
 }
 
 fn filter_vfs_capabilities(

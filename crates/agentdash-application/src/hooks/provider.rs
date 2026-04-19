@@ -563,6 +563,16 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     &self.script_engine,
                 );
             }
+            HookTrigger::CapabilityChanged => {
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                    &self.script_engine,
+                );
+            }
         }
 
         Ok(resolution)

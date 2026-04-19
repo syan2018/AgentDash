@@ -9,6 +9,7 @@ use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionHubHandle,
@@ -90,8 +91,8 @@ pub struct TaskRuntime {
 
 /// 应用级配置
 pub struct AppConfig {
-    /// MCP 服务基础 URL（用于向 Agent 注入 MCP 端点信息）
-    pub mcp_base_url: Option<String>,
+    /// 进程级平台配置（MCP base URL 等不变量，`Arc` 共享避免逐层透传）
+    pub platform_config: SharedPlatformConfig,
     /// 当前宿主配置的认证模式
     pub auth_mode: AuthMode,
 }
@@ -212,6 +213,13 @@ impl AppState {
             ),
         );
 
+        let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
+            mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
+                let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
+                Some(format!("http://127.0.0.1:{port}"))
+            }),
+        });
+
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
 
@@ -230,6 +238,7 @@ impl AppState {
             session_hub_handle: session_hub_handle.clone(),
             inline_persister: Some(inline_persister),
             mcp_relay_provider: backend_registry.clone(),
+            platform_config: platform_config.clone(),
         })
         .await
         {
@@ -286,6 +295,7 @@ impl AppState {
                     workflow_repo.clone(),
                     workflow_repo.clone(),
                     inline_file_repo.clone(),
+                    platform_config.clone(),
                 ));
             session_hub.set_terminal_callback(orchestrator).await;
         }
@@ -323,10 +333,6 @@ impl AppState {
             }
         }
 
-        let mcp_base_url = std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
-            let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
-            Some(format!("http://127.0.0.1:{port}"))
-        });
         let auth_mode = resolve_configured_auth_mode()?;
 
         if plugin_registration.auth_provider.is_none() {
@@ -384,7 +390,7 @@ impl AppState {
             hub: session_hub.clone(),
             vfs_service: vfs_service.clone(),
             contributor_registry: contributor_registry.clone(),
-            mcp_base_url: mcp_base_url.clone(),
+            platform_config: platform_config.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             restart_tracker: restart_tracker.clone(),
@@ -413,7 +419,7 @@ impl AppState {
                 restart_tracker,
             },
             config: AppConfig {
-                mcp_base_url,
+                platform_config,
                 auth_mode,
             },
             auth_provider: plugin_registration.auth_provider,
@@ -433,7 +439,7 @@ impl AppState {
                 state.services.session_hub.clone(),
                 state.services.vfs_service.clone(),
                 state.services.connector.clone(),
-                state.config.mcp_base_url.clone(),
+                state.config.platform_config.clone(),
             ));
             // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）
             // SAFETY: 此时 state 的 Arc 引用计数为 1，get_mut 保证成功
@@ -503,6 +509,7 @@ struct PiAgentConnectorDeps {
         Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>,
     >,
     mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    platform_config: SharedPlatformConfig,
 }
 
 async fn build_pi_agent_connector(
@@ -527,6 +534,7 @@ async fn build_pi_agent_connector(
         deps.inline_file_repo,
         deps.session_hub_handle,
         deps.inline_persister,
+        deps.platform_config,
     )));
     connector.set_mcp_relay_provider(deps.mcp_relay_provider);
     Some(connector)

@@ -203,7 +203,10 @@ pub(crate) async fn build_project_session_context_response(
         .mcp_base_url
         .as_ref()
         .map(|base_url| {
-            vec![McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server()]
+            vec![
+                McpInjectionConfig::for_relay(base_url.clone(), project.id).to_acp_mcp_server(),
+                McpInjectionConfig::for_workflow(base_url.clone(), project.id).to_acp_mcp_server(),
+            ]
         })
         .unwrap_or_default();
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());

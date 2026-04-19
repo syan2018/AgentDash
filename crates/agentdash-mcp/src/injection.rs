@@ -67,6 +67,16 @@ impl McpInjectionConfig {
         }
     }
 
+    pub fn for_workflow(base_url: impl Into<String>, project_id: Uuid) -> Self {
+        Self {
+            base_url: base_url.into(),
+            scope: ToolScope::Workflow,
+            project_id,
+            story_id: None,
+            task_id: None,
+        }
+    }
+
     pub fn endpoint_url(&self) -> String {
         let base = self.base_url.trim_end_matches('/');
         match self.scope {
@@ -79,6 +89,7 @@ impl McpInjectionConfig {
                 let task_id = self.task_id.expect("Task 层必须提供 task_id");
                 format!("{base}/mcp/task/{task_id}")
             }
+            ToolScope::Workflow => format!("{base}/mcp/workflow/{}", self.project_id),
         }
     }
 
@@ -93,6 +104,10 @@ impl McpInjectionConfig {
                 "agentdash-task-tools-{}",
                 &self.task_id.unwrap().to_string()[..8]
             ),
+            ToolScope::Workflow => format!(
+                "agentdash-workflow-tools-{}",
+                &self.project_id.to_string()[..8]
+            ),
         }
     }
 
@@ -102,11 +117,13 @@ impl McpInjectionConfig {
             ToolScope::Relay => "relay",
             ToolScope::Story => "story",
             ToolScope::Task => "task",
+            ToolScope::Workflow => "workflow",
         };
         let tool_desc = match self.scope {
             ToolScope::Relay => "项目管理、Story 创建与状态变更",
             ToolScope::Story => "Story 上下文管理、Task 创建与批量拆解、状态推进",
             ToolScope::Task => "Task 状态更新、执行产物上报、兄弟 Task 查看、Story 上下文读取",
+            ToolScope::Workflow => "Workflow/Lifecycle 定义的查看、创建与编辑",
         };
 
         format!(

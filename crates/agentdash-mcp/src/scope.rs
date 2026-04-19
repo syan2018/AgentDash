@@ -13,6 +13,8 @@ pub enum ToolScope {
     Story,
     /// Task 层：面向执行 Agent，支持 Task 状态更新与产物上报
     Task,
+    /// Workflow 层：面向拥有 workflow_management 能力的 Agent，支持 Workflow/Lifecycle CRUD
+    Workflow,
 }
 
 /// MCP 会话上下文

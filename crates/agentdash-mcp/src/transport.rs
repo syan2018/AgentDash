@@ -34,7 +34,7 @@ use rmcp::transport::{
 };
 use uuid::Uuid;
 
-use crate::servers::{RelayMcpServer, StoryMcpServer, TaskMcpServer};
+use crate::servers::{RelayMcpServer, StoryMcpServer, TaskMcpServer, WorkflowMcpServer};
 use crate::services::McpServices;
 
 /// 创建 Relay 层的 Streamable HTTP 服务
@@ -114,6 +114,7 @@ struct McpHttpRouterState {
     services: Arc<McpServices>,
     story_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<StoryMcpServer>>>>,
     task_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<TaskMcpServer>>>>,
+    workflow_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<WorkflowMcpServer>>>>,
 }
 
 impl McpHttpRouterState {
@@ -122,6 +123,7 @@ impl McpHttpRouterState {
             services,
             story_services: Arc::new(Mutex::new(HashMap::new())),
             task_services: Arc::new(Mutex::new(HashMap::new())),
+            workflow_services: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -225,6 +227,40 @@ impl McpHttpRouterState {
             .or_insert_with(|| service.clone())
             .clone())
     }
+
+    fn workflow_service(
+        &self,
+        project_id: Uuid,
+    ) -> Result<StreamableHttpService<WorkflowMcpServer>, (StatusCode, String)> {
+        if let Some(service) = self
+            .workflow_services
+            .lock()
+            .expect("workflow service cache lock poisoned")
+            .get(&project_id)
+            .cloned()
+        {
+            return Ok(service);
+        }
+
+        let service = StreamableHttpService::new(
+            {
+                let services = self.services.clone();
+                move || Ok(WorkflowMcpServer::new(services.clone(), project_id))
+            },
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default(),
+        );
+
+        let mut guard = self
+            .workflow_services
+            .lock()
+            .expect("workflow service cache lock poisoned");
+
+        Ok(guard
+            .entry(project_id)
+            .or_insert_with(|| service.clone())
+            .clone())
+    }
 }
 
 async fn handle_story_mcp(
@@ -244,6 +280,17 @@ async fn handle_task_mcp(
     request: Request<Body>,
 ) -> impl IntoResponse {
     match state.task_service(task_id).await {
+        Ok(service) => service.handle(request).await.into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn handle_workflow_mcp(
+    state: Arc<McpHttpRouterState>,
+    project_id: Uuid,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    match state.workflow_service(project_id) {
         Ok(service) => service.handle(request).await.into_response(),
         Err(error) => error.into_response(),
     }
@@ -284,6 +331,16 @@ impl McpRouterBuilder {
                     move |Path(task_id): Path<Uuid>, request: Request<Body>| {
                         let state = state.clone();
                         async move { handle_task_mcp(state, task_id, request).await }
+                    }
+                }),
+            )
+            .route(
+                "/mcp/workflow/{project_id}",
+                any({
+                    let state = http_state.clone();
+                    move |Path(project_id): Path<Uuid>, request: Request<Body>| {
+                        let state = state.clone();
+                        async move { handle_workflow_mcp(state, project_id, request).await }
                     }
                 }),
             )

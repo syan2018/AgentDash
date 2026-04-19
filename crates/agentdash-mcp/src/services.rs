@@ -4,6 +4,10 @@ use agentdash_domain::{
     project::ProjectRepository,
     story::StoryRepository,
     task::{TaskAggregateCommandRepository, TaskRepository},
+    workflow::{
+        LifecycleDefinitionRepository, WorkflowAssignmentRepository,
+        WorkflowDefinitionRepository,
+    },
     workspace::WorkspaceRepository,
 };
 
@@ -23,4 +27,7 @@ pub struct McpServices {
     pub task_repo: Arc<dyn TaskRepository>,
     pub task_command_repo: Arc<dyn TaskAggregateCommandRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
+    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
 }

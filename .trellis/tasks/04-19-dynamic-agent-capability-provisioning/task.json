@@ -1,0 +1,42 @@
+{
+  "id": "dynamic-agent-capability-provisioning",
+  "name": "dynamic-agent-capability-provisioning",
+  "title": "动态 Agent 能力管线 — 基于 Lifecycle 的工具自动供给",
+  "description": "实现 Lifecycle step 级的动态工具供给能力。当 Agent 进入某个 lifecycle step 时，根据该 step 或其绑定 workflow 的声明，自动挂载/卸载对应的 MCP server 和 AgentTools。同时支持 tool capability 变更时的自动追踪更新。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "application + executor + spi",
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": null,
+  "createdAt": "2026-04-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    { "phase": 0, "action": "brainstorm" },
+    { "phase": 1, "action": "implement" },
+    { "phase": 2, "action": "check" }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "设计 capability 声明协议（WorkflowContract 中的 tool_capabilities 字段或独立配置）",
+    "实现 step 切换时的工具动态加载/卸载逻辑",
+    "实现 Agent 定义中的 capabilities 字段支持",
+    "实现 tool capability 变更追踪（当可用工具增删时自动更新 session 工具集）",
+    "实现 tool capability 变更相关 hooks 用于触发工具说明注入（重大重构，需要把原本Agent内嵌的Tool说明生成逻辑抽出来，变成系统逻辑；但如果直接沉降到 agent 层似乎也不是不行）",
+    "WorkflowMcpServer 的 capability flag 门控（workflow_management）",
+    "集成测试：step 切换触发工具变更"
+  ],
+  "relatedFiles": [
+    "crates/agentdash-domain/src/workflow/value_objects.rs",
+    "crates/agentdash-application/src/workflow/orchestrator.rs",
+    "crates/agentdash-application/src/vfs/tools/provider.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
+    "crates/agentdash-spi/src/connector.rs"
+  ],
+  "notes": "前置依赖：04-19-session-tool-capability-pipeline（需要先收口工具注入管线才能做动态化）。目标状态：lifecycle 的某个 step 可以声明 \"此步骤的 Agent 需要 workflow_management 能力\"，orchestrator 自动挂载 WorkflowMcpServer。"
+}

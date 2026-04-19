@@ -1,0 +1,40 @@
+{
+  "id": "workflow-mcp-server",
+  "name": "workflow-mcp-server",
+  "title": "Workflow 管理 MCP Server — Agent 可用的工作流创建/编辑工具集",
+  "description": "实现 Project 级 MCP Server，让 Agent 直接通过工具调用创建和编辑 Workflow/Lifecycle，取代手写 JSON 模板的繁琐流程。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "application + mcp",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": null,
+  "createdAt": "2026-04-19",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    { "phase": 1, "action": "implement" },
+    { "phase": 2, "action": "check" },
+    { "phase": 3, "action": "finish" }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "创建 WorkflowMcpServer 结构体 + ServerHandler 实现",
+    "实现 5 个 MCP tool（list_workflows, get_workflow, get_lifecycle, upsert_workflow, upsert_lifecycle）",
+    "编写 server instructions 使用指南",
+    "hook_rules Rhai 脚本沙箱验证",
+    "在 tool provider 管线中注册 WorkflowMcpServer",
+    "集成测试 + schema 兼容性测试"
+  ],
+  "relatedFiles": [
+    "crates/agentdash-mcp/src/servers/story.rs",
+    "crates/agentdash-application/src/workflow/catalog.rs",
+    "crates/agentdash-application/src/workflow/definition.rs",
+    "crates/agentdash-application/src/vfs/tools/provider.rs"
+  ],
+  "notes": ""
+}

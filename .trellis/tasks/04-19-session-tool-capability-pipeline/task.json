@@ -1,11 +1,11 @@
 {
   "id": "session-tool-capability-pipeline",
   "name": "session-tool-capability-pipeline",
-  "title": "Session 工具能力 / 上下文提供管线收口",
-  "description": "梳理并统一 session 级工具注入、上下文提供、MCP server 挂载的管线。明确每类工具（VFS tools, Workflow tools, Companion tools, Story MCP, Relay MCP）的注入时机、可见性条件和生命周期，消除当前 ProjectAgent 中 Story 管理工具 \"莫名其妙注入\" 的问题。",
+  "title": "Session 工具能力管线收口",
+  "description": "建立显式的 ToolCapability 声明模型，引入 CapabilityResolver 统一治理工具注入。消除 FlowCapabilities 硬编码和 MCP 注入的隐式逻辑，让每个 session 的工具集由 (session owner type, agent config, active workflow) 三元组声明式驱动。",
   "status": "planning",
   "dev_type": "refactor",
-  "scope": "application + executor + mcp",
+  "scope": "spi + application + mcp",
   "priority": "P1",
   "creator": "cursor-agent",
   "assignee": null,
@@ -23,19 +23,26 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [
-    "盘点当前所有工具注入路径（ToolProvider.build_tools / MCP server 挂载 / 内置 AgentTool）",
-    "明确每类工具的可见性规则（哪些 session 能看到哪些工具）",
-    "统一 MCP server 注册/卸载生命周期",
-    "为 Story MCP tools 建立明确的注入条件（而非硬编码到 ProjectAgent）",
-    "定义 tool capability 声明协议（为后续动态能力管线铺路）",
-    "文档化工具管线架构"
+    "[1a] 在 agentdash-spi 中定义 ToolCapability 枚举 + ToolCluster/MCP scope 映射",
+    "[1a] 定义 CapabilityVisibilityRule 与默认 visibility 矩阵",
+    "[1a] 实现 CapabilityResolver：(session owner type, agent config, workflow) -> (FlowCapabilities, Vec<McpInjectionConfig>)",
+    "[1b] 收口 routine/executor.rs — Project Agent 的 FlowCapabilities 改为 resolver 驱动",
+    "[1b] 收口 routine/executor.rs — Project Agent 的 MCP 注入改为基于 effective capabilities",
+    "[1b] WorkflowMcpServer 基于 workflow_management capability 条件注入",
+    "[1c] 收口 task/gateway/turn_context.rs — Task session 的 MCP 注入改为 resolver 驱动",
+    "[1c] 收口 task/session_runtime_inputs.rs — MCP server 列表改为 resolver 产出",
+    "[1d] 新建 .trellis/spec/backend/tool-capability-pipeline.md 文档化管线架构",
+    "CapabilityResolver 单元测试：覆盖所有 session 类型 x capability 组合"
   ],
   "relatedFiles": [
+    "crates/agentdash-spi/src/connector.rs",
+    "crates/agentdash-application/src/routine/executor.rs",
+    "crates/agentdash-application/src/task/gateway/turn_context.rs",
+    "crates/agentdash-application/src/task/session_runtime_inputs.rs",
     "crates/agentdash-application/src/vfs/tools/provider.rs",
-    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
-    "crates/agentdash-mcp/src/servers/story.rs",
-    "crates/agentdash-mcp/src/servers/relay.rs",
-    "crates/agentdash-mcp/src/servers/task.rs"
+    "crates/agentdash-mcp/src/injection.rs",
+    "crates/agentdash-mcp/src/scope.rs",
+    "crates/agentdash-application/src/runtime.rs"
   ],
-  "notes": "关键问题：当前 Story MCP tools 注入到 ProjectAgent 的方式不够显式，需要收口为基于条件的声明式注入。"
+  "notes": "ToolCapability 协议设计见 prd.md。Phase 1 全量实施（1a-1d），不做子集裁剪。完成后为 04-19-dynamic-agent-capability-provisioning (P2) 铺路。"
 }

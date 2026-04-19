@@ -2,10 +2,10 @@
   "id": "dynamic-agent-capability-provisioning",
   "name": "dynamic-agent-capability-provisioning",
   "title": "动态 Agent 能力管线 — 基于 Lifecycle 的工具自动供给",
-  "description": "实现 Lifecycle step 级的动态工具供给能力。当 Agent 进入某个 lifecycle step 时，根据该 step 或其绑定 workflow 的声明，自动挂载/卸载对应的 MCP server 和 AgentTools。同时支持 tool capability 变更时的自动追踪更新。",
+  "description": "在 Phase 1 的 ToolCapability 声明模型基础上，实现 lifecycle step 级的动态工具供给。agent_node 创建新 session 时由 CapabilityResolver 直接产出正确工具集；phase_node 在 session 内切换时，通过 hook 管线注入 capability 变更通知。核心原则：能力说明通过 hook 管线注入（初始化/变化时），而非直接修改 tool desc 上下文。",
   "status": "planning",
   "dev_type": "feature",
-  "scope": "application + executor + spi",
+  "scope": "domain + application + executor + spi",
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": null,
@@ -23,20 +23,26 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [
-    "设计 capability 声明协议（WorkflowContract 中的 tool_capabilities 字段或独立配置）",
-    "实现 step 切换时的工具动态加载/卸载逻辑",
-    "实现 Agent 定义中的 capabilities 字段支持",
-    "实现 tool capability 变更追踪（当可用工具增删时自动更新 session 工具集）",
-    "实现 tool capability 变更相关 hooks 用于触发工具说明注入（重大重构，需要把原本Agent内嵌的Tool说明生成逻辑抽出来，变成系统逻辑；但如果直接沉降到 agent 层似乎也不是不行）",
-    "WorkflowMcpServer 的 capability flag 门控（workflow_management）",
-    "集成测试：step 切换触发工具变更"
+    "[2.1] 扩展 LifecycleStepDefinition — 新增 capabilities: Option<Vec<ToolCapability>> 字段",
+    "[2.1] 定义 step capability 继承规则：无声明时继承 workflow 级，有声明时 union 合并",
+    "[2.2] 新增 session_init hook — 首次进入 step 时注入 effective capabilities 说明",
+    "[2.2] 新增 capability_changed hook — step 切换导致 capabilities 变更时注入 delta 通知",
+    "[2.3] phase_node mid-session 处理：hook runtime 检测 step transition → 计算 CapabilityDelta → 注入通知",
+    "[2.3] phase_node MCP 变更：通过 ACP session update 通知 MCP server 列表变更",
+    "[2.4] agent_node session 创建：Orchestrator 使用 CapabilityResolver 传入 step 的 effective capabilities",
+    "[2.5] HookSessionRuntime 维护 current_capabilities + CapabilityDelta 计算",
+    "集成测试：step 切换触发工具变更（agent_node + phase_node 两种场景）"
   ],
   "relatedFiles": [
     "crates/agentdash-domain/src/workflow/value_objects.rs",
+    "crates/agentdash-domain/src/workflow/entity.rs",
     "crates/agentdash-application/src/workflow/orchestrator.rs",
-    "crates/agentdash-application/src/vfs/tools/provider.rs",
+    "crates/agentdash-application/src/workflow/run.rs",
+    "crates/agentdash-spi/src/connector.rs",
+    "crates/agentdash-spi/src/hooks.rs",
+    "crates/agentdash-application/src/hooks/workflow_contribution.rs",
     "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
-    "crates/agentdash-spi/src/connector.rs"
+    "crates/agentdash-mcp/src/injection.rs"
   ],
-  "notes": "前置依赖：04-19-session-tool-capability-pipeline（需要先收口工具注入管线才能做动态化）。目标状态：lifecycle 的某个 step 可以声明 \"此步骤的 Agent 需要 workflow_management 能力\"，orchestrator 自动挂载 WorkflowMcpServer。"
+  "notes": "前置依赖：04-19-session-tool-capability-pipeline (P1) — ToolCapability 枚举 + CapabilityResolver 必须先就位。核心设计：能力通知走 hook 管线而非直接 tool mutation。Lifecycle session 模型：agent_node = 新 session, phase_node = session 内切换。"
 }

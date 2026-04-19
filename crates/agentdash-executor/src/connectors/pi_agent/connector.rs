@@ -2,7 +2,7 @@
 ///
 /// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -51,7 +51,15 @@ pub struct PiAgentConnector {
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
     system_prompt: String,
-    agents: Arc<Mutex<HashMap<String, Agent>>>,
+    agents: Arc<Mutex<HashMap<String, PiAgentSessionRuntime>>>,
+}
+
+struct PiAgentSessionRuntime {
+    agent: Agent,
+    /// runtime tool provider 产出的基础工具（不含 MCP）。
+    runtime_base_tools: Vec<DynAgentTool>,
+    /// 当前生效的 MCP 工具集合（直连 + relay）。
+    mcp_tools: Vec<DynAgentTool>,
 }
 
 struct ProviderRuntimeState {
@@ -641,14 +649,18 @@ impl AgentConnector for PiAgentConnector {
             .as_ref()
             .map(|state| state.messages.clone());
 
-        let existing_agent = {
+        let existing_runtime = {
             let mut agents = self.agents.lock().await;
             agents.remove(session_id)
         };
 
-        let is_new_agent = existing_agent.is_none();
-        let mut agent = if let Some(agent) = existing_agent {
-            agent
+        let is_new_agent = existing_runtime.is_none();
+        let mut runtime_base_tools: Vec<DynAgentTool> = Vec::new();
+        let mut mcp_tools_runtime: Vec<DynAgentTool> = Vec::new();
+        let mut agent = if let Some(runtime) = existing_runtime {
+            runtime_base_tools = runtime.runtime_base_tools;
+            mcp_tools_runtime = runtime.mcp_tools;
+            runtime.agent
         } else {
             let provider_state = self.load_provider_runtime_state().await;
             if !provider_state.is_configured() {
@@ -699,9 +711,11 @@ impl AgentConnector for PiAgentConnector {
                     "PiAgentConnector 未配置 runtime tool provider".to_string(),
                 )
             })?;
-            runtime_tools.extend(provider.build_tools(&context).await?);
-            runtime_tools.extend(mcp_tools);
-            runtime_tools.extend(relay_mcp_tools);
+            runtime_base_tools = provider.build_tools(&context).await?;
+            mcp_tools_runtime.extend(mcp_tools);
+            mcp_tools_runtime.extend(relay_mcp_tools);
+            runtime_tools.extend(runtime_base_tools.iter().cloned());
+            runtime_tools.extend(mcp_tools_runtime.iter().cloned());
             let tool_names = runtime_tools
                 .iter()
                 .map(|tool| tool.name().to_string())
@@ -730,7 +744,14 @@ impl AgentConnector for PiAgentConnector {
         self.agents
             .lock()
             .await
-            .insert(session_id_owned.clone(), agent);
+            .insert(
+                session_id_owned.clone(),
+                PiAgentSessionRuntime {
+                    agent,
+                    runtime_base_tools,
+                    mcp_tools: mcp_tools_runtime,
+                },
+            );
 
         let mut source = AgentDashSourceV1::new(self.connector_id(), "local_executor");
         source.executor_id = Some("PI_AGENT".to_string());
@@ -840,8 +861,8 @@ impl AgentConnector for PiAgentConnector {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        if let Some(agent) = self.agents.lock().await.get(session_id) {
-            agent.abort();
+        if let Some(runtime) = self.agents.lock().await.get(session_id) {
+            runtime.agent.abort();
         }
         Ok(())
     }
@@ -852,10 +873,11 @@ impl AgentConnector for PiAgentConnector {
         tool_call_id: &str,
     ) -> Result<(), ConnectorError> {
         let agents = self.agents.lock().await;
-        let agent = agents.get(session_id).ok_or_else(|| {
+        let runtime = agents.get(session_id).ok_or_else(|| {
             ConnectorError::Runtime(format!("session `{session_id}` 当前没有活跃的 Pi Agent"))
         })?;
-        agent
+        runtime
+            .agent
             .approve_tool_call(tool_call_id)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))
@@ -868,13 +890,83 @@ impl AgentConnector for PiAgentConnector {
         reason: Option<String>,
     ) -> Result<(), ConnectorError> {
         let agents = self.agents.lock().await;
-        let agent = agents.get(session_id).ok_or_else(|| {
+        let runtime = agents.get(session_id).ok_or_else(|| {
             ConnectorError::Runtime(format!("session `{session_id}` 当前没有活跃的 Pi Agent"))
         })?;
-        agent
+        runtime
+            .agent
             .reject_tool_call(tool_call_id, reason)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))
+    }
+
+    async fn update_session_mcp_servers(
+        &self,
+        session_id: &str,
+        mcp_servers: Vec<agent_client_protocol::McpServer>,
+    ) -> Result<(), ConnectorError> {
+        let (relay_server_names, direct_servers) =
+            self.partition_mcp_servers(&mcp_servers, &Default::default());
+
+        let mcp_tools = match discover_mcp_tools(&direct_servers).await {
+            Ok(tools) => tools,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    "MCP 热更新：发现直连 MCP 工具失败: {error}"
+                );
+                Vec::new()
+            }
+        };
+        let relay_mcp_tools = if let Some(relay) = &self.mcp_relay_provider {
+            crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
+                relay.clone(),
+                &relay_server_names,
+            )
+            .await
+        } else {
+            Vec::new()
+        };
+
+        let mut new_mcp_tools: Vec<agentdash_agent::DynAgentTool> = Vec::new();
+        new_mcp_tools.extend(mcp_tools);
+        new_mcp_tools.extend(relay_mcp_tools);
+
+        let mut agents = self.agents.lock().await;
+        let runtime = agents.get_mut(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 当前没有活跃的 Pi Agent，无法热更新 MCP"
+            ))
+        })?;
+
+        let old_names: BTreeSet<String> = runtime
+            .mcp_tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        let new_names: BTreeSet<String> = new_mcp_tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
+        runtime.mcp_tools = new_mcp_tools;
+        let mut merged_tools = runtime.runtime_base_tools.clone();
+        merged_tools.extend(runtime.mcp_tools.iter().cloned());
+        let tool_count = runtime.mcp_tools.len();
+        runtime.agent.set_tools(merged_tools);
+
+        let added: Vec<String> = new_names.difference(&old_names).cloned().collect();
+        let removed: Vec<String> = old_names.difference(&new_names).cloned().collect();
+
+        tracing::info!(
+            session_id = %session_id,
+            added = ?added,
+            removed = ?removed,
+            new_mcp_tool_count = tool_count,
+            "MCP 热更新完成（replace-set）"
+        );
+
+        Ok(())
     }
 }
 
@@ -1056,6 +1148,51 @@ mod tests {
             _context: &ExecutionContext,
         ) -> Result<Vec<agentdash_spi::DynAgentTool>, ConnectorError> {
             Ok(Vec::new())
+        }
+    }
+
+    struct StaticTool {
+        name: String,
+    }
+
+    impl StaticTool {
+        fn named(name: &str) -> agentdash_spi::DynAgentTool {
+            Arc::new(Self {
+                name: name.to_string(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl agentdash_spi::AgentTool for StaticTool {
+        fn name(&self) -> &str {
+            self.name.as_str()
+        }
+
+        fn description(&self) -> &str {
+            "static test tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            })
+        }
+
+        async fn execute(
+            &self,
+            _tool_use_id: &str,
+            _args: serde_json::Value,
+            _cancel: tokio_util::sync::CancellationToken,
+            _update: Option<agentdash_spi::ToolUpdateCallback>,
+        ) -> Result<agentdash_spi::AgentToolResult, agentdash_spi::AgentToolError> {
+            Ok(agentdash_spi::AgentToolResult {
+                content: vec![agentdash_spi::ContentPart::text("ok")],
+                is_error: false,
+                details: None,
+            })
         }
     }
 
@@ -2195,5 +2332,52 @@ mod tests {
         assert_eq!(request.messages[0].first_text(), Some("历史用户消息"));
         assert_eq!(request.messages[1].first_text(), Some("历史助手消息"));
         assert_eq!(request.messages[2].first_text(), Some("新的用户消息"));
+    }
+
+    #[tokio::test]
+    async fn update_session_mcp_servers_replaces_previous_mcp_tools() {
+        let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
+
+        let base_tool = StaticTool::named("fs_read");
+        let old_mcp_tool = StaticTool::named("mcp_tool_old");
+
+        let mut agent = Agent::new(
+            Arc::new(NoopBridge),
+            agentdash_agent::AgentConfig::default(),
+        );
+        agent.set_tools(vec![base_tool.clone(), old_mcp_tool.clone()]);
+
+        connector.agents.lock().await.insert(
+            "session-replace-mcp".to_string(),
+            PiAgentSessionRuntime {
+                agent,
+                runtime_base_tools: vec![base_tool.clone()],
+                mcp_tools: vec![old_mcp_tool],
+            },
+        );
+
+        connector
+            .update_session_mcp_servers("session-replace-mcp", vec![])
+            .await
+            .expect("replace-set should succeed");
+
+        let agents = connector.agents.lock().await;
+        let runtime = agents
+            .get("session-replace-mcp")
+            .expect("runtime should exist");
+        assert!(
+            runtime.mcp_tools.is_empty(),
+            "MCP tool set should be fully replaced by empty target set"
+        );
+        let state = runtime
+            .agent
+            .try_state()
+            .expect("agent state should be readable");
+        let names: Vec<String> = state
+            .tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        assert_eq!(names, vec!["fs_read".to_string()]);
     }
 }

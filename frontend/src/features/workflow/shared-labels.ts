@@ -1,7 +1,6 @@
 import type {
   LifecycleExecutionEventKind,
   WorkflowDefinitionSource,
-  WorkflowDefinitionStatus,
   WorkflowRunStatus,
   WorkflowStepExecutionStatus,
   WorkflowTargetKind,
@@ -36,12 +35,6 @@ export const DEFINITION_SOURCE_LABEL: Record<WorkflowDefinitionSource, string> =
   builtin_seed: "Built-in",
   user_authored: "User Authored",
   cloned: "Cloned",
-};
-
-export const DEFINITION_STATUS_LABEL: Record<WorkflowDefinitionStatus, string> = {
-  draft: "Draft",
-  active: "Active",
-  disabled: "Disabled",
 };
 
 export const EXECUTION_EVENT_KIND_LABEL: Record<LifecycleExecutionEventKind, string> = {

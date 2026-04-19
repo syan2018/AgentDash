@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleStepDefinition, WorkflowBindingKind,
@@ -50,12 +51,13 @@ pub struct BuiltinWorkflowBundle {
 }
 
 impl BuiltinWorkflowTemplateBundle {
-    pub fn build_bundle(&self) -> Result<BuiltinWorkflowBundle, String> {
+    pub fn build_bundle(&self, project_id: Uuid) -> Result<BuiltinWorkflowBundle, String> {
         let workflows = self
             .workflows
             .iter()
             .map(|template| {
                 let mut definition = WorkflowDefinition::new(
+                    project_id,
                     template.key.clone(),
                     template.name.clone(),
                     template.description.clone(),
@@ -69,6 +71,7 @@ impl BuiltinWorkflowTemplateBundle {
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut lifecycle = LifecycleDefinition::new(
+            project_id,
             self.lifecycle.key.clone(),
             self.lifecycle.name.clone(),
             self.lifecycle.description.clone(),
@@ -108,10 +111,13 @@ pub fn get_builtin_workflow_template(
     Ok(template)
 }
 
-pub fn build_builtin_workflow_bundle(builtin_key: &str) -> Result<BuiltinWorkflowBundle, String> {
+pub fn build_builtin_workflow_bundle(
+    project_id: Uuid,
+    builtin_key: &str,
+) -> Result<BuiltinWorkflowBundle, String> {
     let template = get_builtin_workflow_template(builtin_key)?
         .ok_or_else(|| format!("workflow template 不存在: {builtin_key}"))?;
-    template.build_bundle()
+    template.build_bundle(project_id)
 }
 
 fn parse_builtin_workflow_template(raw: &str) -> Result<BuiltinWorkflowTemplateBundle, String> {
@@ -145,7 +151,7 @@ mod tests {
     #[test]
     fn builtin_template_can_build_bundle() {
         let bundle =
-            build_builtin_workflow_bundle(TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("build bundle");
+            build_builtin_workflow_bundle(Uuid::new_v4(), TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("build bundle");
 
         assert_eq!(bundle.lifecycle.key, TRELLIS_DEV_TASK_TEMPLATE_KEY);
         assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Task);

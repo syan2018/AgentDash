@@ -360,7 +360,6 @@ impl AppState {
             agent_link_repo: agent_repo,
             workflow_definition_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
-            workflow_assignment_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo,
             routine_repo: routine_repo.clone(),
             routine_execution_repo: routine_execution_repo.clone(),

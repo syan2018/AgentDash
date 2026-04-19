@@ -17,7 +17,6 @@ import type {
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
-  DEFINITION_STATUS_LABEL,
   TARGET_KIND_LABEL,
 } from "./shared-labels";
 import { BindingEditor } from "./binding-editor";
@@ -564,12 +563,7 @@ export function WorkflowEditor() {
         <div className="flex items-center gap-2">
           {isDirty && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700">未保存</span>}
           {currentDefinition && (
-            <>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${currentDefinition.status === "active" ? "border-emerald-300/40 bg-emerald-500/10 text-emerald-700" : "border-border bg-secondary/40 text-muted-foreground"}`}>
-                {DEFINITION_STATUS_LABEL[currentDefinition.status]}
-              </span>
-              <span className="text-[10px] text-muted-foreground">v{currentDefinition.version}</span>
-            </>
+            <span className="text-[10px] text-muted-foreground">v{currentDefinition.version}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

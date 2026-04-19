@@ -4,7 +4,7 @@
 //! Workflow / Lifecycle 定义的完整 CRUD 能力。
 //!
 //! 每个 WorkflowMcpServer 实例绑定到一个具体 Project，
-//! upsert_lifecycle 会自动为当前 Project 创建 WorkflowAssignment。
+//! 定义直接归属 Project（project_id 字段），无需额外的 Assignment 间接层。
 
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleNodeType,
-    LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity, WorkflowAssignment,
+    LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
     WorkflowBindingKind, WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec,
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
     WorkflowHookTrigger, WorkflowInjectionSpec,
@@ -289,26 +289,6 @@ impl WorkflowMcpServer {
         Ok(lifecycle)
     }
 
-    /// 自动将 lifecycle 绑定到当前 Project。
-    async fn ensure_assignment(
-        &self,
-        lifecycle_id: Uuid,
-        role: WorkflowBindingRole,
-    ) -> Result<(), McpError> {
-        let repo = self.services.workflow_assignment_repo.as_ref();
-        let existing = repo
-            .list_by_project_and_role(self.project_id, role)
-            .await
-            .map_err(McpError::from)?;
-
-        if existing.iter().any(|a| a.lifecycle_id == lifecycle_id) {
-            return Ok(());
-        }
-
-        let assignment = WorkflowAssignment::new(self.project_id, lifecycle_id, role);
-        repo.create(&assignment).await.map_err(McpError::from)?;
-        Ok(())
-    }
 }
 
 // ─── 辅助转换 ─────────────────────────────────────────────────
@@ -474,26 +454,16 @@ impl WorkflowMcpServer {
         let workflows = self
             .services
             .workflow_definition_repo
-            .list_all()
+            .list_by_project(self.project_id)
             .await
             .map_err(|e| McpError::Internal(format!("加载 workflow 列表失败: {e}")))?;
 
         let lifecycles = self
             .services
             .lifecycle_definition_repo
-            .list_all()
-            .await
-            .map_err(|e| McpError::Internal(format!("加载 lifecycle 列表失败: {e}")))?;
-
-        let assignments = self
-            .services
-            .workflow_assignment_repo
             .list_by_project(self.project_id)
             .await
-            .map_err(|e| McpError::Internal(format!("加载 assignment 列表失败: {e}")))?;
-
-        let assigned_lifecycle_ids: std::collections::HashSet<Uuid> =
-            assignments.iter().map(|a| a.lifecycle_id).collect();
+            .map_err(|e| McpError::Internal(format!("加载 lifecycle 列表失败: {e}")))?;
 
         let result = serde_json::json!({
             "project_id": self.project_id.to_string(),
@@ -502,7 +472,6 @@ impl WorkflowMcpServer {
                 "name": w.name,
                 "description": w.description,
                 "binding_kind": w.binding_kind,
-                "status": w.status,
                 "source": w.source,
             })).collect::<Vec<_>>(),
             "lifecycles": lifecycles.iter().map(|l| serde_json::json!({
@@ -510,12 +479,10 @@ impl WorkflowMcpServer {
                 "name": l.name,
                 "description": l.description,
                 "binding_kind": l.binding_kind,
-                "status": l.status,
                 "source": l.source,
                 "entry_step_key": l.entry_step_key,
                 "step_count": l.steps.len(),
                 "edge_count": l.edges.len(),
-                "assigned_to_project": assigned_lifecycle_ids.contains(&l.id),
             })).collect::<Vec<_>>(),
         });
 
@@ -579,6 +546,7 @@ impl WorkflowMcpServer {
         let contract = build_contract(&params.contract)?;
 
         let mut definition = WorkflowDefinition::new(
+            self.project_id,
             params.key,
             params.name,
             params.description,
@@ -610,6 +578,7 @@ impl WorkflowMcpServer {
         let edges = build_edges(params.edges.as_deref().unwrap_or_default());
 
         let mut definition = LifecycleDefinition::new(
+            self.project_id,
             params.key,
             params.name,
             params.description,
@@ -627,20 +596,8 @@ impl WorkflowMcpServer {
 
         let saved = self.upsert_lifecycle_definition(definition).await?;
 
-        if let Err(e) = self
-            .ensure_assignment(saved.id, WorkflowBindingRole::from(binding_kind))
-            .await
-        {
-            tracing::warn!(
-                lifecycle_key = %saved.key,
-                project_id = %self.project_id,
-                error = %e,
-                "lifecycle 已保存但自动 assign 失败"
-            );
-        }
-
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Lifecycle `{}` 已保存并绑定到 Project {}（id={}, version={}, steps={}, edges={}）",
+            "Lifecycle `{}` 已保存（project={}, id={}, version={}, steps={}, edges={}）",
             saved.key,
             self.project_id,
             saved.id,
@@ -670,7 +627,7 @@ impl ServerHandler for WorkflowMcpServer {
 1. `list_workflows` — 查看现有定义
 2. `upsert_workflow_tool` — 先创建各步骤的 Workflow 定义
 3. `upsert_lifecycle_tool` — 再创建 Lifecycle，引用已有的 workflow_key
-4. Lifecycle 保存后自动绑定到当前 Project
+4. 所有定义自动归属当前 Project
 
 ## 注意事项
 

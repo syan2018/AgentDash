@@ -1,21 +1,23 @@
 use uuid::Uuid;
 
-use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowAssignment, WorkflowDefinition};
-use super::value_objects::{WorkflowBindingKind, WorkflowBindingRole, WorkflowDefinitionStatus};
+use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowDefinition};
+use super::value_objects::WorkflowBindingKind;
 use crate::common::error::DomainError;
-
-// NOTE: WorkflowBindingKind 仍然用于 Definition/Assignment 层（定义模板的目标类型标签）。
-// LifecycleRun 已改为通过 session_id 关联运行上下文。
 
 #[async_trait::async_trait]
 pub trait WorkflowDefinitionRepository: Send + Sync {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError>;
     async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError>;
-    async fn list_by_status(
+    async fn get_by_project_and_key(
         &self,
-        status: WorkflowDefinitionStatus,
+        project_id: Uuid,
+        key: &str,
+    ) -> Result<Option<WorkflowDefinition>, DomainError>;
+    async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
     ) -> Result<Vec<WorkflowDefinition>, DomainError>;
     async fn list_by_binding_kind(
         &self,
@@ -30,33 +32,21 @@ pub trait LifecycleDefinitionRepository: Send + Sync {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError>;
     async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_status(
+    async fn get_by_project_and_key(
         &self,
-        status: WorkflowDefinitionStatus,
+        project_id: Uuid,
+        key: &str,
+    ) -> Result<Option<LifecycleDefinition>, DomainError>;
+    async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
     ) -> Result<Vec<LifecycleDefinition>, DomainError>;
     async fn list_by_binding_kind(
         &self,
         binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<LifecycleDefinition>, DomainError>;
     async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
-    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-}
-
-#[async_trait::async_trait]
-pub trait WorkflowAssignmentRepository: Send + Sync {
-    async fn create(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowAssignment>, DomainError>;
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<WorkflowAssignment>, DomainError>;
-    async fn list_by_project_and_role(
-        &self,
-        project_id: Uuid,
-        role: WorkflowBindingRole,
-    ) -> Result<Vec<WorkflowAssignment>, DomainError>;
-    async fn update(&self, assignment: &WorkflowAssignment) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 

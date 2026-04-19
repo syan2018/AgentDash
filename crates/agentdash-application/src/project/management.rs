@@ -5,7 +5,6 @@ use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
-use agentdash_domain::workflow::{WorkflowAssignment, WorkflowAssignmentRepository};
 use agentdash_domain::workspace::WorkspaceRepository;
 
 #[derive(Debug, Clone, Default)]
@@ -94,17 +93,6 @@ pub fn build_cloned_project(
     cloned_project
 }
 
-pub fn clone_workflow_assignment(
-    target_project_id: Uuid,
-    assignment: &WorkflowAssignment,
-) -> WorkflowAssignment {
-    let mut cloned_assignment =
-        WorkflowAssignment::new(target_project_id, assignment.lifecycle_id, assignment.role);
-    cloned_assignment.enabled = assignment.enabled;
-    cloned_assignment.is_default = assignment.is_default;
-    cloned_assignment
-}
-
 pub async fn delete_project_aggregate(
     project_repo: &dyn ProjectRepository,
     story_repo: &dyn StoryRepository,
@@ -131,27 +119,9 @@ pub async fn delete_project_aggregate(
     Ok(())
 }
 
-pub async fn clone_project_assignments(
-    workflow_assignment_repo: &dyn WorkflowAssignmentRepository,
-    source_project_id: Uuid,
-    target_project_id: Uuid,
-) -> Result<(), agentdash_domain::DomainError> {
-    let assignments = workflow_assignment_repo
-        .list_by_project(source_project_id)
-        .await?;
-
-    for assignment in assignments {
-        let cloned_assignment = clone_workflow_assignment(target_project_id, &assignment);
-        workflow_assignment_repo.create(&cloned_assignment).await?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::workflow::WorkflowBindingRole;
 
     #[test]
     fn normalize_clone_name_rejects_blank_name() {
@@ -179,23 +149,5 @@ mod tests {
         assert_eq!(cloned.visibility, ProjectVisibility::Private);
         assert!(!cloned.is_template);
         assert_eq!(cloned.config.default_workspace_id, None);
-    }
-
-    #[test]
-    fn clone_workflow_assignment_preserves_flags_but_switches_project() {
-        let lifecycle_id = Uuid::new_v4();
-        let mut assignment =
-            WorkflowAssignment::new(Uuid::new_v4(), lifecycle_id, WorkflowBindingRole::Task);
-        assignment.enabled = false;
-        assignment.is_default = true;
-
-        let target_project_id = Uuid::new_v4();
-        let cloned = clone_workflow_assignment(target_project_id, &assignment);
-
-        assert_eq!(cloned.project_id, target_project_id);
-        assert_eq!(cloned.lifecycle_id, assignment.lifecycle_id);
-        assert_eq!(cloned.role, assignment.role);
-        assert_eq!(cloned.enabled, assignment.enabled);
-        assert_eq!(cloned.is_default, assignment.is_default);
     }
 }

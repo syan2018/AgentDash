@@ -10,21 +10,6 @@ import type {
   WorkflowTemplate,
 } from "../../types";
 
-function statusStyle(status: string): { bg: string; text: string } {
-  if (status === "active") return { bg: "bg-emerald-500/10 border-emerald-300/40", text: "text-emerald-700" };
-  if (status === "disabled") return { bg: "bg-amber-500/10 border-amber-300/40", text: "text-amber-700" };
-  return { bg: "bg-secondary/40 border-border", text: "text-muted-foreground" };
-}
-
-function StatusPill({ status, label }: { status: string; label: string }) {
-  const s = statusStyle(status);
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] ${s.bg} ${s.text}`}>
-      {label}
-    </span>
-  );
-}
-
 export function WorkflowTabView() {
   const navigate = useNavigate();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
@@ -36,10 +21,6 @@ export function WorkflowTabView() {
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const bootstrapTemplate = useWorkflowStore((s) => s.bootstrapTemplate);
-  const enableDefinition = useWorkflowStore((s) => s.enableDefinition);
-  const disableDefinition = useWorkflowStore((s) => s.disableDefinition);
-  const enableLifecycle = useWorkflowStore((s) => s.enableLifecycle);
-  const disableLifecycle = useWorkflowStore((s) => s.disableLifecycle);
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
   const removeDefinition = useWorkflowStore((s) => s.removeDefinition);
@@ -182,8 +163,6 @@ export function WorkflowTabView() {
               <LifecycleCardGrid
                 items={lifecycles}
                 onEdit={(lc) => navigate(`/lifecycle-editor/${lc.id}`)}
-                onEnable={(lc) => void enableLifecycle(lc.id)}
-                onDisable={(lc) => void disableLifecycle(lc.id)}
                 onDelete={(lc) => setConfirmDelete({ type: "lifecycle", id: lc.id, name: lc.name })}
               />
             )}
@@ -191,8 +170,6 @@ export function WorkflowTabView() {
               <WorkflowCardGrid
                 items={definitions}
                 onEdit={(wf) => void openEditDraft(wf.id)}
-                onEnable={(wf) => void enableDefinition(wf.id)}
-                onDisable={(wf) => void disableDefinition(wf.id)}
                 onDelete={(wf) => setConfirmDelete({ type: "workflow", id: wf.id, name: wf.name })}
               />
             )}
@@ -245,19 +222,13 @@ export function WorkflowTabView() {
 
 /* ─── Lifecycle 卡片网格 ─── */
 
-const STATUS_LABEL: Record<string, string> = { draft: "草稿", active: "已激活", disabled: "已停用" };
-
 function LifecycleCardGrid({
   items,
   onEdit,
-  onEnable,
-  onDisable,
   onDelete,
 }: {
   items: LifecycleDefinition[];
   onEdit: (lc: LifecycleDefinition) => void;
-  onEnable: (lc: LifecycleDefinition) => void;
-  onDisable: (lc: LifecycleDefinition) => void;
   onDelete: (lc: LifecycleDefinition) => void;
 }) {
   if (items.length === 0) {
@@ -279,10 +250,6 @@ function LifecycleCardGrid({
             onClick={() => onEdit(lc)}
             className="w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-all hover:border-primary/25 hover:bg-secondary/35"
           >
-            <div className="mb-2 flex items-center gap-1.5">
-              <StatusPill status={lc.status} label={STATUS_LABEL[lc.status] ?? lc.status} />
-            </div>
-
             <p className="truncate text-sm font-medium leading-6 text-foreground">{lc.name}</p>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{lc.key}</p>
             {lc.description && (
@@ -292,15 +259,6 @@ function LifecycleCardGrid({
             <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
               <span>{lc.steps.length} 个 Step</span>
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {lc.status === "active" ? (
-                  <span role="button" tabIndex={0} onClick={() => onDisable(lc)} onKeyDown={(e) => { if (e.key === "Enter") onDisable(lc); }} className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-amber-700 transition-colors hover:bg-amber-500/10">
-                    停用
-                  </span>
-                ) : (
-                  <span role="button" tabIndex={0} onClick={() => onEnable(lc)} onKeyDown={(e) => { if (e.key === "Enter") onEnable(lc); }} className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-emerald-700 transition-colors hover:bg-emerald-500/10">
-                    激活
-                  </span>
-                )}
                 <span
                   role="button"
                   tabIndex={0}
@@ -323,14 +281,10 @@ function LifecycleCardGrid({
 function WorkflowCardGrid({
   items,
   onEdit,
-  onEnable,
-  onDisable,
   onDelete,
 }: {
   items: WorkflowDefinition[];
   onEdit: (wf: WorkflowDefinition) => void;
-  onEnable: (wf: WorkflowDefinition) => void;
-  onDisable: (wf: WorkflowDefinition) => void;
   onDelete: (wf: WorkflowDefinition) => void;
 }) {
   if (items.length === 0) {
@@ -356,10 +310,6 @@ function WorkflowCardGrid({
             onClick={() => onEdit(wf)}
             className="w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-all hover:border-primary/25 hover:bg-secondary/35"
           >
-            <div className="mb-2 flex items-center gap-1.5">
-              <StatusPill status={wf.status} label={STATUS_LABEL[wf.status] ?? wf.status} />
-            </div>
-
             <p className="truncate text-sm font-medium leading-6 text-foreground">{wf.name}</p>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{wf.key}</p>
             {wf.description && (
@@ -374,15 +324,6 @@ function WorkflowCardGrid({
                 {bindCount + ruleCount + checkCount === 0 && <span>空 contract</span>}
               </div>
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {wf.status === "active" ? (
-                  <span role="button" tabIndex={0} onClick={() => onDisable(wf)} onKeyDown={(e) => { if (e.key === "Enter") onDisable(wf); }} className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-amber-700 transition-colors hover:bg-amber-500/10">
-                    停用
-                  </span>
-                ) : (
-                  <span role="button" tabIndex={0} onClick={() => onEnable(wf)} onKeyDown={(e) => { if (e.key === "Enter") onEnable(wf); }} className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-emerald-700 transition-colors hover:bg-emerald-500/10">
-                    激活
-                  </span>
-                )}
                 <span
                   role="button"
                   tabIndex={0}

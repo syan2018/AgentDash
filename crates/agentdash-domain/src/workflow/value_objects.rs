@@ -94,14 +94,6 @@ pub enum WorkflowDefinitionSource {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowDefinitionStatus {
-    Draft,
-    Active,
-    Disabled,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ValidationSeverity {
     Error,
     Warning,

@@ -10,7 +10,7 @@ mod session_association;
 pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
-pub use catalog::{AssignLifecycleCommand, WorkflowCatalogService};
+pub use catalog::WorkflowCatalogService;
 pub use completion::{
     WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
     evaluate_step_completion, session_terminal_state_tag, session_terminal_summary,

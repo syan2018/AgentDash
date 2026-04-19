@@ -14,7 +14,7 @@ use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository,
     WorkflowDefinitionRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
@@ -42,7 +42,6 @@ pub struct RepositorySet {
     pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    pub workflow_assignment_repo: Arc<dyn WorkflowAssignmentRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,

@@ -81,6 +81,7 @@ mod tests {
             ..WorkflowContract::default()
         };
         let definition = WorkflowDefinition::new(
+            Uuid::new_v4(),
             "trellis_dev_task_implement",
             "Trellis Dev Workflow / Implement",
             "workflow desc",
@@ -97,7 +98,9 @@ mod tests {
             output_ports: vec![],
             input_ports: vec![],
         };
+        let project_id = Uuid::new_v4();
         let lifecycle = LifecycleDefinition::new(
+            project_id,
             "trellis_dev_task",
             "Trellis Dev Lifecycle",
             "lifecycle desc",
@@ -108,7 +111,6 @@ mod tests {
             vec![],
         )
         .expect("lifecycle definition should build");
-        let project_id = Uuid::new_v4();
         let mut run = LifecycleRun::new(
             project_id,
             lifecycle.id,

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application::project::{
     ProjectAuthorizationContext, ProjectAuthorizationService, ProjectMutationInput,
-    apply_project_mutation, build_cloned_project, build_project, clone_project_assignments,
+    apply_project_mutation, build_cloned_project, build_project,
     delete_project_aggregate, normalize_clone_name,
 };
 use axum::Json;
@@ -267,23 +267,6 @@ pub async fn clone_project(
     validate_project_contract(&cloned_project)?;
 
     state.repos.project_repo.create(&cloned_project).await?;
-    if let Err(err) = clone_project_assignments(
-        state.repos.workflow_assignment_repo.as_ref(),
-        source_project.id,
-        cloned_project.id,
-    )
-    .await
-    .map_err(ApiError::from)
-    {
-        tracing::error!(
-            source_project_id = %source_project.id,
-            cloned_project_id = %cloned_project.id,
-            error = %err,
-            "复制 Project workflow assignments 失败，开始回滚新建副本"
-        );
-        cleanup_cloned_project(state.as_ref(), cloned_project.id).await;
-        return Err(err);
-    }
 
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, cloned_project).await?,
@@ -632,38 +615,6 @@ async fn project_response_for_user(
 }
 
 async fn cleanup_cloned_project(state: &AppState, project_id: Uuid) {
-    match state
-        .repos
-        .workflow_assignment_repo
-        .list_by_project(project_id)
-        .await
-    {
-        Ok(assignments) => {
-            for assignment in assignments {
-                if let Err(err) = state
-                    .repos
-                    .workflow_assignment_repo
-                    .delete(assignment.id)
-                    .await
-                {
-                    tracing::error!(
-                        project_id = %project_id,
-                        workflow_assignment_id = %assignment.id,
-                        error = %err,
-                        "回滚 cloned project workflow assignment 失败"
-                    );
-                }
-            }
-        }
-        Err(err) => {
-            tracing::error!(
-                project_id = %project_id,
-                error = %err,
-                "回滚 cloned project 前读取 workflow assignments 失败"
-            );
-        }
-    }
-
     if let Err(err) = state.repos.project_repo.delete(project_id).await {
         tracing::error!(
             project_id = %project_id,

@@ -122,6 +122,7 @@ mod tests {
 
     fn sample_workflow() -> ActiveWorkflowProjection {
         let definition = WorkflowDefinition::new(
+            Uuid::new_v4(),
             "wf_impl",
             "Workflow Implement",
             "desc",
@@ -139,6 +140,7 @@ mod tests {
             input_ports: vec![],
         };
         let lifecycle = LifecycleDefinition::new(
+            Uuid::new_v4(),
             "trellis_dev_task",
             "Trellis Dev Task",
             "desc",

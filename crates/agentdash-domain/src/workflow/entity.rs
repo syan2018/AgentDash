@@ -6,7 +6,7 @@ use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
     WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowDefinitionStatus,
+    WorkflowDefinitionSource,
     node_deps_from_edges,
     validate_lifecycle_definition, validate_workflow_definition,
 };
@@ -14,6 +14,7 @@ use super::value_objects::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub key: String,
     pub name: String,
     pub description: String,
@@ -21,7 +22,6 @@ pub struct WorkflowDefinition {
     #[serde(default)]
     pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub source: WorkflowDefinitionSource,
-    pub status: WorkflowDefinitionStatus,
     pub version: i32,
     pub contract: WorkflowContract,
     pub created_at: DateTime<Utc>,
@@ -30,6 +30,7 @@ pub struct WorkflowDefinition {
 
 impl WorkflowDefinition {
     pub fn new(
+        project_id: Uuid,
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
@@ -44,25 +45,18 @@ impl WorkflowDefinition {
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
+            project_id,
             key,
             name,
             description: description.into(),
             binding_kind,
             recommended_binding_roles: Vec::new(),
             source,
-            status: match source {
-                WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
-                _ => WorkflowDefinitionStatus::Draft,
-            },
             version: 1,
             contract,
             created_at: now,
             updated_at: now,
         })
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.status == WorkflowDefinitionStatus::Active
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
@@ -80,6 +74,7 @@ impl WorkflowDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleDefinition {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub key: String,
     pub name: String,
     pub description: String,
@@ -87,7 +82,6 @@ pub struct LifecycleDefinition {
     #[serde(default)]
     pub recommended_binding_roles: Vec<WorkflowBindingRole>,
     pub source: WorkflowDefinitionSource,
-    pub status: WorkflowDefinitionStatus,
     pub version: i32,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
@@ -100,6 +94,7 @@ pub struct LifecycleDefinition {
 
 impl LifecycleDefinition {
     pub fn new(
+        project_id: Uuid,
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
@@ -117,16 +112,13 @@ impl LifecycleDefinition {
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
+            project_id,
             key,
             name,
             description: description.into(),
             binding_kind,
             recommended_binding_roles: Vec::new(),
             source,
-            status: match source {
-                WorkflowDefinitionSource::BuiltinSeed => WorkflowDefinitionStatus::Active,
-                _ => WorkflowDefinitionStatus::Draft,
-            },
             version: 1,
             entry_step_key,
             steps,
@@ -134,10 +126,6 @@ impl LifecycleDefinition {
             created_at: now,
             updated_at: now,
         })
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.status == WorkflowDefinitionStatus::Active
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
@@ -154,34 +142,6 @@ impl LifecycleDefinition {
                 error,
                 "steps",
             )],
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowAssignment {
-    pub id: Uuid,
-    pub project_id: Uuid,
-    pub lifecycle_id: Uuid,
-    pub role: WorkflowBindingRole,
-    pub enabled: bool,
-    pub is_default: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl WorkflowAssignment {
-    pub fn new(project_id: Uuid, lifecycle_id: Uuid, role: WorkflowBindingRole) -> Self {
-        let now = Utc::now();
-        Self {
-            id: Uuid::new_v4(),
-            project_id,
-            lifecycle_id,
-            role,
-            enabled: true,
-            is_default: false,
-            created_at: now,
-            updated_at: now,
         }
     }
 }
@@ -605,6 +565,7 @@ mod tests {
     #[test]
     fn effective_contract_matches_primary_workflow() {
         let primary = WorkflowDefinition::new(
+            Uuid::new_v4(),
             "wf_primary",
             "Primary",
             "desc",
@@ -620,7 +581,8 @@ mod tests {
 
     #[test]
     fn lifecycle_definition_validates_step_graph() {
-        let lifecycle = LifecycleDefinition::new(
+        let _lifecycle = LifecycleDefinition::new(
+            Uuid::new_v4(),
             "lc",
             "Lifecycle",
             "desc",
@@ -631,7 +593,5 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
-
-        assert!(lifecycle.is_active());
     }
 }

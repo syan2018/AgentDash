@@ -7,6 +7,5 @@ pub use authorization::{
 };
 pub use management::{
     ProjectMutationInput, apply_project_mutation, build_cloned_project, build_project,
-    clone_project_assignments, clone_workflow_assignment, delete_project_aggregate,
-    normalize_clone_name,
+    delete_project_aggregate, normalize_clone_name,
 };

@@ -28,7 +28,6 @@ import type {
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
-  DEFINITION_STATUS_LABEL,
   TARGET_KIND_LABEL,
 } from "./shared-labels";
 import { ValidationPanel } from "./ui/validation-panel";
@@ -623,14 +622,8 @@ function LifecycleDagEditorInner() {
                 </span>
               )}
               {currentDefinition && (
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                  currentDefinition.status === "active"
-                    ? "border-emerald-300/40 bg-emerald-500/10 text-emerald-700"
-                    : currentDefinition.status === "disabled"
-                    ? "border-amber-300/40 bg-amber-500/10 text-amber-700"
-                    : "border-border bg-secondary/40 text-muted-foreground"
-                }`}>
-                  {DEFINITION_STATUS_LABEL[currentDefinition.status]} v{currentDefinition.version}
+                <span className="text-[10px] text-muted-foreground">
+                  v{currentDefinition.version}
                 </span>
               )}
             </div>

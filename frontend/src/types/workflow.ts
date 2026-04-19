@@ -138,11 +138,6 @@ export type WorkflowDefinitionSource =
   | "user_authored"
   | "cloned";
 
-export type WorkflowDefinitionStatus =
-  | "draft"
-  | "active"
-  | "disabled";
-
 export type ValidationSeverity = "error" | "warning";
 
 export interface ValidationIssue {
@@ -196,13 +191,13 @@ export interface WorkflowTemplate {
 
 export interface WorkflowDefinition {
   id: string;
+  project_id: string;
   key: string;
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
   recommended_roles: WorkflowAgentRole[];
   source: WorkflowDefinitionSource;
-  status: WorkflowDefinitionStatus;
   version: number;
   contract: WorkflowContract;
   created_at: string;
@@ -211,28 +206,17 @@ export interface WorkflowDefinition {
 
 export interface LifecycleDefinition {
   id: string;
+  project_id: string;
   key: string;
   name: string;
   description: string;
   target_kind: WorkflowTargetKind;
   recommended_roles: WorkflowAgentRole[];
   source: WorkflowDefinitionSource;
-  status: WorkflowDefinitionStatus;
   version: number;
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
   edges: LifecycleEdge[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkflowAssignment {
-  id: string;
-  project_id: string;
-  lifecycle_id: string;
-  role: WorkflowAgentRole;
-  enabled: boolean;
-  is_default: boolean;
   created_at: string;
   updated_at: string;
 }

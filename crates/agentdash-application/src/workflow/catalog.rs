@@ -1,43 +1,29 @@
 use std::collections::BTreeMap;
 
 use chrono::Utc;
-use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, ValidationIssue, ValidationSeverity,
-    WorkflowAssignment, WorkflowAssignmentRepository, WorkflowBindingRole, WorkflowDefinition,
-    WorkflowDefinitionRepository,
+    WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 use super::definition::BuiltinWorkflowBundle;
 use super::error::WorkflowApplicationError;
 
-#[derive(Debug, Clone)]
-pub struct AssignLifecycleCommand {
-    pub project_id: Uuid,
-    pub lifecycle_id: Uuid,
-    pub role: WorkflowBindingRole,
-    pub enabled: bool,
-    pub is_default: bool,
-}
-
-pub struct WorkflowCatalogService<'a, D: ?Sized, L: ?Sized, A: ?Sized> {
+pub struct WorkflowCatalogService<'a, D: ?Sized, L: ?Sized> {
     definition_repo: &'a D,
     lifecycle_repo: &'a L,
-    assignment_repo: &'a A,
 }
 
-impl<'a, D: ?Sized, L: ?Sized, A: ?Sized> WorkflowCatalogService<'a, D, L, A>
+impl<'a, D: ?Sized, L: ?Sized> WorkflowCatalogService<'a, D, L>
 where
     D: WorkflowDefinitionRepository,
     L: LifecycleDefinitionRepository,
-    A: WorkflowAssignmentRepository,
 {
-    pub fn new(definition_repo: &'a D, lifecycle_repo: &'a L, assignment_repo: &'a A) -> Self {
+    pub fn new(definition_repo: &'a D, lifecycle_repo: &'a L) -> Self {
         Self {
             definition_repo,
             lifecycle_repo,
-            assignment_repo,
         }
     }
 
@@ -45,7 +31,11 @@ where
         &self,
         definition: WorkflowDefinition,
     ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
-        if let Some(existing) = self.definition_repo.get_by_key(&definition.key).await? {
+        if let Some(existing) = self
+            .definition_repo
+            .get_by_project_and_key(definition.project_id, &definition.key)
+            .await?
+        {
             if existing.binding_kind != definition.binding_kind {
                 return Err(WorkflowApplicationError::Conflict(format!(
                     "workflow `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
@@ -87,7 +77,11 @@ where
             )));
         }
 
-        if let Some(existing) = self.lifecycle_repo.get_by_key(&lifecycle.key).await? {
+        if let Some(existing) = self
+            .lifecycle_repo
+            .get_by_project_and_key(lifecycle.project_id, &lifecycle.key)
+            .await?
+        {
             if existing.binding_kind != lifecycle.binding_kind {
                 return Err(WorkflowApplicationError::Conflict(format!(
                     "lifecycle `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
@@ -162,7 +156,6 @@ where
             workflows_by_step.insert(step.key.clone(), workflow);
         }
 
-        // port 归属已迁移到 step 级别，直接从 step.output_ports 读取
         let mut output_owner_by_port: BTreeMap<String, String> = BTreeMap::new();
         for (step_index, step) in lifecycle.steps.iter().enumerate() {
             for output_port in &step.output_ports {
@@ -242,74 +235,8 @@ where
             lifecycle,
         })
     }
-
-    pub async fn assign_to_project(
-        &self,
-        cmd: AssignLifecycleCommand,
-    ) -> Result<WorkflowAssignment, WorkflowApplicationError> {
-        if cmd.is_default && !cmd.enabled {
-            return Err(WorkflowApplicationError::BadRequest(
-                "默认 workflow assignment 必须保持 enabled".to_string(),
-            ));
-        }
-
-        let lifecycle = self
-            .lifecycle_repo
-            .get_by_id(cmd.lifecycle_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_definition 不存在: {}",
-                    cmd.lifecycle_id
-                ))
-            })?;
-
-        if cmd.enabled && !lifecycle.is_active() {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "lifecycle `{}` 状态为 {:?}，不能创建启用态 assignment",
-                lifecycle.key, lifecycle.status
-            )));
-        }
-
-        let existing = self
-            .assignment_repo
-            .list_by_project_and_role(cmd.project_id, cmd.role)
-            .await?;
-
-        if cmd.is_default {
-            for assignment in existing
-                .iter()
-                .filter(|item| item.is_default && item.lifecycle_id != cmd.lifecycle_id)
-            {
-                let mut demoted = assignment.clone();
-                demoted.is_default = false;
-                demoted.updated_at = Utc::now();
-                self.assignment_repo.update(&demoted).await?;
-            }
-        }
-
-        if let Some(current) = existing
-            .into_iter()
-            .find(|item| item.lifecycle_id == cmd.lifecycle_id)
-        {
-            let mut updated = current;
-            updated.enabled = cmd.enabled;
-            updated.is_default = cmd.is_default;
-            updated.updated_at = Utc::now();
-            self.assignment_repo.update(&updated).await?;
-            return Ok(updated);
-        }
-
-        let mut assignment = WorkflowAssignment::new(cmd.project_id, cmd.lifecycle_id, cmd.role);
-        assignment.enabled = cmd.enabled;
-        assignment.is_default = cmd.is_default;
-        assignment.updated_at = Utc::now();
-        self.assignment_repo.create(&assignment).await?;
-        Ok(assignment)
-    }
 }
 
-/// edge→port 校验：port 归属已迁移到 step 级别，直接从 step.output_ports / step.input_ports 检查。
 fn validate_edge_port(
     issues: &mut Vec<ValidationIssue>,
     lifecycle: &LifecycleDefinition,
@@ -353,12 +280,13 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Mutex;
 
+    use uuid::Uuid;
+
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ContextStrategy, GateStrategy, InputPortDefinition, LifecycleDefinitionRepository,
         LifecycleEdge, LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition,
         WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
-        WorkflowDefinitionStatus,
     };
 
     use super::*;
@@ -403,6 +331,20 @@ mod tests {
                 .cloned())
         }
 
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            key: &str,
+        ) -> Result<Option<WorkflowDefinition>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .expect("workflow repo lock")
+                .values()
+                .find(|item| item.project_id == project_id && item.key == key)
+                .cloned())
+        }
+
         async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self
                 .items
@@ -413,16 +355,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_status(
+        async fn list_by_project(
             &self,
-            status: WorkflowDefinitionStatus,
+            project_id: Uuid,
         ) -> Result<Vec<WorkflowDefinition>, DomainError> {
             Ok(self
                 .items
                 .lock()
                 .expect("workflow repo lock")
                 .values()
-                .filter(|item| item.status == status)
+                .filter(|item| item.project_id == project_id)
                 .cloned()
                 .collect())
         }
@@ -489,6 +431,20 @@ mod tests {
                 .cloned())
         }
 
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            key: &str,
+        ) -> Result<Option<LifecycleDefinition>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .expect("lifecycle repo lock")
+                .values()
+                .find(|item| item.project_id == project_id && item.key == key)
+                .cloned())
+        }
+
         async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError> {
             Ok(self
                 .items
@@ -499,16 +455,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_status(
+        async fn list_by_project(
             &self,
-            status: WorkflowDefinitionStatus,
+            project_id: Uuid,
         ) -> Result<Vec<LifecycleDefinition>, DomainError> {
             Ok(self
                 .items
                 .lock()
                 .expect("lifecycle repo lock")
                 .values()
-                .filter(|item| item.status == status)
+                .filter(|item| item.project_id == project_id)
                 .cloned()
                 .collect())
         }
@@ -544,43 +500,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct TestWorkflowAssignmentRepo;
-
-    #[async_trait::async_trait]
-    impl WorkflowAssignmentRepository for TestWorkflowAssignmentRepo {
-        async fn create(&self, _assignment: &WorkflowAssignment) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get_by_id(&self, _id: Uuid) -> Result<Option<WorkflowAssignment>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_project(
-            &self,
-            _project_id: Uuid,
-        ) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn list_by_project_and_role(
-            &self,
-            _project_id: Uuid,
-            _role: WorkflowBindingRole,
-        ) -> Result<Vec<WorkflowAssignment>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _assignment: &WorkflowAssignment) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
     fn workflow_with_ports(
         key: &str,
         output_ports: &[&str],
@@ -608,6 +527,7 @@ mod tests {
             ..Default::default()
         };
         WorkflowDefinition::new(
+            Uuid::new_v4(),
             key,
             format!("workflow {key}"),
             "desc",
@@ -620,6 +540,7 @@ mod tests {
 
     fn lifecycle_with_edges(edges: Vec<LifecycleEdge>) -> LifecycleDefinition {
         LifecycleDefinition::new(
+            Uuid::new_v4(),
             "dag",
             "dag",
             "desc",
@@ -665,11 +586,10 @@ mod tests {
         workflow_repo.seed(workflow_with_ports("wf_check", &["shared_output"], &["review_input"]));
 
         let lifecycle_repo = TestLifecycleDefinitionRepo::default();
-        let assignment_repo = TestWorkflowAssignmentRepo;
-        let service =
-            WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo, &assignment_repo);
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let lifecycle = LifecycleDefinition::new(
+            Uuid::new_v4(),
             "dag",
             "dag",
             "desc",
@@ -763,9 +683,7 @@ mod tests {
         workflow_repo.seed(workflow_with_ports("wf_check", &["check_report"], &["review_input"]));
 
         let lifecycle_repo = TestLifecycleDefinitionRepo::default();
-        let assignment_repo = TestWorkflowAssignmentRepo;
-        let service =
-            WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo, &assignment_repo);
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let lifecycle = lifecycle_with_edges(vec![LifecycleEdge {
             from_node: "research".to_string(),

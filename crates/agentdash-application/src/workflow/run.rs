@@ -78,13 +78,6 @@ where
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let lifecycle = self.resolve_lifecycle(&cmd).await?;
 
-        if !lifecycle.is_active() {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "lifecycle `{}` 状态为 {:?}，不能启动 run",
-                lifecycle.key, lifecycle.status
-            )));
-        }
-
         // 同一 session 不能同时有多个活跃 run
         let existing_runs = self.run_repo.list_by_session(&cmd.session_id).await?;
         let conflicting_run = existing_runs.iter().find(|run| {

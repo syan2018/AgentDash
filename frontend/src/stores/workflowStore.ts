@@ -23,10 +23,6 @@ import {
   createWorkflowDefinition,
   deleteLifecycleDefinition,
   deleteWorkflowDefinition,
-  disableLifecycleDefinition,
-  disableWorkflowDefinition,
-  enableLifecycleDefinition,
-  enableWorkflowDefinition,
   fetchLifecycleDefinitions,
   fetchWorkflowDefinitions,
   fetchWorkflowRunsBySession,
@@ -71,6 +67,7 @@ function emptyEditor<T>(): EditorState<T> {
 
 export interface WorkflowEditorDraft {
   id: string | null;
+  project_id: string;
   key: string;
   name: string;
   description: string;
@@ -81,6 +78,7 @@ export interface WorkflowEditorDraft {
 
 export interface LifecycleEditorDraft {
   id: string | null;
+  project_id: string;
   key: string;
   name: string;
   description: string;
@@ -91,9 +89,10 @@ export interface LifecycleEditorDraft {
   edges: LifecycleEdge[];
 }
 
-export function createEmptyDraft(): WorkflowEditorDraft {
+export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
   return {
     id: null,
+    project_id: projectId,
     key: "",
     name: "",
     description: "",
@@ -111,6 +110,7 @@ export function createEmptyDraft(): WorkflowEditorDraft {
 export function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft {
   return {
     id: definition.id,
+    project_id: definition.project_id,
     key: definition.key,
     name: definition.name,
     description: definition.description,
@@ -120,9 +120,10 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
   };
 }
 
-export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
+export function createEmptyLifecycleDraft(projectId = ""): LifecycleEditorDraft {
   return {
     id: null,
+    project_id: projectId,
     key: "",
     name: "",
     description: "",
@@ -137,6 +138,7 @@ export function createEmptyLifecycleDraft(): LifecycleEditorDraft {
 export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEditorDraft {
   return {
     id: definition.id,
+    project_id: definition.project_id,
     key: definition.key,
     name: definition.name,
     description: definition.description,
@@ -189,9 +191,9 @@ interface WorkflowState {
 
   fetchHookPresets: () => Promise<HookRulePreset[]>;
   fetchTemplates: () => Promise<WorkflowTemplate[]>;
-  fetchDefinitions: (targetKind?: WorkflowTargetKind) => Promise<WorkflowDefinition[]>;
-  fetchLifecycles: (targetKind?: WorkflowTargetKind) => Promise<LifecycleDefinition[]>;
-  bootstrapTemplate: (builtinKey: string) => Promise<LifecycleDefinition | null>;
+  fetchDefinitions: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<WorkflowDefinition[]>;
+  fetchLifecycles: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<LifecycleDefinition[]>;
+  bootstrapTemplate: (builtinKey: string, projectId: string) => Promise<LifecycleDefinition | null>;
   fetchRunsBySession: (sessionId: string) => Promise<WorkflowRun[]>;
   startRun: (input: {
     lifecycle_id?: string;
@@ -215,8 +217,6 @@ interface WorkflowState {
   removeDraftBinding: (bindingIndex: number) => void;
   validateDraft: () => Promise<WorkflowValidationResult | null>;
   saveDraft: () => Promise<WorkflowDefinition | null>;
-  enableDefinition: (id: string) => Promise<WorkflowDefinition | null>;
-  disableDefinition: (id: string) => Promise<WorkflowDefinition | null>;
   removeDefinition: (id: string) => Promise<boolean>;
 
   addDraftHookRule: (rule: WorkflowHookRuleSpec) => void;
@@ -232,8 +232,6 @@ interface WorkflowState {
   removeLifecycleStep: (stepIndex: number) => void;
   validateLifecycleDraft: () => Promise<WorkflowValidationResult | null>;
   saveLifecycleDraft: () => Promise<LifecycleDefinition | null>;
-  enableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
-  disableLifecycle: (id: string) => Promise<LifecycleDefinition | null>;
   removeLifecycle: (id: string) => Promise<boolean>;
 
 }
@@ -274,10 +272,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  fetchDefinitions: async (targetKind) => {
+  fetchDefinitions: async (opts) => {
     try {
-      const definitions = await fetchWorkflowDefinitions(targetKind);
+      const definitions = await fetchWorkflowDefinitions(opts);
       set((state) => {
+        const targetKind = opts?.targetKind;
         const next = targetKind
           ? [...state.definitions.filter((item) => item.target_kind !== targetKind), ...definitions]
           : definitions;
@@ -290,10 +289,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  fetchLifecycles: async (targetKind) => {
+  fetchLifecycles: async (opts) => {
     try {
-      const lifecycleDefinitions = await fetchLifecycleDefinitions(targetKind);
+      const lifecycleDefinitions = await fetchLifecycleDefinitions(opts);
       set((state) => {
+        const targetKind = opts?.targetKind;
         const next = targetKind
           ? [...state.lifecycleDefinitions.filter((item) => item.target_kind !== targetKind), ...lifecycleDefinitions]
           : lifecycleDefinitions;
@@ -306,13 +306,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  bootstrapTemplate: async (builtinKey) => {
+  bootstrapTemplate: async (builtinKey, projectId) => {
     set({ error: null });
     try {
-      const lifecycle = await bootstrapWorkflowTemplate(builtinKey);
+      const lifecycle = await bootstrapWorkflowTemplate(builtinKey, projectId);
       const [definitions, lifecycleDefinitions] = await Promise.all([
-        fetchWorkflowDefinitions(),
-        fetchLifecycleDefinitions(),
+        fetchWorkflowDefinitions({ projectId }),
+        fetchLifecycleDefinitions({ projectId }),
       ]);
       set({ definitions, lifecycleDefinitions });
       return lifecycle;
@@ -509,6 +509,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set((s) => ({ wfEditor: { ...s.wfEditor, isValidating: true, error: null } }));
     try {
       const result = await validateWorkflowDefinition({
+        project_id: draft.project_id,
         key: draft.key,
         name: draft.name,
         description: draft.description,
@@ -537,6 +538,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             contract: draft.contract,
           })
         : await createWorkflowDefinition({
+            project_id: draft.project_id,
             key: draft.key,
             name: draft.name,
             description: draft.description,
@@ -558,30 +560,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return definition;
     } catch (error) {
       set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isSaving: false } }));
-      return null;
-    }
-  },
-
-  enableDefinition: async (id) => {
-    set({ error: null });
-    try {
-      const definition = await enableWorkflowDefinition(id);
-      set((state) => ({ definitions: upsert(state.definitions, definition) }));
-      return definition;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
-    }
-  },
-
-  disableDefinition: async (id) => {
-    set({ error: null });
-    try {
-      const definition = await disableWorkflowDefinition(id);
-      set((state) => ({ definitions: upsert(state.definitions, definition) }));
-      return definition;
-    } catch (error) {
-      set({ error: (error as Error).message });
       return null;
     }
   },
@@ -680,6 +658,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set((s) => ({ lcEditor: { ...s.lcEditor, isValidating: true, error: null } }));
     try {
       const result = await validateLifecycleDefinition({
+        project_id: draft.project_id,
         key: draft.key,
         name: draft.name,
         description: draft.description,
@@ -712,6 +691,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             edges: draft.edges,
           })
         : await createLifecycleDefinition({
+            project_id: draft.project_id,
             key: draft.key,
             name: draft.name,
             description: draft.description,
@@ -735,30 +715,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return definition;
     } catch (error) {
       set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isSaving: false } }));
-      return null;
-    }
-  },
-
-  enableLifecycle: async (id) => {
-    set({ error: null });
-    try {
-      const definition = await enableLifecycleDefinition(id);
-      set((state) => ({ lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition) }));
-      return definition;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
-    }
-  },
-
-  disableLifecycle: async (id) => {
-    set({ error: null });
-    try {
-      const definition = await disableLifecycleDefinition(id);
-      set((state) => ({ lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition) }));
-      return definition;
-    } catch (error) {
-      set({ error: (error as Error).message });
       return null;
     }
   },

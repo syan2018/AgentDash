@@ -813,7 +813,7 @@ pub async fn create_project_agent_link(
     }
 
     let lifecycle_key =
-        resolve_lifecycle_key_for_link(&state, req.default_lifecycle_key, req.default_workflow_key)
+        resolve_lifecycle_key_for_link(&state, project_id, req.default_lifecycle_key, req.default_workflow_key)
             .await?;
 
     let mut link = ProjectAgentLink::new(project_id, agent_id);
@@ -889,6 +889,7 @@ pub async fn update_project_agent_link(
     if req.default_lifecycle_key.is_some() || req.default_workflow_key.is_some() {
         link.default_lifecycle_key = resolve_lifecycle_key_for_link(
             &state,
+            project_id,
             req.default_lifecycle_key,
             req.default_workflow_key,
         )
@@ -950,6 +951,7 @@ pub async fn delete_project_agent_link(
 /// 自动创建一个单步 lifecycle 包装它。
 async fn resolve_lifecycle_key_for_link(
     state: &Arc<AppState>,
+    project_id: Uuid,
     lifecycle_key: Option<String>,
     workflow_key: Option<String>,
 ) -> Result<Option<String>, ApiError> {
@@ -988,17 +990,17 @@ async fn resolve_lifecycle_key_for_link(
         if existing.is_none() {
             use agentdash_domain::workflow::{
                 LifecycleDefinition, LifecycleStepDefinition, WorkflowBindingKind,
-                WorkflowDefinitionSource, WorkflowDefinitionStatus,
+                WorkflowDefinitionSource,
             };
             let lifecycle = LifecycleDefinition {
                 id: Uuid::new_v4(),
+                project_id,
                 key: auto_key.clone(),
                 name: format!("Auto: {wk}"),
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
                 binding_kind: WorkflowBindingKind::Project,
                 recommended_binding_roles: vec![],
                 source: WorkflowDefinitionSource::UserAuthored,
-                status: WorkflowDefinitionStatus::Active,
                 version: 1,
                 steps: vec![LifecycleStepDefinition {
                     key: "main".to_string(),

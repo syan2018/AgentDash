@@ -47,7 +47,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         workspace_repo: state.repos.workspace_repo.clone(),
         workflow_definition_repo: state.repos.workflow_definition_repo.clone(),
         lifecycle_definition_repo: state.repos.lifecycle_definition_repo.clone(),
-        workflow_assignment_repo: state.repos.workflow_assignment_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services).build();
 
@@ -158,11 +157,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{id}/sessions/{binding_id}",
             get(project_sessions::get_project_session),
         )
-        .route(
-            "/projects/{id}/workflow-assignments",
-            get(workflows::list_project_workflow_assignments)
-                .post(workflows::create_project_workflow_assignment),
-        )
+        
         .route(
             "/projects/{project_id}/canvases",
             get(canvases::list_project_canvases).post(canvases::create_canvas),
@@ -254,26 +249,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(workflows::delete_workflow_definition),
         )
         .route(
-            "/workflow-definitions/{id}/enable",
-            post(workflows::enable_workflow_definition),
-        )
-        .route(
-            "/workflow-definitions/{id}/disable",
-            post(workflows::disable_workflow_definition),
-        )
-        .route(
             "/lifecycle-definitions/{id}",
             get(workflows::get_lifecycle_definition)
                 .put(workflows::update_lifecycle_definition)
                 .delete(workflows::delete_lifecycle_definition),
-        )
-        .route(
-            "/lifecycle-definitions/{id}/enable",
-            post(workflows::enable_lifecycle_definition),
-        )
-        .route(
-            "/lifecycle-definitions/{id}/disable",
-            post(workflows::disable_lifecycle_definition),
         )
         .route("/hook-presets", get(workflows::list_hook_presets))
         .route(

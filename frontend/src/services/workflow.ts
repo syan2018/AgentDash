@@ -11,7 +11,6 @@ import type {
   LifecycleNodeType,
   LifecycleStepDefinition,
   WorkflowAgentRole,
-  WorkflowAssignment,
   WorkflowCheckKind,
   WorkflowCheckSpec,
   WorkflowCompletionSpec,
@@ -21,7 +20,6 @@ import type {
   WorkflowContract,
   WorkflowDefinition,
   WorkflowDefinitionSource,
-  WorkflowDefinitionStatus,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -51,7 +49,6 @@ const WORKFLOW_STEP_STATUSES = new Set<string>([
   "pending", "ready", "running", "completed", "failed", "skipped",
 ]);
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
-const WORKFLOW_DEF_STATUSES = new Set<string>(["draft", "active", "disabled"]);
 const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
   "user_prompt_submit",
   "before_tool", "after_tool", "after_turn", "before_stop", "session_terminal",
@@ -262,6 +259,7 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
 export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
   return {
     id: requireStringField(raw, "id"),
+    project_id: requireStringField(raw, "project_id"),
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: requireStringField(raw, "description"),
@@ -269,7 +267,6 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
       .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow agent role")),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
-    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "workflow definition status"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     contract: mapWorkflowContract(raw.contract),
     created_at: requireStringField(raw, "created_at"),
@@ -280,6 +277,7 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
 export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleDefinition {
   return {
     id: requireStringField(raw, "id"),
+    project_id: requireStringField(raw, "project_id"),
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: requireStringField(raw, "description"),
@@ -287,7 +285,6 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
       .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "lifecycle agent role")),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "lifecycle definition source"),
-    status: normalizeEnum<WorkflowDefinitionStatus>(raw.status, WORKFLOW_DEF_STATUSES, "lifecycle definition status"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: requireStringField(raw, "entry_step_key"),
     steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],
@@ -325,19 +322,6 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
   };
 }
 
-export function mapWorkflowAssignment(raw: Record<string, unknown>): WorkflowAssignment {
-  return {
-    id: requireStringField(raw, "id"),
-    project_id: requireStringField(raw, "project_id"),
-    lifecycle_id: requireStringField(raw, "lifecycle_id"),
-    role: normalizeEnum<WorkflowAgentRole>(raw.role, WORKFLOW_AGENT_ROLES, "workflow assignment role"),
-    enabled: raw.enabled !== false,
-    is_default: Boolean(raw.is_default),
-    created_at: requireStringField(raw, "created_at"),
-    updated_at: requireStringField(raw, "updated_at"),
-  };
-}
-
 export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   return {
     id: requireStringField(raw, "id"),
@@ -354,19 +338,32 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   };
 }
 
-export async function fetchWorkflowDefinitions(targetKind?: WorkflowTargetKind): Promise<WorkflowDefinition[]> {
-  const query = targetKind ? `?binding_kind=${targetKind}` : "";
+export async function fetchWorkflowDefinitions(opts?: {
+  projectId?: string;
+  targetKind?: WorkflowTargetKind;
+}): Promise<WorkflowDefinition[]> {
+  const params = new URLSearchParams();
+  if (opts?.projectId) params.set("project_id", opts.projectId);
+  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
+  const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/workflow-definitions${query}`);
   return raw.map(mapWorkflowDefinition);
 }
 
-export async function fetchLifecycleDefinitions(targetKind?: WorkflowTargetKind): Promise<LifecycleDefinition[]> {
-  const query = targetKind ? `?binding_kind=${targetKind}` : "";
+export async function fetchLifecycleDefinitions(opts?: {
+  projectId?: string;
+  targetKind?: WorkflowTargetKind;
+}): Promise<LifecycleDefinition[]> {
+  const params = new URLSearchParams();
+  if (opts?.projectId) params.set("project_id", opts.projectId);
+  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
+  const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/lifecycle-definitions${query}`);
   return raw.map(mapLifecycleDefinition);
 }
 
 export async function createLifecycleDefinition(input: {
+  project_id: string;
   key: string;
   name: string;
   description?: string;
@@ -377,6 +374,7 @@ export async function createLifecycleDefinition(input: {
   edges: LifecycleEdge[];
 }): Promise<LifecycleDefinition> {
   const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions", {
+    project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
@@ -417,6 +415,7 @@ export async function updateLifecycleDefinition(
 }
 
 export async function validateLifecycleDefinition(input: {
+  project_id: string;
   key: string;
   name: string;
   description?: string;
@@ -427,6 +426,7 @@ export async function validateLifecycleDefinition(input: {
   edges: LifecycleEdge[];
 }): Promise<WorkflowValidationResult> {
   const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions/validate", {
+    project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
@@ -449,16 +449,6 @@ export async function validateLifecycleDefinition(input: {
   };
 }
 
-export async function enableLifecycleDefinition(id: string): Promise<LifecycleDefinition> {
-  const raw = await api.post<Record<string, unknown>>(`/lifecycle-definitions/${id}/enable`, {});
-  return mapLifecycleDefinition(raw);
-}
-
-export async function disableLifecycleDefinition(id: string): Promise<LifecycleDefinition> {
-  const raw = await api.post<Record<string, unknown>>(`/lifecycle-definitions/${id}/disable`, {});
-  return mapLifecycleDefinition(raw);
-}
-
 export async function deleteLifecycleDefinition(id: string): Promise<void> {
   await api.delete(`/lifecycle-definitions/${id}`);
 }
@@ -468,36 +458,12 @@ export async function fetchWorkflowTemplates(): Promise<WorkflowTemplate[]> {
   return raw.map(mapWorkflowTemplate);
 }
 
-export async function bootstrapWorkflowTemplate(builtinKey: string): Promise<LifecycleDefinition> {
+export async function bootstrapWorkflowTemplate(builtinKey: string, projectId: string): Promise<LifecycleDefinition> {
   const raw = await api.post<Record<string, unknown>>(
     `/workflow-templates/${encodeURIComponent(builtinKey)}/bootstrap`,
-    {},
+    { project_id: projectId },
   );
   return mapLifecycleDefinition(raw);
-}
-
-export async function fetchProjectWorkflowAssignments(projectId: string): Promise<WorkflowAssignment[]> {
-  const raw = await api.get<Record<string, unknown>[]>(`/projects/${projectId}/workflow-assignments`);
-  return raw.map(mapWorkflowAssignment);
-}
-
-export async function assignProjectLifecycle(input: {
-  project_id: string;
-  lifecycle_id: string;
-  role: WorkflowAgentRole;
-  enabled?: boolean;
-  is_default?: boolean;
-}): Promise<WorkflowAssignment> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/projects/${input.project_id}/workflow-assignments`,
-    {
-      lifecycle_id: input.lifecycle_id,
-      role: input.role,
-      enabled: input.enabled ?? true,
-      is_default: input.is_default ?? false,
-    },
-  );
-  return mapWorkflowAssignment(raw);
 }
 
 export async function fetchWorkflowRunsBySession(
@@ -550,6 +516,7 @@ export async function completeWorkflowStep(input: {
 }
 
 export async function createWorkflowDefinition(input: {
+  project_id: string;
   key: string;
   name: string;
   description?: string;
@@ -558,6 +525,7 @@ export async function createWorkflowDefinition(input: {
   contract: WorkflowContract;
 }): Promise<WorkflowDefinition> {
   const raw = await api.post<Record<string, unknown>>("/workflow-definitions", {
+    project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
@@ -592,6 +560,7 @@ export async function updateWorkflowDefinition(
 }
 
 export async function validateWorkflowDefinition(input: {
+  project_id: string;
   key: string;
   name: string;
   description?: string;
@@ -600,6 +569,7 @@ export async function validateWorkflowDefinition(input: {
   contract: WorkflowContract;
 }): Promise<WorkflowValidationResult> {
   const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", {
+    project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
@@ -618,16 +588,6 @@ export async function validateWorkflowDefinition(input: {
         })
       : [],
   };
-}
-
-export async function enableWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
-  const raw = await api.post<Record<string, unknown>>(`/workflow-definitions/${id}/enable`, {});
-  return mapWorkflowDefinition(raw);
-}
-
-export async function disableWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
-  const raw = await api.post<Record<string, unknown>>(`/workflow-definitions/${id}/disable`, {});
-  return mapWorkflowDefinition(raw);
 }
 
 export async function deleteWorkflowDefinition(id: string): Promise<void> {

@@ -3,11 +3,11 @@ mod repository;
 mod value_objects;
 
 pub use entity::{
-    LifecycleDefinition, LifecycleRun, WorkflowAssignment, WorkflowDefinition,
+    LifecycleDefinition, LifecycleRun, WorkflowDefinition,
     build_effective_contract,
 };
 pub use repository::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowAssignmentRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository,
     WorkflowDefinitionRepository,
 };
 pub use value_objects::{
@@ -17,7 +17,7 @@ pub use value_objects::{
     OutputPortDefinition, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
     WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowDefinitionStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
     WorkflowInjectionSpec, WorkflowSessionTerminalState, node_deps_from_edges,
     validate_lifecycle_definition, validate_workflow_definition,
 };

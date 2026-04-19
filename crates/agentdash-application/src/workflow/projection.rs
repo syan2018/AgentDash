@@ -141,12 +141,10 @@ async fn build_projection_from_run(
     definition_repo: &dyn WorkflowDefinitionRepository,
     lifecycle_repo: &dyn LifecycleDefinitionRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    let lifecycle = lifecycle_repo
+    let Some(lifecycle) = lifecycle_repo
         .get_by_id(run.lifecycle_id)
         .await
-        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))?
-        .filter(|definition| definition.is_active());
-    let Some(lifecycle) = lifecycle else {
+        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))? else {
         return Ok(None);
     };
 
@@ -164,9 +162,7 @@ async fn build_projection_from_run(
             let Some(wf) = definition_repo
                 .get_by_key(wk)
                 .await
-                .map_err(|e| format!("加载 workflow 失败: {e}"))?
-                .filter(|definition| definition.is_active())
-            else {
+                .map_err(|e| format!("加载 workflow 失败: {e}"))? else {
                 return Ok(None);
             };
             Some(wf)

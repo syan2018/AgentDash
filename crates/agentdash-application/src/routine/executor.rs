@@ -11,8 +11,11 @@ use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
-use agentdash_mcp::injection::McpInjectionConfig;
-use agentdash_spi::{AgentConfig, AgentConnector, FlowCapabilities, ToolCluster};
+use agentdash_spi::{AgentConfig, AgentConnector};
+
+use crate::capability::{
+    CapabilityResolver, CapabilityResolverInput, AgentMcpServerEntry,
+};
 
 use crate::vfs::{RelayVfsService, SessionMountTarget};
 use crate::canvas::append_visible_canvas_mounts;
@@ -450,13 +453,50 @@ impl RoutineExecutor {
             .map_err(|e| format!("挂载可见 canvas 失败: {e}"))?;
         }
 
-        let mut effective_mcp_servers = Vec::new();
-        if let Some(base_url) = self.mcp_base_url.as_ref() {
-            effective_mcp_servers.push(
-                McpInjectionConfig::for_relay(base_url.clone(), agent_context.project.id)
-                    .to_acp_mcp_server(),
-            );
-        }
+        // ── CapabilityResolver 统一计算工具集 ──
+        let agent_mcp_entries: Vec<AgentMcpServerEntry> = agent_context
+            .preset_mcp_servers
+            .iter()
+            .filter_map(|s| {
+                let name = match s {
+                    McpServer::Http(h) => h.name.clone(),
+                    McpServer::Sse(h) => h.name.clone(),
+                    McpServer::Stdio(h) => h.name.clone(),
+                    _ => return None,
+                };
+                Some(AgentMcpServerEntry {
+                    name,
+                    server: s.clone(),
+                })
+            })
+            .collect();
+
+        let cap_input = CapabilityResolverInput {
+            owner_type: SessionOwnerType::Project,
+            mcp_base_url: self.mcp_base_url.clone(),
+            project_id: agent_context.project.id,
+            story_id: None,
+            task_id: None,
+            agent_declared_capabilities: agent_context
+                .executor_config
+                .tool_clusters
+                .as_ref()
+                .map(|clusters| {
+                    // agent config 中的 tool_clusters 当前仅用于 FlowCapabilities 裁剪，
+                    // 未来可扩展为 capability key 声明
+                    clusters.clone()
+                }),
+            has_active_workflow: false,
+            workflow_capabilities: vec![],
+            agent_mcp_servers: agent_mcp_entries,
+        };
+        let cap_output = CapabilityResolver::resolve(&cap_input);
+
+        let mut effective_mcp_servers: Vec<McpServer> = cap_output
+            .platform_mcp_configs
+            .iter()
+            .map(|c| c.to_acp_mcp_server())
+            .collect();
         effective_mcp_servers.extend(agent_context.preset_mcp_servers.iter().cloned());
 
         let runtime_vfs = vfs.clone();
@@ -522,13 +562,7 @@ impl RoutineExecutor {
             req.vfs = vfs;
         }
         req.mcp_servers = effective_mcp_servers;
-        req.flow_capabilities = Some(FlowCapabilities::from_clusters([
-            ToolCluster::Read,
-            ToolCluster::Write,
-            ToolCluster::Execute,
-            ToolCluster::Collaboration,
-            ToolCluster::Canvas,
-        ]));
+        req.flow_capabilities = Some(cap_output.flow_capabilities);
 
         Ok(req)
     }

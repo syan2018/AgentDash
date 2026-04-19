@@ -2,6 +2,7 @@ use agentdash_domain::common::Vfs;
 use agentdash_domain::task::Task;
 
 use crate::vfs::RelayVfsService;
+use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
@@ -9,12 +10,12 @@ use crate::context::{
     build_task_agent_context, resolve_workspace_declared_sources,
 };
 use crate::repository_set::RepositorySet;
-use crate::runtime::RuntimeMcpBinding;
 use crate::task::execution::{ExecutionPhase, TaskExecutionError};
 use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
 use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
 use crate::workspace::BackendAvailability;
 use agentdash_domain::common::AgentConfig;
+use agentdash_domain::session_binding::SessionOwnerType;
 
 /// 基础设施引用 — prepare_task_turn_context 中不因调用而变化的部分
 pub struct TaskTurnServices<'a> {
@@ -84,15 +85,51 @@ pub async fn prepare_task_turn_context(
         ])));
     }
 
-    // MCP injection
-    if let Some(base_url) = svc.mcp_base_url {
-        let binding = RuntimeMcpBinding::for_task(
-            base_url.to_string(),
-            story.project_id,
-            task.story_id,
-            task.id,
-        );
-        extra_contributors.push(Box::new(McpContextContributor::new(binding)));
+    // ── CapabilityResolver 驱动的 MCP 注入 ──
+    let has_active_workflow = {
+        // 提前检查是否有活跃 workflow（供 visibility rule 使用）
+        let bindings = svc
+            .repos
+            .session_binding_repo
+            .list_by_owner(SessionOwnerType::Task, task.id)
+            .await
+            .unwrap_or_default();
+        let mut has_wf = false;
+        for binding in &bindings {
+            if crate::workflow::resolve_active_workflow_projection_for_session(
+                &binding.session_id,
+                svc.repos.session_binding_repo.as_ref(),
+                svc.repos.workflow_definition_repo.as_ref(),
+                svc.repos.lifecycle_definition_repo.as_ref(),
+                svc.repos.lifecycle_run_repo.as_ref(),
+            )
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+            {
+                has_wf = true;
+                break;
+            }
+        }
+        has_wf
+    };
+
+    let cap_input = CapabilityResolverInput {
+        owner_type: SessionOwnerType::Task,
+        mcp_base_url: svc.mcp_base_url.map(|s| s.to_string()),
+        project_id: story.project_id,
+        story_id: Some(task.story_id),
+        task_id: Some(task.id),
+        agent_declared_capabilities: None,
+        has_active_workflow,
+        workflow_capabilities: vec![],
+        agent_mcp_servers: vec![],
+    };
+    let cap_output = CapabilityResolver::resolve(&cap_input);
+
+    for mcp_config in &cap_output.platform_mcp_configs {
+        extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
     }
 
     let session_runtime_inputs = build_task_session_runtime_inputs(

@@ -7,7 +7,6 @@ use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 use super::resolve_declared_sources;
 use serde_json::{Value, json};
 
-use crate::runtime::{RuntimeMcpBinding, RuntimeToolScope};
 
 use super::contributor::{ContextContributor, Contribution, ContributorInput, TaskExecutionPhase};
 
@@ -400,13 +399,15 @@ impl ContextContributor for InstructionContributor {
     }
 }
 
-/// MCP 能力注入 Contributor — 通过 ACP 协议类型声明 MCP Server，并在上下文中附加简要说明
+/// MCP 能力注入 Contributor — 通过 ACP 协议类型声明 MCP Server，并在上下文中附加简要说明。
+///
+/// 接受 `McpInjectionConfig`（由 CapabilityResolver 产出），支持所有平台 MCP scope。
 pub struct McpContextContributor {
-    pub config: RuntimeMcpBinding,
+    pub config: agentdash_mcp::injection::McpInjectionConfig,
 }
 
 impl McpContextContributor {
-    pub fn new(config: RuntimeMcpBinding) -> Self {
+    pub fn new(config: agentdash_mcp::injection::McpInjectionConfig) -> Self {
         Self { config }
     }
 }
@@ -414,10 +415,14 @@ impl McpContextContributor {
 impl ContextContributor for McpContextContributor {
     fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
         let label: &'static str = match self.config.scope {
-            RuntimeToolScope::Relay => "mcp_relay_tools",
-            RuntimeToolScope::Story => "mcp_story_tools",
-            RuntimeToolScope::Task => "mcp_task_tools",
+            agentdash_mcp::scope::ToolScope::Relay => "mcp_relay_tools",
+            agentdash_mcp::scope::ToolScope::Story => "mcp_story_tools",
+            agentdash_mcp::scope::ToolScope::Task => "mcp_task_tools",
+            agentdash_mcp::scope::ToolScope::Workflow => "mcp_workflow_tools",
         };
+
+        let server = self.config.to_acp_mcp_server();
+        let runtime_server = crate::runtime_bridge::acp_mcp_server_to_runtime(&server);
 
         Contribution {
             context_fragments: vec![ContextFragment {
@@ -427,7 +432,7 @@ impl ContextContributor for McpContextContributor {
                 strategy: MergeStrategy::Append,
                 content: self.config.to_context_content(),
             }],
-            mcp_servers: vec![self.config.to_runtime_server()],
+            mcp_servers: vec![runtime_server],
         }
     }
 }

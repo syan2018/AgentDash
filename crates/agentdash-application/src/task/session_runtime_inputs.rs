@@ -3,12 +3,14 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 
+use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::vfs::{
     RelayVfsService, ResolveBindingsOutput, SessionMountTarget,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::repository_set::RepositorySet;
-use crate::runtime::{Vfs, AgentConfig, RuntimeMcpBinding, RuntimeMcpServer};
+use crate::runtime::{Vfs, AgentConfig, RuntimeMcpServer};
+use crate::runtime_bridge::acp_mcp_server_to_runtime;
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::TaskExecutionError;
 use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
@@ -47,14 +49,24 @@ pub async fn build_task_session_runtime_inputs(
     // 通过 task 的 session binding 查找是否有关联 lifecycle run
     let workflow = resolve_workflow_via_task_sessions(repos, task).await?;
 
-    let mcp_servers = mcp_base_url
-        .map(|base_url| {
-            vec![
-                RuntimeMcpBinding::for_task(base_url, task.project_id, task.story_id, task.id)
-                    .to_runtime_server(),
-            ]
-        })
-        .unwrap_or_default();
+    // ── CapabilityResolver 统一计算 MCP server 列表 ──
+    let cap_input = CapabilityResolverInput {
+        owner_type: SessionOwnerType::Task,
+        mcp_base_url: mcp_base_url.map(|s| s.to_string()),
+        project_id: task.project_id,
+        story_id: Some(task.story_id),
+        task_id: Some(task.id),
+        agent_declared_capabilities: None,
+        has_active_workflow: workflow.is_some(),
+        workflow_capabilities: vec![],
+        agent_mcp_servers: vec![],
+    };
+    let cap_output = CapabilityResolver::resolve(&cap_input);
+    let mcp_servers: Vec<RuntimeMcpServer> = cap_output
+        .platform_mcp_configs
+        .iter()
+        .map(|c| acp_mcp_server_to_runtime(&c.to_acp_mcp_server()))
+        .collect();
 
     let use_vfs = resolved_config
         .as_ref()

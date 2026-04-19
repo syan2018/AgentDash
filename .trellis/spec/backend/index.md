@@ -137,6 +137,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [质量规范](./quality-guidelines.md) | 代码标准、DTO 命名契约、Session 状态持久化 | ✅ 已更新 |
 | [日志规范](./logging-guidelines.md) | 结构化日志、级别约定 | ✅ 已更新 |
 | [Relay Protocol](../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
+| [工具能力管线](./tool-capability-pipeline.md) | ToolCapability 协议、CapabilityResolver、session 工具集治理 | ✅ 已创建 |
 
 ---
 

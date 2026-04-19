@@ -2,6 +2,7 @@ pub mod vfs;
 pub mod auth;
 pub mod backend_transport;
 pub mod canvas;
+pub mod capability;
 pub mod companion;
 pub mod context;
 pub mod hooks;

@@ -38,6 +38,22 @@ export function requireStringField(
   return value;
 }
 
+/**
+ * 读取可为空串的字符串字段：
+ * - 字段值为 string（含空串）→ 原样返回
+ * - 缺失 / null / undefined / 非字符串 → 返回空串
+ *
+ * 与 `requireStringField` 对应：当后端契约允许该字段留空（例如 description、notes
+ * 这类可选说明字段），前端不应因空串而拒绝整条记录的映射。
+ */
+export function optStringField(
+  raw: Record<string, unknown>,
+  field: string,
+): string {
+  const value = raw[field];
+  return typeof value === "string" ? value : "";
+}
+
 export function requireNumberField(
   raw: Record<string, unknown>,
   field: string,

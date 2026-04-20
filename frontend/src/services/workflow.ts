@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import { asRecord, asRecordArray, asStringArray, optString } from "../api/mappers";
+import { asRecord, asRecordArray, asStringArray, optString, optStringField } from "../api/mappers";
 import type {
   HookRulePreset,
   ContextStrategy,
@@ -103,7 +103,7 @@ function mapWorkflowConstraintSpec(raw: Record<string, unknown>): WorkflowConstr
   return {
     key: requireStringField(raw, "key"),
     kind: normalizeEnum<WorkflowConstraintKind>(raw.kind, WORKFLOW_CONSTRAINT_KINDS, "workflow constraint kind"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     payload: asRecord(raw.payload),
   };
 }
@@ -112,7 +112,7 @@ function mapWorkflowCheckSpec(raw: Record<string, unknown>): WorkflowCheckSpec {
   return {
     key: requireStringField(raw, "key"),
     kind: normalizeEnum<WorkflowCheckKind>(raw.kind, WORKFLOW_CHECK_KINDS, "workflow check kind"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     payload: asRecord(raw.payload),
   };
 }
@@ -143,7 +143,7 @@ function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRule
   return {
     key: requireStringField(raw, "key"),
     trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "workflow hook trigger"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     preset: optString(raw.preset),
     params: asRecord(raw.params),
     script: optString(raw.script),
@@ -154,7 +154,7 @@ function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRule
 function mapOutputPortDefinition(raw: Record<string, unknown>) {
   return {
     key: requireStringField(raw, "key"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     gate_strategy: raw.gate_strategy != null
       ? normalizeEnum<GateStrategy>(raw.gate_strategy, GATE_STRATEGIES, "output port gate strategy")
       : undefined,
@@ -165,7 +165,7 @@ function mapOutputPortDefinition(raw: Record<string, unknown>) {
 function mapInputPortDefinition(raw: Record<string, unknown>) {
   return {
     key: requireStringField(raw, "key"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     context_strategy: raw.context_strategy != null
       ? normalizeEnum<ContextStrategy>(raw.context_strategy, CONTEXT_STRATEGIES, "input port context strategy")
       : undefined,
@@ -205,7 +205,7 @@ function mapWorkflowTemplateWorkflow(raw: Record<string, unknown>): WorkflowTemp
   return {
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     contract: mapWorkflowContract(raw.contract),
   };
 }
@@ -218,7 +218,7 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
   const workflowKeyRaw = value.workflow_key;
   return {
     key: requireStringField(value, "key"),
-    description: requireStringField(value, "description"),
+    description: optStringField(value, "description"),
     workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
     node_type: value.node_type != null
       ? normalizeEnum<LifecycleNodeType>(value.node_type, LIFECYCLE_NODE_TYPES, "lifecycle node type")
@@ -262,7 +262,7 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     project_id: requireStringField(raw, "project_id"),
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
       .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow agent role")),
@@ -280,7 +280,7 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     project_id: requireStringField(raw, "project_id"),
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "lifecycle target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
       .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "lifecycle agent role")),
@@ -302,7 +302,7 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
   return {
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
-    description: requireStringField(raw, "description"),
+    description: optStringField(raw, "description"),
     target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow template target kind"),
     recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
       .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow template agent role")),
@@ -310,7 +310,7 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
     lifecycle: {
       key: requireStringField(lifecycleRaw, "key"),
       name: requireStringField(lifecycleRaw, "name"),
-      description: requireStringField(lifecycleRaw, "description"),
+      description: optStringField(lifecycleRaw, "description"),
       entry_step_key: requireStringField(lifecycleRaw, "entry_step_key"),
       steps: Array.isArray(lifecycleRaw.steps)
         ? lifecycleRaw.steps.map(mapLifecycleStepDefinition)
@@ -613,7 +613,7 @@ export async function fetchHookPresets(): Promise<HookRulePreset[]> {
         key: requireStringField(record, "key"),
         trigger: normalizeEnum<WorkflowHookTrigger>(record.trigger, WORKFLOW_HOOK_TRIGGERS, "hook preset trigger"),
         label: requireStringField(record, "label"),
-        description: requireStringField(record, "description"),
+        description: optStringField(record, "description"),
         param_schema: asRecord(record.param_schema),
         script: typeof record.script === "string" ? record.script : undefined,
         source: record.source === "builtin" || record.source === "user_defined" ? record.source : undefined,

@@ -499,8 +499,10 @@ impl LifecycleOrchestrator {
                 story_id: None,
                 task_id: None,
                 agent_declared_capabilities: None,
-                has_active_workflow: true,
-                workflow_capabilities: Some(step_effective_caps),
+                workflow_ctx: crate::capability::SessionWorkflowContext {
+                    has_active_workflow: true,
+                    workflow_capabilities: Some(step_effective_caps),
+                },
                 agent_mcp_servers: vec![],
                 companion_slice_mode: None,
             };

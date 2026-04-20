@@ -57,10 +57,10 @@ pub struct SessionPlanInput<'a> {
     pub platform_config: &'a PlatformConfig,
     /// session meta 中记录的可见 canvas mount_id 列表
     pub visible_canvas_mount_ids: &'a [String],
-    /// 是否有活跃 workflow
-    pub has_active_workflow: bool,
-    /// 显式目标能力集合（None 表示使用默认 visibility 能力集）
-    pub workflow_capabilities: Option<Vec<String>>,
+    /// Workflow 上下文：是否活跃 + 显式目标能力集合。
+    /// 调用方用 [`crate::capability::resolve_session_workflow_context`] 装配，
+    /// 无绑定时传 [`crate::capability::SessionWorkflowContext::NONE`]。
+    pub workflow_ctx: crate::capability::SessionWorkflowContext,
     /// agent config 中注册的 MCP servers（用于 `mcp:*` key 解析）
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
     /// 请求已携带的 MCP servers（前端透传）
@@ -147,8 +147,7 @@ impl SessionPlanBuilder {
                 story_id,
                 task_id: None,
                 agent_declared_capabilities: input.agent_declared_capabilities,
-                has_active_workflow: input.has_active_workflow,
-                workflow_capabilities: input.workflow_capabilities,
+                workflow_ctx: input.workflow_ctx,
                 agent_mcp_servers: input.agent_mcp_servers,
                 companion_slice_mode: None,
             },

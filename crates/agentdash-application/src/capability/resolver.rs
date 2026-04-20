@@ -10,6 +10,7 @@ use agentdash_spi::tool_capability::{
 use agentdash_spi::{FlowCapabilities, ToolCluster};
 use uuid::Uuid;
 
+use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
 
 /// Resolver 输入 — 纯粹的 session 上下文描述，不含基础设施配置。
@@ -26,13 +27,15 @@ pub struct CapabilityResolverInput {
     /// agent config 中显式声明的 capability key 列表。
     /// None 表示 agent 未声明（使用默认可见能力），空 vec 表示显式声明为空。
     pub agent_declared_capabilities: Option<Vec<String>>,
-    /// 是否有活跃的 workflow lifecycle run
-    pub has_active_workflow: bool,
-    /// 显式目标能力集合（全量替换语义）。
+    /// Workflow 上下文（是否活跃 + 显式目标能力集合）。
     ///
-    /// - `None`: 使用默认 visibility 规则产出的能力集
-    /// - `Some(vec)`: 直接按给定 key 集合构建最终能力集（可覆盖 visibility）
-    pub workflow_capabilities: Option<Vec<String>>,
+    /// - `has_active_workflow=false, workflow_capabilities=None`
+    ///   ([`SessionWorkflowContext::NONE`])：使用默认 visibility 规则
+    /// - `has_active_workflow=true, workflow_capabilities=Some(vec)`：
+    ///   直接按给定 key 集合构建最终能力集（全量替换，可覆盖 visibility）
+    /// - `has_active_workflow=true, workflow_capabilities=None`：
+    ///   仅激活 `workflow_can_grant` 授予路径，不覆盖能力集
+    pub workflow_ctx: SessionWorkflowContext,
     /// agent config 中的 `mcp_servers` 配置 — 用于解析 `mcp:*` key。
     /// 存储为 (server_name, McpServer ACP 对象) 对。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
@@ -95,7 +98,7 @@ impl CapabilityResolver {
             .as_ref()
             .map(|caps| caps.iter().map(|s| s.as_str()).collect());
 
-        let mut effective_caps = if input.workflow_capabilities.is_some() {
+        let mut effective_caps = if input.workflow_ctx.workflow_capabilities.is_some() {
             BTreeSet::<ToolCapability>::new()
         } else {
             default_visible_capabilities(input, agent_declares_set.as_ref())
@@ -104,7 +107,7 @@ impl CapabilityResolver {
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 1. workflow/step 覆盖能力集（支持 well-known + mcp:*） ──
-        for key in input.workflow_capabilities.iter().flatten() {
+        for key in input.workflow_ctx.workflow_capabilities.iter().flatten() {
             let cap = ToolCapability::new(key.clone());
 
             if cap.is_well_known() {
@@ -181,7 +184,7 @@ fn default_visible_capabilities(
             &cap,
             input.owner_type,
             agent_declares_this,
-            input.has_active_workflow,
+            input.workflow_ctx.has_active_workflow,
         ) {
             effective.insert(cap);
         }
@@ -252,8 +255,7 @@ mod tests {
             story_id: None,
             task_id: None,
             agent_declared_capabilities: None,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
             companion_slice_mode: None,
         }
@@ -325,8 +327,7 @@ mod tests {
             story_id: Some(story_id),
             task_id: Some(task_id),
             agent_declared_capabilities: None,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
             companion_slice_mode: None,
         };
@@ -357,8 +358,7 @@ mod tests {
             story_id: Some(story_id),
             task_id: None,
             agent_declared_capabilities: None,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
             companion_slice_mode: None,
         };
@@ -379,7 +379,7 @@ mod tests {
         let output_no_workflow = CapabilityResolver::resolve(&input, &platform);
         assert!(!output_no_workflow.flow_capabilities.has(ToolCluster::Workflow));
 
-        input.has_active_workflow = true;
+        input.workflow_ctx.has_active_workflow = true;
         let output_with_workflow = CapabilityResolver::resolve(&input, &platform);
         assert!(output_with_workflow.flow_capabilities.has(ToolCluster::Workflow));
     }
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn custom_mcp_from_workflow_resolved() {
         let mut input = base_input();
-        input.workflow_capabilities = Some(vec!["mcp:code_analyzer".to_string()]);
+        input.workflow_ctx.workflow_capabilities = Some(vec!["mcp:code_analyzer".to_string()]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
             server: agent_client_protocol::McpServer::Http(
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn custom_mcp_missing_server_not_resolved() {
         let mut input = base_input();
-        input.workflow_capabilities = Some(vec!["mcp:nonexistent".to_string()]);
+        input.workflow_ctx.workflow_capabilities = Some(vec!["mcp:nonexistent".to_string()]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
@@ -428,8 +428,8 @@ mod tests {
     #[test]
     fn workflow_well_known_can_override_visibility() {
         let mut input = base_input();
-        input.has_active_workflow = false;
-        input.workflow_capabilities = Some(vec!["workflow".to_string()]);
+        input.workflow_ctx.has_active_workflow = false;
+        input.workflow_ctx.workflow_capabilities = Some(vec!["workflow".to_string()]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.flow_capabilities.has(ToolCluster::Workflow));
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn workflow_override_empty_caps_removes_default_clusters() {
         let mut input = base_input();
-        input.workflow_capabilities = Some(vec![]);
+        input.workflow_ctx.workflow_capabilities = Some(vec![]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.flow_capabilities.enabled_clusters.is_empty());
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn workflow_custom_mcp_is_included_in_output() {
         let mut input = base_input();
-        input.workflow_capabilities = Some(vec!["mcp:code_analyzer".to_string()]);
+        input.workflow_ctx.workflow_capabilities = Some(vec!["mcp:code_analyzer".to_string()]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
             server: agent_client_protocol::McpServer::Http(

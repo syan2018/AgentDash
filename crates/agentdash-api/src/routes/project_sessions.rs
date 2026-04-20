@@ -243,8 +243,7 @@ pub(crate) async fn build_project_session_context_response(
             agent_declared_capabilities: resolved_config
                 .as_ref()
                 .and_then(|config| config.tool_clusters.clone()),
-            has_active_workflow: workflow_ctx.has_active_workflow,
-            workflow_capabilities: workflow_ctx.workflow_capabilities,
+            workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
             companion_slice_mode: None,
         },

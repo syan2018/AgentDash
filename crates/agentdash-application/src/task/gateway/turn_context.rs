@@ -127,8 +127,10 @@ pub async fn prepare_task_turn_context(
         story_id: Some(task.story_id),
         task_id: Some(task.id),
         agent_declared_capabilities: None,
-        has_active_workflow: active_projection.is_some(),
-        workflow_capabilities,
+        workflow_ctx: crate::capability::SessionWorkflowContext {
+            has_active_workflow: active_projection.is_some(),
+            workflow_capabilities,
+        },
         agent_mcp_servers: vec![],
         companion_slice_mode: None,
     };

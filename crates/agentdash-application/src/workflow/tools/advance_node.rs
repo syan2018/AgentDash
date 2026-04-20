@@ -390,13 +390,15 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                         story_id,
                                         task_id,
                                         agent_declared_capabilities: None,
-                                        has_active_workflow: true,
-                                        workflow_capabilities: Some(
-                                            new_caps_set
-                                                .iter()
-                                                .cloned()
-                                                .collect(),
-                                        ),
+                                        workflow_ctx: crate::capability::SessionWorkflowContext {
+                                            has_active_workflow: true,
+                                            workflow_capabilities: Some(
+                                                new_caps_set
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect(),
+                                            ),
+                                        },
                                         agent_mcp_servers: mcp_entries_from_servers(
                                             &runtime_mcp_servers,
                                         ),

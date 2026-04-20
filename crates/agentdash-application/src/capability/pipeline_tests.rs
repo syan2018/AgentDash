@@ -23,7 +23,7 @@ use agentdash_spi::ToolCluster;
 use uuid::Uuid;
 
 use crate::capability::{
-    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput,
+    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, SessionWorkflowContext,
     build_capability_delta_markdown,
 };
 use crate::platform_config::PlatformConfig;
@@ -72,8 +72,10 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         story_id: None,
         task_id: None,
         agent_declared_capabilities: None,
-        has_active_workflow: true,
-        workflow_capabilities: Some(effective.clone()),
+        workflow_ctx: SessionWorkflowContext {
+            has_active_workflow: true,
+            workflow_capabilities: Some(effective.clone()),
+        },
         agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         companion_slice_mode: None,
     };
@@ -138,8 +140,10 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         story_id: None,
         task_id: None,
         agent_declared_capabilities: None,
-        has_active_workflow: true,
-        workflow_capabilities: Some(effective.clone()),
+        workflow_ctx: SessionWorkflowContext {
+            has_active_workflow: true,
+            workflow_capabilities: Some(effective.clone()),
+        },
         agent_mcp_servers: vec![mcp_entry(
             "external_analyzer",
             "http://external:9000/mcp",
@@ -211,8 +215,10 @@ fn phase_node_invalid_directives_are_tolerated() {
         story_id: None,
         task_id: None,
         agent_declared_capabilities: None,
-        has_active_workflow: true,
-        workflow_capabilities: Some(effective.clone()),
+        workflow_ctx: SessionWorkflowContext {
+            has_active_workflow: true,
+            workflow_capabilities: Some(effective.clone()),
+        },
         agent_mcp_servers: vec![], // 故意不注册
         companion_slice_mode: None,
     };

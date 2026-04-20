@@ -499,8 +499,7 @@ impl RoutineExecutor {
                     // 未来可扩展为 capability key 声明
                     clusters.clone()
                 }),
-            has_active_workflow: workflow_ctx.has_active_workflow,
-            workflow_capabilities: workflow_ctx.workflow_capabilities,
+            workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
             companion_slice_mode: None,
         };

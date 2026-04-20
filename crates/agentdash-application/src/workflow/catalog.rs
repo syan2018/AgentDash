@@ -710,4 +710,28 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn upsert_bundle_accepts_builtin_workflow_admin() {
+        use crate::workflow::definition::{
+            BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY, build_builtin_workflow_bundle,
+        };
+
+        let project_id = Uuid::new_v4();
+        let bundle = build_builtin_workflow_bundle(project_id, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY)
+            .expect("build builtin_workflow_admin bundle");
+
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+
+        let saved = service
+            .upsert_bundle(bundle)
+            .await
+            .expect("bootstrap 内建工作流应通过所有校验");
+
+        assert_eq!(saved.workflows.len(), 2);
+        assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
+        assert_eq!(saved.lifecycle.steps.len(), 2);
+    }
 }

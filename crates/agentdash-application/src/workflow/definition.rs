@@ -10,6 +10,8 @@ pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
 pub const TRELLIS_DEV_STORY_TEMPLATE_KEY: &str = "trellis_dev_story";
 pub const TRELLIS_DEV_TASK_TEMPLATE_KEY: &str = "trellis_dev_task";
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
+#[allow(dead_code)] // runtime 只用字符串比较；常量用于测试和未来排错引用
+pub const BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY: &str = "builtin_workflow_admin";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BuiltinWorkflowTemplateBundle {
@@ -96,6 +98,7 @@ pub fn list_builtin_workflow_templates() -> Result<Vec<BuiltinWorkflowTemplateBu
         include_str!("builtins/trellis_dev_story.json"),
         include_str!("builtins/trellis_dev_task.json"),
         include_str!("builtins/trellis_dag_task.json"),
+        include_str!("builtins/builtin_workflow_admin.json"),
     ]
     .into_iter()
     .map(parse_builtin_workflow_template)
@@ -135,7 +138,7 @@ mod tests {
     fn builtin_workflow_templates_are_unique_and_loadable() {
         let templates = list_builtin_workflow_templates().expect("load templates");
 
-        assert_eq!(templates.len(), 4);
+        assert_eq!(templates.len(), 5);
         let keys = templates
             .iter()
             .map(|item| item.key.as_str())
@@ -146,6 +149,7 @@ mod tests {
         assert!(keys.contains(TRELLIS_DEV_STORY_TEMPLATE_KEY));
         assert!(keys.contains(TRELLIS_DEV_TASK_TEMPLATE_KEY));
         assert!(keys.contains(TRELLIS_DAG_TASK_TEMPLATE_KEY));
+        assert!(keys.contains(BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY));
     }
 
     #[test]
@@ -157,5 +161,53 @@ mod tests {
         assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Task);
         assert_eq!(bundle.workflows.len(), 4);
         assert_eq!(bundle.lifecycle.steps.len(), 4);
+    }
+
+    #[test]
+    fn builtin_workflow_admin_has_expected_shape() {
+        use agentdash_domain::workflow::CapabilityDirective;
+
+        let bundle = build_builtin_workflow_bundle(
+            Uuid::new_v4(),
+            BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY,
+        )
+        .expect("build builtin_workflow_admin bundle");
+
+        assert_eq!(bundle.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
+        assert_eq!(
+            bundle.lifecycle.binding_kind,
+            WorkflowBindingKind::Project,
+            "workflow_management 仅在 Project 级 session 可见，lifecycle 必须绑定到 Project"
+        );
+        assert_eq!(bundle.workflows.len(), 2);
+        assert_eq!(bundle.lifecycle.steps.len(), 2);
+        assert_eq!(bundle.lifecycle.entry_step_key, "plan");
+
+        let step_keys = bundle
+            .lifecycle
+            .steps
+            .iter()
+            .map(|step| step.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(step_keys, vec!["plan", "apply"]);
+
+        // 两步都显式 Add workflow_management 能力，让绑定此 lifecycle 的 Project
+        // session 通过新的 workflow_can_grant 授予路径获得 workflow 管理工具集。
+        for step in &bundle.lifecycle.steps {
+            let adds_workflow_mgmt = step
+                .capabilities
+                .iter()
+                .any(|directive| {
+                    matches!(
+                        directive,
+                        CapabilityDirective::Add(key) if key == "workflow_management"
+                    )
+                });
+            assert!(
+                adds_workflow_mgmt,
+                "step `{}` 必须 Add workflow_management 能力",
+                step.key
+            );
+        }
     }
 }

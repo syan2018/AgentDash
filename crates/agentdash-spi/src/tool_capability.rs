@@ -138,15 +138,22 @@ pub fn capability_to_platform_mcp_scope(cap: &ToolCapability) -> Option<Platform
 use agentdash_domain::session_binding::SessionOwnerType;
 
 /// 平台 well-known 能力的可见性规则。
+///
+/// 语义分两层：
+/// - **屏蔽（AND）**：`allowed_owner_types` 是硬边界，不在列表的 owner 一定不可见。
+/// - **授予（OR）**：`auto_granted` / `agent_can_grant` / `workflow_can_grant`
+///   至少一个来源命中即可见；三者同时为 false 代表该能力当前无任何授予源。
 #[derive(Debug, Clone)]
 pub struct CapabilityVisibilityRule {
     pub key: &'static str,
-    /// 允许该能力生效的 session owner 类型
+    /// 允许该能力生效的 session owner 类型（硬边界，AND 语义）
     pub allowed_owner_types: &'static [SessionOwnerType],
-    /// 是否需要 agent config 中显式声明才生效
-    pub requires_agent_declaration: bool,
-    /// 是否需要有活跃 workflow 才生效
-    pub requires_workflow: bool,
+    /// 只要 owner 匹配就默认授予（用于基础能力，如 file_system）
+    pub auto_granted: bool,
+    /// agent config 显式声明即授予
+    pub agent_can_grant: bool,
+    /// 当前 session 绑定的 workflow 声明即授予
+    pub workflow_can_grant: bool,
 }
 
 /// 返回所有平台 well-known 能力的默认可见性规则。
@@ -157,56 +164,73 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
         CapabilityVisibilityRule {
             key: CAP_FILE_SYSTEM,
             allowed_owner_types: &[Project, Story, Task],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_CANVAS,
             allowed_owner_types: &[Project],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_WORKFLOW,
             allowed_owner_types: &[Project, Story, Task],
-            requires_agent_declaration: false,
-            requires_workflow: true,
+            auto_granted: false,
+            agent_can_grant: false,
+            workflow_can_grant: true,
         },
         CapabilityVisibilityRule {
             key: CAP_COLLABORATION,
             allowed_owner_types: &[Project],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_STORY_MANAGEMENT,
             allowed_owner_types: &[Story],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_TASK_MANAGEMENT,
             allowed_owner_types: &[Task],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_RELAY_MANAGEMENT,
             allowed_owner_types: &[Project],
-            requires_agent_declaration: false,
-            requires_workflow: false,
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_WORKFLOW_MANAGEMENT,
             allowed_owner_types: &[Project],
-            requires_agent_declaration: true,
-            requires_workflow: false,
+            auto_granted: false,
+            // 保留 agent config 声明路径（向后兼容）
+            agent_can_grant: true,
+            // 新增：workflow 绑定即可授予，配合 builtin_workflow_admin 等内建工作流
+            workflow_can_grant: true,
         },
     ];
     RULES
 }
 
 /// 根据 visibility rule 判断某个 well-known capability 在给定上下文中是否生效。
+///
+/// 判定逻辑：
+/// 1. 自定义 `mcp:*` 能力不受规则约束，始终可见。
+/// 2. 未登记的 well-known key 不可见。
+/// 3. 屏蔽（AND）：`owner_type` 不在 `allowed_owner_types` 列表内 → 不可见。
+/// 4. 授予（OR）：`auto_granted` 或（`agent_can_grant && agent_declares`）或
+///    （`workflow_can_grant && has_active_workflow`）任一为真即可见。
 pub fn is_capability_visible(
     cap: &ToolCapability,
     owner_type: SessionOwnerType,
@@ -225,17 +249,15 @@ pub fn is_capability_visible(
         None => return false,
     };
 
+    // 屏蔽（AND）：owner 硬边界
     if !rule.allowed_owner_types.contains(&owner_type) {
         return false;
     }
-    if rule.requires_agent_declaration && !agent_declares {
-        return false;
-    }
-    if rule.requires_workflow && !has_active_workflow {
-        return false;
-    }
 
-    true
+    // 授予（OR）：任一来源命中即可见
+    rule.auto_granted
+        || (rule.agent_can_grant && agent_declares)
+        || (rule.workflow_can_grant && has_active_workflow)
 }
 
 #[cfg(test)]
@@ -343,6 +365,38 @@ mod tests {
             SessionOwnerType::Project,
             true,
             false,
+        ));
+    }
+
+    #[test]
+    fn visibility_workflow_management_workflow_grant_path() {
+        // 新 OR 语义：workflow 激活即可授予 workflow_management，
+        // 无需 agent config 显式声明，匹配 builtin_workflow_admin 使用场景。
+        let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
+        assert!(is_capability_visible(
+            &cap,
+            SessionOwnerType::Project,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn visibility_workflow_management_hard_boundary_still_blocks() {
+        // 屏蔽 AND：allowed_owner_types 是硬边界，Task/Story owner
+        // 即便同时命中所有授予源也不可见。
+        let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
+        assert!(!is_capability_visible(
+            &cap,
+            SessionOwnerType::Task,
+            true,
+            true,
+        ));
+        assert!(!is_capability_visible(
+            &cap,
+            SessionOwnerType::Story,
+            true,
+            true,
         ));
     }
 

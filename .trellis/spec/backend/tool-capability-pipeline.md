@@ -45,29 +45,48 @@ Resolver 行为：
 
 仅适用于平台 well-known 能力。`mcp:*` 不受 visibility rule 限制。
 
+语义分两层：**屏蔽走 AND，授予走 OR**。
+
+- **屏蔽（AND）**：`allowed_owner_types` 是硬边界，不在列表的 owner 一定不可见。
+- **授予（OR）**：`auto_granted` / `agent_can_grant` / `workflow_can_grant` 三个布尔源，至少一个命中即视为被授予。
+
 ```
 CapabilityVisibilityRule {
     key: String,
-    allowed_owner_types: [SessionOwnerType],
-    requires_agent_declaration: bool,
-    requires_workflow: bool,
+    allowed_owner_types: [SessionOwnerType],   // 硬边界（AND）
+    auto_granted: bool,                         // owner 匹配就默认授予（基础能力）
+    agent_can_grant: bool,                      // agent config 显式声明即授予
+    workflow_can_grant: bool,                   // 当前 workflow 声明即授予
 }
+```
+
+判定伪代码：
+
+```
+if cap.is_custom_mcp(): return true
+rule = find_rule(cap) or return false
+if owner_type not in rule.allowed_owner_types: return false
+return rule.auto_granted
+    || (rule.agent_can_grant && agent_declares)
+    || (rule.workflow_can_grant && has_active_workflow)
 ```
 
 ### 默认矩阵
 
-| Key | Project | Story | Task | 需 Agent 声明 | 需活跃 Workflow |
-|-----|---------|-------|------|--------------|----------------|
-| file_system | ✓ | ✓ | ✓* | — | — |
-| canvas | ✓ | — | — | — | — |
-| workflow | ✓ | ✓ | ✓ | — | ✓ |
-| collaboration | ✓ | — | — | — | — |
-| story_management | — | ✓ | — | — | — |
-| task_management | — | — | ✓ | — | — |
-| relay_management | ✓ | — | — | — | — |
-| workflow_management | ✓ | — | — | ✓ | — |
+| Key | Project | Story | Task | auto | agent | workflow |
+|-----|---------|-------|------|------|-------|----------|
+| file_system | ✓ | ✓ | ✓* | ✓ | — | — |
+| canvas | ✓ | — | — | ✓ | — | — |
+| workflow | ✓ | ✓ | ✓ | — | — | ✓ |
+| collaboration | ✓ | — | — | ✓ | — | — |
+| story_management | — | ✓ | — | ✓ | — | — |
+| task_management | — | — | ✓ | ✓ | — | — |
+| relay_management | ✓ | — | — | ✓ | — | — |
+| workflow_management | ✓ | — | — | — | ✓ | ✓ |
 
 > *Task session 的 file_system 由外部执行器 native 提供，不通过 ToolCluster
+>
+> `workflow_management` 同时开启 agent 与 workflow 两条授予源：前端未提供 agent 能力配置入口时，通过绑定 `builtin_workflow_admin` 等内建工作流即可赋能；agent config 显式声明的旧路径也继续可用。
 
 ## CapabilityResolver
 

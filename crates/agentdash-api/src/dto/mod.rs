@@ -4,6 +4,7 @@
 /// 使 API 序列化结构与领域模型解耦，便于独立演进。
 mod canvas;
 mod identity_directory;
+mod mcp_preset;
 mod project;
 mod story;
 mod task;
@@ -12,6 +13,7 @@ mod workspace;
 
 pub use canvas::*;
 pub use identity_directory::*;
+pub use mcp_preset::*;
 pub use project::*;
 pub use story::*;
 pub use task::*;

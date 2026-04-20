@@ -11,6 +11,7 @@ pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
 pub mod llm_providers;
+pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
 pub mod project_sessions;
@@ -161,6 +162,25 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/canvases",
             get(canvases::list_project_canvases).post(canvases::create_canvas),
+        )
+        // MCP Preset（Project 级 MCP Server 配置模板，Assets 页子类目）
+        .route(
+            "/projects/{project_id}/mcp-presets",
+            get(mcp_presets::list_mcp_presets).post(mcp_presets::create_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/bootstrap",
+            post(mcp_presets::bootstrap_mcp_presets),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}",
+            get(mcp_presets::get_mcp_preset)
+                .patch(mcp_presets::update_mcp_preset)
+                .delete(mcp_presets::delete_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}/clone",
+            post(mcp_presets::clone_mcp_preset),
         )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(

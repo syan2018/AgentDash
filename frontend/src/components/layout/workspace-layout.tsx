@@ -50,8 +50,8 @@ export function WorkspaceLayout() {
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
-  const canvasDashboardMatch = useMatch("/dashboard/canvas");
-  const workflowDashboardMatch = useMatch("/dashboard/workflow");
+  // Assets 页及其子类目——Workflow / Lifecycle 编辑器页也归属 Assets（PRD: 编辑跳转拉起原 editor）
+  const assetsDashboardMatch = useMatch("/dashboard/assets/*");
   const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
   const lifecycleEditorMatch = useMatch("/lifecycle-editor/:definitionId");
   const routineDashboardMatch = useMatch("/dashboard/routine");
@@ -62,12 +62,10 @@ export function WorkspaceLayout() {
   const isStoryActive =
     !!storyDashboardMatch ||
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
-  const isCanvasActive =
-    !!canvasDashboardMatch;
-  const isWorkflowActive =
-    !!workflowDashboardMatch ||
+  const isAssetsActive =
+    !!assetsDashboardMatch ||
     !!workflowEditorMatch ||
-    !!lifecycleEditorMatch;  // Workflow / Lifecycle 编辑器页也高亮 Workflow Tab
+    !!lifecycleEditorMatch;  // Workflow / Lifecycle 编辑器从 Assets 跳入，高亮 Assets
   const isRoutineActive = !!routineDashboardMatch;
 
   const agentNavTarget = useMemo(() => {
@@ -92,24 +90,18 @@ export function WorkspaceLayout() {
     return "/dashboard/story";
   }, [isSettingsRoute, rememberedPath]);
 
-  const workflowNavTarget = useMemo(() => {
-    if (!isSettingsRoute) return "/dashboard/workflow";
+  const assetsNavTarget = useMemo(() => {
+    // 访问 Settings 页时，记忆之前在 Assets 区的路径（含 editor 子页）；
+    // 其他情况默认回到 Assets 默认类目（由嵌套路由的 index Navigate 跳到 workflow）
+    if (!isSettingsRoute) return "/dashboard/assets";
     if (
-      rememberedPath.startsWith("/dashboard/workflow")
+      rememberedPath.startsWith("/dashboard/assets")
       || rememberedPath.startsWith("/workflow-editor/")
       || rememberedPath.startsWith("/lifecycle-editor/")
     ) {
       return rememberedPath;
     }
-    return "/dashboard/workflow";
-  }, [isSettingsRoute, rememberedPath]);
-
-  const canvasNavTarget = useMemo(() => {
-    if (!isSettingsRoute) return "/dashboard/canvas";
-    if (rememberedPath.startsWith("/dashboard/canvas")) {
-      return rememberedPath;
-    }
-    return "/dashboard/canvas";
+    return "/dashboard/assets";
   }, [isSettingsRoute, rememberedPath]);
 
   const routineNavTarget = useMemo(() => {
@@ -173,28 +165,16 @@ export function WorkspaceLayout() {
                 Story
               </NavLink>
               <NavLink
-                to={workflowNavTarget}
+                to={assetsNavTarget}
                 className={() =>
                   `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
-                    isWorkflowActive
+                    isAssetsActive
                       ? "border-primary/20 bg-background font-medium text-foreground"
                       : "border-transparent text-muted-foreground hover:border-border hover:bg-background/80 hover:text-foreground"
                   }`
                 }
               >
-                Workflow
-              </NavLink>
-              <NavLink
-                to={canvasNavTarget}
-                className={() =>
-                  `flex w-full items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
-                    isCanvasActive
-                      ? "border-primary/20 bg-background font-medium text-foreground"
-                      : "border-transparent text-muted-foreground hover:border-border hover:bg-background/80 hover:text-foreground"
-                  }`
-                }
-              >
-                Canvas
+                Assets
               </NavLink>
               <NavLink
                 to={routineNavTarget}

@@ -7,3 +7,8 @@
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理风格"}
 {"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "domain 类型设计"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量基线"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "前端目录结构约定"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端状态管理"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量基线"}

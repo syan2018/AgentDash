@@ -469,4 +469,5 @@ export * from "./context";
 export * from "./workflow";
 export * from "./canvas";
 export * from "./session";
+export * from "./mcp-preset";
 export * from "./acp";

@@ -46,19 +46,35 @@ const StoryTabView = lazy(async () => {
   return { default: m.StoryTabView };
 });
 
-const WorkflowTabView = lazy(async () => {
-  const m = await import("./features/workflow/workflow-tab-view");
-  return { default: m.WorkflowTabView };
-});
-
-const CanvasTabView = lazy(async () => {
-  const m = await import("./features/canvas-panel/CanvasTabView");
-  return { default: m.CanvasTabView };
-});
+// NOTE: Workflow / Canvas 原顶级 Tab 已降级为 Assets 子类目（PR3）。
+// `workflow-tab-view.tsx` / `CanvasTabView.tsx` 组件文件保留——PR4 会通过新的
+// 子路由（例如 `/dashboard/assets/workflow/:id/edit`）重新拉起做资产编辑。
 
 const RoutineTabView = lazy(async () => {
   const m = await import("./features/routine/routine-tab-view");
   return { default: m.RoutineTabView };
+});
+
+// Assets 页：Workflow / Canvas / MCP Preset 三类项目级可复用资产的统一入口。
+// 顶层壳 AssetsTabView + 三个类目 Panel 通过嵌套路由切换。
+const AssetsTabView = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.AssetsTabView };
+});
+
+const AssetsWorkflowPanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.WorkflowCategoryPanel };
+});
+
+const AssetsCanvasPanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.CanvasCategoryPanel };
+});
+
+const AssetsMcpPresetPanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.McpPresetCategoryPanel };
 });
 
 const WorkflowEditorPage = lazy(async () => {
@@ -227,8 +243,16 @@ function AppContent() {
             <Route index element={<Navigate to="agent" replace />} />
             <Route path="agent" element={<AgentTabView />} />
             <Route path="story" element={<StoryTabView />} />
-            <Route path="canvas" element={<CanvasTabView />} />
-            <Route path="workflow" element={<WorkflowTabView />} />
+            {/* Assets 页：Workflow / Canvas / MCP Preset 三类项目级可复用资产统一入口 */}
+            <Route path="assets" element={<AssetsTabView />}>
+              <Route index element={<Navigate to="workflow" replace />} />
+              <Route path="workflow" element={<AssetsWorkflowPanel />} />
+              <Route path="canvas" element={<AssetsCanvasPanel />} />
+              <Route path="mcp-preset" element={<AssetsMcpPresetPanel />} />
+            </Route>
+            {/* 旧路径深链兼容：重定向到 Assets 对应子类目，避免收藏 / 外部链接失效 */}
+            <Route path="canvas" element={<Navigate to="/dashboard/assets/canvas" replace />} />
+            <Route path="workflow" element={<Navigate to="/dashboard/assets/workflow" replace />} />
             <Route path="routine" element={<RoutineTabView />} />
           </Route>
 

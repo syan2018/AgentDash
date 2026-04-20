@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
-import type { AgentPreset, McpEnvVar, McpHttpHeader, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
+import type { AgentPreset, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
 import { VfsBrowser } from "../vfs";
+import { McpServerDeclEditor } from "../mcp-shared";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -73,216 +74,10 @@ export function formToPreset(form: PresetFormState): AgentPreset {
 }
 
 // ─── MCP Servers Editor ──────────────────────────────────
-
-function KeyValueList({
-  items,
-  onChange,
-  keyPlaceholder,
-  valuePlaceholder,
-}: {
-  items: McpHttpHeader[] | McpEnvVar[];
-  onChange: (items: McpHttpHeader[]) => void;
-  keyPlaceholder: string;
-  valuePlaceholder: string;
-}) {
-  return (
-    <div className="space-y-1">
-      {items.map((item, i) => (
-        <div key={i} className="flex gap-1.5">
-          <input
-            value={item.name}
-            onChange={(e) => {
-              const next = [...items] as McpHttpHeader[];
-              next[i] = { ...next[i], name: e.target.value };
-              onChange(next);
-            }}
-            placeholder={keyPlaceholder}
-            className="agentdash-form-input flex-1"
-          />
-          <input
-            value={item.value}
-            onChange={(e) => {
-              const next = [...items] as McpHttpHeader[];
-              next[i] = { ...next[i], value: e.target.value };
-              onChange(next);
-            }}
-            placeholder={valuePlaceholder}
-            className="agentdash-form-input flex-1"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const next = items.filter((_, j) => j !== i) as McpHttpHeader[];
-              onChange(next);
-            }}
-            className="shrink-0 rounded-[6px] border border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10"
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...items as McpHttpHeader[], { name: "", value: "" }])}
-        className="text-[10px] text-muted-foreground hover:text-foreground"
-      >
-        + 添加
-      </button>
-    </div>
-  );
-}
-
-function StringList({
-  items,
-  onChange,
-  placeholder,
-}: {
-  items: string[];
-  onChange: (items: string[]) => void;
-  placeholder: string;
-}) {
-  return (
-    <div className="space-y-1">
-      {items.map((item, i) => (
-        <div key={i} className="flex gap-1.5">
-          <input
-            value={item}
-            onChange={(e) => {
-              const next = [...items];
-              next[i] = e.target.value;
-              onChange(next);
-            }}
-            placeholder={placeholder}
-            className="agentdash-form-input flex-1"
-          />
-          <button
-            type="button"
-            onClick={() => onChange(items.filter((_, j) => j !== i))}
-            className="shrink-0 rounded-[6px] border border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10"
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...items, ""])}
-        className="text-[10px] text-muted-foreground hover:text-foreground"
-      >
-        + 添加
-      </button>
-    </div>
-  );
-}
-
-function McpServerEntry({
-  server,
-  onChange,
-  onRemove,
-}: {
-  server: McpServerDecl;
-  onChange: (s: McpServerDecl) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-      <div className="flex items-center gap-2">
-        <select
-          value={server.type}
-          onChange={(e) => {
-            const t = e.target.value as McpServerDecl["type"];
-            if (t === "stdio") {
-              onChange({ type: "stdio", name: server.name, command: "", args: [], env: [] });
-            } else {
-              onChange({ type: t, name: server.name, url: "", headers: [] });
-            }
-          }}
-          className="agentdash-form-select w-24"
-        >
-          <option value="http">HTTP</option>
-          <option value="sse">SSE</option>
-          <option value="stdio">Stdio</option>
-        </select>
-        <input
-          value={server.name}
-          onChange={(e) => onChange({ ...server, name: e.target.value })}
-          placeholder="服务名称"
-          className="agentdash-form-input flex-1"
-        />
-        <label className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={server.relay ?? (server.type === "stdio")}
-            onChange={(e) => onChange({ ...server, relay: e.target.checked })}
-            className="h-3 w-3"
-          />
-          Relay
-        </label>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="shrink-0 rounded-[6px] border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-        >
-          删除
-        </button>
-      </div>
-
-      {(server.type === "http" || server.type === "sse") && (
-        <>
-          <div>
-            <label className="agentdash-form-label">URL</label>
-            <input
-              value={server.url}
-              onChange={(e) => onChange({ ...server, url: e.target.value })}
-              placeholder="https://example.com/mcp"
-              className="agentdash-form-input"
-            />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Headers</label>
-            <KeyValueList
-              items={server.headers ?? []}
-              onChange={(h) => onChange({ ...server, headers: h })}
-              keyPlaceholder="Header 名称"
-              valuePlaceholder="值"
-            />
-          </div>
-        </>
-      )}
-
-      {server.type === "stdio" && (
-        <>
-          <div>
-            <label className="agentdash-form-label">Command</label>
-            <input
-              value={server.command}
-              onChange={(e) => onChange({ ...server, command: e.target.value })}
-              placeholder="npx / python / /path/to/binary"
-              className="agentdash-form-input"
-            />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Args</label>
-            <StringList
-              items={server.args ?? []}
-              onChange={(a) => onChange({ ...server, args: a })}
-              placeholder="参数"
-            />
-          </div>
-          <div>
-            <label className="agentdash-form-label">Env</label>
-            <KeyValueList
-              items={(server.env ?? []) as McpHttpHeader[]}
-              onChange={(e) => onChange({ ...server, env: e as McpEnvVar[] })}
-              keyPlaceholder="变量名"
-              valuePlaceholder="值"
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+//
+// 单条 MCP Server 的编辑 UI 抽取到 `features/mcp-shared/McpServerDeclEditor`
+// 与 Assets 页 MCP Preset 表单共享实现。此处的 McpServersEditor 仅保留
+// "列表 + 新增 / 删除"这层 agent-preset 特有的包装。
 
 function McpServersEditor({
   servers,
@@ -303,9 +98,9 @@ function McpServersEditor({
         </p>
       )}
       {servers.map((server, i) => (
-        <McpServerEntry
+        <McpServerDeclEditor
           key={i}
-          server={server}
+          value={server}
           onChange={(s) => {
             const next = [...servers];
             next[i] = s;

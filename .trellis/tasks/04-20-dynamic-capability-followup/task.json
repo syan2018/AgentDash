@@ -1,0 +1,69 @@
+{
+  "id": "dynamic-capability-followup",
+  "name": "dynamic-capability-followup",
+  "title": "动态能力赋予链路补齐与验收收尾",
+  "description": "承接 04-19-dynamic-agent-capability-provisioning 的剩余缺口，补齐 lifecycle 动态能力赋予链路在 agent_node / phase_node 以及 step capability 配置路径上的完整生效路径，并完成验收口径对齐。重点包括 agent_node 对自定义 mcp:* capability 的真实注入、step capability 的前端支持、capability key 校验，以及仅围绕能力更新事件的治理闭环。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "domain + application + executor + api + frontend",
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "补齐 agent_node 路径对自定义 mcp:* capability 的真实 MCP 注入与继承",
+    "补齐 step capability 在前端编辑器/展示路径上的支持",
+    "补齐 lifecycle step capability key 的域层校验与非法输入测试",
+    "将 SessionStart 排除出范围，明确只治理能力更新事件与运行时同步",
+    "补充覆盖真实 orchestrator 路径的回归测试，避免纯函数测试掩盖集成缺口"
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-application/src/workflow/orchestrator.rs",
+    "crates/agentdash-application/src/capability/resolver.rs",
+    "crates/agentdash-application/src/session/plan_builder.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/workflow/tools/advance_node.rs",
+    "crates/agentdash-domain/src/workflow/value_objects.rs",
+    "crates/agentdash-mcp/src/servers/workflow.rs",
+    "crates/agentdash-executor/src/connectors/pi_agent/connector.rs",
+    "frontend/src"
+  ],
+  "notes": "承接 04-19-dynamic-agent-capability-provisioning 的收尾缺口。旧任务主链已落地：CapabilityDirective / effective set / phase node delta / PiAgent replace-set 已具备；本任务聚焦验收未闭合项，避免继续混在旧 task 中造成“看似完成但实际上仍缺关键链路”的状态。根据最新确认，SessionStart 不再纳入治理范围，能力说明依赖 Agent 自身工具治理；本任务只处理 step/phase 切换时的能力更新、生效链路与配置入口。",
+  "meta": {}
+}

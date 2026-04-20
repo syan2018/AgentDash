@@ -3,20 +3,23 @@
   "name": "dynamic-agent-capability-provisioning",
   "title": "动态 Agent 能力管线 — 基于 Lifecycle 的工具自动供给",
   "description": "在 Phase 1 的 ToolCapability 声明模型基础上，实现 lifecycle step 级的动态工具供给。step 通过 CapabilityDirective (Add/Remove) 声明能力变更，hook 管线注入 effective capabilities 说明和 delta 通知。agent_node 创建新 session 时由 CapabilityResolver 直接产出正确工具集；phase_node 在 session 内切换时，通过 PiAgentConnector MCP 热插拔 + hook 注入 delta。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "feature",
   "scope": "domain + application + executor + spi",
   "priority": "P2",
   "creator": "cursor-agent",
   "assignee": null,
   "createdAt": "2026-04-19",
-  "completedAt": null,
+  "completedAt": "2026-04-20",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
   "current_phase": 2,
   "next_action": [
-    { "phase": 2, "action": "check" }
+    {
+      "phase": 2,
+      "action": "check"
+    }
   ],
   "commit": null,
   "pr_url": null,
@@ -47,5 +50,8 @@
     "crates/agentdash-mcp/src/servers/workflow.rs",
     "crates/agentdash-mcp/src/injection.rs"
   ],
-  "notes": "设计决策：Step capability 用 CapabilityDirective{Add,Remove} 枚举。SessionInit 阶段不做 Markdown 注入 —— PiAgent 每轮 prompt 从 state.tools 自动派生 ToolDefinition，覆盖"新工具感知"；Compact 只压缩 messages，不触碰 tools，重建正确。Phase Node delta 通知走 agent.steer()：只追加 user message，不改 system_prompt / 历史消息，KV cache 前缀友好；tools 段变化不可避免会 invalidate 其后缓存，这是 replace-set 语义必然代价。"
+  "notes": "设计决策：Step capability 用 CapabilityDirective{Add,Remove} 枚举。SessionInit 阶段不做 Markdown 注入 —— PiAgent 每轮 prompt 从 state.tools 自动派生 ToolDefinition，覆盖\"新工具感知\"；Compact 只压缩 messages，不触碰 tools，重建正确。Phase Node delta 通知走 agent.steer()：只追加 user message，不改 system_prompt / 历史消息，KV cache 前缀友好；tools 段变化不可避免会 invalidate 其后缓存，这是 replace-set 语义必然代价。",
+  "children": [
+    "04-20-dynamic-capability-followup"
+  ]
 }

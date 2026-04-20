@@ -4,8 +4,8 @@
 -- 先上线。跑这个 migration 前请确认：
 --   1. 所有服务都已部署到移除兼容包袱的版本；
 --   2. 没有正在运行的老版本 session / lifecycle run 还在读取这些列。
-
-BEGIN;
+--
+-- 运行时：Postgres（sqlx::migrate 会为每个文件包一层事务，这里不再显式 BEGIN/COMMIT）。
 
 -- #2 lifecycle_runs.current_step_key —— 字段已被 active_node_keys 完全取代
 ALTER TABLE lifecycle_runs DROP COLUMN IF EXISTS current_step_key;
@@ -16,17 +16,10 @@ ALTER TABLE lifecycle_runs DROP COLUMN IF EXISTS current_step_key;
 --    如果未来 mount metadata 有被 cached 到表中，在此追加清理 JSON 的 UPDATE。
 
 -- #8 stories.context 里的 prd_doc / spec_refs / resource_list —— 代码已不再消费
---    改为通过 JSONB/TEXT 两种形态都兼容的写法。
---    SQLite / Postgres 都可接受以下做法（stories.context 为 TEXT，存 JSON 字符串）。
---    Postgres:
---      UPDATE stories SET context = (context::jsonb - 'prd_doc' - 'spec_refs' - 'resource_list')::text
---      WHERE context::jsonb ? 'prd_doc' OR context::jsonb ? 'spec_refs' OR context::jsonb ? 'resource_list';
---    SQLite (JSON1):
+--    stories.context 列类型为 TEXT，存 JSON 字符串；Postgres 下用 jsonb 做 key 去除。
 UPDATE stories
-SET context = json_remove(context, '$.prd_doc', '$.spec_refs', '$.resource_list')
-WHERE json_extract(context, '$.prd_doc') IS NOT NULL
-   OR json_extract(context, '$.spec_refs') IS NOT NULL
-   OR json_extract(context, '$.resource_list') IS NOT NULL;
+SET context = ((context::jsonb) - 'prd_doc' - 'spec_refs' - 'resource_list')::text
+WHERE (context::jsonb) ?| ARRAY['prd_doc', 'spec_refs', 'resource_list'];
 
 -- #9 session hook metadata 里的 primary_workflow_key —— 仅存在于 snapshot/事件流
 --    不在关系型列中，无需 DDL。历史事件负载里遗留的键可忽略，serde 会跳过。
@@ -36,7 +29,5 @@ WHERE json_extract(context, '$.prd_doc') IS NOT NULL
 --    constraints/checks 推导 hook_rules，将需要人工更新 contract。可以用如下
 --    查询找出候选：
 --      SELECT id, key FROM workflow_definitions
---      WHERE json_extract(contract, '$.hook_rules') IS NULL
---        AND json_extract(contract, '$.completion.checks') IS NOT NULL;
-
-COMMIT;
+--      WHERE (contract::jsonb) -> 'hook_rules' IS NULL
+--        AND (contract::jsonb) #> '{completion,checks}' IS NOT NULL;

@@ -7,6 +7,7 @@ use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -38,6 +39,7 @@ pub struct RepositorySet {
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub llm_provider_repo: Arc<dyn LlmProviderRepository>,
+    pub mcp_preset_repo: Arc<dyn McpPresetRepository>,
     pub agent_repo: Arc<dyn AgentRepository>,
     pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,

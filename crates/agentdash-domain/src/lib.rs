@@ -8,6 +8,7 @@ pub mod context_source;
 pub mod identity;
 pub mod inline_file;
 pub mod llm_provider;
+pub mod mcp_preset;
 pub mod project;
 pub mod routine;
 pub mod session_binding;

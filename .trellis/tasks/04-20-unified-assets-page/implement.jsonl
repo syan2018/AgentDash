@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "MCP Preset 新表/迁移规范"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Postgres repository 风格"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "crate 目录放置"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理风格"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "domain 类型设计"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量基线"}

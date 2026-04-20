@@ -1,0 +1,15 @@
+{
+  "key": "fetch",
+  "name": "Fetch",
+  "description": "通过 @modelcontextprotocol/server-fetch 以 stdio 方式为 Agent 暴露 HTTP 请求能力，默认关闭任何远端鉴权。",
+  "server_decl": {
+    "type": "stdio",
+    "name": "fetch",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-fetch"
+    ],
+    "env": []
+  }
+}

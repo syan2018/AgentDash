@@ -1,0 +1,16 @@
+{
+  "key": "filesystem",
+  "name": "Filesystem",
+  "description": "使用 @modelcontextprotocol/server-filesystem 通过 stdio 暴露本机文件系统读写能力，默认作用域在工作目录。",
+  "server_decl": {
+    "type": "stdio",
+    "name": "filesystem",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "."
+    ],
+    "env": []
+  }
+}

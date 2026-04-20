@@ -40,7 +40,8 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
-    PostgresProjectRepository, PostgresRoutineExecutionRepository, PostgresRoutineRepository,
+    PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
+    PostgresRoutineRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -175,6 +176,12 @@ impl AppState {
         let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
 
         let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
+
+        let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
+        mcp_preset_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp_presets 表初始化失败: {e}"))?;
 
         let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
 
@@ -358,6 +365,7 @@ impl AppState {
             user_directory_repo,
             settings_repo,
             llm_provider_repo,
+            mcp_preset_repo,
             agent_repo: agent_repo.clone(),
             agent_link_repo: agent_repo,
             workflow_definition_repo: workflow_repo.clone(),

@@ -6,6 +6,7 @@ pub mod capability;
 pub mod companion;
 pub mod context;
 pub mod hooks;
+pub mod mcp_preset;
 pub mod platform_config;
 pub mod project;
 pub mod reconcile;

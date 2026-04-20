@@ -4,7 +4,7 @@
   "title": "统一 Assets 管理页（Workflow / Canvas / MCP Preset）",
   "description": "",
   "status": "planning",
-  "dev_type": null,
+  "dev_type": "fullstack",
   "scope": null,
   "package": null,
   "priority": "P2",

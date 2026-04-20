@@ -369,12 +369,25 @@ pub trait AgentConnector: Send + Sync {
     ) -> Result<(), ConnectorError>;
 
     /// Phase Node 切换时热更新 session 的 MCP server 列表。
-    /// 语义为“目标集合替换”（replace-set），而非增量追加。
+    /// 语义为"目标集合替换"（replace-set），而非增量追加。
     /// 默认 no-op — 仅 PiAgentConnector 等 in-process connector 需要实现。
     async fn update_session_mcp_servers(
         &self,
         _session_id: &str,
         _mcp_servers: Vec<McpServer>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    /// 向活跃 session 注入一条用户消息（用于能力变更等 out-of-band 通知）。
+    ///
+    /// 与 `prompt` 不同，这里只是把消息塞进 steering 队列，
+    /// 下一次 LLM 调用前会被自动合并到对话末尾，保持 KV cache 前缀稳定。
+    /// 默认 no-op — 仅 in-process connector（如 PiAgent）需要实现。
+    async fn push_session_notification(
+        &self,
+        _session_id: &str,
+        _message: String,
     ) -> Result<(), ConnectorError> {
         Ok(())
     }

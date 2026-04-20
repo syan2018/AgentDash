@@ -968,6 +968,24 @@ impl AgentConnector for PiAgentConnector {
 
         Ok(())
     }
+
+    async fn push_session_notification(
+        &self,
+        session_id: &str,
+        message: String,
+    ) -> Result<(), ConnectorError> {
+        let agents = self.agents.lock().await;
+        let runtime = agents.get(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 当前没有活跃的 Pi Agent，无法注入通知"
+            ))
+        })?;
+        runtime
+            .agent
+            .steer(AgentMessage::user(message))
+            .await;
+        Ok(())
+    }
 }
 
 async fn emit_pending_hook_trace_notifications(

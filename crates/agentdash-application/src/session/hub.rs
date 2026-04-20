@@ -380,6 +380,20 @@ impl SessionHub {
         Ok(())
     }
 
+    /// 向运行中 session 的 agent 注入一条 out-of-band user message。
+    ///
+    /// 走 connector 的 steering 队列（in-process connector 实现）。
+    /// 消息会在下一次 LLM 调用前被合并到对话末尾，对 KV cache 前缀友好。
+    pub async fn push_session_notification(
+        &self,
+        session_id: &str,
+        message: String,
+    ) -> Result<(), ConnectorError> {
+        self.connector
+            .push_session_notification(session_id, message)
+            .await
+    }
+
     pub async fn has_live_runtime(&self, session_id: &str) -> bool {
         self.connector.has_live_session(session_id).await
     }

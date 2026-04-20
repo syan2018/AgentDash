@@ -10,6 +10,7 @@
 
 mod notification;
 mod resolver;
+mod session_workflow_context;
 
 #[cfg(test)]
 mod pipeline_tests;
@@ -20,4 +21,8 @@ pub use notification::{
 pub use resolver::{
     AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, CapabilityResolverOutput,
     CompanionSliceMode,
+};
+pub use session_workflow_context::{
+    capabilities_from_active_step, resolve_session_workflow_context, SessionWorkflowContext,
+    SessionWorkflowOwner, SessionWorkflowRepos,
 };

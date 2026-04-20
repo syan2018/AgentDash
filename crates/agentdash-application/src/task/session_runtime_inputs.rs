@@ -51,6 +51,10 @@ pub async fn build_task_session_runtime_inputs(
     let workflow = resolve_workflow_via_task_sessions(repos, task).await?;
 
     // ── CapabilityResolver 统一计算 MCP server 列表 ──
+    let workflow_capabilities = workflow
+        .as_ref()
+        .map(|projection| crate::capability::capabilities_from_active_step(&projection.active_step));
+
     let cap_input = CapabilityResolverInput {
         owner_type: SessionOwnerType::Task,
         project_id: task.project_id,
@@ -58,7 +62,7 @@ pub async fn build_task_session_runtime_inputs(
         task_id: Some(task.id),
         agent_declared_capabilities: None,
         has_active_workflow: workflow.is_some(),
-        workflow_capabilities: None,
+        workflow_capabilities,
         agent_mcp_servers: vec![],
         companion_slice_mode: None,
     };

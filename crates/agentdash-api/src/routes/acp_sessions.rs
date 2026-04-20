@@ -1182,6 +1182,18 @@ async fn build_story_owner_prompt_request(
             )
         })?;
 
+    let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
+        agentdash_application::capability::SessionWorkflowRepos {
+            agent_link: state.repos.agent_link_repo.as_ref(),
+            lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
+            workflow_def: state.repos.workflow_definition_repo.as_ref(),
+        },
+        agentdash_application::capability::SessionWorkflowOwner::Story {
+            project_id: project.id,
+        },
+    )
+    .await;
+
     let plan = SessionPlanBuilder::build(
         &session_plan_services(state),
         SessionPlanInput {
@@ -1189,8 +1201,8 @@ async fn build_story_owner_prompt_request(
             effective_agent_type: Some(effective_executor_config.executor.as_str()),
             platform_config: &state.config.platform_config,
             visible_canvas_mount_ids,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            has_active_workflow: workflow_ctx.has_active_workflow,
+            workflow_capabilities: workflow_ctx.workflow_capabilities,
             agent_mcp_servers: vec![],
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
@@ -1303,6 +1315,24 @@ async fn build_project_owner_prompt_request(
             })
             .collect();
 
+    let workflow_ctx = match uuid::Uuid::parse_str(agent_key) {
+        Ok(agent_uuid) => {
+            agentdash_application::capability::resolve_session_workflow_context(
+                agentdash_application::capability::SessionWorkflowRepos {
+                    agent_link: state.repos.agent_link_repo.as_ref(),
+                    lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
+                    workflow_def: state.repos.workflow_definition_repo.as_ref(),
+                },
+                agentdash_application::capability::SessionWorkflowOwner::Project {
+                    project_id: project.id,
+                    agent_id: agent_uuid,
+                },
+            )
+            .await
+        }
+        Err(_) => agentdash_application::capability::SessionWorkflowContext::NONE,
+    };
+
     let plan = SessionPlanBuilder::build(
         &session_plan_services(state),
         SessionPlanInput {
@@ -1317,8 +1347,8 @@ async fn build_project_owner_prompt_request(
             effective_agent_type: Some(effective_executor_config.executor.as_str()),
             platform_config: &state.config.platform_config,
             visible_canvas_mount_ids,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            has_active_workflow: workflow_ctx.has_active_workflow,
+            workflow_capabilities: workflow_ctx.workflow_capabilities,
             agent_mcp_servers: agent_mcp_entries,
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),

@@ -471,6 +471,20 @@ impl RoutineExecutor {
             })
             .collect();
 
+        // ── 解析 Routine session 的 workflow 上下文（与 Project 共用 agent_link 查询路径） ──
+        let workflow_ctx = crate::capability::resolve_session_workflow_context(
+            crate::capability::SessionWorkflowRepos {
+                agent_link: self.repos.agent_link_repo.as_ref(),
+                lifecycle_def: self.repos.lifecycle_definition_repo.as_ref(),
+                workflow_def: self.repos.workflow_definition_repo.as_ref(),
+            },
+            crate::capability::SessionWorkflowOwner::Routine {
+                project_id: agent_context.project.id,
+                agent_id: routine.agent_id,
+            },
+        )
+        .await;
+
         let cap_input = CapabilityResolverInput {
             owner_type: SessionOwnerType::Project,
             project_id: agent_context.project.id,
@@ -485,8 +499,8 @@ impl RoutineExecutor {
                     // 未来可扩展为 capability key 声明
                     clusters.clone()
                 }),
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            has_active_workflow: workflow_ctx.has_active_workflow,
+            workflow_capabilities: workflow_ctx.workflow_capabilities,
             agent_mcp_servers: agent_mcp_entries,
             companion_slice_mode: None,
         };

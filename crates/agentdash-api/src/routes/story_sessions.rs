@@ -434,6 +434,19 @@ pub(crate) async fn build_story_session_context_response(
     } else {
         None
     };
+    // ── 解析 Story session 的 workflow 上下文 ──
+    let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
+        agentdash_application::capability::SessionWorkflowRepos {
+            agent_link: state.repos.agent_link_repo.as_ref(),
+            lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
+            workflow_def: state.repos.workflow_definition_repo.as_ref(),
+        },
+        agentdash_application::capability::SessionWorkflowOwner::Story {
+            project_id: story.project_id,
+        },
+    )
+    .await;
+
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
@@ -442,8 +455,8 @@ pub(crate) async fn build_story_session_context_response(
             story_id: Some(story.id),
             task_id: None,
             agent_declared_capabilities: None,
-            has_active_workflow: false,
-            workflow_capabilities: None,
+            has_active_workflow: workflow_ctx.has_active_workflow,
+            workflow_capabilities: workflow_ctx.workflow_capabilities,
             agent_mcp_servers: vec![],
             companion_slice_mode: None,
         },

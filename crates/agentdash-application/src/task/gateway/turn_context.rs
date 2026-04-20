@@ -91,17 +91,17 @@ pub async fn prepare_task_turn_context(
     }
 
     // ── CapabilityResolver 驱动的 MCP 注入 ──
-    let has_active_workflow = {
-        // 提前检查是否有活跃 workflow（供 visibility rule 使用）
+    let active_projection = {
+        // 提前检查是否有活跃 workflow（供 visibility rule + capability 注入使用）
         let bindings = svc
             .repos
             .session_binding_repo
             .list_by_owner(SessionOwnerType::Task, task.id)
             .await
             .unwrap_or_default();
-        let mut has_wf = false;
+        let mut projection = None;
         for binding in &bindings {
-            if crate::workflow::resolve_active_workflow_projection_for_session(
+            if let Ok(Some(p)) = crate::workflow::resolve_active_workflow_projection_for_session(
                 &binding.session_id,
                 svc.repos.session_binding_repo.as_ref(),
                 svc.repos.workflow_definition_repo.as_ref(),
@@ -109,16 +109,17 @@ pub async fn prepare_task_turn_context(
                 svc.repos.lifecycle_run_repo.as_ref(),
             )
             .await
-            .ok()
-            .flatten()
-            .is_some()
             {
-                has_wf = true;
+                projection = Some(p);
                 break;
             }
         }
-        has_wf
+        projection
     };
+
+    let workflow_capabilities = active_projection
+        .as_ref()
+        .map(|p| crate::capability::capabilities_from_active_step(&p.active_step));
 
     let cap_input = CapabilityResolverInput {
         owner_type: SessionOwnerType::Task,
@@ -126,8 +127,8 @@ pub async fn prepare_task_turn_context(
         story_id: Some(task.story_id),
         task_id: Some(task.id),
         agent_declared_capabilities: None,
-        has_active_workflow,
-        workflow_capabilities: None,
+        has_active_workflow: active_projection.is_some(),
+        workflow_capabilities,
         agent_mcp_servers: vec![],
         companion_slice_mode: None,
     };

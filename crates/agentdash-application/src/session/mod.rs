@@ -22,6 +22,7 @@ pub mod title_generator;
 pub mod turn_processor;
 pub mod types;
 
+pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_notification;
 pub use hook_runtime::HookSessionRuntime;

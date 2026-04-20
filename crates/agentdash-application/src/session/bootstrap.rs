@@ -67,8 +67,7 @@ pub struct BootstrapPlanInput {
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub working_dir: Option<String>,
     pub executor_preset_name: Option<String>,
-    pub executor_source: String,
-    pub executor_resolution_error: Option<String>,
+    pub executor_resolution: super::context::ExecutorResolution,
     pub owner_variant: BootstrapOwnerVariant,
     pub workflow: Option<ActiveWorkflowProjection>,
 }
@@ -107,8 +106,7 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
     let executor = build_session_executor_summary(
         input.resolved_config.as_ref(),
         input.executor_preset_name,
-        input.executor_source,
-        input.executor_resolution_error,
+        input.executor_resolution,
     );
 
     SessionBootstrapPlan {
@@ -214,8 +212,7 @@ mod tests {
             mcp_servers: vec![],
             working_dir: None,
             executor_preset_name: None,
-            executor_source: "test".to_string(),
-            executor_resolution_error: None,
+            executor_resolution: crate::session::ExecutorResolution::resolved("test"),
             owner_variant: BootstrapOwnerVariant::Project {
                 agent_key: "default".to_string(),
                 agent_display_name: "Default Agent".to_string(),
@@ -240,8 +237,7 @@ mod tests {
             mcp_servers: vec![],
             working_dir: None,
             executor_preset_name: None,
-            executor_source: "test".to_string(),
-            executor_resolution_error: None,
+            executor_resolution: crate::session::ExecutorResolution::resolved("test"),
             owner_variant: BootstrapOwnerVariant::Project {
                 agent_key: "default".to_string(),
                 agent_display_name: "Default Agent".to_string(),

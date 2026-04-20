@@ -19,8 +19,7 @@ use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projecti
 #[derive(Debug, Clone)]
 pub struct TaskSessionRuntimeInputs {
     pub resolved_config: Option<AgentConfig>,
-    pub executor_source: String,
-    pub executor_resolution_error: Option<String>,
+    pub executor_resolution: crate::session::ExecutorResolution,
     pub vfs: Option<Vfs>,
     pub workflow: Option<ActiveWorkflowProjection>,
     /// context_bindings 预解析结果（session 创建时通过 VFS read 解析）
@@ -40,11 +39,17 @@ pub async fn build_task_session_runtime_inputs(
     strict_config_resolution: bool,
 ) -> Result<TaskSessionRuntimeInputs, TaskExecutionError> {
     let executor_source = resolve_task_executor_source(task, project, explicit_config.as_ref());
-    let (resolved_config, executor_resolution_error) =
+    let (resolved_config, executor_resolution) =
         match resolve_task_executor_config(explicit_config, task, project) {
-            Ok(config) => (config, None),
+            Ok(config) => (
+                config,
+                crate::session::ExecutorResolution::resolved(executor_source),
+            ),
             Err(err) if strict_config_resolution => return Err(err),
-            Err(err) => (None, Some(err.to_string())),
+            Err(err) => (
+                None,
+                crate::session::ExecutorResolution::failed(executor_source, err.to_string()),
+            ),
         };
 
     // 通过 task 的 session binding 查找是否有关联 lifecycle run
@@ -130,8 +135,7 @@ pub async fn build_task_session_runtime_inputs(
 
     Ok(TaskSessionRuntimeInputs {
         resolved_config,
-        executor_source,
-        executor_resolution_error,
+        executor_resolution,
         vfs,
         workflow,
         resolved_bindings,

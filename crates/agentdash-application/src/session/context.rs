@@ -77,9 +77,9 @@ pub struct SessionEffectiveContext {
 pub fn build_session_executor_summary(
     resolved_config: Option<&AgentConfig>,
     preset_name: Option<String>,
-    source: impl Into<String>,
-    resolution_error: Option<String>,
+    resolution: ExecutorResolution,
 ) -> SessionExecutorSummary {
+    let (source, resolution_error) = resolution.into_parts();
     SessionExecutorSummary {
         executor: resolved_config.map(|c| c.executor.clone()),
         provider_id: resolved_config.and_then(|c| c.provider_id.clone()),
@@ -88,8 +88,57 @@ pub fn build_session_executor_summary(
         thinking_level: resolved_config.and_then(|c| c.thinking_level),
         permission_policy: resolved_config.and_then(|c| c.permission_policy.clone()),
         preset_name,
-        source: source.into(),
+        source,
         resolution_error,
+    }
+}
+
+/// Executor config 解析结果：来源 + 可选错误。
+///
+/// 替代了原来分散的 `(executor_source: String, executor_resolution_error: Option<String>)`
+/// 双字段——两者始终成对出现，且"有 error"与"没 error"是两条互斥路径，
+/// 用 enum 表达可以让类型层拒绝"err 为 Some 但 source 为空"这类非法组合。
+#[derive(Debug, Clone)]
+pub enum ExecutorResolution {
+    /// 成功解析到 AgentConfig。`source` 描述使用的来源
+    /// （如 `task.agent_binding.preset_name` / `project.config.default_agent_type`）。
+    Resolved { source: String },
+    /// 解析失败但被上游容忍（`strict_config_resolution=false` 场景）。
+    /// `source` 描述尝试过的来源，`error` 记录失败原因。
+    Failed { source: String, error: String },
+}
+
+impl ExecutorResolution {
+    pub fn resolved(source: impl Into<String>) -> Self {
+        Self::Resolved { source: source.into() }
+    }
+
+    pub fn failed(source: impl Into<String>, error: impl Into<String>) -> Self {
+        Self::Failed {
+            source: source.into(),
+            error: error.into(),
+        }
+    }
+
+    pub fn source(&self) -> &str {
+        match self {
+            Self::Resolved { source } | Self::Failed { source, .. } => source.as_str(),
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Resolved { .. } => None,
+            Self::Failed { error, .. } => Some(error.as_str()),
+        }
+    }
+
+    /// 用于持久化/序列化到 `SessionExecutorSummary` 的旧双字段形状。
+    pub fn into_parts(self) -> (String, Option<String>) {
+        match self {
+            Self::Resolved { source } => (source, None),
+            Self::Failed { source, error } => (source, Some(error)),
+        }
     }
 }
 

@@ -489,8 +489,8 @@ pub(crate) async fn build_story_session_context_response(
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: None,
-        executor_source: executor_source.to_string(),
-        executor_resolution_error: None,
+        executor_resolution:
+            agentdash_application::session::ExecutorResolution::resolved(executor_source),
         owner_variant: BootstrapOwnerVariant::Story { story_overrides },
         workflow: None,
     });

@@ -274,8 +274,8 @@ pub(crate) async fn build_project_session_context_response(
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: project_agent.preset_name,
-        executor_source,
-        executor_resolution_error: None,
+        executor_resolution:
+            agentdash_application::session::ExecutorResolution::resolved(executor_source),
         owner_variant: BootstrapOwnerVariant::Project {
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,

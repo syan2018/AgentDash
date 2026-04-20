@@ -86,8 +86,7 @@ pub async fn build_task_session_context(
         mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
         executor_preset_name: preset_name,
-        executor_source: session_runtime_inputs.executor_source,
-        executor_resolution_error: session_runtime_inputs.executor_resolution_error,
+        executor_resolution: session_runtime_inputs.executor_resolution,
         owner_variant: BootstrapOwnerVariant::Task { story_overrides },
         workflow: session_runtime_inputs.workflow,
     });

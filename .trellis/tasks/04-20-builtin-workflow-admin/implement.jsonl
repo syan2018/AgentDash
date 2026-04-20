@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/tool-capability-pipeline.md", "reason": "本任务重构 CapabilityVisibilityRule 语义 + 新增 workflow_management 绑定路径的核心规范"}

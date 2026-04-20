@@ -5,9 +5,7 @@ use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-};
+use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
 use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -34,7 +32,6 @@ pub struct RelayRuntimeToolProvider {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     agent_repo: Arc<dyn AgentRepository>,
     agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -50,7 +47,6 @@ impl RelayRuntimeToolProvider {
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -64,7 +60,6 @@ impl RelayRuntimeToolProvider {
             session_binding_repo,
             agent_repo,
             agent_link_repo,
-            workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
@@ -180,7 +175,6 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Workflow) {
             tools.push(Arc::new(CompleteLifecycleNodeTool::new(
                 self.session_binding_repo.clone(),
-                self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
                 self.inline_file_repo.clone(),

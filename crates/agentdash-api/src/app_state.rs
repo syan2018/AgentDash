@@ -34,9 +34,7 @@ use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::StateChangeRepository;
 use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
-use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-};
+use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
@@ -231,7 +229,6 @@ impl AppState {
             session_binding_repo: session_binding_repo.clone(),
             agent_repo: agent_repo.clone(),
             agent_link_repo: agent_repo.clone(),
-            workflow_definition_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo.clone(),
             inline_file_repo: inline_file_repo.clone(),
@@ -291,7 +288,6 @@ impl AppState {
                 Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
                     session_hub.clone(),
                     session_binding_repo.clone(),
-                    workflow_repo.clone(),
                     workflow_repo.clone(),
                     workflow_repo.clone(),
                     inline_file_repo.clone(),
@@ -500,7 +496,6 @@ struct PiAgentConnectorDeps {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     agent_repo: Arc<dyn agentdash_domain::agent::AgentRepository>,
     agent_link_repo: Arc<dyn agentdash_domain::agent::ProjectAgentLinkRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
@@ -528,7 +523,6 @@ async fn build_pi_agent_connector(
         deps.session_binding_repo,
         deps.agent_repo,
         deps.agent_link_repo,
-        deps.workflow_definition_repo,
         deps.lifecycle_definition_repo,
         deps.lifecycle_run_repo,
         deps.inline_file_repo,

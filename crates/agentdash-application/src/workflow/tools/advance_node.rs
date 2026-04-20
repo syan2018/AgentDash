@@ -5,7 +5,7 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleStepExecutionStatus,
-    WorkflowDefinitionRepository, compute_effective_capabilities,
+    compute_effective_capabilities,
 };
 use agentdash_spi::hooks::SessionHookSnapshot;
 use agentdash_spi::schema::schema_value;
@@ -32,7 +32,6 @@ use crate::workflow::{
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -67,7 +66,6 @@ pub struct CompleteLifecycleNodeParams {
 impl CompleteLifecycleNodeTool {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -77,7 +75,6 @@ impl CompleteLifecycleNodeTool {
     ) -> Self {
         Self {
             session_binding_repo,
-            workflow_definition_repo,
             lifecycle_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
@@ -355,7 +352,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
             let orchestrator = LifecycleOrchestrator::new(
                 session_hub.clone(),
                 self.session_binding_repo.clone(),
-                self.workflow_definition_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
                 self.inline_file_repo.clone(),

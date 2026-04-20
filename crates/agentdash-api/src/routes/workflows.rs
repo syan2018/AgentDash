@@ -255,7 +255,6 @@ pub async fn start_lifecycle_run(
     let orchestrator = LifecycleOrchestrator::new(
         state.services.session_hub.clone(),
         state.repos.session_binding_repo.clone(),
-        state.repos.workflow_definition_repo.clone(),
         state.repos.lifecycle_definition_repo.clone(),
         state.repos.lifecycle_run_repo.clone(),
         state.repos.inline_file_repo.clone(),

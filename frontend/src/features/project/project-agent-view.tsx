@@ -262,8 +262,9 @@ function CreateAgentDialog({
     }
   };
 
-  const activeLifecycles = lifecycles.filter((l) => l.status === "active");
-  const activeWorkflows = definitions.filter((w) => w.status === "active");
+  // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
+  const activeLifecycles = lifecycles;
+  const activeWorkflows = definitions;
 
   return (
     <>
@@ -392,8 +393,9 @@ function LinkExistingAgentDialog({
   if (!open) return null;
 
   const available = agents.filter((a) => !excludeAgentIds.has(a.id));
-  const activeLifecycles = lifecycles.filter((l) => l.status === "active");
-  const activeWorkflows = definitions.filter((w) => w.status === "active");
+  // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
+  const activeLifecycles = lifecycles;
+  const activeWorkflows = definitions;
 
   const handleSave = async () => {
     if (!selectedAgentId) return;

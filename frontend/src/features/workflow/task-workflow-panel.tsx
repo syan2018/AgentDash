@@ -331,7 +331,8 @@ export function TaskWorkflowPanel({
       return;
     }
     const taskLifecycle = lifecycleDefinitions.find(
-      (l) => l.status === "active" && l.recommended_roles?.includes("task"),
+      // status 字段自 migration 0013 起已废弃；仅按 recommended_roles 筛选。
+      (l) => l.recommended_roles?.includes("task"),
     );
     if (!taskLifecycle) {
       setMessage("暂无可用的 Task Lifecycle 定义，请先在 Workflow 页面创建并激活。");

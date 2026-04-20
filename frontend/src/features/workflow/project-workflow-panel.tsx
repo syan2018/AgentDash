@@ -16,7 +16,8 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
     void fetchLifecycles();
   }, [projectId, fetchLifecycles]);
 
-  const activeLifecycles = lifecycles.filter((l) => l.status === "active");
+  // status 字段自 migration 0013 起已废弃；全部视为可用。
+  const activeLifecycles = lifecycles;
 
   return (
     <div className="space-y-3">

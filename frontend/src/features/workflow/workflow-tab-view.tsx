@@ -45,10 +45,21 @@ export function WorkflowTabView() {
     return () => clearTimeout(t);
   }, [message]);
 
-  const handleBootstrap = async (tpl: WorkflowTemplate) => {
-    setBusyKey(tpl.key);
-    const lc = await bootstrapTemplate(tpl.key);
-    if (lc) setMessage(`已注册：${tpl.name}`);
+  const handleBootstrapAll = async (list: WorkflowTemplate[]) => {
+    if (!currentProjectId || list.length === 0) return;
+    setBusyKey("__all__");
+    const registered: string[] = [];
+    for (const tpl of list) {
+      const lc = await bootstrapTemplate(tpl.key, currentProjectId);
+      if (lc) registered.push(tpl.name);
+    }
+    if (registered.length > 0) {
+      setMessage(
+        registered.length === list.length
+          ? `已注册 ${registered.length} 个内置 Bundle：${registered.join("、")}`
+          : `已注册 ${registered.length}/${list.length}：${registered.join("、")}`,
+      );
+    }
     setBusyKey(null);
   };
 
@@ -100,10 +111,13 @@ export function WorkflowTabView() {
                 <button
                   type="button"
                   className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary"
-                  onClick={() => void handleBootstrap(unregisteredTemplates[0])}
+                  onClick={() => void handleBootstrapAll(unregisteredTemplates)}
                   disabled={busyKey != null}
+                  title={unregisteredTemplates.map((tpl) => tpl.name).join("、")}
                 >
-                  {busyKey === unregisteredTemplates[0].key ? "注册中…" : `注册内置 Bundle (${unregisteredTemplates.length})`}
+                  {busyKey === "__all__"
+                    ? `注册中…(${unregisteredTemplates.length})`
+                    : `注册内置 Bundle (${unregisteredTemplates.length})`}
                 </button>
               </div>
             )}

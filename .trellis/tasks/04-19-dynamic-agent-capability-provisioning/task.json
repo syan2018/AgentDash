@@ -14,25 +14,24 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 1,
+  "current_phase": 2,
   "next_action": [
-    { "phase": 1, "action": "implement" },
     { "phase": 2, "action": "check" }
   ],
   "commit": null,
   "pr_url": null,
   "subtasks": [
-    "[2.1] CapabilityDirective 枚举 (Add/Remove) + LifecycleStepDefinition.capabilities 字段",
-    "[2.1] compute_effective_capabilities() — workflow baseline + step directives → effective set",
-    "[2.1] 域层校验：平台 key ∈ well-known；mcp:* 格式合法",
-    "[2.1] WorkflowMcpServer.upsert_lifecycle_tool 支持 step capabilities 输入",
-    "[2.4] Orchestrator.create_agent_node_session 传入 step effective capabilities",
-    "[2.5] HookSessionRuntime.current_capabilities + CapabilityDelta 追踪",
-    "[2.2] SessionStart hook 注入 effective capabilities 说明 (capability slot)",
-    "[2.2] step transition → capability_changed hook 注入 delta Markdown",
-    "[2.3] PiAgentConnector MCP 列表热更新接口",
-    "[2.3] Phase Node transition → delta → PiAgent MCP 热插拔",
-    "集成测试：agent_node + phase_node 场景"
+    "[2.1] ✅ CapabilityDirective 枚举 (Add/Remove) + LifecycleStepDefinition.capabilities 字段",
+    "[2.1] ✅ compute_effective_capabilities() — workflow baseline + step directives → effective set",
+    "[2.1] ✅ 域层校验：平台 key ∈ well-known；mcp:* 格式合法",
+    "[2.1] ✅ WorkflowMcpServer.upsert_lifecycle_tool 支持 step capabilities 输入",
+    "[2.4] ✅ Orchestrator.create_agent_node_session 传入 step effective capabilities",
+    "[2.5] ✅ HookSessionRuntime.current_capabilities + CapabilityDelta 追踪",
+    "[2.2] 降级：放弃 SessionStart Markdown 注入，改为依赖 PiAgent 自动 ToolDefinition 导出",
+    "[2.2] ✅ step transition → 结构化 delta Markdown 通过 agent.steer() 注入对话末尾",
+    "[2.3] ✅ PiAgentConnector MCP 列表热更新接口（replace-set）",
+    "[2.3] ✅ Phase Node transition → delta → PiAgent MCP 热插拔",
+    "✅ 集成测试：agent_node + phase_node capability pipeline 一致性"
   ],
   "relatedFiles": [
     "crates/agentdash-domain/src/workflow/value_objects.rs",
@@ -48,5 +47,5 @@
     "crates/agentdash-mcp/src/servers/workflow.rs",
     "crates/agentdash-mcp/src/injection.rs"
   ],
-  "notes": "设计决策：Step capability 用 CapabilityDirective{Add,Remove} 枚举。SessionInit 走 SessionStart sub-phase。Phase Node MCP 更新扩展 PiAgentConnector。Delta 通知用结构化 Markdown。实施顺序：2.1→2.4→2.5→2.2→2.3。"
+  "notes": "设计决策：Step capability 用 CapabilityDirective{Add,Remove} 枚举。SessionInit 阶段不做 Markdown 注入 —— PiAgent 每轮 prompt 从 state.tools 自动派生 ToolDefinition，覆盖"新工具感知"；Compact 只压缩 messages，不触碰 tools，重建正确。Phase Node delta 通知走 agent.steer()：只追加 user message，不改 system_prompt / 历史消息，KV cache 前缀友好；tools 段变化不可避免会 invalidate 其后缓存，这是 replace-set 语义必然代价。"
 }

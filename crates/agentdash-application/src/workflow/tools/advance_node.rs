@@ -437,6 +437,29 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     removed = ?removed,
                                     "Phase node capability delta detected"
                                 );
+
+                                // 将结构化 delta Markdown 注入到 agent 的 steering 队列，
+                                // 让 LLM 在对话层面显式感知能力变化。
+                                let delta_md = crate::capability::build_capability_delta_markdown(
+                                    &phase.node_key,
+                                    &delta,
+                                    &new_caps_set,
+                                );
+                                if let Err(error) = session_hub
+                                    .push_session_notification(
+                                        hook_session.session_id(),
+                                        delta_md,
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        session_id = %hook_session.session_id(),
+                                        phase_node = %phase.node_key,
+                                        error = %error,
+                                        "Phase node capability delta 消息注入失败"
+                                    );
+                                }
+
                                 session_hub
                                     .emit_capability_changed_hook(
                                         hook_session.session_id(),

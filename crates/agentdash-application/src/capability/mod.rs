@@ -8,8 +8,15 @@
 //! - `mcp:*` 自定义能力从 agent config 的 mcp_servers 中按 name 查找
 //! - 本模块取代各处散落的硬编码 FlowCapabilities 和 MCP injection 列表
 
+mod notification;
 mod resolver;
 
+#[cfg(test)]
+mod pipeline_tests;
+
+pub use notification::{
+    build_capability_delta_markdown, capability_description, is_known_capability_key,
+};
 pub use resolver::{
     AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, CapabilityResolverOutput,
     CompanionSliceMode,

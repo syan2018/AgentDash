@@ -486,10 +486,9 @@ impl RoutineExecutor {
         .await;
 
         let cap_input = CapabilityResolverInput {
-            owner_type: SessionOwnerType::Project,
-            project_id: agent_context.project.id,
-            story_id: None,
-            task_id: None,
+            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                project_id: agent_context.project.id,
+            },
             agent_declared_capabilities: agent_context
                 .executor_config
                 .tool_clusters

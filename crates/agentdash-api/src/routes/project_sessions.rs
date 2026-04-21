@@ -236,10 +236,9 @@ pub(crate) async fn build_project_session_context_response(
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
-            owner_type: SessionOwnerType::Project,
-            project_id: project.id,
-            story_id: None,
-            task_id: None,
+            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                project_id: project.id,
+            },
             agent_declared_capabilities: resolved_config
                 .as_ref()
                 .and_then(|config| config.tool_clusters.clone()),

@@ -2,13 +2,12 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::tool_capability::{
     self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
 use agentdash_spi::{FlowCapabilities, ToolCluster};
-use uuid::Uuid;
 
 use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
@@ -16,14 +15,13 @@ use crate::platform_config::PlatformConfig;
 /// Resolver 输入 — 纯粹的 session 上下文描述，不含基础设施配置。
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverInput {
-    /// session 归属实体类型
-    pub owner_type: SessionOwnerType,
-    /// session 关联的 Project ID
-    pub project_id: Uuid,
-    /// session 关联的 Story ID（story/task session 必填）
-    pub story_id: Option<Uuid>,
-    /// session 关联的 Task ID（task session 必填）
-    pub task_id: Option<Uuid>,
+    /// session 归属上下文（owner_type + 关联 ID 组合成的 sum type）。
+    ///
+    /// 合法组合被类型系统约束：
+    /// - [`SessionOwnerCtx::Project`] — project 级 session
+    /// - [`SessionOwnerCtx::Story`] — story 级 session（含 project_id）
+    /// - [`SessionOwnerCtx::Task`] — task 级 session（含 project_id + story_id）
+    pub owner_ctx: SessionOwnerCtx,
     /// agent config 中显式声明的 capability key 列表。
     /// None 表示 agent 未声明（使用默认可见能力），空 vec 表示显式声明为空。
     pub agent_declared_capabilities: Option<Vec<String>>,
@@ -182,7 +180,7 @@ fn default_visible_capabilities(
         let agent_declares_this = agent_declares_set.is_some_and(|set| set.contains(key));
         if tool_capability::is_capability_visible(
             &cap,
-            input.owner_type,
+            input.owner_ctx.owner_type(),
             agent_declares_this,
             input.workflow_ctx.has_active_workflow,
         ) {
@@ -222,18 +220,25 @@ fn build_platform_mcp_config(
     let base_url = mcp_base_url?;
 
     Some(match scope {
-        PlatformMcpScope::Relay => McpInjectionConfig::for_relay(base_url, input.project_id),
+        PlatformMcpScope::Relay => {
+            McpInjectionConfig::for_relay(base_url, input.owner_ctx.project_id())
+        }
         PlatformMcpScope::Story => {
-            let story_id = input.story_id?;
-            McpInjectionConfig::for_story(base_url, input.project_id, story_id)
+            let story_id = input.owner_ctx.story_id()?;
+            McpInjectionConfig::for_story(base_url, input.owner_ctx.project_id(), story_id)
         }
         PlatformMcpScope::Task => {
-            let task_id = input.task_id?;
-            let story_id = input.story_id?;
-            McpInjectionConfig::for_task(base_url, input.project_id, story_id, task_id)
+            let task_id = input.owner_ctx.task_id()?;
+            let story_id = input.owner_ctx.story_id()?;
+            McpInjectionConfig::for_task(
+                base_url,
+                input.owner_ctx.project_id(),
+                story_id,
+                task_id,
+            )
         }
         PlatformMcpScope::Workflow => {
-            McpInjectionConfig::for_workflow(base_url, input.project_id)
+            McpInjectionConfig::for_workflow(base_url, input.owner_ctx.project_id())
         }
     })
 }
@@ -241,6 +246,7 @@ fn build_platform_mcp_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn test_platform() -> PlatformConfig {
         PlatformConfig {
@@ -250,10 +256,9 @@ mod tests {
 
     fn base_input() -> CapabilityResolverInput {
         CapabilityResolverInput {
-            owner_type: SessionOwnerType::Project,
-            project_id: Uuid::new_v4(),
-            story_id: None,
-            task_id: None,
+            owner_ctx: SessionOwnerCtx::Project {
+                project_id: Uuid::new_v4(),
+            },
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
@@ -322,10 +327,11 @@ mod tests {
         let task_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_type: SessionOwnerType::Task,
-            project_id,
-            story_id: Some(story_id),
-            task_id: Some(task_id),
+            owner_ctx: SessionOwnerCtx::Task {
+                project_id,
+                story_id,
+                task_id,
+            },
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
@@ -353,10 +359,10 @@ mod tests {
         let story_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_type: SessionOwnerType::Story,
-            project_id,
-            story_id: Some(story_id),
-            task_id: None,
+            owner_ctx: SessionOwnerCtx::Story {
+                project_id,
+                story_id,
+            },
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
@@ -465,5 +471,118 @@ mod tests {
         assert!(output
             .effective_capabilities
             .contains(&ToolCapability::custom_mcp("code_analyzer")));
+    }
+
+    // ── SessionOwnerCtx 变体 × MCP 注入边界回归 ──────────────────────────────
+    //
+    // 这一组测试固定"sum type 变体所携带的 project/story/task id 必须通过
+    // `CapabilityResolver` 透传到最终的 `McpInjectionConfig`"的契约,守住
+    // PR1 收口后"四字段 → owner_ctx"改造的核心行为。
+
+    #[test]
+    fn project_owner_ctx_injects_relay_with_project_id() {
+        let project_id = Uuid::new_v4();
+        let input = CapabilityResolverInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            agent_declared_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
+            agent_mcp_servers: vec![],
+            companion_slice_mode: None,
+        };
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        let relay = output
+            .platform_mcp_configs
+            .iter()
+            .find(|c| c.endpoint_url().contains("/mcp/relay"))
+            .expect("project owner 应注入 relay MCP");
+        assert_eq!(
+            relay.project_id, project_id,
+            "relay config 应透传 owner_ctx.project_id"
+        );
+        assert!(relay.story_id.is_none());
+        assert!(relay.task_id.is_none());
+        assert!(
+            !output
+                .platform_mcp_configs
+                .iter()
+                .any(|c| c.endpoint_url().contains("/mcp/story/")
+                    || c.endpoint_url().contains("/mcp/task/")),
+            "project owner 不应注入 story/task scope"
+        );
+    }
+
+    #[test]
+    fn story_owner_ctx_injects_story_scope_with_story_id() {
+        let project_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let input = CapabilityResolverInput {
+            owner_ctx: SessionOwnerCtx::Story {
+                project_id,
+                story_id,
+            },
+            agent_declared_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
+            agent_mcp_servers: vec![],
+            companion_slice_mode: None,
+        };
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        let story = output
+            .platform_mcp_configs
+            .iter()
+            .find(|c| c.endpoint_url().contains("/mcp/story/"))
+            .expect("story owner 应注入 story MCP");
+        assert_eq!(story.project_id, project_id);
+        assert_eq!(story.story_id, Some(story_id));
+        assert!(story.task_id.is_none());
+        assert!(
+            story.endpoint_url().contains(&story_id.to_string()),
+            "story endpoint URL 应包含 story_id, 实际: {}",
+            story.endpoint_url()
+        );
+        assert!(
+            !output
+                .platform_mcp_configs
+                .iter()
+                .any(|c| c.endpoint_url().contains("/mcp/task/")),
+            "story owner 不应注入 task scope"
+        );
+    }
+
+    #[test]
+    fn task_owner_ctx_injects_task_scope_with_story_and_task_ids() {
+        let project_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let input = CapabilityResolverInput {
+            owner_ctx: SessionOwnerCtx::Task {
+                project_id,
+                story_id,
+                task_id,
+            },
+            agent_declared_capabilities: None,
+            workflow_ctx: SessionWorkflowContext::NONE,
+            agent_mcp_servers: vec![],
+            companion_slice_mode: None,
+        };
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        let task = output
+            .platform_mcp_configs
+            .iter()
+            .find(|c| c.endpoint_url().contains("/mcp/task/"))
+            .expect("task owner 应注入 task MCP");
+        assert_eq!(task.project_id, project_id);
+        assert_eq!(task.story_id, Some(story_id), "task config 应透传 story_id");
+        assert_eq!(task.task_id, Some(task_id), "task config 应透传 task_id");
+        assert!(
+            task.endpoint_url().contains(&task_id.to_string()),
+            "task endpoint URL 应包含 task_id, 实际: {}",
+            task.endpoint_url()
+        );
     }
 }

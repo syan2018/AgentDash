@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::project::Project;
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{FlowCapabilities, Vfs};
@@ -90,13 +90,22 @@ impl SessionPlanBuilder {
         svc: &SessionPlanServices<'_>,
         input: SessionPlanInput<'_>,
     ) -> Result<SessionPlanOutput, String> {
-        let (owner_type, project_id, story_id) = match &input.owner {
+        let (project_id, owner_ctx) = match &input.owner {
             SessionOwnerVariant::Story {
                 story, project, ..
-            } => (SessionOwnerType::Story, project.id, Some(story.id)),
-            SessionOwnerVariant::Project { project, .. } => {
-                (SessionOwnerType::Project, project.id, None)
-            }
+            } => (
+                project.id,
+                SessionOwnerCtx::Story {
+                    project_id: project.id,
+                    story_id: story.id,
+                },
+            ),
+            SessionOwnerVariant::Project { project, .. } => (
+                project.id,
+                SessionOwnerCtx::Project {
+                    project_id: project.id,
+                },
+            ),
         };
 
         // ── 1. VFS 构建 + canvas 挂载 ──
@@ -142,10 +151,7 @@ impl SessionPlanBuilder {
         // ── 2. CapabilityResolver ──
         let cap_output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_type,
-                project_id,
-                story_id,
-                task_id: None,
+                owner_ctx,
                 agent_declared_capabilities: input.agent_declared_capabilities,
                 workflow_ctx: input.workflow_ctx,
                 agent_mcp_servers: input.agent_mcp_servers,

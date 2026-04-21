@@ -99,17 +99,36 @@ return rule.auto_granted
 
 ```rust
 CapabilityResolverInput {
-    owner_type: SessionOwnerType,
+    /// session 归属上下文（owner_type + 关联 ID 合一的 sum type）
+    owner_ctx: SessionOwnerCtx,
     mcp_base_url: Option<String>,
-    project_id: Uuid,
-    story_id: Option<Uuid>,
-    task_id: Option<Uuid>,
     agent_declared_capabilities: Option<Vec<String>>,
-    has_active_workflow: bool,
-    workflow_capabilities: Vec<String>,
+    workflow_ctx: SessionWorkflowContext,  // has_active_workflow + workflow_capabilities
     agent_mcp_servers: Vec<AgentMcpServerEntry>,
+    companion_slice_mode: Option<CompanionSliceMode>,
 }
 ```
+
+> **owner_ctx 收口**（2026-04-21，`04-20-session-owner-sum-type` PR1）
+>
+> 历史上 resolver 用四字段并列 `(owner_type, project_id, story_id: Option, task_id: Option)`
+> 表达归属,合法组合 3 种却允许 $2^3$ 种表示。PR1 用
+> [`SessionOwnerCtx`](../../../crates/agentdash-domain/src/session_binding/value_objects.rs) sum
+> type 收口,非法状态在类型层被排除:
+>
+> ```rust
+> pub enum SessionOwnerCtx {
+>     Project { project_id: Uuid },
+>     Story   { project_id: Uuid, story_id: Uuid },
+>     Task    { project_id: Uuid, story_id: Uuid, task_id: Uuid },
+> }
+> ```
+>
+> `build_platform_mcp_config` 通过 `ctx.story_id()` / `ctx.task_id()` getter 复用旧取值语义,
+> `is_capability_visible` 通过 `ctx.owner_type()` 继续使用 `SessionOwnerType` 硬边界。
+>
+> 未收口的层:`SessionPlanInput` / `Runtime*` / `SessionBinding` 的四字段仍在应用层存活,
+> PR2/PR3 继续收敛;resolver 入口不再出现 `story_id: None, task_id: None` 硬编码。
 
 ### 输出
 

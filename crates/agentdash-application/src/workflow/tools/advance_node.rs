@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
@@ -364,8 +364,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 Ok(Some(result)) => {
                     if !result.activated_phase_nodes.is_empty() {
                         let snapshot = hook_session.snapshot();
-                        let (owner_type, project_id, story_id, task_id) =
-                            resolve_owner_scope(&snapshot, run.project_id);
+                        let owner_ctx = resolve_owner_scope(&snapshot, run.project_id);
                         let mut baseline_caps: Vec<String> = hook_session
                             .current_capabilities()
                             .into_iter()
@@ -385,10 +384,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     .await;
                                 let cap_output = CapabilityResolver::resolve(
                                     &CapabilityResolverInput {
-                                        owner_type,
-                                        project_id,
-                                        story_id,
-                                        task_id,
+                                        owner_ctx,
                                         agent_declared_capabilities: None,
                                         workflow_ctx: crate::capability::SessionWorkflowContext {
                                             has_active_workflow: true,
@@ -530,16 +526,13 @@ impl AgentTool for CompleteLifecycleNodeTool {
 fn resolve_owner_scope(
     snapshot: &SessionHookSnapshot,
     fallback_project_id: Uuid,
-) -> (SessionOwnerType, Uuid, Option<Uuid>, Option<Uuid>) {
+) -> SessionOwnerCtx {
     let Some(owner) = snapshot.owners.first() else {
-        return (SessionOwnerType::Project, fallback_project_id, None, None);
+        return SessionOwnerCtx::Project {
+            project_id: fallback_project_id,
+        };
     };
 
-    let owner_type = match owner.owner_type.as_str() {
-        "story" => SessionOwnerType::Story,
-        "task" => SessionOwnerType::Task,
-        _ => SessionOwnerType::Project,
-    };
     let project_id = owner
         .project_id
         .as_deref()
@@ -553,7 +546,30 @@ fn resolve_owner_scope(
         .task_id
         .as_deref()
         .and_then(|id| Uuid::parse_str(id).ok());
-    (owner_type, project_id, story_id, task_id)
+
+    // 按字符串 owner_type + 关联 ID 还原合法 sum type;若关联 ID 缺失则向上降级。
+    match owner.owner_type.as_str() {
+        "task" => match (story_id, task_id) {
+            (Some(story_id), Some(task_id)) => SessionOwnerCtx::Task {
+                project_id,
+                story_id,
+                task_id,
+            },
+            (Some(story_id), None) => SessionOwnerCtx::Story {
+                project_id,
+                story_id,
+            },
+            _ => SessionOwnerCtx::Project { project_id },
+        },
+        "story" => match story_id {
+            Some(story_id) => SessionOwnerCtx::Story {
+                project_id,
+                story_id,
+            },
+            None => SessionOwnerCtx::Project { project_id },
+        },
+        _ => SessionOwnerCtx::Project { project_id },
+    }
 }
 
 fn mcp_entries_from_servers(

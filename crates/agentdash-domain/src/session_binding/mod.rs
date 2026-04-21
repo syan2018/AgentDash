@@ -4,4 +4,4 @@ mod value_objects;
 
 pub use entity::SessionBinding;
 pub use repository::{ProjectSessionBinding, SessionBindingRepository};
-pub use value_objects::SessionOwnerType;
+pub use value_objects::{SessionOwnerCtx, SessionOwnerType};

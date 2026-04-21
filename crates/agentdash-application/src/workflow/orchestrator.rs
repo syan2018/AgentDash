@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType,
+    SessionBinding, SessionBindingRepository, SessionOwnerCtx, SessionOwnerType,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun,
@@ -488,16 +488,17 @@ impl LifecycleOrchestrator {
                 .list_by_session(&run.session_id)
                 .await
                 .unwrap_or_default();
-            let owner_type = parent_bindings
+            // workflow orchestrator 仅对 Project 级 session 驱动 run(lifecycle 绑定在
+            // project agent 上);若 binding 存在但非 Project 类型,保守降级为 Project。
+            // PR2 会把 parent binding → SessionOwnerCtx 的完整推导收口到 session_binding。
+            let owner_ctx = parent_bindings
                 .first()
-                .map(|b| b.owner_type)
-                .unwrap_or(SessionOwnerType::Project);
+                .filter(|b| b.owner_type == SessionOwnerType::Project)
+                .map(|_| SessionOwnerCtx::Project { project_id })
+                .unwrap_or(SessionOwnerCtx::Project { project_id });
 
             let cap_input = CapabilityResolverInput {
-                owner_type,
-                project_id,
-                story_id: None,
-                task_id: None,
+                owner_ctx,
                 agent_declared_capabilities: None,
                 workflow_ctx: crate::capability::SessionWorkflowContext {
                     has_active_workflow: true,

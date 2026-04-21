@@ -122,10 +122,11 @@ pub async fn prepare_task_turn_context(
         .map(|p| crate::capability::capabilities_from_active_step(&p.active_step));
 
     let cap_input = CapabilityResolverInput {
-        owner_type: SessionOwnerType::Task,
-        project_id: story.project_id,
-        story_id: Some(task.story_id),
-        task_id: Some(task.id),
+        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
+            project_id: story.project_id,
+            story_id: task.story_id,
+            task_id: task.id,
+        },
         agent_declared_capabilities: None,
         workflow_ctx: crate::capability::SessionWorkflowContext {
             has_active_workflow: active_projection.is_some(),

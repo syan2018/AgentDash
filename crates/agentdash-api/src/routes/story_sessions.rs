@@ -450,10 +450,10 @@ pub(crate) async fn build_story_session_context_response(
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
-            owner_type: SessionOwnerType::Story,
-            project_id: story.project_id,
-            story_id: Some(story.id),
-            task_id: None,
+            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Story {
+                project_id: story.project_id,
+                story_id: story.id,
+            },
             agent_declared_capabilities: None,
             workflow_ctx,
             agent_mcp_servers: vec![],

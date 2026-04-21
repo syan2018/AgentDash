@@ -633,7 +633,6 @@ mod tests {
     /// 与对应的 Workflow 平台 MCP 注入。这是 PR1 的核心回归点。
     #[tokio::test]
     async fn session_creation_with_default_lifecycle_grants_workflow_management() {
-        use agentdash_domain::session_binding::SessionOwnerType;
 
         use crate::capability::{CapabilityResolver, CapabilityResolverInput};
         use crate::platform_config::PlatformConfig;
@@ -673,10 +672,9 @@ mod tests {
         };
         let output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_type: SessionOwnerType::Project,
-                project_id,
-                story_id: None,
-                task_id: None,
+                owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                    project_id,
+                },
                 agent_declared_capabilities: None,
                 workflow_ctx: wf_ctx,
                 agent_mcp_servers: vec![],

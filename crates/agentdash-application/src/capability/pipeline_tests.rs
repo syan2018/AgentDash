@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{CapabilityDirective, compute_effective_capabilities};
 use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::ToolCluster;
@@ -67,10 +67,9 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     // Orchestrator 在 create_agent_node_session 中会将 effective set 当作 workflow_capabilities
     // 传给 CapabilityResolver（全量替换）
     let input = CapabilityResolverInput {
-        owner_type: SessionOwnerType::Project,
-        project_id: Uuid::new_v4(),
-        story_id: None,
-        task_id: None,
+        owner_ctx: SessionOwnerCtx::Project {
+            project_id: Uuid::new_v4(),
+        },
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
@@ -135,10 +134,9 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
 
     // Resolver 用新的 effective 重建 MCP 注入集合（replace-set 语义输入侧）
     let input = CapabilityResolverInput {
-        owner_type: SessionOwnerType::Project,
-        project_id: Uuid::new_v4(),
-        story_id: None,
-        task_id: None,
+        owner_ctx: SessionOwnerCtx::Project {
+            project_id: Uuid::new_v4(),
+        },
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
@@ -210,10 +208,9 @@ fn phase_node_invalid_directives_are_tolerated() {
     assert!(effective.contains(&"mcp:missing_server".to_string()));
 
     let input = CapabilityResolverInput {
-        owner_type: SessionOwnerType::Project,
-        project_id: Uuid::new_v4(),
-        story_id: None,
-        task_id: None,
+        owner_ctx: SessionOwnerCtx::Project {
+            project_id: Uuid::new_v4(),
+        },
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,

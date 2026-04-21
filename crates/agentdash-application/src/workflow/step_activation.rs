@@ -278,22 +278,27 @@ fn render_input_section(
     }
     let mut items = Vec::new();
     for ip in ports {
+        // Port 级输入只匹配 artifact edge；flow edge 不承载 port 关系
         let source_edges: Vec<_> = edges
             .iter()
-            .filter(|e| e.to_node == *node_key && e.to_port == ip.key)
+            .filter(|e| {
+                e.to_node == *node_key
+                    && e.to_port.as_deref() == Some(ip.key.as_str())
+            })
             .collect();
         if source_edges.is_empty() {
             items.push(format!("- **{}**({}) — 无前驱连接", ip.key, ip.description));
         } else {
             for edge in source_edges {
-                let status = if ready_port_keys.contains(&edge.from_port) {
+                let from_port = edge.from_port.as_deref().unwrap_or("");
+                let status = if ready_port_keys.contains(from_port) {
                     "已就绪"
                 } else {
                     "未就绪"
                 };
                 items.push(format!(
-                    "- **{}**({}) ← `lifecycle://artifacts/{}` [{status}]",
-                    ip.key, ip.description, edge.from_port
+                    "- **{}**({}) ← `lifecycle://artifacts/{from_port}` [{status}]",
+                    ip.key, ip.description
                 ));
             }
         }
@@ -541,12 +546,7 @@ mod tests {
                 context_template: None,
             }],
         };
-        let edges = vec![LifecycleEdge {
-            from_node: "a".to_string(),
-            from_port: "out".to_string(),
-            to_node: "b".to_string(),
-            to_port: "ctx".to_string(),
-        }];
+        let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();
         let ready: BTreeSet<String> = ["out".to_string()].into_iter().collect();
 

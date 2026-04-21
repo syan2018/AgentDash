@@ -386,14 +386,74 @@ pub fn compute_effective_capabilities(
     effective.into_iter().collect()
 }
 
-/// Port 级别的 DAG 边——唯一的拓扑数据源。
-/// node 级别依赖通过 `node_deps_from_edges()` 运行时计算。
+/// Lifecycle edge 类别：控制流 vs 数据流。
+///
+/// - `Flow`：无数据语义的顺序约束（前驱完成即激活后继）。
+/// - `Artifact`：端口级数据依赖；自动蕴含 Flow 约束（B 消费 A.port → B dep A）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleEdgeKind {
+    Flow,
+    Artifact,
+}
+
+fn default_edge_kind() -> LifecycleEdgeKind {
+    // 既有持久化数据无 kind 字段时统一视为 artifact（历史边全部带 port）
+    LifecycleEdgeKind::Artifact
+}
+
+/// Lifecycle DAG 边——控制流 + 数据流的统一承载。
+///
+/// `kind = Flow` 时 `from_port` / `to_port` 必须为 `None`；
+/// `kind = Artifact` 时两者必须为 `Some`。
+/// node 级别依赖通过 `node_deps_from_edges()` 从 flow/artifact 两类边统一计算。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleEdge {
+    #[serde(default = "default_edge_kind")]
+    pub kind: LifecycleEdgeKind,
     pub from_node: String,
-    pub from_port: String,
     pub to_node: String,
-    pub to_port: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_port: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_port: Option<String>,
+}
+
+impl LifecycleEdge {
+    /// 构造控制流边：仅表达顺序约束，无 port。
+    pub fn flow(from_node: impl Into<String>, to_node: impl Into<String>) -> Self {
+        Self {
+            kind: LifecycleEdgeKind::Flow,
+            from_node: from_node.into(),
+            to_node: to_node.into(),
+            from_port: None,
+            to_port: None,
+        }
+    }
+
+    /// 构造 artifact 边：端口级数据依赖；隐含 flow 约束。
+    pub fn artifact(
+        from_node: impl Into<String>,
+        from_port: impl Into<String>,
+        to_node: impl Into<String>,
+        to_port: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LifecycleEdgeKind::Artifact,
+            from_node: from_node.into(),
+            to_node: to_node.into(),
+            from_port: Some(from_port.into()),
+            to_port: Some(to_port.into()),
+        }
+    }
+
+    pub fn is_flow(&self) -> bool {
+        matches!(self.kind, LifecycleEdgeKind::Flow)
+    }
+
+    pub fn is_artifact(&self) -> bool {
+        matches!(self.kind, LifecycleEdgeKind::Artifact)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -550,6 +610,14 @@ pub fn validate_lifecycle_definition(
         ));
     }
 
+    // 多 step lifecycle 必须显式声明 edges——禁止 fallback 依赖
+    if steps.len() >= 2 && edges.is_empty() {
+        return Err(
+            "lifecycle.edges 不能为空：多 step lifecycle 必须显式声明 flow / artifact edges"
+                .to_string(),
+        );
+    }
+
     if !edges.is_empty() {
         validate_edge_topology(steps, edges, entry_step_key)?;
     }
@@ -676,8 +744,10 @@ pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> std::collections::HashMa
 /// Edge-based DAG 拓扑校验：
 /// 1. edge 引用的 node key 必须存在于 steps 中
 /// 2. 不允许自连接
-/// 3. entry node 不应有入边
-/// 4. 不得存在循环依赖（Kahn's algorithm，node 级别去重）
+/// 3. kind 感知 port 约束：Flow 不可带 port；Artifact 必须带 port
+/// 4. entry node 不应有入边
+/// 5. 不得存在孤岛 step（无入边也无出边）——单 step lifecycle 除外
+/// 6. 不得存在循环依赖（Kahn's algorithm，node 级别去重）
 fn validate_edge_topology(
     steps: &[LifecycleStepDefinition],
     edges: &[LifecycleEdge],
@@ -705,6 +775,22 @@ fn validate_edge_topology(
                 edge.from_node
             ));
         }
+        match edge.kind {
+            LifecycleEdgeKind::Flow => {
+                if edge.from_port.is_some() || edge.to_port.is_some() {
+                    return Err(format!(
+                        "lifecycle.edges[{i}] kind=flow 不应携带 port"
+                    ));
+                }
+            }
+            LifecycleEdgeKind::Artifact => {
+                if edge.from_port.is_none() || edge.to_port.is_none() {
+                    return Err(format!(
+                        "lifecycle.edges[{i}] kind=artifact 必须同时声明 from_port 与 to_port"
+                    ));
+                }
+            }
+        }
     }
 
     let node_deps = node_deps_from_edges(edges);
@@ -713,6 +799,23 @@ fn validate_edge_topology(
         return Err(format!(
             "entry_step_key `{entry_step_key}` 不应有入边"
         ));
+    }
+
+    // 禁止孤岛 step（既无入边也无出边）——单 step lifecycle 除外
+    if steps.len() > 1 {
+        let mut touched: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for edge in edges {
+            touched.insert(edge.from_node.as_str());
+            touched.insert(edge.to_node.as_str());
+        }
+        for step in steps {
+            if !touched.contains(step.key.as_str()) {
+                return Err(format!(
+                    "lifecycle.steps `{}` 是孤岛（无入边也无出边）",
+                    step.key
+                ));
+            }
+        }
     }
 
     // Kahn's algorithm — node 级别
@@ -865,24 +968,9 @@ mod tests {
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
         let edges = vec![
-            LifecycleEdge {
-                from_node: "a".into(),
-                from_port: "out".into(),
-                to_node: "b".into(),
-                to_port: "in".into(),
-            },
-            LifecycleEdge {
-                from_node: "b".into(),
-                from_port: "out".into(),
-                to_node: "c".into(),
-                to_port: "in".into(),
-            },
-            LifecycleEdge {
-                from_node: "c".into(),
-                from_port: "out".into(),
-                to_node: "b".into(),
-                to_port: "in2".into(),
-            },
+            LifecycleEdge::artifact("a", "out", "b", "in"),
+            LifecycleEdge::artifact("b", "out", "c", "in"),
+            LifecycleEdge::artifact("c", "out", "b", "in2"),
         ];
         let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
             .expect_err("should detect cycle");
@@ -909,17 +997,98 @@ mod tests {
                 input_ports: vec![],
             },
         ];
-        let edges = vec![LifecycleEdge {
-            from_node: "b".into(),
-            from_port: "out".into(),
-            to_node: "a".into(),
-            to_port: "in".into(),
-        }];
+        let edges = vec![LifecycleEdge::artifact("b", "out", "a", "in")];
         let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
             .expect_err("entry should not have incoming");
         assert!(err.contains("入边"));
     }
 
+    fn simple_step(key: &str) -> LifecycleStepDefinition {
+        LifecycleStepDefinition {
+            key: key.to_string(),
+            description: String::new(),
+            workflow_key: None,
+            node_type: Default::default(),
+            output_ports: vec![],
+            input_ports: vec![],
+        }
+    }
+
+    #[test]
+    fn validate_rejects_multi_step_without_edges() {
+        let steps = vec![simple_step("a"), simple_step("b")];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &[])
+            .expect_err("multi-step without edges must fail");
+        assert!(err.contains("lifecycle.edges 不能为空"));
+    }
+
+    #[test]
+    fn validate_accepts_single_step_without_edges() {
+        let steps = vec![simple_step("solo")];
+        validate_lifecycle_definition("lc", "Lifecycle", "solo", &steps, &[])
+            .expect("single-step without edges should pass");
+    }
+
+    #[test]
+    fn validate_rejects_flow_edge_with_port() {
+        let steps = vec![simple_step("a"), simple_step("b")];
+        let edges = vec![LifecycleEdge {
+            kind: LifecycleEdgeKind::Flow,
+            from_node: "a".into(),
+            to_node: "b".into(),
+            from_port: Some("out".into()),
+            to_port: None,
+        }];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect_err("flow edge must not carry port");
+        assert!(err.contains("kind=flow"));
+    }
+
+    #[test]
+    fn validate_rejects_artifact_edge_without_port() {
+        let steps = vec![simple_step("a"), simple_step("b")];
+        let edges = vec![LifecycleEdge {
+            kind: LifecycleEdgeKind::Artifact,
+            from_node: "a".into(),
+            to_node: "b".into(),
+            from_port: None,
+            to_port: None,
+        }];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect_err("artifact edge must have both ports");
+        assert!(err.contains("kind=artifact"));
+    }
+
+    #[test]
+    fn validate_rejects_island_step() {
+        let steps = vec![simple_step("a"), simple_step("b"), simple_step("c")];
+        // 只连 a → b，c 是孤岛
+        let edges = vec![LifecycleEdge::flow("a", "b")];
+        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect_err("island step must be rejected");
+        assert!(err.contains("孤岛"));
+    }
+
+    #[test]
+    fn validate_accepts_pure_flow_edges() {
+        let steps = vec![simple_step("a"), simple_step("b"), simple_step("c")];
+        let edges = vec![
+            LifecycleEdge::flow("a", "b"),
+            LifecycleEdge::flow("b", "c"),
+        ];
+        validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
+            .expect("pure flow lifecycle should pass");
+    }
+
+    #[test]
+    fn lifecycle_edge_deserializes_without_kind_as_artifact() {
+        // 历史持久化数据无 kind 字段，应兼容反序列化为 Artifact
+        let json = r#"{"from_node":"a","from_port":"out","to_node":"b","to_port":"in"}"#;
+        let edge: LifecycleEdge = serde_json::from_str(json).expect("deserialize legacy edge");
+        assert_eq!(edge.kind, LifecycleEdgeKind::Artifact);
+        assert_eq!(edge.from_port.as_deref(), Some("out"));
+        assert_eq!(edge.to_port.as_deref(), Some("in"));
+    }
     #[test]
     fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
         assert_eq!(

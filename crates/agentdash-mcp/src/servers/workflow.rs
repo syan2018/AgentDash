@@ -15,7 +15,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    InputPortDefinition, LifecycleDefinition, LifecycleEdge,
+    InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind,
     LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
     WorkflowBindingKind, WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec,
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
@@ -151,15 +151,32 @@ pub struct OutputPortInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKindInput {
+    Flow,
+    Artifact,
+}
+
+fn default_edge_kind_input() -> EdgeKindInput {
+    // 历史调用不带 kind 时按 artifact 兼容
+    EdgeKindInput::Artifact
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EdgeInput {
+    #[schemars(description = "边类别：flow（控制流，无 port）/ artifact（数据流，需声明 port）；默认 artifact 以兼容历史调用")]
+    #[serde(default = "default_edge_kind_input")]
+    pub kind: EdgeKindInput,
     #[schemars(description = "源节点 key")]
     pub from_node: String,
-    #[schemars(description = "源输出端口 key")]
-    pub from_port: String,
+    #[schemars(description = "源输出端口 key（仅 artifact edge 需要）")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_port: Option<String>,
     #[schemars(description = "目标节点 key")]
     pub to_node: String,
-    #[schemars(description = "目标输入端口 key")]
-    pub to_port: String,
+    #[schemars(description = "目标输入端口 key（仅 artifact edge 需要）")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_port: Option<String>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -450,11 +467,15 @@ fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, Mcp
 fn build_edges(inputs: &[EdgeInput]) -> Vec<LifecycleEdge> {
     inputs
         .iter()
-        .map(|e| LifecycleEdge {
-            from_node: e.from_node.clone(),
-            from_port: e.from_port.clone(),
-            to_node: e.to_node.clone(),
-            to_port: e.to_port.clone(),
+        .map(|e| match e.kind {
+            EdgeKindInput::Flow => LifecycleEdge::flow(e.from_node.clone(), e.to_node.clone()),
+            EdgeKindInput::Artifact => LifecycleEdge {
+                kind: LifecycleEdgeKind::Artifact,
+                from_node: e.from_node.clone(),
+                to_node: e.to_node.clone(),
+                from_port: e.from_port.clone(),
+                to_port: e.to_port.clone(),
+            },
         })
         .collect()
 }

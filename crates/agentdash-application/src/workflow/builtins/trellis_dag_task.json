@@ -102,6 +102,7 @@
     ],
     "edges": [
       {
+        "kind": "artifact",
         "from_node": "research",
         "from_port": "research_report",
         "to_node": "implement",

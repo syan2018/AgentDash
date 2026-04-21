@@ -282,7 +282,8 @@ impl LifecycleRun {
 
     /// 完成指定 step 并计算后继 node 的就绪状态。
     ///
-    /// `edges` 用于 DAG 依赖解析。空切片退化为线性推进（按数组顺序）。
+    /// 推进逻辑完全由 `edges` 驱动（flow + artifact 两类 edge 的 from_node
+    /// 合并为 dependency set）。无出边的 step 即 terminal；所有 step 终态后 lifecycle 置 Completed。
     pub fn complete_step(
         &mut self,
         step_key: &str,
@@ -328,38 +329,23 @@ impl LifecycleRun {
 
         self.active_node_keys.retain(|k| k != step_key);
 
-        let has_edges = !edges.is_empty();
+        self.advance_dag_successors(step_key, edges);
 
-        if has_edges {
-            self.advance_dag_successors(step_key, edges);
-        } else if current_idx + 1 < self.step_states.len() {
-            let next_idx = current_idx + 1;
-            let next_key = self.step_states[next_idx].step_key.clone();
-            self.step_states[next_idx].status = LifecycleStepExecutionStatus::Ready;
-            self.active_node_keys = vec![next_key];
-            self.status = LifecycleRunStatus::Ready;
-        } else {
-            self.active_node_keys.clear();
-            self.status = LifecycleRunStatus::Completed;
-        }
-
-        if has_edges {
-            if self.active_node_keys.is_empty() {
-                let all_done = self.step_states.iter().all(|s| {
-                    matches!(
-                        s.status,
-                        LifecycleStepExecutionStatus::Completed
-                            | LifecycleStepExecutionStatus::Skipped
-                    )
-                });
-                self.status = if all_done {
-                    LifecycleRunStatus::Completed
-                } else {
-                    LifecycleRunStatus::Blocked
-                };
+        if self.active_node_keys.is_empty() {
+            let all_done = self.step_states.iter().all(|s| {
+                matches!(
+                    s.status,
+                    LifecycleStepExecutionStatus::Completed
+                        | LifecycleStepExecutionStatus::Skipped
+                )
+            });
+            self.status = if all_done {
+                LifecycleRunStatus::Completed
             } else {
-                self.status = LifecycleRunStatus::Ready;
-            }
+                LifecycleRunStatus::Blocked
+            };
+        } else {
+            self.status = LifecycleRunStatus::Ready;
         }
 
         self.updated_at = now;
@@ -480,32 +466,84 @@ mod tests {
     }
 
     fn edge(from_node: &str, from_port: &str, to_node: &str, to_port: &str) -> LifecycleEdge {
-        LifecycleEdge {
-            from_node: from_node.to_string(),
-            from_port: from_port.to_string(),
-            to_node: to_node.to_string(),
-            to_port: to_port.to_string(),
-        }
+        LifecycleEdge::artifact(from_node, from_port, to_node, to_port)
+    }
+
+    fn flow_edge(from_node: &str, to_node: &str) -> LifecycleEdge {
+        LifecycleEdge::flow(from_node, to_node)
     }
 
     #[test]
     fn lifecycle_run_completes_and_advances_linear() {
         let steps = [step("start", "wf_start"), step("check", "wf_check")];
+        let edges = [flow_edge("start", "check")];
         let mut run = LifecycleRun::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "sess-test-linear",
             &steps,
             "start",
-            &[],
+            &edges,
         )
         .expect("run");
 
-        run.complete_step("start", Some("done".to_string()), &[])
+        run.complete_step("start", Some("done".to_string()), &edges)
             .expect("complete");
 
         assert_eq!(run.current_step_key(), Some("check"));
         assert_eq!(run.status, LifecycleRunStatus::Ready);
+    }
+
+    #[test]
+    fn lifecycle_run_single_step_completes_without_edges() {
+        let steps = [step("solo", "wf_solo")];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-test-solo",
+            &steps,
+            "solo",
+            &[],
+        )
+        .expect("run");
+
+        run.complete_step("solo", Some("done".to_string()), &[])
+            .expect("complete");
+
+        assert!(run.active_node_keys.is_empty());
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+    }
+
+    #[test]
+    fn lifecycle_run_mixed_flow_and_artifact_edges() {
+        let steps = [
+            step("plan", "wf_plan"),
+            step("build", "wf_build"),
+            step("verify", "wf_verify"),
+        ];
+        // plan --flow--> build --artifact--> verify
+        let edges = [
+            flow_edge("plan", "build"),
+            edge("build", "artifact", "verify", "input"),
+        ];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-test-mixed",
+            &steps,
+            "plan",
+            &edges,
+        )
+        .expect("run");
+
+        assert_eq!(run.active_node_keys, vec!["plan".to_string()]);
+        run.complete_step("plan", None, &edges).expect("plan done");
+        assert!(run.active_node_keys.contains(&"build".to_string()));
+        run.complete_step("build", None, &edges).expect("build done");
+        assert!(run.active_node_keys.contains(&"verify".to_string()));
+        run.complete_step("verify", None, &edges)
+            .expect("verify done");
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
     }
 
     #[test]

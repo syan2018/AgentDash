@@ -176,7 +176,12 @@ where
 
         let mut incoming_edge_by_input: BTreeMap<(String, String), usize> = BTreeMap::new();
         for (edge_index, edge) in lifecycle.edges.iter().enumerate() {
-            let input_key = (edge.to_node.clone(), edge.to_port.clone());
+            // Port 级校验只对 artifact edge 生效，flow edge 不涉及 port
+            let (from_port, to_port) = match (edge.from_port.as_deref(), edge.to_port.as_deref()) {
+                (Some(fp), Some(tp)) => (fp, tp),
+                _ => continue,
+            };
+            let input_key = (edge.to_node.clone(), to_port.to_string());
             if let Some(previous_edge_index) =
                 incoming_edge_by_input.insert(input_key.clone(), edge_index)
             {
@@ -198,7 +203,7 @@ where
                     step_index,
                     edge_index,
                     edge.from_node.as_str(),
-                    edge.from_port.as_str(),
+                    from_port,
                     true,
                 );
             }
@@ -211,7 +216,7 @@ where
                     step_index,
                     edge_index,
                     edge.to_node.as_str(),
-                    edge.to_port.as_str(),
+                    to_port,
                     false,
                 );
             }
@@ -648,18 +653,8 @@ mod tests {
                 },
             ],
             vec![
-                LifecycleEdge {
-                    from_node: "research".to_string(),
-                    from_port: "missing_output".to_string(),
-                    to_node: "implement".to_string(),
-                    to_port: "research_input".to_string(),
-                },
-                LifecycleEdge {
-                    from_node: "check".to_string(),
-                    from_port: "shared_output".to_string(),
-                    to_node: "implement".to_string(),
-                    to_port: "research_input".to_string(),
-                },
+                LifecycleEdge::artifact("research", "missing_output", "implement", "research_input"),
+                LifecycleEdge::artifact("check", "shared_output", "implement", "research_input"),
             ],
         )
         .expect("lifecycle definition");
@@ -685,12 +680,12 @@ mod tests {
         let lifecycle_repo = TestLifecycleDefinitionRepo::default();
         let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
 
-        let lifecycle = lifecycle_with_edges(vec![LifecycleEdge {
-            from_node: "research".to_string(),
-            from_port: "research_report".to_string(),
-            to_node: "implement".to_string(),
-            to_port: "missing_input".to_string(),
-        }]);
+        let lifecycle = lifecycle_with_edges(vec![
+            LifecycleEdge::artifact("research", "research_report", "implement", "missing_input"),
+            // 为避免 check 成为孤岛触发独立校验，补一条 flow edge；
+            // 本测试关注 port contract 错误，check 的连接形态不影响断言
+            LifecycleEdge::flow("implement", "check"),
+        ]);
 
         let error = service
             .upsert_lifecycle_definition(lifecycle)

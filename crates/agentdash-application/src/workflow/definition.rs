@@ -178,6 +178,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(step_keys, vec!["plan", "apply"]);
 
+        // 必须显式声明 plan → apply 的 flow edge（移除 fallback 后无 edges 的 lifecycle 无法启动）
+        assert_eq!(bundle.lifecycle.edges.len(), 1);
+        let edge = &bundle.lifecycle.edges[0];
+        assert!(edge.is_flow(), "plan → apply 应为 flow edge");
+        assert_eq!(edge.from_node, "plan");
+        assert_eq!(edge.to_node, "apply");
+
         // capability 声明迁移到 workflow.contract.capabilities。
         // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project
         // session 在启动时拿到 workflow 管理工具集。

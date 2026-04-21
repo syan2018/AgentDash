@@ -55,6 +55,13 @@
         "description": "执行 Upsert 与校验。",
         "workflow_key": "builtin_workflow_admin_apply"
       }
+    ],
+    "edges": [
+      {
+        "kind": "flow",
+        "from_node": "plan",
+        "to_node": "apply"
+      }
     ]
   }
 }

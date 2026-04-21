@@ -129,11 +129,14 @@ export function AcpSessionList(props: AcpSessionListProps) {
     >
       {renderConnectionStatus()}
       <div className="space-y-1 p-4">
-        {displayItems.map((item) => (
-          <div key={getItemKey(item)} className={itemClassName}>
-            <AcpSessionEntry item={item} streamingEntryId={streamingEntryId} />
-          </div>
-        ))}
+        {displayItems.map((item) => {
+          const key = getItemKey(item);
+          return (
+            <div key={key} className={itemClassName}>
+              <AcpSessionEntry item={item} isStreaming={key === streamingEntryId} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

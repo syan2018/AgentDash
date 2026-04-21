@@ -5,9 +5,13 @@
  * 暴露 displayItems（聚合后）、rawEntries、tokenUsage 等供 UI 使用。
  */
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useAcpStream } from "./useAcpStream";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import {
+  isAggregatedGroup as isAggregatedGroupItem,
+  isAggregatedThinkingGroup as isAggregatedThinkingGroupItem,
+} from "./types";
 import type {
   AcpDisplayEntry,
   AcpDisplayItem,
@@ -223,6 +227,53 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   });
 }
 
+function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
+  return (
+    a.id === b.id &&
+    a.eventSeq === b.eventSeq &&
+    a.update === b.update &&
+    a.isPendingApproval === b.isPendingApproval
+  );
+}
+
+function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
+  if (a === b) return true;
+
+  const aIsGroup = isAggregatedGroupItem(a);
+  const bIsGroup = isAggregatedGroupItem(b);
+  if (aIsGroup !== bIsGroup) return false;
+
+  const aIsThink = isAggregatedThinkingGroupItem(a);
+  const bIsThink = isAggregatedThinkingGroupItem(b);
+  if (aIsThink !== bIsThink) return false;
+
+  if (aIsGroup && bIsGroup) {
+    const ga = a as AggregatedEntryGroup;
+    const gb = b as AggregatedEntryGroup;
+    if (ga.groupKey !== gb.groupKey) return false;
+    if (ga.aggregationType !== gb.aggregationType) return false;
+    if (ga.filePath !== gb.filePath) return false;
+    if (ga.entries.length !== gb.entries.length) return false;
+    for (let i = 0; i < ga.entries.length; i += 1) {
+      if (!entryShallowEqual(ga.entries[i]!, gb.entries[i]!)) return false;
+    }
+    return true;
+  }
+
+  if (aIsThink && bIsThink) {
+    const ta = a as AggregatedThinkingGroup;
+    const tb = b as AggregatedThinkingGroup;
+    if (ta.groupKey !== tb.groupKey) return false;
+    if (ta.entries.length !== tb.entries.length) return false;
+    for (let i = 0; i < ta.entries.length; i += 1) {
+      if (!entryShallowEqual(ta.entries[i]!, tb.entries[i]!)) return false;
+    }
+    return true;
+  }
+
+  return entryShallowEqual(a as AcpDisplayEntry, b as AcpDisplayEntry);
+}
+
 export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
@@ -243,11 +294,36 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     enabled,
   });
 
+  const prevDisplayItemsRef = useRef<AcpDisplayItem[]>([]);
+
   const displayItems = useMemo(() => {
-    if (!enableAggregation) {
-      return entries as AcpDisplayItem[];
+    const next: AcpDisplayItem[] = enableAggregation
+      ? aggregateEntries(entries)
+      : (entries as AcpDisplayItem[]);
+
+    // 复用上一次的 group / entry 引用，使 React.memo 能命中
+    const prev = prevDisplayItemsRef.current;
+    if (prev.length === next.length) {
+      let allEqual = true;
+      const stabilized: AcpDisplayItem[] = new Array(next.length);
+      for (let i = 0; i < next.length; i += 1) {
+        const a = prev[i]!;
+        const b = next[i]!;
+        if (isAggregatedGroupEqual(a, b)) {
+          stabilized[i] = a;
+        } else {
+          stabilized[i] = b;
+          allEqual = false;
+        }
+      }
+      if (allEqual && prev.every((p, i) => p === stabilized[i])) {
+        return prev;
+      }
+      prevDisplayItemsRef.current = stabilized;
+      return stabilized;
     }
-    return aggregateEntries(entries);
+    prevDisplayItemsRef.current = next;
+    return next;
   }, [entries, enableAggregation]);
 
   const streamingEntryId = useMemo(() => {

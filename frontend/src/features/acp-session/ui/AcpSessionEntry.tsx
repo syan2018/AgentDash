@@ -18,7 +18,7 @@
  * - 系统信息后续计划收敛到 inbox 场景，常规会话流先保持静默
  */
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   isAggregatedGroup,
   isAggregatedThinkingGroup,
@@ -41,11 +41,11 @@ import { isRenderableSystemEventUpdate } from "./AcpSystemEventGuard";
 
 export interface AcpSessionEntryProps {
   item: AcpDisplayItem;
-  streamingEntryId?: string | null;
+  isStreaming?: boolean;
   sessionId?: string | null;
 }
 
-export function AcpSessionEntry({ item, streamingEntryId, sessionId }: AcpSessionEntryProps) {
+export const AcpSessionEntry = memo(function AcpSessionEntry({ item, isStreaming, sessionId }: AcpSessionEntryProps) {
   if (isAggregatedGroup(item)) {
     if (item.aggregationType === "file_edit") {
       return <AggregatedDiffGroupEntry group={item} sessionId={sessionId} />;
@@ -58,11 +58,11 @@ export function AcpSessionEntry({ item, streamingEntryId, sessionId }: AcpSessio
   }
 
   if (isDisplayEntry(item)) {
-    return <SingleEntry entry={item} isStreaming={item.id === streamingEntryId} sessionId={sessionId} />;
+    return <SingleEntry entry={item} isStreaming={!!isStreaming} sessionId={sessionId} />;
   }
 
   return null;
-}
+});
 
 function SingleEntry({
   entry,

@@ -8,7 +8,7 @@
  * 状态色仅影响 header 行右侧的 dot + label，不影响外框。
  */
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 import { extractToolCallDraftInfo } from "../model/agentdashMeta";
@@ -30,7 +30,7 @@ export interface AcpToolCallCardProps {
   sessionId?: string;
 }
 
-export function AcpToolCallCard({
+export const AcpToolCallCard = memo(function AcpToolCallCard({
   update,
   isPendingApproval,
   compact = false,
@@ -299,7 +299,7 @@ export function AcpToolCallCard({
       )}
     </div>
   );
-}
+});
 
 // ─── 辅助组件 ─────────────────────────────────────────────────────────────────
 

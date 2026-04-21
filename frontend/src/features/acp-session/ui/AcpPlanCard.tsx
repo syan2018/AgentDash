@@ -4,7 +4,7 @@
  * 显示 Agent 的执行计划
  */
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { PlanEntry, PlanEntryStatus, PlanEntryPriority } from "@agentclientprotocol/sdk";
 
 export interface AcpPlanCardProps {
@@ -13,7 +13,7 @@ export interface AcpPlanCardProps {
   defaultCollapsed?: boolean;
 }
 
-export function AcpPlanCard({
+export const AcpPlanCard = memo(function AcpPlanCard({
   entries,
   collapsible = true,
   defaultCollapsed = false,
@@ -88,7 +88,7 @@ export function AcpPlanCard({
       {cardContent}
     </div>
   );
-}
+});
 
 function PlanEntryItem({
   entry,

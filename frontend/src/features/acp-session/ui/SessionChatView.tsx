@@ -289,6 +289,7 @@ export function SessionChatView({
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
+  const cancelInFlightRef = useRef(false);
 
   const fileRef = useFileReference(workspaceId);
 
@@ -311,6 +312,7 @@ export function SessionChatView({
     setSendError(null);
     setExecutionState(null);
     setIsCancelling(false);
+    cancelInFlightRef.current = false;
   }, [sessionId]);
 
   const refreshExecutionState = useCallback(async () => {
@@ -569,24 +571,33 @@ export function SessionChatView({
   }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState, workspaceId]);
 
   const handleCancel = useCallback(async () => {
-    if (!hasSession || !sessionId || isCancelling) return;
+    if (!hasSession || !sessionId) return;
+    if (cancelInFlightRef.current) return;
+    cancelInFlightRef.current = true;
     setSendError(null);
     setIsCancelling(true);
     try {
       await sendCancel();
-      const next = await refreshExecutionState();
-      if (next?.status === "interrupted" || next?.status === "idle") {
-        optimisticRunningUntilRef.current = 0;
-        setOptimisticRunning(false);
-      }
+      // 不 await 状态刷新，避免 UI 卡在"取消中…"；
+      // 1.5s 轮询 + 流事件会自然驱动 executionState 更新。
+      void refreshExecutionState()
+        .then((next) => {
+          if (next?.status === "interrupted" || next?.status === "idle") {
+            optimisticRunningUntilRef.current = 0;
+            setOptimisticRunning(false);
+          }
+        })
+        .catch(() => {});
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
     } finally {
+      cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [hasSession, isCancelling, refreshExecutionState, sendCancel, sessionId]);
+  }, [hasSession, refreshExecutionState, sendCancel, sessionId]);
 
   const handlePrimaryAction = useCallback(async () => {
+    if (cancelInFlightRef.current) return;
     if (hasSession && isActionRunning) {
       await handleCancel();
       return;
@@ -687,15 +698,18 @@ export function SessionChatView({
         ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
           <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
             {streamPrefixContent}
-            {displayItems.map((item) => (
-              <div key={getItemKey(item)}>
-                <AcpSessionEntry
-                  item={item}
-                  streamingEntryId={streamingEntryId}
-                  sessionId={sessionId}
-                />
-              </div>
-            ))}
+            {displayItems.map((item) => {
+              const key = getItemKey(item);
+              return (
+                <div key={key}>
+                  <AcpSessionEntry
+                    item={item}
+                    isStreaming={key === streamingEntryId}
+                    sessionId={sessionId}
+                  />
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="flex h-full items-center justify-center">

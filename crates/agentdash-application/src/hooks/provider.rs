@@ -20,8 +20,6 @@ use async_trait::async_trait;
 
 use agentdash_spi::{ExecutionHookProvider, HookStepAdvanceRequest};
 
-use crate::workflow::WorkflowCompletionSignalSet;
-
 use super::owner_resolver::SessionOwnerResolver;
 use super::presets::builtin_preset_scripts;
 use super::rules::*;
@@ -481,26 +479,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     &mut resolution,
                     &self.script_engine,
                 );
-                if let Some(decision) = completion_decision_for_active_workflow_snapshot(
-                    &snapshot,
-                    &WorkflowCompletionSignalSet {
-                        checklist_evidence_present: checklist_evidence_present(&snapshot),
-                        ..WorkflowCompletionSignalSet::default()
-                    },
-                ) {
-                    resolution.matched_rule_keys.push(format!(
-                        "completion:{}:{}",
-                        workflow_step_key(&snapshot).unwrap_or("unknown"),
-                        decision.transition_policy
-                    ));
-                    self.apply_completion_decision(&snapshot, decision, &mut resolution)
-                        .await?;
-                }
             }
             HookTrigger::SessionTerminal => {
-                // 1) global + workflow contract + owner default hook rules
-                //    owner_default_hook_rules 会为 task owner 自动注入
-                //    task_session_terminal preset，无需此处硬编码
+                // owner_default_hook_rules 会为 task owner 自动注入
+                // task_session_terminal preset；workflow contract 的 completion 需求
+                // 一律由用户声明的 hook rule（如 stop_gate_checks_pending preset）驱动，
+                // 不在此处硬编码 evaluate_step_completion。
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,
@@ -509,31 +493,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     &mut resolution,
                     &self.script_engine,
                 );
-
-                // 2) workflow completion decision（step 推进）
-                if let Some(decision) = completion_decision_for_active_workflow_snapshot(
-                    &snapshot,
-                    &WorkflowCompletionSignalSet {
-                        session_terminal_state: parse_session_terminal_state(
-                            query.payload.as_ref(),
-                        ),
-                        session_terminal_message: query
-                            .payload
-                            .as_ref()
-                            .and_then(|value| value.get("message"))
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string),
-                        ..WorkflowCompletionSignalSet::default()
-                    },
-                ) {
-                    resolution.matched_rule_keys.push(format!(
-                        "completion:{}:{}",
-                        workflow_step_key(&snapshot).unwrap_or("unknown"),
-                        decision.transition_policy
-                    ));
-                    self.apply_completion_decision(&snapshot, decision, &mut resolution)
-                        .await?;
-                }
             }
             HookTrigger::BeforeSubagentDispatch
             | HookTrigger::AfterSubagentDispatch

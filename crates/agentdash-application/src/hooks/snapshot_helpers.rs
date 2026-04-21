@@ -1,15 +1,12 @@
-use crate::workflow::{
-    WorkflowCompletionDecision, WorkflowCompletionSignalSet, evaluate_step_completion,
-};
 use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowSessionTerminalState,
+    LifecycleRunStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
 use agentdash_spi::{
     ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, SessionHookSnapshot,
 };
 
-use super::ActiveWorkflowLocator;
+#[cfg(test)]
+use agentdash_domain::workflow::EffectiveSessionContract;
 
 pub struct ResolvedOwnerSummary {
     pub summary: HookOwnerSummary,
@@ -69,49 +66,15 @@ pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> 
     active_workflow(snapshot)?.step_key.as_deref()
 }
 
-pub(crate) fn active_workflow_locator(
-    snapshot: &SessionHookSnapshot,
-) -> Option<ActiveWorkflowLocator> {
-    let aw = active_workflow(snapshot)?;
-    Some(ActiveWorkflowLocator {
-        run_id: aw.run_id?,
-        step_key: aw.step_key.clone()?,
-    })
-}
-
+#[cfg(test)]
 pub(crate) fn active_workflow_contract(
     snapshot: &SessionHookSnapshot,
 ) -> Option<EffectiveSessionContract> {
     active_workflow(snapshot)?.effective_contract.clone()
 }
 
-pub(crate) fn completion_decision_for_active_workflow_snapshot(
-    snapshot: &SessionHookSnapshot,
-    signals: &WorkflowCompletionSignalSet,
-) -> Option<WorkflowCompletionDecision> {
-    let contract = active_workflow_contract(snapshot)?;
-    Some(evaluate_step_completion(
-        workflow_auto_completion_snapshot(snapshot).then_some(&contract.completion),
-        signals,
-    ))
-}
-
 pub(crate) fn checklist_evidence_present(snapshot: &SessionHookSnapshot) -> bool {
     active_workflow_checklist_evidence(snapshot)
-}
-
-pub(crate) fn parse_session_terminal_state(
-    payload: Option<&serde_json::Value>,
-) -> Option<WorkflowSessionTerminalState> {
-    match payload
-        .and_then(|value| value.get("terminal_state"))
-        .and_then(serde_json::Value::as_str)
-    {
-        Some("completed") => Some(WorkflowSessionTerminalState::Completed),
-        Some("failed") => Some(WorkflowSessionTerminalState::Failed),
-        Some("interrupted") => Some(WorkflowSessionTerminalState::Interrupted),
-        _ => None,
-    }
 }
 
 /// 检查 snapshot 是否关联了 task owner

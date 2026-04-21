@@ -63,7 +63,7 @@ pub struct StepActivationInput<'a> {
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力集,
     /// 然后叠加 `capability_directives` 得到新集合。
     /// None → 使用 `workflow.contract.capabilities`。
-    pub baseline_override: Option<Vec<String>>,
+    pub baseline_override: Option<Vec<agentdash_domain::workflow::CapabilityEntry>>,
     /// 运行时 capability 指令(PhaseNode 热更新场景);与 baseline 做 set 运算。
     pub capability_directives: &'a [CapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
@@ -128,14 +128,15 @@ pub fn activate_step_with_platform(
     input: &StepActivationInput<'_>,
     platform: &PlatformConfig,
 ) -> StepActivation {
-    // ── 1. baseline + directive → effective workflow capability keys ──
-    let baseline: Vec<String> = input.baseline_override.clone().unwrap_or_else(|| {
-        input
-            .workflow
-            .map(|w| w.contract.capabilities.clone())
-            .unwrap_or_default()
-    });
-    let effective_workflow_capability_keys = if input.capability_directives.is_empty() {
+    // ── 1. baseline + directive → effective workflow capability entries ──
+    let baseline: Vec<agentdash_domain::workflow::CapabilityEntry> =
+        input.baseline_override.clone().unwrap_or_else(|| {
+            input
+                .workflow
+                .map(|w| w.contract.capabilities.clone())
+                .unwrap_or_default()
+        });
+    let effective_entries = if input.capability_directives.is_empty() {
         baseline
     } else {
         compute_effective_capabilities(&baseline, input.capability_directives)
@@ -146,10 +147,10 @@ pub fn activate_step_with_platform(
         SessionWorkflowContext {
             has_active_workflow: true,
             workflow_capability_directives: Some(
-                effective_workflow_capability_keys
+                effective_entries
                     .iter()
                     .cloned()
-                    .map(CapabilityDirective::Add)
+                    .map(CapabilityDirective::add_entry)
                     .collect(),
             ),
         }
@@ -385,7 +386,7 @@ mod tests {
         }
     }
 
-    fn sample_workflow(caps: Vec<String>) -> WorkflowDefinition {
+    fn sample_workflow(caps: Vec<agentdash_domain::workflow::CapabilityEntry>) -> WorkflowDefinition {
         let contract = WorkflowContract {
             capabilities: caps,
             ..WorkflowContract::default()
@@ -441,7 +442,8 @@ mod tests {
 
     #[test]
     fn activate_step_with_workflow_uses_contract_capabilities_as_baseline() {
-        let workflow = sample_workflow(vec!["file_system".to_string(), "workflow_management".to_string()]);
+        use agentdash_domain::workflow::CapabilityEntry;
+        let workflow = sample_workflow(vec![CapabilityEntry::simple("file_system"), CapabilityEntry::simple("workflow_management")]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -463,12 +465,16 @@ mod tests {
 
         let out = activate_step_with_platform(&input, &test_platform());
         assert!(out.capability_keys.contains("workflow_management"));
-        assert!(out.capability_keys.contains("file_system"));
+        // file_system 是别名，resolver 展开为 file_read + file_write + shell_execute
+        assert!(out.capability_keys.contains("file_read"), "file_system alias should expand to file_read");
+        assert!(out.capability_keys.contains("file_write"), "file_system alias should expand to file_write");
+        assert!(out.capability_keys.contains("shell_execute"), "file_system alias should expand to shell_execute");
     }
 
     #[test]
     fn activate_step_baseline_override_takes_precedence_over_contract() {
-        let workflow = sample_workflow(vec!["file_system".to_string()]);
+        use agentdash_domain::workflow::CapabilityEntry;
+        let workflow = sample_workflow(vec![CapabilityEntry::simple("file_system")]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -484,8 +490,8 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
-            baseline_override: Some(vec!["canvas".to_string(), "collaboration".to_string()]),
-            capability_directives: &[CapabilityDirective::Add("workflow_management".to_string())],
+            baseline_override: Some(vec![CapabilityEntry::simple("canvas"), CapabilityEntry::simple("collaboration")]),
+            capability_directives: &[CapabilityDirective::add_simple("workflow_management")],
             ready_port_keys: BTreeSet::new(),
         };
 

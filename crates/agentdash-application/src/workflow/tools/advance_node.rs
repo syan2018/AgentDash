@@ -358,6 +358,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     &phase.baseline_capability_directives,
                                 )
                                 .into_iter()
+                                .map(|e| e.key().to_string())
                                 .collect();
                             if let Some(delta) =
                                 hook_session.update_capabilities(new_caps_set.clone())
@@ -378,7 +379,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                                     .added
                                                     .iter()
                                                     .cloned()
-                                                    .map(agentdash_domain::workflow::CapabilityDirective::Add)
+                                                    .map(agentdash_domain::workflow::CapabilityDirective::add_simple)
                                                     .chain(
                                                         delta
                                                             .removed

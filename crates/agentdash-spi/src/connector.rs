@@ -137,9 +137,13 @@ pub enum ToolCluster {
 /// 流程工具能力声明。
 /// 按 session 类型在 session plan 阶段填充，runtime tool provider 据此裁剪注入。
 /// 可进一步与 agent base_config 中的 tool_clusters 做交集裁剪。
+///
+/// 支持两层裁剪：cluster 级开关 + 工具级排除。
 #[derive(Debug, Clone, Default)]
 pub struct FlowCapabilities {
     pub enabled_clusters: BTreeSet<ToolCluster>,
+    /// 工具级排除集：即使所属 cluster 已启用，名在此集合中的工具仍不注入。
+    pub excluded_tools: BTreeSet<String>,
 }
 
 impl FlowCapabilities {
@@ -154,6 +158,7 @@ impl FlowCapabilities {
                 ToolCluster::Collaboration,
                 ToolCluster::Canvas,
             ]),
+            excluded_tools: BTreeSet::new(),
         }
     }
 
@@ -162,10 +167,16 @@ impl FlowCapabilities {
         self.enabled_clusters.contains(&cluster)
     }
 
+    /// 检查指定工具是否可用（cluster 启用 且 未被排除）。
+    pub fn is_tool_enabled(&self, tool_name: &str, cluster: ToolCluster) -> bool {
+        self.has(cluster) && !self.excluded_tools.contains(tool_name)
+    }
+
     /// 从簇数组构造。
     pub fn from_clusters(clusters: impl IntoIterator<Item = ToolCluster>) -> Self {
         Self {
             enabled_clusters: clusters.into_iter().collect(),
+            excluded_tools: BTreeSet::new(),
         }
     }
 
@@ -176,6 +187,11 @@ impl FlowCapabilities {
                 .enabled_clusters
                 .intersection(&other.enabled_clusters)
                 .copied()
+                .collect(),
+            excluded_tools: self
+                .excluded_tools
+                .union(&other.excluded_tools)
+                .cloned()
                 .collect(),
         }
     }

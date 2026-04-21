@@ -103,6 +103,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
         let session_hub = self.session_hub_handle.get().await;
+        let excluded = &context.flow_capabilities.excluded_tools;
 
         // Read 簇：只读文件系统访问
         if clusters.contains(&ToolCluster::Read) {
@@ -211,6 +212,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             } else {
                 tracing::warn!("canvas tools 注入失败：无法从 hook session 解析 project_id");
             }
+        }
+
+        // 工具级排除：从 CapabilityEntry 的 include/exclude 合并而来
+        if !excluded.is_empty() {
+            tools.retain(|tool| !excluded.contains(tool.name()));
         }
 
         Ok(tools)

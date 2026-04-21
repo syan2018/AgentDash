@@ -11,6 +11,7 @@
 mod notification;
 mod resolver;
 mod session_workflow_context;
+pub mod tool_catalog;
 
 #[cfg(test)]
 mod pipeline_tests;
@@ -26,3 +27,4 @@ pub use session_workflow_context::{
     capability_directives_from_active_workflow, resolve_session_workflow_context,
     SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,
 };
+pub use tool_catalog::query_tool_catalog;

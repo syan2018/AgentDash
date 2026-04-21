@@ -727,3 +727,24 @@ pub async fn delete_hook_preset(
     let removed = state.services.hook_provider.remove_preset(&key);
     Json(serde_json::json!({ "removed": removed, "key": key }))
 }
+
+// ── Tool Catalog ──
+
+#[derive(Debug, Deserialize)]
+pub struct ToolCatalogQuery {
+    /// 逗号分隔的 capability keys，如 `file_read,canvas,mcp:code_analyzer`
+    pub capabilities: String,
+}
+
+pub async fn query_tool_catalog(
+    Query(query): Query<ToolCatalogQuery>,
+) -> Json<Vec<agentdash_spi::ToolDescriptor>> {
+    let keys: Vec<String> = query
+        .capabilities
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let catalog = agentdash_application::capability::query_tool_catalog(&keys);
+    Json(catalog)
+}

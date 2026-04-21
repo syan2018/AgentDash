@@ -10,6 +10,7 @@ import type {
   LifecycleExecutionEventKind,
   LifecycleNodeType,
   LifecycleStepDefinition,
+  ToolDescriptor,
   WorkflowAgentRole,
   WorkflowCheckKind,
   WorkflowCheckSpec,
@@ -605,6 +606,19 @@ export async function validateWorkflowDefinition(input: {
 export async function deleteWorkflowDefinition(id: string): Promise<void> {
   await api.delete(`/workflow-definitions/${id}`);
 }
+
+// ─── Tool Catalog ──
+
+/**
+ * 查询能力下属的工具目录。
+ * @param capabilityKeys 逗号分隔的 capability key，如 ["file_read", "canvas"]
+ */
+export async function fetchToolCatalog(capabilityKeys: string[]): Promise<ToolDescriptor[]> {
+  const qs = capabilityKeys.join(",");
+  return api.get<ToolDescriptor[]>(`/tool-catalog?capabilities=${encodeURIComponent(qs)}`);
+}
+
+// ─── Hook Presets ──
 
 export async function fetchHookPresets(): Promise<HookRulePreset[]> {
   const raw = await api.get<Record<string, unknown>>("/hook-presets");

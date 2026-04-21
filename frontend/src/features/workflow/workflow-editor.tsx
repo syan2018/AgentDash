@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
+  CapabilityEntry,
   HookRulePreset,
   McpPresetDto,
   OutputPortDefinition,
   InputPortDefinition,
+  ToolDescriptor,
   WorkflowCheckKind,
   WorkflowCompletionSpec,
   WorkflowConstraintKind,
@@ -16,8 +18,10 @@ import type {
   GateStrategy,
   ContextStrategy,
 } from "../../types";
+import { capabilityEntryKey } from "../../types/workflow";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../services/mcpPreset";
+import { fetchToolCatalog } from "../../services/workflow";
 import {
   TARGET_KIND_LABEL,
 } from "./shared-labels";
@@ -475,16 +479,15 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
 
 // ─── Capabilities Editor ──────────────────────────────
 //
-// capability key 语义（与后端 CapabilityResolver 对齐）：
-// - well-known key（无前缀）→ 映射到 ToolCluster / PlatformMcpScope
-// - `mcp:<preset_name>` → 查当前 project 的 McpPreset → 展开为 McpServerDecl
-// - 其他前缀 → 未识别，仅回显，给出删除按钮
-//
-// 本编辑器把 contract.capabilities 数组在 UI 层拆分为三段展示，写回时合并。
+// 本编辑器操作 `CapabilityEntry[]`（支持简写 string 和结构化 object 两种形式），
+// 在 UI 层拆分为 well-known 能力、MCP Preset、未识别 key 三段，
+// 并支持展开 capability 下属工具列表进行工具级排除。
 
-/** Well-known capability key 列表（与后端 well_known_capability_key 一一对应）。 */
-const WELL_KNOWN_CAPABILITY_KEYS = [
+const CAP_EDITOR_WELL_KNOWN_KEYS = [
   "file_system",
+  "file_read",
+  "file_write",
+  "shell_execute",
   "canvas",
   "workflow",
   "collaboration",
@@ -494,11 +497,13 @@ const WELL_KNOWN_CAPABILITY_KEYS = [
   "workflow_management",
 ] as const;
 
-type WellKnownCapabilityKey = (typeof WELL_KNOWN_CAPABILITY_KEYS)[number];
+type WellKnownCapabilityKey = (typeof CAP_EDITOR_WELL_KNOWN_KEYS)[number];
 
-/** Well-known capability 的中文展示标签。 */
 const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
-  file_system: "文件系统",
+  file_system: "文件系统（全部）",
+  file_read: "文件读取",
+  file_write: "文件写入",
+  shell_execute: "Shell 执行",
   canvas: "画布",
   workflow: "工作流",
   collaboration: "协作",
@@ -508,9 +513,11 @@ const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
   workflow_management: "工作流管理",
 };
 
-/** Well-known capability 的一句话说明。 */
 const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> = {
-  file_system: "读写工作空间文件",
+  file_system: "读写工作空间文件（file_read + file_write + shell_execute 的别名）",
+  file_read: "只读文件系统访问（fs_read、fs_glob、fs_grep 等）",
+  file_write: "文件写入操作（fs_apply_patch）",
+  shell_execute: "执行 shell 命令（shell_exec）",
   canvas: "画布 / 白板操作",
   workflow: "工作流汇报与推进",
   collaboration: "多 agent 协作通道",
@@ -520,14 +527,74 @@ const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> 
   workflow_management: "MCP workflow 管理工具",
 };
 
-/** 判断某 key 是否为 well-known capability。 */
 function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {
-  return (WELL_KNOWN_CAPABILITY_KEYS as readonly string[]).includes(key);
+  return (CAP_EDITOR_WELL_KNOWN_KEYS as readonly string[]).includes(key);
 }
 
-/** 从 `mcp:<name>` 形式的 key 中提取 preset 名；不是 mcp 前缀则返回 null。 */
 function extractMcpPresetName(key: string): string | null {
   return key.startsWith("mcp:") ? key.slice(4) : null;
+}
+
+/** 从 CapabilityEntry 中提取 exclude_tools 列表。 */
+function getExcludedTools(entry: CapabilityEntry): string[] {
+  return typeof entry === "string" ? [] : entry.exclude_tools ?? [];
+}
+
+/** 根据 key 在 capabilities 数组中查找对应 entry。 */
+function findEntryByKey(capabilities: CapabilityEntry[], key: string): CapabilityEntry | undefined {
+  return capabilities.find((e) => capabilityEntryKey(e) === key);
+}
+
+/** 替换指定 key 对应的 entry，或追加新 entry。 */
+function upsertEntry(capabilities: CapabilityEntry[], key: string, entry: CapabilityEntry): CapabilityEntry[] {
+  const idx = capabilities.findIndex((e) => capabilityEntryKey(e) === key);
+  if (idx >= 0) {
+    const next = [...capabilities];
+    next[idx] = entry;
+    return next;
+  }
+  return [...capabilities, entry];
+}
+
+/** 工具级排除面板 — 展开某个 capability 后展示下属工具，可单独排除。 */
+function ToolExclusionPanel({
+  capKey,
+  tools,
+  excludedTools,
+  onToggleTool,
+}: {
+  capKey: string;
+  tools: ToolDescriptor[];
+  excludedTools: string[];
+  onToggleTool: (capKey: string, toolName: string) => void;
+}) {
+  const excluded = new Set(excludedTools);
+  if (tools.length === 0) {
+    return <p className="pl-4 py-1 text-[11px] text-muted-foreground">此能力无下属平台工具</p>;
+  }
+  return (
+    <div className="pl-4 mt-1 flex flex-wrap gap-1">
+      {tools.map((tool) => {
+        const isExcluded = excluded.has(tool.name);
+        return (
+          <button
+            key={tool.name}
+            type="button"
+            onClick={() => onToggleTool(capKey, tool.name)}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-all duration-120 ${
+              isExcluded
+                ? "border-destructive/30 bg-destructive/5 text-destructive line-through"
+                : "border-border bg-background text-foreground hover:border-primary/20"
+            }`}
+            title={`${tool.display_name}: ${tool.description}${isExcluded ? " (已排除)" : ""}`}
+          >
+            <code className="font-mono">{tool.name}</code>
+            {isExcluded && <span className="text-[9px]">(排除)</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function CapabilitiesEditor({
@@ -536,16 +603,18 @@ function CapabilitiesEditor({
   onChange,
 }: {
   projectId: string;
-  capabilities: string[];
-  onChange: (next: string[]) => void;
+  capabilities: CapabilityEntry[];
+  onChange: (next: CapabilityEntry[]) => void;
 }) {
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
 
-  // 加载当前 project 的 MCP Preset 列表。
-  // 新建 workflow 时 projectId 可能为空串——此时跳过 fetch，直接渲染"空列表"提示即可。
-  // 所有 setState 都延后到 fetch 回调内，避免在 effect body 内同步触发 re-render。
+  // 已展开工具面板的 capability key 集合
+  const [expandedCaps, setExpandedCaps] = useState<Set<string>>(new Set());
+  // 工具目录缓存：key → ToolDescriptor[]
+  const [toolCatalogCache, setToolCatalogCache] = useState<Record<string, ToolDescriptor[]>>({});
+
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
@@ -565,17 +634,15 @@ function CapabilitiesEditor({
         if (!cancelled) setPresetsLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [projectId]);
 
-  // 把 capabilities 数组拆成三段，便于分区渲染。
   const { wellKnownSet, mcpSet, unknownList } = useMemo(() => {
     const wellKnown = new Set<string>();
     const mcp = new Set<string>();
     const unknown: string[] = [];
-    for (const key of capabilities) {
+    for (const entry of capabilities) {
+      const key = capabilityEntryKey(entry);
       if (isWellKnownCapability(key)) {
         wellKnown.add(key);
       } else if (extractMcpPresetName(key) !== null) {
@@ -587,29 +654,59 @@ function CapabilitiesEditor({
     return { wellKnownSet: wellKnown, mcpSet: mcp, unknownList: unknown };
   }, [capabilities]);
 
-  // Toggle well-known key。已选则移除，未选则追加，保持原有顺序尽量稳定。
   const toggleWellKnown = (key: WellKnownCapabilityKey) => {
     if (wellKnownSet.has(key)) {
-      onChange(capabilities.filter((item) => item !== key));
+      onChange(capabilities.filter((e) => capabilityEntryKey(e) !== key));
+      setExpandedCaps((prev) => { const next = new Set(prev); next.delete(key); return next; });
     } else {
       onChange([...capabilities, key]);
     }
   };
 
-  // Toggle MCP preset。由 preset.name 组装成 `mcp:<name>` 写回。
   const toggleMcpPreset = (presetName: string) => {
     const compositeKey = `mcp:${presetName}`;
     if (mcpSet.has(compositeKey)) {
-      onChange(capabilities.filter((item) => item !== compositeKey));
+      onChange(capabilities.filter((e) => capabilityEntryKey(e) !== compositeKey));
     } else {
       onChange([...capabilities, compositeKey]);
     }
   };
 
-  // 删除未识别 key（用户手动清理脏数据）。
   const removeUnknown = (key: string) => {
-    onChange(capabilities.filter((item) => item !== key));
+    onChange(capabilities.filter((e) => capabilityEntryKey(e) !== key));
   };
+
+  // 展开/收起 capability 工具面板
+  const toggleExpand = useCallback(async (key: string) => {
+    setExpandedCaps((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+      return next;
+    });
+    if (!toolCatalogCache[key]) {
+      try {
+        const tools = await fetchToolCatalog([key]);
+        setToolCatalogCache((prev) => ({ ...prev, [key]: tools }));
+      } catch {
+        setToolCatalogCache((prev) => ({ ...prev, [key]: [] }));
+      }
+    }
+  }, [toolCatalogCache]);
+
+  // 切换单个工具的排除状态
+  const toggleToolExclusion = useCallback((capKey: string, toolName: string) => {
+    const existing = findEntryByKey(capabilities, capKey);
+    const currentExcluded = existing ? getExcludedTools(existing) : [];
+    const isCurrentlyExcluded = currentExcluded.includes(toolName);
+    const newExcluded = isCurrentlyExcluded
+      ? currentExcluded.filter((t) => t !== toolName)
+      : [...currentExcluded, toolName];
+
+    const newEntry: CapabilityEntry = newExcluded.length === 0
+      ? capKey
+      : { key: capKey, exclude_tools: newExcluded };
+    onChange(upsertEntry(capabilities, capKey, newEntry));
+  }, [capabilities, onChange]);
 
   return (
     <div className="space-y-4">
@@ -617,25 +714,54 @@ function CapabilitiesEditor({
       <div>
         <label className="agentdash-form-label">Well-known 能力</label>
         <p className="mb-1.5 text-[11px] text-muted-foreground">
-          后端 CapabilityResolver 直接识别的内置能力 key。
+          后端 CapabilityResolver 直接识别的内置能力 key。点击能力按钮右侧的展开图标可查看/排除下属工具。
         </p>
-        <div className="flex flex-wrap gap-1.5">
-          {WELL_KNOWN_CAPABILITY_KEYS.map((key) => {
+        <div className="space-y-1">
+          {CAP_EDITOR_WELL_KNOWN_KEYS.map((key) => {
             const on = wellKnownSet.has(key);
+            const isExpanded = expandedCaps.has(key);
+            const entry = findEntryByKey(capabilities, key);
+            const excluded = entry ? getExcludedTools(entry) : [];
             return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => toggleWellKnown(key)}
-                className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
-                  on
-                    ? "border-primary/30 bg-primary/8 text-primary"
-                    : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                }`}
-                title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
-              >
-                {WELL_KNOWN_CAPABILITY_LABEL[key]}
-              </button>
+              <div key={key}>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleWellKnown(key)}
+                    className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
+                      on
+                        ? "border-primary/30 bg-primary/8 text-primary"
+                        : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                    }`}
+                    title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+                  >
+                    {WELL_KNOWN_CAPABILITY_LABEL[key]}
+                    {excluded.length > 0 && (
+                      <span className="ml-1 text-[9px] text-destructive">(-{excluded.length})</span>
+                    )}
+                  </button>
+                  {on && (
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(key)}
+                      className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                      title={isExpanded ? "收起工具列表" : "展开工具列表"}
+                    >
+                      <svg className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                {on && isExpanded && (
+                  <ToolExclusionPanel
+                    capKey={key}
+                    tools={toolCatalogCache[key] ?? []}
+                    excludedTools={excluded}
+                    onToggleTool={toggleToolExclusion}
+                  />
+                )}
+              </div>
             );
           })}
         </div>

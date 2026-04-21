@@ -306,55 +306,69 @@ impl PiAgentConnector {
             sections.push("## Workspace\n\n（当前会话未配置 VFS。）".to_string());
         }
 
-        // ── 4. Tools: 可用工具及使用规范 ──
-        if !runtime_tools.is_empty() {
-            let mut tool_section = String::from("## Tools\n\n");
-            let tool_lines = runtime_tools
-                .iter()
-                .map(describe_builtin_tool)
-                .collect::<Vec<_>>()
-                .join("\n");
-            tool_section.push_str("以下工具已注入当前会话，可直接调用：\n\n");
-            tool_section.push_str(&tool_lines);
-            tool_section.push_str("\n\n");
-            if context.vfs.is_some() {
-                tool_section.push_str(
-                    "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
+        // ── 4. Available Tools: 统一工具清单（平台内嵌 + MCP 外部）──
+        {
+            let has_builtin = !runtime_tools.is_empty();
+            let has_mcp = !context.mcp_servers.is_empty();
+
+            if has_builtin || has_mcp {
+                let mut tool_section = String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
+
+                // 平台内嵌工具
+                if has_builtin {
+                    let builtin_lines = runtime_tools
+                        .iter()
+                        .map(describe_builtin_tool)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    tool_section.push_str("### Platform Tools\n\n");
+                    tool_section.push_str(&builtin_lines);
+                    tool_section.push_str("\n\n");
+                }
+
+                // MCP 外部工具
+                if has_mcp {
+                    let mcp_lines = context
+                        .mcp_servers
+                        .iter()
+                        .map(describe_mcp_server)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    tool_section.push_str("### MCP Tools\n\n");
+                    tool_section.push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
+                    tool_section.push_str(&mcp_lines);
+                    tool_section.push_str("\n\n");
+                }
+
+                // 路径规范（仅当有平台工具时）
+                if has_builtin {
+                    if context.vfs.is_some() {
+                        tool_section.push_str(
+                            "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
 The mount prefix may be omitted when the session has exactly one mount. \
 Never put backend_id or absolute paths into tool arguments. \
 For shell_exec, `cwd` must also be relative to the mount root; use `main://.` for the current directory.\n\n",
-                );
-                tool_section.push_str(
-                    "**fs_apply_patch format**: uses Codex apply_patch syntax (**not** unified diff). \
+                        );
+                        tool_section.push_str(
+                            "**fs_apply_patch format**: uses Codex apply_patch syntax (**not** unified diff). \
 Starts with `*** Begin Patch`, ends with `*** End Patch`. \
 Each file operation MUST begin with `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`. \
 For renaming, follow `Update File` with `*** Move to: new/path`. \
 Each hunk starts with `@@` (optionally followed by a context-anchor line); \
 lines within a hunk are prefixed with space (context) / `-` (remove) / `+` (add). \
 Paths may use `mount_id://path` to target a specific mount; paths without a prefix use the default mount.",
-                );
-            } else {
-                let abs_hint = workspace_path_from_context(context)
-                    .map(|root| root.display().to_string())
-                    .unwrap_or_else(|_| "（未配置工作区路径）".to_string());
-                tool_section.push_str(&format!(
-                    "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{abs_hint}/...` 这类绝对路径直接写进工具参数。",
-                ));
+                        );
+                    } else {
+                        let abs_hint = workspace_path_from_context(context)
+                            .map(|root| root.display().to_string())
+                            .unwrap_or_else(|_| "（未配置工作区路径）".to_string());
+                        tool_section.push_str(&format!(
+                            "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{abs_hint}/...` 这类绝对路径直接写进工具参数。",
+                        ));
+                    }
+                }
+                sections.push(tool_section);
             }
-            sections.push(tool_section);
-        }
-
-        // ── 5. MCP Servers ──
-        if !context.mcp_servers.is_empty() {
-            let server_lines = context
-                .mcp_servers
-                .iter()
-                .map(describe_mcp_server)
-                .collect::<Vec<_>>()
-                .join("\n");
-            sections.push(format!(
-                "## MCP Servers\n\n以下 MCP Server 已注入当前会话，可在需要时使用：\n\n{server_lines}"
-            ));
         }
 
         // ── 6. Hooks ──
@@ -2298,7 +2312,8 @@ mod tests {
         let prompt = connector.build_runtime_system_prompt(&context, &tools);
         assert!(prompt.contains("## Identity"));
         assert!(prompt.contains("## Workspace"));
-        assert!(prompt.contains("## Tools"));
+        assert!(prompt.contains("## Available Tools"));
+        assert!(prompt.contains("### Platform Tools"));
         assert!(prompt.contains("/tmp/test-workspace"));
         assert!(prompt.contains("- **shell**: Run a shell command"));
     }

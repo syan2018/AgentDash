@@ -424,7 +424,7 @@ impl LifecycleOrchestrator {
                 .capabilities
                 .iter()
                 .cloned()
-                .map(CapabilityDirective::Add)
+                .map(CapabilityDirective::add_entry)
                 .collect(),
             Ok(None) => {
                 tracing::warn!(

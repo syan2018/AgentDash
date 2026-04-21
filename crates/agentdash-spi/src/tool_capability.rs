@@ -40,9 +40,9 @@ impl ToolCapability {
         self.0.strip_prefix(MCP_KEY_PREFIX)
     }
 
-    /// 是否为平台 well-known key。
+    /// 是否为平台 well-known key（含别名）。
     pub fn is_well_known(&self) -> bool {
-        WELL_KNOWN_KEYS.contains(&self.0.as_str())
+        is_known_key(&self.0)
     }
 
     /// 从 server_name 构造 `mcp:<server_name>` key。
@@ -71,7 +71,14 @@ impl From<String> for ToolCapability {
 
 // ── 平台 well-known capability key 常量 ──
 
+/// 别名：展开为 `file_read + file_write + shell_execute`，保持向后兼容。
 pub const CAP_FILE_SYSTEM: &str = "file_system";
+/// Read-only 文件访问：mounts_list, fs_read, fs_glob, fs_grep
+pub const CAP_FILE_READ: &str = "file_read";
+/// 文件写入：fs_apply_patch
+pub const CAP_FILE_WRITE: &str = "file_write";
+/// 命令执行：shell_exec
+pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 pub const CAP_CANVAS: &str = "canvas";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -82,9 +89,11 @@ pub const CAP_WORKFLOW_MANAGEMENT: &str = "workflow_management";
 
 const MCP_KEY_PREFIX: &str = "mcp:";
 
-/// 所有平台 well-known key 列表（用于校验）。
+/// 所有平台 well-known key 列表（含新拆分 key，不含别名）。
 pub const WELL_KNOWN_KEYS: &[&str] = &[
-    CAP_FILE_SYSTEM,
+    CAP_FILE_READ,
+    CAP_FILE_WRITE,
+    CAP_SHELL_EXECUTE,
     CAP_CANVAS,
     CAP_WORKFLOW,
     CAP_COLLABORATION,
@@ -94,17 +103,187 @@ pub const WELL_KNOWN_KEYS: &[&str] = &[
     CAP_WORKFLOW_MANAGEMENT,
 ];
 
+/// 平台别名 → 展开目标。当前仅 `file_system` 一个别名。
+pub const CAPABILITY_ALIASES: &[(&str, &[&str])] = &[
+    (CAP_FILE_SYSTEM, &[CAP_FILE_READ, CAP_FILE_WRITE, CAP_SHELL_EXECUTE]),
+];
+
+/// 如果 key 是别名，返回展开后的 well-known key 列表；否则返回 None。
+pub fn expand_alias(key: &str) -> Option<&'static [&'static str]> {
+    CAPABILITY_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == key)
+        .map(|(_, targets)| *targets)
+}
+
+/// 判断 key 是否为 well-known key 或别名。
+pub fn is_known_key(key: &str) -> bool {
+    WELL_KNOWN_KEYS.contains(&key) || CAPABILITY_ALIASES.iter().any(|(alias, _)| *alias == key)
+}
+
+// ── 工具注册表：每个 ToolCluster 下属的工具名 ──
+
+pub const CLUSTER_READ_TOOLS: &[&str] = &["mounts_list", "fs_read", "fs_glob", "fs_grep"];
+pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
+pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
+pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["report_workflow_artifact"];
+pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
+pub const CLUSTER_CANVAS_TOOLS: &[&str] = &["canvases_list", "canvas_start", "bind_canvas_data", "present_canvas"];
+
+/// 返回 ToolCluster 下属的全部工具名。
+pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
+    match cluster {
+        ToolCluster::Read => CLUSTER_READ_TOOLS,
+        ToolCluster::Write => CLUSTER_WRITE_TOOLS,
+        ToolCluster::Execute => CLUSTER_EXECUTE_TOOLS,
+        ToolCluster::Workflow => CLUSTER_WORKFLOW_TOOLS,
+        ToolCluster::Collaboration => CLUSTER_COLLABORATION_TOOLS,
+        ToolCluster::Canvas => CLUSTER_CANVAS_TOOLS,
+    }
+}
+
+/// 返回 well-known capability key 下属的全部工具名（跨 cluster 合并）。
+pub fn capability_tools(key: &str) -> Vec<&'static str> {
+    let clusters = capability_to_tool_clusters_by_key(key);
+    clusters.iter().flat_map(|c| cluster_tools(*c).iter().copied()).collect()
+}
+
+// ── 统一工具描述 ──
+
+/// 工具来源 — 区分平台内嵌工具和 MCP 外部工具。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolSource {
+    Platform { cluster: ToolCluster },
+    Mcp { server_name: String },
+}
+
+/// 统一工具描述 — 平台内嵌工具和 MCP 工具的共用元数据。
+///
+/// 前端查询工具目录、connector 组装 system prompt、以及 capability editor
+/// 展示工具列表时都消费此类型。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub source: ToolSource,
+    /// 所属 capability key（平台工具由 cluster 反推，MCP 工具为 `mcp:<server>`）
+    pub capability_key: String,
+}
+
+impl ToolDescriptor {
+    pub fn platform(
+        name: &str,
+        display_name: &str,
+        description: &str,
+        cluster: ToolCluster,
+        capability_key: &str,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            display_name: display_name.to_string(),
+            description: description.to_string(),
+            source: ToolSource::Platform { cluster },
+            capability_key: capability_key.to_string(),
+        }
+    }
+
+    pub fn mcp(name: &str, description: &str, server_name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            display_name: name.to_string(),
+            description: description.to_string(),
+            source: ToolSource::Mcp {
+                server_name: server_name.to_string(),
+            },
+            capability_key: format!("mcp:{server_name}"),
+        }
+    }
+
+    pub fn is_platform(&self) -> bool {
+        matches!(self.source, ToolSource::Platform { .. })
+    }
+}
+
+/// 格式化工具描述为 system prompt 片段（platform + MCP 统一格式）。
+///
+/// 输出形如：
+/// ```text
+/// - **fs_read** (file_read): 读取 mount 内文件内容
+/// ```
+pub fn format_tool_for_prompt(desc: &ToolDescriptor) -> String {
+    let source_tag = match &desc.source {
+        ToolSource::Platform { .. } => desc.capability_key.clone(),
+        ToolSource::Mcp { server_name } => format!("mcp:{server_name}"),
+    };
+    if desc.description.is_empty() {
+        format!("- **{}** ({})", desc.name, source_tag)
+    } else {
+        format!("- **{}** ({}): {}", desc.name, source_tag, desc.description)
+    }
+}
+
+// ── 平台工具注册表（编译期静态元数据）──
+
+/// 返回所有平台内嵌工具的完整描述（编译期已知的静态元数据）。
+pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
+    vec![
+        // ── Read cluster (file_read) ──
+        ToolDescriptor::platform("mounts_list", "List Mounts", "列出当前会话可用的文件系统挂载点", ToolCluster::Read, CAP_FILE_READ),
+        ToolDescriptor::platform("fs_read", "Read File", "读取 mount 内指定文件的内容", ToolCluster::Read, CAP_FILE_READ),
+        ToolDescriptor::platform("fs_glob", "Glob Search", "在 mount 内按 glob 模式搜索文件路径", ToolCluster::Read, CAP_FILE_READ),
+        ToolDescriptor::platform("fs_grep", "Grep Search", "在 mount 内按正则表达式搜索文件内容", ToolCluster::Read, CAP_FILE_READ),
+        // ── Write cluster (file_write) ──
+        ToolDescriptor::platform("fs_apply_patch", "Apply Patch", "对 mount 内文件执行补丁操作（创建/更新/删除/重命名）", ToolCluster::Write, CAP_FILE_WRITE),
+        // ── Execute cluster (shell_execute) ──
+        ToolDescriptor::platform("shell_exec", "Shell Execute", "在工作空间内执行 shell 命令", ToolCluster::Execute, CAP_SHELL_EXECUTE),
+        // ── Workflow cluster ──
+        ToolDescriptor::platform("complete_lifecycle_node", "Complete Node", "声明当前 lifecycle node 完成或失败", ToolCluster::Workflow, CAP_WORKFLOW),
+        // ── Collaboration cluster ──
+        ToolDescriptor::platform("companion_request", "Companion Request", "向关联 agent 发起协作请求", ToolCluster::Collaboration, CAP_COLLABORATION),
+        ToolDescriptor::platform("companion_respond", "Companion Respond", "回复协作 agent 的请求", ToolCluster::Collaboration, CAP_COLLABORATION),
+        // ── Canvas cluster ──
+        ToolDescriptor::platform("canvases_list", "List Canvases", "列出当前 project 的画布资产", ToolCluster::Canvas, CAP_CANVAS),
+        ToolDescriptor::platform("canvas_start", "Start Canvas", "创建新画布资产", ToolCluster::Canvas, CAP_CANVAS),
+        ToolDescriptor::platform("bind_canvas_data", "Bind Canvas Data", "绑定数据到画布", ToolCluster::Canvas, CAP_CANVAS),
+        ToolDescriptor::platform("present_canvas", "Present Canvas", "向用户展示画布", ToolCluster::Canvas, CAP_CANVAS),
+    ]
+}
+
+/// 按 capability key 过滤平台工具描述。
+pub fn platform_tools_for_capability(key: &str) -> Vec<ToolDescriptor> {
+    if let Some(expanded) = expand_alias(key) {
+        expanded
+            .iter()
+            .flat_map(|k| platform_tools_for_capability(k))
+            .collect()
+    } else {
+        platform_tool_descriptors()
+            .into_iter()
+            .filter(|d| d.capability_key == key)
+            .collect()
+    }
+}
+
 // ── well-known key → ToolCluster 映射 ──
 
 /// 返回 well-known key 对应的 `ToolCluster` 集合。
-/// 非 well-known key 或无 ToolCluster 映射的 key 返回空 vec。
+/// 别名自动展开。非 well-known key 返回空 vec。
 pub fn capability_to_tool_clusters(cap: &ToolCapability) -> Vec<ToolCluster> {
-    match cap.key() {
+    capability_to_tool_clusters_by_key(cap.key())
+}
+
+fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
+    match key {
+        CAP_FILE_READ => vec![ToolCluster::Read],
+        CAP_FILE_WRITE => vec![ToolCluster::Write],
+        CAP_SHELL_EXECUTE => vec![ToolCluster::Execute],
+        // 别名展开
         CAP_FILE_SYSTEM => vec![ToolCluster::Read, ToolCluster::Write, ToolCluster::Execute],
         CAP_CANVAS => vec![ToolCluster::Canvas],
         CAP_WORKFLOW => vec![ToolCluster::Workflow],
         CAP_COLLABORATION => vec![ToolCluster::Collaboration],
-        // MCP-only 能力不映射 ToolCluster
         _ => vec![],
     }
 }
@@ -162,7 +341,21 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
 
     static RULES: &[CapabilityVisibilityRule] = &[
         CapabilityVisibilityRule {
-            key: CAP_FILE_SYSTEM,
+            key: CAP_FILE_READ,
+            allowed_owner_types: &[Project, Story, Task],
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
+        },
+        CapabilityVisibilityRule {
+            key: CAP_FILE_WRITE,
+            allowed_owner_types: &[Project, Story, Task],
+            auto_granted: true,
+            agent_can_grant: false,
+            workflow_can_grant: false,
+        },
+        CapabilityVisibilityRule {
+            key: CAP_SHELL_EXECUTE,
             allowed_owner_types: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
@@ -214,9 +407,7 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
             key: CAP_WORKFLOW_MANAGEMENT,
             allowed_owner_types: &[Project],
             auto_granted: false,
-            // 保留 agent config 声明路径（向后兼容）
             agent_can_grant: true,
-            // 新增：workflow 绑定即可授予，配合 builtin_workflow_admin 等内建工作流
             workflow_can_grant: true,
         },
     ];
@@ -237,24 +428,25 @@ pub fn is_capability_visible(
     agent_declares: bool,
     has_active_workflow: bool,
 ) -> bool {
-    // 自定义 MCP 不受 visibility rule 限制
     if cap.is_custom_mcp() {
         return true;
+    }
+
+    // 别名不出现在 visibility rules 中，由展开后的 key 各自判断
+    if expand_alias(cap.key()).is_some() {
+        return false;
     }
 
     let rules = default_visibility_rules();
     let rule = match rules.iter().find(|r| r.key == cap.key()) {
         Some(r) => r,
-        // 未知 well-known key 默认不可见
         None => return false,
     };
 
-    // 屏蔽（AND）：owner 硬边界
     if !rule.allowed_owner_types.contains(&owner_type) {
         return false;
     }
 
-    // 授予（OR）：任一来源命中即可见
     rule.auto_granted
         || (rule.agent_can_grant && agent_declares)
         || (rule.workflow_can_grant && has_active_workflow)
@@ -282,13 +474,50 @@ mod tests {
     }
 
     #[test]
-    fn file_system_maps_to_read_write_execute() {
+    fn file_read_maps_to_read_cluster() {
+        let cap = ToolCapability::new(CAP_FILE_READ);
+        assert_eq!(capability_to_tool_clusters(&cap), vec![ToolCluster::Read]);
+    }
+
+    #[test]
+    fn file_write_maps_to_write_cluster() {
+        let cap = ToolCapability::new(CAP_FILE_WRITE);
+        assert_eq!(capability_to_tool_clusters(&cap), vec![ToolCluster::Write]);
+    }
+
+    #[test]
+    fn shell_execute_maps_to_execute_cluster() {
+        let cap = ToolCapability::new(CAP_SHELL_EXECUTE);
+        assert_eq!(capability_to_tool_clusters(&cap), vec![ToolCluster::Execute]);
+    }
+
+    #[test]
+    fn file_system_alias_expands_to_three_clusters() {
         let cap = ToolCapability::new(CAP_FILE_SYSTEM);
         let clusters = capability_to_tool_clusters(&cap);
-        assert_eq!(
-            clusters,
-            vec![ToolCluster::Read, ToolCluster::Write, ToolCluster::Execute]
-        );
+        assert_eq!(clusters, vec![ToolCluster::Read, ToolCluster::Write, ToolCluster::Execute]);
+    }
+
+    #[test]
+    fn expand_alias_file_system() {
+        let expanded = expand_alias("file_system").unwrap();
+        assert_eq!(expanded, &["file_read", "file_write", "shell_execute"]);
+        assert!(expand_alias("file_read").is_none());
+    }
+
+    #[test]
+    fn cluster_tools_returns_correct_tool_names() {
+        assert_eq!(cluster_tools(ToolCluster::Read), &["mounts_list", "fs_read", "fs_glob", "fs_grep"]);
+        assert_eq!(cluster_tools(ToolCluster::Write), &["fs_apply_patch"]);
+        assert_eq!(cluster_tools(ToolCluster::Execute), &["shell_exec"]);
+    }
+
+    #[test]
+    fn capability_tools_returns_all_tools() {
+        let tools = capability_tools("file_system");
+        assert!(tools.contains(&"fs_read"));
+        assert!(tools.contains(&"fs_apply_patch"));
+        assert!(tools.contains(&"shell_exec"));
     }
 
     #[test]
@@ -307,20 +536,27 @@ mod tests {
     }
 
     #[test]
-    fn file_system_has_no_mcp_scope() {
-        let cap = ToolCapability::new(CAP_FILE_SYSTEM);
+    fn file_read_has_no_mcp_scope() {
+        let cap = ToolCapability::new(CAP_FILE_READ);
         assert_eq!(capability_to_platform_mcp_scope(&cap), None);
     }
 
     #[test]
-    fn visibility_project_session_gets_file_system() {
+    fn visibility_project_session_gets_file_read() {
+        let cap = ToolCapability::new(CAP_FILE_READ);
+        assert!(is_capability_visible(&cap, SessionOwnerType::Project, false, false));
+    }
+
+    #[test]
+    fn visibility_project_session_gets_file_write() {
+        let cap = ToolCapability::new(CAP_FILE_WRITE);
+        assert!(is_capability_visible(&cap, SessionOwnerType::Project, false, false));
+    }
+
+    #[test]
+    fn visibility_file_system_alias_not_directly_visible() {
         let cap = ToolCapability::new(CAP_FILE_SYSTEM);
-        assert!(is_capability_visible(
-            &cap,
-            SessionOwnerType::Project,
-            false,
-            false
-        ));
+        assert!(!is_capability_visible(&cap, SessionOwnerType::Project, false, false));
     }
 
     #[test]

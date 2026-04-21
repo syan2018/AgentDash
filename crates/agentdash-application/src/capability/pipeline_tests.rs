@@ -8,16 +8,13 @@
 //! - CapabilityResolver::resolve(workflow_capability_directives) → 实际 FlowCapabilities
 //!   + platform MCP configs + 自定义 mcp:* 注入
 //! - build_capability_delta_markdown → 供 agent 直接消费的通知文本
-//!
-//! 不构造 SessionHub / Connector 真身（那部分由 connector 单测覆盖），
-//! 本测试守护的是"静态→动态"切换时 pure function 链条的一致性。
 
 #![cfg(test)]
 
 use std::collections::BTreeSet;
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
-use agentdash_domain::workflow::{CapabilityDirective, compute_effective_capabilities};
+use agentdash_domain::workflow::{CapabilityDirective, CapabilityEntry, compute_effective_capabilities};
 use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::ToolCluster;
 use uuid::Uuid;
@@ -46,25 +43,25 @@ fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
 /// agent_node 场景：workflow baseline + step Add/Remove → CapabilityResolver 产出新 session 工具集。
 #[test]
 fn agent_node_step_directives_produce_expected_session_tools() {
-    // baseline: workflow 级别声明了 file_system + collaboration
-    let baseline = vec!["file_system".to_string(), "collaboration".to_string()];
+    let baseline = vec![
+        CapabilityEntry::simple("file_system"),
+        CapabilityEntry::simple("collaboration"),
+    ];
 
-    // 新 step 追加 workflow_management 和一个 mcp:* 外部能力，移除 collaboration
     let directives = vec![
-        CapabilityDirective::Add("workflow_management".to_string()),
-        CapabilityDirective::Add("mcp:code_analyzer".to_string()),
-        CapabilityDirective::Remove("collaboration".to_string()),
+        CapabilityDirective::add_simple("workflow_management"),
+        CapabilityDirective::add_simple("mcp:code_analyzer"),
+        CapabilityDirective::Remove("collaboration".into()),
     ];
 
     let effective = compute_effective_capabilities(&baseline, &directives);
-    let effective_set: BTreeSet<String> = effective.iter().cloned().collect();
+    let effective_set: BTreeSet<String> = effective.iter().map(|e| e.key().to_string()).collect();
 
     assert!(effective_set.contains("file_system"));
     assert!(effective_set.contains("workflow_management"));
     assert!(effective_set.contains("mcp:code_analyzer"));
     assert!(!effective_set.contains("collaboration"));
 
-    // Resolver 通过标准 CapabilityDirective 做增删。
     let input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
@@ -80,7 +77,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    // file_system → Read + Write + Execute
+    // file_system alias → Read + Write + Execute
     assert!(output.flow_capabilities.has(ToolCluster::Read));
     assert!(output.flow_capabilities.has(ToolCluster::Write));
     assert!(output.flow_capabilities.has(ToolCluster::Execute));
@@ -105,20 +102,20 @@ fn agent_node_step_directives_produce_expected_session_tools() {
 #[test]
 fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     let baseline = vec![
-        "file_system".to_string(),
-        "canvas".to_string(),
-        "collaboration".to_string(),
+        CapabilityEntry::simple("file_system"),
+        CapabilityEntry::simple("canvas"),
+        CapabilityEntry::simple("collaboration"),
     ];
 
     let directives = vec![
-        CapabilityDirective::Add("workflow_management".to_string()),
-        CapabilityDirective::Add("mcp:external_analyzer".to_string()),
-        CapabilityDirective::Remove("canvas".to_string()),
+        CapabilityDirective::add_simple("workflow_management"),
+        CapabilityDirective::add_simple("mcp:external_analyzer"),
+        CapabilityDirective::Remove("canvas".into()),
     ];
 
     let effective = compute_effective_capabilities(&baseline, &directives);
-    let effective_set: BTreeSet<String> = effective.iter().cloned().collect();
-    let baseline_set: BTreeSet<String> = baseline.iter().cloned().collect();
+    let effective_set: BTreeSet<String> = effective.iter().map(|e| e.key().to_string()).collect();
+    let baseline_set: BTreeSet<String> = baseline.iter().map(|e| e.key().to_string()).collect();
 
     let delta = CapabilityDelta::compute(&baseline_set, &effective_set);
     assert_eq!(
@@ -132,7 +129,6 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     );
     assert_eq!(delta.removed, vec!["canvas".to_string()]);
 
-    // Resolver 通过标准 CapabilityDirective 在基线上增删能力。
     let input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
@@ -151,21 +147,16 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    // Canvas cluster 已经不在 effective，下次 agent 请求 tools 时看不到 Canvas 工具
     assert!(!output.flow_capabilities.has(ToolCluster::Canvas));
-    // file_system 保留
     assert!(output.flow_capabilities.has(ToolCluster::Read));
-    // 新增 Workflow 管理 MCP
     assert!(
         output
             .platform_mcp_configs
             .iter()
             .any(|c| c.endpoint_url().contains("/mcp/workflow/")),
     );
-    // 新增自定义 MCP
     assert_eq!(output.custom_mcp_servers.len(), 1);
 
-    // Agent 会在 steering 队列收到的结构化 Markdown
     let md = build_capability_delta_markdown("implement", &delta, &effective_set);
     assert!(md.contains("## Capability Update — Step Transition: implement"));
     assert!(md.contains("### Added Capabilities"));
@@ -174,39 +165,39 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     assert!(md.contains("### Removed Capabilities"));
     assert!(md.contains("**canvas**"));
     assert!(md.contains("（不再可用）"));
-    // 对应 MCP 描述与 McpInjectionConfig::to_context_content 的口径一致
     assert!(md.contains("Workflow / Lifecycle 定义的查看、创建与编辑"));
 }
 
 /// step 未声明 capabilities 时完全继承 baseline，不产生 delta。
 #[test]
 fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
-    let baseline = vec!["file_system".to_string(), "workflow".to_string()];
+    let baseline = vec![
+        CapabilityEntry::simple("file_system"),
+        CapabilityEntry::simple("workflow"),
+    ];
     let effective = compute_effective_capabilities(&baseline, &[]);
 
     assert_eq!(effective, baseline);
 
-    let baseline_set: BTreeSet<String> = baseline.iter().cloned().collect();
-    let effective_set: BTreeSet<String> = effective.iter().cloned().collect();
+    let baseline_set: BTreeSet<String> = baseline.iter().map(|e| e.key().to_string()).collect();
+    let effective_set: BTreeSet<String> = effective.iter().map(|e| e.key().to_string()).collect();
 
     let delta = CapabilityDelta::compute(&baseline_set, &effective_set);
     assert!(delta.is_empty());
-    // delta 为空时 advance_node 不会推送通知
 }
 
 /// Remove 不存在的 key 静默失败；mcp:* 未注册时 resolver 跳过。
 #[test]
 fn phase_node_invalid_directives_are_tolerated() {
-    let baseline = vec!["file_system".to_string()];
+    let baseline = vec![CapabilityEntry::simple("file_system")];
     let directives = vec![
-        CapabilityDirective::Remove("never_existed".to_string()),
-        CapabilityDirective::Add("mcp:missing_server".to_string()),
+        CapabilityDirective::Remove("never_existed".into()),
+        CapabilityDirective::add_simple("mcp:missing_server"),
     ];
 
     let effective = compute_effective_capabilities(&baseline, &directives);
-    // Remove 不存在：noop
-    // Add mcp:missing：key 进入 effective 但 resolver 会在注入阶段跳过
-    assert!(effective.contains(&"mcp:missing_server".to_string()));
+    let effective_keys: Vec<&str> = effective.iter().map(|e| e.key()).collect();
+    assert!(effective_keys.contains(&"mcp:missing_server"));
 
     let input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Project {
@@ -217,12 +208,11 @@ fn phase_node_invalid_directives_are_tolerated() {
             has_active_workflow: true,
             workflow_capability_directives: Some(directives.clone()),
         },
-        agent_mcp_servers: vec![], // 故意不注册
+        agent_mcp_servers: vec![],
         available_presets: Default::default(),
         companion_slice_mode: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
-    // 未注册 server 的 mcp:* key 不会出现在 custom_mcp_servers
     assert!(output.custom_mcp_servers.is_empty());
     assert!(
         !output

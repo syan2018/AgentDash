@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -230,6 +232,105 @@ pub struct WorkflowHookRuleSpec {
     pub enabled: bool,
 }
 
+// ── Capability 结构化条目 ──
+
+/// 工具能力的细粒度声明。
+///
+/// 每个条目指定一个 capability key，并可选地通过 include/exclude 裁剪
+/// 该能力下属的具体工具集。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct CapabilityDetailedEntry {
+    pub key: String,
+    /// 白名单：仅启用此 capability 下属的指定工具。为空表示启用全部。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_tools: Vec<String>,
+    /// 黑名单：从此 capability 下属工具中排除指定工具。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_tools: Vec<String>,
+}
+
+/// Workflow 能力声明条目 — 支持简写（纯 key）和结构化（带工具裁剪）两种形式。
+///
+/// JSON 序列化向后兼容：`"file_system"` 反序列化为 `Simple`，
+/// `{ "key": "file_read", "exclude_tools": ["fs_grep"] }` 反序列化为 `Detailed`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(untagged)]
+pub enum CapabilityEntry {
+    Simple(String),
+    Detailed(CapabilityDetailedEntry),
+}
+
+impl CapabilityEntry {
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Simple(k) => k,
+            Self::Detailed(d) => &d.key,
+        }
+    }
+
+    pub fn include_tools(&self) -> &[String] {
+        match self {
+            Self::Simple(_) => &[],
+            Self::Detailed(d) => &d.include_tools,
+        }
+    }
+
+    pub fn exclude_tools(&self) -> &[String] {
+        match self {
+            Self::Simple(_) => &[],
+            Self::Detailed(d) => &d.exclude_tools,
+        }
+    }
+
+    pub fn has_tool_filter(&self) -> bool {
+        match self {
+            Self::Simple(_) => false,
+            Self::Detailed(d) => !d.include_tools.is_empty() || !d.exclude_tools.is_empty(),
+        }
+    }
+
+    /// 从纯 key 构造简写条目。
+    pub fn simple(key: impl Into<String>) -> Self {
+        Self::Simple(key.into())
+    }
+
+    /// 从 key + 排除列表构造结构化条目。
+    pub fn with_excludes(key: impl Into<String>, excludes: Vec<String>) -> Self {
+        Self::Detailed(CapabilityDetailedEntry {
+            key: key.into(),
+            include_tools: Vec::new(),
+            exclude_tools: excludes,
+        })
+    }
+
+    /// 从 key + 白名单构造结构化条目。
+    pub fn with_includes(key: impl Into<String>, includes: Vec<String>) -> Self {
+        Self::Detailed(CapabilityDetailedEntry {
+            key: key.into(),
+            include_tools: includes,
+            exclude_tools: Vec::new(),
+        })
+    }
+}
+
+impl fmt::Display for CapabilityEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
+impl From<&str> for CapabilityEntry {
+    fn from(s: &str) -> Self {
+        Self::Simple(s.to_string())
+    }
+}
+
+impl From<String> for CapabilityEntry {
+    fn from(s: String) -> Self {
+        Self::Simple(s)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowContract {
     #[serde(default)]
@@ -245,15 +346,18 @@ pub struct WorkflowContract {
     pub recommended_output_ports: Vec<OutputPortDefinition>,
     #[serde(default, alias = "input_ports", skip_serializing_if = "Vec::is_empty")]
     pub recommended_input_ports: Vec<InputPortDefinition>,
-    /// Workflow 级基线能力 key 集合。
+    /// Workflow 级基线能力集合。
     ///
-    /// - 平台 well-known key（例如 `file_system`、`workflow_management`）
-    /// - 自定义 MCP 引用：`mcp:<preset_name>`，指向同 project 下的 [`McpPreset`]
+    /// 每个条目可以是：
+    /// - 简写形式：`"file_read"` — 启用整个能力的全部工具
+    /// - 结构化形式：`{ "key": "file_read", "exclude_tools": ["fs_grep"] }` — 带工具级裁剪
+    /// - 平台别名：`"file_system"` — 自动展开为 `file_read + file_write + shell_execute`
+    /// - 自定义 MCP：`"mcp:<preset_name>"` — 指向 project 级 McpPreset
     ///
     /// 运行时 hook runtime 可以通过 `CapabilityDirective` 在此基线上动态增减；
     /// Step 级不再承担能力声明。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<CapabilityEntry>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -332,58 +436,72 @@ pub struct InputPortDefinition {
     pub context_template: Option<String>,
 }
 
-/// Step 级能力指令 — 在 workflow 基线上执行增减运算。
+/// 运行时能力指令 — 在 workflow 基线上执行增减运算。
 ///
-/// `Add(key)` 追加能力，`Remove(key)` 移除能力。
-/// key 为开放 string，平台 well-known key 如 `file_system`，
-/// 用户自定义 MCP 使用 `mcp:<server_name>` 格式。
+/// `Add(entry)` 追加能力（支持工具级裁剪），`Remove(key)` 按 key 移除能力。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityDirective {
-    Add(String),
+    Add(CapabilityEntry),
     Remove(String),
 }
 
 impl CapabilityDirective {
     pub fn key(&self) -> &str {
         match self {
-            Self::Add(k) | Self::Remove(k) => k,
+            Self::Add(entry) => entry.key(),
+            Self::Remove(k) => k,
         }
     }
 
     pub fn is_add(&self) -> bool {
         matches!(self, Self::Add(_))
     }
+
+    /// 快捷构造：简单 key 的 Add 指令。
+    pub fn add_simple(key: impl Into<String>) -> Self {
+        Self::Add(CapabilityEntry::simple(key))
+    }
+
+    /// 快捷构造：从 CapabilityEntry 构造 Add 指令。
+    pub fn add_entry(entry: CapabilityEntry) -> Self {
+        Self::Add(entry)
+    }
 }
 
-/// 在 workflow 基线能力集上应用 step 指令，产出 effective capability key 集合。
+/// 在 workflow 基线能力集上应用运行时指令，产出 effective capability 集合。
 ///
 /// 规则：
-/// - step 无指令 → 完全继承 baseline
-/// - Add(key) → 追加到集合
-/// - Remove(key) → 从集合中移除
+/// - 无指令 → 完全继承 baseline
+/// - `Add(entry)` → 追加到集合（相同 key 的后项覆盖前项）
+/// - `Remove(key)` → 从集合中按 key 移除
 pub fn compute_effective_capabilities(
-    baseline: &[String],
+    baseline: &[CapabilityEntry],
     directives: &[CapabilityDirective],
-) -> Vec<String> {
-    use std::collections::BTreeSet;
+) -> Vec<CapabilityEntry> {
+    use std::collections::BTreeMap;
 
     if directives.is_empty() {
         return baseline.to_vec();
     }
 
-    let mut effective: BTreeSet<String> = baseline.iter().cloned().collect();
+    let mut effective: BTreeMap<String, CapabilityEntry> = baseline
+        .iter()
+        .map(|e| (e.key().to_string(), e.clone()))
+        .collect();
+
     for directive in directives {
         match directive {
-            CapabilityDirective::Add(key) => {
-                effective.insert(key.clone());
+            CapabilityDirective::Add(entry) => {
+                effective.insert(entry.key().to_string(), entry.clone());
             }
             CapabilityDirective::Remove(key) => {
-                effective.remove(key);
+                effective.remove(key.as_str());
             }
         }
     }
-    effective.into_iter().collect()
+
+    effective.into_values().collect()
 }
 
 /// Lifecycle edge 类别：控制流 vs 数据流。
@@ -1117,7 +1235,7 @@ mod tests {
 
     #[test]
     fn capability_directive_add_remove() {
-        let add = CapabilityDirective::Add("file_system".to_string());
+        let add = CapabilityDirective::add_simple("file_system");
         assert!(add.is_add());
         assert_eq!(add.key(), "file_system");
 
@@ -1129,9 +1247,9 @@ mod tests {
     #[test]
     fn capability_directive_serde_roundtrip() {
         let directives = vec![
-            CapabilityDirective::Add("file_system".to_string()),
+            CapabilityDirective::add_simple("file_system"),
             CapabilityDirective::Remove("canvas".to_string()),
-            CapabilityDirective::Add("mcp:code_analyzer".to_string()),
+            CapabilityDirective::add_simple("mcp:code_analyzer"),
         ];
         let json = serde_json::to_string(&directives).unwrap();
         let deserialized: Vec<CapabilityDirective> = serde_json::from_str(&json).unwrap();
@@ -1139,57 +1257,107 @@ mod tests {
     }
 
     #[test]
+    fn capability_entry_simple_serde() {
+        let entry = CapabilityEntry::simple("file_system");
+        let json = serde_json::to_string(&entry).unwrap();
+        assert_eq!(json, r#""file_system""#);
+        let back: CapabilityEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.key(), "file_system");
+        assert!(!back.has_tool_filter());
+    }
+
+    #[test]
+    fn capability_entry_detailed_serde() {
+        let entry = CapabilityEntry::with_excludes(
+            "file_read",
+            vec!["fs_grep".to_string()],
+        );
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("file_read"));
+        assert!(json.contains("fs_grep"));
+        let back: CapabilityEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.key(), "file_read");
+        assert!(back.has_tool_filter());
+        assert_eq!(back.exclude_tools(), &["fs_grep".to_string()]);
+    }
+
+    #[test]
+    fn capability_entry_from_string() {
+        let entry: CapabilityEntry = "canvas".into();
+        assert_eq!(entry.key(), "canvas");
+        assert!(!entry.has_tool_filter());
+    }
+
+    #[test]
     fn compute_effective_empty_directives_inherits_baseline() {
-        let baseline = vec!["file_system".to_string(), "canvas".to_string()];
+        let baseline = vec![CapabilityEntry::simple("canvas"), CapabilityEntry::simple("file_system")];
         let effective = compute_effective_capabilities(&baseline, &[]);
-        assert_eq!(effective, vec!["file_system", "canvas"]);
+        assert_eq!(effective.len(), 2);
+        assert_eq!(effective[0].key(), "canvas");
     }
 
     #[test]
     fn compute_effective_add_extends_baseline() {
-        let baseline = vec!["file_system".to_string()];
+        let baseline = vec![CapabilityEntry::simple("file_system")];
         let directives = vec![
-            CapabilityDirective::Add("canvas".to_string()),
-            CapabilityDirective::Add("mcp:analyzer".to_string()),
+            CapabilityDirective::add_simple("canvas"),
+            CapabilityDirective::add_simple("mcp:analyzer"),
         ];
         let effective = compute_effective_capabilities(&baseline, &directives);
-        assert_eq!(effective, vec!["canvas", "file_system", "mcp:analyzer"]);
+        let keys: Vec<&str> = effective.iter().map(|e| e.key()).collect();
+        assert!(keys.contains(&"canvas"));
+        assert!(keys.contains(&"file_system"));
+        assert!(keys.contains(&"mcp:analyzer"));
     }
 
     #[test]
     fn compute_effective_remove_shrinks_baseline() {
         let baseline = vec![
-            "file_system".to_string(),
-            "canvas".to_string(),
-            "collaboration".to_string(),
+            CapabilityEntry::simple("canvas"),
+            CapabilityEntry::simple("collaboration"),
+            CapabilityEntry::simple("file_system"),
         ];
         let directives = vec![CapabilityDirective::Remove("canvas".to_string())];
         let effective = compute_effective_capabilities(&baseline, &directives);
-        assert_eq!(effective, vec!["collaboration", "file_system"]);
+        let keys: Vec<&str> = effective.iter().map(|e| e.key()).collect();
+        assert_eq!(keys, vec!["collaboration", "file_system"]);
     }
 
     #[test]
     fn compute_effective_add_and_remove_combined() {
-        let baseline = vec!["file_system".to_string(), "canvas".to_string()];
+        let baseline = vec![CapabilityEntry::simple("canvas"), CapabilityEntry::simple("file_system")];
         let directives = vec![
             CapabilityDirective::Remove("canvas".to_string()),
-            CapabilityDirective::Add("workflow".to_string()),
+            CapabilityDirective::add_simple("workflow"),
         ];
         let effective = compute_effective_capabilities(&baseline, &directives);
-        assert_eq!(effective, vec!["file_system", "workflow"]);
+        let keys: Vec<&str> = effective.iter().map(|e| e.key()).collect();
+        assert_eq!(keys, vec!["file_system", "workflow"]);
     }
 
     #[test]
     fn compute_effective_remove_nonexistent_is_noop() {
-        let baseline = vec!["file_system".to_string()];
+        let baseline = vec![CapabilityEntry::simple("file_system")];
         let directives = vec![CapabilityDirective::Remove("nonexistent".to_string())];
         let effective = compute_effective_capabilities(&baseline, &directives);
-        assert_eq!(effective, vec!["file_system"]);
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].key(), "file_system");
+    }
+
+    #[test]
+    fn compute_effective_detailed_entry_preserved() {
+        let baseline = vec![CapabilityEntry::simple("file_read")];
+        let directives = vec![CapabilityDirective::Add(
+            CapabilityEntry::with_excludes("file_write", vec!["fs_apply_patch".to_string()]),
+        )];
+        let effective = compute_effective_capabilities(&baseline, &directives);
+        assert_eq!(effective.len(), 2);
+        let write = effective.iter().find(|e| e.key() == "file_write").unwrap();
+        assert_eq!(write.exclude_tools(), &["fs_apply_patch".to_string()]);
     }
 
     #[test]
     fn lifecycle_step_definition_roundtrip_without_capabilities() {
-        // Step 不再承担 capability 声明，保留最小 roundtrip 以守住 schema 演化。
         let json = r#"{"key":"test","description":"","node_type":"agent_node"}"#;
         let step: LifecycleStepDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(step.key, "test");
@@ -1197,7 +1365,6 @@ mod tests {
 
     #[test]
     fn workflow_contract_capabilities_default_empty() {
-        // 未提供 capabilities 字段时反序列化应得到空 vec，且序列化时被 skip。
         let json = r#"{}"#;
         let contract: WorkflowContract = serde_json::from_str(json).unwrap();
         assert!(contract.capabilities.is_empty());
@@ -1207,17 +1374,35 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_capabilities_roundtrip() {
+    fn workflow_contract_capabilities_simple_roundtrip() {
         let contract = WorkflowContract {
             capabilities: vec![
-                "file_system".to_string(),
-                "workflow_management".to_string(),
-                "mcp:code_analyzer".to_string(),
+                CapabilityEntry::simple("file_system"),
+                CapabilityEntry::simple("workflow_management"),
             ],
             ..WorkflowContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
         let back: WorkflowContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capabilities, contract.capabilities);
+    }
+
+    #[test]
+    fn workflow_contract_capabilities_legacy_string_compat() {
+        // 旧格式 `["file_system", "workflow_management"]` 必须能反序列化
+        let json = r#"{"capabilities":["file_system","workflow_management"]}"#;
+        let contract: WorkflowContract = serde_json::from_str(json).unwrap();
+        assert_eq!(contract.capabilities.len(), 2);
+        assert_eq!(contract.capabilities[0].key(), "file_system");
+    }
+
+    #[test]
+    fn workflow_contract_capabilities_mixed_format() {
+        let json = r#"{"capabilities":["file_system",{"key":"file_read","exclude_tools":["fs_grep"]}]}"#;
+        let contract: WorkflowContract = serde_json::from_str(json).unwrap();
+        assert_eq!(contract.capabilities.len(), 2);
+        assert!(!contract.capabilities[0].has_tool_filter());
+        assert!(contract.capabilities[1].has_tool_filter());
+        assert_eq!(contract.capabilities[1].exclude_tools(), &["fs_grep".to_string()]);
     }
 }

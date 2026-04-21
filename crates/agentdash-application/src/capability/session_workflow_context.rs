@@ -268,6 +268,7 @@ pub fn capability_directives_from_active_workflow(
         .collect()
 }
 
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -278,7 +279,7 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgentLink, ProjectAgentLinkRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
+        CapabilityDirective, CapabilityEntry, LifecycleDefinition, LifecycleDefinitionRepository,
         LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
         WorkflowDefinitionSource,
@@ -573,7 +574,7 @@ mod tests {
 
     fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capabilities: vec!["workflow_management".to_string()],
+            capabilities: vec![CapabilityEntry::simple("workflow_management")],
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -628,9 +629,7 @@ mod tests {
         assert!(ctx.has_active_workflow);
         assert_eq!(
             ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::Add(
-                "workflow_management".to_string()
-            )])
+            Some(vec![CapabilityDirective::add_simple("workflow_management")])
         );
     }
 
@@ -882,9 +881,7 @@ mod tests {
         assert!(ctx.has_active_workflow);
         assert_eq!(
             ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::Add(
-                "workflow_management".to_string()
-            )])
+            Some(vec![CapabilityDirective::add_simple("workflow_management")])
         );
     }
 
@@ -955,9 +952,7 @@ mod tests {
         assert!(ctx.has_active_workflow);
         assert_eq!(
             ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::Add(
-                "workflow_management".to_string()
-            )])
+            Some(vec![CapabilityDirective::add_simple("workflow_management")])
         );
     }
 
@@ -965,9 +960,9 @@ mod tests {
     fn capability_directives_from_active_workflow_maps_to_add_directives() {
         let contract = WorkflowContract {
             capabilities: vec![
-                "workflow_management".to_string(),
-                "file_system".to_string(),
-                "mcp:code_analyzer".to_string(),
+                CapabilityEntry::simple("workflow_management"),
+                CapabilityEntry::simple("file_system"),
+                CapabilityEntry::simple("mcp:code_analyzer"),
             ],
             ..WorkflowContract::default()
         };
@@ -986,7 +981,7 @@ mod tests {
         let as_set: std::collections::BTreeSet<String> = directives
             .into_iter()
             .map(|d| match d {
-                CapabilityDirective::Add(key) => key,
+                CapabilityDirective::Add(entry) => entry.key().to_string(),
                 CapabilityDirective::Remove(key) => panic!("不应出现 Remove 指令: {key}"),
             })
             .collect();

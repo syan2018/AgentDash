@@ -50,9 +50,10 @@ pub use routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
 pub use skill::SkillRef;
 pub use tool_capability::{
-    ToolCapability, CapabilityVisibilityRule, PlatformMcpScope,
+    ToolCapability, ToolDescriptor, ToolSource, CapabilityVisibilityRule, PlatformMcpScope,
     capability_to_tool_clusters, capability_to_platform_mcp_scope,
-    is_capability_visible, default_visibility_rules,
+    is_capability_visible, default_visibility_rules, format_tool_for_prompt,
+    platform_tool_descriptors, platform_tools_for_capability,
 };
 pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,

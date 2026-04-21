@@ -274,6 +274,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .put(workflows::update_lifecycle_definition)
                 .delete(workflows::delete_lifecycle_definition),
         )
+        .route("/tool-catalog", get(workflows::query_tool_catalog))
         .route("/hook-presets", get(workflows::list_hook_presets))
         .route(
             "/hook-scripts/validate",

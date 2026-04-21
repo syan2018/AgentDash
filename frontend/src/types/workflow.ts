@@ -134,19 +134,80 @@ export type LifecycleEdge =
       to_port: string;
     };
 
+/**
+ * 工具能力的结构化声明。
+ *
+ * 支持简写（纯 key string）和结构化（带工具级裁剪 object）两种形式。
+ */
+export type CapabilityEntry =
+  | string
+  | {
+      key: string;
+      /** 白名单：仅启用此 capability 下属的指定工具。为空数组或省略表示启用全部。 */
+      include_tools?: string[];
+      /** 黑名单：从此 capability 下属工具中排除指定工具。 */
+      exclude_tools?: string[];
+    };
+
+/** 提取 CapabilityEntry 的 key */
+export function capabilityEntryKey(entry: CapabilityEntry): string {
+  return typeof entry === "string" ? entry : entry.key;
+}
+
+/**
+ * 平台 well-known capability key 常量。
+ *
+ * - `file_system` 是别名，自动展开为 file_read + file_write + shell_execute
+ * - `file_read` / `file_write` / `shell_execute` 是拆分后的细粒度 key
+ */
+export const WELL_KNOWN_CAPABILITY_KEYS = [
+  "file_read",
+  "file_write",
+  "shell_execute",
+  "canvas",
+  "workflow",
+  "collaboration",
+  "story_management",
+  "task_management",
+  "relay_management",
+  "workflow_management",
+] as const;
+
+export const CAPABILITY_ALIASES: Record<string, string[]> = {
+  file_system: ["file_read", "file_write", "shell_execute"],
+};
+
+// ─── Tool Descriptor（统一工具元数据）──────────────────
+
+export type ToolSourceType = "platform" | "mcp";
+
+export interface ToolDescriptor {
+  name: string;
+  display_name: string;
+  description: string;
+  source:
+    | { type: "platform"; cluster: string }
+    | { type: "mcp"; server_name: string };
+  capability_key: string;
+}
+
+// ─── Workflow Contract ─────────────────────────────────
+
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
   hook_rules: WorkflowHookRuleSpec[];
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
   /**
-   * Agent 单步可用的工具基线能力。每个元素为一个 capability key：
-   * - well-known（如 `file_system` / `workflow_management`）由后端 CapabilityResolver 映射到 ToolCluster / PlatformMcpScope
-   * - `mcp:<preset_name>` 指向当前 project 的 `McpPreset`，由后端展开为 McpServerDecl
+   * Workflow 级基线能力集合。
    *
-   * Add/Remove 等动态授予留给 hook runtime；此处只承载"workflow 声明的基线"。
+   * 每个条目可以是：
+   * - 简写形式：`"file_read"` — 启用整个能力的全部工具
+   * - 结构化形式：`{ key: "file_read", exclude_tools: ["fs_grep"] }` — 带工具级裁剪
+   * - 平台别名：`"file_system"` — 自动展开为 file_read + file_write + shell_execute
+   * - 自定义 MCP：`"mcp:<preset_name>"` — 指向 project 级 McpPreset
    */
-  capabilities: string[];
+  capabilities: CapabilityEntry[];
   /** 推荐 ports（模板用途，运行时产出约束由 step 级 ports 定义） */
   recommended_output_ports?: OutputPortDefinition[];
   recommended_input_ports?: InputPortDefinition[];

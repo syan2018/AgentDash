@@ -410,7 +410,13 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
         recommended_input_ports: build_input_ports(
             input.recommended_input_ports.as_deref().unwrap_or_default(),
         ),
-        capabilities: input.capabilities.clone().unwrap_or_default(),
+        capabilities: input
+            .capabilities
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|s| agentdash_domain::workflow::CapabilityEntry::simple(s))
+            .collect(),
     })
 }
 

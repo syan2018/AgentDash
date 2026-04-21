@@ -194,7 +194,7 @@ mod tests {
                     .contract
                     .capabilities
                     .iter()
-                    .any(|key| key == "workflow_management"),
+                    .any(|entry| entry.key() == "workflow_management"),
                 "workflow `{}` 必须声明 workflow_management 能力",
                 workflow.key
             );

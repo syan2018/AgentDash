@@ -17,7 +17,8 @@
             "本阶段只做理解与方案设计，暂不调用 upsert_workflow / upsert_lifecycle；把结构化设计交付给用户，进入 Apply 阶段后再实际写入。",
             "设计输出应包含：新增/修改的 workflow key、contract 关键字段（injection、constraints、completion）、lifecycle 步骤编排和 edges、以及对既有引用的影响。"
           ]
-        }
+        },
+        "capabilities": ["workflow_management"]
       }
     },
     {
@@ -33,7 +34,8 @@
             "Lifecycle 的 step.workflow_key 引用必须先存在，先 upsert workflow 再 upsert lifecycle。",
             "完成后用 list_workflows 回读确认新定义已生效。"
           ]
-        }
+        },
+        "capabilities": ["workflow_management"]
       }
     }
   ],
@@ -46,14 +48,12 @@
       {
         "key": "plan",
         "description": "理解现状并输出调整方案（仅读，不写）。",
-        "workflow_key": "builtin_workflow_admin_plan",
-        "capabilities": [{"add": "workflow_management"}]
+        "workflow_key": "builtin_workflow_admin_plan"
       },
       {
         "key": "apply",
         "description": "执行 Upsert 与校验。",
-        "workflow_key": "builtin_workflow_admin_apply",
-        "capabilities": [{"add": "workflow_management"}]
+        "workflow_key": "builtin_workflow_admin_apply"
       }
     ]
   }

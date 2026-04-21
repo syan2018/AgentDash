@@ -44,10 +44,9 @@ impl ContextContributor for WorkflowContextBindingsContributor {
                     .unwrap_or_else(|| "(none)".to_string()),
                 enum_tag(&self.workflow.run.status),
                 self.workflow
-                    .effective_contract
-                    .injection
-                    .context_bindings
-                    .len(),
+                    .active_contract()
+                    .map(|c| c.injection.context_bindings.len())
+                    .unwrap_or(0),
                 self.resolved_bindings.resolved.len()
             ),
         }];
@@ -115,12 +114,24 @@ mod tests {
     use super::*;
     use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
     use agentdash_domain::workflow::{
-        EffectiveSessionContract, LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
-        WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionSource,
+        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use uuid::Uuid;
 
     fn sample_workflow() -> ActiveWorkflowProjection {
+        let contract = WorkflowContract {
+            injection: WorkflowInjectionSpec {
+                context_bindings: vec![agentdash_domain::workflow::WorkflowContextBinding {
+                    locator: ".trellis/workflow.md".to_string(),
+                    reason: "workflow 总规则".to_string(),
+                    required: true,
+                    title: Some("Workflow 总规则".to_string()),
+                }],
+                ..Default::default()
+            },
+            ..WorkflowContract::default()
+        };
         let definition = WorkflowDefinition::new(
             Uuid::new_v4(),
             "wf_impl",
@@ -128,7 +139,7 @@ mod tests {
             "desc",
             WorkflowBindingKind::Task,
             WorkflowDefinitionSource::BuiltinSeed,
-            Default::default(),
+            contract,
         )
         .expect("workflow definition");
         let step = LifecycleStepDefinition {
@@ -138,7 +149,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            capabilities: vec![],
         };
         let lifecycle = LifecycleDefinition::new(
             Uuid::new_v4(),
@@ -165,21 +175,7 @@ mod tests {
             run,
             lifecycle,
             active_step: step,
-            primary_workflow: Some(definition.clone()),
-            effective_contract: EffectiveSessionContract {
-                lifecycle_key: Some("trellis_dev_task".to_string()),
-                active_step_key: Some("implement".to_string()),
-                injection: agentdash_domain::workflow::WorkflowInjectionSpec {
-                    context_bindings: vec![agentdash_domain::workflow::WorkflowContextBinding {
-                        locator: ".trellis/workflow.md".to_string(),
-                        reason: "workflow 总规则".to_string(),
-                        required: true,
-                        title: Some("Workflow 总规则".to_string()),
-                    }],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
+            primary_workflow: Some(definition),
         }
     }
 

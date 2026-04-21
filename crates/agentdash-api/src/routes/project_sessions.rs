@@ -31,6 +31,28 @@ use crate::{
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+
+/// 批量加载 project 级 MCP Preset 并展开为 resolver 消费的 map。
+/// 查询失败降级为空 map，避免 session 创建被 Preset 读失败阻断。
+async fn load_project_presets(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+) -> agentdash_application::capability::AvailableMcpPresets {
+    match state.repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "project_sessions: 加载 MCP Preset 列表失败"
+            );
+            Default::default()
+        }
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct ProjectSessionDetailResponse {
     pub binding_id: String,
@@ -244,6 +266,7 @@ pub(crate) async fn build_project_session_context_response(
                 .and_then(|config| config.tool_clusters.clone()),
             workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
+            available_presets: load_project_presets(state, project.id).await,
             companion_slice_mode: None,
         },
         &state.config.platform_config,

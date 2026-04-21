@@ -500,6 +500,7 @@ impl RoutineExecutor {
                 }),
             workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
+            available_presets: load_available_presets(&self.repos, agent_context.project.id).await,
             companion_slice_mode: None,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
@@ -591,6 +592,27 @@ async fn resolve_project_workspace(
             .await
             .map_err(|e| format!("查询默认 Workspace 失败: {e}")),
         None => Ok(None),
+    }
+}
+
+/// 加载 project 级 MCP Preset 并展开为 resolver 消费的 map。查询失败降级为空。
+async fn load_available_presets(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> crate::capability::AvailableMcpPresets {
+    match repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "routine executor: 加载 MCP Preset 列表失败"
+            );
+            Default::default()
+        }
     }
 }
 

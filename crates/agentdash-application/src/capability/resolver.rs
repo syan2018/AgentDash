@@ -1,7 +1,11 @@
 //! CapabilityResolver 实现
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use agent_client_protocol::{
+    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
+};
+use agentdash_domain::mcp_preset::McpServerDecl;
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::tool_capability::{
@@ -11,6 +15,13 @@ use agentdash_spi::{FlowCapabilities, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
+
+/// 调用方预展开的 project 级 MCP Preset 字典。
+///
+/// key 为 preset `name`（同 `mcp:<name>` 中的 `<name>`），value 为对应 `McpServerDecl`。
+/// resolver 内部保持纯函数；查询 Preset 的 IO 由调用方（例如 `SessionPlanBuilder`）完成,
+/// 结果以 map 形式塞进 [`CapabilityResolverInput::available_presets`]。
+pub type AvailableMcpPresets = BTreeMap<String, McpServerDecl>;
 
 /// Resolver 输入 — 纯粹的 session 上下文描述，不含基础设施配置。
 #[derive(Debug, Clone)]
@@ -34,9 +45,12 @@ pub struct CapabilityResolverInput {
     /// - `has_active_workflow=true, workflow_capabilities=None`：
     ///   仅激活 `workflow_can_grant` 授予路径，不覆盖能力集
     pub workflow_ctx: SessionWorkflowContext,
-    /// agent config 中的 `mcp_servers` 配置 — 用于解析 `mcp:*` key。
-    /// 存储为 (server_name, McpServer ACP 对象) 对。
+    /// agent config 中的 `mcp_servers` 配置 — 用于兼容旧的 inline 声明链路。
+    /// `mcp:<X>` 解析优先查 `available_presets`，未命中时 fallback 到此列表。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
+    /// project 级 MCP Preset 预展开字典 — `mcp:<name>` 的首选查源。
+    /// 由调用方在 builder 入口处从 `McpPresetRepository` 批量查出并展开。
+    pub available_presets: AvailableMcpPresets,
     /// Companion sub-session 模式 — 设置时，对最终 FlowCapabilities 施加 slice 裁剪。
     pub companion_slice_mode: Option<CompanionSliceMode>,
 }
@@ -120,6 +134,17 @@ impl CapabilityResolver {
                 else {
                     continue;
                 };
+
+                // ── 通路 A：project 级 MCP Preset（首选） ──
+                if let Some(decl) = input.available_presets.get(&server_name) {
+                    effective_caps.insert(cap);
+                    if seen_custom_mcp_names.insert(server_name.clone()) {
+                        custom_mcp_servers.push(mcp_server_decl_to_acp(decl));
+                    }
+                    continue;
+                }
+
+                // ── 通路 B：agent config 内联 mcp_servers（向前兼容，不破坏既有行为） ──
                 if let Some(entry) = input
                     .agent_mcp_servers
                     .iter()
@@ -133,7 +158,7 @@ impl CapabilityResolver {
                     tracing::warn!(
                         key = %key,
                         server_name = %server_name,
-                        "workflow 声明了 mcp:{server_name}，但 agent config 中未注册该 MCP server"
+                        "workflow 声明了 mcp:{server_name}，但 project 级 McpPreset 和 agent 内联 mcp_servers 都未注册该 server"
                     );
                 }
             }
@@ -243,6 +268,40 @@ fn build_platform_mcp_config(
     })
 }
 
+/// 把领域层的 `McpServerDecl` 转换为 ACP `McpServer`（供 session 注入用）。
+///
+/// Preset 里 stdio / http / sse 三种 transport 各自映射到 ACP 对应类型,
+/// relay 标志在当前 resolver 层不消费（由下游 transport 决定）。
+fn mcp_server_decl_to_acp(decl: &McpServerDecl) -> agent_client_protocol::McpServer {
+    match decl {
+        McpServerDecl::Http { name, url, headers, .. } => {
+            let mapped_headers: Vec<HttpHeader> = headers
+                .iter()
+                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
+                .collect();
+            McpServer::Http(McpServerHttp::new(name.clone(), url.clone()).headers(mapped_headers))
+        }
+        McpServerDecl::Sse { name, url, headers, .. } => {
+            let mapped_headers: Vec<HttpHeader> = headers
+                .iter()
+                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
+                .collect();
+            McpServer::Sse(McpServerSse::new(name.clone(), url.clone()).headers(mapped_headers))
+        }
+        McpServerDecl::Stdio { name, command, args, env, .. } => {
+            let mapped_env: Vec<EnvVariable> = env
+                .iter()
+                .map(|e| EnvVariable::new(e.name.clone(), e.value.clone()))
+                .collect();
+            McpServer::Stdio(
+                McpServerStdio::new(name.clone(), command.clone())
+                    .args(args.clone())
+                    .env(mapped_env),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +321,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         }
     }
@@ -335,6 +395,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         };
 
@@ -366,6 +427,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         };
 
@@ -431,6 +493,75 @@ mod tests {
             .contains(&ToolCapability::custom_mcp("nonexistent")));
     }
 
+    /// Workflow 的 `mcp:<preset>` 可以从 `available_presets` 展开,
+    /// 不再依赖 agent config 的 inline mcp_servers。
+    #[test]
+    fn workflow_mcp_capability_resolves_to_preset() {
+        use agentdash_domain::mcp_preset::McpServerDecl;
+
+        let mut input = base_input();
+        input.workflow_ctx.workflow_capabilities = Some(vec!["mcp:code_analyzer".to_string()]);
+        input.available_presets.insert(
+            "code_analyzer".to_string(),
+            McpServerDecl::Http {
+                name: "code_analyzer".to_string(),
+                url: "http://external:8080/mcp".to_string(),
+                headers: vec![],
+                relay: None,
+            },
+        );
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output
+                .effective_capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer")),
+            "preset 命中后 effective_capabilities 应包含 mcp:code_analyzer"
+        );
+        assert_eq!(output.custom_mcp_servers.len(), 1);
+        match &output.custom_mcp_servers[0] {
+            agent_client_protocol::McpServer::Http(http) => {
+                assert_eq!(http.name, "code_analyzer");
+                assert_eq!(http.url, "http://external:8080/mcp");
+            }
+            other => panic!("期望 Http transport, 实际: {other:?}"),
+        }
+    }
+
+    /// Preset 与 inline agent mcp_server 同名时以 Preset 为准（不重复注入）。
+    #[test]
+    fn preset_takes_precedence_over_inline_agent_mcp_server() {
+        use agentdash_domain::mcp_preset::McpServerDecl;
+
+        let mut input = base_input();
+        input.workflow_ctx.workflow_capabilities = Some(vec!["mcp:shared".to_string()]);
+        input.available_presets.insert(
+            "shared".to_string(),
+            McpServerDecl::Http {
+                name: "shared".to_string(),
+                url: "http://preset/mcp".to_string(),
+                headers: vec![],
+                relay: None,
+            },
+        );
+        input.agent_mcp_servers = vec![AgentMcpServerEntry {
+            name: "shared".to_string(),
+            server: agent_client_protocol::McpServer::Http(
+                agent_client_protocol::McpServerHttp::new("shared", "http://inline/mcp"),
+            ),
+        }];
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+        assert_eq!(output.custom_mcp_servers.len(), 1, "同名去重,只保留一条");
+        match &output.custom_mcp_servers[0] {
+            agent_client_protocol::McpServer::Http(http) => {
+                assert_eq!(http.url, "http://preset/mcp", "应以 preset url 为准");
+            }
+            other => panic!("期望 Http transport, 实际: {other:?}"),
+        }
+    }
+
     #[test]
     fn workflow_well_known_can_override_visibility() {
         let mut input = base_input();
@@ -487,6 +618,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         };
 
@@ -525,6 +657,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         };
 
@@ -566,6 +699,7 @@ mod tests {
             agent_declared_capabilities: None,
             workflow_ctx: SessionWorkflowContext::NONE,
             agent_mcp_servers: vec![],
+            available_presets: Default::default(),
             companion_slice_mode: None,
         };
 

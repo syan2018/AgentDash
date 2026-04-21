@@ -154,8 +154,6 @@ mod tests {
 
     #[test]
     fn builtin_workflow_admin_has_expected_shape() {
-        use agentdash_domain::workflow::CapabilityDirective;
-
         let bundle = build_builtin_workflow_bundle(
             Uuid::new_v4(),
             BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY,
@@ -180,22 +178,18 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(step_keys, vec!["plan", "apply"]);
 
-        // 两步都显式 Add workflow_management 能力，让绑定此 lifecycle 的 Project
-        // session 通过新的 workflow_can_grant 授予路径获得 workflow 管理工具集。
-        for step in &bundle.lifecycle.steps {
-            let adds_workflow_mgmt = step
-                .capabilities
-                .iter()
-                .any(|directive| {
-                    matches!(
-                        directive,
-                        CapabilityDirective::Add(key) if key == "workflow_management"
-                    )
-                });
+        // capability 声明迁移到 workflow.contract.capabilities。
+        // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project
+        // session 在启动时拿到 workflow 管理工具集。
+        for workflow in &bundle.workflows {
             assert!(
-                adds_workflow_mgmt,
-                "step `{}` 必须 Add workflow_management 能力",
-                step.key
+                workflow
+                    .contract
+                    .capabilities
+                    .iter()
+                    .any(|key| key == "workflow_management"),
+                "workflow `{}` 必须声明 workflow_management 能力",
+                workflow.key
             );
         }
     }

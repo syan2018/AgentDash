@@ -15,7 +15,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    CapabilityDirective, InputPortDefinition, LifecycleDefinition, LifecycleEdge,
+    InputPortDefinition, LifecycleDefinition, LifecycleEdge,
     LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
     WorkflowBindingKind, WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec,
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
@@ -69,6 +69,8 @@ pub struct WorkflowContractInput {
     pub recommended_output_ports: Option<Vec<OutputPortInput>>,
     #[schemars(description = "推荐的输入端口（WorkflowContract 级，非 step 级）")]
     pub recommended_input_ports: Option<Vec<InputPortInput>>,
+    #[schemars(description = "Workflow 基线能力 key 集合。平台 well-known key（如 file_system、workflow_management），或自定义 MCP 引用 mcp:<preset_name>。")]
+    pub capabilities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -123,17 +125,11 @@ pub struct StepInput {
     pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(description = "输出端口列表")]
     pub output_ports: Option<Vec<OutputPortInput>>,
-    #[schemars(description = "能力指令列表。格式: [{\"add\":\"file_system\"}, {\"remove\":\"canvas\"}, {\"add\":\"mcp:code_analyzer\"}]。空列表表示完全继承 workflow 级能力。")]
-    pub capabilities: Option<Vec<CapabilityDirectiveInput>>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[schemars(description = "能力指令：add 追加能力，remove 移除能力（二选一）")]
-pub struct CapabilityDirectiveInput {
-    #[schemars(description = "追加的能力 key（平台 well-known 或 mcp:<name>）")]
-    pub add: Option<String>,
-    #[schemars(description = "移除的能力 key")]
-    pub remove: Option<String>,
+    /// 旧版字段：step 级 capability 指令。新模型已将 capability 归属迁移到 WorkflowContract,
+    /// 此字段若有值仅会落 warn 日志，不再实际参与解析；兼容已有 upsert 请求避免强制破坏契约。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "已废弃：step 级 capabilities 已迁移到 workflow.contract.capabilities，此字段收到后会被忽略。")]
+    pub capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -397,6 +393,7 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
         recommended_input_ports: build_input_ports(
             input.recommended_input_ports.as_deref().unwrap_or_default(),
         ),
+        capabilities: input.capabilities.clone().unwrap_or_default(),
     })
 }
 
@@ -424,30 +421,16 @@ fn build_output_ports(inputs: &[OutputPortInput]) -> Vec<OutputPortDefinition> {
         .collect()
 }
 
-fn build_capability_directives(
-    inputs: &[CapabilityDirectiveInput],
-) -> Result<Vec<CapabilityDirective>, McpError> {
-    inputs
-        .iter()
-        .map(|d| match (&d.add, &d.remove) {
-            (Some(key), None) => Ok(CapabilityDirective::Add(key.clone())),
-            (None, Some(key)) => Ok(CapabilityDirective::Remove(key.clone())),
-            (Some(_), Some(_)) => Err(McpError::invalid_param(
-                "capabilities",
-                "每个 directive 只能设置 add 或 remove 之一".to_string(),
-            )),
-            (None, None) => Err(McpError::invalid_param(
-                "capabilities",
-                "directive 必须设置 add 或 remove".to_string(),
-            )),
-        })
-        .collect()
-}
-
 fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, McpError> {
     inputs
         .iter()
         .map(|step| {
+            if step.capabilities.is_some() {
+                tracing::warn!(
+                    step_key = %step.key,
+                    "upsert_lifecycle: 收到已废弃的 step.capabilities 字段,已忽略。请改用 workflow.contract.capabilities。"
+                );
+            }
             Ok(LifecycleStepDefinition {
                 key: step.key.clone(),
                 description: step.description.clone().unwrap_or_default(),
@@ -459,9 +442,6 @@ fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, Mcp
                 output_ports: build_output_ports(
                     step.output_ports.as_deref().unwrap_or_default(),
                 ),
-                capabilities: build_capability_directives(
-                    step.capabilities.as_deref().unwrap_or_default(),
-                )?,
             })
         })
         .collect()

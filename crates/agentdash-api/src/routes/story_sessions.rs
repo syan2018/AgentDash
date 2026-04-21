@@ -27,6 +27,27 @@ use crate::{
 use agentdash_application::vfs::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
+/// 加载 story 所属 project 的 MCP Preset map，供 resolver 解析 `mcp:<X>` 能力。
+async fn load_story_project_presets(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+) -> agentdash_application::capability::AvailableMcpPresets {
+    match state.repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "story_sessions: 加载 MCP Preset 列表失败"
+            );
+            Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct StorySessionDetailResponse {
     pub binding_id: String,
@@ -457,6 +478,7 @@ pub(crate) async fn build_story_session_context_response(
             agent_declared_capabilities: None,
             workflow_ctx,
             agent_mcp_servers: vec![],
+            available_presets: load_story_project_presets(&state, story.project_id).await,
             companion_slice_mode: None,
         },
         &state.config.platform_config,

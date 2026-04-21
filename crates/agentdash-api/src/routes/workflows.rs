@@ -256,8 +256,10 @@ pub async fn start_lifecycle_run(
         state.services.session_hub.clone(),
         state.repos.session_binding_repo.clone(),
         state.repos.lifecycle_definition_repo.clone(),
+        state.repos.workflow_definition_repo.clone(),
         state.repos.lifecycle_run_repo.clone(),
         state.repos.inline_file_repo.clone(),
+        state.repos.mcp_preset_repo.clone(),
         state.config.platform_config.clone(),
     );
     if let Err(error) = orchestrator

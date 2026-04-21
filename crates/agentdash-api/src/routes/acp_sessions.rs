@@ -1135,6 +1135,28 @@ fn session_plan_services(state: &AppState) -> SessionPlanServices<'_> {
     }
 }
 
+/// 查询 project 级 MCP Preset 并展开为 resolver 消费的 map。
+/// 查询失败降级为空 map, session 创建不被 Preset 读失败阻断。
+async fn load_available_presets(
+    state: &Arc<AppState>,
+    project_id: uuid::Uuid,
+) -> agentdash_application::capability::AvailableMcpPresets {
+    match state.repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "acp_sessions: 加载 MCP Preset 列表失败"
+            );
+            Default::default()
+        }
+    }
+}
+
 fn apply_plain_lifecycle_request(
     mut req: PromptSessionRequest,
     system_context: Option<String>,
@@ -1203,6 +1225,7 @@ async fn build_story_owner_prompt_request(
             visible_canvas_mount_ids,
             workflow_ctx,
             agent_mcp_servers: vec![],
+            available_presets: load_available_presets(state, project.id).await,
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             agent_declared_capabilities: None,
@@ -1348,6 +1371,7 @@ async fn build_project_owner_prompt_request(
             visible_canvas_mount_ids,
             workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
+            available_presets: load_available_presets(state, project.id).await,
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             agent_declared_capabilities: effective_executor_config

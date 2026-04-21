@@ -76,6 +76,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
             workflow_capabilities: Some(effective.clone()),
         },
         agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
+        available_presets: Default::default(),
         companion_slice_mode: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
@@ -146,6 +147,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
             "external_analyzer",
             "http://external:9000/mcp",
         )],
+        available_presets: Default::default(),
         companion_slice_mode: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
@@ -217,6 +219,7 @@ fn phase_node_invalid_directives_are_tolerated() {
             workflow_capabilities: Some(effective.clone()),
         },
         agent_mcp_servers: vec![], // 故意不注册
+        available_presets: Default::default(),
         companion_slice_mode: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());

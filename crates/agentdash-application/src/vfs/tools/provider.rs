@@ -4,8 +4,11 @@ use crate::session::SessionHub;
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
+use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
+use agentdash_domain::workflow::{
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+};
 use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -33,8 +36,10 @@ pub struct RelayRuntimeToolProvider {
     agent_repo: Arc<dyn AgentRepository>,
     agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    mcp_preset_repo: Arc<dyn McpPresetRepository>,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
@@ -48,8 +53,10 @@ impl RelayRuntimeToolProvider {
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        mcp_preset_repo: Arc<dyn McpPresetRepository>,
         session_hub_handle: SharedSessionHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
         platform_config: SharedPlatformConfig,
@@ -61,8 +68,10 @@ impl RelayRuntimeToolProvider {
             agent_repo,
             agent_link_repo,
             lifecycle_definition_repo,
+            workflow_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
+            mcp_preset_repo,
             session_hub_handle,
             inline_persister,
             platform_config,
@@ -176,8 +185,10 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             tools.push(Arc::new(CompleteLifecycleNodeTool::new(
                 self.session_binding_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
+                self.workflow_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
                 self.inline_file_repo.clone(),
+                self.mcp_preset_repo.clone(),
                 session_hub.clone(),
                 context,
                 self.platform_config.clone(),

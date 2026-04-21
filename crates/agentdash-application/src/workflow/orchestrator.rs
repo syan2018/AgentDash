@@ -11,13 +11,14 @@
 use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
+use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerCtx, SessionOwnerType,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun,
     LifecycleRunRepository, LifecycleStepDefinition, LifecycleStepExecutionStatus,
-    compute_effective_capabilities,
+    WorkflowDefinitionRepository,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -52,16 +53,19 @@ pub struct ActivatedNode {
 #[derive(Debug, Clone)]
 pub struct ActivatedPhaseNode {
     pub node_key: String,
-    /// 该 step 的 CapabilityDirective 列表（从 LifecycleStepDefinition 中拷贝）
-    pub capability_directives: Vec<agentdash_domain::workflow::CapabilityDirective>,
+    /// 该 phase 所指向的 workflow 基线 capability key 集合（取自 `WorkflowContract.capabilities`）。
+    /// 若 step 未绑定 workflow 或 workflow 查不到,则为空 vec，表示"不改变能力集"。
+    pub baseline_capabilities: Vec<String>,
 }
 
 pub struct LifecycleOrchestrator {
     session_hub: SessionHub,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    mcp_preset_repo: Arc<dyn McpPresetRepository>,
     platform_config: SharedPlatformConfig,
 }
 
@@ -70,16 +74,20 @@ impl LifecycleOrchestrator {
         session_hub: SessionHub,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        mcp_preset_repo: Arc<dyn McpPresetRepository>,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             session_hub,
             session_binding_repo,
             lifecycle_definition_repo,
+            workflow_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
+            mcp_preset_repo,
             platform_config,
         }
     }
@@ -212,9 +220,11 @@ impl LifecycleOrchestrator {
                             "Orchestrator: failed to activate phase node"
                         );
                     } else {
+                        let baseline_capabilities =
+                            self.resolve_step_workflow_capabilities(step_def, project_id).await;
                         activated_phases.push(ActivatedPhaseNode {
                             node_key: node_state.step_key.clone(),
-                            capability_directives: step_def.capabilities.clone(),
+                            baseline_capabilities,
                         });
                     }
                 }
@@ -473,15 +483,12 @@ impl LifecycleOrchestrator {
         req.user_input.executor_config = executor_config;
         req.vfs = Some(vfs);
 
-        // ── step capability resolution ──
-        let workflow_baseline_caps: Vec<String> = self
-            .session_hub
-            .get_hook_session_runtime(&run.session_id)
-            .await
-            .map(|runtime| runtime.current_capabilities().into_iter().collect())
-            .unwrap_or_default();
-        let step_effective_caps =
-            compute_effective_capabilities(&workflow_baseline_caps, &step_def.capabilities);
+        // ── step → workflow baseline capability resolution ──
+        // 新模型：step 本身不再承担能力声明,baseline 取自 step.workflow_key 指向的 workflow。
+        // 查不到 workflow 时,baseline 退化为空集,orchestrator 下游仅依赖 platform MCP。
+        let step_effective_caps = self
+            .resolve_step_workflow_capabilities(step_def, project_id)
+            .await;
         if !step_effective_caps.is_empty() || self.platform_config.mcp_base_url.is_some() {
             let parent_bindings = self
                 .session_binding_repo
@@ -505,6 +512,7 @@ impl LifecycleOrchestrator {
                     workflow_capabilities: Some(step_effective_caps),
                 },
                 agent_mcp_servers: vec![],
+                available_presets: self.load_available_presets(project_id).await,
                 companion_slice_mode: None,
             };
             let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
@@ -531,6 +539,62 @@ impl LifecycleOrchestrator {
             .await
             .map_err(|e| format!("自动启动 node session prompt 失败: {e}"))?;
         Ok(())
+    }
+
+    /// 查找 step.workflow_key 指向的 WorkflowDefinition 并取其 `contract.capabilities`。
+    /// 查不到时返回空 vec —— 等价于"不授予能力"。
+    async fn resolve_step_workflow_capabilities(
+        &self,
+        step_def: &LifecycleStepDefinition,
+        project_id: Uuid,
+    ) -> Vec<String> {
+        let Some(workflow_key) = step_def.effective_workflow_key() else {
+            return Vec::new();
+        };
+        match self
+            .workflow_definition_repo
+            .get_by_project_and_key(project_id, workflow_key)
+            .await
+        {
+            Ok(Some(workflow)) => workflow.contract.capabilities.clone(),
+            Ok(None) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    workflow_key = %workflow_key,
+                    step_key = %step_def.key,
+                    "orchestrator: step.workflow_key 指向的 workflow 不存在,capability baseline 退化为空"
+                );
+                Vec::new()
+            }
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    workflow_key = %workflow_key,
+                    step_key = %step_def.key,
+                    error = %error,
+                    "orchestrator: 加载 workflow 定义失败,capability baseline 退化为空"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// 加载 project 级 MCP Preset 并展开成 resolver map。
+    async fn load_available_presets(&self, project_id: Uuid) -> crate::capability::AvailableMcpPresets {
+        match self.mcp_preset_repo.list_by_project(project_id).await {
+            Ok(presets) => presets
+                .into_iter()
+                .map(|p| (p.name, p.server_decl))
+                .collect(),
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "orchestrator: 加载 MCP Preset 列表失败"
+                );
+                Default::default()
+            }
+        }
     }
 }
 

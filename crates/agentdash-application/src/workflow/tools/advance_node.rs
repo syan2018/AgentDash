@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::inline_file::InlineFileRepository;
+use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleStepExecutionStatus,
-    compute_effective_capabilities,
+    WorkflowDefinitionRepository,
 };
 use agentdash_spi::hooks::SessionHookSnapshot;
 use agentdash_spi::schema::schema_value;
@@ -17,13 +18,14 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::active_workflow_locator_from_snapshot;
 use crate::capability::{AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput};
 use crate::platform_config::SharedPlatformConfig;
 use crate::session::SessionHub;
 use crate::workflow::{
     CompleteLifecycleStepCommand, LifecycleOrchestrator, LifecycleRunService,
 };
+
+use super::active_workflow_locator_from_snapshot;
 
 /// Agent 主动声明当前 lifecycle node 完成或失败。
 ///
@@ -33,8 +35,10 @@ use crate::workflow::{
 pub struct CompleteLifecycleNodeTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    mcp_preset_repo: Arc<dyn McpPresetRepository>,
     session_hub: Option<SessionHub>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
@@ -67,8 +71,10 @@ impl CompleteLifecycleNodeTool {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        mcp_preset_repo: Arc<dyn McpPresetRepository>,
         session_hub: Option<SessionHub>,
         context: &ExecutionContext,
         platform_config: SharedPlatformConfig,
@@ -76,12 +82,34 @@ impl CompleteLifecycleNodeTool {
         Self {
             session_binding_repo,
             lifecycle_definition_repo,
+            workflow_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
+            mcp_preset_repo,
             session_hub,
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
             platform_config,
+        }
+    }
+
+    async fn load_available_presets(
+        &self,
+        project_id: Uuid,
+    ) -> crate::capability::AvailableMcpPresets {
+        match self.mcp_preset_repo.list_by_project(project_id).await {
+            Ok(presets) => presets
+                .into_iter()
+                .map(|p| (p.name, p.server_decl))
+                .collect(),
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "advance_node: 加载 project MCP Preset 列表失败"
+                );
+                Default::default()
+            }
         }
     }
 }
@@ -353,8 +381,10 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 session_hub.clone(),
                 self.session_binding_repo.clone(),
                 self.lifecycle_definition_repo.clone(),
+                self.workflow_definition_repo.clone(),
                 self.lifecycle_run_repo.clone(),
                 self.inline_file_repo.clone(),
+                self.mcp_preset_repo.clone(),
                 self.platform_config.clone(),
             );
             match orchestrator
@@ -365,23 +395,19 @@ impl AgentTool for CompleteLifecycleNodeTool {
                     if !result.activated_phase_nodes.is_empty() {
                         let snapshot = hook_session.snapshot();
                         let owner_ctx = resolve_owner_scope(&snapshot, run.project_id);
-                        let mut baseline_caps: Vec<String> = hook_session
-                            .current_capabilities()
-                            .into_iter()
-                            .collect();
                         for phase in &result.activated_phase_nodes {
-                            let new_caps = compute_effective_capabilities(
-                                &baseline_caps,
-                                &phase.capability_directives,
-                            );
+                            // 新模型：phase node 的 baseline 来自 workflow.contract.capabilities。
+                            // step 不再承担能力指令；Add/Remove 由 hook runtime 动态处理（out of scope）。
                             let new_caps_set: std::collections::BTreeSet<String> =
-                                new_caps.into_iter().collect();
+                                phase.baseline_capabilities.iter().cloned().collect();
                             if let Some(delta) =
                                 hook_session.update_capabilities(new_caps_set.clone())
                             {
                                 let runtime_mcp_servers = session_hub
                                     .get_runtime_mcp_servers(hook_session.session_id())
                                     .await;
+                                let available_presets =
+                                    self.load_available_presets(run.project_id).await;
                                 let cap_output = CapabilityResolver::resolve(
                                     &CapabilityResolverInput {
                                         owner_ctx,
@@ -398,6 +424,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                         agent_mcp_servers: mcp_entries_from_servers(
                                             &runtime_mcp_servers,
                                         ),
+                                        available_presets,
                                         companion_slice_mode: None,
                                     },
                                     &self.platform_config,
@@ -472,7 +499,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     )
                                     .await;
                             }
-                            baseline_caps = new_caps_set.into_iter().collect();
                         }
                     }
                     None

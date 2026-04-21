@@ -19,10 +19,10 @@ pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };
 pub use resolver::{
-    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, CapabilityResolverOutput,
-    CompanionSliceMode,
+    AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
+    CapabilityResolverOutput, CompanionSliceMode,
 };
 pub use session_workflow_context::{
-    capabilities_from_active_step, resolve_session_workflow_context, SessionWorkflowContext,
+    capabilities_from_active_workflow, resolve_session_workflow_context, SessionWorkflowContext,
     SessionWorkflowOwner, SessionWorkflowRepos,
 };

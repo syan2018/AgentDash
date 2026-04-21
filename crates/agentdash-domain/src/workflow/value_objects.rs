@@ -245,6 +245,15 @@ pub struct WorkflowContract {
     pub recommended_output_ports: Vec<OutputPortDefinition>,
     #[serde(default, alias = "input_ports", skip_serializing_if = "Vec::is_empty")]
     pub recommended_input_ports: Vec<InputPortDefinition>,
+    /// Workflow 级基线能力 key 集合。
+    ///
+    /// - 平台 well-known key（例如 `file_system`、`workflow_management`）
+    /// - 自定义 MCP 引用：`mcp:<preset_name>`，指向同 project 下的 [`McpPreset`]
+    ///
+    /// 运行时 hook runtime 可以通过 `CapabilityDirective` 在此基线上动态增减；
+    /// Step 级不再承担能力声明。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -402,10 +411,6 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
-    /// Step 级能力指令：在 workflow 基线上增减能力。
-    /// 空 vec 表示完全继承 workflow 级 capabilities。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<CapabilityDirective>,
 }
 
 impl LifecycleStepDefinition {
@@ -822,7 +827,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            capabilities: vec![],
         }];
 
         let error =
@@ -841,7 +845,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -850,7 +853,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
@@ -859,7 +861,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                capabilities: vec![],
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -898,7 +899,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                capabilities: vec![],
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -907,7 +907,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                capabilities: vec![],
             },
         ];
         let edges = vec![LifecycleEdge {
@@ -1020,28 +1019,36 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_step_definition_capabilities_default_empty() {
+    fn lifecycle_step_definition_roundtrip_without_capabilities() {
+        // Step 不再承担 capability 声明，保留最小 roundtrip 以守住 schema 演化。
         let json = r#"{"key":"test","description":"","node_type":"agent_node"}"#;
         let step: LifecycleStepDefinition = serde_json::from_str(json).unwrap();
-        assert!(step.capabilities.is_empty());
+        assert_eq!(step.key, "test");
     }
 
     #[test]
-    fn lifecycle_step_definition_capabilities_roundtrip() {
-        let step = LifecycleStepDefinition {
-            key: "implement".to_string(),
-            description: "implement step".to_string(),
-            workflow_key: None,
-            node_type: LifecycleNodeType::PhaseNode,
-            output_ports: vec![],
-            input_ports: vec![],
+    fn workflow_contract_capabilities_default_empty() {
+        // 未提供 capabilities 字段时反序列化应得到空 vec，且序列化时被 skip。
+        let json = r#"{}"#;
+        let contract: WorkflowContract = serde_json::from_str(json).unwrap();
+        assert!(contract.capabilities.is_empty());
+
+        let back = serde_json::to_string(&contract).unwrap();
+        assert!(!back.contains("capabilities"), "空 capabilities 不应出现在序列化结果中: {back}");
+    }
+
+    #[test]
+    fn workflow_contract_capabilities_roundtrip() {
+        let contract = WorkflowContract {
             capabilities: vec![
-                CapabilityDirective::Add("file_system".to_string()),
-                CapabilityDirective::Remove("canvas".to_string()),
+                "file_system".to_string(),
+                "workflow_management".to_string(),
+                "mcp:code_analyzer".to_string(),
             ],
+            ..WorkflowContract::default()
         };
-        let json = serde_json::to_string(&step).unwrap();
-        let deserialized: LifecycleStepDefinition = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.capabilities, step.capabilities);
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.capabilities, contract.capabilities);
     }
 }

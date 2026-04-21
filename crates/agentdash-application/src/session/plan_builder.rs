@@ -61,8 +61,12 @@ pub struct SessionPlanInput<'a> {
     /// 调用方用 [`crate::capability::resolve_session_workflow_context`] 装配，
     /// 无绑定时传 [`crate::capability::SessionWorkflowContext::NONE`]。
     pub workflow_ctx: crate::capability::SessionWorkflowContext,
-    /// agent config 中注册的 MCP servers（用于 `mcp:*` key 解析）
+    /// agent config 中注册的 MCP servers（用于兼容旧 inline 声明链路,
+    /// 新模型应优先用 `available_presets`）。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
+    /// project 级 MCP Preset 预展开字典 — 供 resolver 解析 `mcp:<preset_name>` 能力。
+    /// 调用方从 `McpPresetRepository::list_by_project` 查询后展开传入。
+    pub available_presets: crate::capability::AvailableMcpPresets,
     /// 请求已携带的 MCP servers（前端透传）
     pub request_mcp_servers: Vec<agent_client_protocol::McpServer>,
     /// 请求已携带的 VFS（不为 None 时跳过 VFS 构建）
@@ -155,6 +159,7 @@ impl SessionPlanBuilder {
                 agent_declared_capabilities: input.agent_declared_capabilities,
                 workflow_ctx: input.workflow_ctx,
                 agent_mcp_servers: input.agent_mcp_servers,
+                available_presets: input.available_presets,
                 companion_slice_mode: None,
             },
             input.platform_config,

@@ -7,6 +7,7 @@ pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
 mod session_association;
+pub mod step_activation;
 pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
@@ -32,3 +33,7 @@ pub use run::{
     StartLifecycleRunCommand, select_active_run,
 };
 pub use session_association::LIFECYCLE_NODE_LABEL_PREFIX;
+pub use step_activation::{
+    KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
+    apply_to_prompt_request, capability_keys_sorted, empty_presets,
+};

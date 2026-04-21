@@ -2,18 +2,33 @@ use super::session_association::resolve_node_session_association;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleStepDefinition, WorkflowDefinition, WorkflowDefinitionRepository,
-    build_effective_contract,
+    LifecycleStepDefinition, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 use uuid::Uuid;
 
+/// 运行时聚合视图:单 step 激活所需的全部定义域上下文。
+///
+/// 不再持有 `effective_contract` 字段——消费者需要 contract 4 字段时,
+/// 直接通过 [`ActiveWorkflowProjection::active_contract`] 取到关联 workflow
+/// 的 [`WorkflowContract`] 即可。SPI `ActiveWorkflowSnapshot.effective_contract`
+/// 仍由 provider 在构造 snapshot 时按需用 `build_effective_contract` 派生,
+/// 本结构不重复存一份。
 #[derive(Debug, Clone)]
 pub struct ActiveWorkflowProjection {
     pub run: LifecycleRun,
     pub lifecycle: LifecycleDefinition,
     pub active_step: LifecycleStepDefinition,
     pub primary_workflow: Option<WorkflowDefinition>,
-    pub effective_contract: agentdash_domain::workflow::EffectiveSessionContract,
+}
+
+impl ActiveWorkflowProjection {
+    /// 返回当前激活 step 关联的 workflow contract。
+    ///
+    /// - `Some(&contract)`:step 绑定了 workflow,返回其 contract
+    /// - `None`:未绑定 workflow(manual step),消费者按"空 contract"语义处理
+    pub fn active_contract(&self) -> Option<&WorkflowContract> {
+        self.primary_workflow.as_ref().map(|w| &w.contract)
+    }
 }
 
 /// 通过 session_id 查找该 session 关联的活跃 lifecycle run 并构建 projection。
@@ -134,7 +149,10 @@ pub async fn resolve_workflow_projection_by_run(
 }
 
 /// 共享的 projection 构建核心：从已确定的 run + step_key 出发，
-/// 加载 lifecycle → 查找 step → 加载 workflow → 构建 effective_contract。
+/// 加载 lifecycle → 查找 step → 加载 workflow。
+///
+/// effective_contract 由消费者按需通过 [`ActiveWorkflowProjection::active_contract`]
+/// 或 `build_effective_contract` 派生,此处不预先构造。
 async fn build_projection_from_run(
     run: LifecycleRun,
     step_key: &str,
@@ -170,14 +188,10 @@ async fn build_projection_from_run(
         None => None,
     };
 
-    let effective_contract =
-        build_effective_contract(&lifecycle.key, &active_step.key, primary_workflow.as_ref());
-
     Ok(Some(ActiveWorkflowProjection {
         run,
         lifecycle,
         active_step,
         primary_workflow,
-        effective_contract,
     }))
 }

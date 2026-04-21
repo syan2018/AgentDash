@@ -31,17 +31,14 @@ pub(super) fn build_workflow_step_fragments(
         source: source.to_string(),
     }];
 
-    if !workflow
-        .effective_contract
-        .injection
-        .instructions
-        .is_empty()
-    {
+    let instructions = workflow
+        .active_contract()
+        .map(|c| c.injection.instructions.as_slice())
+        .unwrap_or(&[]);
+    if !instructions.is_empty() {
         injections.push(HookInjection {
             slot: "workflow".to_string(),
-            content: build_instruction_injection_markdown(
-                &workflow.effective_contract.injection.instructions,
-            ),
+            content: build_instruction_injection_markdown(instructions),
             source: source.to_string(),
         });
     }
@@ -67,7 +64,6 @@ mod tests {
     use agentdash_domain::workflow::{
         LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
         WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
-        build_effective_contract,
     };
 
     fn workflow_projection_with_instructions(
@@ -97,7 +93,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            capabilities: vec![],
         };
         let project_id = Uuid::new_v4();
         let lifecycle = LifecycleDefinition::new(
@@ -123,14 +118,11 @@ mod tests {
         .expect("workflow run should build");
         run.activate_step("implement")
             .expect("implement step should activate");
-        let effective_contract =
-            build_effective_contract(&lifecycle.key, &active_step.key, Some(&definition));
         ActiveWorkflowProjection {
             run,
             lifecycle,
             active_step,
             primary_workflow: Some(definition),
-            effective_contract,
         }
     }
 

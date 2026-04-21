@@ -8,6 +8,7 @@ use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -332,7 +333,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             .primary_workflow
                             .as_ref()
                             .map(|w| w.name.clone()),
-                        effective_contract: Some(workflow.effective_contract.clone()),
+                        effective_contract: Some(build_effective_contract(
+                            &workflow.lifecycle.key,
+                            &workflow.active_step.key,
+                            workflow.primary_workflow.as_ref(),
+                        )),
                         checklist_evidence_present: None,
                         output_port_keys: {
                             // port 归属已迁移到 step 级别
@@ -388,19 +393,18 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     .extend(build_workflow_step_fragments(&workflow, &wf_source));
 
                 // Add workflow constraint injections
-                snapshot
-                    .injections
-                    .extend(
-                        workflow
-                            .effective_contract
-                            .constraints
-                            .iter()
-                            .map(|constraint| HookInjection {
-                                slot: "constraint".to_string(),
-                                content: constraint.description.clone(),
-                                source: wf_source.clone(),
-                            }),
-                    );
+                snapshot.injections.extend(
+                    workflow
+                        .active_contract()
+                        .map(|c| c.constraints.as_slice())
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|constraint| HookInjection {
+                            slot: "constraint".to_string(),
+                            content: constraint.description.clone(),
+                            source: wf_source.clone(),
+                        }),
+                );
             }
 
             snapshot.owners.push(owner);

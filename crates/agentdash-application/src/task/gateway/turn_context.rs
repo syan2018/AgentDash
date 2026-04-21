@@ -117,9 +117,11 @@ pub async fn prepare_task_turn_context(
         projection
     };
 
-    let workflow_capabilities = active_projection
-        .as_ref()
-        .map(|p| crate::capability::capabilities_from_active_step(&p.active_step));
+    let workflow_capabilities = active_projection.as_ref().and_then(|p| {
+        p.primary_workflow
+            .as_ref()
+            .map(crate::capability::capabilities_from_active_workflow)
+    });
 
     let cap_input = CapabilityResolverInput {
         owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
@@ -133,6 +135,7 @@ pub async fn prepare_task_turn_context(
             workflow_capabilities,
         },
         agent_mcp_servers: vec![],
+        available_presets: presets_for_project(svc.repos, story.project_id).await,
         companion_slice_mode: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, svc.platform_config);
@@ -207,4 +210,25 @@ pub async fn prepare_task_turn_context(
         identity: None,
         post_turn_handler: None,
     })
+}
+
+/// 加载 project 级 MCP Preset 并展开成 resolver map,查询失败降级为空。
+async fn presets_for_project(
+    repos: &RepositorySet,
+    project_id: uuid::Uuid,
+) -> crate::capability::AvailableMcpPresets {
+    match repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "task turn: 加载 project MCP Preset 列表失败"
+            );
+            Default::default()
+        }
+    }
 }

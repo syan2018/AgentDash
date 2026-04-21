@@ -476,7 +476,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            capabilities: vec![],
         }
     }
 

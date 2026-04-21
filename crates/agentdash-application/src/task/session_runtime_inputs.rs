@@ -56,9 +56,14 @@ pub async fn build_task_session_runtime_inputs(
     let workflow = resolve_workflow_via_task_sessions(repos, task).await?;
 
     // ── CapabilityResolver 统一计算 MCP server 列表 ──
-    let workflow_capabilities = workflow
-        .as_ref()
-        .map(|projection| crate::capability::capabilities_from_active_step(&projection.active_step));
+    // capabilities 来源于 active workflow 的 contract.capabilities（工作流级基线),
+    // step 不再承担能力声明。
+    let workflow_capabilities = workflow.as_ref().and_then(|projection| {
+        projection
+            .primary_workflow
+            .as_ref()
+            .map(crate::capability::capabilities_from_active_workflow)
+    });
 
     let cap_input = CapabilityResolverInput {
         owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
@@ -72,6 +77,7 @@ pub async fn build_task_session_runtime_inputs(
             workflow_capabilities,
         },
         agent_mcp_servers: vec![],
+        available_presets: build_available_presets(repos, task.project_id).await,
         companion_slice_mode: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
@@ -120,7 +126,10 @@ pub async fn build_task_session_runtime_inputs(
     // 解析 workflow context_bindings（如果有 vfs 和 workflow）
     let resolved_bindings = match (&vfs, &workflow) {
         (Some(space), Some(wf)) => {
-            let bindings = &wf.effective_contract.injection.context_bindings;
+            let bindings = wf
+                .active_contract()
+                .map(|c| c.injection.context_bindings.as_slice())
+                .unwrap_or(&[]);
             if bindings.is_empty() {
                 None
             } else {
@@ -205,4 +214,26 @@ async fn resolve_workflow_via_task_sessions(
         }
     }
     Ok(None)
+}
+
+/// 查询 project 下全部 MCP Preset 并展开成 resolver 可消费的 map。
+/// 查询失败时返回空 map（降级不中断 session 构造，只落 warn）。
+async fn build_available_presets(
+    repos: &RepositorySet,
+    project_id: uuid::Uuid,
+) -> crate::capability::AvailableMcpPresets {
+    match repos.mcp_preset_repo.list_by_project(project_id).await {
+        Ok(presets) => presets
+            .into_iter()
+            .map(|p| (p.name, p.server_decl))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "加载 project MCP Preset 列表失败,mcp:<X> 能力将退化到 inline agent_mcp_servers"
+            );
+            Default::default()
+        }
+    }
 }

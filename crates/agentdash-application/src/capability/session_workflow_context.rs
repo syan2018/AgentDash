@@ -9,7 +9,7 @@
 //! - `Routine { project_id, agent_id }` —— 复用 Project 查询（routine 自带 agent 绑定）
 //!
 //! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
-//! 无需走 helper；那边直接用 `capabilities_from_active_step` 做单步计算即可。
+//! 无需走 helper；那边直接用 `capabilities_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
 //! [`SessionWorkflowContext::NONE`]，只记录 `tracing::warn!`，不中断 session 创建。
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use agentdash_domain::agent::ProjectAgentLinkRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
-    WorkflowDefinitionRepository, compute_effective_capabilities,
+    WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 /// session bootstrap 阶段要注入 resolver 的 workflow 上下文。
@@ -52,14 +52,15 @@ pub enum SessionWorkflowOwner {
 pub struct SessionWorkflowRepos<'a> {
     pub agent_link: &'a dyn ProjectAgentLinkRepository,
     pub lifecycle_def: &'a dyn LifecycleDefinitionRepository,
-    #[allow(dead_code)] // 目前所有分支只需 agent_link + lifecycle_def；保留挂载点给后续 workflow contract baseline 合入。
+    /// workflow_def 在解析链末端用于拉取 entry step 对应的 WorkflowDefinition,
+    /// 其 `contract.capabilities` 即 session bootstrap baseline。
     pub workflow_def: &'a dyn WorkflowDefinitionRepository,
 }
 
 /// 解析 session bootstrap workflow 上下文。
 ///
 /// 规则：
-/// - 成功解析到 lifecycle entry step 的 capability 指令 → 返回 `(true, Some(effective))`
+/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capabilities` → 返回 `(true, Some(baseline))`
 /// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 [`SessionWorkflowContext::NONE`]
 pub async fn resolve_session_workflow_context(
     repos: SessionWorkflowRepos<'_>,
@@ -80,7 +81,7 @@ pub async fn resolve_session_workflow_context(
     }
 }
 
-/// 从 (project_id, agent_id) 解析 → agent_link → lifecycle entry step capabilities。
+/// 从 (project_id, agent_id) 解析 → agent_link → lifecycle entry step → workflow capabilities。
 async fn resolve_for_project_agent(
     repos: SessionWorkflowRepos<'_>,
     project_id: Uuid,
@@ -109,7 +110,13 @@ async fn resolve_for_project_agent(
         return SessionWorkflowContext::NONE;
     };
 
-    resolve_from_lifecycle_key(repos.lifecycle_def, project_id, &lifecycle_key).await
+    resolve_from_lifecycle_key(
+        repos.lifecycle_def,
+        repos.workflow_def,
+        project_id,
+        &lifecycle_key,
+    )
+    .await
 }
 
 /// 从 project 内 `is_default_for_story=true` 的 agent_link 查 lifecycle。
@@ -138,11 +145,18 @@ async fn resolve_for_story(
         return SessionWorkflowContext::NONE;
     };
 
-    resolve_from_lifecycle_key(repos.lifecycle_def, project_id, &lifecycle_key).await
+    resolve_from_lifecycle_key(
+        repos.lifecycle_def,
+        repos.workflow_def,
+        project_id,
+        &lifecycle_key,
+    )
+    .await
 }
 
 async fn resolve_from_lifecycle_key(
     lifecycle_def: &dyn LifecycleDefinitionRepository,
+    workflow_def: &dyn WorkflowDefinitionRepository,
     project_id: Uuid,
     lifecycle_key: &str,
 ) -> SessionWorkflowContext {
@@ -180,9 +194,43 @@ async fn resolve_from_lifecycle_key(
         return SessionWorkflowContext::NONE;
     };
 
+    let Some(workflow_key) = entry_step.effective_workflow_key() else {
+        // entry step 没有绑定 workflow，无法推断能力基线，但活跃标志仍成立。
+        return SessionWorkflowContext {
+            has_active_workflow: true,
+            workflow_capabilities: Some(Vec::new()),
+        };
+    };
+
+    let workflow = match workflow_def
+        .get_by_project_and_key(project_id, workflow_key)
+        .await
+    {
+        Ok(Some(workflow)) => workflow,
+        Ok(None) => {
+            tracing::warn!(
+                project_id = %project_id,
+                lifecycle_key = %lifecycle_key,
+                workflow_key = %workflow_key,
+                "resolve_session_workflow_context: entry step 引用的 workflow 不存在"
+            );
+            return SessionWorkflowContext::NONE;
+        }
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                lifecycle_key = %lifecycle_key,
+                workflow_key = %workflow_key,
+                error = %error,
+                "resolve_session_workflow_context: 读取 workflow 定义失败"
+            );
+            return SessionWorkflowContext::NONE;
+        }
+    };
+
     SessionWorkflowContext {
         has_active_workflow: true,
-        workflow_capabilities: Some(capabilities_from_active_step(entry_step)),
+        workflow_capabilities: Some(capabilities_from_active_workflow(&workflow)),
     }
 }
 
@@ -200,12 +248,12 @@ fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
     }
 }
 
-/// 从 lifecycle step 的 capability 指令算出 session 创建时要注入的 capability key 集合。
+/// 从当前活跃 workflow 的 `contract.capabilities` 拷贝出 session 基线能力 key。
 ///
-/// session bootstrap 阶段没有 hook runtime baseline，以空集 + step Add/Remove 为初值。
-/// Task 及其他已持有 `ActiveWorkflowProjection` 的 caller 可直接调用此函数，避免走完整 repo 查询。
-pub fn capabilities_from_active_step(step: &LifecycleStepDefinition) -> Vec<String> {
-    compute_effective_capabilities(&[], &step.capabilities)
+/// session bootstrap 阶段直接使用此 baseline；hook runtime 的动态增减（`CapabilityDirective`）
+/// 由 workflow 级调用方在运行时叠加。
+pub fn capabilities_from_active_workflow(workflow: &WorkflowDefinition) -> Vec<String> {
+    workflow.contract.capabilities.clone()
 }
 
 #[cfg(test)]
@@ -218,12 +266,14 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgentLink, ProjectAgentLinkRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
-        LifecycleStepDefinition, WorkflowBindingKind, WorkflowDefinition,
-        WorkflowDefinitionRepository, WorkflowDefinitionSource,
+        LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+        WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
+        WorkflowDefinitionSource,
     };
 
     use super::*;
+
+    const ENTRY_WORKFLOW_KEY: &str = "builtin_workflow_admin_plan";
 
     // ── in-memory mocks ──────────────────────────────────────────────
 
@@ -394,47 +444,83 @@ mod tests {
         }
     }
 
-    /// workflow def repo 在 PR1 用不到，只需要满足 trait。
-    #[derive(Default)]
-    struct StubWorkflowDefRepo;
+    #[derive(Default, Clone)]
+    struct MockWorkflowDefRepo {
+        defs: Arc<Mutex<Vec<WorkflowDefinition>>>,
+    }
+
+    impl MockWorkflowDefRepo {
+        async fn insert(&self, def: WorkflowDefinition) {
+            self.defs.lock().await.push(def);
+        }
+    }
 
     #[async_trait]
-    impl WorkflowDefinitionRepository for StubWorkflowDefRepo {
-        async fn create(&self, _: &WorkflowDefinition) -> Result<(), DomainError> {
+    impl WorkflowDefinitionRepository for MockWorkflowDefRepo {
+        async fn create(&self, def: &WorkflowDefinition) -> Result<(), DomainError> {
+            self.defs.lock().await.push(def.clone());
             Ok(())
         }
-        async fn get_by_id(&self, _: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(None)
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
+            Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
-        async fn get_by_key(&self, _: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(None)
+        async fn get_by_key(
+            &self,
+            key: &str,
+        ) -> Result<Option<WorkflowDefinition>, DomainError> {
+            Ok(self.defs.lock().await.iter().find(|d| d.key == key).cloned())
         }
         async fn get_by_project_and_key(
             &self,
-            _: Uuid,
-            _: &str,
+            project_id: Uuid,
+            key: &str,
         ) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(None)
+            Ok(self
+                .defs
+                .lock()
+                .await
+                .iter()
+                .find(|d| d.project_id == project_id && d.key == key)
+                .cloned())
         }
         async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(vec![])
+            Ok(self.defs.lock().await.clone())
         }
         async fn list_by_project(
             &self,
-            _: Uuid,
+            project_id: Uuid,
         ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(vec![])
+            Ok(self
+                .defs
+                .lock()
+                .await
+                .iter()
+                .filter(|d| d.project_id == project_id)
+                .cloned()
+                .collect())
         }
         async fn list_by_binding_kind(
             &self,
-            _: WorkflowBindingKind,
+            binding_kind: WorkflowBindingKind,
         ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-            Ok(vec![])
+            Ok(self
+                .defs
+                .lock()
+                .await
+                .iter()
+                .filter(|d| d.binding_kind == binding_kind)
+                .cloned()
+                .collect())
         }
-        async fn update(&self, _: &WorkflowDefinition) -> Result<(), DomainError> {
+        async fn update(&self, def: &WorkflowDefinition) -> Result<(), DomainError> {
+            let mut lock = self.defs.lock().await;
+            if let Some(existing) = lock.iter_mut().find(|d| d.id == def.id) {
+                *existing = def.clone();
+            }
             Ok(())
         }
-        async fn delete(&self, _: Uuid) -> Result<(), DomainError> {
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.defs.lock().await.retain(|d| d.id != id);
             Ok(())
         }
     }
@@ -447,16 +533,16 @@ mod tests {
         link
     }
 
+    /// 构造 `builtin_workflow_admin` lifecycle 及其 entry step workflow。
+    /// workflow.contract.capabilities 放一个 `workflow_management`,对应 PRD 的新结构。
     fn admin_lifecycle(project_id: Uuid) -> LifecycleDefinition {
-        // plan step: add workflow_management
         let plan = LifecycleStepDefinition {
             key: "plan".to_string(),
             description: String::new(),
-            workflow_key: None,
+            workflow_key: Some(ENTRY_WORKFLOW_KEY.to_string()),
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            capabilities: vec![CapabilityDirective::Add("workflow_management".to_string())],
         };
         LifecycleDefinition::new(
             project_id,
@@ -470,6 +556,23 @@ mod tests {
             vec![],
         )
         .expect("build lifecycle")
+    }
+
+    fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
+        let contract = WorkflowContract {
+            capabilities: vec!["workflow_management".to_string()],
+            ..WorkflowContract::default()
+        };
+        WorkflowDefinition::new(
+            project_id,
+            ENTRY_WORKFLOW_KEY,
+            "Workflow Admin / Plan",
+            "",
+            WorkflowBindingKind::Project,
+            WorkflowDefinitionSource::BuiltinSeed,
+            contract,
+        )
+        .expect("workflow definition")
     }
 
     fn lifecycle_without_entry_step(project_id: Uuid) -> LifecycleDefinition {
@@ -493,7 +596,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -524,7 +628,7 @@ mod tests {
         link_repo.insert(make_link(project_id, agent_id, None)).await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -554,7 +658,7 @@ mod tests {
 
         // lifecycle_repo 不注册任何定义
         let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -579,7 +683,7 @@ mod tests {
 
         let link_repo = MockAgentLinkRepo::default();
         let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -610,7 +714,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(lifecycle_without_entry_step(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -633,7 +738,6 @@ mod tests {
     /// 与对应的 Workflow 平台 MCP 注入。这是 PR1 的核心回归点。
     #[tokio::test]
     async fn session_creation_with_default_lifecycle_grants_workflow_management() {
-
         use crate::capability::{CapabilityResolver, CapabilityResolverInput};
         use crate::platform_config::PlatformConfig;
 
@@ -648,7 +752,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         // Step 1: helper 解析 workflow 上下文
         let wf_ctx = resolve_session_workflow_context(
@@ -678,6 +783,7 @@ mod tests {
                 agent_declared_capabilities: None,
                 workflow_ctx: wf_ctx,
                 agent_mcp_servers: vec![],
+                available_presets: Default::default(),
                 companion_slice_mode: None,
             },
             &platform,
@@ -745,7 +851,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -783,7 +890,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -811,7 +919,8 @@ mod tests {
         let lifecycle_repo = MockLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = StubWorkflowDefRepo;
+        let workflow_repo = MockWorkflowDefRepo::default();
+        workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -834,26 +943,30 @@ mod tests {
     }
 
     #[test]
-    fn capabilities_from_active_step_returns_only_added_caps_at_bootstrap() {
-        let step = LifecycleStepDefinition {
-            key: "plan".to_string(),
-            description: String::new(),
-            workflow_key: None,
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
+    fn capabilities_from_active_workflow_returns_contract_capabilities() {
+        let contract = WorkflowContract {
             capabilities: vec![
-                CapabilityDirective::Add("workflow_management".to_string()),
-                CapabilityDirective::Add("file_system".to_string()),
-                // bootstrap baseline 为空，Remove 不会影响产出（留作文档）
-                CapabilityDirective::Remove("canvas".to_string()),
+                "workflow_management".to_string(),
+                "file_system".to_string(),
+                "mcp:code_analyzer".to_string(),
             ],
+            ..WorkflowContract::default()
         };
+        let workflow = WorkflowDefinition::new(
+            Uuid::new_v4(),
+            "sample",
+            "Sample",
+            "",
+            WorkflowBindingKind::Project,
+            WorkflowDefinitionSource::UserAuthored,
+            contract,
+        )
+        .expect("workflow");
 
-        let effective = capabilities_from_active_step(&step);
+        let effective = capabilities_from_active_workflow(&workflow);
         let as_set: std::collections::BTreeSet<String> = effective.into_iter().collect();
         assert!(as_set.contains("workflow_management"));
         assert!(as_set.contains("file_system"));
-        assert!(!as_set.contains("canvas"));
+        assert!(as_set.contains("mcp:code_analyzer"));
     }
 }

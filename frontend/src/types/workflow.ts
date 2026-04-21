@@ -128,6 +128,14 @@ export interface WorkflowContract {
   hook_rules: WorkflowHookRuleSpec[];
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
+  /**
+   * Agent 单步可用的工具基线能力。每个元素为一个 capability key：
+   * - well-known（如 `file_system` / `workflow_management`）由后端 CapabilityResolver 映射到 ToolCluster / PlatformMcpScope
+   * - `mcp:<preset_name>` 指向当前 project 的 `McpPreset`，由后端展开为 McpServerDecl
+   *
+   * Add/Remove 等动态授予留给 hook runtime；此处只承载"workflow 声明的基线"。
+   */
+  capabilities: string[];
   /** 推荐 ports（模板用途，运行时产出约束由 step 级 ports 定义） */
   recommended_output_ports?: OutputPortDefinition[];
   recommended_input_ports?: InputPortDefinition[];

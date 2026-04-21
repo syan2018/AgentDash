@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   HookRulePreset,
+  McpPresetDto,
   OutputPortDefinition,
   InputPortDefinition,
   WorkflowCheckKind,
@@ -16,6 +17,7 @@ import type {
   ContextStrategy,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { fetchProjectMcpPresets } from "../../services/mcpPreset";
 import {
   TARGET_KIND_LABEL,
 } from "./shared-labels";
@@ -471,6 +473,257 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
   return Object.keys(result).length > 0 ? result : null;
 }
 
+// ─── Capabilities Editor ──────────────────────────────
+//
+// capability key 语义（与后端 CapabilityResolver 对齐）：
+// - well-known key（无前缀）→ 映射到 ToolCluster / PlatformMcpScope
+// - `mcp:<preset_name>` → 查当前 project 的 McpPreset → 展开为 McpServerDecl
+// - 其他前缀 → 未识别，仅回显，给出删除按钮
+//
+// 本编辑器把 contract.capabilities 数组在 UI 层拆分为三段展示，写回时合并。
+
+/** Well-known capability key 列表（与后端 well_known_capability_key 一一对应）。 */
+const WELL_KNOWN_CAPABILITY_KEYS = [
+  "file_system",
+  "canvas",
+  "workflow",
+  "collaboration",
+  "story_management",
+  "task_management",
+  "relay_management",
+  "workflow_management",
+] as const;
+
+type WellKnownCapabilityKey = (typeof WELL_KNOWN_CAPABILITY_KEYS)[number];
+
+/** Well-known capability 的中文展示标签。 */
+const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
+  file_system: "文件系统",
+  canvas: "画布",
+  workflow: "工作流",
+  collaboration: "协作",
+  story_management: "Story 管理",
+  task_management: "Task 管理",
+  relay_management: "Relay 管理",
+  workflow_management: "工作流管理",
+};
+
+/** Well-known capability 的一句话说明。 */
+const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> = {
+  file_system: "读写工作空间文件",
+  canvas: "画布 / 白板操作",
+  workflow: "工作流汇报与推进",
+  collaboration: "多 agent 协作通道",
+  story_management: "创建 / 调整 Story",
+  task_management: "创建 / 调整 Task",
+  relay_management: "Relay 后端管理",
+  workflow_management: "MCP workflow 管理工具",
+};
+
+/** 判断某 key 是否为 well-known capability。 */
+function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {
+  return (WELL_KNOWN_CAPABILITY_KEYS as readonly string[]).includes(key);
+}
+
+/** 从 `mcp:<name>` 形式的 key 中提取 preset 名；不是 mcp 前缀则返回 null。 */
+function extractMcpPresetName(key: string): string | null {
+  return key.startsWith("mcp:") ? key.slice(4) : null;
+}
+
+function CapabilitiesEditor({
+  projectId,
+  capabilities,
+  onChange,
+}: {
+  projectId: string;
+  capabilities: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [presets, setPresets] = useState<McpPresetDto[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+
+  // 加载当前 project 的 MCP Preset 列表。
+  // 新建 workflow 时 projectId 可能为空串——此时跳过 fetch，直接渲染"空列表"提示即可。
+  // 所有 setState 都延后到 fetch 回调内，避免在 effect body 内同步触发 re-render。
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    void (async () => {
+      setPresetsLoading(true);
+      setPresetsError(null);
+      try {
+        const items = await fetchProjectMcpPresets(projectId);
+        if (!cancelled) setPresets(items);
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          setPresetsError(message);
+          setPresets([]);
+        }
+      } finally {
+        if (!cancelled) setPresetsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // 把 capabilities 数组拆成三段，便于分区渲染。
+  const { wellKnownSet, mcpSet, unknownList } = useMemo(() => {
+    const wellKnown = new Set<string>();
+    const mcp = new Set<string>();
+    const unknown: string[] = [];
+    for (const key of capabilities) {
+      if (isWellKnownCapability(key)) {
+        wellKnown.add(key);
+      } else if (extractMcpPresetName(key) !== null) {
+        mcp.add(key);
+      } else {
+        unknown.push(key);
+      }
+    }
+    return { wellKnownSet: wellKnown, mcpSet: mcp, unknownList: unknown };
+  }, [capabilities]);
+
+  // Toggle well-known key。已选则移除，未选则追加，保持原有顺序尽量稳定。
+  const toggleWellKnown = (key: WellKnownCapabilityKey) => {
+    if (wellKnownSet.has(key)) {
+      onChange(capabilities.filter((item) => item !== key));
+    } else {
+      onChange([...capabilities, key]);
+    }
+  };
+
+  // Toggle MCP preset。由 preset.name 组装成 `mcp:<name>` 写回。
+  const toggleMcpPreset = (presetName: string) => {
+    const compositeKey = `mcp:${presetName}`;
+    if (mcpSet.has(compositeKey)) {
+      onChange(capabilities.filter((item) => item !== compositeKey));
+    } else {
+      onChange([...capabilities, compositeKey]);
+    }
+  };
+
+  // 删除未识别 key（用户手动清理脏数据）。
+  const removeUnknown = (key: string) => {
+    onChange(capabilities.filter((item) => item !== key));
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Well-known 能力多选 */}
+      <div>
+        <label className="agentdash-form-label">Well-known 能力</label>
+        <p className="mb-1.5 text-[11px] text-muted-foreground">
+          后端 CapabilityResolver 直接识别的内置能力 key。
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {WELL_KNOWN_CAPABILITY_KEYS.map((key) => {
+            const on = wellKnownSet.has(key);
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleWellKnown(key)}
+                className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
+                  on
+                    ? "border-primary/30 bg-primary/8 text-primary"
+                    : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                }`}
+                title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+              >
+                {WELL_KNOWN_CAPABILITY_LABEL[key]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* MCP Preset 引用 */}
+      <div>
+        <label className="agentdash-form-label">MCP Preset 引用</label>
+        <p className="mb-1.5 text-[11px] text-muted-foreground">
+          选中后以 <code className="rounded bg-secondary/50 px-1">mcp:&lt;preset_name&gt;</code> 写入 capabilities，由后端展开为 McpServerDecl 注入 session。
+        </p>
+        {presetsError && (
+          <p className="mb-1.5 rounded-[8px] border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
+            加载 MCP Preset 失败：{presetsError}
+          </p>
+        )}
+        {presetsLoading ? (
+          <p className="py-2 text-center text-xs text-muted-foreground">加载中…</p>
+        ) : presets.length === 0 ? (
+          <p className="py-2 text-center text-xs text-muted-foreground">
+            当前 project 无 MCP Preset — 可在 Assets 页创建
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {presets.map((preset) => {
+              const compositeKey = `mcp:${preset.name}`;
+              const on = mcpSet.has(compositeKey);
+              const sourceLabel = preset.source === "builtin" ? "builtin" : "user";
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => toggleMcpPreset(preset.name)}
+                  className={`flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
+                    on
+                      ? "border-primary/30 bg-primary/8 text-primary"
+                      : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                  }`}
+                  title={preset.description ?? preset.name}
+                >
+                  <span>{preset.name}</span>
+                  <span
+                    className={`rounded px-1 py-0.5 text-[9px] font-mono ${
+                      preset.source === "builtin"
+                        ? "bg-amber-500/15 text-amber-700"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {sourceLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 未识别 key — 仅显示 + 删除 */}
+      {unknownList.length > 0 && (
+        <div>
+          <label className="agentdash-form-label">其他（不识别）</label>
+          <p className="mb-1.5 text-[11px] text-muted-foreground">
+            既非 well-known 也不是 <code className="rounded bg-secondary/50 px-1">mcp:</code> 前缀，建议清理。
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {unknownList.map((key) => (
+              <span
+                key={key}
+                className="inline-flex items-center gap-1.5 rounded-[8px] border border-dashed border-destructive/40 bg-destructive/5 px-2 py-1 text-xs text-destructive"
+              >
+                <code className="font-mono text-[11px]">{key}</code>
+                <button
+                  type="button"
+                  onClick={() => removeUnknown(key)}
+                  className="text-destructive/70 hover:text-destructive"
+                  title="删除此 key"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main editor ───────────────────────────────────────
 
 export function WorkflowEditor() {
@@ -649,6 +902,18 @@ export function WorkflowEditor() {
             <p className="py-4 text-center text-sm text-muted-foreground">暂无上下文挂载</p>
           )}
         </div>
+      </DetailSection>
+
+      {/* Agent 工具能力 */}
+      <DetailSection
+        title={`Agent 工具能力 (${draft.contract.capabilities.length})`}
+        description="声明此 workflow 下 agent 可用的工具基线。well-known 能力与 project MCP Preset 二选一。"
+      >
+        <CapabilitiesEditor
+          projectId={draft.project_id}
+          capabilities={draft.contract.capabilities}
+          onChange={(capabilities) => updateDraft({ contract: { ...draft.contract, capabilities } })}
+        />
       </DetailSection>
 
       {/* 过程行为 */}

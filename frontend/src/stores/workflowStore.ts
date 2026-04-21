@@ -103,6 +103,7 @@ export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
       hook_rules: [],
       constraints: [],
       completion: { checks: [] },
+      capabilities: [],
     },
   };
 }

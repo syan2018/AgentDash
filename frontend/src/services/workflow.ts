@@ -196,6 +196,7 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
+    capabilities: asStringArray(value.capabilities),
     recommended_output_ports: asRecordArray(value.recommended_output_ports ?? value.output_ports).map(mapOutputPortDefinition),
     recommended_input_ports: asRecordArray(value.recommended_input_ports ?? value.input_ports).map(mapInputPortDefinition),
   };

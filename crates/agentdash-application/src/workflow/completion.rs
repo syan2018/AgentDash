@@ -63,35 +63,16 @@ pub fn evaluate_step_completion(
         };
     };
 
-    if let Some(terminal_state) = signals.session_terminal_state {
-        return WorkflowCompletionDecision {
-            transition_policy: "auto".to_string(),
-            satisfied: true,
-            should_complete_step: true,
-            summary: Some(session_terminal_summary(
-                terminal_state,
-                signals.session_terminal_message.as_deref(),
-            )),
-            blocking_reason: None,
-            evidence: vec![WorkflowCompletionEvidence {
-                code: "session_terminal_detected".to_string(),
-                summary: "Session reached terminal state".to_string(),
-                detail: Some(format!(
-                    "terminal_state={}",
-                    session_terminal_state_tag(terminal_state)
-                )),
-            }],
-        };
-    }
-
     let checks = &completion.checks;
     if checks.is_empty() {
         return WorkflowCompletionDecision {
-            transition_policy: "auto".to_string(),
+            transition_policy: "manual".to_string(),
             satisfied: false,
             should_complete_step: false,
             summary: None,
-            blocking_reason: Some("Waiting for session to complete".to_string()),
+            blocking_reason: Some(
+                "workflow 未声明自动完成 check，等待显式推进".to_string(),
+            ),
             evidence: vec![],
         };
     }
@@ -397,7 +378,10 @@ mod tests {
     }
 
     #[test]
-    fn global_session_terminal_short_circuits_before_contract_checks() {
+    fn session_terminal_signal_does_not_force_satisfy_unrelated_checks() {
+        // 旧行为：terminal 信号一来就强制短路 satisfied=true，无视 contract checks。
+        // 新行为：terminal 信号必须经 SessionTerminalIn check 评估；
+        // 这里 check 只接受 completed，但收到 Failed → 不满足。
         let spec = WorkflowCompletionSpec {
             checks: vec![WorkflowCheckSpec {
                 key: "term".to_string(),
@@ -415,7 +399,40 @@ mod tests {
             },
         );
 
-        assert!(decision.should_complete_step);
+        assert!(!decision.satisfied);
+        assert!(!decision.should_complete_step);
+    }
+
+    #[test]
+    fn empty_checks_yields_manual_decision_not_implicit_session_terminal_wait() {
+        // 空 checks = workflow 没声明自动门禁 → 视同 manual，由 agent/编排显式推进，
+        // 不再隐式"等 session terminal"。
+        let spec = WorkflowCompletionSpec::default();
+        let decision = evaluate_step_completion(
+            Some(&spec),
+            &WorkflowCompletionSignalSet::default(),
+        );
+
+        assert_eq!(decision.transition_policy, "manual");
+        assert!(!decision.satisfied);
+        assert!(!decision.should_complete_step);
+    }
+
+    #[test]
+    fn empty_checks_ignores_session_terminal_signal() {
+        // 即便有 session terminal 信号，空 checks 也保持 manual——
+        // 没有声明就不会被任何信号强行通关。
+        let spec = WorkflowCompletionSpec::default();
+        let decision = evaluate_step_completion(
+            Some(&spec),
+            &WorkflowCompletionSignalSet {
+                session_terminal_state: Some(WorkflowSessionTerminalState::Completed),
+                ..WorkflowCompletionSignalSet::default()
+            },
+        );
+
+        assert_eq!(decision.transition_policy, "manual");
+        assert!(!decision.should_complete_step);
     }
 
     #[test]

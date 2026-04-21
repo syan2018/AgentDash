@@ -72,7 +72,7 @@ BEGIN
                     RAISE NOTICE 'migrated step %.% → workflow % capabilities=%',
                         lc.id, step_item ->> 'key', wk, merged_caps;
                 ELSE
-                    RAISE WARNING 'lifecycle %% step %% 引用的 workflow_key=%% 不存在,跳过 capability 合并',
+                    RAISE WARNING 'lifecycle % step % 引用的 workflow_key=% 不存在,跳过 capability 合并',
                         lc.id, step_item ->> 'key', wk;
                 END IF;
             END IF;

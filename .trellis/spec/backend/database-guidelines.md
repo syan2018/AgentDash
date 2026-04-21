@@ -175,6 +175,75 @@ let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL 
 
 ---
 
+## PL/pgSQL 迁移脚本规范（必读）
+
+编写数据迁移(DO $$ BEGIN ... END $$ / CREATE FUNCTION)时,踩坑率最高的是 `RAISE` 子句的 format 占位符。**每次都会有人在这里翻车**,请严格对照下表。
+
+### RAISE 的占位符就是 `%`,不是 `%%`
+
+PL/pgSQL 的 `RAISE` 语句用 **单个** `%` 作为参数占位符,**和 C `printf` / Rust `format!` 完全一致**。常见的误解是把它当成 shell/SQL 的 `%` 通配符然后写成 `%%` 去转义 —— 这是错的,`%%` 会被当成 literal `%` 字符,导致 format string 里实际占位符数量 < 参数数量,Postgres 报错:
+
+```
+error returned from database: 为 RAISE 子句指定参数过多
+(too many parameters specified for RAISE)
+```
+
+#### 正确写法
+
+```sql
+-- ✅ 单个 % 做占位符,参数数量必须对上
+RAISE NOTICE 'migrated step %.% → workflow % capabilities=%',
+    lc.id, step_item ->> 'key', wk, merged_caps;
+
+RAISE WARNING 'lifecycle % 的 workflow_key=% 不存在,跳过',
+    lc.id, wk;
+```
+
+#### 常见错误
+
+```sql
+-- ❌ 用 %% 以为是转义,实际 format string 里 0 个占位符
+RAISE WARNING 'lifecycle %% step %% 引用的 workflow_key=%% 不存在',
+    lc.id, step_item ->> 'key', wk;
+-- 运行时报错: 为 RAISE 子句指定参数过多
+
+-- ❌ 占位符数量 < 参数数量
+RAISE NOTICE 'merged % caps', lc.id, merged_caps;
+-- 运行时报错: 为 RAISE 子句指定参数过多
+
+-- ❌ 占位符数量 > 参数数量
+RAISE NOTICE 'lifecycle % step % → %', lc.id;
+-- 运行时报错: RAISE 子句缺少参数
+```
+
+#### 何时真的需要 `%%`
+
+只有当你要让日志输出 **literal `%` 字符** 时才写 `%%`:
+
+```sql
+-- ✅ 想让日志里出现字面 "%" 符号时用 %%
+RAISE NOTICE 'progress: %%% complete', pct;
+-- 输出: progress: 50% complete
+```
+
+### 其他 PL/pgSQL 写法约定
+
+- **`SELECT ... INTO record` 后必须检查 `FOUND`**。`INTO` 查不到时变量是 NULL,但不会报错;直接用 `wf_row.xxx` 会炸。写 `IF FOUND THEN ... ELSE ... END IF` 保护
+- **循环内取 JSONB 数组元素用 `FOR x IN SELECT * FROM jsonb_array_elements(arr) LOOP`**,不要用 `FOREACH x IN ARRAY`(那是 PostgreSQL 原生数组,不是 JSONB)
+- **JSONB 合并写 `::jsonb` 显式转型**。`'[]'::jsonb || to_jsonb('foo'::text)` 产出 `["foo"]`;不加 `::jsonb` 可能被推断成 text concat
+- **幂等性**。迁移脚本要能重跑不出错(sqlx `_sqlx_migrations` 表防重跑只是最后一道保险,业务层也要写成 idempotent):`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`、`INSERT ... ON CONFLICT DO NOTHING`、`jsonb_set(..., '{key}', val, true)` 的第四参 `create_missing=true`
+
+### Checklist
+
+每次写 migration 脚本前:
+
+- [ ] `RAISE` 所有 format string 的 `%` 数量 = 参数数量
+- [ ] 不要用 `%%` 除非真的想输出字面 `%`
+- [ ] `SELECT ... INTO` 后有 `IF FOUND` 保护
+- [ ] 脚本可以重跑(本地用 `sqlx migrate run` 之后手动再跑一遍 DO 块验证)
+
+---
+
 ## 常见错误
 
 | 错误 | 正确 |
@@ -195,4 +264,4 @@ let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL 
 
 ---
 
-*更新：2026-04-01 — 对齐 PostgreSQL 主业务仓储、独立 StateChange port 与显式事务型 command port*
+*更新：2026-04-21 — 补充 PL/pgSQL 迁移脚本 RAISE 子句规范与常见坑*

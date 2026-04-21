@@ -9,7 +9,7 @@ use super::contributor::{
     TaskExecutionPhase,
 };
 use crate::session::plan::{
-    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
+    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };
 
@@ -52,7 +52,11 @@ pub fn build_task_agent_context(
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_type: SessionOwnerType::Task,
+        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
+            project_id: input.project.id,
+            story_id: input.story.id,
+            task_id: input.task.id,
+        },
         phase: match input.phase {
             TaskExecutionPhase::Start => SessionPlanPhase::TaskStart,
             TaskExecutionPhase::Continue => SessionPlanPhase::TaskContinue,

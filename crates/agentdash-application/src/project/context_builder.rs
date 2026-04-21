@@ -6,7 +6,7 @@ use crate::context::{
 };
 use crate::runtime::{Vfs, RuntimeMcpServer};
 use crate::session::plan::{
-    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
+    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
 };
 
 pub struct ProjectContextBuildInput<'a> {
@@ -62,7 +62,9 @@ pub fn build_project_context_markdown(
     }
 
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_type: SessionOwnerType::Project,
+        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
+            project_id: input.project.id,
+        },
         phase: SessionPlanPhase::ProjectAgent,
         vfs: input.vfs,
         mcp_servers: input.mcp_servers,

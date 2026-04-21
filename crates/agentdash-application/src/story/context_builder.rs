@@ -8,7 +8,7 @@ use crate::context::{
 };
 use crate::runtime::{Vfs, RuntimeMcpServer};
 use crate::session::plan::{
-    SessionOwnerType, SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
+    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
     resolve_story_session_composition,
 };
 
@@ -62,7 +62,10 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
     let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_type: SessionOwnerType::Story,
+        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Story {
+            project_id: input.project.id,
+            story_id: input.story.id,
+        },
         phase: SessionPlanPhase::StoryOwner,
         vfs: input.vfs,
         mcp_servers: input.mcp_servers,

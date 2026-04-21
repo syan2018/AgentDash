@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::runtime::{Vfs, Mount, MountCapability, RuntimeMcpServer};
 
-pub use agentdash_domain::session_binding::SessionOwnerType;
+pub use agentdash_domain::session_binding::{SessionOwnerCtx, SessionOwnerType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
@@ -66,7 +66,11 @@ pub struct SessionRuntimePolicySummary {
 }
 
 pub struct SessionPlanInput<'a> {
-    pub owner_type: SessionOwnerType,
+    /// session 归属上下文(owner_type + 关联 ID 合一的 sum type)。
+    ///
+    /// 取代此前的 `owner_type: SessionOwnerType` 单字段,与 bootstrap 路径
+    /// 使用同一份 owner 表达,后续 fragment 可直接消费 story_id/task_id。
+    pub owner_ctx: SessionOwnerCtx,
     pub phase: SessionPlanPhase,
     pub vfs: Option<&'a Vfs>,
     pub mcp_servers: &'a [RuntimeMcpServer],
@@ -103,7 +107,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     let tool_visibility = summarize_tool_visibility_with_context(
         input.vfs,
         input.mcp_servers,
-        Some(input.owner_type),
+        Some(input.owner_ctx.owner_type()),
     );
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
@@ -315,12 +319,12 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
 }
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
-    let role_label = match input.owner_type {
+    let role_label = match input.owner_ctx.owner_type() {
         SessionOwnerType::Project => "project_agent",
         SessionOwnerType::Task => "task_execution",
         SessionOwnerType::Story => "story_owner",
     };
-    let role_description = match input.owner_type {
+    let role_description = match input.owner_ctx.owner_type() {
         SessionOwnerType::Project => {
             "Project 级协作代理，负责维护项目共享上下文、整理资料、沉淀决策并辅助后续 Story 准备"
         }
@@ -712,7 +716,11 @@ mod tests {
         };
 
         let built = build_session_plan_fragments(SessionPlanInput {
-            owner_type: SessionOwnerType::Task,
+            owner_ctx: SessionOwnerCtx::Task {
+                project_id: uuid::Uuid::new_v4(),
+                story_id: uuid::Uuid::new_v4(),
+                task_id: uuid::Uuid::new_v4(),
+            },
             phase: SessionPlanPhase::TaskStart,
             vfs: Some(&vfs),
             mcp_servers: &[],

@@ -2,7 +2,6 @@ use agentdash_domain::common::Vfs;
 use agentdash_domain::task::Task;
 
 use crate::vfs::RelayVfsService;
-use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::platform_config::PlatformConfig;
 use crate::context::{
     BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
@@ -16,7 +15,6 @@ use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
 use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
 use crate::workspace::BackendAvailability;
 use agentdash_domain::common::AgentConfig;
-use agentdash_domain::session_binding::SessionOwnerType;
 
 /// 基础设施引用 — prepare_task_turn_context 中不因调用而变化的部分
 pub struct TaskTurnServices<'a> {
@@ -90,65 +88,12 @@ pub async fn prepare_task_turn_context(
         ])));
     }
 
-    // ── CapabilityResolver 驱动的 MCP 注入 ──
-    let active_projection = {
-        // 提前检查是否有活跃 workflow（供 visibility rule + capability 注入使用）
-        let bindings = svc
-            .repos
-            .session_binding_repo
-            .list_by_owner(SessionOwnerType::Task, task.id)
-            .await
-            .unwrap_or_default();
-        let mut projection = None;
-        for binding in &bindings {
-            if let Ok(Some(p)) = crate::workflow::resolve_active_workflow_projection_for_session(
-                &binding.session_id,
-                svc.repos.session_binding_repo.as_ref(),
-                svc.repos.workflow_definition_repo.as_ref(),
-                svc.repos.lifecycle_definition_repo.as_ref(),
-                svc.repos.lifecycle_run_repo.as_ref(),
-            )
-            .await
-            {
-                projection = Some(p);
-                break;
-            }
-        }
-        projection
-    };
-
-    let workflow_capabilities = active_projection.as_ref().and_then(|p| {
-        p.primary_workflow
-            .as_ref()
-            .map(crate::capability::capabilities_from_active_workflow)
-    });
-
-    let cap_input = CapabilityResolverInput {
-        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
-            project_id: story.project_id,
-            story_id: task.story_id,
-            task_id: task.id,
-        },
-        agent_declared_capabilities: None,
-        workflow_ctx: crate::capability::SessionWorkflowContext {
-            has_active_workflow: active_projection.is_some(),
-            workflow_capabilities,
-        },
-        agent_mcp_servers: vec![],
-        available_presets: presets_for_project(svc.repos, story.project_id).await,
-        companion_slice_mode: None,
-    };
-    let cap_output = CapabilityResolver::resolve(&cap_input, svc.platform_config);
-    let effective_capability_keys: std::collections::BTreeSet<String> = cap_output
-        .effective_capabilities
-        .iter()
-        .map(|cap| cap.key().to_string())
-        .collect();
-
-    for mcp_config in &cap_output.platform_mcp_configs {
-        extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
-    }
-
+    // ── 构造 session runtime inputs(内部做 workflow projection 查询 + 一次 Resolver 调用) ──
+    //
+    // 历史上 prepare_task_turn_context 自己也查一次 projection + 调一次 Resolver,
+    // 造成同一 turn 两次 IO/Resolver。现在复用 runtime_inputs 的产出:
+    // flow_capabilities / effective_capability_keys / platform_mcp_configs 已经在
+    // `TaskSessionRuntimeInputs` 里携带,直接读取。
     let session_runtime_inputs = build_task_session_runtime_inputs(
         svc.repos,
         svc.vfs_service,
@@ -161,6 +106,11 @@ pub async fn prepare_task_turn_context(
         true,
     )
     .await?;
+
+    for mcp_config in &session_runtime_inputs.platform_mcp_configs {
+        extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
+    }
+
     if let (Some(workflow), Some(resolved_bindings)) = (
         session_runtime_inputs.workflow.clone(),
         session_runtime_inputs.resolved_bindings.clone(),
@@ -175,6 +125,8 @@ pub async fn prepare_task_turn_context(
         .as_ref()
         .is_some_and(|config| config.is_cloud_native());
     let vfs = session_runtime_inputs.vfs.clone();
+    let flow_capabilities = session_runtime_inputs.flow_capabilities.clone();
+    let effective_capability_keys = session_runtime_inputs.effective_capability_keys.clone();
 
     // build full agent context
     let built = build_task_agent_context(
@@ -205,30 +157,10 @@ pub async fn prepare_task_turn_context(
         resolved_config,
         use_cloud_native_agent,
         workspace,
-        flow_capabilities: cap_output.flow_capabilities,
+        flow_capabilities,
         effective_capability_keys,
         identity: None,
         post_turn_handler: None,
     })
 }
 
-/// 加载 project 级 MCP Preset 并展开成 resolver map,查询失败降级为空。
-async fn presets_for_project(
-    repos: &RepositorySet,
-    project_id: uuid::Uuid,
-) -> crate::capability::AvailableMcpPresets {
-    match repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
-        Err(error) => {
-            tracing::warn!(
-                project_id = %project_id,
-                error = %error,
-                "task turn: 加载 project MCP Preset 列表失败"
-            );
-            Default::default()
-        }
-    }
-}

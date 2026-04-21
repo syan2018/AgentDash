@@ -2,6 +2,8 @@ use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, task::Task,
     workspace::Workspace,
 };
+use agentdash_mcp::injection::McpInjectionConfig;
+use agentdash_spi::FlowCapabilities;
 
 use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::platform_config::PlatformConfig;
@@ -25,6 +27,14 @@ pub struct TaskSessionRuntimeInputs {
     /// context_bindings 预解析结果（session 创建时通过 VFS read 解析）
     pub resolved_bindings: Option<ResolveBindingsOutput>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
+    /// CapabilityResolver 产出的内置工具簇 —— turn_context / dispatcher 直接复用,
+    /// 避免 turn 路径第二次调用 Resolver。
+    pub flow_capabilities: FlowCapabilities,
+    /// CapabilityResolver 产出的 effective capability key 集合(供 hook runtime 追踪)。
+    pub effective_capability_keys: std::collections::BTreeSet<String>,
+    /// CapabilityResolver 产出的 platform MCP 注入配置 —— turn_context 用来
+    /// 构造 McpContextContributor,不再自己调 Resolver。
+    pub platform_mcp_configs: Vec<McpInjectionConfig>,
 }
 
 pub async fn build_task_session_runtime_inputs(
@@ -85,6 +95,13 @@ pub async fn build_task_session_runtime_inputs(
         .platform_mcp_configs
         .iter()
         .map(|c| acp_mcp_server_to_runtime(&c.to_acp_mcp_server()))
+        .collect();
+    let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
+    let flow_capabilities = cap_output.flow_capabilities.clone();
+    let effective_capability_keys: std::collections::BTreeSet<String> = cap_output
+        .effective_capabilities
+        .iter()
+        .map(|c| c.key().to_string())
         .collect();
 
     let use_vfs = resolved_config
@@ -150,6 +167,9 @@ pub async fn build_task_session_runtime_inputs(
         workflow,
         resolved_bindings,
         mcp_servers,
+        flow_capabilities,
+        effective_capability_keys,
+        platform_mcp_configs,
     })
 }
 

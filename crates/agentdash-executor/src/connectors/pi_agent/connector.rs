@@ -232,8 +232,12 @@ impl PiAgentConnector {
     fn build_runtime_system_prompt(
         &self,
         context: &ExecutionContext,
-        tool_names: &[String],
+        runtime_tools: &[DynAgentTool],
     ) -> String {
+        let tool_names: Vec<String> = runtime_tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
         let mut sections: Vec<String> = Vec::new();
 
         // ── 1. Identity: 基础人设 ──
@@ -303,13 +307,17 @@ impl PiAgentConnector {
         }
 
         // ── 4. Tools: 可用工具及使用规范 ──
-        if !tool_names.is_empty() {
+        if !runtime_tools.is_empty() {
             let mut tool_section = String::from("## Tools\n\n");
+            let tool_lines = runtime_tools
+                .iter()
+                .map(describe_builtin_tool)
+                .collect::<Vec<_>>()
+                .join("\n");
+            tool_section.push_str("以下工具已注入当前会话，可直接调用：\n\n");
+            tool_section.push_str(&tool_lines);
+            tool_section.push_str("\n\n");
             if context.vfs.is_some() {
-                tool_section.push_str(&format!(
-                    "Available address-space tools: {}. Prefer mounts_list / fs_read / fs_glob / fs_grep / fs_apply_patch / shell_exec to inspect and edit files.\n\n",
-                    tool_names.join(", ")
-                ));
                 tool_section.push_str(
                     "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
 The mount prefix may be omitted when the session has exactly one mount. \
@@ -326,10 +334,6 @@ lines within a hunk are prefixed with space (context) / `-` (remove) / `+` (add)
 Paths may use `mount_id://path` to target a specific mount; paths without a prefix use the default mount.",
                 );
             } else {
-                tool_section.push_str(&format!(
-                    "可调用的内置工具：{}。优先使用工具读取/搜索/执行，不要臆测文件内容。\n\n",
-                    tool_names.join("、")
-                ));
                 let abs_hint = workspace_path_from_context(context)
                     .map(|root| root.display().to_string())
                     .unwrap_or_else(|_| "（未配置工作区路径）".to_string());
@@ -363,7 +367,7 @@ Paths may use `mount_id://path` to target a specific mount; paths without a pref
 
         // ── 7. Skills：从 session capabilities 渲染 ──
         if let Some(ref caps) = context.session_capabilities {
-            if let Some(skills_block) = format_skills_from_capabilities(caps, tool_names) {
+            if let Some(skills_block) = format_skills_from_capabilities(caps, &tool_names) {
                 sections.push(skills_block);
             }
         }
@@ -716,12 +720,8 @@ impl AgentConnector for PiAgentConnector {
             mcp_tools_runtime.extend(relay_mcp_tools);
             runtime_tools.extend(runtime_base_tools.iter().cloned());
             runtime_tools.extend(mcp_tools_runtime.iter().cloned());
-            let tool_names = runtime_tools
-                .iter()
-                .map(|tool| tool.name().to_string())
-                .collect::<Vec<_>>();
+            agent.set_system_prompt(self.build_runtime_system_prompt(&context, &runtime_tools));
             agent.set_tools(runtime_tools);
-            agent.set_system_prompt(self.build_runtime_system_prompt(&context, &tool_names));
             if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
                 agent.replace_messages(messages).await;
             }
@@ -1013,7 +1013,8 @@ async fn emit_pending_hook_trace_notifications(
 }
 
 use super::stream_mapper::{
-    ChunkEmitState, ToolCallEmitState, convert_event_to_notifications, describe_mcp_server,
+    ChunkEmitState, ToolCallEmitState, convert_event_to_notifications, describe_builtin_tool,
+    describe_mcp_server,
 };
 
 struct NoopBridge;
@@ -1129,6 +1130,59 @@ mod tests {
             default_mount_id: Some("workspace".to_string()),
             ..Default::default()
         }
+    }
+
+    struct MockTool {
+        name: String,
+        description: String,
+        schema: serde_json::Value,
+    }
+
+    #[async_trait::async_trait]
+    impl agentdash_agent::AgentTool for MockTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            &self.description
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            self.schema.clone()
+        }
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _args: serde_json::Value,
+            _cancel: tokio_util::sync::CancellationToken,
+            _on_update: Option<agentdash_agent::ToolUpdateCallback>,
+        ) -> Result<AgentToolResult, agentdash_agent::AgentToolError> {
+            unreachable!("MockTool::execute should not be called in prompt tests")
+        }
+    }
+
+    fn mock_tools(specs: &[(&str, &str)]) -> Vec<DynAgentTool> {
+        specs
+            .iter()
+            .map(|(name, description)| {
+                Arc::new(MockTool {
+                    name: (*name).to_string(),
+                    description: (*description).to_string(),
+                    schema: serde_json::json!({}),
+                }) as DynAgentTool
+            })
+            .collect()
+    }
+
+    fn mock_tool_with_schema(
+        name: &str,
+        description: &str,
+        schema: serde_json::Value,
+    ) -> DynAgentTool {
+        Arc::new(MockTool {
+            name: name.to_string(),
+            description: description.to_string(),
+            schema,
+        }) as DynAgentTool
     }
 
     #[derive(Default)]
@@ -2081,6 +2135,146 @@ mod tests {
     }
 
     #[test]
+    fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
+        // 回归：ToolCallStart 之前如果会 bump entry_index，
+        // MessageEnd 的 reconcile 会命中空 state，把整段文本当作新 chunk 重发一次，
+        // 前端就会出现"工具调用前后两条几乎相同的文本气泡"。
+        let delta_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("he")],
+                tool_calls: vec![],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::TextDelta {
+                content_index: 0,
+                text: "he".to_string(),
+            },
+        };
+        let tool_start_event = AgentEvent::MessageUpdate {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("hello")],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "ls" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+            event: AssistantStreamEvent::ToolCallStart {
+                content_index: 1,
+                tool_call_id: "tool-1".to_string(),
+                name: "shell_exec".to_string(),
+            },
+        };
+        let message_end = AgentEvent::MessageEnd {
+            message: AgentMessage::Assistant {
+                content: vec![ContentPart::text("hello")],
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "tool-1".to_string(),
+                    call_id: Some("tool-1".to_string()),
+                    name: "shell_exec".to_string(),
+                    arguments: serde_json::json!({ "command": "ls" }),
+                }],
+                stop_reason: Some(StopReason::ToolUse),
+                error_message: None,
+                usage: None,
+                timestamp: Some(agentdash_agent::types::now_millis()),
+            },
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_message_ids = HashMap::new();
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+
+        let delta_notifications = convert_event_to_notifications(
+            &delta_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+        let tool_notifications = convert_event_to_notifications(
+            &tool_start_event,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+        let end_notifications = convert_event_to_notifications(
+            &message_end,
+            &SessionId::new("session-1"),
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_message_ids,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(delta_notifications.len(), 1);
+        assert_eq!(tool_notifications.len(), 1);
+        assert_eq!(end_notifications.len(), 1);
+
+        let delta_chunk = match &delta_notifications[0].update {
+            SessionUpdate::AgentMessageChunk(chunk) => chunk,
+            other => panic!("unexpected update: {other:?}"),
+        };
+        let end_chunk = match &end_notifications[0].update {
+            SessionUpdate::AgentMessageChunk(chunk) => chunk,
+            other => panic!("unexpected update: {other:?}"),
+        };
+
+        // 关键断言：两个 chunk 共享同一个 message_id（同一条文本 entry），
+        // MessageEnd 只发 suffix "llo"，不是整段 "hello"。
+        assert_eq!(
+            delta_chunk.message_id, end_chunk.message_id,
+            "MessageEnd reconcile 必须命中 TextDelta 的 chunk_emit_state，否则前端会渲染成两条文本气泡"
+        );
+        match &end_chunk.content {
+            ContentBlock::Text(text) => assert_eq!(text.text, "llo"),
+            other => panic!("unexpected content block: {other:?}"),
+        }
+
+        // tool_call 与所属 message 的文本共享 entry_index
+        let delta_entry_index = delta_chunk
+            .meta
+            .as_ref()
+            .and_then(|m| agentdash_acp_meta::parse_agentdash_meta(m))
+            .and_then(|m| m.trace)
+            .and_then(|t| t.entry_index);
+        let tool_entry_index = match &tool_notifications[0].update {
+            SessionUpdate::ToolCall(call) => call
+                .meta
+                .as_ref()
+                .and_then(|m| agentdash_acp_meta::parse_agentdash_meta(m))
+                .and_then(|m| m.trace)
+                .and_then(|t| t.entry_index),
+            other => panic!("unexpected update: {other:?}"),
+        };
+        assert_eq!(
+            delta_entry_index, tool_entry_index,
+            "tool_call 与其所在 message 的文本应共享 entry_index"
+        );
+
+        // MessageEnd 后 entry_index 恰好 +1
+        assert_eq!(entry_index, 1);
+    }
+
+    #[test]
     fn runtime_system_prompt_prefers_relative_workspace_paths() {
         let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
         let context = ExecutionContext {
@@ -2100,13 +2294,66 @@ mod tests {
             session_capabilities: None,
         };
 
-        let prompt = connector.build_runtime_system_prompt(&context, &["shell".to_string()]);
+        let tools = mock_tools(&[("shell", "Run a shell command")]);
+        let prompt = connector.build_runtime_system_prompt(&context, &tools);
         assert!(prompt.contains("## Identity"));
         assert!(prompt.contains("## Workspace"));
         assert!(prompt.contains("## Tools"));
         assert!(prompt.contains("/tmp/test-workspace"));
-        assert!(prompt.contains("Available address-space tools"));
-        assert!(prompt.contains("mounts_list"));
+        assert!(prompt.contains("- **shell**: Run a shell command"));
+    }
+
+    #[test]
+    fn runtime_system_prompt_renders_tool_parameters() {
+        let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
+        let context = ExecutionContext {
+            turn_id: "turn-params".to_string(),
+            working_directory: PathBuf::from("/tmp/ws"),
+            environment_variables: HashMap::new(),
+            executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+            mcp_servers: vec![],
+            relay_mcp_server_names: Default::default(),
+            vfs: Some(test_vfs("/tmp/ws")),
+            hook_session: None,
+            flow_capabilities: Default::default(),
+            system_context: None,
+            runtime_delegate: None,
+            identity: None,
+            restored_session_state: None,
+            session_capabilities: None,
+        };
+
+        let tools = vec![mock_tool_with_schema(
+            "fs_read",
+            "Read a file",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Target path"},
+                    "start_line": {"type": "integer"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["path"],
+            }),
+        )];
+        let prompt = connector.build_runtime_system_prompt(&context, &tools);
+
+        assert!(
+            prompt.contains("- **fs_read**: Read a file"),
+            "should render tool header"
+        );
+        assert!(
+            prompt.contains("`path` (string, required): Target path"),
+            "should mark required param with description"
+        );
+        assert!(
+            prompt.contains("`start_line` (integer)"),
+            "should render optional param without required marker"
+        );
+        assert!(
+            prompt.contains("`tags` (array<string>)"),
+            "should render array element type"
+        );
     }
 
     #[test]
@@ -2153,7 +2400,7 @@ mod tests {
             }),
         };
 
-        let tools = ["fs_read".to_string(), "shell".to_string()];
+        let tools = mock_tools(&[("fs_read", "Read a file"), ("shell", "Run a shell command")]);
         let prompt = connector.build_runtime_system_prompt(&context, &tools);
 
         assert!(

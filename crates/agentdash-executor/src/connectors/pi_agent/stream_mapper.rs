@@ -8,7 +8,7 @@ use agent_client_protocol::{
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
-use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
+use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart, DynAgentTool};
 
 pub(super) fn describe_mcp_server(server: &agent_client_protocol::McpServer) -> String {
     let value = serde_json::to_value(server).unwrap_or_default();
@@ -25,6 +25,93 @@ pub(super) fn describe_mcp_server(server: &agent_client_protocol::McpServer) -> 
         .and_then(|item| item.as_str())
         .unwrap_or("unknown");
     format!("- {name} ({server_type}): {url}")
+}
+
+/// 内嵌工具的 prompt 描述，与 `describe_mcp_server` 形式对齐：
+/// 标题行 `- {name}: {description}`，下挂参数签名（从 JSON Schema 抽一级 properties）。
+pub(super) fn describe_builtin_tool(tool: &DynAgentTool) -> String {
+    let description = tool.description().trim();
+    let header = if description.is_empty() {
+        format!("- **{}**", tool.name())
+    } else {
+        format!("- **{}**: {}", tool.name(), description)
+    };
+    let params = format_parameters_brief(&tool.parameters_schema());
+    if params.is_empty() {
+        header
+    } else {
+        format!("{header}\n{params}")
+    }
+}
+
+/// 从 JSON Schema 的一级 `properties` + `required` 渲染参数签名。
+/// 嵌套对象/数组仅标注顶层类型，不展开，避免 prompt 爆炸。
+fn format_parameters_brief(schema: &serde_json::Value) -> String {
+    let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) else {
+        return String::new();
+    };
+    if properties.is_empty() {
+        return String::new();
+    }
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    properties
+        .iter()
+        .map(|(name, spec)| {
+            let ty = extract_type_label(spec);
+            let marker = if required.contains(name.as_str()) {
+                ", required"
+            } else {
+                ""
+            };
+            let param_desc = spec
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            match param_desc {
+                Some(d) => format!("  - `{name}` ({ty}{marker}): {d}"),
+                None => format!("  - `{name}` ({ty}{marker})"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn extract_type_label(spec: &serde_json::Value) -> String {
+    let ty = spec.get("type");
+    let base = match ty {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|s| *s != "null")
+            .next()
+            .unwrap_or("any")
+            .to_string(),
+        _ => {
+            if spec.get("enum").is_some() {
+                "enum".to_string()
+            } else if spec.get("oneOf").is_some() || spec.get("anyOf").is_some() {
+                "union".to_string()
+            } else if spec.get("$ref").is_some() {
+                "ref".to_string()
+            } else {
+                "any".to_string()
+            }
+        }
+    };
+    if base == "array" {
+        if let Some(items) = spec.get("items") {
+            let item_ty = extract_type_label(items);
+            return format!("array<{item_ty}>");
+        }
+    }
+    base
 }
 
 fn make_meta(
@@ -202,7 +289,9 @@ pub(super) fn convert_event_to_notifications(
             kind,
             raw_input,
         };
-        *entry_index += 1;
+        // 不在此处 bump entry_index：tool_call 与包含它的 message 共享 entry_index，
+        // 由 MessageEnd 统一推进。否则会导致 MessageEnd 按 bump 后的 index 查 chunk_emit_states
+        // 命中空 state，误判"无增量"而把整段文本作为新 chunk 重发一次。
         tool_call_states.insert(tool_call_id.to_string(), state.clone());
         (state, true)
     }

@@ -422,6 +422,21 @@ impl AppState {
         };
 
         let mut state = Arc::new(state);
+
+        // 注入 PromptRequestAugmenter：让 SessionHub 的 auto-resume 等内部 prompt
+        // 路径与 HTTP 主通道共享同一条 `augment_prompt_request_for_owner`，
+        // 避免 owner / MCP / flow_capabilities / system_context 漂移。
+        {
+            let augmenter = Arc::new(
+                crate::bootstrap::prompt_augmenter::AppStatePromptAugmenter::new(state.clone()),
+            );
+            state
+                .services
+                .session_hub
+                .set_prompt_augmenter(augmenter)
+                .await;
+        }
+
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
             state.services.session_hub.clone(),

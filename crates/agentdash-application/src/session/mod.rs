@@ -14,6 +14,7 @@ mod memory_persistence;
 pub mod persistence;
 pub mod plan;
 pub mod assembler;
+pub mod augmenter;
 pub mod post_turn_handler;
 mod prompt_vfs;
 mod prompt_pipeline;
@@ -28,6 +29,7 @@ pub use assembler::{
     TaskRuntimeSpec, acp_mcp_servers_to_runtime, compose_companion, compose_lifecycle_node,
     extract_agent_mcp_entries, finalize_request, load_available_presets,
 };
+pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_notification;

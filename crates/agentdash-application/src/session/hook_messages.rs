@@ -95,5 +95,9 @@ pub(super) fn flow_constraints_section(items_md: &str) -> String {
 
 // ── Auto-resume prompt ──────────────────────────────────────────────────
 
-pub(super) const AUTO_RESUME_PROMPT: &str = "[系统自动续跑] 上一轮执行结束但 workflow stop gate 仍未满足。\
-     请继续完成未尽事项：补齐验证结论、提交必要产物，或推动状态流转。";
+// 刻意设计为不诱导 Agent 复述/总结上一轮：
+// - 不提"上一轮执行结束"（这是 LLM 被动触发 recap 的关键词）
+// - 不要求 Agent 做任何"汇报"，只要求继续推进 workflow step
+// - 语气贴近人类说"继续"，给 LLM 的信号是"直接动手"而不是"先回顾再动手"
+pub(super) const AUTO_RESUME_PROMPT: &str =
+    "继续推进当前 workflow step，直接执行未完成的动作或补齐证据。不要重复总结已发生的内容。";

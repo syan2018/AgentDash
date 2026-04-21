@@ -962,7 +962,7 @@ pub async fn prompt_session(
     ))
 }
 
-async fn augment_prompt_request_for_owner(
+pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
     req: PromptSessionRequest,

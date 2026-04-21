@@ -5,6 +5,7 @@ use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_agent_types::AgentMessage;
 use tokio::sync::{Mutex, broadcast};
 
+use super::augmenter::SharedPromptRequestAugmenter;
 use super::companion_wait::CompanionWaitRegistry;
 use super::continuation::{
     build_companion_human_response_notification, build_continuation_system_context_from_events,
@@ -35,6 +36,11 @@ pub struct SessionHub {
     pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
+    /// 将"裸" PromptSessionRequest 增强成与 HTTP 主通道一致的完整请求。
+    /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
+    /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
+    pub(super) prompt_augmenter:
+        Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,
 }
 
 impl SessionHub {
@@ -55,6 +61,7 @@ impl SessionHub {
             companion_wait_registry: CompanionWaitRegistry::default(),
             title_generator: None,
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
+            prompt_augmenter: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -92,6 +99,22 @@ impl SessionHub {
         callback: super::post_turn_handler::DynSessionTerminalCallback,
     ) {
         *self.terminal_callback.write().await = Some(callback);
+    }
+
+    /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
+    ///
+    /// **何时必须注入**：只要 SessionHub 会在内部构造 `PromptSessionRequest`（如
+    /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此增强器——否则
+    /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
+    ///
+    /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
+    pub async fn set_prompt_augmenter(&self, augmenter: SharedPromptRequestAugmenter) {
+        *self.prompt_augmenter.write().await = Some(augmenter);
+    }
+
+    /// 取出当前已注入的增强器（主要用于 hub 内部调用与测试检查）。
+    pub(super) async fn current_prompt_augmenter(&self) -> Option<SharedPromptRequestAugmenter> {
+        self.prompt_augmenter.read().await.clone()
     }
 
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
@@ -643,14 +666,42 @@ impl SessionHub {
     /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.
     /// Uses fire-and-forget to avoid awaiting `start_prompt` directly inside
     /// the stream-processing spawn block (whose Future is not Send).
+    ///
+    /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 augmenter，
+    /// 否则 owner context / MCP / flow_capabilities / system_context 会漂移，
+    /// Agent 失去工作流背景 → 复读上一轮。因此这里先从 hub 拿 augmenter 增强，
+    /// 再调 `start_prompt`；若未注入 augmenter（测试 / 非正式 embedding 场景）
+    /// 也不致命，但会打 warn，提示运营侧补齐。
     pub(super) fn schedule_hook_auto_resume(&self, session_id: String) {
         let hub = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let resume_req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(
+            let bare_req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(
                 msg::AUTO_RESUME_PROMPT,
             ));
-            if let Err(e) = hub.start_prompt(&session_id, resume_req).await {
+
+            let req = match hub.current_prompt_augmenter().await {
+                Some(augmenter) => match augmenter.augment(&session_id, bare_req).await {
+                    Ok(augmented) => augmented,
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "Hook auto-resume: augment 失败，跳过本次续跑以避免发送裸请求"
+                        );
+                        return;
+                    }
+                },
+                None => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "Hook auto-resume: prompt_augmenter 未注入，发送的 prompt 将缺少 owner / MCP / flow 上下文，Agent 可能复读"
+                    );
+                    bare_req
+                }
+            };
+
+            if let Err(e) = hub.start_prompt(&session_id, req).await {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,
@@ -2079,5 +2130,163 @@ mod tests {
         assert_eq!(terminal.0, turn_id);
         assert_eq!(terminal.1, TurnTerminalKind::Interrupted);
         assert_eq!(terminal.2.as_deref(), Some("执行已取消"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Fail-lock: auto-resume 必须经过 PromptRequestAugmenter
+    //
+    // 这条测试锁住 "主通道 vs auto-resume 对齐" 的契约：hub.rs schedule_hook_auto_resume
+    // 必须先调 augmenter.augment() 再走 start_prompt。如果未来有人把 augmenter 链路
+    // 删掉或短路，这条测试会失败，从而阻止 Agent "复读" bug 回归。
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn schedule_hook_auto_resume_routes_through_augmenter() {
+        use crate::session::augmenter::PromptRequestAugmenter;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct SpyAugmenter {
+            calls: Arc<AtomicUsize>,
+            captured_prompt: Arc<TokioMutex<Option<String>>>,
+            captured_mcp_len: Arc<AtomicUsize>,
+        }
+
+        #[async_trait::async_trait]
+        impl PromptRequestAugmenter for SpyAugmenter {
+            async fn augment(
+                &self,
+                _session_id: &str,
+                req: PromptSessionRequest,
+            ) -> Result<PromptSessionRequest, ConnectorError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let text = req
+                    .user_input
+                    .prompt_blocks
+                    .as_ref()
+                    .and_then(|blocks| blocks.first())
+                    .and_then(|block| block.get("text"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                *self.captured_prompt.lock().await = text;
+                self.captured_mcp_len
+                    .store(req.mcp_servers.len(), Ordering::SeqCst);
+                // 为了 augment 成功，返回一个 augmenter 预期会补齐的请求；
+                // 这里故意让后续 start_prompt 因缺少 executor_config 而失败——
+                // 我们验证的是 augmenter 被调用，不验证整条 prompt 链路跑通。
+                Err(ConnectorError::InvalidConfig(
+                    "spy augmenter stops here".to_string(),
+                ))
+            }
+        }
+
+        struct NoopConnector;
+
+        #[async_trait::async_trait]
+        impl AgentConnector for NoopConnector {
+            fn connector_id(&self) -> &'static str {
+                "noop"
+            }
+            fn connector_type(&self) -> agentdash_spi::ConnectorType {
+                agentdash_spi::ConnectorType::LocalExecutor
+            }
+            fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+                agentdash_spi::ConnectorCapabilities::default()
+            }
+            fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+                Vec::new()
+            }
+            async fn discover_options_stream(
+                &self,
+                _executor: &str,
+                _working_dir: Option<PathBuf>,
+            ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+            {
+                Ok(Box::pin(stream::empty()))
+            }
+            async fn prompt(
+                &self,
+                _session_id: &str,
+                _follow_up_session_id: Option<&str>,
+                _prompt: &PromptPayload,
+                _context: agentdash_spi::ExecutionContext,
+            ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+                Err(ConnectorError::Runtime(
+                    "connector should not be reached if augmenter stopped".to_string(),
+                ))
+            }
+            async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn approve_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+            async fn reject_tool_call(
+                &self,
+                _session_id: &str,
+                _tool_call_id: &str,
+                _reason: Option<String>,
+            ) -> Result<(), ConnectorError> {
+                Ok(())
+            }
+        }
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = test_hub(base.path().to_path_buf(), Arc::new(NoopConnector), None);
+        let session = hub.create_session("test").await.expect("create session");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_prompt = Arc::new(TokioMutex::new(None));
+        let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
+        hub.set_prompt_augmenter(Arc::new(SpyAugmenter {
+            calls: calls.clone(),
+            captured_prompt: captured_prompt.clone(),
+            captured_mcp_len: captured_mcp_len.clone(),
+        }))
+        .await;
+
+        hub.schedule_hook_auto_resume(session.id.clone());
+
+        // schedule_hook_auto_resume 内部 sleep 200ms 后才跑 augment，
+        // 给它 1.5s 余量完成。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "augmenter 必须在 auto-resume 时被调用一次，否则主通道与自动续跑会漂移"
+        );
+        let prompt_text = captured_prompt.lock().await.clone();
+        let expected = msg::AUTO_RESUME_PROMPT.to_string();
+        assert_eq!(
+            prompt_text.as_deref(),
+            Some(expected.as_str()),
+            "augmenter 收到的应是标准 AUTO_RESUME_PROMPT，而不是被改写过的"
+        );
+        assert_eq!(
+            captured_mcp_len.load(Ordering::SeqCst),
+            0,
+            "augmenter 的输入应该是裸请求（mcp_servers 为空），它自己负责补齐"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_resume_prompt_does_not_induce_recap() {
+        // 文案审计：AUTO_RESUME_PROMPT 不应包含会让 LLM 切换到 "先总结再动作"
+        // 模式的关键词。这条测试把"不要用这些词"写成可执行契约。
+        let prompt = msg::AUTO_RESUME_PROMPT;
+        let recap_triggers = ["上一轮执行结束", "请总结", "请回顾", "请汇报"];
+        for trigger in recap_triggers {
+            assert!(
+                !prompt.contains(trigger),
+                "AUTO_RESUME_PROMPT 出现了 recap 触发词 `{trigger}`：\n{prompt}"
+            );
+        }
     }
 }

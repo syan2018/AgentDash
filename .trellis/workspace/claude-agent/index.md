@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
-- **Last Active**: 2026-04-03
+- **Total Sessions**: 30
+- **Last Active**: 2026-04-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1318 | Active |
+| `journal-1.md` | ~1390 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -27,8 +27,10 @@
 ## Session History
 
 <!-- @@@auto:session-history -->
-| # | Date | Title | Commits |
-|---|------|-------|---------|
+| # | Date | Title | Commits | Branch |
+|---|------|-------|---------|--------|
+| 30 | 2026-04-21 | Workflow LifecycleEdge flow/artifact 双维度重构 | `f8defc9`, `62f2a4f`, `0b56c20` | `main` |
+| 29 | 2026-04-21 | 5 条 session 启动路径统一到 SessionRequestAssembler | `0b352f0`, `e7f96c5` | `main` |
 | 28 | 2026-04-03 | Session 生命周期与仓储恢复重构 | `b0bdb9f` |
 | 27 | 2026-04-02 | Agent 创建面板配置项补全 + ToolCluster 簇化注入管线 | `eab63d3`, `3ccfe9b` |
 | 26 | 2026-03-31 | 统一 Mount Patch 能力推进到组合式 Apply Patch | - |

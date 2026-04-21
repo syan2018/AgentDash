@@ -31,15 +31,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct RelayRuntimeToolProvider {
     service: Arc<RelayVfsService>,
-    canvas_repo: Arc<dyn CanvasRepository>,
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
-    agent_repo: Arc<dyn AgentRepository>,
-    agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    inline_file_repo: Arc<dyn InlineFileRepository>,
-    mcp_preset_repo: Arc<dyn McpPresetRepository>,
+    repos: crate::repository_set::RepositorySet,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
@@ -48,30 +40,14 @@ pub struct RelayRuntimeToolProvider {
 impl RelayRuntimeToolProvider {
     pub fn new(
         service: Arc<RelayVfsService>,
-        canvas_repo: Arc<dyn CanvasRepository>,
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
-        agent_repo: Arc<dyn AgentRepository>,
-        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        mcp_preset_repo: Arc<dyn McpPresetRepository>,
+        repos: crate::repository_set::RepositorySet,
         session_hub_handle: SharedSessionHubHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             service,
-            canvas_repo,
-            session_binding_repo,
-            agent_repo,
-            agent_link_repo,
-            lifecycle_definition_repo,
-            workflow_definition_repo,
-            lifecycle_run_repo,
-            inline_file_repo,
-            mcp_preset_repo,
+            repos,
             session_hub_handle,
             inline_persister,
             platform_config,
@@ -183,12 +159,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         // Workflow 簇：lifecycle node 推进
         if clusters.contains(&ToolCluster::Workflow) {
             tools.push(Arc::new(CompleteLifecycleNodeTool::new(
-                self.session_binding_repo.clone(),
-                self.lifecycle_definition_repo.clone(),
-                self.workflow_definition_repo.clone(),
-                self.lifecycle_run_repo.clone(),
-                self.inline_file_repo.clone(),
-                self.mcp_preset_repo.clone(),
+                self.repos.clone(),
                 session_hub.clone(),
                 context,
                 self.platform_config.clone(),
@@ -198,9 +169,9 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         // Collaboration 簇：Companion 协作 + Hook action 解析
         if clusters.contains(&ToolCluster::Collaboration) {
             tools.push(Arc::new(CompanionRequestTool::new(
-                self.session_binding_repo.clone(),
-                self.agent_repo.clone(),
-                self.agent_link_repo.clone(),
+                self.repos.session_binding_repo.clone(),
+                self.repos.agent_repo.clone(),
+                self.repos.agent_link_repo.clone(),
                 self.session_hub_handle.clone(),
                 context,
             )));
@@ -214,11 +185,11 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         if clusters.contains(&ToolCluster::Canvas) {
             if let Some(project_id) = project_id_from_context(context) {
                 tools.push(Arc::new(ListCanvasesTool::new(
-                    self.canvas_repo.clone(),
+                    self.repos.canvas_repo.clone(),
                     project_id,
                 )));
                 tools.push(Arc::new(StartCanvasTool::new(
-                    self.canvas_repo.clone(),
+                    self.repos.canvas_repo.clone(),
                     project_id,
                     shared_vfs.clone(),
                     self.session_hub_handle.clone(),
@@ -228,7 +199,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         .map(|session| session.session_id().to_string()),
                 )));
                 tools.push(Arc::new(BindCanvasDataTool::new(
-                    self.canvas_repo.clone(),
+                    self.repos.canvas_repo.clone(),
                     project_id,
                 )));
 
@@ -238,7 +209,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     .map(|session| session.session_id().to_string())
                 {
                     tools.push(Arc::new(PresentCanvasTool::new(
-                        self.canvas_repo.clone(),
+                        self.repos.canvas_repo.clone(),
                         self.session_hub_handle.clone(),
                         session_id,
                         context.turn_id.clone(),

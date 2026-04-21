@@ -33,12 +33,7 @@ use super::active_workflow_locator_from_snapshot;
 /// agent 调用此工具 → Orchestrator 验证 → 放行或拒绝。
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    inline_file_repo: Arc<dyn InlineFileRepository>,
-    mcp_preset_repo: Arc<dyn McpPresetRepository>,
+    repos: crate::repository_set::RepositorySet,
     session_hub: Option<SessionHub>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
@@ -69,47 +64,17 @@ pub struct CompleteLifecycleNodeParams {
 
 impl CompleteLifecycleNodeTool {
     pub fn new(
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        mcp_preset_repo: Arc<dyn McpPresetRepository>,
+        repos: crate::repository_set::RepositorySet,
         session_hub: Option<SessionHub>,
         context: &ExecutionContext,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
-            session_binding_repo,
-            lifecycle_definition_repo,
-            workflow_definition_repo,
-            lifecycle_run_repo,
-            inline_file_repo,
-            mcp_preset_repo,
+            repos,
             session_hub,
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
             platform_config,
-        }
-    }
-
-    async fn load_available_presets(
-        &self,
-        project_id: Uuid,
-    ) -> crate::capability::AvailableMcpPresets {
-        match self.mcp_preset_repo.list_by_project(project_id).await {
-            Ok(presets) => presets
-                .into_iter()
-                .map(|p| (p.name, p.server_decl))
-                .collect(),
-            Err(error) => {
-                tracing::warn!(
-                    project_id = %project_id,
-                    error = %error,
-                    "advance_node: 加载 project MCP Preset 列表失败"
-                );
-                Default::default()
-            }
         }
     }
 }
@@ -154,6 +119,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             })?;
 
         let current_run = self
+            .repos
             .lifecycle_run_repo
             .get_by_id(locator.run_id)
             .await
@@ -190,7 +156,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             if all_terminal {
                 run.status = agentdash_domain::workflow::LifecycleRunStatus::Failed;
             }
-            self.lifecycle_run_repo
+            self.repos.lifecycle_run_repo
                 .update(&run)
                 .await
                 .map_err(|e| {
@@ -199,7 +165,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
 
             if let Some(summary) = &params.summary {
                 crate::workflow::materialize_step_summary(
-                    self.inline_file_repo.as_ref(),
+                    self.repos.inline_file_repo.as_ref(),
                     locator.run_id,
                     &locator.step_key,
                     summary,
@@ -236,6 +202,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
 
         // ── outcome == Completed (default): gate collision 检查 + 正常完成 ──
         let lifecycle_def = self
+            .repos
             .lifecycle_definition_repo
             .get_by_id(current_run.lifecycle_id)
             .await
@@ -259,7 +226,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
 
         if !required_output_keys.is_empty() {
             let port_output_map = crate::workflow::load_port_output_map(
-                self.inline_file_repo.as_ref(),
+                self.repos.inline_file_repo.as_ref(),
                 current_run.id,
             )
             .await;
@@ -284,7 +251,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                         state.status = LifecycleStepExecutionStatus::Failed;
                         state.completed_at = Some(chrono::Utc::now());
                         updated_run.last_activity_at = chrono::Utc::now();
-                        self.lifecycle_run_repo
+                        self.repos.lifecycle_run_repo
                             .update(&updated_run)
                             .await
                             .map_err(|e| {
@@ -312,7 +279,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                     }
 
                     updated_run.last_activity_at = chrono::Utc::now();
-                    self.lifecycle_run_repo
+                    self.repos.lifecycle_run_repo
                         .update(&updated_run)
                         .await
                         .map_err(|e| {
@@ -343,8 +310,8 @@ impl AgentTool for CompleteLifecycleNodeTool {
         }
 
         let service = LifecycleRunService::new(
-            self.lifecycle_definition_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
+            self.repos.lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
         );
 
         let run = service
@@ -358,7 +325,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
 
         if let Some(summary) = &params.summary {
             crate::workflow::materialize_step_summary(
-                self.inline_file_repo.as_ref(),
+                self.repos.inline_file_repo.as_ref(),
                 locator.run_id,
                 &locator.step_key,
                 summary,
@@ -379,12 +346,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
         let orchestration_warning = if let Some(session_hub) = self.session_hub.clone() {
             let orchestrator = LifecycleOrchestrator::new(
                 session_hub.clone(),
-                self.session_binding_repo.clone(),
-                self.lifecycle_definition_repo.clone(),
-                self.workflow_definition_repo.clone(),
-                self.lifecycle_run_repo.clone(),
-                self.inline_file_repo.clone(),
-                self.mcp_preset_repo.clone(),
+                self.repos.clone(),
                 self.platform_config.clone(),
             );
             match orchestrator
@@ -407,7 +369,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     .get_runtime_mcp_servers(hook_session.session_id())
                                     .await;
                                 let available_presets =
-                                    self.load_available_presets(run.project_id).await;
+                                    crate::session::load_available_presets(&self.repos, run.project_id).await;
                                 let cap_output = CapabilityResolver::resolve(
                                     &CapabilityResolverInput {
                                         owner_ctx,

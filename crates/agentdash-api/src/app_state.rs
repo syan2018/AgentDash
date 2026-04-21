@@ -185,6 +185,32 @@ impl AppState {
 
         let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
 
+        // RepositorySet —— 提前构造,供 build_pi_agent_connector / RoutineExecutor / AppState 共用
+        let repos = RepositorySet {
+            project_repo: project_repo.clone(),
+            canvas_repo: canvas_repo.clone(),
+            workspace_repo: workspace_repo.clone(),
+            story_repo: story_repo.clone(),
+            state_change_repo: state_change_repo.clone(),
+            task_repo: task_repo.clone(),
+            task_command_repo: task_repo.clone(),
+            session_binding_repo: session_binding_repo.clone(),
+            backend_repo: backend_repo.clone(),
+            auth_session_repo: auth_session_repo.clone(),
+            user_directory_repo: user_directory_repo.clone(),
+            settings_repo: settings_repo.clone(),
+            llm_provider_repo: llm_provider_repo.clone(),
+            mcp_preset_repo: mcp_preset_repo.clone(),
+            agent_repo: agent_repo.clone(),
+            agent_link_repo: agent_repo.clone(),
+            workflow_definition_repo: workflow_repo.clone(),
+            lifecycle_definition_repo: workflow_repo.clone(),
+            lifecycle_run_repo: workflow_repo.clone(),
+            routine_repo: routine_repo.clone(),
+            routine_execution_repo: routine_execution_repo.clone(),
+            inline_file_repo: inline_file_repo.clone(),
+        };
+
         let backend_registry = BackendRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
@@ -232,15 +258,7 @@ impl AppState {
             settings_repo: settings_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
             vfs_service: vfs_service.clone(),
-            canvas_repo: canvas_repo.clone(),
-            session_binding_repo: session_binding_repo.clone(),
-            agent_repo: agent_repo.clone(),
-            agent_link_repo: agent_repo.clone(),
-            lifecycle_definition_repo: workflow_repo.clone(),
-            workflow_definition_repo: workflow_repo.clone(),
-            lifecycle_run_repo: workflow_repo.clone(),
-            inline_file_repo: inline_file_repo.clone(),
-            mcp_preset_repo: mcp_preset_repo.clone(),
+            repos: repos.clone(),
             session_hub_handle: session_hub_handle.clone(),
             inline_persister: Some(inline_persister),
             mcp_relay_provider: backend_registry.clone(),
@@ -296,12 +314,7 @@ impl AppState {
             let orchestrator =
                 Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
                     session_hub.clone(),
-                    session_binding_repo.clone(),
-                    workflow_repo.clone(),
-                    workflow_repo.clone(),
-                    workflow_repo.clone(),
-                    inline_file_repo.clone(),
-                    mcp_preset_repo.clone(),
+                    repos.clone(),
                     platform_config.clone(),
                 ));
             session_hub.set_terminal_callback(orchestrator).await;
@@ -354,31 +367,6 @@ impl AppState {
         }
 
         let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
-
-        let repos = RepositorySet {
-            project_repo,
-            canvas_repo,
-            workspace_repo,
-            story_repo,
-            state_change_repo,
-            task_repo,
-            task_command_repo: task_command_repo_port,
-            session_binding_repo,
-            backend_repo,
-            auth_session_repo,
-            user_directory_repo,
-            settings_repo,
-            llm_provider_repo,
-            mcp_preset_repo,
-            agent_repo: agent_repo.clone(),
-            agent_link_repo: agent_repo,
-            workflow_definition_repo: workflow_repo.clone(),
-            lifecycle_definition_repo: workflow_repo.clone(),
-            lifecycle_run_repo: workflow_repo,
-            routine_repo: routine_repo.clone(),
-            routine_execution_repo: routine_execution_repo.clone(),
-            inline_file_repo: inline_file_repo.clone(),
-        };
 
         let runtime_reconciler = Arc::new(
             agentdash_application::reconcile::runtime::RuntimeReconciler::new(
@@ -448,6 +436,8 @@ impl AppState {
                 state.services.vfs_service.clone(),
                 state.services.connector.clone(),
                 state.config.platform_config.clone(),
+                state.services.contributor_registry.clone(),
+                state.services.backend_registry.clone(),
             ));
             // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）
             // SAFETY: 此时 state 的 Arc 引用计数为 1，get_mut 保证成功
@@ -504,15 +494,7 @@ struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
     vfs_service: Arc<RelayVfsService>,
-    canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
-    agent_repo: Arc<dyn agentdash_domain::agent::AgentRepository>,
-    agent_link_repo: Arc<dyn agentdash_domain::agent::ProjectAgentLinkRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_definition_repo: Arc<dyn agentdash_domain::workflow::WorkflowDefinitionRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
-    mcp_preset_repo: Arc<dyn agentdash_domain::mcp_preset::McpPresetRepository>,
+    repos: RepositorySet,
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<
         Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>,
@@ -533,15 +515,7 @@ async fn build_pi_agent_connector(
     connector.set_llm_provider_repository(deps.llm_provider_repo);
     connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
         deps.vfs_service,
-        deps.canvas_repo,
-        deps.session_binding_repo,
-        deps.agent_repo,
-        deps.agent_link_repo,
-        deps.lifecycle_definition_repo,
-        deps.workflow_definition_repo,
-        deps.lifecycle_run_repo,
-        deps.inline_file_repo,
-        deps.mcp_preset_repo,
+        deps.repos,
         deps.session_hub_handle,
         deps.inline_persister,
         deps.platform_config,

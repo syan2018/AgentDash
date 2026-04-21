@@ -17,17 +17,13 @@ use tokio::time::MissedTickBehavior;
 
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::project::context_builder::build_project_owner_prompt_blocks;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::session::plan_builder::{
-    SessionOwnerVariant, SessionPlanBuilder, SessionPlanInput, SessionPlanServices,
-};
 use agentdash_application::session::{
-    PromptSessionRequest, SessionBootstrapAction, SessionExecutionState, SessionMeta,
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
+    AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PromptSessionRequest,
+    SessionBootstrapAction, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
+    SessionRepositoryRehydrateMode, SessionRequestAssembler, UserPromptInput, finalize_request,
     resolve_session_prompt_lifecycle,
 };
-use agentdash_application::story::context_builder::build_story_owner_prompt_blocks;
 use agentdash_application::task::execution::ExecutionPhase;
 use agentdash_application::task::gateway::{TaskTurnServices, prepare_task_turn_context};
 use agentdash_domain::{
@@ -1127,14 +1123,6 @@ fn finalize_augmented_request(
     req.effective_capability_keys = Some(effective_capability_keys);
 }
 
-fn session_plan_services(state: &AppState) -> SessionPlanServices<'_> {
-    SessionPlanServices {
-        vfs_service: state.services.vfs_service.as_ref(),
-        canvas_repo: state.repos.canvas_repo.as_ref(),
-        availability: state.services.backend_registry.as_ref(),
-    }
-}
-
 /// 查询 project 级 MCP Preset 并展开为 resolver 消费的 map。
 /// 查询失败降级为空 map, session 创建不被 Preset 读失败阻断。
 async fn load_available_presets(
@@ -1204,83 +1192,41 @@ async fn build_story_owner_prompt_request(
             )
         })?;
 
-    let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
-        agentdash_application::capability::SessionWorkflowRepos {
-            agent_link: state.repos.agent_link_repo.as_ref(),
-            lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
-            workflow_def: state.repos.workflow_definition_repo.as_ref(),
-        },
-        agentdash_application::capability::SessionWorkflowOwner::Story {
-            project_id: project.id,
-        },
-    )
-    .await;
-
-    let plan = SessionPlanBuilder::build(
-        &session_plan_services(state),
-        SessionPlanInput {
-            owner: SessionOwnerVariant::Story { story, project, workspace },
-            effective_agent_type: Some(effective_executor_config.executor.as_str()),
-            platform_config: &state.config.platform_config,
-            visible_canvas_mount_ids,
-            workflow_ctx,
-            agent_mcp_servers: vec![],
-            available_presets: load_available_presets(state, project.id).await,
-            request_mcp_servers: req.mcp_servers.clone(),
-            existing_vfs: req.vfs.clone(),
-            agent_declared_capabilities: None,
-        },
-    )
-    .await
-    .map_err(ApiError::BadRequest)?;
-
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    let (system_context, prompt_blocks, bootstrap_action) = match lifecycle_kind {
-        SessionPromptLifecycle::OwnerBootstrap => (
-            Some(plan.context_markdown.clone()),
-            build_story_owner_prompt_blocks(story.id, plan.context_markdown.clone(), user_prompt_blocks),
-            SessionBootstrapAction::OwnerContext,
-        ),
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::SystemContext,
-        ) => (
-            state
-                .services
-                .session_hub
-                .build_continuation_system_context(session_id, Some(&plan.context_markdown))
-                .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
-            user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::ExecutorState,
-        ) => (
-            Some(plan.context_markdown.clone()),
-            user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
-        SessionPromptLifecycle::Plain => (None, user_prompt_blocks, SessionBootstrapAction::None),
-    };
-    req.user_input.executor_config = Some(effective_executor_config);
 
-    finalize_augmented_request(
-        &mut req,
-        system_context,
-        prompt_blocks,
-        workspace,
-        plan.vfs,
-        plan.effective_mcp_servers,
-        plan.flow_capabilities,
-        plan.effective_capability_keys,
-        bootstrap_action,
+    let lifecycle = map_owner_prompt_lifecycle(
+        state,
+        session_id,
+        lifecycle_kind,
+        None, // RepositoryRehydrate(SystemContext) 预算在 compose 内;此处传 None 让 compose 走默认
     );
+    let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
 
-    Ok(req)
+    let assembler = build_session_assembler(state);
+    let prepared = assembler
+        .compose_owner_bootstrap(OwnerBootstrapSpec {
+            owner: OwnerScope::Story {
+                story,
+                project,
+                workspace,
+            },
+            executor_config: effective_executor_config,
+            user_prompt_blocks,
+            agent_mcp: AgentLevelMcp::default(),
+            request_mcp_servers: req.mcp_servers.clone(),
+            existing_vfs: req.vfs.clone(),
+            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
+            agent_declared_capabilities: None,
+            lifecycle,
+        })
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    Ok(finalize_request(req, prepared))
 }
 
 async fn build_project_owner_prompt_request(
@@ -1319,123 +1265,111 @@ async fn build_project_owner_prompt_request(
         }
         None => project_agent.executor_config.clone(),
     };
-    let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
-        project_agent
-            .preset_mcp_servers
-            .iter()
-            .filter_map(|s| {
-                let name = match s {
-                    agent_client_protocol::McpServer::Http(h) => h.name.clone(),
-                    agent_client_protocol::McpServer::Sse(h) => h.name.clone(),
-                    agent_client_protocol::McpServer::Stdio(h) => h.name.clone(),
-                    _ => return None,
-                };
-                Some(agentdash_application::capability::AgentMcpServerEntry {
-                    name,
-                    server: s.clone(),
-                })
-            })
-            .collect();
 
-    let workflow_ctx = match uuid::Uuid::parse_str(agent_key) {
-        Ok(agent_uuid) => {
-            agentdash_application::capability::resolve_session_workflow_context(
-                agentdash_application::capability::SessionWorkflowRepos {
-                    agent_link: state.repos.agent_link_repo.as_ref(),
-                    lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
-                    workflow_def: state.repos.workflow_definition_repo.as_ref(),
-                },
-                agentdash_application::capability::SessionWorkflowOwner::Project {
-                    project_id: project.id,
-                    agent_id: agent_uuid,
-                },
-            )
-            .await
-        }
-        Err(_) => agentdash_application::capability::SessionWorkflowContext::NONE,
-    };
-
-    let plan = SessionPlanBuilder::build(
-        &session_plan_services(state),
-        SessionPlanInput {
-            owner: SessionOwnerVariant::Project {
-                project,
-                workspace: workspace.as_ref(),
-                agent_display_name: project_agent.display_name.clone(),
-                preset_name: project_agent.preset_name.clone(),
-                preset_mcp_servers: project_agent.preset_mcp_servers.clone(),
-                relay_mcp_server_names: project_agent.relay_mcp_server_names.clone(),
-            },
-            effective_agent_type: Some(effective_executor_config.executor.as_str()),
-            platform_config: &state.config.platform_config,
-            visible_canvas_mount_ids,
-            workflow_ctx,
-            agent_mcp_servers: agent_mcp_entries,
-            available_presets: load_available_presets(state, project.id).await,
-            request_mcp_servers: req.mcp_servers.clone(),
-            existing_vfs: req.vfs.clone(),
-            agent_declared_capabilities: effective_executor_config
-                .tool_clusters
-                .as_ref()
-                .cloned(),
-        },
-    )
-    .await
-    .map_err(ApiError::BadRequest)?;
-
-    req.relay_mcp_server_names.extend(plan.relay_mcp_server_names);
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    let (system_context, prompt_blocks, bootstrap_action) = match lifecycle_kind {
-        SessionPromptLifecycle::OwnerBootstrap => (
-            Some(plan.context_markdown.clone()),
-            build_project_owner_prompt_blocks(
-                project.id,
-                plan.context_markdown.clone(),
-                user_prompt_blocks,
-            ),
-            SessionBootstrapAction::OwnerContext,
-        ),
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::SystemContext,
-        ) => (
-            state
-                .services
-                .session_hub
-                .build_continuation_system_context(session_id, Some(&plan.context_markdown))
-                .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
+
+    let agent_id = uuid::Uuid::parse_str(agent_key).ok();
+    let agent_declared_capabilities = effective_executor_config.tool_clusters.as_ref().cloned();
+    let agent_display_name = project_agent.display_name.clone();
+    let preset_name = project_agent.preset_name.clone();
+    let preset_mcp_servers = project_agent.preset_mcp_servers.clone();
+    let relay_mcp_server_names = project_agent.relay_mcp_server_names.clone();
+
+    let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
+    let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
+
+    let assembler = build_session_assembler(state);
+    let prepared = assembler
+        .compose_owner_bootstrap(OwnerBootstrapSpec {
+            owner: OwnerScope::Project {
+                project,
+                workspace: workspace.as_ref(),
+                agent_id,
+                agent_display_name,
+                preset_name,
+            },
+            executor_config: effective_executor_config,
             user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
+            agent_mcp: AgentLevelMcp {
+                preset_mcp_servers,
+                relay_mcp_server_names,
+            },
+            request_mcp_servers: req.mcp_servers.clone(),
+            existing_vfs: req.vfs.clone(),
+            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
+            agent_declared_capabilities,
+            lifecycle,
+        })
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    Ok(finalize_request(req, prepared))
+}
+
+/// 构造 SessionRequestAssembler 实例(shared services 注入)。
+fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_> {
+    SessionRequestAssembler::new(
+        state.services.vfs_service.as_ref(),
+        state.repos.canvas_repo.as_ref(),
+        state.services.backend_registry.as_ref(),
+        &state.repos,
+        &state.config.platform_config,
+        state.services.contributor_registry.as_ref(),
+    )
+}
+
+/// `SessionPromptLifecycle` → `OwnerPromptLifecycle`,预留 continuation_system_context 槽位。
+fn map_owner_prompt_lifecycle(
+    _state: &Arc<AppState>,
+    _session_id: &str,
+    kind: SessionPromptLifecycle,
+    prebuilt_continuation: Option<String>,
+) -> OwnerPromptLifecycle {
+    match kind {
+        SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
+        SessionPromptLifecycle::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext) => {
+            OwnerPromptLifecycle::RepositoryRehydrate {
+                prebuilt_continuation_system_context: prebuilt_continuation,
+                include_markdown_as_system_context: false,
+            }
+        }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
-        ) => (
-            Some(plan.context_markdown.clone()),
-            user_prompt_blocks,
-            SessionBootstrapAction::None,
-        ),
-        SessionPromptLifecycle::Plain => (None, user_prompt_blocks, SessionBootstrapAction::None),
-    };
+        ) => OwnerPromptLifecycle::RepositoryRehydrate {
+            prebuilt_continuation_system_context: None,
+            include_markdown_as_system_context: true,
+        },
+        SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
+    }
+}
 
-    req.user_input.executor_config = Some(effective_executor_config);
-
-    finalize_augmented_request(
-        &mut req,
-        system_context,
-        prompt_blocks,
-        workspace.as_ref(),
-        plan.vfs,
-        plan.effective_mcp_servers,
-        plan.flow_capabilities,
-        plan.effective_capability_keys,
-        bootstrap_action,
-    );
-
-    Ok(req)
+/// 对 `RepositoryRehydrate(SystemContext)` 预算 continuation system context(SessionHub IO)。
+async fn resolve_continuation_system_context(
+    state: &Arc<AppState>,
+    session_id: &str,
+    lifecycle: OwnerPromptLifecycle,
+) -> Result<OwnerPromptLifecycle, ApiError> {
+    if let OwnerPromptLifecycle::RepositoryRehydrate {
+        prebuilt_continuation_system_context: None,
+        include_markdown_as_system_context: false,
+    } = lifecycle
+    {
+        let ctx = state
+            .services
+            .session_hub
+            .build_continuation_system_context(session_id, None)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        return Ok(OwnerPromptLifecycle::RepositoryRehydrate {
+            prebuilt_continuation_system_context: ctx,
+            include_markdown_as_system_context: false,
+        });
+    }
+    Ok(lifecycle)
 }
 
 async fn build_task_owner_prompt_request(

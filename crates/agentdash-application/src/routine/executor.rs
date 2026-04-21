@@ -13,23 +13,19 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
 
-use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, AgentMcpServerEntry,
-};
-
-use crate::vfs::{RelayVfsService, SessionMountTarget};
-use crate::canvas::append_visible_canvas_mounts;
-use crate::project::context_builder::{
-    ProjectContextBuildInput, build_project_context_markdown, build_project_owner_prompt_blocks,
-};
+use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
-use crate::runtime_bridge::acp_mcp_servers_to_runtime;
 use crate::session::SessionHub;
-use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{
-    PromptSessionRequest, SessionBootstrapAction, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, UserPromptInput, resolve_session_prompt_lifecycle,
+    PromptSessionRequest, SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
+    resolve_session_prompt_lifecycle,
 };
+use crate::session::{
+    AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionRequestAssembler,
+    finalize_request,
+};
+use crate::vfs::RelayVfsService;
+use crate::workspace::BackendAvailability;
 
 use super::template::render_prompt_template;
 
@@ -48,6 +44,8 @@ pub struct RoutineExecutor {
     vfs_service: Arc<RelayVfsService>,
     connector: Arc<dyn AgentConnector>,
     platform_config: crate::platform_config::SharedPlatformConfig,
+    contributor_registry: Arc<ContextContributorRegistry>,
+    availability: Arc<dyn BackendAvailability>,
 }
 
 struct RoutineAgentContext {
@@ -67,6 +65,8 @@ impl RoutineExecutor {
         vfs_service: Arc<RelayVfsService>,
         connector: Arc<dyn AgentConnector>,
         platform_config: crate::platform_config::SharedPlatformConfig,
+        contributor_registry: Arc<ContextContributorRegistry>,
+        availability: Arc<dyn BackendAvailability>,
     ) -> Self {
         Self {
             repos,
@@ -74,6 +74,8 @@ impl RoutineExecutor {
             vfs_service,
             connector,
             platform_config,
+            contributor_registry,
+            availability,
         }
     }
 
@@ -423,161 +425,80 @@ impl RoutineExecutor {
         let supports_repository_restore = self
             .connector
             .supports_repository_restore(agent_context.executor_config.executor.as_str());
-        let lifecycle =
+        let kind =
             resolve_session_prompt_lifecycle(&meta, has_live_runtime, supports_repository_restore);
 
-        let mut req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
-        req.user_input.executor_config = Some(agent_context.executor_config.clone());
-        req.relay_mcp_server_names
-            .extend(agent_context.relay_mcp_server_names.iter().cloned());
+        // Routine 的 prompt 是纯文本模板渲染结果 —— 包成单 text block 作为 user_prompt_blocks
+        let user_prompt_blocks = vec![serde_json::json!({
+            "type": "text",
+            "text": prompt,
+        })];
 
-        let mut vfs = Some(
-            self.vfs_service
-                .build_vfs(
-                    &agent_context.project,
-                    None,
-                    agent_context.workspace.as_ref(),
-                    SessionMountTarget::Project,
-                    Some(agent_context.executor_config.executor.as_str()),
-                )
-                .map_err(|e| format!("构建 VFS 失败: {e}"))?,
-        );
-        if let Some(space) = vfs.as_mut() {
-            append_visible_canvas_mounts(
-                self.repos.canvas_repo.as_ref(),
-                agent_context.project.id,
-                space,
-                &meta.visible_canvas_mount_ids,
-            )
-            .await
-            .map_err(|e| format!("挂载可见 canvas 失败: {e}"))?;
-        }
-
-        // ── CapabilityResolver 统一计算工具集 ──
-        let agent_mcp_entries: Vec<AgentMcpServerEntry> = agent_context
-            .preset_mcp_servers
-            .iter()
-            .filter_map(|s| {
-                let name = match s {
-                    McpServer::Http(h) => h.name.clone(),
-                    McpServer::Sse(h) => h.name.clone(),
-                    McpServer::Stdio(h) => h.name.clone(),
-                    _ => return None,
-                };
-                Some(AgentMcpServerEntry {
-                    name,
-                    server: s.clone(),
-                })
-            })
-            .collect();
-
-        // ── 解析 Routine session 的 workflow 上下文（与 Project 共用 agent_link 查询路径） ──
-        let workflow_ctx = crate::capability::resolve_session_workflow_context(
-            crate::capability::SessionWorkflowRepos {
-                agent_link: self.repos.agent_link_repo.as_ref(),
-                lifecycle_def: self.repos.lifecycle_definition_repo.as_ref(),
-                workflow_def: self.repos.workflow_definition_repo.as_ref(),
-            },
-            crate::capability::SessionWorkflowOwner::Routine {
-                project_id: agent_context.project.id,
-                agent_id: routine.agent_id,
-            },
-        )
-        .await;
-
-        let cap_input = CapabilityResolverInput {
-            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
-                project_id: agent_context.project.id,
-            },
-            agent_declared_capabilities: agent_context
-                .executor_config
-                .tool_clusters
-                .as_ref()
-                .map(|clusters| {
-                    // agent config 中的 tool_clusters 当前仅用于 FlowCapabilities 裁剪，
-                    // 未来可扩展为 capability key 声明
-                    clusters.clone()
-                }),
-            workflow_ctx,
-            agent_mcp_servers: agent_mcp_entries,
-            available_presets: load_available_presets(&self.repos, agent_context.project.id).await,
-            companion_slice_mode: None,
-        };
-        let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
-
-        let mut effective_mcp_servers: Vec<McpServer> = cap_output
-            .platform_mcp_configs
-            .iter()
-            .map(|c| c.to_acp_mcp_server())
-            .collect();
-        effective_mcp_servers.extend(agent_context.preset_mcp_servers.iter().cloned());
-
-        let runtime_vfs = vfs.clone();
-        let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
-        let (context_markdown, _) = build_project_context_markdown(ProjectContextBuildInput {
-            project: &agent_context.project,
-            workspace: agent_context.workspace.as_ref(),
-            vfs: runtime_vfs.as_ref(),
-            mcp_servers: &runtime_mcp_servers,
-            effective_agent_type: Some(agent_context.executor_config.executor.as_str()),
-            preset_name: agent_context.preset_name.as_deref(),
-            agent_display_name: agent_context.display_name.as_str(),
-        });
-
-        let user_prompt_blocks = req
-            .user_input
-            .prompt_blocks
-            .take()
-            .ok_or_else(|| "Routine prompt 缺少 prompt_blocks".to_string())?;
-
-        let (system_context, prompt_blocks, bootstrap_action) = match lifecycle {
-            SessionPromptLifecycle::OwnerBootstrap => (
-                Some(context_markdown.clone()),
-                build_project_owner_prompt_blocks(
-                    routine.project_id,
-                    context_markdown.clone(),
-                    user_prompt_blocks,
-                ),
-                SessionBootstrapAction::OwnerContext,
-            ),
+        // RepositoryRehydrate(SystemContext) 需要预查 continuation system context
+        let lifecycle = match kind {
+            SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
-            ) => (
-                self.session_hub
-                    .build_continuation_system_context(session_id, Some(&context_markdown))
+            ) => {
+                let ctx = self
+                    .session_hub
+                    .build_continuation_system_context(session_id, None)
                     .await
-                    .map_err(|e| format!("构建 continuation context 失败: {e}"))?,
-                user_prompt_blocks,
-                SessionBootstrapAction::None,
-            ),
+                    .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
+                OwnerPromptLifecycle::RepositoryRehydrate {
+                    prebuilt_continuation_system_context: ctx,
+                    include_markdown_as_system_context: false,
+                }
+            }
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
-            ) => (
-                Some(context_markdown.clone()),
-                user_prompt_blocks,
-                SessionBootstrapAction::None,
-            ),
-            SessionPromptLifecycle::Plain => {
-                (None, user_prompt_blocks, SessionBootstrapAction::None)
-            }
+            ) => OwnerPromptLifecycle::RepositoryRehydrate {
+                prebuilt_continuation_system_context: None,
+                include_markdown_as_system_context: true,
+            },
+            SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
         };
 
-        req.user_input.prompt_blocks = Some(prompt_blocks);
-        req.system_context = system_context;
-        req.bootstrap_action = bootstrap_action;
-
-        apply_workspace_defaults(
-            &mut req.user_input.working_dir,
-            &mut req.vfs,
-            agent_context.workspace.as_ref(),
+        let assembler = SessionRequestAssembler::new(
+            self.vfs_service.as_ref(),
+            self.repos.canvas_repo.as_ref(),
+            self.availability.as_ref(),
+            &self.repos,
+            &self.platform_config,
+            self.contributor_registry.as_ref(),
         );
-        if req.vfs.is_none() {
-            req.vfs = vfs;
-        }
-        req.mcp_servers = effective_mcp_servers;
-        req.flow_capabilities = Some(cap_output.flow_capabilities);
 
-        Ok(req)
+        let agent_declared_capabilities = agent_context
+            .executor_config
+            .tool_clusters
+            .as_ref()
+            .cloned();
+
+        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
+        let prepared = assembler
+            .compose_owner_bootstrap(OwnerBootstrapSpec {
+                owner: OwnerScope::Project {
+                    project: &agent_context.project,
+                    workspace: agent_context.workspace.as_ref(),
+                    agent_id: Some(routine.agent_id),
+                    agent_display_name: agent_context.display_name.clone(),
+                    preset_name: agent_context.preset_name.clone(),
+                },
+                executor_config: agent_context.executor_config.clone(),
+                user_prompt_blocks,
+                agent_mcp: AgentLevelMcp {
+                    preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
+                    relay_mcp_server_names: agent_context.relay_mcp_server_names.clone(),
+                },
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
+                agent_declared_capabilities,
+                lifecycle,
+            })
+            .await?;
+
+        Ok(finalize_request(base, prepared))
     }
 }
 
@@ -592,27 +513,6 @@ async fn resolve_project_workspace(
             .await
             .map_err(|e| format!("查询默认 Workspace 失败: {e}")),
         None => Ok(None),
-    }
-}
-
-/// 加载 project 级 MCP Preset 并展开为 resolver 消费的 map。查询失败降级为空。
-async fn load_available_presets(
-    repos: &RepositorySet,
-    project_id: Uuid,
-) -> crate::capability::AvailableMcpPresets {
-    match repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
-        Err(error) => {
-            tracing::warn!(
-                project_id = %project_id,
-                error = %error,
-                "routine executor: 加载 MCP Preset 列表失败"
-            );
-            Default::default()
-        }
     }
 }
 

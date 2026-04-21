@@ -10,29 +10,28 @@
 
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerCtx, SessionOwnerType,
+    SessionBinding, SessionBindingRepository, SessionOwnerType,
 };
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun,
-    LifecycleRunRepository, LifecycleStepDefinition, LifecycleStepExecutionStatus,
-    WorkflowDefinitionRepository,
+    LifecycleDefinition, LifecycleNodeType, LifecycleRun, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::platform_config::SharedPlatformConfig;
+use crate::repository_set::RepositorySet;
+use crate::session::{
+    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node,
+    finalize_request,
+};
 
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
 };
-use crate::vfs::build_lifecycle_mount_with_ports;
-use crate::runtime::Vfs;
+use crate::session::SessionHub;
 use crate::session::SessionTerminalCallback;
-use crate::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use crate::workflow::{ActivateLifecycleStepCommand, LifecycleRunService};
 
 #[derive(Debug)]
@@ -60,34 +59,19 @@ pub struct ActivatedPhaseNode {
 
 pub struct LifecycleOrchestrator {
     session_hub: SessionHub,
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    inline_file_repo: Arc<dyn InlineFileRepository>,
-    mcp_preset_repo: Arc<dyn McpPresetRepository>,
+    repos: RepositorySet,
     platform_config: SharedPlatformConfig,
 }
 
 impl LifecycleOrchestrator {
     pub fn new(
         session_hub: SessionHub,
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        mcp_preset_repo: Arc<dyn McpPresetRepository>,
+        repos: RepositorySet,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             session_hub,
-            session_binding_repo,
-            lifecycle_definition_repo,
-            workflow_definition_repo,
-            lifecycle_run_repo,
-            inline_file_repo,
-            mcp_preset_repo,
+            repos,
             platform_config,
         }
     }
@@ -102,8 +86,8 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_node_session_association(
             session_id,
-            self.session_binding_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
+            self.repos.session_binding_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
         else {
@@ -135,14 +119,14 @@ impl LifecycleOrchestrator {
         run_id: Uuid,
         project_id: Uuid,
     ) -> Result<Option<OrchestrationResult>, String> {
-        let run = self
+        let run = self.repos
             .lifecycle_run_repo
             .get_by_id(run_id)
             .await
             .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?
             .ok_or_else(|| format!("lifecycle run 不存在: {run_id}"))?;
 
-        let lifecycle = self
+        let lifecycle = self.repos
             .lifecycle_definition_repo
             .get_by_id(run.lifecycle_id)
             .await
@@ -204,8 +188,8 @@ impl LifecycleOrchestrator {
                 }
                 LifecycleNodeType::PhaseNode => {
                     let service = LifecycleRunService::new(
-                        self.lifecycle_definition_repo.as_ref(),
-                        self.lifecycle_run_repo.as_ref(),
+                        self.repos.lifecycle_definition_repo.as_ref(),
+                        self.repos.lifecycle_run_repo.as_ref(),
                     );
                     if let Err(e) = service
                         .activate_step(ActivateLifecycleStepCommand {
@@ -263,7 +247,7 @@ impl LifecycleOrchestrator {
             .map_err(|e| format!("创建 session 失败: {e}"))?;
         let session_id = meta.id.clone();
 
-        let parent_bindings = self
+        let parent_bindings = self.repos
             .session_binding_repo
             .list_by_session(parent_session_id)
             .await
@@ -281,7 +265,7 @@ impl LifecycleOrchestrator {
                 parent_binding.owner_id,
                 build_lifecycle_node_label(node_key),
             );
-            self.session_binding_repo
+            self.repos.session_binding_repo
                 .create(&binding)
                 .await
                 .map_err(|e| format!("创建 session binding 失败: {e}"))?;
@@ -293,14 +277,14 @@ impl LifecycleOrchestrator {
                 project_id,
                 build_lifecycle_node_label(node_key),
             );
-            self.session_binding_repo
+            self.repos.session_binding_repo
                 .create(&binding)
                 .await
                 .map_err(|e| format!("创建 session binding 失败: {e}"))?;
         }
 
         // 更新 LifecycleRun.step_states[node_key].session_id 并 activate
-        let latest_run = self
+        let latest_run = self.repos
             .lifecycle_run_repo
             .get_by_id(run_id)
             .await
@@ -318,7 +302,7 @@ impl LifecycleOrchestrator {
         updated_run
             .activate_step(node_key.as_str())
             .map_err(|e| format!("activate step 失败: {e}"))?;
-        self.lifecycle_run_repo
+        self.repos.lifecycle_run_repo
             .update(&updated_run)
             .await
             .map_err(|e| format!("更新 lifecycle run 失败: {e}"))?;
@@ -368,7 +352,8 @@ impl LifecycleOrchestrator {
         Ok(session_id)
     }
 
-    /// 构建 kickoff prompt，附带 input port 上下文引用和 output port 交付要求。
+    /// 委托给 [`compose_lifecycle_node`]:构造 kickoff prompt + vfs + cap + mcp,
+    /// 然后 start_prompt。
     async fn start_agent_node_prompt(
         &self,
         session_id: &str,
@@ -378,161 +363,38 @@ impl LifecycleOrchestrator {
         step_def: &LifecycleStepDefinition,
         executor_config: Option<agentdash_spi::AgentConfig>,
     ) -> Result<(), String> {
-        let node_key = &step_def.key;
-        let node_description = &step_def.description;
         self.session_hub
             .mark_owner_bootstrap_pending(session_id)
             .await
             .map_err(|e| format!("标记 owner bootstrap pending 失败: {e}"))?;
 
-        let lifecycle_key = &lifecycle.key;
-        let node_title = if node_description.trim().is_empty() {
-            format!("`{node_key}`")
-        } else {
-            format!("`{node_key}`（{}）", node_description.trim())
-        };
-
-        // ── output port 交付要求（从 step 级 ports 读取） ──
-        let output_ports = &step_def.output_ports[..];
-        let writable_port_keys: Vec<String> =
-            output_ports.iter().map(|p| p.key.clone()).collect();
-
-        let output_section = if output_ports.is_empty() {
-            String::new()
-        } else {
-            let items: Vec<String> = output_ports
-                .iter()
-                .map(|p| {
-                    format!(
-                        "- `lifecycle://artifacts/{}` — {}",
-                        p.key, p.description
-                    )
-                })
-                .collect();
-            format!(
-                "\n\n## 必须交付的产出\n\
-                 请将以下产出通过 `write_file` 写入对应路径：\n{}\n\n\
-                 **所有 output port 写入完成后**再调用 `complete_lifecycle_node`。",
-                items.join("\n")
-            )
-        };
-
-        // ── input port 上下文引用（从 step 级 ports + edges 推导前驱 port output） ──
-        let input_ports = &step_def.input_ports[..];
-        let input_section = if input_ports.is_empty() {
-            String::new()
-        } else {
-            let port_output_map = crate::workflow::load_port_output_map(
-                self.inline_file_repo.as_ref(),
-                run.id,
-            )
-            .await;
-
-            let mut items = Vec::new();
-            for ip in input_ports {
-                // 从 edges 中找到连入当前 node + port 的边
-                let source_edges: Vec<_> = lifecycle
-                    .edges
-                    .iter()
-                    .filter(|e| e.to_node == *node_key && e.to_port == ip.key)
-                    .collect();
-                if source_edges.is_empty() {
-                    items.push(format!(
-                        "- **{}**（{}）— 无前驱连接",
-                        ip.key, ip.description
-                    ));
-                } else {
-                    for edge in source_edges {
-                        let status = if port_output_map.contains_key(&edge.from_port) {
-                            "已就绪"
-                        } else {
-                            "未就绪"
-                        };
-                        items.push(format!(
-                            "- **{}**（{}）← `lifecycle://artifacts/{}` [{status}]",
-                            ip.key, ip.description, edge.from_port
-                        ));
-                    }
-                }
-            }
-            format!(
-                "\n\n## 输入上下文\n以下是来自前驱节点的产出，可通过 `read_file` 读取：\n{}",
-                items.join("\n")
-            )
-        };
-
-        let kickoff_prompt = format!(
-            "你正在执行 lifecycle `{lifecycle_key}` 的 node {node_title}。\n\
-             请先完成当前阶段工作，并在完成后调用 `complete_lifecycle_node` 工具提交总结与产物。\
-             {output_section}{input_section}"
-        );
-
-        // ── 构建带 port 写入权限的 lifecycle mount ──
-        let lifecycle_mount =
-            build_lifecycle_mount_with_ports(run.id, lifecycle_key, &writable_port_keys);
-        let vfs = Vfs {
-            mounts: vec![lifecycle_mount],
-            default_mount_id: None,
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let mut req =
-            PromptSessionRequest::from_user_input(UserPromptInput::from_text(kickoff_prompt));
-        req.user_input.executor_config = executor_config;
-        req.vfs = Some(vfs);
-
-        // ── step → workflow baseline capability resolution ──
-        // 新模型：step 本身不再承担能力声明,baseline 取自 step.workflow_key 指向的 workflow。
-        // 查不到 workflow 时,baseline 退化为空集,orchestrator 下游仅依赖 platform MCP。
-        let step_effective_caps = self
-            .resolve_step_workflow_capabilities(step_def, project_id)
-            .await;
-        if !step_effective_caps.is_empty() || self.platform_config.mcp_base_url.is_some() {
-            let parent_bindings = self
-                .session_binding_repo
-                .list_by_session(&run.session_id)
+        // 解析 step.workflow_key → WorkflowDefinition,作为 activate_step 的 workflow input
+        let workflow = match step_def.effective_workflow_key() {
+            Some(key) => self
+                .repos
+                .workflow_definition_repo
+                .get_by_project_and_key(project_id, key)
                 .await
-                .unwrap_or_default();
-            // workflow orchestrator 仅对 Project 级 session 驱动 run(lifecycle 绑定在
-            // project agent 上);若 binding 存在但非 Project 类型,保守降级为 Project。
-            // PR2 会把 parent binding → SessionOwnerCtx 的完整推导收口到 session_binding。
-            let owner_ctx = parent_bindings
-                .first()
-                .filter(|b| b.owner_type == SessionOwnerType::Project)
-                .map(|_| SessionOwnerCtx::Project { project_id })
-                .unwrap_or(SessionOwnerCtx::Project { project_id });
+                .ok()
+                .flatten(),
+            None => None,
+        };
 
-            let cap_input = CapabilityResolverInput {
-                owner_ctx,
-                agent_declared_capabilities: None,
-                workflow_ctx: crate::capability::SessionWorkflowContext {
-                    has_active_workflow: true,
-                    workflow_capabilities: Some(step_effective_caps),
-                },
-                agent_mcp_servers: vec![],
-                available_presets: self.load_available_presets(project_id).await,
-                companion_slice_mode: None,
-            };
-            let cap_output = CapabilityResolver::resolve(&cap_input, &self.platform_config);
-            req.flow_capabilities = Some(cap_output.flow_capabilities);
-            req.effective_capability_keys = Some(
-                cap_output
-                    .effective_capabilities
-                    .iter()
-                    .map(|c| c.key().to_string())
-                    .collect(),
-            );
+        let prepared = compose_lifecycle_node(
+            &self.repos,
+            &self.platform_config,
+            LifecycleNodeSpec {
+                run,
+                lifecycle,
+                step: step_def,
+                workflow: workflow.as_ref(),
+                inherited_executor_config: executor_config,
+            },
+        )
+        .await?;
 
-            let mcp_configs: Vec<_> = cap_output
-                .platform_mcp_configs
-                .into_iter()
-                .map(|c| c.to_acp_mcp_server())
-                .collect();
-            req.mcp_servers.extend(mcp_configs);
-            req.mcp_servers.extend(cap_output.custom_mcp_servers);
-        }
+        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
+        let req = finalize_request(base, prepared);
 
         self.session_hub
             .start_prompt(session_id, req)
@@ -551,7 +413,7 @@ impl LifecycleOrchestrator {
         let Some(workflow_key) = step_def.effective_workflow_key() else {
             return Vec::new();
         };
-        match self
+        match self.repos
             .workflow_definition_repo
             .get_by_project_and_key(project_id, workflow_key)
             .await
@@ -575,24 +437,6 @@ impl LifecycleOrchestrator {
                     "orchestrator: 加载 workflow 定义失败,capability baseline 退化为空"
                 );
                 Vec::new()
-            }
-        }
-    }
-
-    /// 加载 project 级 MCP Preset 并展开成 resolver map。
-    async fn load_available_presets(&self, project_id: Uuid) -> crate::capability::AvailableMcpPresets {
-        match self.mcp_preset_repo.list_by_project(project_id).await {
-            Ok(presets) => presets
-                .into_iter()
-                .map(|p| (p.name, p.server_decl))
-                .collect(),
-            Err(error) => {
-                tracing::warn!(
-                    project_id = %project_id,
-                    error = %error,
-                    "orchestrator: 加载 MCP Preset 列表失败"
-                );
-                Default::default()
             }
         }
     }

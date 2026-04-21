@@ -355,30 +355,36 @@ impl CompanionRequestTool {
             &self.mcp_servers,
             slice_mode,
         );
+        let base_req = PromptSessionRequest {
+            user_input: UserPromptInput {
+                prompt_blocks: None,
+                working_dir: Some(self.working_dir.clone()),
+                env: std::collections::HashMap::new(),
+                executor_config: None,
+            },
+            mcp_servers: Vec::new(),
+            relay_mcp_server_names: Default::default(),
+            vfs: None,
+            flow_capabilities: None,
+            effective_capability_keys: None,
+            system_context: self.system_context.clone(),
+            bootstrap_action: crate::session::SessionBootstrapAction::None,
+            identity: None,
+            post_turn_handler: None,
+        };
+        let prepared = crate::session::compose_companion(crate::session::CompanionSpec {
+            parent_vfs: self.vfs.as_ref(),
+            parent_mcp_servers: &self.mcp_servers,
+            parent_system_context: self.system_context.as_deref(),
+            slice_mode,
+            companion_executor_config,
+            dispatch_prompt: final_prompt,
+        });
         let turn_id = session_hub
             .start_prompt_with_follow_up(
                 &target_binding.session_id,
                 None,
-                PromptSessionRequest {
-                    user_input: UserPromptInput {
-                        prompt_blocks: Some(vec![serde_json::json!({
-                            "type": "text",
-                            "text": final_prompt,
-                        })]),
-                        working_dir: Some(self.working_dir.clone()),
-                        env: std::collections::HashMap::new(),
-                        executor_config: Some(companion_executor_config),
-                    },
-                    mcp_servers: execution_slice.mcp_servers.clone(),
-                    relay_mcp_server_names: Default::default(),
-                    vfs: execution_slice.vfs.clone(),
-                    flow_capabilities: Some(build_companion_flow_capabilities(slice_mode)),
-                    effective_capability_keys: None,
-                    system_context: self.system_context.clone(),
-                    bootstrap_action: crate::session::SessionBootstrapAction::OwnerContext,
-                    identity: None,
-                    post_turn_handler: None,
-                },
+                crate::session::finalize_request(base_req, prepared),
             )
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;

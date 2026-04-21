@@ -1,18 +1,13 @@
 use agentdash_domain::common::Vfs;
 use agentdash_domain::task::Task;
 
-use crate::vfs::RelayVfsService;
+use crate::context::{BuiltTaskAgentContext, ContextContributorRegistry};
 use crate::platform_config::PlatformConfig;
-use crate::context::{
-    BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
-    StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
-    WorkflowContextBindingsContributor, build_declared_source_warning_fragment,
-    build_task_agent_context, resolve_workspace_declared_sources,
-};
 use crate::repository_set::RepositorySet;
+use crate::session::{SessionRequestAssembler, TaskRuntimePhase, TaskRuntimeSpec};
 use crate::task::execution::{ExecutionPhase, TaskExecutionError};
 use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
-use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
+use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 use agentdash_domain::common::AgentConfig;
 
@@ -43,9 +38,10 @@ pub struct PreparedTurnContext {
     pub post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
 }
 
-/// 从 Task / Story / Project / Workspace 等上下文中构建 turn 执行所需的完整信息
+/// 从 Task / Story / Project / Workspace 等上下文中构建 turn 执行所需的完整信息。
 ///
-/// 这是 `start_task_turn` 中"准备阶段"的核心逻辑，不涉及实际 dispatch。
+/// 内部完全委托给 [`SessionRequestAssembler::compose_task_runtime`],
+/// 这里只做 owner 上下文加载与 phase enum 映射。
 pub async fn prepare_task_turn_context(
     svc: &TaskTurnServices<'_>,
     task: &Task,
@@ -58,109 +54,43 @@ pub async fn prepare_task_turn_context(
         .await
         .map_err(map_internal_error)?;
 
-    let mut extra_contributors: Vec<Box<dyn ContextContributor>> = Vec::new();
-
-    // declared sources resolution
-    let mut declared_sources = story.context.source_refs.clone();
-    declared_sources.extend(task.agent_binding.context_sources.clone());
-    let resolved_workspace_sources = resolve_workspace_declared_sources(
+    let assembler = SessionRequestAssembler::new(
+        svc.vfs_service,
+        svc.repos.canvas_repo.as_ref(),
         svc.availability,
-        svc.vfs_service,
-        &declared_sources,
-        workspace.as_ref(),
-        86,
-    )
-    .await
-    .map_err(TaskExecutionError::UnprocessableEntity)?;
-
-    if !resolved_workspace_sources.fragments.is_empty() {
-        extra_contributors.push(Box::new(StaticFragmentsContributor::new(
-            resolved_workspace_sources.fragments,
-        )));
-    }
-    if !resolved_workspace_sources.warnings.is_empty() {
-        extra_contributors.push(Box::new(StaticFragmentsContributor::new(vec![
-            build_declared_source_warning_fragment(
-                "declared_source_warnings",
-                96,
-                &resolved_workspace_sources.warnings,
-            ),
-        ])));
-    }
-
-    // ── 构造 session runtime inputs(内部做 workflow projection 查询 + 一次 Resolver 调用) ──
-    //
-    // 历史上 prepare_task_turn_context 自己也查一次 projection + 调一次 Resolver,
-    // 造成同一 turn 两次 IO/Resolver。现在复用 runtime_inputs 的产出:
-    // flow_capabilities / effective_capability_keys / platform_mcp_configs 已经在
-    // `TaskSessionRuntimeInputs` 里携带,直接读取。
-    let session_runtime_inputs = build_task_session_runtime_inputs(
         svc.repos,
-        svc.vfs_service,
         svc.platform_config,
-        task,
-        &story,
-        &project,
-        workspace.as_ref(),
-        connector_config.cloned(),
-        true,
-    )
-    .await?;
+        svc.contributor_registry,
+    );
 
-    for mcp_config in &session_runtime_inputs.platform_mcp_configs {
-        extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
-    }
+    let runtime_phase = match phase {
+        ExecutionPhase::Start => TaskRuntimePhase::Start,
+        ExecutionPhase::Continue => TaskRuntimePhase::Continue,
+    };
 
-    if let (Some(workflow), Some(resolved_bindings)) = (
-        session_runtime_inputs.workflow.clone(),
-        session_runtime_inputs.resolved_bindings.clone(),
-    ) {
-        extra_contributors.push(Box::new(WorkflowContextBindingsContributor::new(
-            workflow,
-            resolved_bindings,
-        )));
-    }
-    let resolved_config = session_runtime_inputs.resolved_config.clone();
-    let use_cloud_native_agent = resolved_config
-        .as_ref()
-        .is_some_and(|config| config.is_cloud_native());
-    let vfs = session_runtime_inputs.vfs.clone();
-    let flow_capabilities = session_runtime_inputs.flow_capabilities.clone();
-    let effective_capability_keys = session_runtime_inputs.effective_capability_keys.clone();
-
-    // build full agent context
-    let built = build_task_agent_context(
-        TaskAgentBuildInput {
+    let out = assembler
+        .compose_task_runtime(TaskRuntimeSpec {
             task,
             story: &story,
             project: &project,
             workspace: workspace.as_ref(),
-            vfs: vfs.as_ref(),
-            effective_agent_type: resolved_config
-                .as_ref()
-                .map(|config| config.executor.as_str()),
-            phase: match phase {
-                ExecutionPhase::Start => TaskExecutionPhase::Start,
-                ExecutionPhase::Continue => TaskExecutionPhase::Continue,
-            },
+            phase: runtime_phase,
             override_prompt,
             additional_prompt,
-            extra_contributors,
-        },
-        svc.contributor_registry,
-    )
-    .map_err(TaskExecutionError::UnprocessableEntity)?;
+            explicit_executor_config: connector_config.cloned(),
+            strict_config_resolution: true,
+        })
+        .await?;
 
     Ok(PreparedTurnContext {
-        built,
-        vfs,
-        resolved_config,
-        use_cloud_native_agent,
-        workspace,
-        flow_capabilities,
-        effective_capability_keys,
+        built: out.built,
+        vfs: out.vfs,
+        resolved_config: out.resolved_config,
+        use_cloud_native_agent: out.use_cloud_native_agent,
+        workspace: out.workspace,
+        flow_capabilities: out.flow_capabilities,
+        effective_capability_keys: out.effective_capability_keys,
         identity: None,
         post_turn_handler: None,
     })
 }
-

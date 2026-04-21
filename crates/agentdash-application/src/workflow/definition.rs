@@ -6,9 +6,6 @@ use agentdash_domain::workflow::{
     WorkflowBindingRole, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
 };
 
-pub const TRELLIS_DEV_PROJECT_TEMPLATE_KEY: &str = "trellis_dev_project";
-pub const TRELLIS_DEV_STORY_TEMPLATE_KEY: &str = "trellis_dev_story";
-pub const TRELLIS_DEV_TASK_TEMPLATE_KEY: &str = "trellis_dev_task";
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
 #[allow(dead_code)] // runtime 只用字符串比较；常量用于测试和未来排错引用
 pub const BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY: &str = "builtin_workflow_admin";
@@ -94,9 +91,6 @@ impl BuiltinWorkflowTemplateBundle {
 
 pub fn list_builtin_workflow_templates() -> Result<Vec<BuiltinWorkflowTemplateBundle>, String> {
     [
-        include_str!("builtins/trellis_dev_project.json"),
-        include_str!("builtins/trellis_dev_story.json"),
-        include_str!("builtins/trellis_dev_task.json"),
         include_str!("builtins/trellis_dag_task.json"),
         include_str!("builtins/builtin_workflow_admin.json"),
     ]
@@ -138,29 +132,24 @@ mod tests {
     fn builtin_workflow_templates_are_unique_and_loadable() {
         let templates = list_builtin_workflow_templates().expect("load templates");
 
-        assert_eq!(templates.len(), 5);
+        assert_eq!(templates.len(), 2);
         let keys = templates
             .iter()
             .map(|item| item.key.as_str())
             .collect::<BTreeSet<_>>();
 
         assert_eq!(keys.len(), templates.len());
-        assert!(keys.contains(TRELLIS_DEV_PROJECT_TEMPLATE_KEY));
-        assert!(keys.contains(TRELLIS_DEV_STORY_TEMPLATE_KEY));
-        assert!(keys.contains(TRELLIS_DEV_TASK_TEMPLATE_KEY));
         assert!(keys.contains(TRELLIS_DAG_TASK_TEMPLATE_KEY));
         assert!(keys.contains(BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY));
     }
 
     #[test]
     fn builtin_template_can_build_bundle() {
-        let bundle =
-            build_builtin_workflow_bundle(Uuid::new_v4(), TRELLIS_DEV_TASK_TEMPLATE_KEY).expect("build bundle");
+        let bundle = build_builtin_workflow_bundle(Uuid::new_v4(), TRELLIS_DAG_TASK_TEMPLATE_KEY)
+            .expect("build bundle");
 
-        assert_eq!(bundle.lifecycle.key, TRELLIS_DEV_TASK_TEMPLATE_KEY);
+        assert_eq!(bundle.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
         assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Task);
-        assert_eq!(bundle.workflows.len(), 4);
-        assert_eq!(bundle.lifecycle.steps.len(), 4);
     }
 
     #[test]

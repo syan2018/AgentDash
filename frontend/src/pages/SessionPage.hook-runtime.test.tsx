@@ -16,7 +16,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
     session_id: "sess-hook-test",
     sources: [
       "builtin:global",
-      "workflow:trellis_dev_task:check",
+      "workflow:demo_lifecycle:check",
     ],
     owners: [
       {
@@ -25,37 +25,37 @@ const hookRuntime: HookSessionRuntimeInfo = {
         label: "Task A",
       },
     ],
-    tags: ["workflow:trellis_dev_task", "workflow_step:check"],
+    tags: ["workflow:demo_lifecycle", "workflow_step:check"],
     injections: [
       {
         slot: "context",
         content: "当前在 Check phase",
-        source: "workflow:trellis_dev_task:check",
+        source: "workflow:demo_lifecycle:check",
       },
       {
         slot: "constraint",
         content: "先给出验证结论，再结束 session。",
-        source: "workflow:trellis_dev_task:check",
+        source: "workflow:demo_lifecycle:check",
       },
       {
         slot: "workflow",
         content: "Check phase 需要先更新 Task 状态。",
-        source: "workflow:trellis_dev_task:check",
+        source: "workflow:demo_lifecycle:check",
       },
     ],
     diagnostics: [],
     metadata: {
       active_workflow: {
         lifecycle_id: "lc-1",
-        lifecycle_key: "trellis_dev_task",
-        lifecycle_name: "Trellis Dev Lifecycle / Task",
+        lifecycle_key: "demo_lifecycle",
+        lifecycle_name: "Demo Lifecycle / Task",
         run_id: "run-1",
         run_status: "running",
         step_key: "check",
         step_title: "Check",
         primary_workflow_id: "wf-1",
-        workflow_key: "trellis_dev_task_check",
-        primary_workflow_name: "Trellis Task / Check",
+        workflow_key: "demo_lifecycle_check",
+        primary_workflow_name: "Demo Task / Check",
       },
     },
   },
@@ -108,12 +108,12 @@ const hookRuntime: HookSessionRuntimeInfo = {
         {
           slot: "workflow",
           content: "请先处理 companion review 结论。",
-          source: "workflow:trellis_dev_task:check",
+          source: "workflow:demo_lifecycle:check",
         },
         {
           slot: "constraint",
           content: "主 session 必须先处理这份 companion review。",
-          source: "workflow:trellis_dev_task:check",
+          source: "workflow:demo_lifecycle:check",
         },
       ],
     },
@@ -146,11 +146,11 @@ describe("SessionPage hook runtime cards", () => {
     expect(html).toContain("actions: 2");
     expect(html).toContain("open: 1");
     expect(html).toContain("resolved: 1");
-    expect(html).toContain("Trellis Dev Lifecycle / Task / Check");
+    expect(html).toContain("Demo Lifecycle / Task / Check");
     expect(html).toContain("builtin:global");
-    expect(html).toContain("workflow:trellis_dev_task:check");
+    expect(html).toContain("workflow:demo_lifecycle:check");
     expect(html).toContain("step: check");
-    expect(html).toContain("workflow: trellis_dev_task_check");
+    expect(html).toContain("workflow: demo_lifecycle_check");
   });
 
   it("渲染 diagnostics 与 trace 细节", () => {

@@ -35,7 +35,7 @@ export function BindingEditor({
             value={binding.locator}
             onChange={(e) => onChange({ locator: e.target.value })}
             className="agentdash-form-input mt-1 text-sm"
-            placeholder="e.g. main/.trellis/workflow.md"
+            placeholder="e.g. main/docs/workflow.md"
           />
         </div>
 

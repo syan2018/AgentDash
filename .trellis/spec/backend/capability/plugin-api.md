@@ -117,7 +117,7 @@ run_server(plugins).await
 
 ### 4.2 不要把过渡态 Address Space 抽象直接冻结给企业仓
 
-根据 [vfs-access.md](./vfs-access.md)，当前
+根据 [vfs-access.md](../vfs/vfs-access.md)，当前
 `agentdash_injection::VfsProvider` 只是 descriptor / discovery provider，
 并不是统一的 runtime `read / write / list / search / exec` provider。
 
@@ -272,7 +272,7 @@ contract crate 的职责是：
 
 插件体系必须服从统一 Address Space 的长期方向，而不是绕开它。
 
-根据 [vfs-access.md](./vfs-access.md)：
+根据 [vfs-access.md](../vfs/vfs-access.md)：
 
 - 长期目标是统一到 `mount + relative path`
 - context injection、runtime tool、frontend browse 应共享同一 provider 底座
@@ -337,9 +337,9 @@ contract crate 的职责是：
 
 ## 14. 相关文件
 
-- [plugin-api PRD](../../tasks/03-24-plugin-api-architecture/prd.md)
-- [VFS Access](./vfs-access.md)
-- [agentdash-spi](../../../crates/agentdash-spi/src/lib.rs)
-- [agentdash-first-party-plugins](../../../crates/agentdash-first-party-plugins/src/lib.rs)
-- [app_state.rs](../../../crates/agentdash-api/src/app_state.rs)
-- [lib.rs](../../../crates/agentdash-api/src/lib.rs)
+- plugin-api PRD（任务 `03-24-plugin-api-architecture` 已归档）
+- [VFS Access](../vfs/vfs-access.md)
+- [agentdash-spi](../../../../crates/agentdash-spi/src/lib.rs)
+- [agentdash-first-party-plugins](../../../../crates/agentdash-first-party-plugins/src/lib.rs)
+- [app_state.rs](../../../../crates/agentdash-api/src/app_state.rs)
+- [lib.rs](../../../../crates/agentdash-api/src/lib.rs)

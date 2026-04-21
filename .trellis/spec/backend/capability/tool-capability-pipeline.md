@@ -113,7 +113,7 @@ CapabilityResolverInput {
 >
 > 历史上 resolver 用四字段并列 `(owner_type, project_id, story_id: Option, task_id: Option)`
 > 表达归属,合法组合 3 种却允许 $2^3$ 种表示。PR1 用
-> [`SessionOwnerCtx`](../../../crates/agentdash-domain/src/session_binding/value_objects.rs) sum
+> [`SessionOwnerCtx`](../../../../crates/agentdash-domain/src/session_binding/value_objects.rs) sum
 > type 收口,非法状态在类型层被排除:
 >
 > ```rust

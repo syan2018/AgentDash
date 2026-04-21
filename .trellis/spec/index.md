@@ -32,14 +32,24 @@
 
 详见 [后端开发指南](./backend/index.md)
 
-主要规范：
-- 目录结构（整洁架构分层、15 个 crate）
+通用开发规范：
+- 目录结构（整洁架构分层、14 个 crate）
 - 数据库指南（PostgreSQL + SQLite + SQLx）
-- Repository 模式
-- 错误处理 + 流式协议
-- ACP Meta Warp 跨层契约
-- Hook Runtime / Address Space / Plugin API / LLM Model Config
-- 质量规范（DTO 命名契约、Session 状态持久化）
+- Repository 模式、错误处理、质量规范、日志规范
+
+模块专属契约（按子系统分目录）：
+- `session/` — 流式协议、Pi Agent 流式合并
+- `hooks/` — Hook Runtime 跨层契约、Rhai 脚本引擎
+- `workflow/` — Lifecycle Edge 设计
+- `vfs/` — 统一 Address Space
+- `capability/` — 工具能力管线、Plugin API、LLM Model Config
+
+### 跨层契约
+
+详见 [跨层契约索引](./cross-layer/index.md)
+
+前后端共享的协议与序列化契约：
+- ACP Meta Warp 跨层序列化契约
 
 ---
 
@@ -54,33 +64,64 @@
 
 ## 规范文档状态
 
-| 类别 | 文档 | 状态 |
-|------|------|------|
-| 项目 | 项目总览 | ✅ 已定稿 |
-| 项目 | 技术选型 | ✅ 已更新（对齐实际技术栈） |
-| 项目 | 沟通规范 | ✅ 已定稿 |
-| 前端 | 开发指南索引 | ✅ 已更新 |
-| 前端 | 目录结构 | ✅ 已更新（对齐实际 features/stores/pages） |
-| 前端 | 组件规范 | ✅ 已更新 |
-| 前端 | Hook 规范 | ✅ 已更新（含 ACP 事件归并契约） |
-| 前端 | 状态管理 | ✅ 已更新（对齐实际 10 个 store） |
-| 前端 | 质量规范 | ✅ 已更新 |
-| 前端 | 类型安全 | ✅ 已更新（含 snake_case 映射边界） |
-| 后端 | 开发指南索引 | ✅ 已更新 |
-| 后端 | 目录结构 | ✅ 已更新（整洁架构分层 + 演进记录） |
-| 后端 | 数据库指南 | ✅ 已更新（SQLite + SQLx + JSONL） |
-| 后端 | Repository 模式 | ✅ 已更新 |
-| 后端 | 错误处理 | ✅ 已更新（含 SSE/NDJSON 契约） |
-| 后端 | ACP Meta Warp | ✅ 已更新 |
-| 后端 | Hook Runtime | ✅ 已更新（跨层契约 + Companion 契约） |
-| 后端 | Address Space | ✅ 已更新 |
-| 后端 | LLM Model Config | ✅ 已创建 |
-| 后端 | Plugin API | ✅ 已创建 |
-| 后端 | 领域类型化标准 | ✅ 已创建 |
-| 后端 | 流式合并协议 | ✅ 已拆分 |
-| 后端 | 日志规范 | ✅ 已更新 |
-| 后端 | 质量规范 | ✅ 已更新（含 DTO 命名 + Session 持久化） |
-| 指南 | 思维指南索引 | ✅ 已定稿 |
+### 项目级
+
+| 文档 | 状态 |
+|------|------|
+| 项目总览 | ✅ 已定稿 |
+| 技术选型 | ✅ 已更新（对齐实际技术栈） |
+| 沟通规范 | ✅ 已定稿 |
+
+### 前端
+
+| 文档 | 状态 |
+|------|------|
+| 开发指南索引 | ✅ 已更新 |
+| 目录结构 | ✅ 已更新（对齐实际 features/stores/pages） |
+| 组件规范 | ✅ 已更新 |
+| Hook 规范 | ✅ 已更新（含 ACP 事件归并契约） |
+| 状态管理 | ✅ 已更新（对齐实际 13 个 store） |
+| 质量规范 | ✅ 已更新 |
+| 类型安全 | ✅ 已更新（含 snake_case 映射边界） |
+
+### 后端 — 通用规范
+
+| 文档 | 状态 |
+|------|------|
+| 开发指南索引 | ✅ 已更新 |
+| 目录结构 | ✅ 已更新（整洁架构分层 + 演进记录） |
+| 数据库指南 | ✅ 已更新（PostgreSQL + SQLx） |
+| Repository 模式 | ✅ 已更新 |
+| 错误处理 | ✅ 已更新（含 SSE/NDJSON 契约） |
+| 领域类型化标准 | ✅ 已创建 |
+| 质量规范 | ✅ 已更新（含 DTO 命名 + Session 持久化） |
+| 日志规范 | ✅ 已更新 |
+
+### 后端 — 模块专属契约
+
+| 子系统 | 文档 | 状态 |
+|--------|------|------|
+| session/ | 流式协议 | ✅ 已拆分 |
+| session/ | Pi Agent 流式合并 | ✅ 已拆分 |
+| hooks/ | Execution Hook Runtime | ✅ 已更新 |
+| hooks/ | Hook Script Engine | ✅ 已创建 |
+| workflow/ | Lifecycle Edge 设计 | ✅ 已创建 |
+| vfs/ | VFS Access | ✅ 已创建 |
+| capability/ | 工具能力管线 | ✅ 已创建 |
+| capability/ | Plugin API | ✅ 已创建 |
+| capability/ | LLM Model Config | ✅ 已创建 |
+
+### 跨层契约
+
+| 文档 | 状态 |
+|------|------|
+| ACP Meta Warp | ✅ 已更新 |
+
+### 思维指南
+
+| 文档 | 状态 |
+|------|------|
+| 思维指南索引 | ✅ 已定稿 |
 
 ---
 
@@ -88,6 +129,7 @@
 
 | 日期 | 更新内容 |
 |------|---------|
+| 2026-04-21 | 目录重组：backend/ 模块专属契约按子系统分目录（session/hooks/workflow/vfs/capability），新增 cross-layer/ 存放跨层契约 |
 | 2026-04-14 | 项目审计（第二轮）：修正 DomainError/ConnectorError 变体、更新 LLM 配置文件路径、补全 Rhai preset 清单、精简 ctx 对象复述、去重 database/repository 模板 |
 | 2026-04-14 | 项目审计（第一轮）：修正数据库为 PostgreSQL、更新连接器架构、修复文件路径引用、精简 hook-runtime/hook-guidelines/quality-guidelines 过度规范、归档已完成任务 |
 | 2026-03-29 | 全量审查与修复：tech-stack/database/quality/directory/state 等对齐实际代码 |

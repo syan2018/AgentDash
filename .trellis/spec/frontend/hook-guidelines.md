@@ -100,7 +100,7 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 
 `session_info_update` 不是一律静默。交由 `AcpTaskEventGuard` 和 `AcpSystemEventGuard` 判定。
 
-> hook_event 可见性规则、companion 事件处理等详见后端 [execution-hook-runtime.md](../backend/execution-hook-runtime.md) 及前端 Guard 组件实现。
+> hook_event 可见性规则、companion 事件处理等详见后端 [execution-hook-runtime.md](../backend/hooks/execution-hook-runtime.md) 及前端 Guard 组件实现。
 
 ---
 

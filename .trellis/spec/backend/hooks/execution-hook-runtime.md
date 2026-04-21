@@ -120,6 +120,6 @@ pub trait ExecutionHookProvider: Send + Sync {
 
 ---
 
-> Pi Agent 流式 chunk 合并协议已拆分到 [pi-agent-streaming.md](./pi-agent-streaming.md)。
+> Pi Agent 流式 chunk 合并协议已拆分到 [pi-agent-streaming.md](../session/pi-agent-streaming.md)。
 
 *更新：2026-04-14 — 大幅精简，移除实现级冗余描述，保留跨层契约与设计约束*

@@ -1,6 +1,6 @@
 # Workflow Lifecycle Edge 设计
 
-> 约束 lifecycle DAG 中 edge 的语义与校验规则。与 [domain-payload-typing.md](./domain-payload-typing.md) / [database-guidelines.md](./database-guidelines.md) 一起参考。
+> 约束 lifecycle DAG 中 edge 的语义与校验规则。与 [domain-payload-typing.md](../domain-payload-typing.md) / [database-guidelines.md](../database-guidelines.md) 一起参考。
 
 ---
 
@@ -108,7 +108,7 @@ pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> HashMap<&str, BTreeSet<&
 
 ## 6. 前端渲染约定
 
-[lifecycle-dag-editor.tsx](../../frontend/src/features/workflow/lifecycle-dag-editor.tsx) 按 kind 分派 ReactFlow edge 样式：
+[lifecycle-dag-editor.tsx](../../../frontend/src/features/workflow/lifecycle-dag-editor.tsx) 按 kind 分派 ReactFlow edge 样式：
 
 - **Flow edge**：实线 + primary 色；连接创建点为 node body（无 handle）
 - **Artifact edge**：虚线 (`strokeDasharray: "6 4"`) + border 色 + port 标签；必须连接到 port handle

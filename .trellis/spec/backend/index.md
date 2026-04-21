@@ -118,6 +118,10 @@ Workspace (1) → (*) WorkspaceBinding
 
 ## 规范索引
 
+### 通用开发规范
+
+跨模块适用的编码标准和架构约定。
+
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [目录结构](./directory-structure.md) | 整洁架构分层、Crate 布局、添加模块步骤 | ✅ 已更新 |
@@ -125,19 +129,56 @@ Workspace (1) → (*) WorkspaceBinding
 | [Repository 模式](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已更新 |
 | [数据库指南](./database-guidelines.md) | PostgreSQL + SQLite + SQLx 存储规范 | ✅ 已更新 |
 | [错误处理](./error-handling.md) | 分层错误体系、错误边界规则 | ✅ 已更新 |
-| [流式协议](./streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
-| [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层契约 | ✅ 已更新 |
-| [VFS Access](./vfs-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
-| [LLM Model Config](./llm-model-config.md) | ThinkingLevel / ModelInfo / Provider Registry 架构 | ✅ 已创建 |
-| [Execution Hook Runtime](./execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已更新 |
-| [Hook Script Engine](./hook-script-engine.md) | Rhai 脚本引擎、preset 编写指南、沙箱契约 | ✅ 已创建 |
-| [Pi Agent 流式合并](./pi-agent-streaming.md) | Pi Agent streaming chunk 合并协议 | ✅ 已拆分 |
 | [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 类型化盘点和迁移路线 | ✅ 已创建 |
-| [Plugin API](./plugin-api.md) | 开源核心 + 企业扩展插件架构 | ✅ 已创建 |
 | [质量规范](./quality-guidelines.md) | 代码标准、DTO 命名契约、Session 状态持久化 | ✅ 已更新 |
 | [日志规范](./logging-guidelines.md) | 结构化日志、级别约定 | ✅ 已更新 |
-| [Relay Protocol](../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
-| [工具能力管线](./tool-capability-pipeline.md) | ToolCapability 协议、CapabilityResolver、session 工具集治理 | ✅ 已创建 |
+| [Relay Protocol](../../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
+
+### 模块专属契约
+
+按子系统分目录组织，仅在特定模块上下文中适用。
+
+#### `session/` — Session / ACP 核心子系统
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [流式协议](./session/streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
+| [Pi Agent 流式合并](./session/pi-agent-streaming.md) | Pi Agent streaming chunk 合并协议 | ✅ 已拆分 |
+
+#### `hooks/` — Hook 运行时
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [Execution Hook Runtime](./hooks/execution-hook-runtime.md) | Hook Runtime / Workflow Policy / Session Surface 跨层契约 | ✅ 已更新 |
+| [Hook Script Engine](./hooks/hook-script-engine.md) | Rhai 脚本引擎、preset 编写指南、沙箱契约 | ✅ 已创建 |
+
+#### `workflow/` — Workflow 引擎
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [Lifecycle Edge 设计](./workflow/lifecycle-edge.md) | Lifecycle DAG edge 语义、校验规则、运行时推进 | ✅ 已创建 |
+
+#### `vfs/` — 虚拟文件系统
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [VFS Access](./vfs/vfs-access.md) | 统一 Address Space / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
+
+#### `capability/` — 能力管线与插件
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [工具能力管线](./capability/tool-capability-pipeline.md) | ToolCapability 协议、CapabilityResolver、session 工具集治理 | ✅ 已创建 |
+| [Plugin API](./capability/plugin-api.md) | 开源核心 + 企业扩展插件架构 | ✅ 已创建 |
+| [LLM Model Config](./capability/llm-model-config.md) | ThinkingLevel / ModelInfo / Provider Registry 架构 | ✅ 已创建 |
+
+### 跨层契约（前后端共享）
+
+详见 [跨层契约索引](../cross-layer/index.md)
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [ACP Meta Warp](../cross-layer/acp-meta-warp.md) | ACP `_meta.agentdash` 跨层序列化契约 | ✅ 已更新 |
 
 ---
 
@@ -177,4 +218,4 @@ Workspace (1) → (*) WorkspaceBinding
 
 ---
 
-*更新：2026-03-29 — 清理模板残留，对齐规范索引（含新拆分文件）*
+*更新：2026-04-21 — 按子系统分目录重组（session/hooks/workflow/vfs/capability），跨层契约移至 cross-layer/*

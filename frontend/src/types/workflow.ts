@@ -116,12 +116,23 @@ export interface InputPortDefinition {
   context_template?: string | null;
 }
 
-export interface LifecycleEdge {
-  from_node: string;
-  from_port: string;
-  to_node: string;
-  to_port: string;
-}
+export type LifecycleEdgeKind = "flow" | "artifact";
+
+export type LifecycleEdge =
+  | {
+      kind: "flow";
+      from_node: string;
+      to_node: string;
+      from_port?: null;
+      to_port?: null;
+    }
+  | {
+      kind: "artifact";
+      from_node: string;
+      to_node: string;
+      from_port: string;
+      to_port: string;
+    };
 
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;

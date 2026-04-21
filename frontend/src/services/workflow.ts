@@ -178,7 +178,18 @@ function mapLifecycleEdge(raw: unknown): LifecycleEdge {
   if (!value) {
     throw new Error("lifecycle edge 缺失或不是对象");
   }
+  // 历史数据无 kind 字段时按 artifact 兼容（与后端 serde default 对齐）
+  const kindRaw = optString(value.kind);
+  const kind: LifecycleEdge["kind"] = kindRaw === "flow" ? "flow" : "artifact";
+  if (kind === "flow") {
+    return {
+      kind: "flow",
+      from_node: requireStringField(value, "from_node"),
+      to_node: requireStringField(value, "to_node"),
+    };
+  }
   return {
+    kind: "artifact",
     from_node: requireStringField(value, "from_node"),
     from_port: requireStringField(value, "from_port"),
     to_node: requireStringField(value, "to_node"),

@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration 0017 扫描补齐 lifecycle edges"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "LifecycleEdgeKind 枚举 + JsonSchema 传播前端类型"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量基线"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "JsonSchema 生成 TS 类型的 kind 字段处理"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "domain/infra/frontend 三层改动的数据流思考"}

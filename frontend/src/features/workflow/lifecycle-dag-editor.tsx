@@ -94,29 +94,55 @@ function stepsToNodes(
   });
 }
 
+function lifecycleEdgeId(e: LifecycleEdge): string {
+  return e.kind === "flow"
+    ? `flow:${e.from_node}->${e.to_node}`
+    : `${e.from_node}:${e.from_port ?? ""}--${e.to_node}:${e.to_port ?? ""}`;
+}
+
 function lifecycleEdgesToRfEdges(edges: LifecycleEdge[]): Edge[] {
-  return edges.map((e) => ({
-    id: `${e.from_node}:${e.from_port}--${e.to_node}:${e.to_port}`,
-    source: e.from_node,
-    sourceHandle: e.from_port,
-    target: e.to_node,
-    targetHandle: e.to_port,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-    label: `${e.from_port} → ${e.to_port}`,
-    labelStyle: { fontSize: 10, fill: "hsl(var(--muted-foreground))" },
-    style: { stroke: "hsl(var(--border))", strokeWidth: 2 },
-  }));
+  return edges.map((e) => {
+    const isFlow = e.kind === "flow";
+    return {
+      id: lifecycleEdgeId(e),
+      source: e.from_node,
+      sourceHandle: isFlow ? undefined : e.from_port ?? undefined,
+      target: e.to_node,
+      targetHandle: isFlow ? undefined : e.to_port ?? undefined,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+      label: isFlow ? undefined : `${e.from_port ?? ""} → ${e.to_port ?? ""}`,
+      labelStyle: { fontSize: 10, fill: "hsl(var(--muted-foreground))" },
+      style: isFlow
+        ? {
+            stroke: "hsl(var(--primary))",
+            strokeWidth: 2,
+          }
+        : {
+            stroke: "hsl(var(--border))",
+            strokeWidth: 2,
+            strokeDasharray: "6 4",
+          },
+    };
+  });
 }
 
 function rfEdgesToLifecycleEdges(rfEdges: Edge[]): LifecycleEdge[] {
-  return rfEdges
-    .filter((e) => e.sourceHandle && e.targetHandle)
-    .map((e) => ({
+  return rfEdges.map((e) => {
+    if (e.sourceHandle && e.targetHandle) {
+      return {
+        kind: "artifact" as const,
+        from_node: e.source,
+        from_port: e.sourceHandle,
+        to_node: e.target,
+        to_port: e.targetHandle,
+      };
+    }
+    return {
+      kind: "flow" as const,
       from_node: e.source,
-      from_port: e.sourceHandle!,
       to_node: e.target,
-      to_port: e.targetHandle!,
-    }));
+    };
+  });
 }
 
 // ─── 内部编辑器（需要 ReactFlowProvider wrapper） ───
@@ -261,9 +287,7 @@ function LifecycleDagEditorInner() {
 
       if (deletedEdges.length > 0) {
         const deletedEdgeIds = new Set(deletedEdges.map((e) => e.id));
-        const toLifecycleId = (e: LifecycleEdge) =>
-          `${e.from_node}:${e.from_port}--${e.to_node}:${e.to_port}`;
-        newEdges = newEdges.filter((e) => !deletedEdgeIds.has(toLifecycleId(e)));
+        newEdges = newEdges.filter((e) => !deletedEdgeIds.has(lifecycleEdgeId(e)));
       }
 
       updateLifecycleDraft({ steps: newSteps, edges: newEdges });
@@ -279,43 +303,73 @@ function LifecycleDagEditorInner() {
       if (connection.source === connection.target) return;
       // [Fix F] 用 draft.edges 做校验，不依赖 RF local state
       if (wouldCreateCycle(draft.edges, connection.source, connection.target)) return;
-      if (
-        connection.targetHandle &&
-        draft.edges.some(
-          (e) => e.to_node === connection.target && e.to_port === connection.targetHandle,
-        )
-      ) {
-        return;
-      }
-      const fromPort = connection.sourceHandle ?? "__default_out";
-      let toPort = connection.targetHandle ?? "__default_in";
 
-      // ── 拖拽到 __default_in（节点 body）→ 自动创建同名 input port ──
-      let newSteps = draft.steps;
-      if (toPort === "__default_in" && fromPort !== "__default_out") {
-        const targetStepIdx = draft.steps.findIndex((s) => s.key === connection.target);
-        if (targetStepIdx >= 0) {
-          const targetStep = draft.steps[targetStepIdx];
-          const alreadyHas = targetStep.input_ports.some((p) => p.key === fromPort);
-          if (!alreadyHas) {
-            // 以 source port key 为名自动创建 input port
-            newSteps = draft.steps.map((s, i) =>
-              i === targetStepIdx
-                ? { ...s, input_ports: [...s.input_ports, { key: fromPort, description: "", context_strategy: "full" as const }] }
-                : s,
-            );
-          }
-          toPort = fromPort; // 连接到新创建（或已存在）的同名 port
+      // 判定 kind：source/target 都连到 port handle → artifact；否则 flow
+      const hasSourcePort =
+        !!connection.sourceHandle && connection.sourceHandle !== "__default_out";
+      const hasTargetPort =
+        !!connection.targetHandle && connection.targetHandle !== "__default_in";
+      const isArtifactConnect = hasSourcePort || hasTargetPort;
+
+      if (isArtifactConnect) {
+        // Artifact edge：沿用原有 port 冲突校验 + 自动补 input port 逻辑
+        if (
+          connection.targetHandle &&
+          draft.edges.some(
+            (e) =>
+              e.kind === "artifact" &&
+              e.to_node === connection.target &&
+              e.to_port === connection.targetHandle,
+          )
+        ) {
+          return;
         }
-      }
+        const fromPort = connection.sourceHandle ?? "__default_out";
+        let toPort = connection.targetHandle ?? "__default_in";
 
-      const newEdge: LifecycleEdge = {
-        from_node: connection.source,
-        from_port: fromPort,
-        to_node: connection.target,
-        to_port: toPort,
-      };
-      updateLifecycleDraft({ steps: newSteps, edges: [...draft.edges, newEdge] });
+        // ── 拖拽到 __default_in（节点 body）→ 自动创建同名 input port ──
+        let newSteps = draft.steps;
+        if (toPort === "__default_in" && fromPort !== "__default_out") {
+          const targetStepIdx = draft.steps.findIndex((s) => s.key === connection.target);
+          if (targetStepIdx >= 0) {
+            const targetStep = draft.steps[targetStepIdx];
+            const alreadyHas = targetStep.input_ports.some((p) => p.key === fromPort);
+            if (!alreadyHas) {
+              newSteps = draft.steps.map((s, i) =>
+                i === targetStepIdx
+                  ? { ...s, input_ports: [...s.input_ports, { key: fromPort, description: "", context_strategy: "full" as const }] }
+                  : s,
+              );
+            }
+            toPort = fromPort;
+          }
+        }
+
+        const newEdge: LifecycleEdge = {
+          kind: "artifact",
+          from_node: connection.source,
+          from_port: fromPort,
+          to_node: connection.target,
+          to_port: toPort,
+        };
+        updateLifecycleDraft({ steps: newSteps, edges: [...draft.edges, newEdge] });
+      } else {
+        // Flow edge：仅控制流，禁止重复（同一 from→to 只允许一条 flow edge）
+        const existsFlow = draft.edges.some(
+          (e) =>
+            e.kind === "flow" &&
+            e.from_node === connection.source &&
+            e.to_node === connection.target,
+        );
+        if (existsFlow) return;
+
+        const newEdge: LifecycleEdge = {
+          kind: "flow",
+          from_node: connection.source,
+          to_node: connection.target,
+        };
+        updateLifecycleDraft({ edges: [...draft.edges, newEdge] });
+      }
     },
     [draft, updateLifecycleDraft],
   );

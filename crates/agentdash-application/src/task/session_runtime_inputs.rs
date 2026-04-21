@@ -68,11 +68,11 @@ pub async fn build_task_session_runtime_inputs(
     // ── CapabilityResolver 统一计算 MCP server 列表 ──
     // capabilities 来源于 active workflow 的 contract.capabilities（工作流级基线),
     // step 不再承担能力声明。
-    let workflow_capabilities = workflow.as_ref().and_then(|projection| {
+    let workflow_capability_directives = workflow.as_ref().and_then(|projection| {
         projection
             .primary_workflow
             .as_ref()
-            .map(crate::capability::capabilities_from_active_workflow)
+            .map(crate::capability::capability_directives_from_active_workflow)
     });
 
     let cap_input = CapabilityResolverInput {
@@ -84,7 +84,7 @@ pub async fn build_task_session_runtime_inputs(
         agent_declared_capabilities: None,
         workflow_ctx: crate::capability::SessionWorkflowContext {
             has_active_workflow: workflow.is_some(),
-            workflow_capabilities,
+            workflow_capability_directives,
         },
         agent_mcp_servers: vec![],
         available_presets: build_available_presets(repos, task.project_id).await,

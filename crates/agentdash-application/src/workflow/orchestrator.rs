@@ -10,7 +10,8 @@
 
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleNodeType, LifecycleRun, LifecycleStepDefinition,
+    CapabilityDirective, LifecycleDefinition, LifecycleNodeType, LifecycleRun,
+    LifecycleStepDefinition,
     LifecycleStepExecutionStatus,
 };
 use tracing::{info, warn};
@@ -48,9 +49,9 @@ pub struct ActivatedNode {
 #[derive(Debug, Clone)]
 pub struct ActivatedPhaseNode {
     pub node_key: String,
-    /// 该 phase 所指向的 workflow 基线 capability key 集合（取自 `WorkflowContract.capabilities`）。
+    /// 该 phase 所指向的 workflow 基线 capability directives（取自 `WorkflowContract.capabilities`）。
     /// 若 step 未绑定 workflow 或 workflow 查不到,则为空 vec，表示"不改变能力集"。
-    pub baseline_capabilities: Vec<String>,
+    pub baseline_capability_directives: Vec<CapabilityDirective>,
 }
 
 pub struct LifecycleOrchestrator {
@@ -200,11 +201,15 @@ impl LifecycleOrchestrator {
                             "Orchestrator: failed to activate phase node"
                         );
                     } else {
-                        let baseline_capabilities =
-                            self.resolve_step_workflow_capabilities(step_def, project_id).await;
+                        let baseline_capability_directives = self
+                            .resolve_step_workflow_capability_directives(
+                                step_def,
+                                project_id,
+                            )
+                            .await;
                         activated_phases.push(ActivatedPhaseNode {
                             node_key: node_state.step_key.clone(),
-                            baseline_capabilities,
+                            baseline_capability_directives,
                         });
                     }
                 }
@@ -399,13 +404,13 @@ impl LifecycleOrchestrator {
         Ok(())
     }
 
-    /// 查找 step.workflow_key 指向的 WorkflowDefinition 并取其 `contract.capabilities`。
-    /// 查不到时返回空 vec —— 等价于"不授予能力"。
-    async fn resolve_step_workflow_capabilities(
+    /// 查找 step.workflow_key 指向的 WorkflowDefinition 并构建 `CapabilityDirective`。
+    /// 查不到时返回空 vec —— 等价于"不改变能力集"。
+    async fn resolve_step_workflow_capability_directives(
         &self,
         step_def: &LifecycleStepDefinition,
         project_id: Uuid,
-    ) -> Vec<String> {
+    ) -> Vec<CapabilityDirective> {
         let Some(workflow_key) = step_def.effective_workflow_key() else {
             return Vec::new();
         };
@@ -414,7 +419,13 @@ impl LifecycleOrchestrator {
             .get_by_project_and_key(project_id, workflow_key)
             .await
         {
-            Ok(Some(workflow)) => workflow.contract.capabilities.clone(),
+            Ok(Some(workflow)) => workflow
+                .contract
+                .capabilities
+                .iter()
+                .cloned()
+                .map(CapabilityDirective::Add)
+                .collect(),
             Ok(None) => {
                 tracing::warn!(
                     project_id = %project_id,

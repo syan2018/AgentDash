@@ -23,6 +23,6 @@ pub use resolver::{
     CapabilityResolverOutput, CompanionSliceMode,
 };
 pub use session_workflow_context::{
-    capabilities_from_active_workflow, resolve_session_workflow_context, SessionWorkflowContext,
-    SessionWorkflowOwner, SessionWorkflowRepos,
+    capability_directives_from_active_workflow, resolve_session_workflow_context,
+    SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,
 };

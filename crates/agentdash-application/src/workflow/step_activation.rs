@@ -128,14 +128,14 @@ pub fn activate_step_with_platform(
     input: &StepActivationInput<'_>,
     platform: &PlatformConfig,
 ) -> StepActivation {
-    // ── 1. baseline + directive → workflow_capabilities ──
+    // ── 1. baseline + directive → effective workflow capability keys ──
     let baseline: Vec<String> = input.baseline_override.clone().unwrap_or_else(|| {
         input
             .workflow
             .map(|w| w.contract.capabilities.clone())
             .unwrap_or_default()
     });
-    let workflow_capabilities = if input.capability_directives.is_empty() {
+    let effective_workflow_capability_keys = if input.capability_directives.is_empty() {
         baseline
     } else {
         compute_effective_capabilities(&baseline, input.capability_directives)
@@ -145,7 +145,13 @@ pub fn activate_step_with_platform(
     let workflow_ctx = if has_active_workflow {
         SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capabilities: Some(workflow_capabilities),
+            workflow_capability_directives: Some(
+                effective_workflow_capability_keys
+                    .iter()
+                    .cloned()
+                    .map(CapabilityDirective::Add)
+                    .collect(),
+            ),
         }
     } else {
         SessionWorkflowContext::NONE
@@ -198,8 +204,7 @@ pub fn activate_step_with_platform(
     };
 
     // ── 5. kickoff prompt fragment ──
-    let kickoff_prompt =
-        build_kickoff_prompt_fragment(input, &workflow_capabilities_from_ctx(&cap_input.workflow_ctx));
+    let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
     StepActivation {
         flow_capabilities: cap_output.flow_capabilities,
@@ -211,13 +216,8 @@ pub fn activate_step_with_platform(
     }
 }
 
-fn workflow_capabilities_from_ctx(ctx: &SessionWorkflowContext) -> Vec<String> {
-    ctx.workflow_capabilities.clone().unwrap_or_default()
-}
-
 fn build_kickoff_prompt_fragment(
     input: &StepActivationInput<'_>,
-    _caps_for_banner: &[String],
 ) -> KickoffPromptFragment {
     let node_key = &input.active_step.key;
     let desc = input.active_step.description.trim();

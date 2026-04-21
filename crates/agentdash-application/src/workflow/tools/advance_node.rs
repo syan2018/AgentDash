@@ -353,7 +353,12 @@ impl AgentTool for CompleteLifecycleNodeTool {
                             // 新模型：phase node 的 baseline 来自 workflow.contract.capabilities。
                             // step 不再承担能力指令；Add/Remove 由 hook runtime 动态处理（out of scope）。
                             let new_caps_set: std::collections::BTreeSet<String> =
-                                phase.baseline_capabilities.iter().cloned().collect();
+                                agentdash_domain::workflow::compute_effective_capabilities(
+                                    &[],
+                                    &phase.baseline_capability_directives,
+                                )
+                                .into_iter()
+                                .collect();
                             if let Some(delta) =
                                 hook_session.update_capabilities(new_caps_set.clone())
                             {
@@ -368,10 +373,19 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                         agent_declared_capabilities: None,
                                         workflow_ctx: crate::capability::SessionWorkflowContext {
                                             has_active_workflow: true,
-                                            workflow_capabilities: Some(
-                                                new_caps_set
+                                            workflow_capability_directives: Some(
+                                                delta
+                                                    .added
                                                     .iter()
                                                     .cloned()
+                                                    .map(agentdash_domain::workflow::CapabilityDirective::Add)
+                                                    .chain(
+                                                        delta
+                                                            .removed
+                                                            .iter()
+                                                            .cloned()
+                                                            .map(agentdash_domain::workflow::CapabilityDirective::Remove),
+                                                    )
                                                     .collect(),
                                             ),
                                         },

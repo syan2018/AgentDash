@@ -5,7 +5,7 @@
 //!
 //! - step CapabilityDirective → workflow baseline + directive 运算 → effective key 集合
 //! - CapabilityDelta::compute → 前后差异
-//! - CapabilityResolver::resolve(workflow_capabilities override) → 实际 FlowCapabilities
+//! - CapabilityResolver::resolve(workflow_capability_directives) → 实际 FlowCapabilities
 //!   + platform MCP configs + 自定义 mcp:* 注入
 //! - build_capability_delta_markdown → 供 agent 直接消费的通知文本
 //!
@@ -64,8 +64,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     assert!(effective_set.contains("mcp:code_analyzer"));
     assert!(!effective_set.contains("collaboration"));
 
-    // Orchestrator 在 create_agent_node_session 中会将 effective set 当作 workflow_capabilities
-    // 传给 CapabilityResolver（全量替换）
+    // Resolver 通过标准 CapabilityDirective 做增删。
     let input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
@@ -73,7 +72,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capabilities: Some(effective.clone()),
+            workflow_capability_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         available_presets: Default::default(),
@@ -133,7 +132,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     );
     assert_eq!(delta.removed, vec!["canvas".to_string()]);
 
-    // Resolver 用新的 effective 重建 MCP 注入集合（replace-set 语义输入侧）
+    // Resolver 通过标准 CapabilityDirective 在基线上增删能力。
     let input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
@@ -141,7 +140,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capabilities: Some(effective.clone()),
+            workflow_capability_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![mcp_entry(
             "external_analyzer",
@@ -216,7 +215,7 @@ fn phase_node_invalid_directives_are_tolerated() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capabilities: Some(effective.clone()),
+            workflow_capability_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![], // 故意不注册
         available_presets: Default::default(),

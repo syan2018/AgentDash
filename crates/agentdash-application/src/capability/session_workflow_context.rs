@@ -1,6 +1,6 @@
 //! Session workflow context 解析
 //!
-//! 统一入口：给定 session owner 上下文，解析出 (has_active_workflow, workflow_capabilities)，
+//! 统一入口：给定 session owner 上下文，解析出 (has_active_workflow, workflow_capability_directives)，
 //! 取代 session 创建路径上分散的 `false / None` 硬编码。
 //!
 //! 覆盖：
@@ -9,7 +9,7 @@
 //! - `Routine { project_id, agent_id }` —— 复用 Project 查询（routine 自带 agent 绑定）
 //!
 //! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
-//! 无需走 helper；那边直接用 `capabilities_from_active_workflow` 做单步计算即可。
+//! 无需走 helper；那边直接用 `capability_directives_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
 //! [`SessionWorkflowContext::NONE`]，只记录 `tracing::warn!`，不中断 session 创建。
@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentLinkRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+    CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
+    LifecycleStepDefinition,
     WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
@@ -26,14 +27,14 @@ use agentdash_domain::workflow::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionWorkflowContext {
     pub has_active_workflow: bool,
-    pub workflow_capabilities: Option<Vec<String>>,
+    pub workflow_capability_directives: Option<Vec<CapabilityDirective>>,
 }
 
 impl SessionWorkflowContext {
     /// 未绑定 / 无法解析时的中性返回值，保持与现状一致的默认行为。
     pub const NONE: Self = Self {
         has_active_workflow: false,
-        workflow_capabilities: None,
+        workflow_capability_directives: None,
     };
 }
 
@@ -60,7 +61,8 @@ pub struct SessionWorkflowRepos<'a> {
 /// 解析 session bootstrap workflow 上下文。
 ///
 /// 规则：
-/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capabilities` → 返回 `(true, Some(baseline))`
+/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capabilities` →
+///   返回 `(true, Some(directives))`
 /// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 [`SessionWorkflowContext::NONE`]
 pub async fn resolve_session_workflow_context(
     repos: SessionWorkflowRepos<'_>,
@@ -198,7 +200,7 @@ async fn resolve_from_lifecycle_key(
         // entry step 没有绑定 workflow，无法推断能力基线，但活跃标志仍成立。
         return SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capabilities: Some(Vec::new()),
+            workflow_capability_directives: Some(Vec::new()),
         };
     };
 
@@ -230,7 +232,9 @@ async fn resolve_from_lifecycle_key(
 
     SessionWorkflowContext {
         has_active_workflow: true,
-        workflow_capabilities: Some(capabilities_from_active_workflow(&workflow)),
+        workflow_capability_directives: Some(
+            capability_directives_from_active_workflow(&workflow),
+        ),
     }
 }
 
@@ -248,12 +252,20 @@ fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
     }
 }
 
-/// 从当前活跃 workflow 的 `contract.capabilities` 拷贝出 session 基线能力 key。
+/// 从当前活跃 workflow 的 `contract.capabilities` 构建 session 基线能力指令。
 ///
 /// session bootstrap 阶段直接使用此 baseline；hook runtime 的动态增减（`CapabilityDirective`）
 /// 由 workflow 级调用方在运行时叠加。
-pub fn capabilities_from_active_workflow(workflow: &WorkflowDefinition) -> Vec<String> {
-    workflow.contract.capabilities.clone()
+pub fn capability_directives_from_active_workflow(
+    workflow: &WorkflowDefinition,
+) -> Vec<CapabilityDirective> {
+    workflow
+        .contract
+        .capabilities
+        .iter()
+        .cloned()
+        .map(CapabilityDirective::Add)
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,7 +278,8 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgentLink, ProjectAgentLinkRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+        CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
+        LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
         WorkflowDefinitionSource,
     };
@@ -614,8 +627,10 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capabilities,
-            Some(vec!["workflow_management".to_string()])
+            ctx.workflow_capability_directives,
+            Some(vec![CapabilityDirective::Add(
+                "workflow_management".to_string()
+            )])
         );
     }
 
@@ -866,8 +881,10 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capabilities,
-            Some(vec!["workflow_management".to_string()])
+            ctx.workflow_capability_directives,
+            Some(vec![CapabilityDirective::Add(
+                "workflow_management".to_string()
+            )])
         );
     }
 
@@ -937,13 +954,15 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capabilities,
-            Some(vec!["workflow_management".to_string()])
+            ctx.workflow_capability_directives,
+            Some(vec![CapabilityDirective::Add(
+                "workflow_management".to_string()
+            )])
         );
     }
 
     #[test]
-    fn capabilities_from_active_workflow_returns_contract_capabilities() {
+    fn capability_directives_from_active_workflow_maps_to_add_directives() {
         let contract = WorkflowContract {
             capabilities: vec![
                 "workflow_management".to_string(),
@@ -963,8 +982,14 @@ mod tests {
         )
         .expect("workflow");
 
-        let effective = capabilities_from_active_workflow(&workflow);
-        let as_set: std::collections::BTreeSet<String> = effective.into_iter().collect();
+        let directives = capability_directives_from_active_workflow(&workflow);
+        let as_set: std::collections::BTreeSet<String> = directives
+            .into_iter()
+            .map(|d| match d {
+                CapabilityDirective::Add(key) => key,
+                CapabilityDirective::Remove(key) => panic!("不应出现 Remove 指令: {key}"),
+            })
+            .collect();
         assert!(as_set.contains("workflow_management"));
         assert!(as_set.contains("file_system"));
         assert!(as_set.contains("mcp:code_analyzer"));

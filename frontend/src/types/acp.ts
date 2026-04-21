@@ -103,7 +103,7 @@ export interface StateChange {
   entity_id: string;
   kind: string;
   payload: Record<string, unknown>;
-  backend_id: string;
+  backend_id: string | null;
   created_at: string;
 }
 

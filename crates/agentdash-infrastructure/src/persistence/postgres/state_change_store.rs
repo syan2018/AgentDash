@@ -171,9 +171,14 @@ impl TryFrom<StateChangeRow> for StateChange {
             })?,
             kind: parse_change_kind(&row.kind)?,
             payload: parse_json_payload(&row.payload)?,
-            backend_id: row.backend_id.ok_or_else(|| {
-                DomainError::InvalidConfig("state_changes.backend_id 缺失".to_string())
-            })?,
+            backend_id: row.backend_id.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }),
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
                 "state_changes.created_at",

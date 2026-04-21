@@ -91,6 +91,7 @@ pub struct StateChange {
     pub kind: ChangeKind,
     /// 变更载荷（差异数据）
     pub payload: serde_json::Value,
-    pub backend_id: String,
+    /// 可选 backend 来源；当变更无法归属到具体 Workspace/Backend 时为空。
+    pub backend_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }

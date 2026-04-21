@@ -8,11 +8,7 @@
 //!
 //! 实现 `SessionTerminalCallback`，由 `SessionHub` 在 session 完全终止后自动调用。
 
-use std::sync::Arc;
-
-use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType,
-};
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleNodeType, LifecycleRun, LifecycleStepDefinition,
     LifecycleStepExecutionStatus,

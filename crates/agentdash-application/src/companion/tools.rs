@@ -17,7 +17,7 @@ use agentdash_domain::session_binding::{
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
-    Vfs, AgentConfig, ExecutionContext, FlowCapabilities, HookEvaluationQuery,
+    Vfs, AgentConfig, ExecutionContext, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
     HookTrigger, MountCapability, SessionHookRefreshQuery,
 };
@@ -1913,17 +1913,6 @@ fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) 
         ec.system_prompt_mode = Some(v);
     }
     ec
-}
-
-fn build_companion_flow_capabilities(mode: CompanionSliceMode) -> FlowCapabilities {
-    use crate::capability::{CapabilityResolver, CompanionSliceMode as ResolverSliceMode};
-    let resolver_mode = match mode {
-        CompanionSliceMode::Full => ResolverSliceMode::Full,
-        CompanionSliceMode::Compact => ResolverSliceMode::Compact,
-        CompanionSliceMode::WorkflowOnly => ResolverSliceMode::WorkflowOnly,
-        CompanionSliceMode::ConstraintsOnly => ResolverSliceMode::ConstraintsOnly,
-    };
-    CapabilityResolver::resolve_companion_caps(resolver_mode)
 }
 
 fn filter_vfs_capabilities(

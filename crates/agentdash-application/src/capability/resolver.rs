@@ -19,7 +19,7 @@ use crate::platform_config::PlatformConfig;
 /// 调用方预展开的 project 级 MCP Preset 字典。
 ///
 /// key 为 preset `name`（同 `mcp:<name>` 中的 `<name>`），value 为对应 `McpServerDecl`。
-/// resolver 内部保持纯函数；查询 Preset 的 IO 由调用方（例如 `SessionPlanBuilder`）完成,
+/// resolver 内部保持纯函数；查询 Preset 的 IO 由调用方（例如 `SessionRequestAssembler`）完成,
 /// 结果以 map 形式塞进 [`CapabilityResolverInput::available_presets`]。
 pub type AvailableMcpPresets = BTreeMap<String, McpServerDecl>;
 

@@ -1,14 +1,6 @@
 use std::sync::Arc;
 
 use crate::session::SessionHub;
-use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
-use agentdash_domain::canvas::CanvasRepository;
-use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::mcp_preset::McpPresetRepository;
-use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-};
 use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;

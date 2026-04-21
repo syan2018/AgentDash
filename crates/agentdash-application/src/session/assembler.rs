@@ -4,13 +4,13 @@
 //!
 //! 代码库里一共有 5 条 session 启动路径,此前各自手写 bootstrap 逻辑:
 //!
-//! | 路径 | 原实现位置 |
+//! | 路径 | 实现入口 |
 //! |---|---|
-//! | ACP Story/Project | [`crate::session::plan_builder::SessionPlanBuilder`] |
-//! | Task runtime | `task::gateway::turn_context` + `task::session_runtime_inputs` |
-//! | Routine | `routine::executor::build_project_agent_prompt_request` |
-//! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` |
-//! | Companion | `companion::tools` |
+//! | ACP Story/Project | `api::routes::acp_sessions` → `SessionRequestAssembler::compose_owner_bootstrap` |
+//! | Task runtime | `task::gateway::turn_context` → `SessionRequestAssembler::compose_task_runtime` |
+//! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
+//! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
+//! | Companion | `companion::tools` → `compose_companion` |
 //!
 //! 5 条路径共享 4 个"策略轴":owner scope mount / system_context 生成 /
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有

@@ -42,7 +42,7 @@ impl SessionOwnerResolver {
         binding: &SessionBinding,
     ) -> Result<ResolvedOwnerSummary, HookError> {
         let mut summary = HookOwnerSummary {
-            owner_type: binding.owner_type.to_string(),
+            owner_type: binding.owner_type,
             owner_id: binding.owner_id.to_string(),
             label: None,
             project_id: None,

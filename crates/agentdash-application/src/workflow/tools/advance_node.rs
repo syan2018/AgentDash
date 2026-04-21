@@ -547,9 +547,9 @@ fn resolve_owner_scope(
         .as_deref()
         .and_then(|id| Uuid::parse_str(id).ok());
 
-    // 按字符串 owner_type + 关联 ID 还原合法 sum type;若关联 ID 缺失则向上降级。
-    match owner.owner_type.as_str() {
-        "task" => match (story_id, task_id) {
+    // 按 owner_type + 关联 ID 还原合法 sum type;若关联 ID 缺失则向上降级。
+    match owner.owner_type {
+        agentdash_domain::session_binding::SessionOwnerType::Task => match (story_id, task_id) {
             (Some(story_id), Some(task_id)) => SessionOwnerCtx::Task {
                 project_id,
                 story_id,
@@ -561,14 +561,16 @@ fn resolve_owner_scope(
             },
             _ => SessionOwnerCtx::Project { project_id },
         },
-        "story" => match story_id {
+        agentdash_domain::session_binding::SessionOwnerType::Story => match story_id {
             Some(story_id) => SessionOwnerCtx::Story {
                 project_id,
                 story_id,
             },
             None => SessionOwnerCtx::Project { project_id },
         },
-        _ => SessionOwnerCtx::Project { project_id },
+        agentdash_domain::session_binding::SessionOwnerType::Project => {
+            SessionOwnerCtx::Project { project_id }
+        }
     }
 }
 

@@ -116,10 +116,10 @@ pub(crate) fn parse_session_terminal_state(
 
 /// 检查 snapshot 是否关联了 task owner
 pub(crate) fn snapshot_has_task_owner(snapshot: &SessionHookSnapshot) -> bool {
-    snapshot
-        .owners
-        .iter()
-        .any(|o| o.owner_type == "task" && o.task_id.is_some())
+    snapshot.owners.iter().any(|o| {
+        o.owner_type == agentdash_domain::session_binding::SessionOwnerType::Task
+            && o.task_id.is_some()
+    })
 }
 
 /// 基于 owner type 返回默认 hook rules。

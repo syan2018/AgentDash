@@ -487,7 +487,7 @@ mod tests {
             session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
             owners: vec![HookOwnerSummary {
-                owner_type: "story".to_string(),
+                owner_type: agentdash_domain::session_binding::SessionOwnerType::Story,
                 owner_id: uuid::Uuid::new_v4().to_string(),
                 label: Some("Story A".to_string()),
                 project_id: None,

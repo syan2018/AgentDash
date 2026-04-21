@@ -2051,15 +2051,19 @@ pub fn companion_owner_candidates(
     let mut owners = Vec::new();
     for owner in &snapshot.owners {
         if let Some(candidate) = parse_owner_candidate(
-            owner.owner_type.as_str(),
+            owner.owner_type,
             &owner.owner_id,
             owner.label.clone(),
         )? {
             owners.push(candidate);
         }
-        if owner.owner_type == "task"
+        if owner.owner_type == SessionOwnerType::Task
             && let Some(story_id) = owner.story_id.as_deref()
-            && let Some(candidate) = parse_owner_candidate("story", story_id, owner.label.clone())?
+            && let Some(candidate) = parse_owner_candidate(
+                SessionOwnerType::Story,
+                story_id,
+                owner.label.clone(),
+            )?
         {
             owners.push(candidate);
         }
@@ -2069,16 +2073,10 @@ pub fn companion_owner_candidates(
 }
 
 fn parse_owner_candidate(
-    owner_type: &str,
+    owner_type: SessionOwnerType,
     owner_id: &str,
     label: Option<String>,
 ) -> Result<Option<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
-    let owner_type = match owner_type {
-        "project" => SessionOwnerType::Project,
-        "story" => SessionOwnerType::Story,
-        "task" => SessionOwnerType::Task,
-        _ => return Ok(None),
-    };
     let owner_id = Uuid::parse_str(owner_id).map_err(|error| {
         AgentToolError::ExecutionFailed(format!("owner_id 不是有效 UUID: {error}"))
     })?;
@@ -2094,7 +2092,7 @@ fn companion_project_id_for_owner(
     let matching_owner = snapshot
         .owners
         .iter()
-        .find(|owner| owner.owner_type == owner_type.to_string() && owner.owner_id == owner_id_raw)
+        .find(|owner| owner.owner_type == owner_type && owner.owner_id == owner_id_raw)
         .ok_or_else(|| {
             AgentToolError::ExecutionFailed("当前 session owner 缺少 project 范围信息".to_string())
         })?;
@@ -2137,7 +2135,7 @@ mod companion_tests {
         let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-test".to_string(),
             owners: vec![agentdash_spi::HookOwnerSummary {
-                owner_type: "task".to_string(),
+                owner_type: SessionOwnerType::Task,
                 owner_id: Uuid::new_v4().to_string(),
                 label: Some("Task A".to_string()),
                 project_id: None,
@@ -2160,7 +2158,7 @@ mod companion_tests {
         let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-parent".to_string(),
             owners: vec![agentdash_spi::HookOwnerSummary {
-                owner_type: "task".to_string(),
+                owner_type: SessionOwnerType::Task,
                 owner_id: Uuid::new_v4().to_string(),
                 label: Some("Task A".to_string()),
                 project_id: None,

@@ -127,8 +127,16 @@ CapabilityResolverInput {
 > `build_platform_mcp_config` 通过 `ctx.story_id()` / `ctx.task_id()` getter 复用旧取值语义,
 > `is_capability_visible` 通过 `ctx.owner_type()` 继续使用 `SessionOwnerType` 硬边界。
 >
-> 未收口的层:`SessionPlanInput` / `Runtime*` / `SessionBinding` 的四字段仍在应用层存活,
-> PR2/PR3 继续收敛;resolver 入口不再出现 `story_id: None, task_id: None` 硬编码。
+> **后续收口进度**(见 `04-20-session-owner-sum-type` task):
+>
+> - PR2:`SessionPlanInput.owner_type` 升级为 `owner_ctx: SessionOwnerCtx`;
+>   同步删除从未被调用的 `RuntimeMcpBinding` 死代码(113 行)
+> - PR3:`HookOwnerSummary.owner_type: String` → `SessionOwnerType` 强类型化,
+>   JSON 对外契约通过 `#[serde(rename_all = "snake_case")]` 保持 `"project"/"story"/"task"`
+>
+> 仍未收口的:`SessionBinding` 持久化层的 `(owner_type, owner_id)` ↔ `SessionOwnerCtx`
+> 显式转换(Task 变体需异步查 task 表补 story_id),
+> 以及 `HookOwnerSummary` 剩余 4 个 `Option<String>` id 字段。
 
 ### 输出
 

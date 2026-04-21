@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Rust backend 跨 domain/application/api 层结构改动"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "删除 step.capabilities 后多点重构"}
+{"file": ".trellis/tasks/04-21-workflow-contract-capabilities/prd.md", "reason": "Task PRD"}

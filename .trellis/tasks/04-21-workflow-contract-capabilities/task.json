@@ -4,7 +4,7 @@
   "title": "capabilities 从 Step 迁移到 Workflow 并统一 MCP 引用语义",
   "description": "",
   "status": "planning",
-  "dev_type": null,
+  "dev_type": "backend",
   "scope": null,
   "package": null,
   "priority": "P2",

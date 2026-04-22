@@ -643,15 +643,16 @@ export function ProjectAgentView({
           <div className="relative">
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              width="13"
-              height="13"
+              width="14"
+              height="14"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/70"
             >
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
@@ -661,16 +662,31 @@ export function ProjectAgentView({
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
               placeholder="搜索 agent…"
-              className="h-8 w-full rounded-[8px] border border-border bg-secondary/35 pl-8 pr-2.5 text-xs text-foreground placeholder:text-muted-foreground/70 outline-none transition-colors focus:border-primary focus:bg-background"
+              className="h-8 w-full rounded-[8px] border border-border bg-secondary/35 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground/70 outline-none transition-colors focus:border-primary focus:bg-background"
             />
             {searchKeyword && (
               <button
                 type="button"
                 onClick={() => setSearchKeyword("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-[4px] px-1 text-[11px] text-muted-foreground hover:text-foreground"
+                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
                 title="清除"
+                aria-label="清除搜索"
               >
-                ×
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
               </button>
             )}
           </div>

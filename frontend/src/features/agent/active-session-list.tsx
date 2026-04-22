@@ -480,29 +480,53 @@ function SessionFilterBar({
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
       {/* 搜索框 */}
       <div className="relative flex h-7 min-w-0 flex-1 items-center">
-        <span
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           aria-hidden
-          className="pointer-events-none absolute left-2 text-xs text-muted-foreground/60"
+          className="pointer-events-none absolute left-2 text-muted-foreground/70"
         >
-          🔍
-        </span>
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
         <input
           type="text"
           value={keyword}
           onChange={(e) => onKeywordChange(e.target.value)}
           placeholder="搜索 session…"
-          className="h-7 w-full rounded-md border border-border bg-background pl-7 pr-6 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+          className="h-7 w-full rounded-md border border-border bg-muted/40 pl-8 pr-7 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary focus:bg-background"
           aria-label="搜索 session"
         />
         {keyword.length > 0 && (
           <button
             type="button"
             onClick={() => onKeywordChange("")}
-            className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+            className="absolute right-1 flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
             title="清除搜索"
             aria-label="清除搜索"
           >
-            ×
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
           </button>
         )}
       </div>

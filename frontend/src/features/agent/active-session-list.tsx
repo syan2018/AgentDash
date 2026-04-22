@@ -30,7 +30,13 @@ import {
 // ─── 通用工具 ──────────────────────────────────────────────────────────────
 
 function getAgentLabel(session: ProjectSessionEntry): string {
-  return session.agent_display_name ?? session.agent_key ?? "—";
+  if (session.agent_display_name) return session.agent_display_name;
+  // agent_key 是 GUID，对用户无意义；agent 已删除时给占位文案
+  return "已删除 Agent";
+}
+
+function isAgentDeleted(session: ProjectSessionEntry): boolean {
+  return !session.agent_display_name;
 }
 
 function getOwnerBadgeLabel(session: ProjectSessionEntry): string | null {
@@ -188,12 +194,27 @@ function SessionRow({
               e.stopPropagation();
               onToggleCompanions();
             }}
-            className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
-            title={companionsExpanded ? "收起 companion" : `展开 ${companionCount} 条 companion`}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/10 pl-1 pr-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            title={companionsExpanded ? "收起 companion 子会话" : `展开 ${companionCount} 条 companion 子会话`}
             aria-expanded={companionsExpanded}
+            aria-label={companionsExpanded ? "收起 companion" : `展开 ${companionCount} 条 companion`}
           >
-            {companionsExpanded ? "−" : "+"}
-            {companionCount}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              className={`transition-transform ${companionsExpanded ? "rotate-90" : ""}`}
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <span className="leading-none">{companionCount}</span>
           </button>
         )}
 
@@ -222,11 +243,20 @@ function SessionRow({
 
       {/* ── 第 2 行：agent · 归属 · 状态 ── */}
       <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
-        <span className="shrink-0 truncate max-w-[120px]">{agentText}</span>
+        <span
+          className={`min-w-0 max-w-[55%] shrink-0 truncate ${
+            isAgentDeleted(session) ? "italic text-muted-foreground/50" : ""
+          }`}
+          title={agentText}
+        >
+          {agentText}
+        </span>
         {ownerLabel && (
           <>
             <span className="shrink-0 text-muted-foreground/30">·</span>
-            <span className="min-w-0 flex-1 truncate">{ownerLabel}</span>
+            <span className="min-w-0 flex-1 truncate" title={ownerLabel}>
+              {ownerLabel}
+            </span>
           </>
         )}
         {!ownerLabel && <span className="min-w-0 flex-1" />}

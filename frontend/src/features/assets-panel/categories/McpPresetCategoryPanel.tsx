@@ -5,9 +5,9 @@
  * PR5（本次）：新建 / 编辑 / 复制为 user / 删除 / builtin 只读查看
  *
  * 交互：
- * - 左列：builtin 优先展示、按 name 排序的卡片网格
+ * - 左列：builtin 优先展示、按 display_name 排序的卡片网格
  * - 右侧：同一区域叠放 detail 面板（表单 or 只读查看），仿 Workflow 的 inline modal 风格
- * - 表单：复用 `features/mcp-shared/McpServerDeclEditor`，字段与 agent-preset-editor 完全对齐
+ * - 表单：复用 `features/mcp-shared/McpTransportConfigEditor`
  *
  * 关键约束：
  * - description tombstone：表单追踪"原值 vs 当前值"，未改 → patch 不包含；
@@ -16,8 +16,8 @@
  *   - 编辑按钮 → 打开 disabled 只读表单
  *   - 删除按钮隐藏；tooltip 提示改用"复制为 user"
  *   - 复制按钮始终可用
- * - Transport 切换：由 `McpServerDeclEditor` 内部处理字段保留策略
- * - 客户端校验：name / server_decl.name 必填，http/sse 要求 url 非空（提交时拦截）
+ * - Transport 切换：由 `McpTransportConfigEditor` 内部处理字段保留策略
+ * - 客户端校验：key / display_name 必填，http/sse 要求 url 非空（提交时拦截）
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -34,10 +34,14 @@ import {
 import type {
   CreateMcpPresetRequest,
   McpPresetDto,
-  McpServerDecl,
+  McpRoutePolicy,
+  McpTransportConfig,
   UpdateMcpPresetRequest,
 } from "../../../types";
-import { McpServerDeclEditor, createDefaultMcpServerDecl } from "../../mcp-shared";
+import {
+  McpTransportConfigEditor,
+  createDefaultMcpTransportConfig,
+} from "../../mcp-shared";
 
 /* ─── 表单状态 ─── */
 //
@@ -50,42 +54,51 @@ interface FormBaseline {
 }
 
 interface FormState {
-  name: string;
+  key: string;
+  display_name: string;
   /** 直接映射到 <textarea>；空串在 update 时表示"清空"（tombstone）*/
   description: string;
-  server_decl: McpServerDecl;
+  transport: McpTransportConfig;
+  route_policy: McpRoutePolicy;
 }
 
 function buildInitialForm(preset?: McpPresetDto | null): FormState {
   if (!preset) {
     return {
-      name: "",
+      key: "",
+      display_name: "",
       description: "",
-      server_decl: createDefaultMcpServerDecl(),
+      transport: createDefaultMcpTransportConfig(),
+      route_policy: "auto",
     };
   }
   return {
-    name: preset.name,
+    key: preset.key,
+    display_name: preset.display_name,
     description: preset.description ?? "",
-    server_decl: preset.server_decl,
+    transport: preset.transport,
+    route_policy: preset.route_policy,
   };
 }
 
 /** 客户端校验；返回错误信息或 null。 */
 function validateForm(form: FormState): string | null {
-  const trimmedName = form.name.trim();
-  if (!trimmedName) return "Preset 名称不能为空";
-  if (!form.server_decl.name.trim()) return "MCP Server 名称不能为空";
-  if (form.server_decl.type === "http" || form.server_decl.type === "sse") {
-    if (!form.server_decl.url.trim()) return "URL 不能为空";
+  const trimmedKey = form.key.trim();
+  const trimmedDisplayName = form.display_name.trim();
+  if (!trimmedKey) return "工具标识不能为空";
+  if (!trimmedDisplayName) return "显示名称不能为空";
+  if (trimmedKey.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
+  if (trimmedKey.includes("::")) return "工具标识不能包含 ::";
+  if (/[\\/:\\s]/.test(trimmedKey)) return "工具标识不能包含空白、冒号或路径分隔符";
+  if (form.transport.type === "http" || form.transport.type === "sse") {
+    if (!form.transport.url.trim()) return "URL 不能为空";
     try {
-      // 容错：允许 http(s) 以及项目习惯的相对 / ws(s)：只做"非空 + URL 可 parse"
-      new URL(form.server_decl.url.trim());
+      new URL(form.transport.url.trim());
     } catch {
       return "URL 格式非法";
     }
   }
-  if (form.server_decl.type === "stdio" && !form.server_decl.command.trim()) {
+  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
     return "Command 不能为空";
   }
   return null;
@@ -94,9 +107,13 @@ function validateForm(form: FormState): string | null {
 /** 构造 update patch：仅把发生变化的字段放入；description 支持 null tombstone。 */
 function buildUpdatePatch(current: FormState, original: McpPresetDto): UpdateMcpPresetRequest {
   const patch: UpdateMcpPresetRequest = {};
-  const trimmedName = current.name.trim();
-  if (trimmedName !== original.name) {
-    patch.name = trimmedName;
+  const trimmedKey = current.key.trim();
+  if (trimmedKey !== original.key) {
+    patch.key = trimmedKey;
+  }
+  const trimmedDisplayName = current.display_name.trim();
+  if (trimmedDisplayName !== original.display_name) {
+    patch.display_name = trimmedDisplayName;
   }
   const currentDesc = current.description.trim();
   const originalDesc = (original.description ?? "").trim();
@@ -104,10 +121,13 @@ function buildUpdatePatch(current: FormState, original: McpPresetDto): UpdateMcp
     // 空串 → null（tombstone 清空）；非空 → 字符串
     patch.description = currentDesc ? currentDesc : null;
   }
-  // server_decl：结构化比较用 JSON 序列化，字段顺序受 TS 序列化影响，
+  // transport：结构化比较用 JSON 序列化，字段顺序受 TS 序列化影响，
   // 但在受控表单里字段形态稳定；用 JSON.stringify 作 cheap deep equal
-  if (JSON.stringify(current.server_decl) !== JSON.stringify(original.server_decl)) {
-    patch.server_decl = current.server_decl;
+  if (JSON.stringify(current.transport) !== JSON.stringify(original.transport)) {
+    patch.transport = current.transport;
+  }
+  if (current.route_policy !== original.route_policy) {
+    patch.route_policy = current.route_policy;
   }
   return patch;
 }
@@ -170,7 +190,7 @@ export function McpPresetCategoryPanel() {
       if (created.length === 0) {
         setMessage("未装载任何内置 Preset（可能已全部装载或后端无内置定义）");
       } else {
-        setMessage(`已装载 ${created.length} 个内置 Preset：${created.map((p) => p.name).join("、")}`);
+        setMessage(`已装载 ${created.length} 个内置 Preset：${created.map((p) => p.display_name).join("、")}`);
       }
       await loadPresets(currentProjectId);
     } catch (e) {
@@ -187,10 +207,10 @@ export function McpPresetCategoryPanel() {
       setError(null);
       try {
         const cloned = await cloneMcpPreset(currentProjectId, preset.id, {});
-        setMessage(`已复制为 user Preset：${cloned.name}`);
+        setMessage(`已复制为 user Preset：${cloned.display_name}`);
         await loadPresets(currentProjectId);
       } catch (e) {
-        setError(friendlyError(e, `复制「${preset.name}」失败`));
+        setError(friendlyError(e, `复制「${preset.display_name}」失败`));
       } finally {
         setBusyRowId(null);
       }
@@ -204,7 +224,7 @@ export function McpPresetCategoryPanel() {
     setError(null);
     try {
       await deleteMcpPreset(currentProjectId, confirmDelete.id);
-      setMessage(`已删除：${confirmDelete.name}`);
+      setMessage(`已删除：${confirmDelete.display_name}`);
       setConfirmDelete(null);
       // 如果详情面板正在查看被删的 Preset，关闭它
       if (
@@ -215,7 +235,7 @@ export function McpPresetCategoryPanel() {
       }
       await loadPresets(currentProjectId);
     } catch (e) {
-      setError(friendlyError(e, `删除「${confirmDelete.name}」失败`));
+      setError(friendlyError(e, `删除「${confirmDelete.display_name}」失败`));
     } finally {
       setBusyRowId(null);
     }
@@ -240,7 +260,7 @@ export function McpPresetCategoryPanel() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">MCP Preset 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {builtinCount} 个 builtin · {userCount} 个 user · 单个 MCP Server 条目粒度，供 agent 装配复用
+            {builtinCount} 个 builtin · {userCount} 个 user · project 级 MCP 引用模板，供 agent 装配复用
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -257,7 +277,7 @@ export function McpPresetCategoryPanel() {
             onClick={() => void handleBootstrap()}
             disabled={isBootstrapping}
             className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-            title="从内置 JSON 模板装载常用 MCP Server 定义（幂等，已装载会跳过）"
+            title="从内置 JSON 模板装载常用 MCP Preset 定义（幂等，已装载会跳过）"
           >
             {isBootstrapping ? "装载中…" : "装载内置 Preset"}
           </button>
@@ -345,7 +365,7 @@ export function McpPresetCategoryPanel() {
             setError(null);
             try {
               const created = await createMcpPreset(currentProjectId, input);
-              setMessage(`已创建 Preset：${created.name}`);
+              setMessage(`已创建 Preset：${created.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
@@ -360,7 +380,7 @@ export function McpPresetCategoryPanel() {
             setError(null);
             try {
               const updated = await updateMcpPreset(currentProjectId, presetId, patch);
-              setMessage(`已更新 Preset：${updated.name}`);
+              setMessage(`已更新 Preset：${updated.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
@@ -426,7 +446,7 @@ function McpPresetGrid({
       if (a.source !== b.source) {
         return a.source === "builtin" ? -1 : 1;
       }
-      return a.name.localeCompare(b.name, "zh-CN");
+      return a.display_name.localeCompare(b.display_name, "zh-CN");
     });
   }, [presets]);
 
@@ -459,18 +479,19 @@ function McpPresetCard({
   onDelete: () => void;
   isBusy: boolean;
 }) {
-  const decl = preset.server_decl;
+  const transport = preset.transport;
   const isBuiltin = preset.source === "builtin";
 
   return (
     <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-6 text-foreground">{preset.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">server: {decl.name}</p>
+          <p className="truncate text-sm font-medium leading-6 text-foreground">{preset.display_name}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">key: {preset.key}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <TransportBadge transport={decl.type} />
+          <TransportBadge transport={transport.type} />
+          <RoutePolicyBadge policy={preset.route_policy} />
           <SourceBadge source={preset.source} />
         </div>
       </header>
@@ -481,7 +502,7 @@ function McpPresetCard({
         </p>
       )}
 
-      <ServerPreview decl={decl} />
+      <ServerPreview transport={transport} />
 
       <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
         <span>更新于 {formatDateTime(preset.updated_at)}</span>
@@ -527,42 +548,37 @@ function McpPresetCard({
 
 /* ─── 只读预览：按 transport 区分 ─── */
 
-function ServerPreview({ decl }: { decl: McpServerDecl }) {
-  if (decl.type === "http" || decl.type === "sse") {
-    const headerCount = decl.headers?.length ?? 0;
+function ServerPreview({ transport }: { transport: McpTransportConfig }) {
+  if (transport.type === "http" || transport.type === "sse") {
+    const headerCount = transport.headers?.length ?? 0;
     return (
       <div className="mt-3 space-y-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <span className="shrink-0 text-foreground/70">URL</span>
-          <span className="min-w-0 truncate font-mono" title={decl.url}>
-            {decl.url || "(未配置)"}
+          <span className="min-w-0 truncate font-mono" title={transport.url}>
+            {transport.url || "(未配置)"}
           </span>
         </div>
         <div className="flex flex-wrap gap-1.5 text-muted-foreground">
           <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5">
             {headerCount} header{headerCount === 1 ? "" : "s"}
           </span>
-          {decl.relay && (
-            <span className="rounded-[6px] border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
-              relay
-            </span>
-          )}
         </div>
       </div>
     );
   }
 
   // stdio
-  const args = decl.args ?? [];
-  const envCount = decl.env?.length ?? 0;
+  const args = transport.args ?? [];
+  const envCount = transport.env?.length ?? 0;
   const argsPreview = args.length > 0 ? args.join(" ") : "(无参数)";
 
   return (
     <div className="mt-3 space-y-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
       <div className="flex items-center gap-1.5 text-muted-foreground">
         <span className="shrink-0 text-foreground/70">command</span>
-        <span className="min-w-0 truncate font-mono" title={decl.command}>
-          {decl.command || "(未配置)"}
+        <span className="min-w-0 truncate font-mono" title={transport.command}>
+          {transport.command || "(未配置)"}
         </span>
       </div>
       <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -575,11 +591,6 @@ function ServerPreview({ decl }: { decl: McpServerDecl }) {
         <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5">
           {envCount} env
         </span>
-        {decl.relay && (
-          <span className="rounded-[6px] border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
-            relay
-          </span>
-        )}
       </div>
     </div>
   );
@@ -634,8 +645,10 @@ function McpPresetDetailDialog({
     }
     if (isCreating) {
       const input: CreateMcpPresetRequest = {
-        name: form.name.trim(),
-        server_decl: form.server_decl,
+        key: form.key.trim(),
+        display_name: form.display_name.trim(),
+        transport: form.transport,
+        route_policy: form.route_policy,
       };
       const trimmedDesc = form.description.trim();
       if (trimmedDesc) input.description = trimmedDesc;
@@ -655,8 +668,8 @@ function McpPresetDetailDialog({
   const headerTitle = isCreating
     ? "新建 MCP Preset"
     : isViewOnly
-      ? `查看 MCP Preset：${target?.name ?? ""}`
-      : `编辑 MCP Preset：${target?.name ?? ""}`;
+      ? `查看 MCP Preset：${target?.display_name ?? ""}`
+      : `编辑 MCP Preset：${target?.display_name ?? ""}`;
 
   return (
     <>
@@ -686,18 +699,31 @@ function McpPresetDetailDialog({
           <div className="max-h-[70vh] space-y-3 overflow-y-auto p-5">
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div>
-                <label className="agentdash-form-label">Preset 名称</label>
+                <label className="agentdash-form-label">工具标识</label>
                 <input
-                  value={form.name}
-                  onChange={(e) => patchForm({ name: e.target.value })}
+                  value={form.key}
+                  onChange={(e) => patchForm({ key: e.target.value })}
                   placeholder="唯一标识，例如 filesystem-read"
                   disabled={isViewOnly}
                   className="agentdash-form-input"
                 />
                 <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-                  项目内唯一；用于在 agent 配置处选择
+                  项目内唯一；同时作为 agent-facing server name
                 </p>
               </div>
+              <div>
+                <label className="agentdash-form-label">显示名称</label>
+                <input
+                  value={form.display_name}
+                  onChange={(e) => patchForm({ display_name: e.target.value })}
+                  placeholder="例如 Filesystem"
+                  disabled={isViewOnly}
+                  className="agentdash-form-input"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div>
                 <label className="agentdash-form-label">来源</label>
                 <div className="agentdash-form-input flex items-center text-xs text-muted-foreground">
@@ -707,6 +733,19 @@ function McpPresetDetailDialog({
                       ? `builtin${target?.builtin_key ? ` · ${target.builtin_key}` : ""}`
                       : "user"}
                 </div>
+              </div>
+              <div>
+                <label className="agentdash-form-label">路由策略</label>
+                <select
+                  value={form.route_policy}
+                  onChange={(e) => patchForm({ route_policy: e.target.value as McpRoutePolicy })}
+                  disabled={isViewOnly}
+                  className="agentdash-form-select"
+                >
+                  <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
+                  <option value="relay">relay（强制经本机）</option>
+                  <option value="direct">direct（强制直连）</option>
+                </select>
               </div>
             </div>
 
@@ -728,10 +767,10 @@ function McpPresetDetailDialog({
             </div>
 
             <div>
-              <label className="agentdash-form-label">MCP Server 定义</label>
-              <McpServerDeclEditor
-                value={form.server_decl}
-                onChange={(server_decl) => patchForm({ server_decl })}
+              <label className="agentdash-form-label">Transport 定义</label>
+              <McpTransportConfigEditor
+                value={form.transport}
+                onChange={(transport) => patchForm({ transport })}
                 disabled={isViewOnly}
               />
             </div>
@@ -796,7 +835,7 @@ function ConfirmDeleteDialog({
         <h3 className="text-sm font-semibold text-foreground">确认删除 MCP Preset</h3>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">
           确定要删除{" "}
-          <span className="font-medium text-foreground">{preset.name}</span> 吗？此操作不可撤销；
+          <span className="font-medium text-foreground">{preset.display_name}</span> 吗？此操作不可撤销；
           已引用该 Preset 的 agent 配置在运行时会提示缺失（本任务尚未接入活引用）。
         </p>
         <div className="mt-4 flex justify-end gap-2">
@@ -848,6 +887,20 @@ function SourceBadge({ source }: { source: "builtin" | "user" }) {
   return (
     <span className="shrink-0 rounded-[6px] border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
       user
+    </span>
+  );
+}
+
+function RoutePolicyBadge({ policy }: { policy: McpRoutePolicy }) {
+  const style =
+    policy === "relay"
+      ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+      : policy === "direct"
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+        : "border-border bg-background text-muted-foreground";
+  return (
+    <span className={`shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-medium ${style}`}>
+      {policy}
     </span>
   );
 }

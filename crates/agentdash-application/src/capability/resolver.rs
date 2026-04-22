@@ -6,14 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use agent_client_protocol::{
-    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-};
-use agentdash_domain::mcp_preset::McpServerDecl;
+use agentdash_domain::mcp_preset::McpPreset;
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    CapabilityDirective, CapabilityReduction, CapabilitySlotState,
-    reduce_capability_directives,
+    CapabilityDirective, CapabilityReduction, CapabilitySlotState, reduce_capability_directives,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::tool_capability::{
@@ -22,14 +18,15 @@ use agentdash_spi::tool_capability::{
 use agentdash_spi::{FlowCapabilities, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
+use crate::mcp_preset::{preset_to_acp_server, preset_uses_relay};
 use crate::platform_config::PlatformConfig;
 
 /// 调用方预展开的 project 级 MCP Preset 字典。
 ///
-/// key 为 preset `name`（同 `mcp:<name>` 中的 `<name>`），value 为对应 `McpServerDecl`。
+/// key 为 preset `key`（同 `mcp:<key>` 中的 `<key>`），value 为对应 `McpPreset`。
 /// resolver 内部保持纯函数；查询 Preset 的 IO 由调用方（例如 `SessionRequestAssembler`）完成,
 /// 结果以 map 形式塞进 [`CapabilityResolverInput::available_presets`]。
-pub type AvailableMcpPresets = BTreeMap<String, McpServerDecl>;
+pub type AvailableMcpPresets = BTreeMap<String, McpPreset>;
 
 /// Resolver 输入 — 纯粹的 session 上下文描述，不含基础设施配置。
 #[derive(Debug, Clone)]
@@ -53,7 +50,7 @@ pub struct CapabilityResolverInput {
     /// - `has_active_workflow=true, workflow_capability_directives=None`：
     ///   仅激活 `workflow_can_grant` 授予路径，不覆盖能力集
     pub workflow_ctx: SessionWorkflowContext,
-    /// agent config 中的 `mcp_servers` 配置 — 用于兼容旧的 inline 声明链路。
+    /// 已解析成运行时条目的 Agent MCP 列表。
     /// `mcp:<X>` 解析优先查 `available_presets`，未命中时 fallback 到此列表。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
     /// project 级 MCP Preset 预展开字典 — `mcp:<name>` 的首选查源。
@@ -79,6 +76,7 @@ pub enum CompanionSliceMode {
 pub struct AgentMcpServerEntry {
     pub name: String,
     pub server: agent_client_protocol::McpServer,
+    pub uses_relay: bool,
 }
 
 /// Resolver 输出 — session 的有效工具集
@@ -90,6 +88,8 @@ pub struct CapabilityResolverOutput {
     pub platform_mcp_configs: Vec<McpInjectionConfig>,
     /// 需注入的自定义 MCP server 列表（由 `mcp:*` key 解析得到）
     pub custom_mcp_servers: Vec<agent_client_protocol::McpServer>,
+    /// 需走 relay 的自定义 MCP server name 集合。
+    pub custom_relay_mcp_server_names: BTreeSet<String>,
     /// 已解析通过的 capability key 集合（供调试 / 日志）
     pub effective_capabilities: BTreeSet<ToolCapability>,
 }
@@ -126,11 +126,11 @@ impl CapabilityResolver {
             .map(|caps| caps.iter().map(|s| s.as_str()).collect());
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let mut effective_caps =
-            default_visible_capabilities(input, agent_declares_set.as_ref());
+        let mut effective_caps = default_visible_capabilities(input, agent_declares_set.as_ref());
 
         let mut custom_mcp_servers = Vec::<agent_client_protocol::McpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
+        let mut custom_relay_mcp_server_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
         let directives: &[CapabilityDirective] = input
@@ -148,19 +148,20 @@ impl CapabilityResolver {
                     // 硬屏蔽：即便 auto_granted 也要从集合剔除
                     effective_caps.remove(&cap);
                 }
-                CapabilitySlotState::FullCapability
-                | CapabilitySlotState::ToolWhitelist(_) => {
+                CapabilitySlotState::FullCapability | CapabilitySlotState::ToolWhitelist(_) => {
                     // well-known 或 custom mcp 均通过此分支启用
                     if cap.is_well_known() {
                         effective_caps.insert(cap);
                     } else if cap.is_custom_mcp() {
-                        if let Some(server_name) =
-                            cap.custom_mcp_server_name().map(str::to_string)
+                        if let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
                         {
-                            if let Some(decl) = input.available_presets.get(&server_name) {
+                            if let Some(preset) = input.available_presets.get(&server_name) {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    custom_mcp_servers.push(mcp_server_decl_to_acp(decl));
+                                    if preset_uses_relay(preset) {
+                                        custom_relay_mcp_server_names.insert(server_name.clone());
+                                    }
+                                    custom_mcp_servers.push(preset_to_acp_server(preset));
                                 }
                             } else if let Some(agent_entry) = input
                                 .agent_mcp_servers
@@ -169,6 +170,9 @@ impl CapabilityResolver {
                             {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
+                                    if agent_entry.uses_relay {
+                                        custom_relay_mcp_server_names.insert(server_name.clone());
+                                    }
                                     custom_mcp_servers.push(agent_entry.server.clone());
                                 }
                             } else {
@@ -219,6 +223,7 @@ impl CapabilityResolver {
             flow_capabilities,
             platform_mcp_configs,
             custom_mcp_servers,
+            custom_relay_mcp_server_names,
             effective_capabilities: effective_caps,
         }
     }
@@ -287,10 +292,7 @@ fn default_visible_capabilities(
 }
 
 /// Companion slice mode → FlowCapabilities 约束。
-fn apply_companion_slice(
-    base: FlowCapabilities,
-    mode: CompanionSliceMode,
-) -> FlowCapabilities {
+fn apply_companion_slice(base: FlowCapabilities, mode: CompanionSliceMode) -> FlowCapabilities {
     match mode {
         CompanionSliceMode::Full => base,
         CompanionSliceMode::Compact => base.intersect(&FlowCapabilities::from_clusters([
@@ -326,51 +328,12 @@ fn build_platform_mcp_config(
         PlatformMcpScope::Task => {
             let task_id = input.owner_ctx.task_id()?;
             let story_id = input.owner_ctx.story_id()?;
-            McpInjectionConfig::for_task(
-                base_url,
-                input.owner_ctx.project_id(),
-                story_id,
-                task_id,
-            )
+            McpInjectionConfig::for_task(base_url, input.owner_ctx.project_id(), story_id, task_id)
         }
         PlatformMcpScope::Workflow => {
             McpInjectionConfig::for_workflow(base_url, input.owner_ctx.project_id())
         }
     })
-}
-
-/// 把领域层的 `McpServerDecl` 转换为 ACP `McpServer`（供 session 注入用）。
-///
-/// Preset 里 stdio / http / sse 三种 transport 各自映射到 ACP 对应类型,
-/// relay 标志在当前 resolver 层不消费（由下游 transport 决定）。
-fn mcp_server_decl_to_acp(decl: &McpServerDecl) -> agent_client_protocol::McpServer {
-    match decl {
-        McpServerDecl::Http { name, url, headers, .. } => {
-            let mapped_headers: Vec<HttpHeader> = headers
-                .iter()
-                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
-                .collect();
-            McpServer::Http(McpServerHttp::new(name.clone(), url.clone()).headers(mapped_headers))
-        }
-        McpServerDecl::Sse { name, url, headers, .. } => {
-            let mapped_headers: Vec<HttpHeader> = headers
-                .iter()
-                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
-                .collect();
-            McpServer::Sse(McpServerSse::new(name.clone(), url.clone()).headers(mapped_headers))
-        }
-        McpServerDecl::Stdio { name, command, args, env, .. } => {
-            let mapped_env: Vec<EnvVariable> = env
-                .iter()
-                .map(|e| EnvVariable::new(e.name.clone(), e.value.clone()))
-                .collect();
-            McpServer::Stdio(
-                McpServerStdio::new(name.clone(), command.clone())
-                    .args(args.clone())
-                    .env(mapped_env),
-            )
-        }
-    }
 }
 
 #[cfg(test)]
@@ -402,9 +365,18 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(output.flow_capabilities.has(ToolCluster::Read), "file_read auto-granted");
-        assert!(output.flow_capabilities.has(ToolCluster::Write), "file_write auto-granted");
-        assert!(output.flow_capabilities.has(ToolCluster::Execute), "shell_execute auto-granted");
+        assert!(
+            output.flow_capabilities.has(ToolCluster::Read),
+            "file_read auto-granted"
+        );
+        assert!(
+            output.flow_capabilities.has(ToolCluster::Write),
+            "file_write auto-granted"
+        );
+        assert!(
+            output.flow_capabilities.has(ToolCluster::Execute),
+            "shell_execute auto-granted"
+        );
         assert!(output.flow_capabilities.has(ToolCluster::Canvas));
         assert!(output.flow_capabilities.has(ToolCluster::Collaboration));
         assert!(!output.flow_capabilities.has(ToolCluster::Workflow));
@@ -416,10 +388,11 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         assert_eq!(output.platform_mcp_configs.len(), 1);
-        assert!(output
-            .platform_mcp_configs[0]
-            .endpoint_url()
-            .contains("/mcp/relay"));
+        assert!(
+            output.platform_mcp_configs[0]
+                .endpoint_url()
+                .contains("/mcp/relay")
+        );
     }
 
     #[test]
@@ -516,11 +489,19 @@ mod tests {
         let mut input = base_input();
         let platform = test_platform();
         let output_no_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(!output_no_workflow.flow_capabilities.has(ToolCluster::Workflow));
+        assert!(
+            !output_no_workflow
+                .flow_capabilities
+                .has(ToolCluster::Workflow)
+        );
 
         input.workflow_ctx.has_active_workflow = true;
         let output_with_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(output_with_workflow.flow_capabilities.has(ToolCluster::Workflow));
+        assert!(
+            output_with_workflow
+                .flow_capabilities
+                .has(ToolCluster::Workflow)
+        );
     }
 
     #[test]
@@ -534,9 +515,8 @@ mod tests {
     #[test]
     fn custom_mcp_from_workflow_resolved() {
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("mcp:code_analyzer"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("mcp:code_analyzer")]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
             server: agent_client_protocol::McpServer::Http(
@@ -545,47 +525,55 @@ mod tests {
                     "http://external:8080/mcp",
                 ),
             ),
+            uses_relay: false,
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(output
-            .effective_capabilities
-            .contains(&ToolCapability::custom_mcp("code_analyzer")));
+        assert!(
+            output
+                .effective_capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer"))
+        );
     }
 
     #[test]
     fn custom_mcp_missing_server_not_resolved() {
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("mcp:nonexistent"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("mcp:nonexistent")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(!output
-            .effective_capabilities
-            .contains(&ToolCapability::custom_mcp("nonexistent")));
+        assert!(
+            !output
+                .effective_capabilities
+                .contains(&ToolCapability::custom_mcp("nonexistent"))
+        );
     }
 
     /// Workflow 的 `mcp:<preset>` 可以从 `available_presets` 展开,
     /// 不再依赖 agent config 的 inline mcp_servers。
     #[test]
     fn workflow_mcp_capability_resolves_to_preset() {
-        use agentdash_domain::mcp_preset::McpServerDecl;
+        use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("mcp:code_analyzer"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("mcp:code_analyzer")]);
         input.available_presets.insert(
             "code_analyzer".to_string(),
-            McpServerDecl::Http {
-                name: "code_analyzer".to_string(),
-                url: "http://external:8080/mcp".to_string(),
-                headers: vec![],
-                relay: None,
-            },
+            McpPreset::new_user(
+                Uuid::new_v4(),
+                "code_analyzer",
+                "Code Analyzer",
+                None,
+                McpTransportConfig::Http {
+                    url: "http://external:8080/mcp".to_string(),
+                    headers: vec![],
+                },
+                McpRoutePolicy::Direct,
+            ),
         );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -609,26 +597,31 @@ mod tests {
     /// Preset 与 inline agent mcp_server 同名时以 Preset 为准（不重复注入）。
     #[test]
     fn preset_takes_precedence_over_inline_agent_mcp_server() {
-        use agentdash_domain::mcp_preset::McpServerDecl;
+        use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("mcp:shared"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("mcp:shared")]);
         input.available_presets.insert(
             "shared".to_string(),
-            McpServerDecl::Http {
-                name: "shared".to_string(),
-                url: "http://preset/mcp".to_string(),
-                headers: vec![],
-                relay: None,
-            },
+            McpPreset::new_user(
+                Uuid::new_v4(),
+                "shared",
+                "Shared",
+                None,
+                McpTransportConfig::Http {
+                    url: "http://preset/mcp".to_string(),
+                    headers: vec![],
+                },
+                McpRoutePolicy::Direct,
+            ),
         );
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "shared".to_string(),
             server: agent_client_protocol::McpServer::Http(
                 agent_client_protocol::McpServerHttp::new("shared", "http://inline/mcp"),
             ),
+            uses_relay: false,
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -645,9 +638,8 @@ mod tests {
     fn workflow_well_known_can_override_visibility() {
         let mut input = base_input();
         input.workflow_ctx.has_active_workflow = false;
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("workflow"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("workflow")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.flow_capabilities.has(ToolCluster::Workflow));
@@ -669,9 +661,8 @@ mod tests {
     #[test]
     fn workflow_custom_mcp_is_included_in_output() {
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_simple("mcp:code_analyzer"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_simple("mcp:code_analyzer")]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
             server: agent_client_protocol::McpServer::Http(
@@ -680,21 +671,23 @@ mod tests {
                     "http://external:8080/mcp",
                 ),
             ),
+            uses_relay: false,
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(output.custom_mcp_servers.len(), 1);
-        assert!(output
-            .effective_capabilities
-            .contains(&ToolCapability::custom_mcp("code_analyzer")));
+        assert!(
+            output
+                .effective_capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer"))
+        );
     }
 
     #[test]
     fn workflow_directive_can_remove_default_well_known_capability() {
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::remove_simple("collaboration"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::remove_simple("collaboration")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(!output.flow_capabilities.has(ToolCluster::Collaboration));
@@ -706,9 +699,8 @@ mod tests {
         // PRD 关键场景：workflow 声明 Remove("shell_execute") 必须能屏蔽 baseline
         // 中 auto_granted 的能力。
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::remove_simple("shell_execute"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::remove_simple("shell_execute")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
@@ -725,9 +717,11 @@ mod tests {
     fn workflow_directive_remove_tool_keeps_capability_but_excludes_tool() {
         // Remove(file_read::fs_grep) 应保留 file_read 能力，但把 fs_grep 放入 excluded_tools
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::remove_tool("file_read", "fs_grep"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::remove_tool(
+                "file_read",
+                "fs_grep",
+            )]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
@@ -755,13 +749,16 @@ mod tests {
                     "http://external:8080/mcp",
                 ),
             ),
+            uses_relay: false,
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.custom_mcp_servers.is_empty());
-        assert!(!output
-            .effective_capabilities
-            .contains(&ToolCapability::custom_mcp("code_analyzer")));
+        assert!(
+            !output
+                .effective_capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer"))
+        );
     }
 
     #[test]
@@ -769,9 +766,8 @@ mod tests {
         // Add(file_read::fs_read) → whitelist 只保留 fs_read，
         // 其他 read 工具（mounts_list/fs_glob/fs_grep）进入 excluded_tools
         let mut input = base_input();
-        input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::add_tool("file_read", "fs_read"),
-        ]);
+        input.workflow_ctx.workflow_capability_directives =
+            Some(vec![CapabilityDirective::add_tool("file_read", "fs_read")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.flow_capabilities.has(ToolCluster::Read));

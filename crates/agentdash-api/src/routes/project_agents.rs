@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{
-    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-};
+use agent_client_protocol::McpServer;
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
     project::Project,
@@ -159,7 +157,7 @@ pub async fn list_project_agents(
                     link.id, link.agent_id
                 ))
             })?;
-        let bridge = build_agent_bridge(&agent, link)?;
+        let bridge = build_agent_bridge(state.as_ref(), &agent, link).await?;
         let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
         response.push(build_project_agent_summary(&project, &bridge, session));
     }
@@ -204,7 +202,7 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
-    let agent = build_agent_bridge(&agent_entity, &link)?;
+    let agent = build_agent_bridge(state.as_ref(), &agent_entity, &link).await?;
 
     let label = project_agent_session_label(&agent.key);
 
@@ -352,7 +350,9 @@ pub(crate) async fn resolve_project_agent_bridge_async(
     let Some(link) = link else {
         return Ok(None);
     };
-    Ok(Some(build_agent_bridge(&agent, &link)?))
+    Ok(Some(
+        build_agent_bridge(state.as_ref(), &agent, &link).await?,
+    ))
 }
 
 pub(crate) async fn resolve_project_workspace(
@@ -492,183 +492,6 @@ pub async fn list_project_agent_sessions(
     });
 
     Ok(Json(sessions))
-}
-
-/// Parse `mcp_servers` from agent config JSON value.
-///
-/// Returns (http_sse_servers, stdio_json_decls).
-/// - Http/SSE → constructed as `McpServer::Http` / `McpServer::Sse`
-/// - Stdio → kept as raw JSON (forwarded to relay as-is; cannot execute on cloud)
-///
-/// JSON format:
-///   Http:  { "type": "http",  "name": "...", "url": "...", "headers": [...] }
-///   SSE:   { "type": "sse",   "name": "...", "url": "...", "headers": [...] }
-///   Stdio: { "type": "stdio", "name": "...", "command": "...", "args": [...], "env": [...] }
-fn parse_preset_mcp_servers(
-    config: &serde_json::Value,
-) -> Result<(Vec<McpServer>, std::collections::HashSet<String>), String> {
-    let raw_list = match config.get("mcp_servers").and_then(|v| v.as_array()) {
-        Some(list) => list,
-        None => return Ok((vec![], Default::default())),
-    };
-
-    let mut mcp_servers = Vec::new();
-    let mut relay_names = std::collections::HashSet::new();
-
-    for (index, entry) in raw_list.iter().enumerate() {
-        let obj = entry
-            .as_object()
-            .ok_or_else(|| format!("mcp_servers[{index}] 必须是对象"))?;
-
-        let name = obj
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("mcp_servers[{index}].name 缺失或为空"))?
-            .to_string();
-
-        let effective_type = obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("mcp_servers[{index}].type 缺失或不是字符串"))?;
-
-        // relay 标记：stdio 默认 true，http/sse 默认 false，显式 relay 字段可覆盖
-        let is_relay = obj
-            .get("relay")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(effective_type == "stdio");
-        if is_relay {
-            relay_names.insert(name.clone());
-        }
-
-        match effective_type {
-            "http" | "sse" => {
-                let url = obj
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("mcp_servers[{index}].url 缺失或为空"))?
-                    .to_string();
-                let headers = match obj.get("headers") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].headers 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(header_index, header)| {
-                            let header_obj = header.as_object().ok_or_else(|| {
-                                format!(
-                                    "mcp_servers[{index}].headers[{header_index}] 必须是对象"
-                                )
-                            })?;
-                            let header_name = header_obj
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].headers[{header_index}].name 缺失或为空"
-                                    )
-                                })?;
-                            let header_value = header_obj
-                                .get("value")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].headers[{header_index}].value 缺失或不是字符串"
-                                    )
-                                })?;
-                            Ok::<HttpHeader, String>(HttpHeader::new(
-                                header_name.to_string(),
-                                header_value.to_string(),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-
-                if effective_type == "http" {
-                    mcp_servers.push(McpServer::Http(
-                        McpServerHttp::new(name, url).headers(headers),
-                    ));
-                } else {
-                    mcp_servers.push(McpServer::Sse(
-                        McpServerSse::new(name, url).headers(headers),
-                    ));
-                }
-            }
-            "stdio" => {
-                let command = obj
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("mcp_servers[{index}].command 缺失或为空"))?
-                    .to_string();
-                let args = match obj.get("args") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].args 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(arg_index, arg)| {
-                            arg.as_str().map(String::from).ok_or_else(|| {
-                                format!("mcp_servers[{index}].args[{arg_index}] 必须是字符串")
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-                let env = match obj.get("env") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].env 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(env_index, entry)| {
-                            let env_obj = entry.as_object().ok_or_else(|| {
-                                format!("mcp_servers[{index}].env[{env_index}] 必须是对象")
-                            })?;
-                            let env_name = env_obj
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].env[{env_index}].name 缺失或为空"
-                                    )
-                                })?;
-                            let env_value = env_obj
-                                .get("value")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].env[{env_index}].value 缺失或不是字符串"
-                                    )
-                                })?;
-                            Ok::<EnvVariable, String>(EnvVariable::new(
-                                env_name.to_string(),
-                                env_value.to_string(),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-                mcp_servers.push(McpServer::Stdio(
-                    McpServerStdio::new(name, command).args(args).env(env),
-                ));
-            }
-            other => {
-                return Err(format!("mcp_servers[{index}].type 非法，不支持 `{other}`"));
-            }
-        }
-    }
-
-    Ok((mcp_servers, relay_names))
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
@@ -812,9 +635,13 @@ pub async fn create_project_agent_link(
         return Err(ApiError::Conflict("该 Agent 已关联到此项目".into()));
     }
 
-    let lifecycle_key =
-        resolve_lifecycle_key_for_link(&state, project_id, req.default_lifecycle_key, req.default_workflow_key)
-            .await?;
+    let lifecycle_key = resolve_lifecycle_key_for_link(
+        &state,
+        project_id,
+        req.default_lifecycle_key,
+        req.default_workflow_key,
+    )
+    .await?;
 
     let mut link = ProjectAgentLink::new(project_id, agent_id);
     link.config_override = req.config_override;
@@ -1030,7 +857,8 @@ async fn resolve_lifecycle_key_for_link(
 }
 
 /// 从 Agent + Link 构建 ProjectAgentBridge（新模型）
-pub(crate) fn build_agent_bridge(
+pub(crate) async fn build_agent_bridge(
+    state: &AppState,
     agent: &Agent,
     link: &ProjectAgentLink,
 ) -> Result<ProjectAgentBridge, ApiError> {
@@ -1053,10 +881,16 @@ pub(crate) fn build_agent_bridge(
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let (preset_mcp_servers, relay_mcp_server_names) = parse_preset_mcp_servers(&merged_config)
+    let (preset_mcp_servers, relay_mcp_server_names) =
+        agentdash_application::mcp_preset::resolve_config_mcp_preset_refs(
+            state.repos.mcp_preset_repo.as_ref(),
+            link.project_id,
+            &merged_config,
+        )
+        .await
         .map_err(|error| {
             ApiError::Internal(format!(
-                "Agent `{}` 的 mcp_servers 配置非法: {error}",
+                "Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
                 agent.id
             ))
         })?;

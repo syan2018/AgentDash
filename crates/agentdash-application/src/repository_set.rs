@@ -15,8 +15,7 @@ use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository,
-    WorkflowDefinitionRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 

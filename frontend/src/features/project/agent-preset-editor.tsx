@@ -1,10 +1,26 @@
 import { useState, useEffect, useMemo } from "react";
-import type { AgentPreset, McpServerDecl, SystemPromptMode, ThinkingLevel, ToolCluster } from "../../types";
+import {
+  createMcpPreset,
+  fetchProjectMcpPresets,
+} from "../../services/mcpPreset";
+import type {
+  AgentPreset,
+  CreateMcpPresetRequest,
+  McpPresetDto,
+  McpRoutePolicy,
+  McpTransportConfig,
+  SystemPromptMode,
+  ThinkingLevel,
+  ToolCluster,
+} from "../../types";
 import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
 import { VfsBrowser } from "../vfs";
-import { McpServerDeclEditor } from "../mcp-shared";
+import {
+  McpTransportConfigEditor,
+  createDefaultMcpTransportConfig,
+} from "../mcp-shared";
 
 export interface AgentPresetEditorProps {
   presets: AgentPreset[];
@@ -24,14 +40,16 @@ export interface PresetFormState {
   permission_policy: string;
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
-  mcp_servers: McpServerDecl[];
+  mcp_preset_keys: string[];
   tool_clusters: ToolCluster[];
   allowed_companions: string[];
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = preset?.config ?? {};
-  const rawMcps = Array.isArray(cfg.mcp_servers) ? (cfg.mcp_servers as McpServerDecl[]) : [];
+  const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
+    ? (cfg.mcp_preset_keys as string[])
+    : [];
   const rawClusters = Array.isArray(cfg.tool_clusters) ? (cfg.tool_clusters as ToolCluster[]) : [];
   const rawCompanions = Array.isArray(cfg.allowed_companions) ? (cfg.allowed_companions as string[]) : [];
   return {
@@ -46,7 +64,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
-    mcp_servers: rawMcps,
+    mcp_preset_keys: rawMcpPresetKeys,
     tool_clusters: rawClusters,
     allowed_companions: rawCompanions,
   };
@@ -63,7 +81,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
-  if (form.mcp_servers.length > 0) config.mcp_servers = form.mcp_servers;
+  if (form.mcp_preset_keys.length > 0) config.mcp_preset_keys = form.mcp_preset_keys;
   if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
   if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
   return {
@@ -71,53 +89,6 @@ export function formToPreset(form: PresetFormState): AgentPreset {
     agent_type: form.agent_type.trim(),
     config,
   };
-}
-
-// ─── MCP Servers Editor ──────────────────────────────────
-//
-// 单条 MCP Server 的编辑 UI 抽取到 `features/mcp-shared/McpServerDeclEditor`
-// 与 Assets 页 MCP Preset 表单共享实现。此处的 McpServersEditor 仅保留
-// "列表 + 新增 / 删除"这层 agent-preset 特有的包装。
-
-function McpServersEditor({
-  servers,
-  onChange,
-}: {
-  servers: McpServerDecl[];
-  onChange: (servers: McpServerDecl[]) => void;
-}) {
-  const addServer = () => {
-    onChange([...servers, { type: "http", name: "", url: "", headers: [] }]);
-  };
-
-  return (
-    <div className="space-y-2">
-      {servers.length === 0 && (
-        <p className="rounded-[8px] border border-dashed border-border px-2 py-2 text-center text-[10px] text-muted-foreground">
-          暂无 MCP Server，点击下方按钮添加
-        </p>
-      )}
-      {servers.map((server, i) => (
-        <McpServerDeclEditor
-          key={i}
-          value={server}
-          onChange={(s) => {
-            const next = [...servers];
-            next[i] = s;
-            onChange(next);
-          }}
-          onRemove={() => onChange(servers.filter((_, j) => j !== i))}
-        />
-      ))}
-      <button
-        type="button"
-        onClick={addServer}
-        className="w-full rounded-[8px] border border-dashed border-border py-1.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
-      >
-        + 添加 MCP Server
-      </button>
-    </div>
-  );
 }
 
 // ─── Tool Capabilities ──────────────────────────────────
@@ -260,12 +231,14 @@ export function PresetFormFields({
   agentTypeOptions,
   isDiscoveryLoading,
   siblingAgents,
+  projectId,
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
   agentTypeOptions: Array<{ value: string; label: string }>;
   isDiscoveryLoading: boolean;
   siblingAgents?: Array<{ name: string; display_name: string }>;
+  projectId?: string;
 }) {
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
   const modelSelector = discovered.options?.model_selector ?? null;
@@ -621,17 +594,287 @@ export function PresetFormFields({
         )}
       </FormSection>
 
-      {/* ── Section 6: MCP Servers ── */}
+      {/* ── Section 6: MCP Presets ── */}
       <FormSection
-        title="MCP Servers"
+        title="MCP Presets"
         defaultOpen={false}
-        badge={form.mcp_servers.length > 0 ? `${form.mcp_servers.length} 个` : undefined}
+        badge={form.mcp_preset_keys.length > 0 ? `${form.mcp_preset_keys.length} 个` : undefined}
       >
-        <McpServersEditor
-          servers={form.mcp_servers}
-          onChange={(mcp_servers) => patchForm({ mcp_servers })}
+        <McpPresetPicker
+          projectId={projectId}
+          selectedKeys={form.mcp_preset_keys}
+          onChange={(mcp_preset_keys) => patchForm({ mcp_preset_keys })}
         />
       </FormSection>
+    </div>
+  );
+}
+
+interface QuickCreatePresetFormState {
+  key: string;
+  display_name: string;
+  description: string;
+  transport: McpTransportConfig;
+  route_policy: McpRoutePolicy;
+}
+
+function buildQuickCreatePresetForm(): QuickCreatePresetFormState {
+  return {
+    key: "",
+    display_name: "",
+    description: "",
+    transport: createDefaultMcpTransportConfig(),
+    route_policy: "auto",
+  };
+}
+
+function validateQuickCreatePresetForm(form: QuickCreatePresetFormState): string | null {
+  const key = form.key.trim();
+  const displayName = form.display_name.trim();
+  if (!key) return "工具标识不能为空";
+  if (!displayName) return "显示名称不能为空";
+  if (key.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
+  if (key.includes("::")) return "工具标识不能包含 ::";
+  if (/[\\/:\\s]/.test(key)) return "工具标识不能包含空白、冒号或路径分隔符";
+  if (form.transport.type === "http" || form.transport.type === "sse") {
+    if (!form.transport.url.trim()) return "URL 不能为空";
+    try {
+      new URL(form.transport.url.trim());
+    } catch {
+      return "URL 格式非法";
+    }
+  }
+  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
+    return "Command 不能为空";
+  }
+  return null;
+}
+
+function McpPresetPicker({
+  projectId,
+  selectedKeys,
+  onChange,
+}: {
+  projectId?: string;
+  selectedKeys: string[];
+  onChange: (keys: string[]) => void;
+}) {
+  const [presets, setPresets] = useState<McpPresetDto[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState<QuickCreatePresetFormState>(buildQuickCreatePresetForm);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const loadPresets = async () => {
+    if (!projectId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const next = await fetchProjectMcpPresets(projectId);
+      setPresets(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载 MCP Preset 失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadPresets();
+  }, [projectId]);
+
+  const toggleKey = (key: string) => {
+    if (selectedKeys.includes(key)) {
+      onChange(selectedKeys.filter((item) => item !== key));
+      return;
+    }
+    onChange([...selectedKeys, key]);
+  };
+
+  const handleCreate = async () => {
+    if (!projectId) return;
+    const validationError = validateQuickCreatePresetForm(createForm);
+    if (validationError) {
+      setCreateError(validationError);
+      return;
+    }
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      const input: CreateMcpPresetRequest = {
+        key: createForm.key.trim(),
+        display_name: createForm.display_name.trim(),
+        transport: createForm.transport,
+        route_policy: createForm.route_policy,
+      };
+      const trimmedDesc = createForm.description.trim();
+      if (trimmedDesc) input.description = trimmedDesc;
+      const created = await createMcpPreset(projectId, input);
+      setPresets((prev) => [...prev, created]);
+      onChange(selectedKeys.includes(created.key) ? selectedKeys : [...selectedKeys, created.key]);
+      setIsCreateOpen(false);
+      setCreateForm(buildQuickCreatePresetForm());
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "创建 MCP Preset 失败");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] text-muted-foreground/70">
+        Agent 仅引用 project 级 MCP Preset；不再支持内联定义原始 MCP Server。
+      </p>
+      {error && (
+        <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[10px] text-destructive">
+          {error}
+        </p>
+      )}
+      {isLoading ? (
+        <p className="rounded-[8px] border border-dashed border-border px-2 py-2 text-center text-[10px] text-muted-foreground">
+          正在加载 MCP Preset…
+        </p>
+      ) : presets.length === 0 ? (
+        <div className="rounded-[8px] border border-dashed border-border px-3 py-3 text-center text-[10px] text-muted-foreground">
+          当前项目还没有 MCP Preset
+        </div>
+      ) : (
+        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-1">
+          {presets
+            .slice()
+            .sort((a, b) => a.display_name.localeCompare(b.display_name, "zh-CN"))
+            .map((preset) => {
+              const checked = selectedKeys.includes(preset.key);
+              return (
+                <label
+                  key={preset.id}
+                  className={`flex cursor-pointer items-start gap-2 rounded-[8px] px-2.5 py-2 transition-colors ${
+                    checked ? "bg-primary/6" : "hover:bg-secondary/50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleKey(preset.key)}
+                    className="mt-0.5 h-3.5 w-3.5"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium text-foreground">{preset.display_name}</span>
+                    <span className="block text-[10px] text-muted-foreground">
+                      {preset.key} · {preset.transport.type} · {preset.route_policy}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+        </div>
+      )}
+
+      {projectId && (
+        <button
+          type="button"
+          onClick={() => {
+            setCreateError(null);
+            setCreateForm(buildQuickCreatePresetForm());
+            setIsCreateOpen(true);
+          }}
+          className="w-full rounded-[8px] border border-dashed border-border py-1.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-foreground"
+        >
+          + 快速创建 MCP Preset
+        </button>
+      )}
+
+      {isCreateOpen && (
+        <div className="rounded-[12px] border border-primary/20 bg-background p-3 space-y-3">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div>
+              <label className="agentdash-form-label">工具标识</label>
+              <input
+                value={createForm.key}
+                onChange={(e) => {
+                  setCreateForm((prev) => ({ ...prev, key: e.target.value }));
+                  setCreateError(null);
+                }}
+                placeholder="例如 filesystem-read"
+                className="agentdash-form-input"
+              />
+            </div>
+            <div>
+              <label className="agentdash-form-label">显示名称</label>
+              <input
+                value={createForm.display_name}
+                onChange={(e) => {
+                  setCreateForm((prev) => ({ ...prev, display_name: e.target.value }));
+                  setCreateError(null);
+                }}
+                placeholder="例如 Filesystem"
+                className="agentdash-form-input"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="agentdash-form-label">描述</label>
+            <textarea
+              value={createForm.description}
+              onChange={(e) => {
+                setCreateForm((prev) => ({ ...prev, description: e.target.value }));
+                setCreateError(null);
+              }}
+              rows={2}
+              className="agentdash-form-textarea"
+            />
+          </div>
+          <div>
+            <label className="agentdash-form-label">路由策略</label>
+            <select
+              value={createForm.route_policy}
+              onChange={(e) => {
+                setCreateForm((prev) => ({ ...prev, route_policy: e.target.value as McpRoutePolicy }));
+                setCreateError(null);
+              }}
+              className="agentdash-form-select"
+            >
+              <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
+              <option value="relay">relay（强制经本机）</option>
+              <option value="direct">direct（强制直连）</option>
+            </select>
+          </div>
+          <div>
+            <label className="agentdash-form-label">Transport 定义</label>
+            <McpTransportConfigEditor
+              value={createForm.transport}
+              onChange={(transport) => {
+                setCreateForm((prev) => ({ ...prev, transport }));
+                setCreateError(null);
+              }}
+            />
+          </div>
+          {createError && (
+            <p className="text-xs text-destructive">{createError}</p>
+          )}
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <button
+              type="button"
+              onClick={() => setIsCreateOpen(false)}
+              className="agentdash-button-secondary"
+              disabled={isCreating}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCreate()}
+              className="agentdash-button-primary"
+              disabled={isCreating}
+            >
+              {isCreating ? "创建中..." : "创建并选中"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -666,8 +909,8 @@ function formatPresetSummary(preset: AgentPreset): string {
   if (displayName && displayName !== preset.name) parts.unshift(displayName);
   const desc = String(cfg.description ?? "").trim();
   if (desc) parts.push(desc);
-  const mcps = Array.isArray(cfg.mcp_servers) ? (cfg.mcp_servers as McpServerDecl[]) : [];
-  if (mcps.length > 0) parts.push(`${mcps.length} MCP`);
+  const presetKeys = Array.isArray(cfg.mcp_preset_keys) ? (cfg.mcp_preset_keys as string[]) : [];
+  if (presetKeys.length > 0) parts.push(`${presetKeys.length} MCP Preset`);
   return parts.join(" · ");
 }
 
@@ -949,6 +1192,7 @@ export function SinglePresetDialog({
               agentTypeOptions={agentTypeOptions}
               isDiscoveryLoading={isDiscoveryLoading}
               siblingAgents={siblingAgents}
+              projectId={knowledgeProjectId}
             />
 
             {/* ── 知识库 ── */}

@@ -26,7 +26,7 @@ pub mod plugin;
 // 复用已有 trait，不重新定义
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
-pub use agentdash_spi::{VfsDiscoveryProvider, RoutineTriggerProvider, SourceResolver};
+pub use agentdash_spi::{RoutineTriggerProvider, SourceResolver, VfsDiscoveryProvider};
 
 pub use auth::{
     AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest, LoginCredentials,

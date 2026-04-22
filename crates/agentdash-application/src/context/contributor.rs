@@ -2,7 +2,7 @@ use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Wo
 use agentdash_spi::ContextFragment;
 use serde_json::Value;
 
-use crate::runtime::{Vfs, RuntimeMcpServer};
+use crate::runtime::{RuntimeMcpServer, Vfs};
 
 /// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
 pub struct Contribution {

@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod vfs_access;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
@@ -13,6 +11,8 @@ pub mod runtime_bridge;
 pub mod stream;
 pub mod task_agent_context;
 pub mod title_generator;
+#[cfg(test)]
+mod vfs_access;
 pub mod workspace_resolution;
 
 use anyhow::Result;

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::path::normalize_mount_relative_path;
-use crate::runtime::{Vfs, Mount, MountCapability, RuntimeFileEntry};
+use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{
     ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
@@ -68,7 +68,9 @@ pub fn build_derived_vfs(
         let mut mount = build_context_container_mount(&container)?;
         let (owner_kind_str, owner_id) = match owner_scope {
             ContextContainerOwnerScope::Project => ("project", project.id),
-            ContextContainerOwnerScope::Story => ("story", story.expect("story scope 但 story 为 None").id),
+            ContextContainerOwnerScope::Story => {
+                ("story", story.expect("story scope 但 story 为 None").id)
+            }
         };
         annotate_context_mount_owner(&mut mount, owner_kind_str, owner_id);
         mounts.push(mount);
@@ -118,10 +120,7 @@ fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String>
 }
 
 /// 将 Agent 知识 mount 追加到已有 VFS（仅当 knowledge_enabled=true）
-pub fn append_agent_knowledge_mounts(
-    vfs: &mut Vfs,
-    link: &ProjectAgentLink,
-) -> Result<(), String> {
+pub fn append_agent_knowledge_mounts(vfs: &mut Vfs, link: &ProjectAgentLink) -> Result<(), String> {
     if !link.knowledge_enabled {
         return Ok(());
     }
@@ -135,9 +134,7 @@ pub fn append_agent_knowledge_mounts(
 /// 构建仅包含 Agent 私有知识库的 VFS。
 ///
 /// 该 surface 只用于 Agent 页知识库浏览，不混入 project/workspace/lifecycle/canvas mounts。
-pub fn build_project_agent_knowledge_vfs(
-    link: &ProjectAgentLink,
-) -> Result<Vfs, String> {
+pub fn build_project_agent_knowledge_vfs(link: &ProjectAgentLink) -> Result<Vfs, String> {
     let mut vfs = Vfs {
         mounts: Vec::new(),
         default_mount_id: None,
@@ -154,10 +151,7 @@ pub fn build_project_agent_knowledge_vfs(
 ///
 /// 仅保留 `link.project_container_ids` 中列出的项目容器 mount。
 /// 非项目级容器（workspace / canvas / lifecycle 等）不受影响。
-pub fn filter_project_containers_by_whitelist(
-    vfs: &mut Vfs,
-    link: &ProjectAgentLink,
-) {
+pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgentLink) {
     if link.project_container_ids.is_empty() {
         // 空白名单 = 移除所有项目级容器
         vfs.mounts.retain(|mount| {
@@ -370,8 +364,6 @@ pub fn build_context_container_mount(
     })
 }
 
-
-
 /// 为 context container mount 写入 owner_kind + owner_id metadata（新 API）
 pub(crate) fn annotate_context_mount_owner(mount: &mut Mount, owner_kind: &str, owner_id: Uuid) {
     let mut metadata = match std::mem::take(&mut mount.metadata) {
@@ -395,7 +387,9 @@ pub(crate) fn annotate_context_mount_owner(mount: &mut Mount, owner_kind: &str, 
 }
 
 /// 从 mount metadata 提取 owner 坐标（owner_kind, owner_id, container_id）
-pub fn parse_inline_mount_owner(mount: &Mount) -> Result<(InlineFileOwnerKind, Uuid, String), String> {
+pub fn parse_inline_mount_owner(
+    mount: &Mount,
+) -> Result<(InlineFileOwnerKind, Uuid, String), String> {
     let owner_kind_str = mount
         .metadata
         .get(CONTEXT_OWNER_KIND_METADATA_KEY)
@@ -406,22 +400,13 @@ pub fn parse_inline_mount_owner(mount: &Mount) -> Result<(InlineFileOwnerKind, U
                 mount.id, CONTEXT_OWNER_KIND_METADATA_KEY
             )
         })?;
-    let owner_kind = InlineFileOwnerKind::from_str(owner_kind_str).ok_or_else(|| {
-        format!(
-            "mount {} 的 owner_kind 无效: {}",
-            mount.id, owner_kind_str
-        )
-    })?;
+    let owner_kind = InlineFileOwnerKind::from_str(owner_kind_str)
+        .ok_or_else(|| format!("mount {} 的 owner_kind 无效: {}", mount.id, owner_kind_str))?;
     let owner_id_str = mount
         .metadata
         .get(CONTEXT_OWNER_ID_METADATA_KEY)
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            format!(
-                "mount {} 缺少 {}",
-                mount.id, CONTEXT_OWNER_ID_METADATA_KEY
-            )
-        })?;
+        .ok_or_else(|| format!("mount {} 缺少 {}", mount.id, CONTEXT_OWNER_ID_METADATA_KEY))?;
     let owner_id = Uuid::parse_str(owner_id_str)
         .map_err(|e| format!("mount {} 的 owner_id 无效: {}", mount.id, e))?;
     let container_id = mount
@@ -704,9 +689,7 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
 pub fn append_canvas_mounts(vfs: &mut Vfs, canvases: &[Canvas]) {
     for canvas in canvases {
         let mount = build_canvas_mount(canvas);
-        vfs
-            .mounts
-            .retain(|existing| existing.id != mount.id);
+        vfs.mounts.retain(|existing| existing.id != mount.id);
         vfs.mounts.push(mount);
     }
 }

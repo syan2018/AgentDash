@@ -17,9 +17,9 @@ use agentdash_domain::session_binding::{
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
-    Vfs, AgentConfig, ExecutionContext, HookEvaluationQuery,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry,
-    HookTrigger, MountCapability, SessionHookRefreshQuery,
+    AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
+    HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry, HookTrigger,
+    MountCapability, SessionHookRefreshQuery, Vfs,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -350,11 +350,8 @@ impl CompanionRequestTool {
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
         let final_prompt = build_companion_dispatch_prompt(&dispatch_plan, prompt);
-        let execution_slice = build_companion_execution_slice(
-            self.vfs.as_ref(),
-            &self.mcp_servers,
-            slice_mode,
-        );
+        let execution_slice =
+            build_companion_execution_slice(self.vfs.as_ref(), &self.mcp_servers, slice_mode);
         let base_req = PromptSessionRequest {
             user_input: UserPromptInput {
                 prompt_blocks: None,
@@ -1915,10 +1912,7 @@ fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) 
     ec
 }
 
-fn filter_vfs_capabilities(
-    vfs: Option<&Vfs>,
-    allowed: &[MountCapability],
-) -> Vfs {
+fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vfs {
     let Some(vfs) = vfs else {
         return Vfs::default();
     };
@@ -1944,15 +1938,12 @@ fn filter_vfs_capabilities(
         })
         .collect::<Vec<_>>();
 
-    let default_mount_id = vfs
-        .default_mount_id
-        .as_ref()
-        .and_then(|default_id| {
-            mounts
-                .iter()
-                .any(|mount| mount.id == *default_id)
-                .then(|| default_id.clone())
-        });
+    let default_mount_id = vfs.default_mount_id.as_ref().and_then(|default_id| {
+        mounts
+            .iter()
+            .any(|mount| mount.id == *default_id)
+            .then(|| default_id.clone())
+    });
 
     Vfs {
         mounts,
@@ -2045,20 +2036,15 @@ pub fn companion_owner_candidates(
 ) -> Result<Vec<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
     let mut owners = Vec::new();
     for owner in &snapshot.owners {
-        if let Some(candidate) = parse_owner_candidate(
-            owner.owner_type,
-            &owner.owner_id,
-            owner.label.clone(),
-        )? {
+        if let Some(candidate) =
+            parse_owner_candidate(owner.owner_type, &owner.owner_id, owner.label.clone())?
+        {
             owners.push(candidate);
         }
         if owner.owner_type == SessionOwnerType::Task
             && let Some(story_id) = owner.story_id.as_deref()
-            && let Some(candidate) = parse_owner_candidate(
-                SessionOwnerType::Story,
-                story_id,
-                owner.label.clone(),
-            )?
+            && let Some(candidate) =
+                parse_owner_candidate(SessionOwnerType::Story, story_id, owner.label.clone())?
         {
             owners.push(candidate);
         }
@@ -2121,7 +2107,7 @@ mod companion_tests {
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
-    use agentdash_spi::{Vfs, MountCapability};
+    use agentdash_spi::{MountCapability, Vfs};
     use uuid::Uuid;
 
     #[test]
@@ -2249,9 +2235,7 @@ mod companion_tests {
             CompanionSliceMode::Compact,
         );
 
-        let sliced_space = slice
-            .vfs
-            .expect("compact should keep sliced vfs");
+        let sliced_space = slice.vfs.expect("compact should keep sliced vfs");
         assert_eq!(slice.mcp_servers.len(), 0);
         assert_eq!(sliced_space.mounts.len(), 1);
         assert!(
@@ -2292,9 +2276,7 @@ mod companion_tests {
             CompanionSliceMode::WorkflowOnly,
         );
 
-        let sliced_space = slice
-            .vfs
-            .expect("workflow_only should force empty vfs");
+        let sliced_space = slice.vfs.expect("workflow_only should force empty vfs");
         assert!(sliced_space.mounts.is_empty());
         assert!(sliced_space.default_mount_id.is_none());
         assert!(slice.mcp_servers.is_empty());

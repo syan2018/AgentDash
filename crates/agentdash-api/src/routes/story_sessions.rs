@@ -19,8 +19,8 @@ use agentdash_application::session::context::{
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
-    routes::vfs_surfaces::build_surface_summary,
     routes::project_agents::resolve_project_workspace,
+    routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
@@ -32,11 +32,13 @@ async fn load_story_project_presets(
     state: &Arc<AppState>,
     project_id: Uuid,
 ) -> agentdash_application::capability::AvailableMcpPresets {
-    match state.repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
+    match state
+        .repos
+        .mcp_preset_repo
+        .list_by_project(project_id)
+        .await
+    {
+        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
         Err(error) => {
             tracing::warn!(
                 project_id = %project_id,
@@ -511,8 +513,9 @@ pub(crate) async fn build_story_session_context_response(
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: None,
-        executor_resolution:
-            agentdash_application::session::ExecutorResolution::resolved(executor_source),
+        executor_resolution: agentdash_application::session::ExecutorResolution::resolved(
+            executor_source,
+        ),
         owner_variant: BootstrapOwnerVariant::Story { story_overrides },
         workflow: None,
     });

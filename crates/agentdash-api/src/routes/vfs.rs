@@ -12,9 +12,7 @@ use agentdash_spi::{VfsContext, VfsDescriptor};
 
 use crate::{
     app_state::AppState,
-    auth::{
-        CurrentUser, ProjectPermission, load_workspace_and_project_with_permission,
-    },
+    auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission},
     rpc::ApiError,
 };
 

@@ -4,10 +4,7 @@ use agentdash_domain::{
     project::ProjectRepository,
     story::StoryRepository,
     task::{TaskAggregateCommandRepository, TaskRepository},
-    workflow::{
-        LifecycleDefinitionRepository,
-        WorkflowDefinitionRepository,
-    },
+    workflow::{LifecycleDefinitionRepository, WorkflowDefinitionRepository},
     workspace::WorkspaceRepository,
 };
 

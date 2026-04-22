@@ -1,6 +1,4 @@
 pub mod acp_sessions;
-pub mod vfs;
-pub mod vfs_surfaces;
 pub mod agents;
 pub mod auth_routes;
 pub mod backends;
@@ -21,6 +19,8 @@ pub mod settings;
 pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
+pub mod vfs;
+pub mod vfs_surfaces;
 pub mod workflows;
 pub mod workspaces;
 
@@ -158,7 +158,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{id}/sessions/{binding_id}",
             get(project_sessions::get_project_session),
         )
-        
         .route(
             "/projects/{project_id}/canvases",
             get(canvases::list_project_canvases).post(canvases::create_canvas),
@@ -392,10 +391,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/mount-providers",
             get(vfs::list_configurable_mount_providers),
         )
-        .route(
-            "/vfs-surfaces/resolve",
-            post(vfs_surfaces::resolve_surface),
-        )
+        .route("/vfs-surfaces/resolve", post(vfs_surfaces::resolve_surface))
         .route(
             "/vfs-surfaces/{surface_ref}",
             get(vfs_surfaces::get_surface),
@@ -418,10 +414,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         // VFSs（统一寻址空间能力发现与条目检索）
         .route("/vfs", get(vfs::list_vfs))
-        .route(
-            "/vfs/{space_id}/entries",
-            get(vfs::list_address_entries),
-        )
+        .route("/vfs/{space_id}/entries", get(vfs::list_address_entries))
         // File Picker（@ 文件引用选择器 API，走 VFS 统一访问层）
         .route("/file-picker", get(file_picker::list_files))
         .route("/file-picker/read", post(file_picker::read_file))

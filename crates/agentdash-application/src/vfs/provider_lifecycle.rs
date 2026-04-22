@@ -11,9 +11,7 @@ use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult}
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::{PersistedSessionEvent, SessionPersistence};
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
-use agentdash_domain::workflow::{
-    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
-};
+use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository, LifecycleRunStatus};
 use async_trait::async_trait;
 use serde::Serialize;
 use tracing::info;
@@ -169,9 +167,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("step 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("step 不存在: {key}")))?;
                         to_json_pretty(step)?
                     }
                     ["active", "log"] => to_json_pretty(&active.execution_log)?,
@@ -194,9 +190,7 @@ impl MountProvider for LifecycleMountProvider {
                             .get_by_id(rid)
                             .await
                             .map_err(map_domain_err)?
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("run 不存在: {rid}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("run 不存在: {rid}")))?;
                         to_json_pretty(&run_overview(&run))?
                     }
                     // ── nodes/ 路径族 ──────────────────────────────────
@@ -205,9 +199,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("node 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
                         to_json_pretty(step)?
                     }
                     // ── nodes/{key}/session/* 路径族：session 虚拟投影 ──
@@ -216,9 +208,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("node 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
                         let session_id = step.session_id.as_deref().ok_or_else(|| {
                             MountError::NotFound(format!("node `{key}` 没有关联 session"))
                         })?;
@@ -230,9 +220,7 @@ impl MountProvider for LifecycleMountProvider {
                                 MountError::OperationFailed(format!("读取 session meta 失败: {e}"))
                             })?
                             .ok_or_else(|| {
-                                MountError::NotFound(format!(
-                                    "session 不存在: {session_id}"
-                                ))
+                                MountError::NotFound(format!("session 不存在: {session_id}"))
                             })?;
                         let meta_json = serde_json::json!({
                             "session_id": session_id,
@@ -249,9 +237,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("node 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
                         let session_id = step.session_id.as_deref().ok_or_else(|| {
                             MountError::NotFound(format!("node `{key}` 没有关联 session"))
                         })?;
@@ -272,9 +258,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("node 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
                         let session_id = step.session_id.as_deref().ok_or_else(|| {
                             MountError::NotFound(format!("node `{key}` 没有关联 session"))
                         })?;
@@ -292,9 +276,7 @@ impl MountProvider for LifecycleMountProvider {
                             .filter(|e| e.turn_id.as_deref() == Some(*turn_id))
                             .collect();
                         if turn_events.is_empty() {
-                            return Err(MountError::NotFound(format!(
-                                "turn 不存在: {turn_id}"
-                            )));
+                            return Err(MountError::NotFound(format!("turn 不存在: {turn_id}")));
                         }
                         to_json_pretty(&turn_events)?
                     }
@@ -303,9 +285,7 @@ impl MountProvider for LifecycleMountProvider {
                             .step_states
                             .iter()
                             .find(|s| s.step_key == *key)
-                            .ok_or_else(|| {
-                                MountError::NotFound(format!("node 不存在: {key}"))
-                            })?;
+                            .ok_or_else(|| MountError::NotFound(format!("node 不存在: {key}")))?;
                         // 混合读取：先查 inline_fs 物化副本，再 fallback
                         let run_id = parse_run_id_from_metadata(mount)?;
                         if let Ok(Some(file)) = self
@@ -322,18 +302,14 @@ impl MountProvider for LifecycleMountProvider {
                         } else {
                             // Fallback: step_state.summary
                             step.summary.clone().ok_or_else(|| {
-                                MountError::NotFound(format!(
-                                    "node `{key}` 没有 summary"
-                                ))
+                                MountError::NotFound(format!("node `{key}` 没有 summary"))
                             })?
                         }
                     }
                     ["nodes", key, "session", "conclusions"] => {
                         let run_id = parse_run_id_from_metadata(mount)?;
                         if !active.step_states.iter().any(|s| s.step_key == *key) {
-                            return Err(MountError::NotFound(format!(
-                                "node 不存在: {key}"
-                            )));
+                            return Err(MountError::NotFound(format!("node 不存在: {key}")));
                         }
                         self.inline_file_repo
                             .get_file(
@@ -346,9 +322,7 @@ impl MountProvider for LifecycleMountProvider {
                             .map_err(map_domain_err)?
                             .map(|f| f.content)
                             .ok_or_else(|| {
-                                MountError::NotFound(format!(
-                                    "node `{key}` 没有 conclusions"
-                                ))
+                                MountError::NotFound(format!("node `{key}` 没有 conclusions"))
                             })?
                     }
                     _ => {
@@ -380,11 +354,7 @@ impl MountProvider for LifecycleMountProvider {
                     .metadata
                     .get("writable_port_keys")
                     .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
 
                 if !allowed_keys.is_empty() && !allowed_keys.contains(port_key) {
@@ -485,9 +455,8 @@ impl MountProvider for LifecycleMountProvider {
                     Vec::new()
                 } else {
                     let step = step.unwrap();
-                    let mut entries = vec![
-                        RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual(),
-                    ];
+                    let mut entries =
+                        vec![RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual()];
                     if step.session_id.is_some() {
                         entries.push(
                             RuntimeFileEntry::dir(format!("nodes/{key}/session")).as_virtual(),
@@ -503,8 +472,7 @@ impl MountProvider for LifecycleMountProvider {
                 } else {
                     vec![
                         RuntimeFileEntry::file(format!("nodes/{key}/session/meta")).as_virtual(),
-                        RuntimeFileEntry::file(format!("nodes/{key}/session/summary"))
-                            .as_virtual(),
+                        RuntimeFileEntry::file(format!("nodes/{key}/session/summary")).as_virtual(),
                         RuntimeFileEntry::file(format!("nodes/{key}/session/conclusions"))
                             .as_virtual(),
                         RuntimeFileEntry::dir(format!("nodes/{key}/session/turns")).as_virtual(),
@@ -565,10 +533,7 @@ fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec<Tur
     let mut groups: BTreeMap<String, Vec<&PersistedSessionEvent>> = BTreeMap::new();
     for event in events {
         if let Some(turn_id) = event.turn_id.as_deref() {
-            groups
-                .entry(turn_id.to_string())
-                .or_default()
-                .push(event);
+            groups.entry(turn_id.to_string()).or_default().push(event);
         }
     }
     groups

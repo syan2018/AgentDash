@@ -1,15 +1,16 @@
 {
   "key": "fetch",
-  "name": "Fetch",
+  "preset_key": "fetch",
+  "display_name": "Fetch",
   "description": "通过 @modelcontextprotocol/server-fetch 以 stdio 方式为 Agent 暴露 HTTP 请求能力，默认关闭任何远端鉴权。",
-  "server_decl": {
+  "transport": {
     "type": "stdio",
-    "name": "fetch",
     "command": "npx",
     "args": [
       "-y",
       "@modelcontextprotocol/server-fetch"
     ],
     "env": []
-  }
+  },
+  "route_policy": "auto"
 }

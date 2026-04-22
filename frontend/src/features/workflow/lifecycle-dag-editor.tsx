@@ -171,7 +171,7 @@ function LifecycleDagEditorInner() {
   // ── 加载关联的 workflow definitions ──
   const targetKind = draft?.target_kind;
   useEffect(() => {
-    if (targetKind) void fetchDefinitions(targetKind);
+    if (targetKind) void fetchDefinitions({ targetKind });
   }, [fetchDefinitions, targetKind]);
 
   // ── 可选择的 workflows ──

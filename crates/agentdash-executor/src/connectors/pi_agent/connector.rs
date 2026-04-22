@@ -329,7 +329,8 @@ impl PiAgentConnector {
             let has_user_mcp = !user_mcp_servers.is_empty();
 
             if has_builtin || has_platform_mcp || has_user_mcp {
-                let mut tool_section = String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
+                let mut tool_section =
+                    String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
 
                 // 平台工具段：cluster-based 内嵌工具 + 平台 MCP scope 工具
                 if has_builtin || has_platform_mcp {
@@ -365,7 +366,8 @@ impl PiAgentConnector {
                         .collect::<Vec<_>>()
                         .join("\n");
                     tool_section.push_str("### MCP Tools\n\n");
-                    tool_section.push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
+                    tool_section
+                        .push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
                     tool_section.push_str(&mcp_lines);
                     tool_section.push_str("\n\n");
                 }
@@ -785,17 +787,14 @@ impl AgentConnector for PiAgentConnector {
             .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
 
         let session_id_owned = session_id.to_string();
-        self.agents
-            .lock()
-            .await
-            .insert(
-                session_id_owned.clone(),
-                PiAgentSessionRuntime {
-                    agent,
-                    runtime_base_tools,
-                    mcp_tools: mcp_tools_runtime,
-                },
-            );
+        self.agents.lock().await.insert(
+            session_id_owned.clone(),
+            PiAgentSessionRuntime {
+                agent,
+                runtime_base_tools,
+                mcp_tools: mcp_tools_runtime,
+            },
+        );
 
         let mut source = AgentDashSourceV1::new(self.connector_id(), "local_executor");
         source.executor_id = Some("PI_AGENT".to_string());
@@ -1024,10 +1023,7 @@ impl AgentConnector for PiAgentConnector {
                 "session `{session_id}` 当前没有活跃的 Pi Agent，无法注入通知"
             ))
         })?;
-        runtime
-            .agent
-            .steer(AgentMessage::user(message))
-            .await;
+        runtime.agent.steer(AgentMessage::user(message)).await;
         Ok(())
     }
 }

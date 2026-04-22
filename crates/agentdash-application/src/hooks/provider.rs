@@ -83,7 +83,13 @@ impl AppExecutionHookProvider {
             agent_link_repo,
             inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
-            workflow_builder: WorkflowSnapshotBuilder::new(wf_binding, workflow_definition_repo, lifecycle_definition_repo, lifecycle_run_repo, wf_inline),
+            workflow_builder: WorkflowSnapshotBuilder::new(
+                wf_binding,
+                workflow_definition_repo,
+                lifecycle_definition_repo,
+                lifecycle_run_repo,
+                wf_inline,
+            ),
             script_engine: HookScriptEngine::new(&preset_scripts),
         }
     }

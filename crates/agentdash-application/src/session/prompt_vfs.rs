@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use agentdash_spi::{Vfs, Mount, MountCapability};
+use agentdash_spi::{Mount, MountCapability, Vfs};
 
 /// 单一 `local_fs` 挂载，供 relay / 本机后端等在无完整 vfs 服务时注入。
 pub fn local_workspace_vfs(root: &Path) -> Vfs {

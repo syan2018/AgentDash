@@ -4,7 +4,7 @@ use agent_client_protocol::{
     ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
 use agentdash_agent_types::AgentMessage;
-use agentdash_domain::common::{Vfs, AgentConfig};
+use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
-use agentdash_agent_types::DynAgentRuntimeDelegate;
 use crate::session_capabilities::SessionBaselineCapabilities;
+use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -96,12 +96,13 @@ impl std::fmt::Debug for ExecutionContext {
 
 /// 从 `ExecutionContext.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
 pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
-    let space = context.vfs.as_ref().ok_or_else(|| {
-        ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
-    })?;
-    let mount = space.default_mount().ok_or_else(|| {
-        ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string())
-    })?;
+    let space = context
+        .vfs
+        .as_ref()
+        .ok_or_else(|| ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string()))?;
+    let mount = space
+        .default_mount()
+        .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))?;
     let path = PathBuf::from(mount.root_ref.trim());
     if path.as_os_str().is_empty() {
         return Err(ConnectorError::InvalidConfig(

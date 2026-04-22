@@ -2,7 +2,7 @@ use sqlx::PgPool;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::mcp_preset::{
-    McpPreset, McpPresetRepository, McpPresetSource, McpServerDecl,
+    McpPreset, McpPresetRepository, McpPresetSource, McpRoutePolicy, McpTransportConfig,
 };
 
 pub struct PostgresMcpPresetRepository {
@@ -22,9 +22,11 @@ impl PostgresMcpPresetRepository {
             CREATE TABLE IF NOT EXISTS mcp_presets (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
-                name TEXT NOT NULL,
+                key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
                 description TEXT,
-                server_decl TEXT NOT NULL,
+                transport TEXT NOT NULL,
+                route_policy TEXT NOT NULL,
                 source TEXT NOT NULL,
                 builtin_key TEXT,
                 created_at TEXT NOT NULL,
@@ -42,7 +44,7 @@ impl PostgresMcpPresetRepository {
         .map_err(db_err)?;
 
         sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_presets_project_name ON mcp_presets(project_id, name)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_presets_project_key ON mcp_presets(project_id, key)",
         )
         .execute(&self.pool)
         .await
@@ -66,20 +68,21 @@ impl PostgresMcpPresetRepository {
     }
 }
 
-const COLS: &str =
-    "id,project_id,name,description,server_decl,source,builtin_key,created_at,updated_at";
+const COLS: &str = "id,project_id,key,display_name,description,transport,route_policy,source,builtin_key,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl McpPresetRepository for PostgresMcpPresetRepository {
     async fn create(&self, preset: &McpPreset) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
         ))
         .bind(preset.id.to_string())
         .bind(preset.project_id.to_string())
-        .bind(&preset.name)
+        .bind(&preset.key)
+        .bind(&preset.display_name)
         .bind(preset.description.as_deref())
-        .bind(serde_json::to_string(&preset.server_decl)?)
+        .bind(serde_json::to_string(&preset.transport)?)
+        .bind(serde_json::to_string(&preset.route_policy)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(preset.created_at.to_rfc3339())
@@ -91,27 +94,25 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
     }
 
     async fn get(&self, id: uuid::Uuid) -> Result<Option<McpPreset>, DomainError> {
-        sqlx::query_as::<_, McpPresetRow>(&format!(
-            "SELECT {COLS} FROM mcp_presets WHERE id = $1"
-        ))
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
+        sqlx::query_as::<_, McpPresetRow>(&format!("SELECT {COLS} FROM mcp_presets WHERE id = $1"))
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?
+            .map(TryInto::try_into)
+            .transpose()
     }
 
-    async fn get_by_project_and_name(
+    async fn get_by_project_and_key(
         &self,
         project_id: uuid::Uuid,
-        name: &str,
+        key: &str,
     ) -> Result<Option<McpPreset>, DomainError> {
         sqlx::query_as::<_, McpPresetRow>(&format!(
-            "SELECT {COLS} FROM mcp_presets WHERE project_id = $1 AND name = $2"
+            "SELECT {COLS} FROM mcp_presets WHERE project_id = $1 AND key = $2"
         ))
         .bind(project_id.to_string())
-        .bind(name)
+        .bind(key)
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?
@@ -119,10 +120,7 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .transpose()
     }
 
-    async fn list_by_project(
-        &self,
-        project_id: uuid::Uuid,
-    ) -> Result<Vec<McpPreset>, DomainError> {
+    async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<McpPreset>, DomainError> {
         sqlx::query_as::<_, McpPresetRow>(&format!(
             "SELECT {COLS} FROM mcp_presets WHERE project_id = $1 ORDER BY created_at ASC"
         ))
@@ -137,11 +135,13 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
 
     async fn update(&self, preset: &McpPreset) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE mcp_presets SET name=$1, description=$2, server_decl=$3, source=$4, builtin_key=$5, updated_at=$6 WHERE id=$7",
+            "UPDATE mcp_presets SET key=$1, display_name=$2, description=$3, transport=$4, route_policy=$5, source=$6, builtin_key=$7, updated_at=$8 WHERE id=$9",
         )
-        .bind(&preset.name)
+        .bind(&preset.key)
+        .bind(&preset.display_name)
         .bind(preset.description.as_deref())
-        .bind(serde_json::to_string(&preset.server_decl)?)
+        .bind(serde_json::to_string(&preset.transport)?)
+        .bind(serde_json::to_string(&preset.route_policy)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(preset.updated_at.to_rfc3339())
@@ -218,9 +218,11 @@ fn db_err(error: sqlx::Error) -> DomainError {
 struct McpPresetRow {
     id: String,
     project_id: String,
-    name: String,
+    key: String,
+    display_name: String,
     description: Option<String>,
-    server_decl: String,
+    transport: String,
+    route_policy: String,
     source: String,
     builtin_key: Option<String>,
     created_at: String,
@@ -231,9 +233,13 @@ impl TryFrom<McpPresetRow> for McpPreset {
     type Error = DomainError;
 
     fn try_from(row: McpPresetRow) -> Result<Self, Self::Error> {
-        let server_decl: McpServerDecl =
-            serde_json::from_str(&row.server_decl).map_err(|error| {
-                DomainError::InvalidConfig(format!("mcp_presets.server_decl: {error}"))
+        let transport: McpTransportConfig =
+            serde_json::from_str(&row.transport).map_err(|error| {
+                DomainError::InvalidConfig(format!("mcp_presets.transport: {error}"))
+            })?;
+        let route_policy: McpRoutePolicy =
+            serde_json::from_str(&row.route_policy).map_err(|error| {
+                DomainError::InvalidConfig(format!("mcp_presets.route_policy: {error}"))
             })?;
 
         let source = match row.source.as_str() {
@@ -264,9 +270,11 @@ impl TryFrom<McpPresetRow> for McpPreset {
                     row.project_id
                 ))
             })?,
-            name: row.name,
+            key: row.key,
+            display_name: row.display_name,
             description: row.description,
-            server_decl,
+            transport,
+            route_policy,
             source,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
@@ -284,7 +292,7 @@ impl TryFrom<McpPresetRow> for McpPreset {
 mod tests {
     use uuid::Uuid;
 
-    use agentdash_domain::mcp_preset::{McpPresetRepository, McpServerDecl};
+    use agentdash_domain::mcp_preset::{McpPresetRepository, McpRoutePolicy, McpTransportConfig};
 
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
@@ -298,12 +306,10 @@ mod tests {
         Some(repo)
     }
 
-    fn sample_http_decl(name: &str) -> McpServerDecl {
-        McpServerDecl::Http {
-            name: name.to_string(),
+    fn sample_http_transport() -> McpTransportConfig {
+        McpTransportConfig::Http {
             url: "https://example.com/mcp".to_string(),
             headers: vec![],
-            relay: None,
         }
     }
 
@@ -316,31 +322,47 @@ mod tests {
         let preset = McpPreset::new_user(
             project_id,
             "fetch-preset",
+            "Fetch Preset",
             Some("demo".to_string()),
-            sample_http_decl("fetch"),
+            sample_http_transport(),
+            McpRoutePolicy::Direct,
         );
 
         repo.create(&preset).await.expect("create preset");
 
         let loaded = repo.get(preset.id).await.expect("get").expect("exists");
-        assert_eq!(loaded.name, preset.name);
+        assert_eq!(loaded.key, preset.key);
+        assert_eq!(loaded.display_name, preset.display_name);
         assert_eq!(loaded.description.as_deref(), Some("demo"));
         assert_eq!(loaded.source, McpPresetSource::User);
-        assert_eq!(loaded.server_decl.server_name(), "fetch");
+        assert_eq!(loaded.transport, preset.transport);
+        assert_eq!(loaded.route_policy, McpRoutePolicy::Direct);
     }
 
     #[tokio::test]
-    async fn project_name_uniqueness_enforced() {
+    async fn project_key_uniqueness_enforced() {
         let Some(repo) = new_repo().await else {
             return;
         };
         let project_id = Uuid::new_v4();
-        let preset1 =
-            McpPreset::new_user(project_id, "dup", None, sample_http_decl("fetch"));
+        let preset1 = McpPreset::new_user(
+            project_id,
+            "dup",
+            "Duplicate",
+            None,
+            sample_http_transport(),
+            McpRoutePolicy::Direct,
+        );
         repo.create(&preset1).await.expect("create first");
 
-        let preset2 =
-            McpPreset::new_user(project_id, "dup", None, sample_http_decl("fetch2"));
+        let preset2 = McpPreset::new_user(
+            project_id,
+            "dup",
+            "Duplicate 2",
+            None,
+            sample_http_transport(),
+            McpRoutePolicy::Direct,
+        );
         let err = repo.create(&preset2).await.expect_err("dup should fail");
         match err {
             DomainError::InvalidConfig(msg) => {
@@ -363,8 +385,10 @@ mod tests {
             project_id,
             "fetch",
             "Fetch",
+            "Fetch",
             Some("builtin fetch".to_string()),
-            sample_http_decl("fetch"),
+            sample_http_transport(),
+            McpRoutePolicy::Auto,
         );
 
         let first = repo.upsert_builtin(&preset).await.expect("first upsert");
@@ -387,8 +411,14 @@ mod tests {
             return;
         };
         let project_id = Uuid::new_v4();
-        let mut preset =
-            McpPreset::new_user(project_id, "edit-me", None, sample_http_decl("fetch"));
+        let mut preset = McpPreset::new_user(
+            project_id,
+            "edit-me",
+            "Edit Me",
+            None,
+            sample_http_transport(),
+            McpRoutePolicy::Direct,
+        );
         repo.create(&preset).await.expect("create");
 
         preset.description = Some("updated".to_string());
@@ -399,6 +429,11 @@ mod tests {
         assert_eq!(loaded.description.as_deref(), Some("updated"));
 
         repo.delete(preset.id).await.expect("delete");
-        assert!(repo.get(preset.id).await.expect("get post-delete").is_none());
+        assert!(
+            repo.get(preset.id)
+                .await
+                .expect("get post-delete")
+                .is_none()
+        );
     }
 }

@@ -287,6 +287,7 @@ function CreateAgentDialog({
               agentTypeOptions={agentTypeOptions}
               isDiscoveryLoading={isDiscoveryLoading}
               siblingAgents={siblingAgents}
+              projectId={projectId}
             />
 
             {/* 工作流绑定 */}

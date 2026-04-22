@@ -93,9 +93,11 @@ pub async fn create_mcp_preset(
     let preset = service
         .create(CreateMcpPresetInput {
             project_id,
-            name: req.name,
+            key: req.key,
+            display_name: req.display_name,
             description: req.description,
-            server_decl: req.server_decl,
+            transport: req.transport,
+            route_policy: req.route_policy,
         })
         .await?;
     Ok(Json(preset.into()))
@@ -107,9 +109,13 @@ pub async fn get_mcp_preset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<McpPresetItemPath>,
 ) -> Result<Json<McpPresetResponse>, ApiError> {
-    let (project_id, preset) =
-        load_preset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::View)
-            .await?;
+    let (project_id, preset) = load_preset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::View,
+    )
+    .await?;
     debug_assert_eq!(preset.project_id, project_id);
     Ok(Json(preset.into()))
 }
@@ -123,18 +129,24 @@ pub async fn update_mcp_preset(
     Path(path): Path<McpPresetItemPath>,
     Json(req): Json<UpdateMcpPresetRequest>,
 ) -> Result<Json<McpPresetResponse>, ApiError> {
-    let (_project_id, preset) =
-        load_preset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Edit)
-            .await?;
+    let (_project_id, preset) = load_preset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     let updated = service
         .update(
             preset.id,
             UpdateMcpPresetInput {
-                name: req.name,
+                key: req.key,
+                display_name: req.display_name,
                 description: req.description,
-                server_decl: req.server_decl,
+                transport: req.transport,
+                route_policy: req.route_policy,
             },
         )
         .await?;
@@ -149,9 +161,13 @@ pub async fn delete_mcp_preset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<McpPresetItemPath>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (_project_id, preset) =
-        load_preset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Edit)
-            .await?;
+    let (_project_id, preset) = load_preset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     service.delete(preset.id).await?;
@@ -167,12 +183,16 @@ pub async fn clone_mcp_preset(
     Path(path): Path<McpPresetItemPath>,
     Json(req): Json<CloneMcpPresetRequest>,
 ) -> Result<Json<McpPresetResponse>, ApiError> {
-    let (_project_id, source) =
-        load_preset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Edit)
-            .await?;
+    let (_project_id, source) = load_preset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::Edit,
+    )
+    .await?;
 
-    let new_name = req
-        .name
+    let new_key = req
+        .key
         .and_then(|raw| {
             let trimmed = raw.trim().to_string();
             if trimmed.is_empty() {
@@ -181,13 +201,22 @@ pub async fn clone_mcp_preset(
                 Some(trimmed)
             }
         })
-        .unwrap_or_else(|| format!("{} (copy)", source.name));
+        .unwrap_or_else(|| format!("{}-copy", source.key));
+    let new_display_name = req.display_name.and_then(|raw| {
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     let cloned = service
         .clone_as_user(CloneMcpPresetInput {
             source_id: source.id,
-            new_name,
+            new_key,
+            new_display_name,
         })
         .await?;
     Ok(Json(cloned.into()))
@@ -241,13 +270,10 @@ async fn load_preset_with_project(
     load_project_with_permission(state, current_user, project_id, permission).await?;
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
-    let preset = service
-        .get(preset_id)
-        .await
-        .map_err(|err| match err {
-            McpPresetApplicationError::NotFound(msg) => ApiError::NotFound(msg),
-            other => other.into(),
-        })?;
+    let preset = service.get(preset_id).await.map_err(|err| match err {
+        McpPresetApplicationError::NotFound(msg) => ApiError::NotFound(msg),
+        other => other.into(),
+    })?;
 
     if preset.project_id != project_id {
         // 不直接回显 project mismatch 细节，避免被当成探测枚举
@@ -315,7 +341,7 @@ mod tests {
 
         // Internal(unique 关键字) → 409（兜底 race 场景）
         let err: ApiError = McpPresetApplicationError::Internal(
-            "duplicate key value violates unique constraint \"idx_mcp_presets_project_name\""
+            "duplicate key value violates unique constraint \"idx_mcp_presets_project_key\""
                 .to_string(),
         )
         .into();

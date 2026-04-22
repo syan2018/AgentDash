@@ -5,10 +5,8 @@ use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSo
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
-use crate::vfs::{
-    ListOptions, RelayVfsService, ResourceRef, selected_workspace_binding,
-};
 use crate::runtime::RuntimeFileEntry;
+use crate::vfs::{ListOptions, RelayVfsService, ResourceRef, selected_workspace_binding};
 use crate::workspace::BackendAvailability;
 
 /// 解析 Story/Task 上声明式来源（File / ProjectSnapshot）为具体上下文片段
@@ -67,8 +65,7 @@ pub async fn resolve_workspace_declared_sources(
                 resolve_workspace_file_source(vfs_service, workspace, source, order).await
             }
             ContextSourceKind::ProjectSnapshot => {
-                resolve_workspace_snapshot_source(vfs_service, workspace, source, order)
-                    .await
+                resolve_workspace_snapshot_source(vfs_service, workspace, source, order).await
             }
             _ => continue,
         };

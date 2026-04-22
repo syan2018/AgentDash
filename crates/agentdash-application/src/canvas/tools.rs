@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 use crate::vfs::tools::provider::SharedSessionHubHandle;
-use crate::canvas::{build_canvas, upsert_canvas_binding};
 
 #[derive(Clone)]
 pub struct ListCanvasesTool {
@@ -592,9 +592,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     use crate::vfs::tools::fs::FsApplyPatchTool;
-    use crate::vfs::{
-        CanvasFsMountProvider, MountProviderRegistry, RelayVfsService,
-    };
+    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, RelayVfsService};
 
     use super::*;
 
@@ -711,10 +709,7 @@ mod tests {
         let vfs = shared_vfs.snapshot().await;
         let expected_mount_id = format!("cvs-{canvas_id}");
         assert!(
-            vfs
-                .mounts
-                .iter()
-                .any(|mount| mount.id == expected_mount_id),
+            vfs.mounts.iter().any(|mount| mount.id == expected_mount_id),
             "shared VFS should contain the new canvas mount after canvas_start"
         );
 
@@ -801,8 +796,7 @@ mod tests {
 
         let vfs = shared_vfs.snapshot().await;
         assert!(
-            vfs
-                .mounts
+            vfs.mounts
                 .iter()
                 .any(|mount| mount.id == "cvs-existing-kpi"),
             "shared VFS should contain the attached canvas mount"

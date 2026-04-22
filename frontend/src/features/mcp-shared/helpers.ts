@@ -4,12 +4,12 @@
  * 独立于组件文件，避免 React Fast Refresh 对混合导出告警。
  */
 
-import type { McpServerDecl } from "../../types";
+import type { McpTransportConfig } from "../../types";
 
 /**
- * 构造一个空白的 MCP Server Decl（默认 http）。
+ * 构造一个空白的 MCP transport（默认 http）。
  * 供 Preset 新建表单初始化使用，保持 discriminated union narrow 成立。
  */
-export function createDefaultMcpServerDecl(): McpServerDecl {
-  return { type: "http", name: "", url: "", headers: [] };
+export function createDefaultMcpTransportConfig(): McpTransportConfig {
+  return { type: "http", url: "", headers: [] };
 }

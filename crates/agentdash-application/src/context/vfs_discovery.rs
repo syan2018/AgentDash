@@ -1,7 +1,5 @@
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_spi::{
-    VfsContext, VfsDescriptor, VfsDiscoveryProvider, SelectorHint,
-};
+use agentdash_spi::{SelectorHint, VfsContext, VfsDescriptor, VfsDiscoveryProvider};
 
 /// 寻址空间发现注册表 — 持有所有已注册的能力发现提供者
 pub struct VfsDiscoveryRegistry {

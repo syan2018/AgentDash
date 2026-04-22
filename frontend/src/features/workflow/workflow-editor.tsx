@@ -901,7 +901,7 @@ function CapabilitiesEditor({
 
   // 可追加的 MCP preset：当前 project 已注册且未被显式 Add 的
   const mcpAddable = useMemo(() => {
-    return presets.filter((p) => !declaredAddKeys.has(`mcp:${p.name}`));
+    return presets.filter((p) => !declaredAddKeys.has(`mcp:${p.key}`));
   }, [presets, declaredAddKeys]);
 
   return (
@@ -963,7 +963,7 @@ function CapabilitiesEditor({
             const description = isWellKnown
               ? WELL_KNOWN_CAPABILITY_DESCRIPTION[key]
               : mcpName
-                ? `用户自定义 MCP Preset 引用。由后端展开为 McpServerDecl 注入 session。`
+                ? `用户自定义 MCP Preset 引用。由后端按 preset key 展开为运行时 MCP server。`
                 : "未识别的 capability key —— 建议清理。";
             const isBlocked = capabilityBlockedByWorkflow(directives, key);
             // 追加能力不需要 baseline 的「屏蔽」语义（移除 Add 即可），
@@ -1049,11 +1049,11 @@ function CapabilitiesEditor({
                       <button
                         key={preset.id}
                         type="button"
-                        onClick={() => addExtraCapability(`mcp:${preset.name}`)}
+                        onClick={() => addExtraCapability(`mcp:${preset.key}`)}
                         className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-foreground hover:border-primary/30 hover:bg-primary/5"
-                        title={preset.description ?? preset.name}
+                        title={preset.description ?? preset.display_name}
                       >
-                        <span>{preset.name}</span>
+                        <span>{preset.display_name}</span>
                         <span
                           className={`rounded px-1 py-0.5 text-[9px] font-mono ${
                             preset.source === "builtin"

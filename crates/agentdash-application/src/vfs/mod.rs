@@ -20,15 +20,13 @@ pub use apply_patch::{
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    SessionMountTarget, append_agent_knowledge_mounts, append_canvas_mounts,
-    build_canvas_mount, build_canvas_mount_id, build_project_agent_knowledge_vfs,
-    build_context_container_mount, build_derived_vfs, build_lifecycle_mount,
-    build_lifecycle_mount_with_ports,
-    build_workspace_vfs, container_visible_for_target, effective_context_containers,
-    filter_project_containers_by_whitelist,
-    list_inline_entries, normalize_inline_files,
-    mount_container_id, mount_owner_id, mount_owner_kind, mount_purpose, parse_inline_mount_owner,
-    selected_workspace_binding, workspace_mount,
+    SessionMountTarget, append_agent_knowledge_mounts, append_canvas_mounts, build_canvas_mount,
+    build_canvas_mount_id, build_context_container_mount, build_derived_vfs, build_lifecycle_mount,
+    build_lifecycle_mount_with_ports, build_project_agent_knowledge_vfs, build_workspace_vfs,
+    container_visible_for_target, effective_context_containers,
+    filter_project_containers_by_whitelist, list_inline_entries, mount_container_id,
+    mount_owner_id, mount_owner_kind, mount_purpose, normalize_inline_files,
+    parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
 };
 pub use path::{
     capability_name, format_mount_uri, join_root_ref, normalize_mount_relative_path,
@@ -44,8 +42,8 @@ pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use relay_service::{RelayVfsService, TextSearchParams};
 pub use surface::{
-    ResolvedVfsSurface, ResolvedVfsSurfaceSource, ResolvedMountOwnerKind,
-    ResolvedMountPurpose, ResolvedMountSummary,
+    ResolvedMountOwnerKind, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
+    ResolvedVfsSurfaceSource,
 };
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,

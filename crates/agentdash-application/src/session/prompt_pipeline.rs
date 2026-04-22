@@ -63,9 +63,7 @@ impl SessionHub {
             .map(|m| PathBuf::from(m.root_ref.trim()))
             .filter(|p| !p.as_os_str().is_empty())
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "vfs 缺少 default_mount 或 root_ref 无效".to_string(),
-                )
+                ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
         let working_directory =
             resolve_working_dir(&default_mount_root, req.user_input.working_dir.as_deref());
@@ -193,9 +191,7 @@ impl SessionHub {
 
         // 通过 VFS service 扫描所有 mount 的 skill
         let mut discovered_skills = if let Some(service) = &self.vfs_service {
-            let skill_result =
-                crate::skill::load_skills_from_vfs(service, &effective_vfs)
-                    .await;
+            let skill_result = crate::skill::load_skills_from_vfs(service, &effective_vfs).await;
             for diag in &skill_result.diagnostics {
                 tracing::warn!(
                     skill_name = %diag.name,
@@ -337,10 +333,8 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
-                let initial_caps: std::collections::BTreeSet<String> = req
-                    .effective_capability_keys
-                    .clone()
-                    .unwrap_or_default();
+                let initial_caps: std::collections::BTreeSet<String> =
+                    req.effective_capability_keys.clone().unwrap_or_default();
                 if !initial_caps.is_empty() {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }

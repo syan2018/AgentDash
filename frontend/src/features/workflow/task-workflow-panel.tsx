@@ -262,8 +262,8 @@ export function TaskWorkflowPanel({
   );
 
   useEffect(() => {
-    void fetchDefinitions("task");
-    void fetchLifecycles("task");
+    void fetchDefinitions({ targetKind: "task" });
+    void fetchLifecycles({ targetKind: "task" });
   }, [fetchDefinitions, fetchLifecycles, projectId, task.id, task.status]);
 
   // 通过 Task session API 查询 execution session，再解析对应 SessionBinding

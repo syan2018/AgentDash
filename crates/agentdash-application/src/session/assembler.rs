@@ -33,9 +33,7 @@ use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::CapabilityDirective;
-use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleRun, LifecycleStepDefinition,
-};
+use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{FlowCapabilities, Vfs};
 use uuid::Uuid;
@@ -56,8 +54,8 @@ use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, build_project_context_markdown};
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
-use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
 use crate::session::context::apply_workspace_defaults;
+use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
 use crate::story::context_builder::{StoryContextBuildInput, build_story_context_markdown};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -98,7 +96,10 @@ pub struct PreparedSessionInputs {
 /// - user_input.prompt_blocks 若 compose 有产出则覆盖,否则保留原值
 /// - vfs 若 compose 有产出则使用,否则用 workspace_defaults 填充
 /// - 其余字段直接覆盖
-pub fn finalize_request(base: PromptSessionRequest, prepared: PreparedSessionInputs) -> PromptSessionRequest {
+pub fn finalize_request(
+    base: PromptSessionRequest,
+    prepared: PreparedSessionInputs,
+) -> PromptSessionRequest {
     let mut req = base;
     if let Some(blocks) = prepared.prompt_blocks {
         req.user_input.prompt_blocks = Some(blocks);
@@ -122,7 +123,8 @@ pub fn finalize_request(base: PromptSessionRequest, prepared: PreparedSessionInp
         req.vfs = prepared.vfs;
     }
     req.mcp_servers = prepared.mcp_servers;
-    req.relay_mcp_server_names.extend(prepared.relay_mcp_server_names);
+    req.relay_mcp_server_names
+        .extend(prepared.relay_mcp_server_names);
     req.flow_capabilities = prepared.flow_capabilities;
     req.effective_capability_keys = prepared.effective_capability_keys;
     req
@@ -155,10 +157,7 @@ pub async fn load_available_presets(
     project_id: Uuid,
 ) -> AvailableMcpPresets {
     match repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
+        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
         Err(error) => {
             tracing::warn!(
                 project_id = %project_id,
@@ -173,6 +172,7 @@ pub async fn load_available_presets(
 /// 从 agent-level `preset_mcp_servers` 抽出 `AgentMcpServerEntry`(供 resolver 解析 `mcp:<name>`)。
 pub fn extract_agent_mcp_entries(
     preset_mcp_servers: &[agent_client_protocol::McpServer],
+    relay_mcp_server_names: &HashSet<String>,
 ) -> Vec<AgentMcpServerEntry> {
     preset_mcp_servers
         .iter()
@@ -184,6 +184,7 @@ pub fn extract_agent_mcp_entries(
                 _ => return None,
             };
             Some(AgentMcpServerEntry {
+                uses_relay: relay_mcp_server_names.contains(&name),
                 name,
                 server: s.clone(),
             })
@@ -462,7 +463,10 @@ impl<'a> SessionRequestAssembler<'a> {
             owner_ctx,
             agent_declared_capabilities: spec.agent_declared_capabilities,
             workflow_ctx,
-            agent_mcp_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
+            agent_mcp_servers: extract_agent_mcp_entries(
+                &spec.agent_mcp.preset_mcp_servers,
+                &spec.agent_mcp.relay_mcp_server_names,
+            ),
             available_presets: load_available_presets(self.repos, project_id).await,
             companion_slice_mode: None,
         };
@@ -475,13 +479,17 @@ impl<'a> SessionRequestAssembler<'a> {
         }
         effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
         effective_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
+        let mut relay_mcp_server_names = spec.agent_mcp.relay_mcp_server_names.clone();
+        relay_mcp_server_names.extend(cap_output.custom_relay_mcp_server_names.iter().cloned());
 
         // ── 5. Context markdown 生成 ──
         let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
         let runtime_vfs = vfs.clone();
 
         let (workspace_fragments, workspace_warnings) = match &spec.owner {
-            OwnerScope::Story { story, workspace, .. } => {
+            OwnerScope::Story {
+                story, workspace, ..
+            } => {
                 let resolved = resolve_workspace_declared_sources(
                     self.availability,
                     self.vfs_service,
@@ -508,7 +516,11 @@ impl<'a> SessionRequestAssembler<'a> {
         let (system_context, prompt_blocks, bootstrap_action) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
                 Some(context_markdown.clone()),
-                wrap_owner_bootstrap_blocks(&spec.owner, &context_markdown, spec.user_prompt_blocks),
+                wrap_owner_bootstrap_blocks(
+                    &spec.owner,
+                    &context_markdown,
+                    spec.user_prompt_blocks,
+                ),
                 SessionBootstrapAction::OwnerContext,
             ),
             OwnerPromptLifecycle::RepositoryRehydrate {
@@ -522,13 +534,15 @@ impl<'a> SessionRequestAssembler<'a> {
                 } else {
                     None
                 };
-                (sys_ctx, spec.user_prompt_blocks, SessionBootstrapAction::None)
+                (
+                    sys_ctx,
+                    spec.user_prompt_blocks,
+                    SessionBootstrapAction::None,
+                )
             }
-            OwnerPromptLifecycle::Plain => (
-                None,
-                spec.user_prompt_blocks,
-                SessionBootstrapAction::None,
-            ),
+            OwnerPromptLifecycle::Plain => {
+                (None, spec.user_prompt_blocks, SessionBootstrapAction::None)
+            }
         };
 
         let effective_capability_keys: BTreeSet<String> = cap_output
@@ -541,7 +555,7 @@ impl<'a> SessionRequestAssembler<'a> {
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(spec.executor_config),
             mcp_servers: effective_mcp_servers,
-            relay_mcp_server_names: spec.agent_mcp.relay_mcp_server_names,
+            relay_mcp_server_names,
             vfs,
             flow_capabilities: Some(cap_output.flow_capabilities),
             effective_capability_keys: Some(effective_capability_keys),
@@ -569,15 +583,18 @@ impl<'a> SessionRequestAssembler<'a> {
             spec.project,
             spec.explicit_executor_config.as_ref(),
         );
-        let (resolved_config, executor_resolution) =
-            match resolve_task_executor_config(spec.explicit_executor_config, spec.task, spec.project) {
-                Ok(config) => (config, ExecutorResolution::resolved(executor_source)),
-                Err(err) if spec.strict_config_resolution => return Err(err),
-                Err(err) => (
-                    None,
-                    ExecutorResolution::failed(executor_source, err.to_string()),
-                ),
-            };
+        let (resolved_config, executor_resolution) = match resolve_task_executor_config(
+            spec.explicit_executor_config,
+            spec.task,
+            spec.project,
+        ) {
+            Ok(config) => (config, ExecutorResolution::resolved(executor_source)),
+            Err(err) if spec.strict_config_resolution => return Err(err),
+            Err(err) => (
+                None,
+                ExecutorResolution::failed(executor_source, err.to_string()),
+            ),
+        };
 
         let effective_agent_type = resolved_config.as_ref().map(|c| c.executor.as_str());
         let use_cloud_native = resolved_config
@@ -663,9 +680,20 @@ impl<'a> SessionRequestAssembler<'a> {
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
         let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
-        let mcp_servers_for_context: Vec<RuntimeMcpServer> = platform_mcp_configs
+        let mut mcp_servers_for_context: Vec<RuntimeMcpServer> = platform_mcp_configs
             .iter()
             .map(|c| crate::runtime_bridge::acp_mcp_server_to_runtime(&c.to_acp_mcp_server()))
+            .collect();
+        mcp_servers_for_context.extend(
+            cap_output
+                .custom_mcp_servers
+                .iter()
+                .map(crate::runtime_bridge::acp_mcp_server_to_runtime),
+        );
+        let relay_mcp_server_names = cap_output
+            .custom_relay_mcp_server_names
+            .iter()
+            .cloned()
             .collect();
         let flow_capabilities = cap_output.flow_capabilities.clone();
         let effective_capability_keys: BTreeSet<String> = cap_output
@@ -711,7 +739,8 @@ impl<'a> SessionRequestAssembler<'a> {
 
         if let (Some(wf), Some(bindings_out)) = (workflow.clone(), resolved_bindings.clone()) {
             extra_contributors.push(Box::new(WorkflowContextBindingsContributor::new(
-                wf, bindings_out,
+                wf,
+                bindings_out,
             )));
         }
 
@@ -719,7 +748,6 @@ impl<'a> SessionRequestAssembler<'a> {
             TaskRuntimePhase::Start => TaskExecutionPhase::Start,
             TaskRuntimePhase::Continue => TaskExecutionPhase::Continue,
         };
-        let _ = mcp_servers_for_context; // 保留变量用于未来扩展
         let built = build_task_agent_context(
             TaskAgentBuildInput {
                 task: spec.task,
@@ -746,6 +774,7 @@ impl<'a> SessionRequestAssembler<'a> {
             workspace: workspace_ref.cloned(),
             flow_capabilities,
             effective_capability_keys,
+            relay_mcp_server_names,
             workflow,
             resolved_bindings,
         })
@@ -764,10 +793,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// Companion 子 session(父 session slice 继承场景)。
     ///
     /// 纯同步函数 —— 不做 IO,只做父 session 的 vfs/mcp 子集 + 能力裁剪。
-    pub fn compose_companion(
-        &self,
-        spec: CompanionSpec<'_>,
-    ) -> PreparedSessionInputs {
+    pub fn compose_companion(&self, spec: CompanionSpec<'_>) -> PreparedSessionInputs {
         compose_companion(spec)
     }
 }
@@ -832,11 +858,8 @@ pub async fn compose_lifecycle_node(
 pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
     use crate::companion::tools::build_companion_execution_slice;
 
-    let slice = build_companion_execution_slice(
-        spec.parent_vfs,
-        spec.parent_mcp_servers,
-        spec.slice_mode,
-    );
+    let slice =
+        build_companion_execution_slice(spec.parent_vfs, spec.parent_mcp_servers, spec.slice_mode);
     let flow_caps = CapabilityResolver::resolve_companion_caps(map_slice_mode(spec.slice_mode));
 
     PreparedSessionInputs {
@@ -865,7 +888,9 @@ fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSlice
         CompanionSliceMode::Full => crate::capability::CompanionSliceMode::Full,
         CompanionSliceMode::Compact => crate::capability::CompanionSliceMode::Compact,
         CompanionSliceMode::WorkflowOnly => crate::capability::CompanionSliceMode::WorkflowOnly,
-        CompanionSliceMode::ConstraintsOnly => crate::capability::CompanionSliceMode::ConstraintsOnly,
+        CompanionSliceMode::ConstraintsOnly => {
+            crate::capability::CompanionSliceMode::ConstraintsOnly
+        }
     }
 }
 
@@ -905,6 +930,7 @@ pub struct TaskRuntimeOutput {
     pub workspace: Option<Workspace>,
     pub flow_capabilities: FlowCapabilities,
     pub effective_capability_keys: BTreeSet<String>,
+    pub relay_mcp_server_names: HashSet<String>,
     pub workflow: Option<ActiveWorkflowProjection>,
     pub resolved_bindings: Option<ResolveBindingsOutput>,
 }

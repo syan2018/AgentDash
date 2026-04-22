@@ -5,7 +5,7 @@ use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::mount::MountProvider;
-use agentdash_spi::{VfsDiscoveryProvider, SourceResolver};
+use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
 use crate::external::ExternalServiceClient;

@@ -102,10 +102,7 @@ pub async fn build_runtime_snapshot_with_bindings(
         let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, vfs) else {
             continue;
         };
-        let Ok(result) = vfs_service
-            .read_text(vfs, &resource_ref, None, None)
-            .await
-        else {
+        let Ok(result) = vfs_service.read_text(vfs, &resource_ref, None, None).await else {
             continue;
         };
 

@@ -7,13 +7,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use agentdash_application::vfs::{
-    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResourceRef, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource, ResolvedMountSummary, SessionMountTarget,
-    build_project_agent_knowledge_vfs, mount_container_id, mount_owner_id,
-    mount_owner_kind, mount_purpose,
+    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResolvedMountSummary, ResolvedVfsSurface,
+    ResolvedVfsSurfaceSource, ResourceRef, SessionMountTarget, build_project_agent_knowledge_vfs,
+    mount_container_id, mount_owner_id, mount_owner_kind, mount_purpose,
 };
-use agentdash_spi::Vfs;
 use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_spi::Vfs;
 
 use crate::{
     app_state::AppState,
@@ -21,13 +20,13 @@ use crate::{
         CurrentUser, ProjectPermission, load_project_with_permission,
         load_story_and_project_with_permission, load_task_story_project_with_permission,
     },
-    rpc::ApiError,
     routes::{
         acp_sessions::{ensure_session_permission, pick_primary_session_binding},
         project_agents::resolve_project_workspace,
         project_sessions::build_project_session_context_response,
         story_sessions::build_story_session_context_response,
     },
+    rpc::ApiError,
 };
 
 const MAX_ENTRIES: usize = 200;
@@ -126,8 +125,8 @@ pub async fn get_surface(
     CurrentUser(current_user): CurrentUser,
     Path(surface_ref): Path<String>,
 ) -> Result<Json<ResolvedVfsSurface>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
     let surface = resolve_surface_from_source(&state, &current_user, &source).await?;
     Ok(Json(surface))
 }
@@ -138,8 +137,8 @@ pub async fn list_surface_mount_entries(
     Path((surface_ref, mount_id)): Path<(String, String)>,
     Query(query): Query<SurfaceEntriesQuery>,
 ) -> Result<Json<SurfaceEntriesResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
 
@@ -242,21 +241,18 @@ pub async fn write_surface_file(
         )));
     }
 
-    let normalized_path = agentdash_application::vfs::normalize_mount_relative_path(
-        &req.path,
-        false,
-    )
-    .map_err(ApiError::BadRequest)?;
+    let normalized_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
+            .map_err(ApiError::BadRequest)?;
 
     if mount.provider == PROVIDER_INLINE_FS {
         let persister =
             agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
                 state.repos.inline_file_repo.clone(),
             );
-        let overlay =
-            agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
-                Arc::new(persister),
-            );
+        let overlay = agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
+            Arc::new(persister),
+        );
         overlay
             .write(mount, &normalized_path, &req.content)
             .await
@@ -326,20 +322,13 @@ pub async fn apply_surface_patch(
             agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
                 state.repos.inline_file_repo.clone(),
             );
-        let overlay =
-            agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
-                Arc::new(persister),
-            );
+        let overlay = agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
+            Arc::new(persister),
+        );
         let result = state
             .services
             .vfs_service
-            .apply_patch(
-                &vfs,
-                &req.mount_id,
-                &req.patch,
-                Some(&overlay),
-                None,
-            )
+            .apply_patch(&vfs, &req.mount_id, &req.patch, Some(&overlay), None)
             .await
             .map_err(ApiError::Internal)?;
 
@@ -395,7 +384,13 @@ pub(crate) async fn resolve_surface_bundle(
             state
                 .services
                 .vfs_service
-                .build_vfs(&project, None, workspace.as_ref(), SessionMountTarget::Project, None)
+                .build_vfs(
+                    &project,
+                    None,
+                    workspace.as_ref(),
+                    SessionMountTarget::Project,
+                    None,
+                )
                 .map_err(|error| ApiError::Internal(format!("构建 VFS 失败: {error}")))?
         }
         ResolvedVfsSurfaceSource::StoryPreview {
@@ -410,7 +405,9 @@ pub(crate) async fn resolve_surface_bundle(
             )
             .await?;
             if project.id != *project_id {
-                return Err(ApiError::Conflict("story_id 与 project_id 不属于同一 Project".into()));
+                return Err(ApiError::Conflict(
+                    "story_id 与 project_id 不属于同一 Project".into(),
+                ));
             }
             let workspace = resolve_project_workspace(state, &project).await?;
             state
@@ -437,7 +434,9 @@ pub(crate) async fn resolve_surface_bundle(
             )
             .await?;
             if project.id != *project_id {
-                return Err(ApiError::Conflict("task_id 与 project_id 不属于同一 Project".into()));
+                return Err(ApiError::Conflict(
+                    "task_id 与 project_id 不属于同一 Project".into(),
+                ));
             }
             let workspace = if let Some(workspace_id) = task.workspace_id {
                 state
@@ -476,14 +475,18 @@ pub(crate) async fn resolve_surface_bundle(
                 .map_err(|error| ApiError::Internal(error.to_string()))?
                 .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
             if link.id != *link_id {
-                return Err(ApiError::Conflict("surface_ref 中的 link_id 与当前 ProjectAgentLink 不匹配".into()));
+                return Err(ApiError::Conflict(
+                    "surface_ref 中的 link_id 与当前 ProjectAgentLink 不匹配".into(),
+                ));
             }
-            build_project_agent_knowledge_vfs(&link)
-                .map_err(|error| ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}")))?
+            build_project_agent_knowledge_vfs(&link).map_err(|error| {
+                ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}"))
+            })?
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             let bindings =
-                ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
+                ensure_session_permission(state.as_ref(), current_user, session_id, permission)
+                    .await?;
             let Some(primary) = pick_primary_session_binding(&bindings) else {
                 let empty = Vfs::default();
                 let surface = build_surface_summary(state, source, &empty).await?;
@@ -498,10 +501,15 @@ pub(crate) async fn resolve_surface_bundle(
                         permission,
                     )
                     .await?;
-                    build_project_session_context_response(state, &project, session_id, &primary.label)
-                        .await?
-                        .vfs
-                        .unwrap_or_default()
+                    build_project_session_context_response(
+                        state,
+                        &project,
+                        session_id,
+                        &primary.label,
+                    )
+                    .await?
+                    .vfs
+                    .unwrap_or_default()
                 }
                 SessionOwnerType::Story => {
                     let (story, _) = load_story_and_project_with_permission(

@@ -586,9 +586,21 @@ mod tests {
     #[tokio::test]
     async fn validate_lifecycle_definition_reports_port_contract_issues() {
         let workflow_repo = TestWorkflowDefinitionRepo::default();
-        workflow_repo.seed(workflow_with_ports("wf_research", &["research_report"], &[]));
-        workflow_repo.seed(workflow_with_ports("wf_implement", &["shared_output"], &["research_input"]));
-        workflow_repo.seed(workflow_with_ports("wf_check", &["shared_output"], &["review_input"]));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_research",
+            &["research_report"],
+            &[],
+        ));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_implement",
+            &["shared_output"],
+            &["research_input"],
+        ));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_check",
+            &["shared_output"],
+            &["review_input"],
+        ));
 
         let lifecycle_repo = TestLifecycleDefinitionRepo::default();
         let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
@@ -653,7 +665,12 @@ mod tests {
                 },
             ],
             vec![
-                LifecycleEdge::artifact("research", "missing_output", "implement", "research_input"),
+                LifecycleEdge::artifact(
+                    "research",
+                    "missing_output",
+                    "implement",
+                    "research_input",
+                ),
                 LifecycleEdge::artifact("check", "shared_output", "implement", "research_input"),
             ],
         )
@@ -673,9 +690,21 @@ mod tests {
     #[tokio::test]
     async fn upsert_lifecycle_definition_rejects_invalid_edge_contracts() {
         let workflow_repo = TestWorkflowDefinitionRepo::default();
-        workflow_repo.seed(workflow_with_ports("wf_research", &["research_report"], &[]));
-        workflow_repo.seed(workflow_with_ports("wf_implement", &["implementation_report"], &["research_input"]));
-        workflow_repo.seed(workflow_with_ports("wf_check", &["check_report"], &["review_input"]));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_research",
+            &["research_report"],
+            &[],
+        ));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_implement",
+            &["implementation_report"],
+            &["research_input"],
+        ));
+        workflow_repo.seed(workflow_with_ports(
+            "wf_check",
+            &["check_report"],
+            &["review_input"],
+        ));
 
         let lifecycle_repo = TestLifecycleDefinitionRepo::default();
         let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);

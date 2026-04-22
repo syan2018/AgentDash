@@ -14,7 +14,7 @@ pub struct Agent {
     pub name: String,
     /// 执行器类型（如 "PI_AGENT", "claude-code"）
     pub agent_type: String,
-    /// 基础配置 JSON（model_id, provider_id, mcp_servers, thinking_level 等）
+    /// 基础配置 JSON（model_id, provider_id, mcp_preset_keys, thinking_level 等）
     pub base_config: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -1,6 +1,4 @@
-use agentdash_domain::workflow::{
-    LifecycleRunStatus, WorkflowHookRuleSpec, WorkflowHookTrigger,
-};
+use agentdash_domain::workflow::{LifecycleRunStatus, WorkflowHookRuleSpec, WorkflowHookTrigger};
 use agentdash_spi::{
     ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, SessionHookSnapshot,
 };

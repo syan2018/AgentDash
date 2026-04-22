@@ -19,8 +19,7 @@ use uuid::Uuid;
 use agentdash_domain::agent::ProjectAgentLinkRepository;
 use agentdash_domain::workflow::{
     CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
-    LifecycleStepDefinition,
-    WorkflowDefinition, WorkflowDefinitionRepository,
+    LifecycleStepDefinition, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 /// session bootstrap 阶段要注入 resolver 的 workflow 上下文。
@@ -77,9 +76,7 @@ pub async fn resolve_session_workflow_context(
             project_id,
             agent_id,
         } => resolve_for_project_agent(repos, project_id, agent_id).await,
-        SessionWorkflowOwner::Story { project_id } => {
-            resolve_for_story(repos, project_id).await
-        }
+        SessionWorkflowOwner::Story { project_id } => resolve_for_story(repos, project_id).await,
     }
 }
 
@@ -107,8 +104,7 @@ async fn resolve_for_project_agent(
         }
     };
 
-    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref())
-    else {
+    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
         return SessionWorkflowContext::NONE;
     };
 
@@ -142,8 +138,7 @@ async fn resolve_for_story(
         return SessionWorkflowContext::NONE;
     };
 
-    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref())
-    else {
+    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
         return SessionWorkflowContext::NONE;
     };
 
@@ -232,9 +227,7 @@ async fn resolve_from_lifecycle_key(
 
     SessionWorkflowContext {
         has_active_workflow: true,
-        workflow_capability_directives: Some(
-            capability_directives_from_active_workflow(&workflow),
-        ),
+        workflow_capability_directives: Some(capability_directives_from_active_workflow(&workflow)),
     }
 }
 
@@ -265,7 +258,6 @@ pub fn capability_directives_from_active_workflow(
     workflow.contract.capability_directives.clone()
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -277,9 +269,8 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
         CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
-        LifecycleStepDefinition,
-        WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
-        WorkflowDefinitionSource,
+        LifecycleStepDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        WorkflowDefinitionRepository, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -306,13 +297,7 @@ mod tests {
             Ok(())
         }
         async fn get_by_id(&self, id: Uuid) -> Result<Option<ProjectAgentLink>, DomainError> {
-            Ok(self
-                .links
-                .lock()
-                .await
-                .iter()
-                .find(|l| l.id == id)
-                .cloned())
+            Ok(self.links.lock().await.iter().find(|l| l.id == id).cloned())
         }
         async fn find_by_project_and_agent(
             &self,
@@ -340,7 +325,10 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<ProjectAgentLink>, DomainError> {
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<ProjectAgentLink>, DomainError> {
             Ok(self
                 .links
                 .lock()
@@ -394,11 +382,14 @@ mod tests {
         async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
-        async fn get_by_key(
-            &self,
-            key: &str,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
-            Ok(self.defs.lock().await.iter().find(|d| d.key == key).cloned())
+        async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError> {
+            Ok(self
+                .defs
+                .lock()
+                .await
+                .iter()
+                .find(|d| d.key == key)
+                .cloned())
         }
         async fn get_by_project_and_key(
             &self,
@@ -475,11 +466,14 @@ mod tests {
         async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
-        async fn get_by_key(
-            &self,
-            key: &str,
-        ) -> Result<Option<WorkflowDefinition>, DomainError> {
-            Ok(self.defs.lock().await.iter().find(|d| d.key == key).cloned())
+        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
+            Ok(self
+                .defs
+                .lock()
+                .await
+                .iter()
+                .find(|d| d.key == key)
+                .cloned())
         }
         async fn get_by_project_and_key(
             &self,
@@ -538,7 +532,11 @@ mod tests {
 
     // ── helpers ──────────────────────────────────────────────────────
 
-    fn make_link(project_id: Uuid, agent_id: Uuid, lifecycle_key: Option<&str>) -> ProjectAgentLink {
+    fn make_link(
+        project_id: Uuid,
+        agent_id: Uuid,
+        lifecycle_key: Option<&str>,
+    ) -> ProjectAgentLink {
         let mut link = ProjectAgentLink::new(project_id, agent_id);
         link.default_lifecycle_key = lifecycle_key.map(str::to_string);
         link
@@ -601,7 +599,11 @@ mod tests {
 
         let link_repo = MockAgentLinkRepo::default();
         link_repo
-            .insert(make_link(project_id, agent_id, Some("builtin_workflow_admin")))
+            .insert(make_link(
+                project_id,
+                agent_id,
+                Some("builtin_workflow_admin"),
+            ))
             .await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();
@@ -636,7 +638,9 @@ mod tests {
         let agent_id = Uuid::new_v4();
 
         let link_repo = MockAgentLinkRepo::default();
-        link_repo.insert(make_link(project_id, agent_id, None)).await;
+        link_repo
+            .insert(make_link(project_id, agent_id, None))
+            .await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();
         let workflow_repo = MockWorkflowDefRepo::default();
@@ -719,11 +723,17 @@ mod tests {
 
         let link_repo = MockAgentLinkRepo::default();
         link_repo
-            .insert(make_link(project_id, agent_id, Some("builtin_workflow_admin")))
+            .insert(make_link(
+                project_id,
+                agent_id,
+                Some("builtin_workflow_admin"),
+            ))
             .await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();
-        lifecycle_repo.insert(lifecycle_without_entry_step(project_id)).await;
+        lifecycle_repo
+            .insert(lifecycle_without_entry_step(project_id))
+            .await;
 
         let workflow_repo = MockWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
@@ -757,7 +767,11 @@ mod tests {
 
         let link_repo = MockAgentLinkRepo::default();
         link_repo
-            .insert(make_link(project_id, agent_id, Some("builtin_workflow_admin")))
+            .insert(make_link(
+                project_id,
+                agent_id,
+                Some("builtin_workflow_admin"),
+            ))
             .await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();
@@ -924,7 +938,11 @@ mod tests {
 
         let link_repo = MockAgentLinkRepo::default();
         link_repo
-            .insert(make_link(project_id, agent_id, Some("builtin_workflow_admin")))
+            .insert(make_link(
+                project_id,
+                agent_id,
+                Some("builtin_workflow_admin"),
+            ))
             .await;
 
         let lifecycle_repo = MockLifecycleDefRepo::default();

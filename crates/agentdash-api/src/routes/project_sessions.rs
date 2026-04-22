@@ -8,9 +8,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::vfs::{
-    SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
-};
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::bootstrap::{
@@ -18,15 +15,18 @@ use agentdash_application::session::bootstrap::{
     derive_session_context_snapshot,
 };
 use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_application::vfs::{
+    SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
+};
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::vfs_surfaces::build_surface_summary,
     routes::project_agents::{
         parse_project_agent_session_label, resolve_project_agent_bridge_async,
         resolve_project_workspace,
     },
+    routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
     runtime_bridge::acp_mcp_servers_to_runtime,
 };
@@ -38,11 +38,13 @@ async fn load_project_presets(
     state: &Arc<AppState>,
     project_id: Uuid,
 ) -> agentdash_application::capability::AvailableMcpPresets {
-    match state.repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
+    match state
+        .repos
+        .mcp_preset_repo
+        .list_by_project(project_id)
+        .await
+    {
+        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
         Err(error) => {
             tracing::warn!(
                 project_id = %project_id,
@@ -203,8 +205,7 @@ pub(crate) async fn build_project_session_context_response(
         // Agent 级容器管控：白名单过滤 + 知识库注入
         if let Some(link) = &agent_link {
             filter_project_containers_by_whitelist(&mut vfs, link);
-            append_agent_knowledge_mounts(&mut vfs, link)
-                .map_err(ApiError::Internal)?;
+            append_agent_knowledge_mounts(&mut vfs, link).map_err(ApiError::Internal)?;
         }
 
         append_visible_canvas_mounts(
@@ -231,6 +232,7 @@ pub(crate) async fn build_project_session_context_response(
                     _ => return None,
                 };
                 Some(agentdash_application::capability::AgentMcpServerEntry {
+                    uses_relay: project_agent.relay_mcp_server_names.contains(&name),
                     name,
                     server: server.clone(),
                 })
@@ -296,8 +298,9 @@ pub(crate) async fn build_project_session_context_response(
         mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: project_agent.preset_name,
-        executor_resolution:
-            agentdash_application::session::ExecutorResolution::resolved(executor_source),
+        executor_resolution: agentdash_application::session::ExecutorResolution::resolved(
+            executor_source,
+        ),
         owner_variant: BootstrapOwnerVariant::Project {
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,

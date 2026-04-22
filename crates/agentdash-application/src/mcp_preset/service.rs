@@ -1,6 +1,8 @@
 use uuid::Uuid;
 
-use agentdash_domain::mcp_preset::{McpPreset, McpPresetRepository, McpServerDecl};
+use agentdash_domain::mcp_preset::{
+    McpPreset, McpPresetRepository, McpRoutePolicy, McpTransportConfig,
+};
 
 use super::definition::{BuiltinMcpPresetTemplate, list_builtin_mcp_preset_templates};
 use super::error::McpPresetApplicationError;
@@ -14,24 +16,29 @@ pub struct McpPresetService<'a, R: ?Sized> {
 #[derive(Debug, Clone)]
 pub struct CreateMcpPresetInput {
     pub project_id: Uuid,
-    pub name: String,
+    pub key: String,
+    pub display_name: String,
     pub description: Option<String>,
-    pub server_decl: McpServerDecl,
+    pub transport: McpTransportConfig,
+    pub route_policy: McpRoutePolicy,
 }
 
 /// 更新 preset 的输入——可选字段，`None` 表示保持原值。
 #[derive(Debug, Clone, Default)]
 pub struct UpdateMcpPresetInput {
-    pub name: Option<String>,
+    pub key: Option<String>,
+    pub display_name: Option<String>,
     pub description: Option<Option<String>>,
-    pub server_decl: Option<McpServerDecl>,
+    pub transport: Option<McpTransportConfig>,
+    pub route_policy: Option<McpRoutePolicy>,
 }
 
 /// 复制 preset（常用于「复制 builtin 为 user」）的输入。
 #[derive(Debug, Clone)]
 pub struct CloneMcpPresetInput {
     pub source_id: Uuid,
-    pub new_name: String,
+    pub new_key: String,
+    pub new_display_name: Option<String>,
 }
 
 impl<'a, R: ?Sized> McpPresetService<'a, R>
@@ -51,10 +58,7 @@ where
     }
 
     /// 获取单个 Preset。
-    pub async fn get(
-        &self,
-        id: Uuid,
-    ) -> Result<McpPreset, McpPresetApplicationError> {
+    pub async fn get(&self, id: Uuid) -> Result<McpPreset, McpPresetApplicationError> {
         self.repo
             .get(id)
             .await?
@@ -66,16 +70,19 @@ where
         &self,
         input: CreateMcpPresetInput,
     ) -> Result<McpPreset, McpPresetApplicationError> {
-        validate_name(&input.name)?;
-        validate_server_decl(&input.server_decl)?;
-        self.ensure_name_available(input.project_id, &input.name, None)
+        validate_key(&input.key)?;
+        validate_display_name(&input.display_name)?;
+        validate_transport(&input.transport)?;
+        self.ensure_key_available(input.project_id, &input.key, None)
             .await?;
 
         let preset = McpPreset::new_user(
             input.project_id,
-            input.name,
+            input.key,
+            input.display_name,
             input.description,
-            input.server_decl,
+            input.transport,
+            input.route_policy,
         );
         self.repo.create(&preset).await?;
         Ok(preset)
@@ -91,24 +98,31 @@ where
         if preset.is_builtin() {
             return Err(McpPresetApplicationError::Conflict(format!(
                 "mcp_preset `{}` 属于 builtin，无法直接编辑；请先复制为 user",
-                preset.name
+                preset.key
             )));
         }
 
-        if let Some(name) = input.name {
-            validate_name(&name)?;
-            if name != preset.name {
-                self.ensure_name_available(preset.project_id, &name, Some(preset.id))
+        if let Some(key) = input.key {
+            validate_key(&key)?;
+            if key != preset.key {
+                self.ensure_key_available(preset.project_id, &key, Some(preset.id))
                     .await?;
             }
-            preset.name = name;
+            preset.key = key;
+        }
+        if let Some(display_name) = input.display_name {
+            validate_display_name(&display_name)?;
+            preset.display_name = display_name;
         }
         if let Some(description) = input.description {
             preset.description = description;
         }
-        if let Some(server_decl) = input.server_decl {
-            validate_server_decl(&server_decl)?;
-            preset.server_decl = server_decl;
+        if let Some(transport) = input.transport {
+            validate_transport(&transport)?;
+            preset.transport = transport;
+        }
+        if let Some(route_policy) = input.route_policy {
+            preset.route_policy = route_policy;
         }
         preset.touch();
 
@@ -122,7 +136,7 @@ where
         if preset.is_builtin() {
             return Err(McpPresetApplicationError::Conflict(format!(
                 "mcp_preset `{}` 属于 builtin，无法删除；请先复制为 user 并单独管理",
-                preset.name
+                preset.key
             )));
         }
         self.repo.delete(id).await?;
@@ -135,15 +149,19 @@ where
         input: CloneMcpPresetInput,
     ) -> Result<McpPreset, McpPresetApplicationError> {
         let source = self.get(input.source_id).await?;
-        validate_name(&input.new_name)?;
-        self.ensure_name_available(source.project_id, &input.new_name, None)
+        validate_key(&input.new_key)?;
+        self.ensure_key_available(source.project_id, &input.new_key, None)
             .await?;
 
         let preset = McpPreset::new_user(
             source.project_id,
-            input.new_name,
+            input.new_key,
+            input
+                .new_display_name
+                .unwrap_or_else(|| format!("{} (copy)", source.display_name)),
             source.description.clone(),
-            source.server_decl.clone(),
+            source.transport.clone(),
+            source.route_policy,
         );
         self.repo.create(&preset).await?;
         Ok(preset)
@@ -154,8 +172,8 @@ where
         &self,
         project_id: Uuid,
     ) -> Result<Vec<McpPreset>, McpPresetApplicationError> {
-        let templates = list_builtin_mcp_preset_templates()
-            .map_err(McpPresetApplicationError::Internal)?;
+        let templates =
+            list_builtin_mcp_preset_templates().map_err(McpPresetApplicationError::Internal)?;
         let mut results = Vec::with_capacity(templates.len());
         for template in templates {
             results.push(self.bootstrap_single_builtin(project_id, &template).await?);
@@ -189,56 +207,84 @@ where
         Ok(self.repo.upsert_builtin(&preset).await?)
     }
 
-    async fn ensure_name_available(
+    async fn ensure_key_available(
         &self,
         project_id: Uuid,
-        name: &str,
+        key: &str,
         allow_id: Option<Uuid>,
     ) -> Result<(), McpPresetApplicationError> {
-        if let Some(existing) = self.repo.get_by_project_and_name(project_id, name).await?
+        if let Some(existing) = self.repo.get_by_project_and_key(project_id, key).await?
             && Some(existing.id) != allow_id
         {
             return Err(McpPresetApplicationError::Conflict(format!(
-                "mcp_preset name 已存在: {name}"
+                "mcp_preset key 已存在: {key}"
             )));
         }
         Ok(())
     }
 }
 
-fn validate_name(name: &str) -> Result<(), McpPresetApplicationError> {
-    let trimmed = name.trim();
+fn validate_key(key: &str) -> Result<(), McpPresetApplicationError> {
+    let trimmed = key.trim();
     if trimmed.is_empty() {
         return Err(McpPresetApplicationError::BadRequest(
-            "mcp_preset.name 不能为空".to_string(),
+            "mcp_preset.key 不能为空".to_string(),
         ));
     }
     if trimmed.len() > 128 {
         return Err(McpPresetApplicationError::BadRequest(
-            "mcp_preset.name 超过 128 字符".to_string(),
+            "mcp_preset.key 超过 128 字符".to_string(),
+        ));
+    }
+    if trimmed.starts_with("agentdash-") {
+        return Err(McpPresetApplicationError::BadRequest(
+            "mcp_preset.key 不能使用保留前缀 `agentdash-`".to_string(),
+        ));
+    }
+    if trimmed.contains("::") {
+        return Err(McpPresetApplicationError::BadRequest(
+            "mcp_preset.key 不能包含 `::`".to_string(),
+        ));
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, ':' | '/' | '\\'))
+    {
+        return Err(McpPresetApplicationError::BadRequest(
+            "mcp_preset.key 只能包含机器可读标识字符，不能包含空白、冒号或路径分隔符".to_string(),
         ));
     }
     Ok(())
 }
 
-fn validate_server_decl(decl: &McpServerDecl) -> Result<(), McpPresetApplicationError> {
-    if decl.server_name().trim().is_empty() {
+fn validate_display_name(display_name: &str) -> Result<(), McpPresetApplicationError> {
+    let trimmed = display_name.trim();
+    if trimmed.is_empty() {
         return Err(McpPresetApplicationError::BadRequest(
-            "mcp_preset.server_decl.name 不能为空".to_string(),
+            "mcp_preset.display_name 不能为空".to_string(),
         ));
     }
-    match decl {
-        McpServerDecl::Http { url, .. } | McpServerDecl::Sse { url, .. } => {
+    if trimmed.len() > 128 {
+        return Err(McpPresetApplicationError::BadRequest(
+            "mcp_preset.display_name 超过 128 字符".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transport(transport: &McpTransportConfig) -> Result<(), McpPresetApplicationError> {
+    match transport {
+        McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
             if url.trim().is_empty() {
                 return Err(McpPresetApplicationError::BadRequest(
-                    "mcp_preset.server_decl.url 不能为空".to_string(),
+                    "mcp_preset.transport.url 不能为空".to_string(),
                 ));
             }
         }
-        McpServerDecl::Stdio { command, .. } => {
+        McpTransportConfig::Stdio { command, .. } => {
             if command.trim().is_empty() {
                 return Err(McpPresetApplicationError::BadRequest(
-                    "mcp_preset.server_decl.command 不能为空".to_string(),
+                    "mcp_preset.transport.command 不能为空".to_string(),
                 ));
             }
         }
@@ -273,10 +319,10 @@ mod tests {
             let mut guard = self.lock();
             if guard
                 .values()
-                .any(|p| p.project_id == preset.project_id && p.name == preset.name)
+                .any(|p| p.project_id == preset.project_id && p.key == preset.key)
             {
                 return Err(DomainError::InvalidConfig(
-                    "mcp_presets unique(project_id,name) violation".to_string(),
+                    "mcp_presets unique(project_id,key) violation".to_string(),
                 ));
             }
             guard.insert(preset.id, preset.clone());
@@ -287,22 +333,19 @@ mod tests {
             Ok(self.lock().get(&id).cloned())
         }
 
-        async fn get_by_project_and_name(
+        async fn get_by_project_and_key(
             &self,
             project_id: Uuid,
-            name: &str,
+            key: &str,
         ) -> Result<Option<McpPreset>, DomainError> {
             Ok(self
                 .lock()
                 .values()
-                .find(|p| p.project_id == project_id && p.name == name)
+                .find(|p| p.project_id == project_id && p.key == key)
                 .cloned())
         }
 
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<McpPreset>, DomainError> {
+        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<McpPreset>, DomainError> {
             Ok(self
                 .lock()
                 .values()
@@ -345,8 +388,10 @@ mod tests {
             let mut guard = self.lock();
             let existing_id = guard
                 .values()
-                .find(|p| p.project_id == preset.project_id
-                    && p.source.builtin_key() == Some(key.as_str()))
+                .find(|p| {
+                    p.project_id == preset.project_id
+                        && p.source.builtin_key() == Some(key.as_str())
+                })
                 .map(|p| p.id);
             let mut merged = preset.clone();
             if let Some(id) = existing_id {
@@ -357,12 +402,10 @@ mod tests {
         }
     }
 
-    fn http_decl(name: &str) -> McpServerDecl {
-        McpServerDecl::Http {
-            name: name.to_string(),
+    fn http_transport() -> McpTransportConfig {
+        McpTransportConfig::Http {
             url: "https://example.com/mcp".to_string(),
             headers: vec![],
-            relay: None,
         }
     }
 
@@ -375,28 +418,33 @@ mod tests {
         service
             .create(CreateMcpPresetInput {
                 project_id,
-                name: "one".to_string(),
+                key: "one".to_string(),
+                display_name: "One".to_string(),
                 description: None,
-                server_decl: http_decl("srv"),
+                transport: http_transport(),
+                route_policy: McpRoutePolicy::Direct,
             })
             .await
             .expect("create");
 
         let listed = service.list(project_id).await.expect("list");
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].name, "one");
+        assert_eq!(listed[0].key, "one");
+        assert_eq!(listed[0].display_name, "One");
     }
 
     #[tokio::test]
-    async fn create_rejects_duplicate_name_in_project() {
+    async fn create_rejects_duplicate_key_in_project() {
         let repo = InMemoryRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let input = || CreateMcpPresetInput {
             project_id,
-            name: "dup".to_string(),
+            key: "dup".to_string(),
+            display_name: "Duplicate".to_string(),
             description: None,
-            server_decl: http_decl("srv"),
+            transport: http_transport(),
+            route_policy: McpRoutePolicy::Direct,
         };
         service.create(input()).await.expect("first");
         let err = service.create(input()).await.expect_err("duplicate");
@@ -407,33 +455,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_rejects_empty_name_and_invalid_decl() {
+    async fn create_rejects_invalid_key_and_invalid_transport() {
         let repo = InMemoryRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let err = service
             .create(CreateMcpPresetInput {
                 project_id,
-                name: "   ".to_string(),
+                key: "   ".to_string(),
+                display_name: "X".to_string(),
                 description: None,
-                server_decl: http_decl("srv"),
+                transport: http_transport(),
+                route_policy: McpRoutePolicy::Direct,
             })
             .await
-            .expect_err("blank name should fail");
+            .expect_err("blank key should fail");
         assert!(matches!(err, McpPresetApplicationError::BadRequest(_)));
 
         let err = service
             .create(CreateMcpPresetInput {
                 project_id,
-                name: "x".to_string(),
+                key: "x".to_string(),
+                display_name: "X".to_string(),
                 description: None,
-                server_decl: McpServerDecl::Stdio {
-                    name: "srv".to_string(),
+                transport: McpTransportConfig::Stdio {
                     command: "".to_string(),
                     args: vec![],
                     env: vec![],
-                    relay: None,
                 },
+                route_policy: McpRoutePolicy::Auto,
             })
             .await
             .expect_err("empty command should fail");
@@ -456,7 +506,7 @@ mod tests {
             .update(
                 builtins[0].id,
                 UpdateMcpPresetInput {
-                    name: Some("new-name".to_string()),
+                    key: Some("new-key".to_string()),
                     ..Default::default()
                 },
             )
@@ -495,14 +545,16 @@ mod tests {
         let cloned = service
             .clone_as_user(CloneMcpPresetInput {
                 source_id: source.id,
-                new_name: format!("{}-copy", source.name),
+                new_key: format!("{}-copy", source.key),
+                new_display_name: None,
             })
             .await
             .expect("clone");
 
         assert_eq!(cloned.source, McpPresetSource::User);
         assert_ne!(cloned.id, source.id);
-        assert_eq!(cloned.server_decl, source.server_decl);
+        assert_eq!(cloned.transport, source.transport);
+        assert_eq!(cloned.route_policy, source.route_policy);
 
         // 复制出的 user preset 可被编辑
         let updated = service
@@ -523,10 +575,7 @@ mod tests {
         let repo = InMemoryRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
-        let first = service
-            .bootstrap_builtins(project_id)
-            .await
-            .expect("first");
+        let first = service.bootstrap_builtins(project_id).await.expect("first");
         let second = service
             .bootstrap_builtins(project_id)
             .await

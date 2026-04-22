@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 
 use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::tool_capability::{
-    self, ToolCapability, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE,
-    CAP_RELAY_MANAGEMENT, CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT,
-    CAP_WORKFLOW, CAP_WORKFLOW_MANAGEMENT,
+    self, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
+    CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
+    CAP_WORKFLOW_MANAGEMENT, ToolCapability,
 };
 
 /// 能力 key 的人类可读短描述 —— 与 `McpInjectionConfig::to_context_content` 保持口径一致。
@@ -90,9 +90,7 @@ pub fn build_capability_delta_markdown(
     };
     sections.push(format!("### Effective Capabilities\n{caps_block}"));
 
-    sections.push(
-        "> 工具 schema 已同步更新，可直接调用上述能力；历史对话未被改写。".to_string(),
-    );
+    sections.push("> 工具 schema 已同步更新，可直接调用上述能力；历史对话未被改写。".to_string());
 
     sections.join("\n\n")
 }

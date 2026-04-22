@@ -3,8 +3,7 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    WorkflowBindingKind,
-    WorkflowDefinition, WorkflowDefinitionRepository,
+    WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 pub struct PostgresWorkflowRepository {
@@ -17,17 +16,22 @@ impl PostgresWorkflowRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
             name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
             binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
             source TEXT NOT NULL, version INTEGER NOT NULL, contract TEXT NOT NULL,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
-        )"#)
-        .execute(&self.pool).await.map_err(db_err)?;
+        )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
 
-        sqlx::query(r#"CREATE TABLE IF NOT EXISTS lifecycle_definitions (
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS lifecycle_definitions (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
             name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
             binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
@@ -35,8 +39,11 @@ impl PostgresWorkflowRepository {
             entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
-        )"#)
-        .execute(&self.pool).await.map_err(db_err)?;
+        )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS lifecycle_runs (
@@ -80,15 +87,27 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
-        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions WHERE id = $1"))
-            .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!(
+            "SELECT {WF_COLS} FROM workflow_definitions WHERE id = $1"
+        ))
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
-        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions WHERE key = $1 LIMIT 1"))
-            .bind(key).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!(
+            "SELECT {WF_COLS} FROM workflow_definitions WHERE key = $1 LIMIT 1"
+        ))
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn get_by_project_and_key(
@@ -96,16 +115,28 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
         project_id: uuid::Uuid,
         key: &str,
     ) -> Result<Option<WorkflowDefinition>, DomainError> {
-        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions WHERE project_id = $1 AND key = $2"))
-            .bind(project_id.to_string()).bind(key)
-            .fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!(
+            "SELECT {WF_COLS} FROM workflow_definitions WHERE project_id = $1 AND key = $2"
+        ))
+        .bind(project_id.to_string())
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
-        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions ORDER BY created_at DESC"))
-            .fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!(
+            "SELECT {WF_COLS} FROM workflow_definitions ORDER BY created_at DESC"
+        ))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn list_by_project(
@@ -166,15 +197,27 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions WHERE id = $1"))
-            .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!(
+            "SELECT {LC_COLS} FROM lifecycle_definitions WHERE id = $1"
+        ))
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions WHERE key = $1 LIMIT 1"))
-            .bind(key).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!(
+            "SELECT {LC_COLS} FROM lifecycle_definitions WHERE key = $1 LIMIT 1"
+        ))
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn get_by_project_and_key(
@@ -182,16 +225,28 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
         project_id: uuid::Uuid,
         key: &str,
     ) -> Result<Option<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND key = $2"))
-            .bind(project_id.to_string()).bind(key)
-            .fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!(
+            "SELECT {LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND key = $2"
+        ))
+        .bind(project_id.to_string())
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions ORDER BY created_at DESC"))
-            .fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!(
+            "SELECT {LC_COLS} FROM lifecycle_definitions ORDER BY created_at DESC"
+        ))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn list_by_project(
@@ -255,33 +310,60 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!("SELECT {RUN_COLS} FROM lifecycle_runs WHERE id = $1"))
-            .bind(id.to_string()).fetch_optional(&self.pool).await.map_err(db_err)?
-            .map(TryInto::try_into).transpose()
+        sqlx::query_as::<_, LifecycleRunRow>(&format!(
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE id = $1"
+        ))
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 
     async fn list_by_project(
         &self,
         project_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!("SELECT {RUN_COLS} FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC"))
-            .bind(project_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, LifecycleRunRow>(&format!(
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE project_id = $1 ORDER BY created_at DESC"
+        ))
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn list_by_lifecycle(
         &self,
         lifecycle_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!("SELECT {RUN_COLS} FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC"))
-            .bind(lifecycle_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, LifecycleRunRow>(&format!(
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC"
+        ))
+        .bind(lifecycle_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!("SELECT {RUN_COLS} FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC"))
-            .bind(session_id).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, LifecycleRunRow>(&format!(
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC"
+        ))
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
@@ -304,7 +386,6 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &id)
     }
 }
-
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())

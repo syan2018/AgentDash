@@ -9,18 +9,11 @@ use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
 use crate::relay::registry::BackendRegistry;
-use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
-use agentdash_application::vfs::RelayVfsService;
-use agentdash_application::vfs::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionHubHandle,
-};
-use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::ContextContributorRegistry;
-use agentdash_application::context::{
-    VfsDiscoveryRegistry, builtin_vfs_registry,
-};
+use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::hooks::AppExecutionHookProvider;
+use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
@@ -28,6 +21,11 @@ use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::TaskLifecycleService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::task_restart_tracker::RestartTracker;
+use agentdash_application::vfs::RelayVfsService;
+use agentdash_application::vfs::tools::provider::{
+    RelayRuntimeToolProvider, SharedSessionHubHandle,
+};
+use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -41,10 +39,10 @@ use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
     PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
-    PostgresRoutineRepository,
-    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
-    PostgresStateChangeRepository, PostgresStoryRepository, PostgresTaskRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresRoutineRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
+    PostgresSettingsRepository, PostgresStateChangeRepository, PostgresStoryRepository,
+    PostgresTaskRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -231,9 +229,7 @@ impl AppState {
 
         let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
-        let vfs_service = Arc::new(RelayVfsService::new(
-            mount_provider_registry.clone(),
-        ));
+        let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
         let session_hub_handle = SharedSessionHubHandle::default();
 
         let inline_persister: Arc<
@@ -511,9 +507,8 @@ struct PiAgentConnectorDeps {
     vfs_service: Arc<RelayVfsService>,
     repos: RepositorySet,
     session_hub_handle: SharedSessionHubHandle,
-    inline_persister: Option<
-        Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>,
-    >,
+    inline_persister:
+        Option<Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>>,
     mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
     platform_config: SharedPlatformConfig,
 }

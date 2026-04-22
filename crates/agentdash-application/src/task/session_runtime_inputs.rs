@@ -7,15 +7,15 @@ use agentdash_spi::FlowCapabilities;
 
 use crate::capability::{CapabilityResolver, CapabilityResolverInput};
 use crate::platform_config::PlatformConfig;
-use crate::vfs::{
-    RelayVfsService, ResolveBindingsOutput, SessionMountTarget,
-    build_lifecycle_mount_with_ports, resolve_context_bindings,
-};
 use crate::repository_set::RepositorySet;
-use crate::runtime::{Vfs, AgentConfig, RuntimeMcpServer};
+use crate::runtime::{AgentConfig, RuntimeMcpServer, Vfs};
 use crate::runtime_bridge::acp_mcp_server_to_runtime;
 use crate::task::config::resolve_task_executor_config;
 use crate::task::execution::TaskExecutionError;
+use crate::vfs::{
+    RelayVfsService, ResolveBindingsOutput, SessionMountTarget, build_lifecycle_mount_with_ports,
+    resolve_context_bindings,
+};
 use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 
 #[derive(Debug, Clone)]
@@ -27,6 +27,7 @@ pub struct TaskSessionRuntimeInputs {
     /// context_bindings 预解析结果（session 创建时通过 VFS read 解析）
     pub resolved_bindings: Option<ResolveBindingsOutput>,
     pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub relay_mcp_server_names: std::collections::HashSet<String>,
     /// CapabilityResolver 产出的内置工具簇 —— turn_context / dispatcher 直接复用,
     /// 避免 turn 路径第二次调用 Resolver。
     pub flow_capabilities: FlowCapabilities,
@@ -91,10 +92,21 @@ pub async fn build_task_session_runtime_inputs(
         companion_slice_mode: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
-    let mcp_servers: Vec<RuntimeMcpServer> = cap_output
+    let mut mcp_servers: Vec<RuntimeMcpServer> = cap_output
         .platform_mcp_configs
         .iter()
         .map(|c| acp_mcp_server_to_runtime(&c.to_acp_mcp_server()))
+        .collect();
+    mcp_servers.extend(
+        cap_output
+            .custom_mcp_servers
+            .iter()
+            .map(acp_mcp_server_to_runtime),
+    );
+    let relay_mcp_server_names = cap_output
+        .custom_relay_mcp_server_names
+        .iter()
+        .cloned()
         .collect();
     let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
     let flow_capabilities = cap_output.flow_capabilities.clone();
@@ -167,6 +179,7 @@ pub async fn build_task_session_runtime_inputs(
         workflow,
         resolved_bindings,
         mcp_servers,
+        relay_mcp_server_names,
         flow_capabilities,
         effective_capability_keys,
         platform_mcp_configs,
@@ -243,10 +256,7 @@ async fn build_available_presets(
     project_id: uuid::Uuid,
 ) -> crate::capability::AvailableMcpPresets {
     match repos.mcp_preset_repo.list_by_project(project_id).await {
-        Ok(presets) => presets
-            .into_iter()
-            .map(|p| (p.name, p.server_decl))
-            .collect(),
+        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
         Err(error) => {
             tracing::warn!(
                 project_id = %project_id,

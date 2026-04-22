@@ -1,13 +1,12 @@
-pub mod vfs_discovery;
 mod builder;
 mod builtins;
 pub mod context_composer;
 mod contributor;
 pub mod source_resolver;
+pub mod vfs_discovery;
 mod workflow_bindings;
 pub mod workspace_sources;
 
-pub use vfs_discovery::{VfsDiscoveryRegistry, builtin_vfs_registry};
 pub use builder::{build_declared_source_warning_fragment, build_task_agent_context};
 pub use builtins::{McpContextContributor, StaticFragmentsContributor};
 pub use builtins::{build_owner_context_resource_block, build_owner_prompt_blocks};
@@ -20,5 +19,6 @@ pub use contributor::{
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,
 };
+pub use vfs_discovery::{VfsDiscoveryRegistry, builtin_vfs_registry};
 pub use workflow_bindings::WorkflowContextBindingsContributor;
 pub use workspace_sources::resolve_workspace_declared_sources;

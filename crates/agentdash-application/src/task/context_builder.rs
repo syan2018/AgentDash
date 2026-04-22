@@ -1,9 +1,8 @@
 use agent_client_protocol::McpServer;
 use uuid::Uuid;
 
-use crate::platform_config::PlatformConfig;
-use crate::vfs::RelayVfsService;
 use crate::canvas::append_visible_canvas_mounts;
+use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime_bridge::{acp_mcp_servers_to_runtime, runtime_mcp_servers_to_acp};
 use crate::session::bootstrap::{
@@ -14,6 +13,7 @@ use crate::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
 use crate::task::session_runtime_inputs::build_task_session_runtime_inputs;
+use crate::vfs::RelayVfsService;
 use agentdash_domain::common::Vfs;
 
 #[derive(Debug)]

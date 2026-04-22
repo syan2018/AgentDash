@@ -14,57 +14,65 @@ pub struct McpEnvVar {
     pub value: String,
 }
 
-/// MCP Server 声明——对齐前端 `McpServerDecl` 联合体，支持 http / sse / stdio 三种 transport。
-///
-/// 此类型故意与 `agent_client_protocol::McpServer` 解耦：Preset 是「配置模板」，
-/// 运行时展开后再由 agent 组装路径转换到 ACP McpServer。
+/// MCP transport 声明——仅描述如何连接，不包含展示名、路由策略或 server identity。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpServerDecl {
+pub enum McpTransportConfig {
     Http {
-        name: String,
         url: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         headers: Vec<McpHttpHeader>,
-        /// 是否强制通过本机 relay 调用。默认 None 时由 connector 按策略决定。
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        relay: Option<bool>,
     },
     Sse {
-        name: String,
         url: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         headers: Vec<McpHttpHeader>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        relay: Option<bool>,
     },
     Stdio {
-        name: String,
         command: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<McpEnvVar>,
-        /// stdio transport 默认通过本机 relay；显式置 false 仅用于本机直连场景。
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        relay: Option<bool>,
     },
 }
 
-impl McpServerDecl {
-    /// 返回 MCP server 声明中的 `name` 字段。
-    pub fn server_name(&self) -> &str {
-        match self {
-            Self::Http { name, .. } | Self::Sse { name, .. } | Self::Stdio { name, .. } => name,
-        }
-    }
-
+impl McpTransportConfig {
     /// 返回 transport 类型标签——用于日志、只读预览卡摘要等场景。
     pub fn transport_kind(&self) -> &'static str {
         match self {
             Self::Http { .. } => "http",
             Self::Sse { .. } => "sse",
             Self::Stdio { .. } => "stdio",
+        }
+    }
+}
+
+/// 应用层路由策略——不属于 transport 连接定义。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpRoutePolicy {
+    /// 按 transport 默认策略决定：stdio 走 relay，http/sse 走直连。
+    Auto,
+    /// 强制通过本机 relay 路径访问。
+    Relay,
+    /// 强制直连。
+    Direct,
+}
+
+impl Default for McpRoutePolicy {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl McpRoutePolicy {
+    /// 将 route policy 解析为运行时是否走 relay。
+    pub fn uses_relay(self, transport: &McpTransportConfig) -> bool {
+        match self {
+            Self::Relay => true,
+            Self::Direct => false,
+            Self::Auto => matches!(transport, McpTransportConfig::Stdio { .. }),
         }
     }
 }
@@ -108,27 +116,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_decl_roundtrip_http() {
-        let decl = McpServerDecl::Http {
-            name: "fetch".to_string(),
+    fn transport_roundtrip_http() {
+        let decl = McpTransportConfig::Http {
             url: "https://example.com/mcp".to_string(),
             headers: vec![McpHttpHeader {
                 name: "Authorization".to_string(),
                 value: "Bearer x".to_string(),
             }],
-            relay: Some(false),
         };
         let json = serde_json::to_string(&decl).expect("serialize http");
-        let back: McpServerDecl = serde_json::from_str(&json).expect("deserialize http");
+        let back: McpTransportConfig = serde_json::from_str(&json).expect("deserialize http");
         assert_eq!(back, decl);
-        assert_eq!(back.server_name(), "fetch");
         assert_eq!(back.transport_kind(), "http");
     }
 
     #[test]
-    fn server_decl_roundtrip_stdio() {
-        let decl = McpServerDecl::Stdio {
-            name: "filesystem".to_string(),
+    fn transport_roundtrip_stdio() {
+        let decl = McpTransportConfig::Stdio {
             command: "npx".to_string(),
             args: vec![
                 "-y".to_string(),
@@ -138,12 +142,28 @@ mod tests {
                 name: "ROOT".to_string(),
                 value: ".".to_string(),
             }],
-            relay: None,
         };
         let json = serde_json::to_string(&decl).expect("serialize stdio");
-        let back: McpServerDecl = serde_json::from_str(&json).expect("deserialize stdio");
+        let back: McpTransportConfig = serde_json::from_str(&json).expect("deserialize stdio");
         assert_eq!(back, decl);
         assert_eq!(back.transport_kind(), "stdio");
+    }
+
+    #[test]
+    fn route_policy_auto_uses_stdio_default() {
+        let stdio = McpTransportConfig::Stdio {
+            command: "npx".to_string(),
+            args: vec![],
+            env: vec![],
+        };
+        let http = McpTransportConfig::Http {
+            url: "https://example.com/mcp".to_string(),
+            headers: vec![],
+        };
+        assert!(McpRoutePolicy::Auto.uses_relay(&stdio));
+        assert!(!McpRoutePolicy::Auto.uses_relay(&http));
+        assert!(McpRoutePolicy::Relay.uses_relay(&http));
+        assert!(!McpRoutePolicy::Direct.uses_relay(&stdio));
     }
 
     #[test]

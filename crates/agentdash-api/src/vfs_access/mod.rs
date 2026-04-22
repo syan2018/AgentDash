@@ -8,7 +8,7 @@ mod tests {
         InlineContentOverlay, InlineContentPersister,
     };
     use agentdash_application::vfs::*;
-    use agentdash_spi::{Vfs, MountCapability};
+    use agentdash_spi::{MountCapability, Vfs};
 
     use agentdash_agent::AgentTool;
     use agentdash_domain::common::error::DomainError;
@@ -19,8 +19,8 @@ mod tests {
     use tokio::sync::{Mutex, mpsc};
 
     use agentdash_application::vfs::tools::fs::{
-        FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
-        SharedRuntimeVfs, ShellExecTool,
+        FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
+        ShellExecTool,
     };
 
     // `MountCapability` 统一使用 agentdash_spi 版本，避免重复导入
@@ -113,12 +113,15 @@ mod tests {
             path: &str,
         ) -> Result<Option<InlineFile>, DomainError> {
             let files = self.files.lock().await;
-            Ok(files.iter().find(|f| {
-                f.owner_kind == owner_kind
-                    && f.owner_id == owner_id
-                    && f.container_id == container_id
-                    && f.path == path
-            }).cloned())
+            Ok(files
+                .iter()
+                .find(|f| {
+                    f.owner_kind == owner_kind
+                        && f.owner_id == owner_id
+                        && f.container_id == container_id
+                        && f.path == path
+                })
+                .cloned())
         }
 
         async fn list_files(
@@ -128,11 +131,15 @@ mod tests {
             container_id: &str,
         ) -> Result<Vec<InlineFile>, DomainError> {
             let files = self.files.lock().await;
-            Ok(files.iter().filter(|f| {
-                f.owner_kind == owner_kind
-                    && f.owner_id == owner_id
-                    && f.container_id == container_id
-            }).cloned().collect())
+            Ok(files
+                .iter()
+                .filter(|f| {
+                    f.owner_kind == owner_kind
+                        && f.owner_id == owner_id
+                        && f.container_id == container_id
+                })
+                .cloned()
+                .collect())
         }
 
         async fn list_files_by_owner(
@@ -141,9 +148,11 @@ mod tests {
             owner_id: uuid::Uuid,
         ) -> Result<Vec<InlineFile>, DomainError> {
             let files = self.files.lock().await;
-            Ok(files.iter().filter(|f| {
-                f.owner_kind == owner_kind && f.owner_id == owner_id
-            }).cloned().collect())
+            Ok(files
+                .iter()
+                .filter(|f| f.owner_kind == owner_kind && f.owner_id == owner_id)
+                .cloned()
+                .collect())
         }
 
         async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
@@ -218,11 +227,14 @@ mod tests {
             container_id: &str,
         ) -> Result<i64, DomainError> {
             let files = self.files.lock().await;
-            Ok(files.iter().filter(|f| {
-                f.owner_kind == owner_kind
-                    && f.owner_id == owner_id
-                    && f.container_id == container_id
-            }).count() as i64)
+            Ok(files
+                .iter()
+                .filter(|f| {
+                    f.owner_kind == owner_kind
+                        && f.owner_id == owner_id
+                        && f.container_id == container_id
+                })
+                .count() as i64)
         }
     }
 
@@ -387,12 +399,22 @@ mod tests {
         let owner_id = uuid::Uuid::new_v4();
         let container_id = "story-brief";
         let repo = MemoryInlineFileRepo::new_with_files(vec![
-            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount"),
-            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "notes/todo.md", "todo: verify inline search"),
+            InlineFile::new(
+                InlineFileOwnerKind::Project,
+                owner_id,
+                container_id,
+                "brief.md",
+                "hello inline mount",
+            ),
+            InlineFile::new(
+                InlineFileOwnerKind::Project,
+                owner_id,
+                container_id,
+                "notes/todo.md",
+                "todo: verify inline search",
+            ),
         ]);
-        let service = RelayVfsService::new(
-            mount_registry_with_inline_fs_repo(Arc::new(repo)),
-        );
+        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -454,12 +476,22 @@ mod tests {
         let owner_id = uuid::Uuid::new_v4();
         let container_id = "story-brief";
         let repo = MemoryInlineFileRepo::new_with_files(vec![
-            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "brief.md", "hello inline mount\n"),
-            InlineFile::new(InlineFileOwnerKind::Project, owner_id, container_id, "obsolete.md", "remove me\n"),
+            InlineFile::new(
+                InlineFileOwnerKind::Project,
+                owner_id,
+                container_id,
+                "brief.md",
+                "hello inline mount\n",
+            ),
+            InlineFile::new(
+                InlineFileOwnerKind::Project,
+                owner_id,
+                container_id,
+                "obsolete.md",
+                "remove me\n",
+            ),
         ]);
-        let service = RelayVfsService::new(
-            mount_registry_with_inline_fs_repo(Arc::new(repo)),
-        );
+        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let runtime_vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -663,14 +695,11 @@ mod tests {
 
         let schemas = vec![
             MountsListTool::new(service.clone(), shared_vfs.clone()).parameters_schema(),
-            FsReadTool::new(service.clone(), shared_vfs.clone(), None, None)
-                .parameters_schema(),
+            FsReadTool::new(service.clone(), shared_vfs.clone(), None, None).parameters_schema(),
             FsApplyPatchTool::new(service.clone(), shared_vfs.clone(), None, None)
                 .parameters_schema(),
-            FsGlobTool::new(service.clone(), shared_vfs.clone(), None, None)
-                .parameters_schema(),
-            FsGrepTool::new(service.clone(), shared_vfs.clone(), None, None)
-                .parameters_schema(),
+            FsGlobTool::new(service.clone(), shared_vfs.clone(), None, None).parameters_schema(),
+            FsGrepTool::new(service.clone(), shared_vfs.clone(), None, None).parameters_schema(),
             ShellExecTool::new(service, shared_vfs).parameters_schema(),
         ];
 

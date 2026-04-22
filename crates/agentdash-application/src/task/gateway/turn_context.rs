@@ -31,6 +31,8 @@ pub struct PreparedTurnContext {
     pub flow_capabilities: agentdash_spi::FlowCapabilities,
     /// CapabilityResolver 产出的有效 capability key（用于 hook runtime 追踪）。
     pub effective_capability_keys: std::collections::BTreeSet<String>,
+    /// 需走 relay 的自定义 MCP server name 集合。
+    pub relay_mcp_server_names: std::collections::HashSet<String>,
     /// 发起本次 task 执行的用户身份（由 HTTP handler 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
     /// Hook effect 回调（cloud-native 路径取代 TurnMonitor）。
@@ -90,6 +92,7 @@ pub async fn prepare_task_turn_context(
         workspace: out.workspace,
         flow_capabilities: out.flow_capabilities,
         effective_capability_keys: out.effective_capability_keys,
+        relay_mcp_server_names: out.relay_mcp_server_names,
         identity: None,
         post_turn_handler: None,
     })

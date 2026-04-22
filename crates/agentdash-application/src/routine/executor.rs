@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use agent_client_protocol::{
-    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-};
+use agent_client_protocol::McpServer;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -253,8 +251,14 @@ impl RoutineExecutor {
             .filter(|value| !value.is_empty())
             .unwrap_or(agent.name.as_str())
             .to_string();
-        let (preset_mcp_servers, relay_mcp_server_names) = parse_preset_mcp_servers(&merged_config)
-            .map_err(|err| format!("Agent `{}` 的 mcp_servers 配置非法: {err}", agent.id))?;
+        let (preset_mcp_servers, relay_mcp_server_names) =
+            crate::mcp_preset::resolve_config_mcp_preset_refs(
+                self.repos.mcp_preset_repo.as_ref(),
+                project.id,
+                &merged_config,
+            )
+            .await
+            .map_err(|err| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {err}", agent.id))?;
 
         Ok(RoutineAgentContext {
             project,
@@ -558,170 +562,6 @@ fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) 
         executor_config.system_prompt_mode = Some(value);
     }
     executor_config
-}
-
-fn parse_preset_mcp_servers(
-    config: &serde_json::Value,
-) -> Result<(Vec<McpServer>, HashSet<String>), String> {
-    let raw_list = match config.get("mcp_servers").and_then(|v| v.as_array()) {
-        Some(list) => list,
-        None => return Ok((vec![], HashSet::new())),
-    };
-
-    let mut mcp_servers = Vec::new();
-    let mut relay_names = HashSet::new();
-
-    for (index, entry) in raw_list.iter().enumerate() {
-        let obj = entry
-            .as_object()
-            .ok_or_else(|| format!("mcp_servers[{index}] 必须是对象"))?;
-
-        let name = obj
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("mcp_servers[{index}].name 缺失或为空"))?
-            .to_string();
-
-        let effective_type = obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("mcp_servers[{index}].type 缺失或不是字符串"))?;
-
-        let is_relay = obj
-            .get("relay")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(effective_type == "stdio");
-        if is_relay {
-            relay_names.insert(name.clone());
-        }
-
-        match effective_type {
-            "http" | "sse" => {
-                let url = obj
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("mcp_servers[{index}].url 缺失或为空"))?
-                    .to_string();
-                let headers = match obj.get("headers") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].headers 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(header_index, header)| {
-                            let header_obj = header.as_object().ok_or_else(|| {
-                                format!("mcp_servers[{index}].headers[{header_index}] 必须是对象")
-                            })?;
-                            let header_name = header_obj
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].headers[{header_index}].name 缺失或为空"
-                                    )
-                                })?;
-                            let header_value = header_obj
-                                .get("value")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].headers[{header_index}].value 缺失或不是字符串"
-                                    )
-                                })?;
-                            Ok::<HttpHeader, String>(HttpHeader::new(
-                                header_name.to_string(),
-                                header_value.to_string(),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-
-                if effective_type == "http" {
-                    mcp_servers.push(McpServer::Http(
-                        McpServerHttp::new(name, url).headers(headers),
-                    ));
-                } else {
-                    mcp_servers.push(McpServer::Sse(
-                        McpServerSse::new(name, url).headers(headers),
-                    ));
-                }
-            }
-            "stdio" => {
-                let command = obj
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("mcp_servers[{index}].command 缺失或为空"))?
-                    .to_string();
-                let args = match obj.get("args") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].args 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(arg_index, arg)| {
-                            arg.as_str().map(String::from).ok_or_else(|| {
-                                format!("mcp_servers[{index}].args[{arg_index}] 必须是字符串")
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-                let env = match obj.get("env") {
-                    Some(value) => value
-                        .as_array()
-                        .ok_or_else(|| format!("mcp_servers[{index}].env 必须是数组"))?
-                        .iter()
-                        .enumerate()
-                        .map(|(env_index, entry)| {
-                            let env_obj = entry.as_object().ok_or_else(|| {
-                                format!("mcp_servers[{index}].env[{env_index}] 必须是对象")
-                            })?;
-                            let env_name = env_obj
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].env[{env_index}].name 缺失或为空"
-                                    )
-                                })?;
-                            let env_value = env_obj
-                                .get("value")
-                                .and_then(|v| v.as_str())
-                                .ok_or_else(|| {
-                                    format!(
-                                        "mcp_servers[{index}].env[{env_index}].value 缺失或不是字符串"
-                                    )
-                                })?;
-                            Ok::<EnvVariable, String>(EnvVariable::new(
-                                env_name.to_string(),
-                                env_value.to_string(),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => Vec::new(),
-                };
-                mcp_servers.push(McpServer::Stdio(
-                    McpServerStdio::new(name, command).args(args).env(env),
-                ));
-            }
-            other => {
-                return Err(format!("mcp_servers[{index}].type 非法，不支持 `{other}`"));
-            }
-        }
-    }
-
-    Ok((mcp_servers, relay_names))
 }
 
 fn project_agent_session_label(agent_id: Uuid) -> String {

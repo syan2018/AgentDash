@@ -7,7 +7,6 @@ use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 use super::resolve_declared_sources;
 use serde_json::{Value, json};
 
-
 use super::contributor::{ContextContributor, Contribution, ContributorInput, TaskExecutionPhase};
 
 // ─── 文本工具 ────────────────────────────────────────────────

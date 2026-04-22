@@ -3,10 +3,10 @@ pub mod persistence;
 pub mod postgres_runtime;
 
 pub use persistence::postgres::PostgresAgentRepository;
-pub use persistence::postgres::PostgresInlineFileRepository;
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendRepository;
 pub use persistence::postgres::PostgresCanvasRepository;
+pub use persistence::postgres::PostgresInlineFileRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
 pub use persistence::postgres::PostgresProjectRepository;

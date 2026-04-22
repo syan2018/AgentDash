@@ -6,8 +6,8 @@ use agentdash_spi::{
 
 use super::presets::domain_trigger_to_spi;
 use super::script_engine::HookScriptEngine;
-use super::snapshot_helpers::*;
 use super::shell_exec_rewritten_args;
+use super::snapshot_helpers::*;
 
 pub(crate) struct HookEvaluationContext<'a> {
     pub(crate) snapshot: &'a SessionHookSnapshot,

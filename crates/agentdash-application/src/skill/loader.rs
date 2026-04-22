@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_spi::{Vfs, MountCapability, SkillRef};
+use agentdash_spi::{MountCapability, SkillRef, Vfs};
 
 use crate::vfs::types::ResourceRef;
 use crate::vfs::{ListOptions, RelayVfsService};
@@ -102,10 +102,7 @@ pub fn load_skills_from_local_dirs(
 /// 通过 VFS service 从所有 mount 扫描 skill（主入口）
 ///
 /// 对每个有 Read + List 能力的 mount，扫描 `.agents/skills/` 和 `skills/` 目录。
-pub async fn load_skills_from_vfs(
-    service: &RelayVfsService,
-    vfs: &Vfs,
-) -> LoadSkillsResult {
+pub async fn load_skills_from_vfs(service: &RelayVfsService, vfs: &Vfs) -> LoadSkillsResult {
     let mut result = LoadSkillsResult::default();
     let mut name_map: HashMap<String, String> = HashMap::new(); // name → "mount_id://path"
 

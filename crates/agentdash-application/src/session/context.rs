@@ -110,7 +110,9 @@ pub enum ExecutorResolution {
 
 impl ExecutorResolution {
     pub fn resolved(source: impl Into<String>) -> Self {
-        Self::Resolved { source: source.into() }
+        Self::Resolved {
+            source: source.into(),
+        }
     }
 
     pub fn failed(source: impl Into<String>, error: impl Into<String>) -> Self {

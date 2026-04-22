@@ -51,10 +51,12 @@ impl PostgresAgentRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_pal_project ON project_agent_links(project_id)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_pal_project ON project_agent_links(project_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_pal_agent ON project_agent_links(agent_id)")
             .execute(&self.pool)
             .await

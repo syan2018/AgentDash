@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_domain::mcp_preset::{McpPreset, McpServerDecl};
+use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
 /// 首批内置 MCP Preset key——与 `builtins/<key>.json` 文件名一一对应。
 ///
@@ -15,12 +15,17 @@ pub const BUILTIN_MCP_PRESET_FETCH_KEY: &str = "fetch";
 pub struct BuiltinMcpPresetTemplate {
     /// builtin key，对齐文件名根（如 `filesystem`、`fetch`）。
     pub key: String,
-    /// Preset 默认名称（project 内唯一——复制为 user 时前端可重命名）。
-    pub name: String,
+    /// Preset 引用 key（项目内唯一，也是 agent-facing server name）。
+    pub preset_key: String,
+    /// 纯展示名称。
+    pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// MCP server 声明本体。
-    pub server_decl: McpServerDecl,
+    /// 纯 transport 连接定义。
+    pub transport: McpTransportConfig,
+    /// 应用层路由策略。
+    #[serde(default)]
+    pub route_policy: McpRoutePolicy,
 }
 
 impl BuiltinMcpPresetTemplate {
@@ -29,9 +34,11 @@ impl BuiltinMcpPresetTemplate {
         McpPreset::new_builtin(
             project_id,
             self.key.clone(),
-            self.name.clone(),
+            self.preset_key.clone(),
+            self.display_name.clone(),
             self.description.clone(),
-            self.server_decl.clone(),
+            self.transport.clone(),
+            self.route_policy,
         )
     }
 }
@@ -87,16 +94,16 @@ mod tests {
 
     #[test]
     fn builtin_mcp_preset_template_instantiate_preserves_key() {
-        let template =
-            get_builtin_mcp_preset_template(BUILTIN_MCP_PRESET_FILESYSTEM_KEY)
-                .expect("load")
-                .expect("filesystem template exists");
+        let template = get_builtin_mcp_preset_template(BUILTIN_MCP_PRESET_FILESYSTEM_KEY)
+            .expect("load")
+            .expect("filesystem template exists");
         let project_id = Uuid::new_v4();
         let preset = template.instantiate(project_id);
 
         assert_eq!(preset.project_id, project_id);
         assert_eq!(preset.source.builtin_key(), Some(template.key.as_str()));
-        assert_eq!(preset.name, template.name);
+        assert_eq!(preset.key, template.preset_key);
+        assert_eq!(preset.display_name, template.display_name);
         assert!(preset.is_builtin());
     }
 }

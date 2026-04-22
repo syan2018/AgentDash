@@ -1,3 +1,5 @@
+pub mod assembler;
+pub mod augmenter;
 pub mod baseline_capabilities;
 pub mod bootstrap;
 pub mod companion_wait;
@@ -13,11 +15,9 @@ mod hub_support;
 mod memory_persistence;
 pub mod persistence;
 pub mod plan;
-pub mod assembler;
-pub mod augmenter;
 pub mod post_turn_handler;
-mod prompt_vfs;
 mod prompt_pipeline;
+mod prompt_vfs;
 pub mod stall_detector;
 pub mod title_generator;
 pub mod turn_processor;
@@ -25,9 +25,9 @@ pub mod types;
 
 pub use assembler::{
     AgentLevelMcp, CompanionSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle,
-    OwnerScope, PreparedSessionInputs, SessionRequestAssembler, TaskRuntimeOutput, TaskRuntimePhase,
-    TaskRuntimeSpec, acp_mcp_servers_to_runtime, compose_companion, compose_lifecycle_node,
-    extract_agent_mcp_entries, finalize_request, load_available_presets,
+    OwnerScope, PreparedSessionInputs, SessionRequestAssembler, TaskRuntimeOutput,
+    TaskRuntimePhase, TaskRuntimeSpec, acp_mcp_servers_to_runtime, compose_companion,
+    compose_lifecycle_node, extract_agent_mcp_entries, finalize_request, load_available_presets,
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use context::ExecutorResolution;

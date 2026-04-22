@@ -42,8 +42,8 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
-use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::routes::vfs_surfaces::build_surface_summary;
+use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::runtime_bridge::runtime_mcp_servers_to_acp;
 use agentdash_application::session::context::apply_workspace_defaults;
 
@@ -559,11 +559,9 @@ async fn try_build_session_capabilities(
         .flatten();
 
     let skills = if let Some(space) = vfs {
-        let result = agentdash_application::skill::load_skills_from_vfs(
-            &state.services.vfs_service,
-            space,
-        )
-        .await;
+        let result =
+            agentdash_application::skill::load_skills_from_vfs(&state.services.vfs_service, space)
+                .await;
         result.skills
     } else {
         Vec::new()
@@ -643,12 +641,8 @@ pub async fn get_session_context(
             let resolved_vfs = built_context
                 .as_ref()
                 .and_then(|context| context.vfs.clone());
-            let capabilities = try_build_session_capabilities(
-                &state,
-                &session_id,
-                resolved_vfs.as_ref(),
-            )
-            .await;
+            let capabilities =
+                try_build_session_capabilities(&state, &session_id, resolved_vfs.as_ref()).await;
             let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
                 Some(
                     build_surface_summary(
@@ -687,12 +681,8 @@ pub async fn get_session_context(
             let resolved_vfs = built_context
                 .as_ref()
                 .and_then(|context| context.vfs.clone());
-            let capabilities = try_build_session_capabilities(
-                &state,
-                &session_id,
-                resolved_vfs.as_ref(),
-            )
-            .await;
+            let capabilities =
+                try_build_session_capabilities(&state, &session_id, resolved_vfs.as_ref()).await;
             let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
                 Some(
                     build_surface_summary(
@@ -732,12 +722,9 @@ pub async fn get_session_context(
                 &primary.label,
             )
             .await?;
-            let capabilities = try_build_session_capabilities(
-                &state,
-                &session_id,
-                built_context.vfs.as_ref(),
-            )
-            .await;
+            let capabilities =
+                try_build_session_capabilities(&state, &session_id, built_context.vfs.as_ref())
+                    .await;
             let runtime_surface = if let Some(space) = built_context.vfs.as_ref() {
                 Some(
                     build_surface_summary(
@@ -1110,11 +1097,7 @@ fn finalize_augmented_request(
     req.system_context = system_context;
     req.bootstrap_action = bootstrap_action;
 
-    apply_workspace_defaults(
-        &mut req.user_input.working_dir,
-        &mut req.vfs,
-        workspace,
-    );
+    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.vfs, workspace);
     if req.vfs.is_none() {
         req.vfs = vfs;
     }
@@ -1309,12 +1292,12 @@ fn map_owner_prompt_lifecycle(
 ) -> OwnerPromptLifecycle {
     match kind {
         SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
-        SessionPromptLifecycle::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext) => {
-            OwnerPromptLifecycle::RepositoryRehydrate {
-                prebuilt_continuation_system_context: prebuilt_continuation,
-                include_markdown_as_system_context: false,
-            }
-        }
+        SessionPromptLifecycle::RepositoryRehydrate(
+            SessionRepositoryRehydrateMode::SystemContext,
+        ) => OwnerPromptLifecycle::RepositoryRehydrate {
+            prebuilt_continuation_system_context: prebuilt_continuation,
+            include_markdown_as_system_context: false,
+        },
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => OwnerPromptLifecycle::RepositoryRehydrate {

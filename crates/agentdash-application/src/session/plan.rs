@@ -3,7 +3,7 @@ use agentdash_domain::story::Story;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 use serde::Serialize;
 
-use crate::runtime::{Vfs, Mount, MountCapability, RuntimeMcpServer};
+use crate::runtime::{Mount, MountCapability, RuntimeMcpServer, Vfs};
 
 pub use agentdash_domain::session_binding::{SessionOwnerCtx, SessionOwnerType};
 
@@ -213,9 +213,7 @@ pub fn summarize_tool_visibility_with_context(
     owner_type: Option<SessionOwnerType>,
 ) -> SessionToolVisibilitySummary {
     let resolved = vfs.is_some();
-    let mut tool_names = vfs
-        .map(runtime_vfs_tools)
-        .unwrap_or_default();
+    let mut tool_names = vfs.map(runtime_vfs_tools).unwrap_or_default();
 
     // 流程工具：按 session owner 类型条件注入
     if resolved {
@@ -443,8 +441,7 @@ pub fn summarize_runtime_policy(
         .unwrap_or_default();
     let writable_mounts = vfs
         .map(|vfs| {
-            vfs
-                .mounts
+            vfs.mounts
                 .iter()
                 .filter(|mount| mount.supports(MountCapability::Write))
                 .map(|mount| format!("`{}`", mount.id))
@@ -453,8 +450,7 @@ pub fn summarize_runtime_policy(
         .unwrap_or_default();
     let exec_mounts = vfs
         .map(|vfs| {
-            vfs
-                .mounts
+            vfs.mounts
                 .iter()
                 .filter(|mount| mount.supports(MountCapability::Exec))
                 .map(|mount| format!("`{}`", mount.id))

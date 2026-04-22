@@ -9,15 +9,14 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand,
-    BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand, LifecycleOrchestrator,
-    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
+    ActivateLifecycleStepCommand, BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand,
+    LifecycleOrchestrator, LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
     build_builtin_workflow_bundle, list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract, WorkflowDefinition,
+    WorkflowDefinitionSource,
 };
 
 use crate::app_state::AppState;
@@ -222,7 +221,8 @@ pub async fn bootstrap_workflow_template(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
     );
-    let bundle = build_builtin_workflow_bundle(project_id, &builtin_key).map_err(ApiError::BadRequest)?;
+    let bundle =
+        build_builtin_workflow_bundle(project_id, &builtin_key).map_err(ApiError::BadRequest)?;
     let saved = service.upsert_bundle(bundle).await?;
     Ok(Json(saved.lifecycle.into()))
 }

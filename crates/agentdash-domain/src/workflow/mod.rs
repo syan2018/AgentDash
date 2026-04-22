@@ -2,19 +2,15 @@ mod entity;
 mod repository;
 mod value_objects;
 
-pub use entity::{
-    LifecycleDefinition, LifecycleRun, WorkflowDefinition,
-    build_effective_contract,
-};
+pub use entity::{LifecycleDefinition, LifecycleRun, WorkflowDefinition, build_effective_contract};
 pub use repository::{
-    LifecycleDefinitionRepository, LifecycleRunRepository,
-    WorkflowDefinitionRepository,
+    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 pub use value_objects::{
-    CapabilityDirective, CapabilityPath, CapabilityReduction, CapabilitySlotState,
-    ContextStrategy, EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge,
-    LifecycleEdgeKind, LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType,
-    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
+    CapabilityDirective, CapabilityPath, CapabilityReduction, CapabilitySlotState, ContextStrategy,
+    EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge, LifecycleEdgeKind,
+    LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
     OutputPortDefinition, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
     WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,

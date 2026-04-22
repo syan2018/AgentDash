@@ -4,10 +4,8 @@ use agentdash_spi::MergeStrategy;
 use crate::context::{
     ContextComposer, build_owner_prompt_blocks, trim_or_dash, workspace_context_fragment,
 };
-use crate::runtime::{Vfs, RuntimeMcpServer};
-use crate::session::plan::{
-    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
-};
+use crate::runtime::{RuntimeMcpServer, Vfs};
+use crate::session::plan::{SessionPlanInput, SessionPlanPhase, build_session_plan_fragments};
 
 pub struct ProjectContextBuildInput<'a> {
     pub project: &'a Project,

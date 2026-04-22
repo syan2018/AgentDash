@@ -54,10 +54,7 @@ fn resolve_links(vfs: &Vfs, mut current: ResourceRef) -> Result<ResourceRef, Str
             current.path.clone()
         } else if current.path == link.from_path {
             String::new()
-        } else if let Some(tail) = current
-            .path
-            .strip_prefix(&format!("{}/", link.from_path))
-        {
+        } else if let Some(tail) = current.path.strip_prefix(&format!("{}/", link.from_path)) {
             tail.to_string()
         } else {
             // find_link 的匹配规则应保证不会走到这里，兜底。
@@ -108,15 +105,11 @@ pub fn resolve_mount<'a>(
     Ok(mount)
 }
 
-pub fn resolve_mount_id(
-    vfs: &Vfs,
-    mount: Option<&str>,
-) -> Result<String, String> {
+pub fn resolve_mount_id(vfs: &Vfs, mount: Option<&str>) -> Result<String, String> {
     if let Some(mount_id) = mount.map(str::trim).filter(|value| !value.is_empty()) {
         return Ok(mount_id.to_string());
     }
-    vfs
-        .default_mount_id
+    vfs.default_mount_id
         .clone()
         .or_else(|| {
             if vfs.mounts.len() == 1 {

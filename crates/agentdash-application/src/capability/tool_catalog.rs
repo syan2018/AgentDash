@@ -3,9 +3,7 @@
 //! 合并平台内嵌工具（编译期静态元数据）和 MCP 外部工具（运行时发现），
 //! 返回统一的 `ToolDescriptor` 列表供 CapabilitiesEditor 消费。
 
-use agentdash_spi::tool_capability::{
-    self, ToolDescriptor, ToolSource, is_known_key,
-};
+use agentdash_spi::tool_capability::{self, ToolDescriptor, ToolSource, is_known_key};
 
 /// 按 capability keys 查询工具目录。
 ///
@@ -65,7 +63,10 @@ mod tests {
     #[test]
     fn query_workflow_management_returns_platform_mcp_tools() {
         let result = query_tool_catalog(&["workflow_management".to_string()]);
-        assert!(!result.is_empty(), "workflow_management 应返回平台 MCP 工具");
+        assert!(
+            !result.is_empty(),
+            "workflow_management 应返回平台 MCP 工具"
+        );
         let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"list_workflows"));
         assert!(names.contains(&"upsert_workflow_tool"));

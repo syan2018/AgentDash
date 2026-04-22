@@ -66,8 +66,8 @@ impl ResolvedVfsSurfaceSource {
     pub fn parse_surface_ref(surface_ref: &str) -> Result<Self, String> {
         let trimmed = surface_ref.trim();
         if let Some(rest) = trimmed.strip_prefix("project-preview:") {
-            let project_id =
-                Uuid::parse_str(rest).map_err(|_| format!("无效的 project preview surface_ref: {trimmed}"))?;
+            let project_id = Uuid::parse_str(rest)
+                .map_err(|_| format!("无效的 project preview surface_ref: {trimmed}"))?;
             return Ok(Self::ProjectPreview { project_id });
         }
         if let Some(rest) = trimmed.strip_prefix("story-preview:") {
@@ -197,10 +197,8 @@ mod tests {
         let source = ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
             project_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111")
                 .expect("project uuid"),
-            agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222")
-                .expect("agent uuid"),
-            link_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333")
-                .expect("link uuid"),
+            agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").expect("agent uuid"),
+            link_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").expect("link uuid"),
         };
 
         assert_eq!(

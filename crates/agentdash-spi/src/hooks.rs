@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::session_binding::SessionOwnerType;
-use agentdash_domain::workflow::{
-    EffectiveSessionContract, LifecycleRunStatus,
-};
+use agentdash_domain::workflow::{EffectiveSessionContract, LifecycleRunStatus};
 
 /// Well-known `action_type` string values for [`HookPendingAction`].
 ///
@@ -638,7 +636,10 @@ mod owner_summary_tests {
             task_id: Some("44444444-4444-4444-4444-444444444444".to_string()),
         };
         let value = serde_json::to_value(&summary).unwrap();
-        assert_eq!(value["owner_type"], serde_json::Value::String("task".into()));
+        assert_eq!(
+            value["owner_type"],
+            serde_json::Value::String("task".into())
+        );
         assert_eq!(value["owner_id"], "11111111-1111-1111-1111-111111111111");
     }
 
@@ -673,7 +674,10 @@ mod owner_summary_tests {
         }"#;
         let summary: HookOwnerSummary = serde_json::from_str(json).unwrap();
         assert_eq!(summary.owner_type, SessionOwnerType::Story);
-        assert_eq!(summary.project_id.as_deref(), Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
+        assert_eq!(
+            summary.project_id.as_deref(),
+            Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        );
         assert!(summary.task_id.is_none());
     }
 }

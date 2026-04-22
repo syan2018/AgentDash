@@ -276,12 +276,12 @@ fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>)
 fn default_mount_from_context(
     context: &ExecutionContext,
 ) -> Result<&agentdash_spi::Mount, ConnectorError> {
-    let vfs = context.vfs.as_ref().ok_or_else(|| {
-        ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
-    })?;
-    vfs.default_mount().ok_or_else(|| {
-        ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string())
-    })
+    let vfs = context
+        .vfs
+        .as_ref()
+        .ok_or_else(|| ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string()))?;
+    vfs.default_mount()
+        .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))
 }
 
 fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<String> {

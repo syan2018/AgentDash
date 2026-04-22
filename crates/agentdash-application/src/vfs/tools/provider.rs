@@ -8,15 +8,15 @@ use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
+use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::relay_service::RelayVfsService;
 use crate::vfs::tools::fs::{
-    FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool,
-    SharedRuntimeVfs, ShellExecTool,
+    FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
+    ShellExecTool,
 };
-use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, StartCanvasTool};
-use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use uuid::Uuid;
 

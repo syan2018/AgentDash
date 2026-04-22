@@ -1,4 +1,3 @@
-pub mod vfs;
 pub mod auth;
 pub mod backend_transport;
 pub mod canvas;
@@ -20,6 +19,7 @@ pub mod session;
 pub mod skill;
 pub mod story;
 pub mod task;
+pub mod vfs;
 pub mod workflow;
 pub mod workspace;
 

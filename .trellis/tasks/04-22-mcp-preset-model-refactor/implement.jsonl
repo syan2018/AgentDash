@@ -1,0 +1,7 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis\\spec\\backend\\database-guidelines.md", "reason": "MCP Preset schema 改造与迁移规则"}
+{"file": ".trellis\\spec\\backend\\capability\\tool-capability-pipeline.md", "reason": "mcp:<key> 能力解析与 resolver 输入重构"}
+{"file": ".trellis\\spec\\frontend\\component-guidelines.md", "reason": "Assets 与 Agent 页面表单重构"}
+{"file": ".trellis\\spec\\frontend\\type-safety.md", "reason": "前端 DTO 与 snake_case 契约调整"}

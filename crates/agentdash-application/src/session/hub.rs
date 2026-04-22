@@ -20,7 +20,7 @@ pub use super::types::*;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{Vfs, AgentConnector, ConnectorError};
+use agentdash_spi::{AgentConnector, ConnectorError, Vfs};
 
 #[derive(Clone)]
 pub struct SessionHub {
@@ -39,8 +39,7 @@ pub struct SessionHub {
     /// 将"裸" PromptSessionRequest 增强成与 HTTP 主通道一致的完整请求。
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
-    pub(super) prompt_augmenter:
-        Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,
+    pub(super) prompt_augmenter: Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,
 }
 
 impl SessionHub {
@@ -66,10 +65,7 @@ impl SessionHub {
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
-    pub fn with_vfs_service(
-        mut self,
-        service: Arc<crate::vfs::RelayVfsService>,
-    ) -> Self {
+    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::RelayVfsService>) -> Self {
         self.vfs_service = Some(service);
         self
     }
@@ -375,10 +371,7 @@ impl SessionHub {
     }
 
     /// 读取 session 当前记录的 MCP server 列表（由 prompt pipeline 维护）。
-    pub async fn get_runtime_mcp_servers(
-        &self,
-        session_id: &str,
-    ) -> Vec<McpServer> {
+    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<McpServer> {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)

@@ -42,7 +42,7 @@ impl TurnDispatcher for AppStateTurnDispatcher {
                 executor_config: ctx.resolved_config.clone(),
             },
             mcp_servers: runtime_mcp_servers_to_acp(&ctx.built.mcp_servers),
-            relay_mcp_server_names: Default::default(),
+            relay_mcp_server_names: ctx.relay_mcp_server_names.clone(),
             vfs: ctx.vfs.clone(),
             flow_capabilities: Some(ctx.flow_capabilities.clone()),
             effective_capability_keys: Some(ctx.effective_capability_keys.clone()),

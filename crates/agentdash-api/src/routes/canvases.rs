@@ -167,12 +167,8 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let vfs = resolve_canvas_runtime_vfs(
-        &state,
-        query.session_id.as_deref(),
-        canvas.project_id,
-    )
-    .await?;
+    let vfs =
+        resolve_canvas_runtime_vfs(&state, query.session_id.as_deref(), canvas.project_id).await?;
     let snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id,

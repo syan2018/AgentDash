@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 pub use agentdash_domain::common::{
-    Vfs, AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel,
+    AgentConfig, Mount, MountCapability, SystemPromptMode, ThinkingLevel, Vfs,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

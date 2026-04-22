@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::vfs::*;
 use crate::runtime::Mount;
-use agentdash_spi::{Vfs, MountCapability};
+use crate::vfs::*;
+use agentdash_spi::{MountCapability, Vfs};
 use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
@@ -64,11 +64,7 @@ impl RelayVfsService {
         identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<ReadResult, String> {
         let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(
-            &runtime_vfs,
-            &target.mount_id,
-            MountCapability::Read,
-        )?;
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
         if let Some(ov) = overlay
@@ -102,11 +98,7 @@ impl RelayVfsService {
         identity: Option<&agentdash_spi::auth::AuthIdentity>,
     ) -> Result<(), String> {
         let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(
-            &runtime_vfs,
-            &target.mount_id,
-            MountCapability::Write,
-        )?;
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Write)?;
         let path = normalize_mount_relative_path(&target.path, false)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -331,9 +323,10 @@ impl RelayVfsService {
 
         if mount.provider == PROVIDER_INLINE_FS {
             // 从 provider（DB）加载文件列表，再合并 overlay
-            let provider = self.mount_provider_registry.get(&mount.provider).ok_or_else(|| {
-                "inline_fs provider 未注册".to_string()
-            })?;
+            let provider = self
+                .mount_provider_registry
+                .get(&mount.provider)
+                .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
             let ctx = MountOperationContext::default();
             if overlay.is_none() {
                 // 无 overlay 直接委托 provider
@@ -394,17 +387,9 @@ impl RelayVfsService {
         Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
-    pub async fn exec(
-        &self,
-        vfs: &Vfs,
-        request: &ExecRequest,
-    ) -> Result<ExecResult, String> {
+    pub async fn exec(&self, vfs: &Vfs, request: &ExecRequest) -> Result<ExecResult, String> {
         let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(
-            &runtime_vfs,
-            &request.mount_id,
-            MountCapability::Exec,
-        )?;
+        let mount = resolve_mount(&runtime_vfs, &request.mount_id, MountCapability::Exec)?;
         let cwd = normalize_mount_relative_path(&request.cwd, true)?;
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
@@ -456,11 +441,7 @@ impl RelayVfsService {
         params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), String> {
         let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(
-            &runtime_vfs,
-            params.mount_id,
-            MountCapability::Search,
-        )?;
+        let mount = resolve_mount(&runtime_vfs, params.mount_id, MountCapability::Search)?;
         let base_path = normalize_mount_relative_path(params.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
@@ -713,9 +694,7 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
         let provider = self
             .provider_registry
             .get(&self.mount.provider)
-            .ok_or_else(|| {
-                ApplyPatchError::Apply("inline_fs provider 未注册".to_string())
-            })?;
+            .ok_or_else(|| ApplyPatchError::Apply("inline_fs provider 未注册".to_string()))?;
         let ctx = MountOperationContext::default();
         provider
             .read_text(self.mount, &normalized, &ctx)

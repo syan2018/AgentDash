@@ -11,13 +11,13 @@ use agentdash_domain::{
     task::{Task, TaskStatus},
 };
 
-use crate::vfs::RelayVfsService;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionExecutionState, SessionHub};
 use crate::task::lock::TaskLockMap;
 use crate::task::restart_tracker::RestartTracker;
+use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 
 use super::execution::*;

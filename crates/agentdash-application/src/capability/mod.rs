@@ -5,7 +5,7 @@
 //!
 //! 设计原则：
 //! - 所有平台 well-known 能力由 visibility rule 过滤
-//! - `mcp:*` 自定义能力从 agent config 的 mcp_servers 中按 name 查找
+//! - `mcp:*` 自定义能力优先从 project MCP preset 按 key 查找
 //! - 本模块取代各处散落的硬编码 FlowCapabilities 和 MCP injection 列表
 
 mod notification;
@@ -24,7 +24,7 @@ pub use resolver::{
     CapabilityResolverOutput, CompanionSliceMode,
 };
 pub use session_workflow_context::{
-    capability_directives_from_active_workflow, resolve_session_workflow_context,
     SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,
+    capability_directives_from_active_workflow, resolve_session_workflow_context,
 };
 pub use tool_catalog::query_tool_catalog;

@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::workflow::{
-    WorkflowCheckKind, WorkflowCompletionSpec,
-    WorkflowSessionTerminalState,
+    WorkflowCheckKind, WorkflowCompletionSpec, WorkflowSessionTerminalState,
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,9 +69,7 @@ pub fn evaluate_step_completion(
             satisfied: false,
             should_complete_step: false,
             summary: None,
-            blocking_reason: Some(
-                "workflow 未声明自动完成 check，等待显式推进".to_string(),
-            ),
+            blocking_reason: Some("workflow 未声明自动完成 check，等待显式推进".to_string()),
             evidence: vec![],
         };
     }
@@ -408,10 +405,8 @@ mod tests {
         // 空 checks = workflow 没声明自动门禁 → 视同 manual，由 agent/编排显式推进，
         // 不再隐式"等 session terminal"。
         let spec = WorkflowCompletionSpec::default();
-        let decision = evaluate_step_completion(
-            Some(&spec),
-            &WorkflowCompletionSignalSet::default(),
-        );
+        let decision =
+            evaluate_step_completion(Some(&spec), &WorkflowCompletionSignalSet::default());
 
         assert_eq!(decision.transition_policy, "manual");
         assert!(!decision.satisfied);

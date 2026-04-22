@@ -154,11 +154,9 @@ mod tests {
 
     #[test]
     fn builtin_workflow_admin_has_expected_shape() {
-        let bundle = build_builtin_workflow_bundle(
-            Uuid::new_v4(),
-            BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY,
-        )
-        .expect("build builtin_workflow_admin bundle");
+        let bundle =
+            build_builtin_workflow_bundle(Uuid::new_v4(), BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY)
+                .expect("build builtin_workflow_admin bundle");
 
         assert_eq!(bundle.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
         assert_eq!(

@@ -7,41 +7,33 @@ import type {
   ListMcpPresetQuery,
   McpPresetDto,
   McpPresetSource,
-  McpServerDecl,
+  McpRoutePolicy,
+  McpTransportConfig,
   UpdateMcpPresetRequest,
 } from "../types";
 
-// ─── Mapper ──────────────────────────────────────────
-//
-// 仅做 `unknown → typed object` + 状态值归一化，不做字段名转换。
-// 严格遵循后端 DTO 的 snake_case；source 字段做白名单收窄。
-
 function normalizeSource(value: unknown): McpPresetSource {
   if (value === "builtin") return "builtin";
-  // 默认回退到 user —— 后端只会产出 builtin / user 两种值，别的值视为脏数据
   return "user";
 }
 
-/**
- * 把后端返回的 `server_decl` 归一化为前端 `McpServerDecl`。
- *
- * 对齐 `frontend/src/types/index.ts` 中的联合体定义（type: http | sse | stdio）。
- * 未识别 type 时抛错——比起长期兼容更推荐在 mapper 里暴露出契约漂移。
- */
-function mapMcpServerDecl(raw: unknown): McpServerDecl {
+function normalizeRoutePolicy(value: unknown): McpRoutePolicy {
+  if (value === "relay" || value === "direct") return value;
+  return "auto";
+}
+
+function mapMcpTransport(raw: unknown): McpTransportConfig {
   const value = asRecord(raw);
   if (!value) {
-    throw new Error("mcp preset server_decl 缺失或不是对象");
+    throw new Error("mcp preset transport 缺失或不是对象");
   }
-  const type = value.type;
-  switch (type) {
+  switch (value.type) {
     case "http":
     case "sse":
     case "stdio":
-      // 直接返回——TS 类型守卫由联合体 `type` 字面量承担
-      return value as unknown as McpServerDecl;
+      return value as unknown as McpTransportConfig;
     default:
-      throw new Error(`未知的 mcp preset server_decl.type: ${String(type)}`);
+      throw new Error(`未知的 mcp preset transport.type: ${String(value.type)}`);
   }
 }
 
@@ -49,12 +41,14 @@ export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
   return {
     id: String(raw.id ?? ""),
     project_id: String(raw.project_id ?? ""),
-    name: String(raw.name ?? ""),
+    key: String(raw.key ?? ""),
+    display_name: String(raw.display_name ?? raw.key ?? ""),
     description:
       raw.description === null || raw.description === undefined
         ? null
         : String(raw.description),
-    server_decl: mapMcpServerDecl(raw.server_decl),
+    transport: mapMcpTransport(raw.transport),
+    route_policy: normalizeRoutePolicy(raw.route_policy),
     source: normalizeSource(raw.source),
     builtin_key:
       raw.builtin_key === null || raw.builtin_key === undefined
@@ -64,11 +58,6 @@ export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
   };
 }
-
-// ─── API client ──────────────────────────────────────
-//
-// 路由前缀：/projects/:project_id/mcp-presets
-// 对齐 crates/agentdash-api/src/routes.rs:166-184
 
 export async function fetchProjectMcpPresets(
   projectId: string,

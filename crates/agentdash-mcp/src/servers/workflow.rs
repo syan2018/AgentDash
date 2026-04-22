@@ -15,11 +15,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind,
-    LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec,
-    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowInjectionSpec,
+    InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind, LifecycleNodeType,
+    LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity, WorkflowBindingKind,
+    WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec, WorkflowContract,
+    WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    WorkflowInjectionSpec,
 };
 
 use crate::error::McpError;
@@ -69,7 +69,9 @@ pub struct WorkflowContractInput {
     pub recommended_output_ports: Option<Vec<OutputPortInput>>,
     #[schemars(description = "推荐的输入端口（WorkflowContract 级，非 step 级）")]
     pub recommended_input_ports: Option<Vec<InputPortInput>>,
-    #[schemars(description = "Workflow 基线能力 key 集合。平台 well-known key（如 file_system、workflow_management），或自定义 MCP 引用 mcp:<preset_name>。")]
+    #[schemars(
+        description = "Workflow 基线能力 key 集合。平台 well-known key（如 file_system、workflow_management），或自定义 MCP 引用 mcp:<preset_name>。"
+    )]
     pub capabilities: Option<Vec<String>>,
 }
 
@@ -77,7 +79,9 @@ pub struct WorkflowContractInput {
 pub struct HookRuleInput {
     #[schemars(description = "规则唯一 key")]
     pub key: String,
-    #[schemars(description = "触发时机: before_turn / after_turn / before_tool / session_terminal / before_stop")]
+    #[schemars(
+        description = "触发时机: before_turn / after_turn / before_tool / session_terminal / before_stop"
+    )]
     pub trigger: String,
     #[schemars(description = "规则描述")]
     pub description: String,
@@ -128,7 +132,9 @@ pub struct StepInput {
     /// 旧版字段：step 级 capability 指令。新模型已将 capability 归属迁移到 WorkflowContract,
     /// 此字段若有值仅会落 warn 日志，不再实际参与解析；兼容已有 upsert 请求避免强制破坏契约。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "已废弃：step 级 capabilities 已迁移到 workflow.contract.capabilities，此字段收到后会被忽略。")]
+    #[schemars(
+        description = "已废弃：step 级 capabilities 已迁移到 workflow.contract.capabilities，此字段收到后会被忽略。"
+    )]
     pub capabilities: Option<serde_json::Value>,
 }
 
@@ -164,7 +170,9 @@ fn default_edge_kind_input() -> EdgeKindInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct EdgeInput {
-    #[schemars(description = "边类别：flow（控制流，无 port）/ artifact（数据流，需声明 port）；默认 artifact 以兼容历史调用")]
+    #[schemars(
+        description = "边类别：flow（控制流，无 port）/ artifact（数据流，需声明 port）；默认 artifact 以兼容历史调用"
+    )]
     #[serde(default = "default_edge_kind_input")]
     pub kind: EdgeKindInput,
     #[schemars(description = "源节点 key")]
@@ -208,7 +216,11 @@ impl WorkflowMcpServer {
     ) -> Result<WorkflowDefinition, McpError> {
         let repo = self.services.workflow_definition_repo.as_ref();
 
-        if let Some(existing) = repo.get_by_key(&definition.key).await.map_err(McpError::from)? {
+        if let Some(existing) = repo
+            .get_by_key(&definition.key)
+            .await
+            .map_err(McpError::from)?
+        {
             if existing.binding_kind != definition.binding_kind {
                 return Err(McpError::invalid_param(
                     "binding_kind",
@@ -290,7 +302,11 @@ impl WorkflowMcpServer {
         }
 
         let lc_repo = self.services.lifecycle_definition_repo.as_ref();
-        if let Some(existing) = lc_repo.get_by_key(&lifecycle.key).await.map_err(McpError::from)? {
+        if let Some(existing) = lc_repo
+            .get_by_key(&lifecycle.key)
+            .await
+            .map_err(McpError::from)?
+        {
             if existing.binding_kind != lifecycle.binding_kind {
                 return Err(McpError::invalid_param(
                     "binding_kind",
@@ -312,7 +328,6 @@ impl WorkflowMcpServer {
         lc_repo.create(&lifecycle).await.map_err(McpError::from)?;
         Ok(lifecycle)
     }
-
 }
 
 // ─── 辅助转换 ─────────────────────────────────────────────────
@@ -405,7 +420,10 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
         constraints: input.constraints.clone().unwrap_or_default(),
         completion: input.completion.clone().unwrap_or_default(),
         recommended_output_ports: build_output_ports(
-            input.recommended_output_ports.as_deref().unwrap_or_default(),
+            input
+                .recommended_output_ports
+                .as_deref()
+                .unwrap_or_default(),
         ),
         recommended_input_ports: build_input_ports(
             input.recommended_input_ports.as_deref().unwrap_or_default(),
@@ -415,9 +433,7 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .map(|s| {
-                agentdash_domain::workflow::CapabilityDirective::add_simple(s.clone())
-            })
+            .map(|s| agentdash_domain::workflow::CapabilityDirective::add_simple(s.clone()))
             .collect(),
     })
 }
@@ -545,9 +561,7 @@ impl WorkflowMcpServer {
             .get_by_key(&params.workflow_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 workflow 失败: {e}")))?
-            .ok_or_else(|| {
-                McpError::not_found("WorkflowDefinition", &params.workflow_key)
-            })?;
+            .ok_or_else(|| McpError::not_found("WorkflowDefinition", &params.workflow_key))?;
 
         let result = serde_json::to_value(&workflow)
             .map_err(|e| McpError::Internal(format!("序列化失败: {e}")))?;
@@ -568,9 +582,7 @@ impl WorkflowMcpServer {
             .get_by_key(&params.lifecycle_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 失败: {e}")))?
-            .ok_or_else(|| {
-                McpError::not_found("LifecycleDefinition", &params.lifecycle_key)
-            })?;
+            .ok_or_else(|| McpError::not_found("LifecycleDefinition", &params.lifecycle_key))?;
 
         let result = serde_json::to_value(&lifecycle)
             .map_err(|e| McpError::Internal(format!("序列化失败: {e}")))?;
@@ -580,7 +592,9 @@ impl WorkflowMcpServer {
         )]))
     }
 
-    #[tool(description = "创建或更新 Workflow 定义（单步行为契约）。保存时自动校验，失败会返回详细错误信息。")]
+    #[tool(
+        description = "创建或更新 Workflow 定义（单步行为契约）。保存时自动校验，失败会返回详细错误信息。"
+    )]
     async fn upsert_workflow_tool(
         &self,
         Parameters(params): Parameters<UpsertWorkflowParams>,
@@ -611,7 +625,9 @@ impl WorkflowMcpServer {
         ))]))
     }
 
-    #[tool(description = "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。")]
+    #[tool(
+        description = "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。"
+    )]
     async fn upsert_lifecycle_tool(
         &self,
         Parameters(params): Parameters<UpsertLifecycleParams>,

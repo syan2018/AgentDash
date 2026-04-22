@@ -2,7 +2,7 @@
 //!
 //! `ToolCapability` 是开放的 string key，分为两类：
 //! - **平台 well-known key**：映射到 `ToolCluster` 和/或平台 MCP scope
-//! - **用户自定义 MCP key**：`mcp:<server_name>` 格式，引用已注册的外部 MCP server
+//! - **用户自定义 MCP key**：`mcp:<preset_key>` 格式，引用已注册的 project MCP preset
 //!
 //! 本模块仅定义协议类型和映射规则，不包含具体的 Resolver 实现
 //! （Resolver 在 `agentdash-application` 中实现，因其依赖 MCP injection 等外部类型）。
@@ -16,7 +16,7 @@ use crate::connector::ToolCluster;
 /// 工具能力标识 — 开放 string key（非封闭枚举）。
 ///
 /// 平台 well-known key 使用 `snake_case`（如 `file_system`）；
-/// 用户自定义 MCP 使用 `mcp:<server_name>` 前缀。
+/// 用户自定义 MCP 使用 `mcp:<preset_key>` 前缀。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ToolCapability(String);
@@ -35,7 +35,7 @@ impl ToolCapability {
         self.0.starts_with(MCP_KEY_PREFIX)
     }
 
-    /// 提取 `mcp:<name>` 中的 server_name 部分；非 mcp key 返回 None。
+    /// 提取 `mcp:<name>` 中的 preset_key 部分；非 mcp key 返回 None。
     pub fn custom_mcp_server_name(&self) -> Option<&str> {
         self.0.strip_prefix(MCP_KEY_PREFIX)
     }
@@ -45,9 +45,9 @@ impl ToolCapability {
         is_known_key(&self.0)
     }
 
-    /// 从 server_name 构造 `mcp:<server_name>` key。
-    pub fn custom_mcp(server_name: impl AsRef<str>) -> Self {
-        Self(format!("{MCP_KEY_PREFIX}{}", server_name.as_ref()))
+    /// 从 preset_key 构造 `mcp:<preset_key>` key。
+    pub fn custom_mcp(preset_key: impl AsRef<str>) -> Self {
+        Self(format!("{MCP_KEY_PREFIX}{}", preset_key.as_ref()))
     }
 }
 
@@ -116,7 +116,12 @@ pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
 pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
 pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
-pub const CLUSTER_CANVAS_TOOLS: &[&str] = &["canvases_list", "canvas_start", "bind_canvas_data", "present_canvas"];
+pub const CLUSTER_CANVAS_TOOLS: &[&str] = &[
+    "canvases_list",
+    "canvas_start",
+    "bind_canvas_data",
+    "present_canvas",
+];
 
 /// 返回 ToolCluster 下属的全部工具名。
 pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
@@ -133,7 +138,10 @@ pub fn cluster_tools(cluster: ToolCluster) -> &'static [&'static str] {
 /// 返回 well-known capability key 下属的全部工具名（跨 cluster 合并）。
 pub fn capability_tools(key: &str) -> Vec<&'static str> {
     let clusters = capability_to_tool_clusters_by_key(key);
-    clusters.iter().flat_map(|c| cluster_tools(*c).iter().copied()).collect()
+    clusters
+        .iter()
+        .flat_map(|c| cluster_tools(*c).iter().copied())
+        .collect()
 }
 
 // ── 统一工具描述 ──
@@ -249,53 +257,281 @@ pub fn format_tool_for_prompt(desc: &ToolDescriptor) -> String {
 pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
     vec![
         // ── Read cluster (file_read) ──
-        ToolDescriptor::platform("mounts_list", "List Mounts", "列出当前会话可用的文件系统挂载点", ToolCluster::Read, CAP_FILE_READ),
-        ToolDescriptor::platform("fs_read", "Read File", "读取 mount 内指定文件的内容", ToolCluster::Read, CAP_FILE_READ),
-        ToolDescriptor::platform("fs_glob", "Glob Search", "在 mount 内按 glob 模式搜索文件路径", ToolCluster::Read, CAP_FILE_READ),
-        ToolDescriptor::platform("fs_grep", "Grep Search", "在 mount 内按正则表达式搜索文件内容", ToolCluster::Read, CAP_FILE_READ),
+        ToolDescriptor::platform(
+            "mounts_list",
+            "List Mounts",
+            "列出当前会话可用的文件系统挂载点",
+            ToolCluster::Read,
+            CAP_FILE_READ,
+        ),
+        ToolDescriptor::platform(
+            "fs_read",
+            "Read File",
+            "读取 mount 内指定文件的内容",
+            ToolCluster::Read,
+            CAP_FILE_READ,
+        ),
+        ToolDescriptor::platform(
+            "fs_glob",
+            "Glob Search",
+            "在 mount 内按 glob 模式搜索文件路径",
+            ToolCluster::Read,
+            CAP_FILE_READ,
+        ),
+        ToolDescriptor::platform(
+            "fs_grep",
+            "Grep Search",
+            "在 mount 内按正则表达式搜索文件内容",
+            ToolCluster::Read,
+            CAP_FILE_READ,
+        ),
         // ── Write cluster (file_write) ──
-        ToolDescriptor::platform("fs_apply_patch", "Apply Patch", "对 mount 内文件执行补丁操作（创建/更新/删除/重命名）", ToolCluster::Write, CAP_FILE_WRITE),
+        ToolDescriptor::platform(
+            "fs_apply_patch",
+            "Apply Patch",
+            "对 mount 内文件执行补丁操作（创建/更新/删除/重命名）",
+            ToolCluster::Write,
+            CAP_FILE_WRITE,
+        ),
         // ── Execute cluster (shell_execute) ──
-        ToolDescriptor::platform("shell_exec", "Shell Execute", "在工作空间内执行 shell 命令", ToolCluster::Execute, CAP_SHELL_EXECUTE),
+        ToolDescriptor::platform(
+            "shell_exec",
+            "Shell Execute",
+            "在工作空间内执行 shell 命令",
+            ToolCluster::Execute,
+            CAP_SHELL_EXECUTE,
+        ),
         // ── Workflow cluster ──
-        ToolDescriptor::platform("complete_lifecycle_node", "Complete Node", "声明当前 lifecycle node 完成或失败", ToolCluster::Workflow, CAP_WORKFLOW),
+        ToolDescriptor::platform(
+            "complete_lifecycle_node",
+            "Complete Node",
+            "声明当前 lifecycle node 完成或失败",
+            ToolCluster::Workflow,
+            CAP_WORKFLOW,
+        ),
         // ── Collaboration cluster ──
-        ToolDescriptor::platform("companion_request", "Companion Request", "向关联 agent 发起协作请求", ToolCluster::Collaboration, CAP_COLLABORATION),
-        ToolDescriptor::platform("companion_respond", "Companion Respond", "回复协作 agent 的请求", ToolCluster::Collaboration, CAP_COLLABORATION),
+        ToolDescriptor::platform(
+            "companion_request",
+            "Companion Request",
+            "向关联 agent 发起协作请求",
+            ToolCluster::Collaboration,
+            CAP_COLLABORATION,
+        ),
+        ToolDescriptor::platform(
+            "companion_respond",
+            "Companion Respond",
+            "回复协作 agent 的请求",
+            ToolCluster::Collaboration,
+            CAP_COLLABORATION,
+        ),
         // ── Canvas cluster ──
-        ToolDescriptor::platform("canvases_list", "List Canvases", "列出当前 project 的画布资产", ToolCluster::Canvas, CAP_CANVAS),
-        ToolDescriptor::platform("canvas_start", "Start Canvas", "创建新画布资产", ToolCluster::Canvas, CAP_CANVAS),
-        ToolDescriptor::platform("bind_canvas_data", "Bind Canvas Data", "绑定数据到画布", ToolCluster::Canvas, CAP_CANVAS),
-        ToolDescriptor::platform("present_canvas", "Present Canvas", "向用户展示画布", ToolCluster::Canvas, CAP_CANVAS),
+        ToolDescriptor::platform(
+            "canvases_list",
+            "List Canvases",
+            "列出当前 project 的画布资产",
+            ToolCluster::Canvas,
+            CAP_CANVAS,
+        ),
+        ToolDescriptor::platform(
+            "canvas_start",
+            "Start Canvas",
+            "创建新画布资产",
+            ToolCluster::Canvas,
+            CAP_CANVAS,
+        ),
+        ToolDescriptor::platform(
+            "bind_canvas_data",
+            "Bind Canvas Data",
+            "绑定数据到画布",
+            ToolCluster::Canvas,
+            CAP_CANVAS,
+        ),
+        ToolDescriptor::platform(
+            "present_canvas",
+            "Present Canvas",
+            "向用户展示画布",
+            ToolCluster::Canvas,
+            CAP_CANVAS,
+        ),
         // ── Platform MCP: Relay scope (capability=relay_management) ──
-        ToolDescriptor::platform_mcp("list_projects", "List Projects", "列出所有项目，可按名称关键字过滤", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_project", "Get Project", "获取指定项目的完整信息，包括配置和关联的 Story 概况", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("create_story", "Create Story", "在指定项目中创建一个新的 Story（用户价值单元）", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("list_stories", "List Stories", "列出指定项目下的所有 Story", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_story_detail", "Get Story Detail", "获取 Story 的完整详情，包括上下文信息和关联的 Task 列表", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("update_story_status", "Update Story Status", "变更 Story 状态（如从 created 推进到 context_ready）", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("update_project_context_config", "Update Project Context Config", "更新 Project 的上下文容器与挂载策略配置", PlatformMcpScope::Relay, CAP_RELAY_MANAGEMENT),
+        ToolDescriptor::platform_mcp(
+            "list_projects",
+            "List Projects",
+            "列出所有项目，可按名称关键字过滤",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_project",
+            "Get Project",
+            "获取指定项目的完整信息，包括配置和关联的 Story 概况",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "create_story",
+            "Create Story",
+            "在指定项目中创建一个新的 Story（用户价值单元）",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "list_stories",
+            "List Stories",
+            "列出指定项目下的所有 Story",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_story_detail",
+            "Get Story Detail",
+            "获取 Story 的完整详情，包括上下文信息和关联的 Task 列表",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "update_story_status",
+            "Update Story Status",
+            "变更 Story 状态（如从 created 推进到 context_ready）",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "update_project_context_config",
+            "Update Project Context Config",
+            "更新 Project 的上下文容器与挂载策略配置",
+            PlatformMcpScope::Relay,
+            CAP_RELAY_MANAGEMENT,
+        ),
         // ── Platform MCP: Story scope (capability=story_management) ──
-        ToolDescriptor::platform_mcp("get_story_context", "Get Story Context", "获取当前 Story 的完整上下文信息（声明式来源与容器）", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("update_story_context", "Update Story Context", "更新 Story 上下文：声明式 source_refs / 容器 / 会话编排", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("update_story_details", "Update Story Details", "更新 Story 基本信息（标题、描述、优先级、类型、标签）", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("create_task", "Create Task", "在当前 Story 下创建一个新的 Task（执行单元）", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("batch_create_tasks", "Batch Create Tasks", "在当前 Story 下批量创建多个 Task（通常用于 Story 拆解完成后一次性创建）", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("list_tasks", "List Tasks", "列出当前 Story 下的所有 Task 及其状态", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
-        ToolDescriptor::platform_mcp("advance_story_status", "Advance Story Status", "推进 Story 生命周期状态（如从 created 到 context_ready，或到 decomposed）", PlatformMcpScope::Story, CAP_STORY_MANAGEMENT),
+        ToolDescriptor::platform_mcp(
+            "get_story_context",
+            "Get Story Context",
+            "获取当前 Story 的完整上下文信息（声明式来源与容器）",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "update_story_context",
+            "Update Story Context",
+            "更新 Story 上下文：声明式 source_refs / 容器 / 会话编排",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "update_story_details",
+            "Update Story Details",
+            "更新 Story 基本信息（标题、描述、优先级、类型、标签）",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "create_task",
+            "Create Task",
+            "在当前 Story 下创建一个新的 Task（执行单元）",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "batch_create_tasks",
+            "Batch Create Tasks",
+            "在当前 Story 下批量创建多个 Task（通常用于 Story 拆解完成后一次性创建）",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "list_tasks",
+            "List Tasks",
+            "列出当前 Story 下的所有 Task 及其状态",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "advance_story_status",
+            "Advance Story Status",
+            "推进 Story 生命周期状态（如从 created 到 context_ready，或到 decomposed）",
+            PlatformMcpScope::Story,
+            CAP_STORY_MANAGEMENT,
+        ),
         // ── Platform MCP: Task scope (capability=task_management) ──
-        ToolDescriptor::platform_mcp("get_task_info", "Get Task Info", "获取当前绑定 Task 的完整信息", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
-        ToolDescriptor::platform_mcp("update_task_status", "Update Task Status", "更新当前 Task 的执行状态", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
-        ToolDescriptor::platform_mcp("report_artifact", "Report Artifact", "上报 Task 执行产物（代码变更、测试结果、日志等）", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_sibling_tasks", "Get Sibling Tasks", "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_story_context", "Get Story Context", "获取所属 Story 的上下文信息（PRD、规范引用），用于理解任务背景", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
-        ToolDescriptor::platform_mcp("append_task_description", "Append Task Description", "向 Task 描述中追加内容（记录执行过程发现的关键信息）", PlatformMcpScope::Task, CAP_TASK_MANAGEMENT),
+        ToolDescriptor::platform_mcp(
+            "get_task_info",
+            "Get Task Info",
+            "获取当前绑定 Task 的完整信息",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "update_task_status",
+            "Update Task Status",
+            "更新当前 Task 的执行状态",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "report_artifact",
+            "Report Artifact",
+            "上报 Task 执行产物（代码变更、测试结果、日志等）",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_sibling_tasks",
+            "Get Sibling Tasks",
+            "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_story_context",
+            "Get Story Context",
+            "获取所属 Story 的上下文信息（PRD、规范引用），用于理解任务背景",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "append_task_description",
+            "Append Task Description",
+            "向 Task 描述中追加内容（记录执行过程发现的关键信息）",
+            PlatformMcpScope::Task,
+            CAP_TASK_MANAGEMENT,
+        ),
         // ── Platform MCP: Workflow scope (capability=workflow_management) ──
-        ToolDescriptor::platform_mcp("list_workflows", "List Workflows", "列出当前项目下所有 Workflow 和 Lifecycle 定义", PlatformMcpScope::Workflow, CAP_WORKFLOW_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_workflow", "Get Workflow", "获取单个 Workflow 定义的完整详情（含 contract）", PlatformMcpScope::Workflow, CAP_WORKFLOW_MANAGEMENT),
-        ToolDescriptor::platform_mcp("get_lifecycle", "Get Lifecycle", "获取单个 Lifecycle 定义的完整详情（含 steps、edges）", PlatformMcpScope::Workflow, CAP_WORKFLOW_MANAGEMENT),
-        ToolDescriptor::platform_mcp("upsert_workflow_tool", "Upsert Workflow", "创建或更新 Workflow 定义（单步行为契约）。保存时自动校验，失败会返回详细错误信息。", PlatformMcpScope::Workflow, CAP_WORKFLOW_MANAGEMENT),
-        ToolDescriptor::platform_mcp("upsert_lifecycle_tool", "Upsert Lifecycle", "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。", PlatformMcpScope::Workflow, CAP_WORKFLOW_MANAGEMENT),
+        ToolDescriptor::platform_mcp(
+            "list_workflows",
+            "List Workflows",
+            "列出当前项目下所有 Workflow 和 Lifecycle 定义",
+            PlatformMcpScope::Workflow,
+            CAP_WORKFLOW_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_workflow",
+            "Get Workflow",
+            "获取单个 Workflow 定义的完整详情（含 contract）",
+            PlatformMcpScope::Workflow,
+            CAP_WORKFLOW_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "get_lifecycle",
+            "Get Lifecycle",
+            "获取单个 Lifecycle 定义的完整详情（含 steps、edges）",
+            PlatformMcpScope::Workflow,
+            CAP_WORKFLOW_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "upsert_workflow_tool",
+            "Upsert Workflow",
+            "创建或更新 Workflow 定义（单步行为契约）。保存时自动校验，失败会返回详细错误信息。",
+            PlatformMcpScope::Workflow,
+            CAP_WORKFLOW_MANAGEMENT,
+        ),
+        ToolDescriptor::platform_mcp(
+            "upsert_lifecycle_tool",
+            "Upsert Lifecycle",
+            "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。",
+            PlatformMcpScope::Workflow,
+            CAP_WORKFLOW_MANAGEMENT,
+        ),
     ]
 }
 
@@ -526,7 +762,10 @@ mod tests {
     #[test]
     fn shell_execute_maps_to_execute_cluster() {
         let cap = ToolCapability::new(CAP_SHELL_EXECUTE);
-        assert_eq!(capability_to_tool_clusters(&cap), vec![ToolCluster::Execute]);
+        assert_eq!(
+            capability_to_tool_clusters(&cap),
+            vec![ToolCluster::Execute]
+        );
     }
 
     #[test]
@@ -539,7 +778,10 @@ mod tests {
 
     #[test]
     fn cluster_tools_returns_correct_tool_names() {
-        assert_eq!(cluster_tools(ToolCluster::Read), &["mounts_list", "fs_read", "fs_glob", "fs_grep"]);
+        assert_eq!(
+            cluster_tools(ToolCluster::Read),
+            &["mounts_list", "fs_read", "fs_glob", "fs_grep"]
+        );
         assert_eq!(cluster_tools(ToolCluster::Write), &["fs_apply_patch"]);
         assert_eq!(cluster_tools(ToolCluster::Execute), &["shell_exec"]);
     }
@@ -575,13 +817,23 @@ mod tests {
     #[test]
     fn visibility_project_session_gets_file_read() {
         let cap = ToolCapability::new(CAP_FILE_READ);
-        assert!(is_capability_visible(&cap, SessionOwnerType::Project, false, false));
+        assert!(is_capability_visible(
+            &cap,
+            SessionOwnerType::Project,
+            false,
+            false
+        ));
     }
 
     #[test]
     fn visibility_project_session_gets_file_write() {
         let cap = ToolCapability::new(CAP_FILE_WRITE);
-        assert!(is_capability_visible(&cap, SessionOwnerType::Project, false, false));
+        assert!(is_capability_visible(
+            &cap,
+            SessionOwnerType::Project,
+            false,
+            false
+        ));
     }
 
     #[test]
@@ -684,7 +936,10 @@ mod tests {
     #[test]
     fn platform_mcp_scope_tools_are_registered() {
         let workflow_tools = platform_tools_for_capability(CAP_WORKFLOW_MANAGEMENT);
-        assert!(!workflow_tools.is_empty(), "workflow_management 应有静态工具");
+        assert!(
+            !workflow_tools.is_empty(),
+            "workflow_management 应有静态工具"
+        );
         let names: Vec<&str> = workflow_tools.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"list_workflows"));
         assert!(names.contains(&"upsert_workflow_tool"));

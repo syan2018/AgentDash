@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::vfs::mount::parse_inline_mount_owner;
 use crate::runtime::Mount;
+use crate::vfs::mount::parse_inline_mount_owner;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_spi::mount::{MountEvent, MountEventKind, MountEventReceiver};
 use async_trait::async_trait;
@@ -101,12 +101,7 @@ impl InlineContentOverlay {
         }
     }
 
-    pub async fn write(
-        &self,
-        mount: &Mount,
-        path: &str,
-        content: &str,
-    ) -> Result<(), String> {
+    pub async fn write(&self, mount: &Mount, path: &str, content: &str) -> Result<(), String> {
         let (owner_kind, owner_id, container_id) = parse_inline_mount_owner(mount)?;
 
         // 判断是否之前存在（决定事件 kind = Created / Modified）
@@ -135,18 +130,12 @@ impl InlineContentOverlay {
         } else {
             MountEventKind::Created
         };
-        let _ = self
-            .event_tx
-            .send(MountEvent::new(&mount.id, path, kind));
+        let _ = self.event_tx.send(MountEvent::new(&mount.id, path, kind));
 
         Ok(())
     }
 
-    pub async fn delete(
-        &self,
-        mount: &Mount,
-        path: &str,
-    ) -> Result<(), String> {
+    pub async fn delete(&self, mount: &Mount, path: &str) -> Result<(), String> {
         let (owner_kind, owner_id, container_id) = parse_inline_mount_owner(mount)?;
 
         self.overrides
@@ -351,13 +340,19 @@ mod tests {
 
         let mut rx = overlay.subscribe_events();
 
-        overlay.write(&mount, "note.md", "v1").await.expect("write 1");
+        overlay
+            .write(&mount, "note.md", "v1")
+            .await
+            .expect("write 1");
         let evt = rx.recv().await.expect("event 1");
         assert_eq!(evt.mount_id, "brief");
         assert_eq!(evt.path, "note.md");
         assert_eq!(evt.kind, MountEventKind::Created);
 
-        overlay.write(&mount, "note.md", "v2").await.expect("write 2");
+        overlay
+            .write(&mount, "note.md", "v2")
+            .await
+            .expect("write 2");
         let evt = rx.recv().await.expect("event 2");
         assert_eq!(evt.kind, MountEventKind::Modified);
 

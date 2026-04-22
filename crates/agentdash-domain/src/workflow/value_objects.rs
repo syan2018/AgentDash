@@ -524,8 +524,7 @@ pub enum CapabilitySlotState {
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityReduction {
     pub slots: std::collections::BTreeMap<String, CapabilitySlotState>,
-    pub excluded_tools:
-        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    pub excluded_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// 在一串 directive 上执行 slot 规则归约，产出 `CapabilityReduction`。
@@ -539,9 +538,7 @@ pub struct CapabilityReduction {
 /// - `Remove(cap, Some(t))` → 写入 `excluded_tools[cap] += t`，并在白名单中移除 t
 ///
 /// 后来者胜 —— 每条指令按序执行。
-pub fn reduce_capability_directives(
-    directives: &[CapabilityDirective],
-) -> CapabilityReduction {
+pub fn reduce_capability_directives(directives: &[CapabilityDirective]) -> CapabilityReduction {
     use std::collections::{BTreeMap, BTreeSet};
 
     let mut slots: BTreeMap<String, CapabilitySlotState> = BTreeMap::new();
@@ -566,8 +563,7 @@ pub fn reduce_capability_directives(
                             CapabilitySlotState::ToolWhitelist(set) => {
                                 set.insert(tool.clone());
                             }
-                            CapabilitySlotState::NotDeclared
-                            | CapabilitySlotState::Blocked => {
+                            CapabilitySlotState::NotDeclared | CapabilitySlotState::Blocked => {
                                 let mut set = BTreeSet::new();
                                 set.insert(tool.clone());
                                 *entry = CapabilitySlotState::ToolWhitelist(set);
@@ -584,15 +580,10 @@ pub fn reduce_capability_directives(
                     }
                     Some(tool) => {
                         // 从白名单中移除（若存在），同时写入 excluded_tools
-                        if let Some(CapabilitySlotState::ToolWhitelist(set)) =
-                            slots.get_mut(&key)
-                        {
+                        if let Some(CapabilitySlotState::ToolWhitelist(set)) = slots.get_mut(&key) {
                             set.remove(tool);
                         }
-                        excluded_tools
-                            .entry(key)
-                            .or_default()
-                            .insert(tool.clone());
+                        excluded_tools.entry(key).or_default().insert(tool.clone());
                     }
                 }
             }
@@ -949,7 +940,9 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
 
 /// 从 port-level edges 计算 node 级别依赖关系。
 /// 返回 `{ to_node -> Set<from_node> }`，多条连同一对 node 的 edge 自动去重。
-pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> std::collections::HashMap<&str, std::collections::BTreeSet<&str>> {
+pub fn node_deps_from_edges(
+    edges: &[LifecycleEdge],
+) -> std::collections::HashMap<&str, std::collections::BTreeSet<&str>> {
     let mut deps: std::collections::HashMap<&str, std::collections::BTreeSet<&str>> =
         std::collections::HashMap::new();
     for edge in edges {
@@ -997,9 +990,7 @@ fn validate_edge_topology(
         match edge.kind {
             LifecycleEdgeKind::Flow => {
                 if edge.from_port.is_some() || edge.to_port.is_some() {
-                    return Err(format!(
-                        "lifecycle.edges[{i}] kind=flow 不应携带 port"
-                    ));
+                    return Err(format!("lifecycle.edges[{i}] kind=flow 不应携带 port"));
                 }
             }
             LifecycleEdgeKind::Artifact => {
@@ -1015,9 +1006,7 @@ fn validate_edge_topology(
     let node_deps = node_deps_from_edges(edges);
 
     if node_deps.contains_key(entry_step_key) {
-        return Err(format!(
-            "entry_step_key `{entry_step_key}` 不应有入边"
-        ));
+        return Err(format!("entry_step_key `{entry_step_key}` 不应有入边"));
     }
 
     // 禁止孤岛 step（既无入边也无出边）——单 step lifecycle 除外
@@ -1151,9 +1140,8 @@ mod tests {
             input_ports: vec![],
         }];
 
-        let error =
-            validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
-                .expect_err("fail");
+        let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
+            .expect_err("fail");
         assert!(error.contains("entry_step_key"));
     }
 
@@ -1291,10 +1279,7 @@ mod tests {
     #[test]
     fn validate_accepts_pure_flow_edges() {
         let steps = vec![simple_step("a"), simple_step("b"), simple_step("c")];
-        let edges = vec![
-            LifecycleEdge::flow("a", "b"),
-            LifecycleEdge::flow("b", "c"),
-        ];
+        let edges = vec![LifecycleEdge::flow("a", "b"), LifecycleEdge::flow("b", "c")];
         validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
             .expect("pure flow lifecycle should pass");
     }

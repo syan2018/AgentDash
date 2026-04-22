@@ -12,9 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::vfs::build_canvas_mount;
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::relay_service::RelayVfsService;
-use crate::vfs::{
-    ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri,
-};
+use crate::vfs::{ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri};
 
 /// Resolve a tool parameter path into a `ResourceRef`.
 ///
@@ -140,14 +138,8 @@ pub struct MountsListTool {
 }
 
 impl MountsListTool {
-    pub fn new(
-        service: Arc<RelayVfsService>,
-        vfs: SharedRuntimeVfs,
-    ) -> Self {
-        Self {
-            service,
-            vfs,
-        }
+    pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
+        Self { service, vfs }
     }
 }
 
@@ -269,8 +261,8 @@ impl AgentTool for FsReadTool {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let vfs = self.vfs.snapshot().await;
-        let target = resolve_uri_path(&vfs, &params.path)
-            .map_err(AgentToolError::ExecutionFailed)?;
+        let target =
+            resolve_uri_path(&vfs, &params.path).map_err(AgentToolError::ExecutionFailed)?;
         let result = self
             .service
             .read_text(
@@ -625,14 +617,8 @@ pub struct ShellExecTool {
     vfs: SharedRuntimeVfs,
 }
 impl ShellExecTool {
-    pub fn new(
-        service: Arc<RelayVfsService>,
-        vfs: SharedRuntimeVfs,
-    ) -> Self {
-        Self {
-            service,
-            vfs,
-        }
+    pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
+        Self { service, vfs }
     }
 }
 

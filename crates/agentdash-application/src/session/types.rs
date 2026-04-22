@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
 
-use agentdash_spi::{Vfs, PromptPayload};
+use agentdash_spi::{PromptPayload, Vfs};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。

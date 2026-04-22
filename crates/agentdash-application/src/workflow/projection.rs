@@ -162,7 +162,8 @@ async fn build_projection_from_run(
     let Some(lifecycle) = lifecycle_repo
         .get_by_id(run.lifecycle_id)
         .await
-        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))? else {
+        .map_err(|e| format!("加载 lifecycle definition 失败: {e}"))?
+    else {
         return Ok(None);
     };
 
@@ -180,7 +181,8 @@ async fn build_projection_from_run(
             let Some(wf) = definition_repo
                 .get_by_key(wk)
                 .await
-                .map_err(|e| format!("加载 workflow 失败: {e}"))? else {
+                .map_err(|e| format!("加载 workflow 失败: {e}"))?
+            else {
                 return Ok(None);
             };
             Some(wf)

@@ -194,8 +194,7 @@ impl CommandHandler {
             }
         };
 
-        let vfs =
-            agentdash_application::session::local_workspace_vfs(&workspace_root);
+        let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
 
         let req = PromptSessionRequest {
             user_input: UserPromptInput {

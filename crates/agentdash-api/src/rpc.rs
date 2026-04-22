@@ -105,7 +105,7 @@ impl From<agentdash_application::mcp_preset::McpPresetApplicationError> for ApiE
 ///
 /// 严格约束作用域为 mcp_presets 表本身，避免误伤其他表的 unique 违反：
 /// - 仅当消息里同时出现 "unique" 相关关键字 **且** 指向 `mcp_presets`
-///   或其已知索引名（`idx_mcp_presets_project_name`、`idx_mcp_presets_project_builtin_key`）
+///   或其已知索引名（`idx_mcp_presets_project_key`、`idx_mcp_presets_project_builtin_key`）
 ///   时才判定为 unique 冲突。
 /// - 这样即便未来其他模块复用该兜底路径或 migration 新增其他 unique 索引，
 ///   也不会把无关错误误伤为 409。
@@ -114,8 +114,7 @@ fn looks_like_unique_violation(message: &str) -> bool {
     let unique_marker = lower.contains("duplicate key")
         || lower.contains("unique constraint")
         || lower.contains("unique");
-    let scoped_to_mcp_presets = lower.contains("mcp_presets")
-        || lower.contains("idx_mcp_presets_");
+    let scoped_to_mcp_presets = lower.contains("mcp_presets") || lower.contains("idx_mcp_presets_");
     unique_marker && scoped_to_mcp_presets
 }
 
@@ -126,13 +125,13 @@ mod tests {
     #[test]
     fn unique_violation_detection_covers_postgres_message() {
         assert!(looks_like_unique_violation(
-            "error returned from database: duplicate key value violates unique constraint \"idx_mcp_presets_project_name\""
+            "error returned from database: duplicate key value violates unique constraint \"idx_mcp_presets_project_key\""
         ));
         assert!(looks_like_unique_violation(
             "unique constraint violation on idx_mcp_presets_project_builtin_key"
         ));
         assert!(looks_like_unique_violation(
-            "mcp_presets unique(project_id,name) violation"
+            "mcp_presets unique(project_id,key) violation"
         ));
     }
 

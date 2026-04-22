@@ -2,22 +2,26 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
-use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource, McpServerDecl};
+use agentdash_domain::mcp_preset::{
+    McpPreset, McpPresetSource, McpRoutePolicy, McpTransportConfig,
+};
 
 /// MCP Preset HTTP 响应 DTO。
 ///
 /// - `source` 序列化为字符串 `"builtin" | "user"`（前端友好）
 /// - `builtin_key` 仅 `source == "builtin"` 时非空
-/// - `server_decl` 透传领域层联合体（`{ type: "http" | "sse" | "stdio", ... }`）
-///   避免 DTO 层重复定义 transport 联合体
+/// - `key` 同时是 preset 引用 key 与 agent-facing server name
+/// - `transport` 仅描述连接参数；`route_policy` 描述应用层路由策略
 #[derive(Debug, Serialize)]
 pub struct McpPresetResponse {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub name: String,
+    pub key: String,
+    pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub server_decl: McpServerDecl,
+    pub transport: McpTransportConfig,
+    pub route_policy: McpRoutePolicy,
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin_key: Option<String>,
@@ -35,9 +39,11 @@ impl From<McpPreset> for McpPresetResponse {
         Self {
             id: preset.id,
             project_id: preset.project_id,
-            name: preset.name,
+            key: preset.key,
+            display_name: preset.display_name,
             description: preset.description,
-            server_decl: preset.server_decl,
+            transport: preset.transport,
+            route_policy: preset.route_policy,
             source,
             builtin_key,
             created_at: preset.created_at,
@@ -49,10 +55,13 @@ impl From<McpPreset> for McpPresetResponse {
 /// 创建 user MCP Preset 的请求体。
 #[derive(Debug, Deserialize)]
 pub struct CreateMcpPresetRequest {
-    pub name: String,
+    pub key: String,
+    pub display_name: String,
     #[serde(default)]
     pub description: Option<String>,
-    pub server_decl: McpServerDecl,
+    pub transport: McpTransportConfig,
+    #[serde(default)]
+    pub route_policy: McpRoutePolicy,
 }
 
 /// 更新 MCP Preset 的请求体——支持部分字段更新。
@@ -66,20 +75,27 @@ pub struct CreateMcpPresetRequest {
 #[derive(Debug, Deserialize, Default)]
 pub struct UpdateMcpPresetRequest {
     #[serde(default)]
-    pub name: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub description: Option<Option<String>>,
     #[serde(default)]
-    pub server_decl: Option<McpServerDecl>,
+    pub transport: Option<McpTransportConfig>,
+    #[serde(default)]
+    pub route_policy: Option<McpRoutePolicy>,
 }
 
 /// 复制 Preset 为 user 副本的请求体。
 ///
-/// `name` 为空时 handler 层会回退到 `"<原 name> (copy)"` 默认命名。
+/// `key` 为空时 handler 层会回退到 `"<原 key>-copy"` 默认命名；
+/// `display_name` 为空时回退到 `"<原 display_name> (copy)"`。
 #[derive(Debug, Deserialize, Default)]
 pub struct CloneMcpPresetRequest {
     #[serde(default)]
-    pub name: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 /// 装载 builtin Preset 的请求体。
@@ -116,14 +132,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::mcp_preset::McpServerDecl;
+    use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
 
-    fn http_decl() -> McpServerDecl {
-        McpServerDecl::Http {
-            name: "fetch".to_string(),
+    fn http_transport() -> McpTransportConfig {
+        McpTransportConfig::Http {
             url: "https://example.com/mcp".to_string(),
             headers: vec![],
-            relay: None,
         }
     }
 
@@ -132,8 +146,10 @@ mod tests {
         let preset = McpPreset::new_user(
             Uuid::new_v4(),
             "my",
+            "My",
             Some("desc".to_string()),
-            http_decl(),
+            http_transport(),
+            McpRoutePolicy::Direct,
         );
         let resp = McpPresetResponse::from(preset);
         let json = serde_json::to_value(&resp).expect("serialize");
@@ -150,8 +166,10 @@ mod tests {
             Uuid::new_v4(),
             "filesystem",
             "Filesystem",
+            "Filesystem",
             None,
-            http_decl(),
+            http_transport(),
+            McpRoutePolicy::Auto,
         );
         let resp = McpPresetResponse::from(preset);
         let json = serde_json::to_value(&resp).expect("serialize");
@@ -162,10 +180,10 @@ mod tests {
     #[test]
     fn update_request_description_triple_state_missing() {
         // 不传 description
-        let raw = r#"{"name":"new-name"}"#;
+        let raw = r#"{"key":"new-key"}"#;
         let parsed: UpdateMcpPresetRequest = serde_json::from_str(raw).expect("parse missing");
         assert!(parsed.description.is_none(), "缺失字段应为 None");
-        assert_eq!(parsed.name.as_deref(), Some("new-name"));
+        assert_eq!(parsed.key.as_deref(), Some("new-key"));
     }
 
     #[test]
@@ -187,9 +205,11 @@ mod tests {
     #[test]
     fn update_request_empty_body_parses_as_all_none() {
         let parsed: UpdateMcpPresetRequest = serde_json::from_str("{}").expect("parse empty");
-        assert!(parsed.name.is_none());
+        assert!(parsed.key.is_none());
+        assert!(parsed.display_name.is_none());
         assert!(parsed.description.is_none());
-        assert!(parsed.server_decl.is_none());
+        assert!(parsed.transport.is_none());
+        assert!(parsed.route_policy.is_none());
     }
 
     #[test]

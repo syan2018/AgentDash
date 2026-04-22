@@ -4,13 +4,13 @@ use agentdash_domain::workspace::Workspace;
 
 use super::context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
-    SessionProjectDefaults, SessionStoryOverrides,
-    build_session_executor_summary, normalize_optional_string,
+    SessionProjectDefaults, SessionStoryOverrides, build_session_executor_summary,
+    normalize_optional_string,
 };
 use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
-use crate::runtime::{Vfs, AgentConfig, RuntimeMcpServer};
+use crate::runtime::{AgentConfig, RuntimeMcpServer, Vfs};
 use crate::workflow::ActiveWorkflowProjection;
 
 /// 统一的 session bootstrap 计划。

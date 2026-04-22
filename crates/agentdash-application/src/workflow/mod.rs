@@ -22,18 +22,24 @@ pub use definition::{
     get_builtin_workflow_template, list_builtin_workflow_templates,
 };
 pub use error::WorkflowApplicationError;
-pub use orchestrator::LifecycleOrchestrator;
+pub use execution_log::{load_port_output_map, materialize_step_summary};
+pub use orchestrator::{
+    AdvanceCurrentNodeInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+};
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection,
     resolve_active_workflow_projection_for_session, resolve_workflow_projection_by_run,
 };
-pub use execution_log::{load_port_output_map, materialize_step_summary};
 pub use run::{
-    ActivateLifecycleStepCommand, CompleteLifecycleStepCommand, LifecycleRunService,
-    StartLifecycleRunCommand, select_active_run,
+    ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
+    BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
+    LifecycleRunService, RecordGateCollisionCommand, StartLifecycleRunCommand, select_active_run,
 };
 pub use session_association::LIFECYCLE_NODE_LABEL_PREFIX;
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
-    apply_to_prompt_request, capability_keys_sorted, empty_presets,
+    agent_mcp_entries_from_servers, apply_to_prompt_request, apply_to_running_session,
+    capability_delta_directives, capability_directives_from_keys, capability_keys_sorted,
+    empty_presets,
 };

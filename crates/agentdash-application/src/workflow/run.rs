@@ -29,6 +29,33 @@ pub struct CompleteLifecycleStepCommand {
     pub summary: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct FailLifecycleStepCommand {
+    pub run_id: Uuid,
+    pub step_key: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordGateCollisionCommand {
+    pub run_id: Uuid,
+    pub step_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BindLifecycleStepSessionCommand {
+    pub run_id: Uuid,
+    pub step_key: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BindAndActivateLifecycleStepCommand {
+    pub run_id: Uuid,
+    pub step_key: String,
+    pub session_id: String,
+}
+
 pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
     runs.into_iter()
         .filter(|run| {
@@ -132,6 +159,53 @@ where
         Ok(run)
     }
 
+    pub async fn fail_step(
+        &self,
+        cmd: FailLifecycleStepCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let mut run = self.load_run(cmd.run_id).await?;
+        run.fail_step(&cmd.step_key, cmd.summary)
+            .map_err(WorkflowApplicationError::Conflict)?;
+        self.run_repo.update(&run).await?;
+        Ok(run)
+    }
+
+    pub async fn record_gate_collision(
+        &self,
+        cmd: RecordGateCollisionCommand,
+    ) -> Result<(LifecycleRun, u32), WorkflowApplicationError> {
+        let mut run = self.load_run(cmd.run_id).await?;
+        let count = run
+            .record_gate_collision(&cmd.step_key)
+            .map_err(WorkflowApplicationError::Conflict)?;
+        self.run_repo.update(&run).await?;
+        Ok((run, count))
+    }
+
+    pub async fn bind_step_session(
+        &self,
+        cmd: BindLifecycleStepSessionCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let mut run = self.load_run(cmd.run_id).await?;
+        run.bind_step_session(&cmd.step_key, cmd.session_id)
+            .map_err(WorkflowApplicationError::Conflict)?;
+        self.run_repo.update(&run).await?;
+        Ok(run)
+    }
+
+    pub async fn bind_session_and_activate_step(
+        &self,
+        cmd: BindAndActivateLifecycleStepCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let mut run = self.load_run(cmd.run_id).await?;
+        run.bind_step_session(&cmd.step_key, cmd.session_id)
+            .map_err(WorkflowApplicationError::Conflict)?;
+        run.activate_step(&cmd.step_key)
+            .map_err(WorkflowApplicationError::Conflict)?;
+        self.run_repo.update(&run).await?;
+        Ok(run)
+    }
+
     async fn resolve_lifecycle(
         &self,
         cmd: &StartLifecycleRunCommand,
@@ -178,4 +252,3 @@ where
         })
     }
 }
-

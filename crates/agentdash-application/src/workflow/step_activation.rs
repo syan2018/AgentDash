@@ -22,6 +22,7 @@ use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
     CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, WorkflowDefinition,
 };
+use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{FlowCapabilities, Vfs};
 use uuid::Uuid;
 
@@ -30,6 +31,7 @@ use crate::capability::{
     CompanionSliceMode, SessionWorkflowContext,
 };
 use crate::platform_config::PlatformConfig;
+use crate::session::SessionHub;
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -131,10 +133,8 @@ pub fn activate_step_with_platform(
     //
     // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
     // `CapabilityResolver` 内部的 slot 归约「后来者胜」，保证运行时增删覆盖 baseline。
-    let baseline_directives: Vec<CapabilityDirective> = input
-        .baseline_override
-        .clone()
-        .unwrap_or_else(|| {
+    let baseline_directives: Vec<CapabilityDirective> =
+        input.baseline_override.clone().unwrap_or_else(|| {
             input
                 .workflow
                 .map(|w| w.contract.capability_directives.clone())
@@ -187,11 +187,8 @@ pub fn activate_step_with_platform(
         .iter()
         .map(|p| p.key.clone())
         .collect();
-    let lifecycle_mount = build_lifecycle_mount_with_ports(
-        input.run_id,
-        input.lifecycle_key,
-        &writable_port_keys,
-    );
+    let lifecycle_mount =
+        build_lifecycle_mount_with_ports(input.run_id, input.lifecycle_key, &writable_port_keys);
     let lifecycle_vfs = Vfs {
         mounts: vec![lifecycle_mount.clone()],
         default_mount_id: None,
@@ -213,9 +210,7 @@ pub fn activate_step_with_platform(
     }
 }
 
-fn build_kickoff_prompt_fragment(
-    input: &StepActivationInput<'_>,
-) -> KickoffPromptFragment {
+fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffPromptFragment {
     let node_key = &input.active_step.key;
     let desc = input.active_step.description.trim();
     let node_title = if desc.is_empty() {
@@ -243,20 +238,13 @@ fn build_kickoff_prompt_fragment(
     }
 }
 
-fn render_output_section(
-    ports: &[agentdash_domain::workflow::OutputPortDefinition],
-) -> String {
+fn render_output_section(ports: &[agentdash_domain::workflow::OutputPortDefinition]) -> String {
     if ports.is_empty() {
         return String::new();
     }
     let items: Vec<String> = ports
         .iter()
-        .map(|p| {
-            format!(
-                "- `lifecycle://artifacts/{}` — {}",
-                p.key, p.description
-            )
-        })
+        .map(|p| format!("- `lifecycle://artifacts/{}` — {}", p.key, p.description))
         .collect();
     format!(
         "\n\n## 必须交付的产出\n请将以下产出通过 `write_file` 写入对应路径:\n{}\n\n**所有 output port 写入完成后**再调用 `complete_lifecycle_node`。",
@@ -278,10 +266,7 @@ fn render_input_section(
         // Port 级输入只匹配 artifact edge；flow edge 不承载 port 关系
         let source_edges: Vec<_> = edges
             .iter()
-            .filter(|e| {
-                e.to_node == *node_key
-                    && e.to_port.as_deref() == Some(ip.key.as_str())
-            })
+            .filter(|e| e.to_node == *node_key && e.to_port.as_deref() == Some(ip.key.as_str()))
             .collect();
         if source_edges.is_empty() {
             items.push(format!("- **{}**({}) — 无前驱连接", ip.key, ip.description));
@@ -330,9 +315,9 @@ fn mcp_server_name(server: &agent_client_protocol::McpServer) -> Option<&str> {
 // 三个 applier 对应三条激活路径:
 //   A. Bootstrap 新 session —— apply_to_prompt_request
 //   B. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session (PR4 实现)
-//   C. PhaseNode / advance tool 热更新 —— apply_to_running_session (PR4 实现)
+//   C. PhaseNode / advance tool 热更新 —— apply_to_running_session
 //
-// 本 PR 仅提供 A(bootstrap 侧会在 PR3 迁移用到);B/C 暂留 TODO。
+// 当前已提供 A / C；B 仍待后续把 orchestrator 的 session 创建流程进一步收口。
 
 /// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PromptSessionRequest`。
 ///
@@ -350,10 +335,107 @@ pub fn apply_to_prompt_request(
     req.mcp_servers = activation.mcp_servers.clone();
 }
 
+/// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
+///
+/// 返回 capability delta；若无能力变化则返回 `Ok(None)`，并保持与旧实现一致：
+/// 不触发 MCP 替换、steering 注入或 capability changed hook。
+pub async fn apply_to_running_session(
+    activation: &StepActivation,
+    hook_session: &SharedHookSessionRuntime,
+    session_hub: &SessionHub,
+    turn_id: Option<&str>,
+    phase_node_key: &str,
+) -> Result<Option<CapabilityDelta>, String> {
+    let Some(delta) = hook_session.update_capabilities(activation.capability_keys.clone()) else {
+        return Ok(None);
+    };
+
+    session_hub
+        .replace_runtime_mcp_servers(hook_session.session_id(), activation.mcp_servers.clone())
+        .await
+        .map_err(|error| format!("Phase node MCP 热更新失败: {error}"))?;
+
+    let delta_md = crate::capability::build_capability_delta_markdown(
+        phase_node_key,
+        &delta,
+        &activation.capability_keys,
+    );
+    session_hub
+        .push_session_notification(hook_session.session_id(), delta_md)
+        .await
+        .map_err(|error| format!("Phase node capability delta 消息注入失败: {error}"))?;
+
+    session_hub
+        .emit_capability_changed_hook(
+            hook_session.session_id(),
+            turn_id,
+            serde_json::json!({
+                "phase_node": phase_node_key,
+                "added": delta.added.clone(),
+                "removed": delta.removed.clone(),
+                "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
+                "mcp_server_count": activation.mcp_servers.len(),
+            }),
+        )
+        .await;
+
+    Ok(Some(delta))
+}
+
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
 /// 供 hook runtime 初始化时注入。
 pub fn capability_keys_sorted(activation: &StepActivation) -> Vec<String> {
     activation.capability_keys.iter().cloned().collect()
+}
+
+/// 把 capability key 集转换成 `Add(simple)` 指令序列。
+pub fn capability_directives_from_keys(keys: &BTreeSet<String>) -> Vec<CapabilityDirective> {
+    keys.iter()
+        .cloned()
+        .map(CapabilityDirective::add_simple)
+        .collect()
+}
+
+/// 计算两组 capability key 集之间的指令化 delta（added/removed）。
+pub fn capability_delta_directives(
+    old_keys: &BTreeSet<String>,
+    new_keys: &BTreeSet<String>,
+) -> Vec<CapabilityDirective> {
+    let mut directives: Vec<CapabilityDirective> = new_keys
+        .difference(old_keys)
+        .cloned()
+        .map(CapabilityDirective::add_simple)
+        .collect();
+    directives.extend(
+        old_keys
+            .difference(new_keys)
+            .cloned()
+            .map(CapabilityDirective::remove_simple),
+    );
+    directives
+}
+
+/// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 step activation
+/// 在 phase 热更新路径里解析自定义 `mcp:<name>` 能力。
+pub fn agent_mcp_entries_from_servers(
+    servers: &[agent_client_protocol::McpServer],
+) -> Vec<AgentMcpServerEntry> {
+    servers
+        .iter()
+        .filter_map(|server| {
+            let name = match server {
+                agent_client_protocol::McpServer::Http(http) => http.name.clone(),
+                agent_client_protocol::McpServer::Sse(sse) => sse.name.clone(),
+                agent_client_protocol::McpServer::Stdio(stdio) => stdio.name.clone(),
+                _ => return None,
+            };
+            Some(AgentMcpServerEntry {
+                uses_relay: false,
+                name,
+                server: server.clone(),
+            })
+        })
+        .collect()
 }
 
 // ─── available_presets 辅助 ────────────────────────────────
@@ -371,7 +453,9 @@ mod tests {
         WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
     };
 
-    fn sample_step(output_ports: Vec<agentdash_domain::workflow::OutputPortDefinition>) -> LifecycleStepDefinition {
+    fn sample_step(
+        output_ports: Vec<agentdash_domain::workflow::OutputPortDefinition>,
+    ) -> LifecycleStepDefinition {
         LifecycleStepDefinition {
             key: "implement".to_string(),
             description: "实现并记录结果".to_string(),
@@ -433,7 +517,10 @@ mod tests {
 
         let out = activate_step_with_platform(&input, &test_platform());
         // 无 workflow,走默认 visibility —— task scope 至少能拿到 Read/Write/Execute
-        assert!(!out.capability_keys.is_empty(), "default visibility 应产出至少一个能力");
+        assert!(
+            !out.capability_keys.is_empty(),
+            "default visibility 应产出至少一个能力"
+        );
     }
 
     #[test]
@@ -539,9 +626,21 @@ mod tests {
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
-        assert!(out.kickoff_prompt.output_section.contains("lifecycle://artifacts/summary"));
-        assert!(out.kickoff_prompt.output_section.contains("本 step 的结论摘要"));
-        assert!(out.kickoff_prompt.output_section.contains("complete_lifecycle_node"));
+        assert!(
+            out.kickoff_prompt
+                .output_section
+                .contains("lifecycle://artifacts/summary")
+        );
+        assert!(
+            out.kickoff_prompt
+                .output_section
+                .contains("本 step 的结论摘要")
+        );
+        assert!(
+            out.kickoff_prompt
+                .output_section
+                .contains("complete_lifecycle_node")
+        );
     }
 
     #[test]
@@ -580,7 +679,11 @@ mod tests {
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
-        assert!(out.kickoff_prompt.input_section.contains("lifecycle://artifacts/out"));
+        assert!(
+            out.kickoff_prompt
+                .input_section
+                .contains("lifecycle://artifacts/out")
+        );
         assert!(out.kickoff_prompt.input_section.contains("已就绪"));
     }
 

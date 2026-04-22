@@ -5,10 +5,8 @@ use uuid::Uuid;
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract,
-    WorkflowDefinitionSource,
-    node_deps_from_edges,
-    validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract, WorkflowDefinitionSource,
+    node_deps_from_edges, validate_lifecycle_definition, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,6 +278,50 @@ impl LifecycleRun {
         Ok(())
     }
 
+    pub fn bind_step_session(
+        &mut self,
+        step_key: &str,
+        session_id: impl Into<String>,
+    ) -> Result<(), String> {
+        let session_id = session_id.into();
+        let Some(index) = self
+            .step_states
+            .iter()
+            .position(|step| step.step_key == step_key)
+        else {
+            return Err(format!("lifecycle run 不存在 step: {step_key}"));
+        };
+
+        match self.step_states[index].status {
+            LifecycleStepExecutionStatus::Pending
+            | LifecycleStepExecutionStatus::Ready
+            | LifecycleStepExecutionStatus::Running => {}
+            LifecycleStepExecutionStatus::Completed => {
+                return Err(format!("step 已完成，不能绑定 session: {step_key}"));
+            }
+            LifecycleStepExecutionStatus::Failed => {
+                return Err(format!("step 已失败，不能绑定 session: {step_key}"));
+            }
+            LifecycleStepExecutionStatus::Skipped => {
+                return Err(format!("step 已跳过，不能绑定 session: {step_key}"));
+            }
+        }
+
+        if let Some(existing) = self.step_states[index].session_id.as_deref()
+            && existing != session_id
+        {
+            return Err(format!(
+                "step 已绑定到其他 session: {step_key} -> {existing}"
+            ));
+        }
+
+        let now = Utc::now();
+        self.step_states[index].session_id = Some(session_id);
+        self.updated_at = now;
+        self.last_activity_at = now;
+        Ok(())
+    }
+
     /// 完成指定 step 并计算后继 node 的就绪状态。
     ///
     /// 推进逻辑完全由 `edges` 驱动（flow + artifact 两类 edge 的 from_node
@@ -335,8 +377,7 @@ impl LifecycleRun {
             let all_done = self.step_states.iter().all(|s| {
                 matches!(
                     s.status,
-                    LifecycleStepExecutionStatus::Completed
-                        | LifecycleStepExecutionStatus::Skipped
+                    LifecycleStepExecutionStatus::Completed | LifecycleStepExecutionStatus::Skipped
                 )
             });
             self.status = if all_done {
@@ -351,6 +392,78 @@ impl LifecycleRun {
         self.updated_at = now;
         self.last_activity_at = now;
         Ok(())
+    }
+
+    pub fn fail_step(&mut self, step_key: &str, summary: Option<String>) -> Result<(), String> {
+        let Some(index) = self
+            .step_states
+            .iter()
+            .position(|step| step.step_key == step_key)
+        else {
+            return Err(format!("lifecycle run 不存在 step: {step_key}"));
+        };
+
+        if self.active_node_keys.is_empty() {
+            return Err(format!("没有可失败的 step: {step_key}"));
+        }
+        if !self.active_node_keys.contains(&step_key.to_string()) {
+            return Err(format!("step 不在当前活跃集合中: {step_key}"));
+        }
+
+        match self.step_states[index].status {
+            LifecycleStepExecutionStatus::Ready | LifecycleStepExecutionStatus::Running => {}
+            LifecycleStepExecutionStatus::Pending => {
+                return Err(format!("step 尚未 ready: {step_key}"));
+            }
+            LifecycleStepExecutionStatus::Completed => {
+                return Err(format!("step 已完成，无法失败: {step_key}"));
+            }
+            LifecycleStepExecutionStatus::Failed => {
+                return Err(format!("step 已失败: {step_key}"));
+            }
+            LifecycleStepExecutionStatus::Skipped => {
+                return Err(format!("step 已跳过，无法失败: {step_key}"));
+            }
+        }
+
+        let now = Utc::now();
+        self.step_states[index].started_at.get_or_insert(now);
+        self.step_states[index].status = LifecycleStepExecutionStatus::Failed;
+        self.step_states[index].completed_at = Some(now);
+        self.step_states[index].summary = summary;
+        self.active_node_keys.retain(|key| key != step_key);
+
+        let all_terminal = self.step_states.iter().all(|state| {
+            matches!(
+                state.status,
+                LifecycleStepExecutionStatus::Completed
+                    | LifecycleStepExecutionStatus::Failed
+                    | LifecycleStepExecutionStatus::Skipped
+            )
+        });
+        if all_terminal {
+            self.status = LifecycleRunStatus::Failed;
+        }
+
+        self.updated_at = now;
+        self.last_activity_at = now;
+        Ok(())
+    }
+
+    pub fn record_gate_collision(&mut self, step_key: &str) -> Result<u32, String> {
+        let Some(index) = self
+            .step_states
+            .iter()
+            .position(|step| step.step_key == step_key)
+        else {
+            return Err(format!("lifecycle run 不存在 step: {step_key}"));
+        };
+
+        let now = Utc::now();
+        self.step_states[index].gate_collision_count += 1;
+        self.updated_at = now;
+        self.last_activity_at = now;
+        Ok(self.step_states[index].gate_collision_count)
     }
 
     /// DAG 后继解析：找出因当前 step 完成而变为 Ready 的 node（基于 edges）
@@ -539,7 +652,8 @@ mod tests {
         assert_eq!(run.active_node_keys, vec!["plan".to_string()]);
         run.complete_step("plan", None, &edges).expect("plan done");
         assert!(run.active_node_keys.contains(&"build".to_string()));
-        run.complete_step("build", None, &edges).expect("build done");
+        run.complete_step("build", None, &edges)
+            .expect("build done");
         assert!(run.active_node_keys.contains(&"verify".to_string()));
         run.complete_step("verify", None, &edges)
             .expect("verify done");
@@ -631,5 +745,70 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
+    }
+
+    #[test]
+    fn lifecycle_run_fail_step_marks_terminal_and_removes_active_key() {
+        let steps = [step("solo", "wf_solo")];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-test-fail",
+            &steps,
+            "solo",
+            &[],
+        )
+        .expect("run");
+
+        run.fail_step("solo", Some("boom".to_string()))
+            .expect("fail step");
+
+        assert!(run.active_node_keys.is_empty());
+        assert_eq!(run.status, LifecycleRunStatus::Failed);
+        assert_eq!(
+            run.step_states[0].status,
+            LifecycleStepExecutionStatus::Failed
+        );
+        assert_eq!(run.step_states[0].summary.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn lifecycle_run_bind_step_session_records_session_id() {
+        let steps = [step("solo", "wf_solo")];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-test-bind",
+            &steps,
+            "solo",
+            &[],
+        )
+        .expect("run");
+
+        run.bind_step_session("solo", "sess-child")
+            .expect("bind session");
+
+        assert_eq!(run.step_states[0].session_id.as_deref(), Some("sess-child"));
+    }
+
+    #[test]
+    fn lifecycle_run_record_gate_collision_increments_counter() {
+        let steps = [step("solo", "wf_solo")];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-test-collision",
+            &steps,
+            "solo",
+            &[],
+        )
+        .expect("run");
+
+        let count = run
+            .record_gate_collision("solo")
+            .expect("record gate collision");
+
+        assert_eq!(count, 1);
+        assert_eq!(run.step_states[0].gate_collision_count, 1);
     }
 }

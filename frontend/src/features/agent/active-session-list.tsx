@@ -228,13 +228,8 @@ function SessionRow({
           </>
         )}
         {!ownerLabel && <span className="min-w-0 flex-1" />}
-        <span
-          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusPillClass[session.execution_status]}`}
-        >
-          {statusLabel[session.execution_status]}
-        </span>
 
-        {/* Companion 折叠按钮（右下角，明确文案） */}
+        {/* Companion 折叠按钮（状态 pill 之前，灰色低调） */}
         {companionCount > 0 && onToggleCompanions && (
           <button
             type="button"
@@ -242,7 +237,7 @@ function SessionRow({
               e.stopPropagation();
               onToggleCompanions();
             }}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            className="flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title={
               companionsExpanded
                 ? `折叠 ${companionCount} 个 companion 子会话`
@@ -275,6 +270,12 @@ function SessionRow({
             </span>
           </button>
         )}
+
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusPillClass[session.execution_status]}`}
+        >
+          {statusLabel[session.execution_status]}
+        </span>
       </div>
     </div>
   );

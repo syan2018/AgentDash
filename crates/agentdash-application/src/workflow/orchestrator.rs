@@ -404,7 +404,7 @@ impl LifecycleOrchestrator {
         Ok(())
     }
 
-    /// 查找 step.workflow_key 指向的 WorkflowDefinition 并构建 `CapabilityDirective`。
+    /// 查找 step.workflow_key 指向的 WorkflowDefinition 并返回其 `CapabilityDirective` 序列。
     /// 查不到时返回空 vec —— 等价于"不改变能力集"。
     async fn resolve_step_workflow_capability_directives(
         &self,
@@ -419,13 +419,7 @@ impl LifecycleOrchestrator {
             .get_by_project_and_key(project_id, workflow_key)
             .await
         {
-            Ok(Some(workflow)) => workflow
-                .contract
-                .capabilities
-                .iter()
-                .cloned()
-                .map(CapabilityDirective::add_entry)
-                .collect(),
+            Ok(Some(workflow)) => workflow.contract.capability_directives.clone(),
             Ok(None) => {
                 tracing::warn!(
                     project_id = %project_id,

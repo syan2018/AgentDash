@@ -12,7 +12,7 @@
 //!   agent MCP servers / available presets / baseline caps)都通过 input 传入。
 //! - **port 前驱状态剥离**:kickoff prompt 构造需要知道 "前驱 output port 是否就绪",
 //!   这部分 IO 由调用方先查好,以 `BTreeSet<String>` 形式塞进 `kickoff_context`。
-//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capabilities`;
+//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_directives`;
 //!   PhaseNode 热更新路径可传 `baseline_override = Some(hook_runtime.current_caps())`,
 //!   再叠加 directive 得到新能力集。
 
@@ -21,7 +21,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
     CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, WorkflowDefinition,
-    compute_effective_capabilities,
 };
 use agentdash_spi::{FlowCapabilities, Vfs};
 use uuid::Uuid;
@@ -43,7 +42,7 @@ pub struct StepActivationInput<'a> {
     pub owner_ctx: SessionOwnerCtx,
     /// 当前激活的 step 定义;提供 output/input ports、node_type、workflow_key。
     pub active_step: &'a LifecycleStepDefinition,
-    /// step 绑定的 workflow 定义(若有);提供 `contract.capabilities` baseline 与
+    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
     pub workflow: Option<&'a WorkflowDefinition>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
@@ -60,11 +59,11 @@ pub struct StepActivationInput<'a> {
     pub available_presets: AvailableMcpPresets,
     /// Companion 子 session 的 slice 裁剪模式。
     pub companion_slice_mode: Option<CompanionSliceMode>,
-    /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力集,
-    /// 然后叠加 `capability_directives` 得到新集合。
-    /// None → 使用 `workflow.contract.capabilities`。
-    pub baseline_override: Option<Vec<agentdash_domain::workflow::CapabilityEntry>>,
-    /// 运行时 capability 指令(PhaseNode 热更新场景);与 baseline 做 set 运算。
+    /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
+    /// 会取代 `workflow.contract.capability_directives`。
+    /// None → 使用 `workflow.contract.capability_directives`。
+    pub baseline_override: Option<Vec<CapabilityDirective>>,
+    /// 运行时 capability 指令(PhaseNode 热更新场景);追加到 baseline 后由 slot 归约。
     pub capability_directives: &'a [CapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
     /// 调用方提前通过 `load_port_output_map` 查好,activate_step 不做 IO。
@@ -128,31 +127,28 @@ pub fn activate_step_with_platform(
     input: &StepActivationInput<'_>,
     platform: &PlatformConfig,
 ) -> StepActivation {
-    // ── 1. baseline + directive → effective workflow capability entries ──
-    let baseline: Vec<agentdash_domain::workflow::CapabilityEntry> =
-        input.baseline_override.clone().unwrap_or_else(|| {
+    // ── 1. baseline + override + directive → 合并 directive 序列 ──
+    //
+    // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
+    // `CapabilityResolver` 内部的 slot 归约「后来者胜」，保证运行时增删覆盖 baseline。
+    let baseline_directives: Vec<CapabilityDirective> = input
+        .baseline_override
+        .clone()
+        .unwrap_or_else(|| {
             input
                 .workflow
-                .map(|w| w.contract.capabilities.clone())
+                .map(|w| w.contract.capability_directives.clone())
                 .unwrap_or_default()
         });
-    let effective_entries = if input.capability_directives.is_empty() {
-        baseline
-    } else {
-        compute_effective_capabilities(&baseline, input.capability_directives)
-    };
+
+    let mut combined_directives = baseline_directives;
+    combined_directives.extend(input.capability_directives.iter().cloned());
 
     let has_active_workflow = input.workflow.is_some();
     let workflow_ctx = if has_active_workflow {
         SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(
-                effective_entries
-                    .iter()
-                    .cloned()
-                    .map(CapabilityDirective::add_entry)
-                    .collect(),
-            ),
+            workflow_capability_directives: Some(combined_directives),
         }
     } else {
         SessionWorkflowContext::NONE
@@ -386,9 +382,9 @@ mod tests {
         }
     }
 
-    fn sample_workflow(caps: Vec<agentdash_domain::workflow::CapabilityEntry>) -> WorkflowDefinition {
+    fn sample_workflow(directives: Vec<CapabilityDirective>) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capabilities: caps,
+            capability_directives: directives,
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -442,8 +438,12 @@ mod tests {
 
     #[test]
     fn activate_step_with_workflow_uses_contract_capabilities_as_baseline() {
-        use agentdash_domain::workflow::CapabilityEntry;
-        let workflow = sample_workflow(vec![CapabilityEntry::simple("file_system"), CapabilityEntry::simple("workflow_management")]);
+        let workflow = sample_workflow(vec![
+            CapabilityDirective::add_simple("file_read"),
+            CapabilityDirective::add_simple("file_write"),
+            CapabilityDirective::add_simple("shell_execute"),
+            CapabilityDirective::add_simple("workflow_management"),
+        ]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -465,16 +465,15 @@ mod tests {
 
         let out = activate_step_with_platform(&input, &test_platform());
         assert!(out.capability_keys.contains("workflow_management"));
-        // file_system 是别名，resolver 展开为 file_read + file_write + shell_execute
-        assert!(out.capability_keys.contains("file_read"), "file_system alias should expand to file_read");
-        assert!(out.capability_keys.contains("file_write"), "file_system alias should expand to file_write");
-        assert!(out.capability_keys.contains("shell_execute"), "file_system alias should expand to shell_execute");
+        // file_read/write/shell_execute 现在是独立 directive
+        assert!(out.capability_keys.contains("file_read"));
+        assert!(out.capability_keys.contains("file_write"));
+        assert!(out.capability_keys.contains("shell_execute"));
     }
 
     #[test]
     fn activate_step_baseline_override_takes_precedence_over_contract() {
-        use agentdash_domain::workflow::CapabilityEntry;
-        let workflow = sample_workflow(vec![CapabilityEntry::simple("file_system")]);
+        let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -490,18 +489,26 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
-            baseline_override: Some(vec![CapabilityEntry::simple("canvas"), CapabilityEntry::simple("collaboration")]),
+            baseline_override: Some(vec![
+                CapabilityDirective::add_simple("canvas"),
+                CapabilityDirective::add_simple("collaboration"),
+                // 显式屏蔽 workflow contract 原有的 file_read
+                CapabilityDirective::remove_simple("file_read"),
+            ]),
             capability_directives: &[CapabilityDirective::add_simple("workflow_management")],
             ready_port_keys: BTreeSet::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
-        // baseline_override = canvas + collaboration, directive = +workflow_management
-        // workflow.contract.capabilities = file_system 被忽略
+        // baseline_override = canvas + collaboration + Remove(file_read),
+        // directive = +workflow_management
+        // workflow.contract.capability_directives = file_read 被 override 替代
         assert!(out.capability_keys.contains("canvas"));
         assert!(out.capability_keys.contains("collaboration"));
         assert!(out.capability_keys.contains("workflow_management"));
-        assert!(!out.capability_keys.contains("file_system"));
+        // 注意：auto_granted baseline 会带入 file_read；但我们在 override 里写了 Remove(file_read)，
+        // 所以最终不应包含 file_read。
+        assert!(!out.capability_keys.contains("file_read"));
     }
 
     #[test]

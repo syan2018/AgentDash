@@ -54,14 +54,14 @@ pub struct SessionWorkflowRepos<'a> {
     pub agent_link: &'a dyn ProjectAgentLinkRepository,
     pub lifecycle_def: &'a dyn LifecycleDefinitionRepository,
     /// workflow_def 在解析链末端用于拉取 entry step 对应的 WorkflowDefinition,
-    /// 其 `contract.capabilities` 即 session bootstrap baseline。
+    /// 其 `contract.capability_directives` 即 session bootstrap baseline。
     pub workflow_def: &'a dyn WorkflowDefinitionRepository,
 }
 
 /// 解析 session bootstrap workflow 上下文。
 ///
 /// 规则：
-/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capabilities` →
+/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capability_directives` →
 ///   返回 `(true, Some(directives))`
 /// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 [`SessionWorkflowContext::NONE`]
 pub async fn resolve_session_workflow_context(
@@ -252,20 +252,17 @@ fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
     }
 }
 
-/// 从当前活跃 workflow 的 `contract.capabilities` 构建 session 基线能力指令。
+/// 从当前活跃 workflow 的 `contract.capability_directives` 构建 session 基线能力指令。
 ///
-/// session bootstrap 阶段直接使用此 baseline；hook runtime 的动态增减（`CapabilityDirective`）
+/// session bootstrap 阶段直接使用这些 directive；hook runtime 的动态增减（`CapabilityDirective`）
 /// 由 workflow 级调用方在运行时叠加。
+///
+/// 新模型中 workflow.contract.capability_directives 本身就是 directive 序列，
+/// 因此直接 clone 即可 —— 不再像旧模型那样需要把条目包装成 Add 指令。
 pub fn capability_directives_from_active_workflow(
     workflow: &WorkflowDefinition,
 ) -> Vec<CapabilityDirective> {
-    workflow
-        .contract
-        .capabilities
-        .iter()
-        .cloned()
-        .map(CapabilityDirective::Add)
-        .collect()
+    workflow.contract.capability_directives.clone()
 }
 
 
@@ -279,7 +276,7 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgentLink, ProjectAgentLinkRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        CapabilityDirective, CapabilityEntry, LifecycleDefinition, LifecycleDefinitionRepository,
+        CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
         LifecycleStepDefinition,
         WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
         WorkflowDefinitionSource,
@@ -548,7 +545,7 @@ mod tests {
     }
 
     /// 构造 `builtin_workflow_admin` lifecycle 及其 entry step workflow。
-    /// workflow.contract.capabilities 放一个 `workflow_management`,对应 PRD 的新结构。
+    /// workflow.contract.capability_directives 放一个 Add("workflow_management"),对应 PRD 的新结构。
     fn admin_lifecycle(project_id: Uuid) -> LifecycleDefinition {
         let plan = LifecycleStepDefinition {
             key: "plan".to_string(),
@@ -574,7 +571,7 @@ mod tests {
 
     fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capabilities: vec![CapabilityEntry::simple("workflow_management")],
+            capability_directives: vec![CapabilityDirective::add_simple("workflow_management")],
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -957,12 +954,13 @@ mod tests {
     }
 
     #[test]
-    fn capability_directives_from_active_workflow_maps_to_add_directives() {
+    fn capability_directives_from_active_workflow_preserves_directives() {
         let contract = WorkflowContract {
-            capabilities: vec![
-                CapabilityEntry::simple("workflow_management"),
-                CapabilityEntry::simple("file_system"),
-                CapabilityEntry::simple("mcp:code_analyzer"),
+            capability_directives: vec![
+                CapabilityDirective::add_simple("workflow_management"),
+                CapabilityDirective::add_simple("file_read"),
+                CapabilityDirective::remove_simple("shell_execute"),
+                CapabilityDirective::add_simple("mcp:code_analyzer"),
             ],
             ..WorkflowContract::default()
         };
@@ -978,15 +976,16 @@ mod tests {
         .expect("workflow");
 
         let directives = capability_directives_from_active_workflow(&workflow);
-        let as_set: std::collections::BTreeSet<String> = directives
-            .into_iter()
-            .map(|d| match d {
-                CapabilityDirective::Add(entry) => entry.key().to_string(),
-                CapabilityDirective::Remove(key) => panic!("不应出现 Remove 指令: {key}"),
-            })
-            .collect();
-        assert!(as_set.contains("workflow_management"));
-        assert!(as_set.contains("file_system"));
-        assert!(as_set.contains("mcp:code_analyzer"));
+        assert_eq!(directives.len(), 4);
+        // 指令序列必须保持与 contract 完全一致（顺序 + 内容）—— 不再做 Add 包装，
+        // workflow 声明的 Remove 指令能够传递到 resolver。
+        assert!(directives.iter().any(|d| matches!(
+            d,
+            CapabilityDirective::Remove(path) if path.capability == "shell_execute"
+        )));
+        assert!(directives.iter().any(|d| matches!(
+            d,
+            CapabilityDirective::Add(path) if path.capability == "workflow_management"
+        )));
     }
 }

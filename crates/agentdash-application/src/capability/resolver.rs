@@ -1,4 +1,8 @@
 //! CapabilityResolver 实现
+//!
+//! 负责把 workflow + agent baseline + `CapabilityDirective` 序列归约为 session
+//! 的有效工具集：`FlowCapabilities`（cluster 级）+ `platform_mcp_configs`
+//! （Relay/Story/Task/Workflow scope）+ `custom_mcp_servers`（用户自定义 MCP）。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,10 +11,13 @@ use agent_client_protocol::{
 };
 use agentdash_domain::mcp_preset::McpServerDecl;
 use agentdash_domain::session_binding::SessionOwnerCtx;
-use agentdash_domain::workflow::CapabilityDirective;
+use agentdash_domain::workflow::{
+    CapabilityDirective, CapabilityReduction, CapabilitySlotState,
+    reduce_capability_directives,
+};
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::tool_capability::{
-    self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS, cluster_tools, expand_alias,
+    self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS, cluster_tools,
 };
 use agentdash_spi::{FlowCapabilities, ToolCluster};
 
@@ -102,6 +109,13 @@ impl CapabilityResolver {
     }
 
     /// 根据 session 上下文计算有效工具集。
+    ///
+    /// 核心流程：
+    /// 1. baseline = agent auto_granted + agent declared 可见能力集合
+    /// 2. 对 workflow_capability_directives 执行 slot 归约（FullCapability /
+    ///    ToolWhitelist / Blocked），对 baseline 做覆盖
+    /// 3. 解析自定义 MCP (`mcp:<server>`) —— 优先查 preset，回退 agent inline
+    /// 4. 映射到 cluster / platform MCP scope / excluded_tools
     pub fn resolve(
         input: &CapabilityResolverInput,
         platform: &PlatformConfig,
@@ -111,109 +125,69 @@ impl CapabilityResolver {
             .as_ref()
             .map(|caps| caps.iter().map(|s| s.as_str()).collect());
 
+        // baseline：只包含 well-known key 的 agent-level 能力
         let mut effective_caps =
             default_visible_capabilities(input, agent_declares_set.as_ref());
+
         let mut custom_mcp_servers = Vec::<agent_client_protocol::McpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
-        // 收集工具级裁剪（include/exclude）→ 最终注入 FlowCapabilities.excluded_tools
-        let mut tool_filters: Vec<ResolvedToolFilter> = Vec::new();
 
-        for directive in input
+        // ── 按 directive 序列执行 slot 归约 ──
+        let directives: &[CapabilityDirective] = input
             .workflow_ctx
             .workflow_capability_directives
-            .iter()
-            .flatten()
-        {
-            match directive {
-                CapabilityDirective::Add(entry) => {
-                    let key = entry.key();
+            .as_deref()
+            .unwrap_or(&[]);
+        let reduction: CapabilityReduction = reduce_capability_directives(directives);
 
-                    // 别名展开：file_system → file_read + file_write + shell_execute
-                    if let Some(expanded_keys) = expand_alias(key) {
-                        for &sub_key in expanded_keys {
-                            effective_caps.insert(ToolCapability::new(sub_key));
-                        }
-                        // 别名级别的 tool filter 分配到所有展开 key
-                        if entry.has_tool_filter() {
-                            for &sub_key in expanded_keys {
-                                tool_filters.push(ResolvedToolFilter {
-                                    capability_key: sub_key.to_string(),
-                                    include_tools: entry.include_tools().to_vec(),
-                                    exclude_tools: entry.exclude_tools().to_vec(),
-                                });
-                            }
-                        }
-                        continue;
-                    }
-
-                    let cap = ToolCapability::new(key);
+        // ── 按 reduction 调整 effective_caps ──
+        for (key, state) in &reduction.slots {
+            let cap = ToolCapability::new(key);
+            match state {
+                CapabilitySlotState::Blocked => {
+                    // 硬屏蔽：即便 auto_granted 也要从集合剔除
+                    effective_caps.remove(&cap);
+                }
+                CapabilitySlotState::FullCapability
+                | CapabilitySlotState::ToolWhitelist(_) => {
+                    // well-known 或 custom mcp 均通过此分支启用
                     if cap.is_well_known() {
                         effective_caps.insert(cap);
-                        if entry.has_tool_filter() {
-                            tool_filters.push(ResolvedToolFilter {
-                                capability_key: key.to_string(),
-                                include_tools: entry.include_tools().to_vec(),
-                                exclude_tools: entry.exclude_tools().to_vec(),
-                            });
-                        }
-                        continue;
-                    }
-
-                    if cap.is_custom_mcp() {
-                        let Some(server_name) =
+                    } else if cap.is_custom_mcp() {
+                        if let Some(server_name) =
                             cap.custom_mcp_server_name().map(str::to_string)
-                        else {
-                            continue;
-                        };
-
-                        if let Some(decl) = input.available_presets.get(&server_name) {
-                            effective_caps.insert(cap);
-                            if seen_custom_mcp_names.insert(server_name.clone()) {
-                                custom_mcp_servers.push(mcp_server_decl_to_acp(decl));
-                            }
-                            continue;
-                        }
-
-                        if let Some(agent_entry) = input
-                            .agent_mcp_servers
-                            .iter()
-                            .find(|e| e.name == server_name)
                         {
-                            effective_caps.insert(cap);
-                            if seen_custom_mcp_names.insert(server_name.clone()) {
-                                custom_mcp_servers.push(agent_entry.server.clone());
+                            if let Some(decl) = input.available_presets.get(&server_name) {
+                                effective_caps.insert(cap.clone());
+                                if seen_custom_mcp_names.insert(server_name.clone()) {
+                                    custom_mcp_servers.push(mcp_server_decl_to_acp(decl));
+                                }
+                            } else if let Some(agent_entry) = input
+                                .agent_mcp_servers
+                                .iter()
+                                .find(|e| e.name == server_name)
+                            {
+                                effective_caps.insert(cap.clone());
+                                if seen_custom_mcp_names.insert(server_name.clone()) {
+                                    custom_mcp_servers.push(agent_entry.server.clone());
+                                }
+                            } else {
+                                tracing::warn!(
+                                    key = %cap.key(),
+                                    server_name = %server_name,
+                                    "workflow directive 声明了 mcp:{server_name}，但 project 级 McpPreset 和 agent 内联 mcp_servers 都未注册该 server"
+                                );
                             }
-                        } else {
-                            tracing::warn!(
-                                key = %cap.key(),
-                                server_name = %server_name,
-                                "workflow directive 声明了 mcp:{server_name}，但 project 级 McpPreset 和 agent 内联 mcp_servers 都未注册该 server"
-                            );
                         }
                     }
                 }
-                CapabilityDirective::Remove(key) => {
-                    // 别名展开移除
-                    if let Some(expanded_keys) = expand_alias(key) {
-                        for &sub_key in expanded_keys {
-                            effective_caps.remove(&ToolCapability::new(sub_key));
-                        }
-                    } else {
-                        let cap = ToolCapability::new(key.clone());
-                        effective_caps.remove(&cap);
-                        if cap.is_custom_mcp() {
-                            if let Some(server_name) = cap.custom_mcp_server_name() {
-                                seen_custom_mcp_names.remove(server_name);
-                                custom_mcp_servers.retain(|server| {
-                                    mcp_server_name(server) != Some(server_name)
-                                });
-                            }
-                        }
-                    }
+                CapabilitySlotState::NotDeclared => {
+                    // 兜底；`reduce_capability_directives` 不会产出此状态，留作防御
                 }
             }
         }
 
+        // ── 归约产出的 effective_caps 到 ToolCluster / platform MCP scope ──
         let mut tool_clusters = BTreeSet::<ToolCluster>::new();
         let mut platform_mcp_configs = Vec::<McpInjectionConfig>::new();
         for cap in &effective_caps {
@@ -229,8 +203,8 @@ impl CapabilityResolver {
             }
         }
 
-        // 构建工具级排除集
-        let excluded_tools = compute_excluded_tools(&tool_filters);
+        // ── 计算 excluded_tools（ToolWhitelist + Remove(tool) 合集）──
+        let excluded_tools = compute_excluded_tools(&reduction, &effective_caps);
 
         let mut flow_capabilities = FlowCapabilities {
             enabled_clusters: tool_clusters,
@@ -250,39 +224,45 @@ impl CapabilityResolver {
     }
 }
 
-/// 单个 capability 的工具级裁剪描述。
-#[derive(Debug)]
-struct ResolvedToolFilter {
-    capability_key: String,
-    include_tools: Vec<String>,
-    exclude_tools: Vec<String>,
-}
-
-/// 把所有 capability 的 include/exclude 合并为统一的 excluded_tools 集合。
+/// 从 reduction 结果产出 `excluded_tools` 集合。
 ///
-/// - `include_tools` 非空时：该 capability 对应 cluster 下不在白名单内的工具被排除
-/// - `exclude_tools` 直接添加到排除集
-fn compute_excluded_tools(filters: &[ResolvedToolFilter]) -> BTreeSet<String> {
+/// 规则：
+/// - `ToolWhitelist(set)`：cluster 内不在 set 中的工具加入 excluded
+/// - `Remove(cap, tool)` （来自 `reduction.excluded_tools`）：直接加入 excluded
+///
+/// 仅对当前 `effective_caps` 内的能力生效；Blocked 的 capability 已从 effective 中移除，
+/// 不需要在工具层重复屏蔽。
+fn compute_excluded_tools(
+    reduction: &CapabilityReduction,
+    effective_caps: &BTreeSet<ToolCapability>,
+) -> BTreeSet<String> {
     let mut excluded = BTreeSet::<String>::new();
-    for filter in filters {
-        let clusters = tool_capability::capability_to_tool_clusters(
-            &ToolCapability::new(&filter.capability_key),
-        );
 
-        if !filter.include_tools.is_empty() {
-            for cluster in &clusters {
-                for &tool in cluster_tools(*cluster) {
-                    if !filter.include_tools.iter().any(|t| t == tool) {
+    // ── 工具级 Remove ──
+    for (_, tools) in &reduction.excluded_tools {
+        for tool in tools {
+            excluded.insert(tool.clone());
+        }
+    }
+
+    // ── ToolWhitelist：排除未命中的工具 ──
+    for (key, state) in &reduction.slots {
+        if let CapabilitySlotState::ToolWhitelist(whitelist) = state {
+            let cap = ToolCapability::new(key);
+            if !effective_caps.contains(&cap) {
+                continue;
+            }
+            let clusters = tool_capability::capability_to_tool_clusters(&cap);
+            for cluster in clusters {
+                for &tool in cluster_tools(cluster) {
+                    if !whitelist.contains(tool) {
                         excluded.insert(tool.to_string());
                     }
                 }
             }
         }
-
-        for tool_name in &filter.exclude_tools {
-            excluded.insert(tool_name.clone());
-        }
     }
+
     excluded
 }
 
@@ -390,15 +370,6 @@ fn mcp_server_decl_to_acp(decl: &McpServerDecl) -> agent_client_protocol::McpSer
                     .env(mapped_env),
             )
         }
-    }
-}
-
-fn mcp_server_name(server: &agent_client_protocol::McpServer) -> Option<&str> {
-    match server {
-        agent_client_protocol::McpServer::Http(http) => Some(http.name.as_str()),
-        agent_client_protocol::McpServer::Sse(sse) => Some(sse.name.as_str()),
-        agent_client_protocol::McpServer::Stdio(stdio) => Some(stdio.name.as_str()),
-        _ => None,
     }
 }
 
@@ -722,7 +693,7 @@ mod tests {
     fn workflow_directive_can_remove_default_well_known_capability() {
         let mut input = base_input();
         input.workflow_ctx.workflow_capability_directives = Some(vec![
-            CapabilityDirective::Remove("collaboration".into()),
+            CapabilityDirective::remove_simple("collaboration"),
         ]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -731,11 +702,50 @@ mod tests {
     }
 
     #[test]
+    fn workflow_directive_can_remove_shell_execute() {
+        // PRD 关键场景：workflow 声明 Remove("shell_execute") 必须能屏蔽 baseline
+        // 中 auto_granted 的能力。
+        let mut input = base_input();
+        input.workflow_ctx.workflow_capability_directives = Some(vec![
+            CapabilityDirective::remove_simple("shell_execute"),
+        ]);
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+        assert!(
+            !output.flow_capabilities.has(ToolCluster::Execute),
+            "Remove(shell_execute) 应屏蔽 Execute cluster"
+        );
+        assert!(
+            output.flow_capabilities.has(ToolCluster::Read),
+            "Read cluster 不应受影响"
+        );
+    }
+
+    #[test]
+    fn workflow_directive_remove_tool_keeps_capability_but_excludes_tool() {
+        // Remove(file_read::fs_grep) 应保留 file_read 能力，但把 fs_grep 放入 excluded_tools
+        let mut input = base_input();
+        input.workflow_ctx.workflow_capability_directives = Some(vec![
+            CapabilityDirective::remove_tool("file_read", "fs_grep"),
+        ]);
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+        assert!(
+            output.flow_capabilities.has(ToolCluster::Read),
+            "file_read 能力整体仍可见"
+        );
+        assert!(
+            output.flow_capabilities.excluded_tools.contains("fs_grep"),
+            "fs_grep 应进入 excluded_tools"
+        );
+    }
+
+    #[test]
     fn workflow_directive_can_remove_custom_mcp_capability() {
         let mut input = base_input();
         input.workflow_ctx.workflow_capability_directives = Some(vec![
             CapabilityDirective::add_simple("mcp:code_analyzer"),
-            CapabilityDirective::Remove("mcp:code_analyzer".into()),
+            CapabilityDirective::remove_simple("mcp:code_analyzer"),
         ]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
@@ -754,11 +764,25 @@ mod tests {
             .contains(&ToolCapability::custom_mcp("code_analyzer")));
     }
 
+    #[test]
+    fn workflow_directive_add_tool_whitelist_excludes_other_tools() {
+        // Add(file_read::fs_read) → whitelist 只保留 fs_read，
+        // 其他 read 工具（mounts_list/fs_glob/fs_grep）进入 excluded_tools
+        let mut input = base_input();
+        input.workflow_ctx.workflow_capability_directives = Some(vec![
+            CapabilityDirective::add_tool("file_read", "fs_read"),
+        ]);
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+        assert!(output.flow_capabilities.has(ToolCluster::Read));
+        let excluded = &output.flow_capabilities.excluded_tools;
+        assert!(!excluded.contains("fs_read"));
+        assert!(excluded.contains("fs_grep"));
+        assert!(excluded.contains("fs_glob"));
+        assert!(excluded.contains("mounts_list"));
+    }
+
     // ── SessionOwnerCtx 变体 × MCP 注入边界回归 ──────────────────────────────
-    //
-    // 这一组测试固定"sum type 变体所携带的 project/story/task id 必须通过
-    // `CapabilityResolver` 透传到最终的 `McpInjectionConfig`"的契约,守住
-    // PR1 收口后"四字段 → owner_ctx"改造的核心行为。
 
     #[test]
     fn project_owner_ctx_injects_relay_with_project_id() {

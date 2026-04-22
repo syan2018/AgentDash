@@ -11,14 +11,14 @@ pub use repository::{
     WorkflowDefinitionRepository,
 };
 pub use value_objects::{
-    CapabilityDetailedEntry, CapabilityDirective, CapabilityEntry, ContextStrategy,
-    EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge, LifecycleEdgeKind,
-    LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
+    CapabilityDirective, CapabilityPath, CapabilityReduction, CapabilitySlotState,
+    ContextStrategy, EffectiveSessionContract, GateStrategy, InputPortDefinition, LifecycleEdge,
+    LifecycleEdgeKind, LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType,
+    LifecycleRunStatus, LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
     OutputPortDefinition, ValidationIssue, ValidationSeverity, WorkflowBindingKind,
     WorkflowBindingRole, WorkflowCheckKind, WorkflowCheckSpec, WorkflowCompletionSpec,
     WorkflowConstraintKind, WorkflowConstraintSpec, WorkflowContextBinding, WorkflowContract,
     WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
-    WorkflowSessionTerminalState, compute_effective_capabilities, node_deps_from_edges,
+    WorkflowSessionTerminalState, node_deps_from_edges, reduce_capability_directives,
     validate_lifecycle_definition, validate_workflow_definition,
 };

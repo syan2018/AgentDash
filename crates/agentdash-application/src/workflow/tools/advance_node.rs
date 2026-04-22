@@ -350,15 +350,22 @@ impl AgentTool for CompleteLifecycleNodeTool {
                         let snapshot = hook_session.snapshot();
                         let owner_ctx = resolve_owner_scope(&snapshot, run.project_id);
                         for phase in &result.activated_phase_nodes {
-                            // 新模型：phase node 的 baseline 来自 workflow.contract.capabilities。
-                            // step 不再承担能力指令；Add/Remove 由 hook runtime 动态处理（out of scope）。
-                            let new_caps_set: std::collections::BTreeSet<String> =
-                                agentdash_domain::workflow::compute_effective_capabilities(
-                                    &[],
-                                    &phase.baseline_capability_directives,
-                                )
-                                .into_iter()
-                                .map(|e| e.key().to_string())
+                            // 新模型：phase node 的 baseline 直接是 workflow.contract.capability_directives。
+                            // Add/Remove 由 hook runtime 动态处理（out of scope）；此处走 slot 归约
+                            // 计算 effective key 集合用于 hook_session.update_capabilities。
+                            let reduction = agentdash_domain::workflow::reduce_capability_directives(
+                                &phase.baseline_capability_directives,
+                            );
+                            let new_caps_set: std::collections::BTreeSet<String> = reduction
+                                .slots
+                                .iter()
+                                .filter_map(|(k, state)| {
+                                    use agentdash_domain::workflow::CapabilitySlotState::*;
+                                    match state {
+                                        FullCapability | ToolWhitelist(_) => Some(k.clone()),
+                                        NotDeclared | Blocked => None,
+                                    }
+                                })
                                 .collect();
                             if let Some(delta) =
                                 hook_session.update_capabilities(new_caps_set.clone())
@@ -368,27 +375,28 @@ impl AgentTool for CompleteLifecycleNodeTool {
                                     .await;
                                 let available_presets =
                                     crate::session::load_available_presets(&self.repos, run.project_id).await;
+                                // hook delta 产出的是 key 列表，转换为 Add/Remove(simple path) 指令。
+                                let mut runtime_directives: Vec<agentdash_domain::workflow::CapabilityDirective> =
+                                    delta
+                                        .added
+                                        .iter()
+                                        .cloned()
+                                        .map(agentdash_domain::workflow::CapabilityDirective::add_simple)
+                                        .collect();
+                                runtime_directives.extend(
+                                    delta
+                                        .removed
+                                        .iter()
+                                        .cloned()
+                                        .map(agentdash_domain::workflow::CapabilityDirective::remove_simple),
+                                );
                                 let cap_output = CapabilityResolver::resolve(
                                     &CapabilityResolverInput {
                                         owner_ctx,
                                         agent_declared_capabilities: None,
                                         workflow_ctx: crate::capability::SessionWorkflowContext {
                                             has_active_workflow: true,
-                                            workflow_capability_directives: Some(
-                                                delta
-                                                    .added
-                                                    .iter()
-                                                    .cloned()
-                                                    .map(agentdash_domain::workflow::CapabilityDirective::add_simple)
-                                                    .chain(
-                                                        delta
-                                                            .removed
-                                                            .iter()
-                                                            .cloned()
-                                                            .map(agentdash_domain::workflow::CapabilityDirective::Remove),
-                                                    )
-                                                    .collect(),
-                                            ),
+                                            workflow_capability_directives: Some(runtime_directives),
                                         },
                                         agent_mcp_servers: mcp_entries_from_servers(
                                             &runtime_mcp_servers,

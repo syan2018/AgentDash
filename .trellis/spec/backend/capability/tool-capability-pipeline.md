@@ -23,7 +23,9 @@
 
 | Key | ToolCluster(s) | 平台 MCP Scope | 说明 |
 |-----|---------------|---------------|------|
-| `file_system` | Read, Write, Execute | — | 文件系统读写执行 |
+| `file_read` | Read | — | 文件读取（mounts_list / fs_read / fs_glob / fs_grep） |
+| `file_write` | Write | — | 文件写入（fs_apply_patch） |
+| `shell_execute` | Execute | — | Shell 命令执行 |
 | `canvas` | Canvas | — | Canvas 资产管理 |
 | `workflow` | Workflow | — | Lifecycle node 推进 |
 | `collaboration` | Collaboration | — | Companion 协作 |
@@ -31,6 +33,10 @@
 | `task_management` | — | Task | Task 状态与产物管理 |
 | `relay_management` | — | Relay | 全局看板/Project 管理 |
 | `workflow_management` | — | Workflow | Workflow/Lifecycle CRUD |
+
+> 2026-04-22 capability_directives 重构起，`file_system` 别名已彻底下线。
+> Workflow contract 必须直接声明 `file_read / file_write / shell_execute` 细粒度 key；
+> 老数据通过 migration 0018 一次性拆解为三条 Add 指令。
 
 ### 用户自定义 MCP 能力
 
@@ -75,7 +81,9 @@ return rule.auto_granted
 
 | Key | Project | Story | Task | auto | agent | workflow |
 |-----|---------|-------|------|------|-------|----------|
-| file_system | ✓ | ✓ | ✓* | ✓ | — | — |
+| file_read | ✓ | ✓ | ✓* | ✓ | — | — |
+| file_write | ✓ | ✓ | ✓* | ✓ | — | — |
+| shell_execute | ✓ | ✓ | ✓* | ✓ | — | — |
 | canvas | ✓ | — | — | ✓ | — | — |
 | workflow | ✓ | ✓ | ✓ | — | — | ✓ |
 | collaboration | ✓ | — | — | ✓ | — | — |
@@ -84,9 +92,76 @@ return rule.auto_granted
 | relay_management | ✓ | — | — | ✓ | — | — |
 | workflow_management | ✓ | — | — | — | ✓ | ✓ |
 
-> *Task session 的 file_system 由外部执行器 native 提供，不通过 ToolCluster
+> *Task session 的文件访问由外部执行器 native 提供，不通过 ToolCluster
 >
 > `workflow_management` 同时开启 agent 与 workflow 两条授予源：前端未提供 agent 能力配置入口时，通过绑定 `builtin_workflow_admin` 等内建工作流即可赋能；agent config 显式声明的旧路径也继续可用。
+
+## CapabilityPath 语法（2026-04-22 引入）
+
+`CapabilityDirective` 的 payload 是 `CapabilityPath`，统一表达「能力级」与「工具级」寻址：
+
+```rust
+pub struct CapabilityPath {
+    pub capability: String,      // "file_read" / "mcp:code_analyzer"
+    pub tool: Option<String>,    // None = 短 path；Some = 长 path（工具级）
+}
+```
+
+分隔符统一 `::`（与 Rust 模块路径同构），与 `mcp:<server>` 的单冒号前缀不冲突。
+MCP server name 禁止含 `::`，由 `McpPreset` 校验层强制。
+
+| 样例                                     | 含义                        |
+| ---------------------------------------- | --------------------------- |
+| `file_read`                              | 短 path — 平台能力级         |
+| `file_read::fs_grep`                     | 长 path — 平台 cluster 工具级 |
+| `mcp:workflow_management`                | 短 path — 平台 MCP 能力级     |
+| `mcp:workflow_management::upsert`        | 长 path — 平台 MCP 工具级     |
+| `mcp:code_analyzer::scan`                | 长 path — 用户自定义 MCP 工具级 |
+
+序列化形式：path 整体以 qualified string 表示，directive 包装为 `{"add": "<path>"}` / `{"remove": "<path>"}`。
+
+示例 JSON：
+
+```json
+{
+  "capability_directives": [
+    {"add": "workflow_management"},
+    {"remove": "shell_execute"},
+    {"add": "file_read::fs_read"},
+    {"remove": "file_read::fs_grep"},
+    {"add": "mcp:code_analyzer"}
+  ]
+}
+```
+
+## Slot 归约规则
+
+`reduce_capability_directives(directives)` 按顺序消费指令，对每个 capability key 维护一个 slot：
+
+```rust
+enum CapabilitySlotState {
+    NotDeclared,                        // 初始
+    FullCapability,                      // 命中过 Add(cap, None)
+    ToolWhitelist(BTreeSet<String>),     // 仅命中过 Add(cap, Some(tool))
+    Blocked,                             // 最后一次命中 Remove(cap, None)
+}
+```
+
+工具级屏蔽独立维护 `excluded_tools: BTreeMap<capability, BTreeSet<tool>>`。
+
+转移表（后来者胜）：
+
+| 指令                              | NotDeclared        | FullCapability | ToolWhitelist{S} | Blocked        |
+| --------------------------------- | ------------------ | -------------- | ---------------- | -------------- |
+| `Add(cap, None)`                  | FullCapability     | -              | FullCapability   | FullCapability |
+| `Add(cap, Some(t))`               | ToolWhitelist{t}   | -              | add t to S       | ToolWhitelist{t} |
+| `Remove(cap, None)`               | Blocked            | Blocked        | Blocked          | -              |
+| `Remove(cap, Some(t))`            | excluded_tools+=t  | excluded+=t    | S.remove(t) 且 excluded+=t | excluded+=t |
+
+`CapabilityResolver` 在 agent baseline（auto_granted）上应用以上 reduction：
+- `Blocked` → baseline 中即便 auto_granted=true 也被移除
+- `FullCapability` / `ToolWhitelist` → 加入 effective_caps；`ToolWhitelist` 下未命中的工具进入 `flow_capabilities.excluded_tools`
+- `excluded_tools` 直接传递到 `flow_capabilities.excluded_tools`（叠加在能力仍可见的情况下）
 
 ## CapabilityResolver
 
@@ -204,11 +279,11 @@ Owner 解析规则：
 
 拿到 `lifecycle_key` 后：
 `lifecycle_def.get_by_project_and_key(...)` → 定位 `entry_step_key` 对应 workflow →
-`workflow.contract.capabilities` 映射为 `CapabilityDirective::Add` →
+`workflow.contract.capability_directives` 直接克隆为 session bootstrap 的 directive 序列 →
 返回 `(has_active_workflow=true, workflow_capability_directives=Some(directives))`。
 
-**Baseline 语义**：session 创建时尚无 hook runtime baseline，统一将 workflow contract
-声明转换为 `Add` 指令；运行时增删由 hook runtime 的 delta 指令叠加。
+**Baseline 语义**：session 创建时尚无 hook runtime baseline，workflow contract
+的 directive 序列直接作为第一轮 baseline；运行时增删由 hook runtime 的 delta 指令叠加。
 
 **错误容忍**：repo 查询失败、未找到、key 不存在 → 全部 fallback 到
 `SessionWorkflowContext::NONE` + `tracing::warn!`，不阻断 session 创建。
@@ -278,10 +353,11 @@ workflow_capability_directives: None
 | Project Agent (Routine) | `routine/executor.rs` | `resolve_session_workflow_context(Routine)` → `CapabilityResolver::resolve()` |
 | Task session runtime | `task/session_runtime_inputs.rs` | `capability_directives_from_active_workflow(primary_workflow)` → `CapabilityResolver::resolve()` |
 | Task turn context | `task/gateway/turn_context.rs` | `capability_directives_from_active_workflow(primary_workflow)` → `CapabilityResolver::resolve()` |
-| Workflow run 推进 | `workflow/orchestrator.rs` / `workflow/tools/advance_node.rs` | `compute_effective_capabilities(hook_runtime_baseline, &step.capabilities)` |
+| Workflow run 推进 | `workflow/orchestrator.rs` / `workflow/tools/advance_node.rs` | `reduce_capability_directives(hook_runtime_baseline + step.capability_directives)` |
 | Context contributor | `context/builtins.rs` | `McpContextContributor` 接受 `McpInjectionConfig` |
 
 ---
 
 *创建：2026-04-19 — Phase 1 工具能力管线收口*
 *更新：2026-04-20 — 新增「装配时机」章节 + 消费者一览对齐到 `resolve_session_workflow_context`*
+*更新：2026-04-22 — Directive 模型重构：引入 `CapabilityPath` + slot 归约；`CapabilityEntry` / `file_system` 别名彻底下线；`WorkflowContract.capabilities` → `capability_directives`（migration 0018）*

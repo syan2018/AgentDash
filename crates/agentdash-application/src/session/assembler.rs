@@ -981,7 +981,7 @@ async fn resolve_owner_workflow_capability_directives(
         .find(|s| s.key == lifecycle.entry_step_key)?;
     let workflow_key = entry_step.effective_workflow_key()?;
 
-    // 3. 查 workflow 定义 → contract.capabilities
+    // 3. 查 workflow 定义 → contract.capability_directives
     let workflow = repos
         .workflow_definition_repo
         .get_by_project_and_key(project_id, workflow_key)

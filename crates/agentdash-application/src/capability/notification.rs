@@ -11,14 +11,17 @@ use std::collections::BTreeSet;
 
 use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::tool_capability::{
-    self, ToolCapability, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_SYSTEM, CAP_RELAY_MANAGEMENT,
-    CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW, CAP_WORKFLOW_MANAGEMENT,
+    self, ToolCapability, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE,
+    CAP_RELAY_MANAGEMENT, CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT,
+    CAP_WORKFLOW, CAP_WORKFLOW_MANAGEMENT,
 };
 
 /// 能力 key 的人类可读短描述 —— 与 `McpInjectionConfig::to_context_content` 保持口径一致。
 pub fn capability_description(key: &str) -> &'static str {
     match key {
-        CAP_FILE_SYSTEM => "文件读 / 写 / 执行",
+        CAP_FILE_READ => "文件读取（mounts_list / fs_read / fs_glob / fs_grep）",
+        CAP_FILE_WRITE => "文件写入（fs_apply_patch）",
+        CAP_SHELL_EXECUTE => "Shell 命令执行",
         CAP_CANVAS => "Canvas 绘制与展示",
         CAP_WORKFLOW => "Lifecycle 推进与产物上报",
         CAP_COLLABORATION => "Companion 协作 + Hook action 解析",
@@ -108,11 +111,11 @@ mod tests {
     #[test]
     fn delta_markdown_covers_added_removed_and_effective() {
         let delta = CapabilityDelta {
-            added: vec!["file_system".to_string(), "mcp:code_analyzer".to_string()],
+            added: vec!["file_read".to_string(), "mcp:code_analyzer".to_string()],
             removed: vec!["canvas".to_string()],
         };
         let effective: BTreeSet<String> =
-            ["file_system".to_string(), "mcp:code_analyzer".to_string()]
+            ["file_read".to_string(), "mcp:code_analyzer".to_string()]
                 .into_iter()
                 .collect();
 
@@ -120,12 +123,12 @@ mod tests {
 
         assert!(md.contains("## Capability Update — Step Transition: implement"));
         assert!(md.contains("### Added Capabilities"));
-        assert!(md.contains("**file_system**: 文件读 / 写 / 执行"));
+        assert!(md.contains("**file_read**: 文件读取"));
         assert!(md.contains("**mcp:code_analyzer**: 外部自定义 MCP 工具集"));
         assert!(md.contains("### Removed Capabilities"));
         assert!(md.contains("**canvas**: Canvas 绘制与展示（不再可用）"));
         assert!(md.contains("### Effective Capabilities"));
-        assert!(md.contains("`file_system`"));
+        assert!(md.contains("`file_read`"));
     }
 
     #[test]
@@ -145,7 +148,7 @@ mod tests {
 
     #[test]
     fn is_known_capability_key_accepts_well_known_and_mcp() {
-        assert!(is_known_capability_key("file_system"));
+        assert!(is_known_capability_key("file_read"));
         assert!(is_known_capability_key("mcp:code_analyzer"));
         assert!(!is_known_capability_key("random_nonsense"));
     }

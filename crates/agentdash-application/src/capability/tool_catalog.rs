@@ -4,12 +4,12 @@
 //! 返回统一的 `ToolDescriptor` 列表供 CapabilitiesEditor 消费。
 
 use agentdash_spi::tool_capability::{
-    self, ToolDescriptor, ToolSource, expand_alias, is_known_key,
+    self, ToolDescriptor, ToolSource, is_known_key,
 };
 
 /// 按 capability keys 查询工具目录。
 ///
-/// - well-known key / alias → 返回平台工具静态元数据
+/// - well-known key（平台 cluster 或平台 MCP scope） → 返回平台工具静态元数据
 /// - `mcp:*` → 返回占位描述（具体工具需要运行时通过 MCP tools/list 发现）
 ///
 /// 前端在 workflow editor 中调用此函数（通过 API），
@@ -18,12 +18,7 @@ pub fn query_tool_catalog(capability_keys: &[String]) -> Vec<ToolDescriptor> {
     let mut result = Vec::new();
 
     for key in capability_keys {
-        if let Some(expanded) = expand_alias(key) {
-            for sub_key in expanded {
-                let tools = tool_capability::platform_tools_for_capability(sub_key);
-                result.extend(tools);
-            }
-        } else if is_known_key(key) {
+        if is_known_key(key) {
             let tools = tool_capability::platform_tools_for_capability(key);
             result.extend(tools);
         } else if key.starts_with("mcp:") {
@@ -61,12 +56,27 @@ mod tests {
     }
 
     #[test]
-    fn query_file_system_alias_returns_all_platform_file_tools() {
+    fn query_file_system_alias_no_longer_recognized() {
+        // 迁移后 file_system 不再是 well-known key
         let result = query_tool_catalog(&["file_system".to_string()]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn query_workflow_management_returns_platform_mcp_tools() {
+        let result = query_tool_catalog(&["workflow_management".to_string()]);
+        assert!(!result.is_empty(), "workflow_management 应返回平台 MCP 工具");
         let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
-        assert!(names.contains(&"fs_read"));
-        assert!(names.contains(&"fs_apply_patch"));
-        assert!(names.contains(&"shell_exec"));
+        assert!(names.contains(&"list_workflows"));
+        assert!(names.contains(&"upsert_workflow_tool"));
+    }
+
+    #[test]
+    fn query_relay_management_returns_platform_mcp_tools() {
+        let result = query_tool_catalog(&["relay_management".to_string()]);
+        let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"list_projects"));
+        assert!(names.contains(&"create_story"));
     }
 
     #[test]

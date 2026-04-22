@@ -66,7 +66,7 @@ pub async fn build_task_session_runtime_inputs(
     let workflow = resolve_workflow_via_task_sessions(repos, task).await?;
 
     // ── CapabilityResolver 统一计算 MCP server 列表 ──
-    // capabilities 来源于 active workflow 的 contract.capabilities（工作流级基线),
+    // capabilities 来源于 active workflow 的 contract.capability_directives（工作流级基线),
     // step 不再承担能力声明。
     let workflow_capability_directives = workflow.as_ref().and_then(|projection| {
         projection

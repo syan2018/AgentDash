@@ -61,7 +61,7 @@
 - [ ] connector system prompt 在 "### Platform Tools" 段包含 `PlatformMcp` scope 工具，且 capability_key tag 正确。
 - [ ] Phase 0 迁移完整性：
   - [ ] `builtin_workflow_admin.json` 已改写为 `capability_directives`；
-  - [ ] SQL migration 脚本（up + down）可往返执行；
+  - [ ] SQL migration 脚本（up-only，遵循项目约定）可执行；
   - [ ] `cargo test --all` 通过 —— 所有 `CapabilityEntry::*` 调用已迁移；
   - [ ] 前端所有 `CapabilityEntry` 类型引用已删除。
 - [ ] 所有新增/修改代码过 `cargo clippy -D warnings` 与 `tsc --noEmit`。
@@ -72,7 +72,7 @@
 - `cargo test --all` 全绿（含 DB migration 往返测试）
 - 前端 `tsc --noEmit` 绿、若有组件测试（vitest）也绿
 - [`.trellis/spec/backend/capability/tool-capability-pipeline.md`](.trellis/spec/backend/capability/tool-capability-pipeline.md) 与 [`.trellis/spec/frontend`](.trellis/spec/frontend)（如有 CapabilitiesEditor 相关 spec）同步更新
-- PR 描述包含 Phase 0 迁移清单 + 回滚指引（down migration 使用方法）
+- PR 描述包含 Phase 0 迁移清单 + 回滚指引（up-only migration，rollback 走 git revert + 手工 DDL）
 
 ## Technical Approach
 
@@ -129,6 +129,19 @@ pub enum CapabilityDirective {
 ```
 
 `CapabilityEntry` 这个类型随之**彻底删除** —— 它原本的职责（key + include/exclude tools）完全被"多条独立 Directive"覆盖。
+
+**Directive JSON 形态**（Stage 1 已确认）：Rust `serde(rename_all = "snake_case")` 对 externally-tagged enum 产出小写 tag：
+
+```json
+[
+  { "add": "file_read" },
+  { "add": "file_read::fs_read" },
+  { "remove": "file_read::fs_grep" },
+  { "remove": "shell_execute" }
+]
+```
+
+前端 TypeScript 类型必须与此 JSON 形态严格匹配（`type CapabilityDirective = { add: string } | { remove: string }`）。
 
 ### Path 语法规范
 
@@ -227,7 +240,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
 **Consequences**:
 - 好：model 完全扁平；Add/Remove 对称；前端按钮 ↔ Directive 一一映射；resolver 归约路径收敛为单条 slot-based 规则；工具级屏蔽不再需要"虚拟 Add + exclude"这种绕弯；兼容代码零存量。
 - 代价：Phase 0 迁移必须覆盖所有数据源（builtin JSON + SQL migration + 所有测试 fixture），漏一处就运行时报错。这是优点也是代价——借强制失败让漏网数据立即暴露。
-- 风险：上线后若需要回滚到本 PR 之前的版本，DB 中已经是 `capability_directives` 字段，老代码无法读取。回滚必须同时回退 SQL migration（提供 down migration 脚本作为硬性交付物）。
+- 风险：上线后若需要回滚到本 PR 之前的版本，DB 中已经是 `capability_directives` 字段，老代码无法读取。rollback 靠 git revert + 手工 DDL（项目现无 down migration 先例，本任务不建立新模式）。
 
 ## Out of Scope
 
@@ -237,7 +250,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
 - tool_catalog API 的缓存策略 / 分页 / 权限过滤 —— 保持现在的 "按 keys query → 返回全量 descriptor" 契约。
 - **Add 工具级的 MVP 支持**：前端 MVP 不强求暴露「只启用一个子工具」入口（`Add(file_read::fs_read)`），数据模型允许即可；UI 暂以"能力级 Add + 工具级 Remove"为主。
 - **不做反序列化兼容**：老 `capabilities` 字段不保留 serde fallback；遗留数据完全靠 Phase 0 迁移 PR 一次性改写，漏网数据在启动期 fail-fast。
-- **不做双写回滚保护**：上线后回滚必须同步回退 DB migration（交付物中包含 down migration）。
+- **不做双写回滚保护**：上线后回滚靠 git revert + 手工 DDL（项目 `migrations/` 下 0 个 down migration 先例，本任务遵循现有 up-only 约定，不建立新模式）。
 
 ## Technical Notes
 

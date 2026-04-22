@@ -185,16 +185,16 @@ mod tests {
         assert_eq!(edge.from_node, "plan");
         assert_eq!(edge.to_node, "apply");
 
-        // capability 声明迁移到 workflow.contract.capabilities。
+        // capability 声明迁移到 workflow.contract.capability_directives（2026-04-22）。
         // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project
         // session 在启动时拿到 workflow 管理工具集。
         for workflow in &bundle.workflows {
             assert!(
                 workflow
                     .contract
-                    .capabilities
+                    .capability_directives
                     .iter()
-                    .any(|entry| entry.key() == "workflow_management"),
+                    .any(|d| d.is_add() && d.key() == "workflow_management"),
                 "workflow `{}` 必须声明 workflow_management 能力",
                 workflow.key
             );

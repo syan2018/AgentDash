@@ -1,0 +1,6 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Capability pipeline 契约核对"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQL migration 规范核对"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量与契约核对"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端类型契约核对"}

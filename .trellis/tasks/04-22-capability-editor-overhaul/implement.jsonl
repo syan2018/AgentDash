@@ -1,0 +1,10 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Capability pipeline 是本任务核心，必读"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Phase 0 SQL migration 需遵循约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "DTO snake_case 契约"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端类型 snake_case 与后端对齐"}
+{"file": ".trellis/spec/cross-layer/index.md", "reason": "跨层契约约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 4+ 层"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "重复点检"}

@@ -18,7 +18,9 @@
             "设计输出应包含：新增/修改的 workflow key、contract 关键字段（injection、constraints、completion）、lifecycle 步骤编排和 edges、以及对既有引用的影响。"
           ]
         },
-        "capabilities": ["workflow_management"]
+        "capability_directives": [
+          { "add": "workflow_management" }
+        ]
       }
     },
     {
@@ -35,7 +37,9 @@
             "完成后用 list_workflows 回读确认新定义已生效。"
           ]
         },
-        "capabilities": ["workflow_management"]
+        "capability_directives": [
+          { "add": "workflow_management" }
+        ]
       }
     }
   ],

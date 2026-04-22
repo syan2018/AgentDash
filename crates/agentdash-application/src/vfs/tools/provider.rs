@@ -214,7 +214,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             }
         }
 
-        // 工具级排除：从 CapabilityEntry 的 include/exclude 合并而来
+        // 工具级排除：由 CapabilityResolver 从 directive 序列归约而来
         if !excluded.is_empty() {
             tools.retain(|tool| !excluded.contains(tool.name()));
         }

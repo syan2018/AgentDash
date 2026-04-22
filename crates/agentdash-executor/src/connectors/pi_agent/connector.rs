@@ -39,6 +39,15 @@ fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String 
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// 判断 MCP server 是否为平台注入的 MCP（relay/story/task/workflow scope）。
+///
+/// 平台 MCP 的 server name 由 `McpInjectionConfig::server_name()` 产出，统一以 `agentdash-` 前缀
+/// 开头（如 `agentdash-relay-tools`、`agentdash-workflow-tools-<short_id>`）；
+/// 用户自定义 MCP 不会使用该前缀，由此可在 system prompt 中把两者分组展示。
+fn is_platform_mcp_server(server: &agent_client_protocol::McpServer) -> bool {
+    extract_mcp_server_name(server).starts_with("agentdash-")
+}
+
 // ─── PiAgentConnector ───────────────────────────────────────────
 
 pub struct PiAgentConnector {
@@ -306,32 +315,53 @@ impl PiAgentConnector {
             sections.push("## Workspace\n\n（当前会话未配置 VFS。）".to_string());
         }
 
-        // ── 4. Available Tools: 统一工具清单（平台内嵌 + MCP 外部）──
+        // ── 4. Available Tools: 统一工具清单（平台内嵌 + 平台 MCP + 外部 MCP）──
         {
             let has_builtin = !runtime_tools.is_empty();
-            let has_mcp = !context.mcp_servers.is_empty();
+            // 平台 MCP 的 server_name 由 `McpInjectionConfig::server_name()` 产出，
+            // 统一以 `agentdash-` 前缀（例如 `agentdash-workflow-tools-<short_id>`）；
+            // 用户自定义 MCP 不会使用该前缀，由此做 system prompt 级别的分组。
+            let (platform_mcp_servers, user_mcp_servers): (Vec<_>, Vec<_>) = context
+                .mcp_servers
+                .iter()
+                .partition(|server| is_platform_mcp_server(server));
+            let has_platform_mcp = !platform_mcp_servers.is_empty();
+            let has_user_mcp = !user_mcp_servers.is_empty();
 
-            if has_builtin || has_mcp {
+            if has_builtin || has_platform_mcp || has_user_mcp {
                 let mut tool_section = String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
 
-                // 平台内嵌工具
-                if has_builtin {
-                    let builtin_lines = runtime_tools
-                        .iter()
-                        .map(describe_builtin_tool)
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                // 平台工具段：cluster-based 内嵌工具 + 平台 MCP scope 工具
+                if has_builtin || has_platform_mcp {
                     tool_section.push_str("### Platform Tools\n\n");
-                    tool_section.push_str(&builtin_lines);
-                    tool_section.push_str("\n\n");
+                    if has_builtin {
+                        let builtin_lines = runtime_tools
+                            .iter()
+                            .map(describe_builtin_tool)
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        tool_section.push_str(&builtin_lines);
+                        tool_section.push_str("\n\n");
+                    }
+                    if has_platform_mcp {
+                        let platform_mcp_lines = platform_mcp_servers
+                            .iter()
+                            .map(|server| describe_mcp_server(server))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        tool_section.push_str(
+                            "以下平台 MCP Server 提供 Project/Story/Task/Workflow 级管理工具：\n\n",
+                        );
+                        tool_section.push_str(&platform_mcp_lines);
+                        tool_section.push_str("\n\n");
+                    }
                 }
 
-                // MCP 外部工具
-                if has_mcp {
-                    let mcp_lines = context
-                        .mcp_servers
+                // 外部 MCP 工具段（用户自定义）
+                if has_user_mcp {
+                    let mcp_lines = user_mcp_servers
                         .iter()
-                        .map(describe_mcp_server)
+                        .map(|server| describe_mcp_server(server))
                         .collect::<Vec<_>>()
                         .join("\n");
                     tool_section.push_str("### MCP Tools\n\n");

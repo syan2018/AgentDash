@@ -186,38 +186,6 @@ function SessionRow({
           {session.session_title ?? "无标题会话"}
         </span>
 
-        {/* Companion 折叠徽标（仅父 session 有 companion 时显示） */}
-        {companionCount > 0 && onToggleCompanions && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleCompanions();
-            }}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/10 pl-1 pr-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
-            title={companionsExpanded ? "收起 companion 子会话" : `展开 ${companionCount} 条 companion 子会话`}
-            aria-expanded={companionsExpanded}
-            aria-label={companionsExpanded ? "收起 companion" : `展开 ${companionCount} 条 companion`}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-              className={`transition-transform ${companionsExpanded ? "rotate-90" : ""}`}
-            >
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-            <span className="leading-none">{companionCount}</span>
-          </button>
-        )}
-
         {/* 时间 */}
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
           {timeText}
@@ -241,7 +209,7 @@ function SessionRow({
         </div>
       </div>
 
-      {/* ── 第 2 行：agent · 归属 · 状态 ── */}
+      {/* ── 第 2 行：agent · 归属 · 状态 · companion 折叠 ── */}
       <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
         <span
           className={`min-w-0 max-w-[55%] shrink-0 truncate ${
@@ -265,6 +233,48 @@ function SessionRow({
         >
           {statusLabel[session.execution_status]}
         </span>
+
+        {/* Companion 折叠按钮（右下角，明确文案） */}
+        {companionCount > 0 && onToggleCompanions && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCompanions();
+            }}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            title={
+              companionsExpanded
+                ? `折叠 ${companionCount} 个 companion 子会话`
+                : `展开 ${companionCount} 个 companion 子会话`
+            }
+            aria-expanded={companionsExpanded}
+            aria-label={
+              companionsExpanded
+                ? `折叠 ${companionCount} 个 companion`
+                : `展开 ${companionCount} 个 companion`
+            }
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              className={`transition-transform ${companionsExpanded ? "rotate-90" : ""}`}
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            <span className="leading-none">
+              {companionsExpanded ? "折叠" : "展开"} {companionCount} 个 companion
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件设计规范"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 使用约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有组件/逻辑"}

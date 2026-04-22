@@ -20,6 +20,7 @@ import {
   SinglePresetDialog,
 } from "./agent-preset-editor";
 import type { PresetFormState } from "./agent-preset-editor";
+import { filterAgents } from "./agent-filter";
 
 const EMPTY_LINKS: ProjectAgentLink[] = [];
 
@@ -498,6 +499,8 @@ export function ProjectAgentView({
   const [isLinkOpen, setIsLinkOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [expandedAgentKeys, setExpandedAgentKeys] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     void fetchLinks(project.id);
@@ -563,7 +566,35 @@ export function ProjectAgentView({
     });
   }, [agents]);
 
+  const visibleAgents = useMemo(
+    () => filterAgents(sortedAgents, searchKeyword),
+    [sortedAgents, searchKeyword],
+  );
+
   const activeCount = agents.filter((a) => a.session != null).length;
+
+  const toggleExpand = useCallback((agentKey: string) => {
+    setExpandedAgentKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentKey)) next.delete(agentKey);
+      else next.add(agentKey);
+      return next;
+    });
+  }, []);
+
+  const handleQuickNewSession = useCallback(
+    (agent: ProjectAgentSummary) => {
+      // 复用展开态“新对话/打开会话”按钮的 handler：
+      // 若该 agent 已有活跃会话且父组件提供了强制新开的入口，则强制新建；
+      // 否则走常规 onOpenAgent（若无会话则新建，若有会话则继续）。
+      if (agent.session && onForceNewSession) {
+        onForceNewSession(agent);
+      } else {
+        onOpenAgent(agent);
+      }
+    },
+    [onForceNewSession, onOpenAgent],
+  );
 
   if (isLoading && agents.length === 0) {
     return (
@@ -607,15 +638,53 @@ export function ProjectAgentView({
           </div>
         </header>
 
+        {/* ── 搜索框 ── */}
+        <div className="shrink-0 border-b border-border bg-background px-3 py-2">
+          <div className="relative">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder="搜索 agent…"
+              className="h-8 w-full rounded-[8px] border border-border bg-secondary/35 pl-8 pr-2.5 text-xs text-foreground placeholder:text-muted-foreground/70 outline-none transition-colors focus:border-primary focus:bg-background"
+            />
+            {searchKeyword && (
+              <button
+                type="button"
+                onClick={() => setSearchKeyword("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-[4px] px-1 text-[11px] text-muted-foreground hover:text-foreground"
+                title="清除"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </div>
+
         {error && (
           <div className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-6 py-2.5 text-sm text-destructive">
             Agent 列表加载异常：{error}
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-4 pt-3">
-          <div className="flex flex-col gap-3">
-            {sortedAgents.map((agent) => {
+        <div className="flex-1 overflow-y-auto px-3 py-3">
+          <div className="flex flex-col gap-2">
+            {visibleAgents.map((agent) => {
               const activity = getActivityLevel(agent.session?.last_activity);
               const link = findLinkForAgent(agent);
               const mergedConfig = link?.merged_config ?? {};
@@ -633,27 +702,80 @@ export function ProjectAgentView({
                     agent.preset_name ?? agent.display_name,
                   ),
               );
+              const isExpanded = expandedAgentKeys.has(agent.key);
+              const thinkingActive =
+                agent.executor.thinking_level && agent.executor.thinking_level !== "off";
 
               return (
-                <article
+                <div
                   key={agent.key}
-                  className="flex flex-col rounded-[14px] border border-border bg-background/75 p-4"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isExpanded}
+                  aria-controls={`agent-detail-${agent.key}`}
+                  onClick={() => toggleExpand(agent.key)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleExpand(agent.key);
+                    }
+                  }}
+                  className={`group cursor-pointer rounded-md border border-border bg-background p-3 transition-all hover:shadow-sm ${
+                    isExpanded ? "bg-secondary/30" : ""
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${activityDotClass[activity]}`}
-                        title={formatRelativeTime(agent.session?.last_activity)}
-                      />
-                      <div>
-                        <p className="text-lg font-semibold text-foreground">{agent.display_name}</p>
-                        <p className="mt-0.5 text-sm leading-6 text-muted-foreground">{agent.description}</p>
+                  {/* ── 卡片头部：状态点 + 名称 + 操作按钮组 ── */}
+                  <div className="flex items-start gap-2">
+                    <span
+                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${activityDotClass[activity]}`}
+                      title={formatRelativeTime(agent.session?.last_activity)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground" title={agent.display_name}>
+                        {agent.display_name}
                       </div>
+                      {/* 描述：默认 1 行截断 */}
+                      {agent.description && !isExpanded && (
+                        <p
+                          className="mt-0.5 truncate text-[11px] text-muted-foreground"
+                          title={agent.description}
+                        >
+                          {agent.description}
+                        </p>
+                      )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <span className="rounded-full border border-border bg-secondary px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        {agent.executor.executor}
-                      </span>
+
+                    {/* 操作按钮区：新建会话(常驻) + 菜单 */}
+                    <div
+                      className="flex shrink-0 items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleQuickNewSession(agent);
+                        }}
+                        aria-label="新建会话"
+                        title="新建会话"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-secondary/50 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M12 5v14" />
+                          <path d="M5 12h14" />
+                        </svg>
+                      </button>
                       <CardMenu items={[
                         { key: "config", label: "编辑配置", onSelect: () => handleOpenEditConfig(agent) },
                         { key: "---", label: "", onSelect: () => {} },
@@ -662,146 +784,207 @@ export function ProjectAgentView({
                     </div>
                   </div>
 
-                  {/* ── Executor 详情 ── */}
-                  {(agent.executor.model_id || (agent.executor.thinking_level && agent.executor.thinking_level !== "off") || agent.executor.permission_policy) && (
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                  {/* ── 默认态核心 Tag：执行器 + 模型 + 推理级别 ── */}
+                  {!isExpanded && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
+                        title="执行器"
+                      >
+                        {agent.executor.executor}
+                      </span>
                       {agent.executor.model_id && (
-                        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-muted-foreground" title="模型">
+                        <span
+                          className="max-w-[160px] truncate rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                          title={`模型: ${agent.executor.model_id}`}
+                        >
                           {agent.executor.model_id}
                         </span>
                       )}
-                      {agent.executor.thinking_level && agent.executor.thinking_level !== "off" && (
-                        <span className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-amber-600 dark:text-amber-400" title="推理级别">
-                          思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
-                        </span>
-                      )}
-                      {agent.executor.permission_policy && (
+                      {thinkingActive && (
                         <span
-                          className={`rounded-[6px] border px-1.5 py-0.5 ${
-                            agent.executor.permission_policy === "AUTO"
-                              ? "border-emerald-400/30 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
-                              : agent.executor.permission_policy === "SUPERVISED"
-                                ? "border-blue-400/30 bg-blue-500/8 text-blue-600 dark:text-blue-400"
-                                : "border-border bg-secondary/40 text-muted-foreground"
-                          }`}
-                          title="权限策略"
+                          className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                          title="推理级别"
                         >
-                          {agent.executor.permission_policy}
+                          思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
                         </span>
                       )}
                     </div>
                   )}
 
-                  {/* ── 能力标签 ── */}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {isCompanionTarget && (
-                      <span
-                        className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
-                        title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
-                      >
-                        Companion
-                      </span>
-                    )}
-                    {toolClusters.length > 0 ? toolClusters.map((cluster) => {
-                      const opt = TOOL_CLUSTER_OPTIONS.find((o) => o.value === cluster);
-                      if (!opt) return null;
-                      const colorCls =
-                        cluster === "read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
-                        : cluster === "write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
-                        : cluster === "execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
-                        : cluster === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
-                        : "border-border bg-secondary/40 text-muted-foreground";
-                      return (
-                        <span key={cluster} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
-                          {opt.label}
-                        </span>
-                      );
-                    }) : (
-                      <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
-                    )}
-                    {allowedCompanions.length > 0 && (
-                      <span
-                        className="rounded-full border border-violet-400/20 bg-violet-500/5 px-2 py-0.5 text-[10px] text-violet-500/70"
-                        title={`可调用: ${allowedCompanions.join(", ")}`}
-                      >
-                        → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
-                      </span>
-                    )}
-                    {link?.default_lifecycle_key && (
-                      <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
-                        Lifecycle: {link.default_lifecycle_key}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void handleToggleLinkDefault(agent.key, "is_default_for_story", link?.is_default_for_story ?? false)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                        link?.is_default_for_story
-                          ? "border-primary/30 bg-primary/10 text-primary"
-                          : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                      }`}
-                      title={link?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
+                  {/* ── 展开态详情 ── */}
+                  {isExpanded && (
+                    <div
+                      id={`agent-detail-${agent.key}`}
+                      className="mt-3 space-y-3 border-t border-border/40 pt-3"
                     >
-                      Story 默认
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleToggleLinkDefault(agent.key, "is_default_for_task", link?.is_default_for_task ?? false)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                        link?.is_default_for_task
-                          ? "border-primary/30 bg-primary/10 text-primary"
-                          : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                      }`}
-                      title={link?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
-                    >
-                      Task 默认
-                    </button>
-                  </div>
+                      {/* 描述（完整） */}
+                      {agent.description && (
+                        <p className="text-xs leading-5 text-muted-foreground">{agent.description}</p>
+                      )}
 
-                  <div className="mt-auto pt-4">
-                    {agent.session && (
-                      <div className="mb-2 flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span className="truncate">{agent.session.session_title ?? "会话进行中"}</span>
-                        <span className="ml-2 shrink-0">{formatRelativeTime(agent.session.last_activity)}</span>
+                      {/* Executor 详情 */}
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                        <span
+                          className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5 font-medium uppercase tracking-[0.14em] text-muted-foreground"
+                          title="执行器"
+                        >
+                          {agent.executor.executor}
+                        </span>
+                        {agent.executor.model_id && (
+                          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-muted-foreground" title="模型">
+                            {agent.executor.model_id}
+                          </span>
+                        )}
+                        {thinkingActive && (
+                          <span className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-amber-600 dark:text-amber-400" title="推理级别">
+                            思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
+                          </span>
+                        )}
+                        {agent.executor.permission_policy && (
+                          <span
+                            className={`rounded-[6px] border px-1.5 py-0.5 ${
+                              agent.executor.permission_policy === "AUTO"
+                                ? "border-emerald-400/30 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
+                                : agent.executor.permission_policy === "SUPERVISED"
+                                  ? "border-blue-400/30 bg-blue-500/8 text-blue-600 dark:text-blue-400"
+                                  : "border-border bg-secondary/40 text-muted-foreground"
+                            }`}
+                            title="权限策略"
+                          >
+                            {agent.executor.permission_policy}
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <div className="mb-2.5">
-                      <SessionHistoryPanel
-                        projectId={project.id}
-                        agentKey={agent.key}
-                        agentDisplayName={agent.display_name}
-                        executorHint={agent.executor.executor}
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      {(!onForceNewSession || !agent.session) && (
+
+                      {/* 能力标签 */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {isCompanionTarget && (
+                          <span
+                            className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
+                            title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
+                          >
+                            Companion
+                          </span>
+                        )}
+                        {toolClusters.length > 0 ? toolClusters.map((cluster) => {
+                          const opt = TOOL_CLUSTER_OPTIONS.find((o) => o.value === cluster);
+                          if (!opt) return null;
+                          const colorCls =
+                            cluster === "read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
+                            : cluster === "write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
+                            : cluster === "execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
+                            : cluster === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
+                            : "border-border bg-secondary/40 text-muted-foreground";
+                          return (
+                            <span key={cluster} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
+                              {opt.label}
+                            </span>
+                          );
+                        }) : (
+                          <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
+                        )}
+                        {allowedCompanions.length > 0 && (
+                          <span
+                            className="rounded-full border border-violet-400/20 bg-violet-500/5 px-2 py-0.5 text-[10px] text-violet-500/70"
+                            title={`可调用: ${allowedCompanions.join(", ")}`}
+                          >
+                            → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {link?.default_lifecycle_key && (
+                          <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
+                            Lifecycle: {link.default_lifecycle_key}
+                          </span>
+                        )}
                         <button
                           type="button"
-                          onClick={() => onOpenAgent(agent)}
-                          className="flex-1 rounded-[10px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleLinkDefault(agent.key, "is_default_for_story", link?.is_default_for_story ?? false);
+                          }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                            link?.is_default_for_story
+                              ? "border-primary/30 bg-primary/10 text-primary"
+                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
+                          }`}
+                          title={link?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
                         >
-                          {agent.session ? "继续对话" : "打开 Agent 会话"}
+                          Story 默认
                         </button>
-                      )}
-                      {agent.session && onForceNewSession && (
                         <button
                           type="button"
-                          onClick={() => onForceNewSession(agent)}
-                          className="flex-1 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleLinkDefault(agent.key, "is_default_for_task", link?.is_default_for_task ?? false);
+                          }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                            link?.is_default_for_task
+                              ? "border-primary/30 bg-primary/10 text-primary"
+                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
+                          }`}
+                          title={link?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
                         >
-                          新对话
+                          Task 默认
                         </button>
+                      </div>
+
+                      {/* 当前会话信息 */}
+                      {agent.session && (
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                          <span className="truncate">{agent.session.session_title ?? "会话进行中"}</span>
+                          <span className="ml-2 shrink-0">{formatRelativeTime(agent.session.last_activity)}</span>
+                        </div>
                       )}
+
+                      {/* 历史会话面板 */}
+                      <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                        <SessionHistoryPanel
+                          projectId={project.id}
+                          agentKey={agent.key}
+                          agentDisplayName={agent.display_name}
+                          executorHint={agent.executor.executor}
+                        />
+                      </div>
+
+                      {/* 操作按钮 */}
+                      <div
+                        className="flex gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        {(!onForceNewSession || !agent.session) && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenAgent(agent)}
+                            className="flex-1 rounded-[10px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
+                          >
+                            {agent.session ? "继续对话" : "打开 Agent 会话"}
+                          </button>
+                        )}
+                        {agent.session && onForceNewSession && (
+                          <button
+                            type="button"
+                            onClick={() => onForceNewSession(agent)}
+                            className="flex-1 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                          >
+                            新对话
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </article>
+                  )}
+                </div>
               );
             })}
-
-            {agents.length === 0 && (
-              <p className="mt-6 text-center text-sm text-muted-foreground">暂无 Agent，点击右上角新建或关联已有</p>
-            )}
           </div>
+
+          {agents.length === 0 && (
+            <p className="mt-6 px-4 text-center text-sm text-muted-foreground">暂无 Agent，点击右上角新建或关联已有</p>
+          )}
+          {agents.length > 0 && visibleAgents.length === 0 && (
+            <p className="mt-6 px-4 text-center text-sm text-muted-foreground">未匹配到 agent，试试其他关键词</p>
+          )}
         </div>
       </div>
 

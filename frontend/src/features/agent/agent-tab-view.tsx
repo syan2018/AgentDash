@@ -179,7 +179,7 @@ export function AgentTabView() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── 左栏：完整 ProjectAgentView ── */}
-      <aside className="flex h-full w-[480px] shrink-0 flex-col overflow-y-auto border-r border-border">
+      <aside className="flex h-full w-[360px] shrink-0 flex-col overflow-y-auto border-r border-border">
         <ProjectAgentView
           project={currentProject}
           agents={agents}
@@ -195,6 +195,7 @@ export function AgentTabView() {
         {selectedSessionId === null ? (
           /* 展示活跃会话列表 */
           <ActiveSessionList
+            projectId={currentProjectId}
             sessions={sessions}
             isLoading={sessionsLoading}
             selectedSessionId={null}

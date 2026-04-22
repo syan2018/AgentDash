@@ -1,18 +1,19 @@
 /**
  * 活跃会话列表 — ActiveSessionList
  *
- * 设计（PR2）：
- * - 行级展示（line-row）：高度 ~36-40px、`border-b` 分隔、hover 时右侧淡入操作区
- * - 分组：先按 `groupSessionsByStory` 做 Story → Task → Companion 深嵌套
- *   - Story 分组带折叠头；折叠状态写入 localStorage（key 见 session-grouping.ts）
- *   - Task 作为 Story 的 child；Companion 按 parent_session_id 嵌套在所属行下方
- *   - orphan / project 会话以根级 line-row 渲染
- * - 行点击切换到 SessionChatView（由父层 onSelectSession 处理）
- *
- * 注：本次重构只影响右栏会话列表的视觉与分组，不动 SSE / store / 选中态流转。
+ * 设计（PR3 + 两行式行调整）：
+ * - 顶部精简筛选条：搜索框 + 状态 tab（全部 / 进行中 / 空闲 / 已结束）
+ * - 行级展示：两行式布局，单行约 52-60px
+ *   - 第 1 行：状态圆点 + 标题（flex-1 截断）+ 最后活动时间（右侧紧凑元信息）
+ *   - 第 2 行：agent 名 · Story/Task 归属（含"打开 Story"小按钮）· 状态标签
+ *   - hover 才出现右侧操作区（跳转按钮）
+ * - Story 分组带折叠头；折叠状态写入 localStorage（见 session-grouping.ts）
+ * - Companion 默认折叠，父行右侧显示 `+N` 徽标，点击展开/收起
+ *   - 折叠状态本地 useState，不持久化
+ *   - 徽标点击 stopPropagation，避免触发行的 session 切换
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ProjectSessionEntry } from "../../types";
 import {
@@ -21,11 +22,28 @@ import {
   writeStoryCollapsed,
   type SessionGroupNode,
 } from "./session-grouping";
+import {
+  applySessionFilters,
+  type SessionStatusFilter,
+} from "./session-filter";
 
 // ─── 通用工具 ──────────────────────────────────────────────────────────────
 
 function getAgentLabel(session: ProjectSessionEntry): string {
   return session.agent_display_name ?? session.agent_key ?? "—";
+}
+
+function getOwnerBadgeLabel(session: ProjectSessionEntry): string | null {
+  // 第二行显示的归属小字；优先用 owner_title / story_title
+  if (session.owner_type === "story") {
+    return session.owner_title ? `Story · ${session.owner_title}` : "Story";
+  }
+  if (session.owner_type === "task") {
+    const storyPart = session.story_title ? `${session.story_title} / ` : "";
+    const taskPart = session.owner_title ?? "Task";
+    return `Task · ${storyPart}${taskPart}`;
+  }
+  return null; // project 会话不展示归属
 }
 
 function formatRelativeTime(timestamp: number | null): string {
@@ -73,7 +91,15 @@ const statusLabel: Record<ProjectSessionEntry["execution_status"], string> = {
   interrupted: "已中断",
 };
 
-// ─── SessionRow：单行会话 ────────────────────────────────────────────────
+const statusPillClass: Record<ProjectSessionEntry["execution_status"], string> = {
+  running: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  completed: "bg-blue-500/10 text-blue-500",
+  failed: "bg-red-500/10 text-red-500",
+  interrupted: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  idle: "bg-muted text-muted-foreground",
+};
+
+// ─── SessionRow：两行式会话行 ────────────────────────────────────────────
 
 interface SessionRowProps {
   session: ProjectSessionEntry;
@@ -83,6 +109,12 @@ interface SessionRowProps {
   indent: number;
   /** 是否作为 companion 展示（决定前缀箭头与次级视觉权重） */
   isCompanion?: boolean;
+  /** companion 数量：>0 时在标题右侧显示 `+N` 徽标 */
+  companionCount?: number;
+  /** companion 是否已展开（仅当 companionCount>0 时生效） */
+  companionsExpanded?: boolean;
+  /** 切换 companion 展开状态 */
+  onToggleCompanions?: () => void;
 }
 
 function SessionRow({
@@ -91,17 +123,26 @@ function SessionRow({
   onSelectSession,
   indent,
   isCompanion = false,
+  companionCount = 0,
+  companionsExpanded = false,
+  onToggleCompanions,
 }: SessionRowProps) {
   const navigate = useNavigate();
 
   // 行左 padding：基础 12px + 每层 16px（story 标题下 task 行 indent=1 → 28px）
   const leftPadPx = 12 + indent * 16;
 
-  // 时间/agent 次要信息；companion 行字号更小
   const agentText = getAgentLabel(session);
   const timeText = formatRelativeTime(session.last_activity);
+  const ownerLabel = getOwnerBadgeLabel(session);
 
   const handleClick = () => onSelectSession(session.session_id);
+
+  const canOpenStory =
+    session.owner_type === "story" || (session.owner_type === "task" && !!session.story_id);
+
+  const storyIdForNav =
+    session.owner_type === "story" ? session.owner_id : session.story_id;
 
   return (
     <div
@@ -115,80 +156,91 @@ function SessionRow({
         }
       }}
       style={{ paddingLeft: leftPadPx }}
-      className={`group flex h-[38px] cursor-pointer items-center gap-2 border-b border-border/50 pr-3 transition-colors ${
-        isSelected
-          ? "bg-primary/5"
-          : "hover:bg-muted/40"
+      className={`group flex cursor-pointer flex-col justify-center gap-0.5 border-b border-border/40 py-2 pr-3 transition-colors ${
+        isSelected ? "bg-primary/5" : "hover:bg-muted/40"
       }`}
       title={session.session_title ?? "无标题会话"}
     >
-      {/* 前缀：companion 箭头 */}
-      {isCompanion && (
-        <span className="shrink-0 text-[11px] text-violet-400/70">↳</span>
-      )}
+      {/* ── 第 1 行：圆点 + 标题 + 时间 + hover 操作区 ── */}
+      <div className="flex items-center gap-2">
+        {/* 前缀：companion 箭头 */}
+        {isCompanion && (
+          <span className="shrink-0 text-[11px] text-violet-400/70">↳</span>
+        )}
 
-      {/* 状态圆点 */}
-      <StatusDot status={session.execution_status} />
+        {/* 状态圆点 */}
+        <StatusDot status={session.execution_status} />
 
-      {/* 标题 */}
-      <span
-        className={`min-w-0 flex-1 truncate ${
-          isCompanion ? "text-xs text-muted-foreground" : "text-sm text-foreground"
-        } ${isSelected ? "font-medium" : ""}`}
-      >
-        {session.session_title ?? "无标题会话"}
-      </span>
-
-      {/* Agent（始终可见，次要信息，缩短） */}
-      <span className="hidden shrink-0 truncate text-[11px] text-muted-foreground/70 sm:inline-block sm:max-w-[110px]">
-        {agentText}
-      </span>
-
-      {/* 分隔 */}
-      <span className="hidden shrink-0 text-muted-foreground/30 sm:inline">·</span>
-
-      {/* 时间 */}
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
-        {timeText}
-      </span>
-
-      {/* Hover 操作区：状态 pill + 打开 Story 快捷键 */}
-      <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* 标题 */}
         <span
-          className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-            session.execution_status === "running"
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-              : session.execution_status === "failed"
-                ? "bg-red-500/10 text-red-500"
-                : session.execution_status === "completed"
-                  ? "bg-blue-500/10 text-blue-500"
-                  : "bg-muted text-muted-foreground"
-          }`}
+          className={`min-w-0 flex-1 truncate ${
+            isCompanion ? "text-xs text-muted-foreground" : "text-sm text-foreground"
+          } ${isSelected ? "font-medium" : ""}`}
         >
-          {statusLabel[session.execution_status]}
+          {session.session_title ?? "无标题会话"}
         </span>
-        {/* Task / Story 行：提供跳转到 Story 详情页的按钮 */}
-        {(session.owner_type === "story" || (session.owner_type === "task" && session.story_id)) && (
+
+        {/* Companion 折叠徽标（仅父 session 有 companion 时显示） */}
+        {companionCount > 0 && onToggleCompanions && (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              const storyId =
-                session.owner_type === "story" ? session.owner_id : session.story_id;
-              if (storyId) navigate(`/story/${storyId}`);
+              onToggleCompanions();
             }}
-            className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
-            title="打开所属 Story"
+            className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            title={companionsExpanded ? "收起 companion" : `展开 ${companionCount} 条 companion`}
+            aria-expanded={companionsExpanded}
           >
-            打开 Story ↗
+            {companionsExpanded ? "−" : "+"}
+            {companionCount}
           </button>
         )}
+
+        {/* 时间 */}
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
+          {timeText}
+        </span>
+
+        {/* Hover 操作区 */}
+        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {canOpenStory && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (storyIdForNav) navigate(`/story/${storyIdForNav}`);
+              }}
+              className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
+              title="打开所属 Story"
+            >
+              打开 Story ↗
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── 第 2 行：agent · 归属 · 状态 ── */}
+      <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
+        <span className="shrink-0 truncate max-w-[120px]">{agentText}</span>
+        {ownerLabel && (
+          <>
+            <span className="shrink-0 text-muted-foreground/30">·</span>
+            <span className="min-w-0 flex-1 truncate">{ownerLabel}</span>
+          </>
+        )}
+        {!ownerLabel && <span className="min-w-0 flex-1" />}
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${statusPillClass[session.execution_status]}`}
+        >
+          {statusLabel[session.execution_status]}
+        </span>
       </div>
     </div>
   );
 }
 
-// ─── SessionSubtree：递归渲染 task + companions ─────────────────────────
+// ─── SessionSubtree：递归渲染 task + companions（含折叠） ─────────────
 
 interface SessionSubtreeProps {
   node: SessionGroupNode;
@@ -207,6 +259,10 @@ function SessionSubtree({
   indent,
   asCompanion = false,
 }: SessionSubtreeProps) {
+  // Companion 折叠：默认收起；本地 useState，不持久化
+  const [companionsExpanded, setCompanionsExpanded] = useState(false);
+  const companionCount = node.companions.length;
+
   return (
     <>
       <SessionRow
@@ -215,8 +271,13 @@ function SessionSubtree({
         onSelectSession={onSelectSession}
         indent={indent}
         isCompanion={asCompanion}
+        companionCount={companionCount}
+        companionsExpanded={companionsExpanded}
+        onToggleCompanions={
+          companionCount > 0 ? () => setCompanionsExpanded((v) => !v) : undefined
+        }
       />
-      {/* Story 的 child task */}
+      {/* Story 的 child task（不参与 companion 折叠） */}
       {node.children.map((child) => (
         <SessionSubtree
           key={child.session.session_id}
@@ -226,17 +287,18 @@ function SessionSubtree({
           indent={indent + 1}
         />
       ))}
-      {/* Companion（父子 session） */}
-      {node.companions.map((companion) => (
-        <SessionRow
-          key={companion.session_id}
-          session={companion}
-          isSelected={selectedSessionId === companion.session_id}
-          onSelectSession={onSelectSession}
-          indent={indent + 1}
-          isCompanion
-        />
-      ))}
+      {/* Companion 行：受折叠控制 */}
+      {companionsExpanded &&
+        node.companions.map((companion) => (
+          <SessionRow
+            key={companion.session_id}
+            session={companion}
+            isSelected={selectedSessionId === companion.session_id}
+            onSelectSession={onSelectSession}
+            indent={indent + 1}
+            isCompanion
+          />
+        ))}
     </>
   );
 }
@@ -334,6 +396,10 @@ function StoryGroup({ node, projectId, selectedSessionId, onSelectSession }: Sto
 
   const descendantCount = countDescendants(node);
 
+  // Story 自身的 companion 折叠状态（同样本地 useState）
+  const [storyCompanionsExpanded, setStoryCompanionsExpanded] = useState(false);
+  const storyCompanionCount = node.companions.length;
+
   return (
     <div>
       <StoryGroupHeader
@@ -350,18 +416,26 @@ function StoryGroup({ node, projectId, selectedSessionId, onSelectSession }: Sto
             isSelected={selectedSessionId === node.session.session_id}
             onSelectSession={onSelectSession}
             indent={0}
+            companionCount={storyCompanionCount}
+            companionsExpanded={storyCompanionsExpanded}
+            onToggleCompanions={
+              storyCompanionCount > 0
+                ? () => setStoryCompanionsExpanded((v) => !v)
+                : undefined
+            }
           />
-          {/* Story 自己的 companions */}
-          {node.companions.map((companion) => (
-            <SessionRow
-              key={companion.session_id}
-              session={companion}
-              isSelected={selectedSessionId === companion.session_id}
-              onSelectSession={onSelectSession}
-              indent={1}
-              isCompanion
-            />
-          ))}
+          {/* Story 自己的 companions：受折叠控制 */}
+          {storyCompanionsExpanded &&
+            node.companions.map((companion) => (
+              <SessionRow
+                key={companion.session_id}
+                session={companion}
+                isSelected={selectedSessionId === companion.session_id}
+                onSelectSession={onSelectSession}
+                indent={1}
+                isCompanion
+              />
+            ))}
           {/* Story 下的 Task（indent=1） + task 自己的 companions (indent=2) */}
           {node.children.map((child) => (
             <SessionSubtree
@@ -374,6 +448,91 @@ function StoryGroup({ node, projectId, selectedSessionId, onSelectSession }: Sto
           ))}
         </>
       )}
+    </div>
+  );
+}
+
+// ─── 筛选条：搜索框 + 状态 tab ─────────────────────────────────────
+
+interface SessionFilterBarProps {
+  keyword: string;
+  onKeywordChange: (value: string) => void;
+  status: SessionStatusFilter;
+  onStatusChange: (value: SessionStatusFilter) => void;
+  counts: Record<SessionStatusFilter, number>;
+}
+
+const STATUS_TABS: Array<{ key: SessionStatusFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "running", label: "进行中" },
+  { key: "idle", label: "空闲" },
+  { key: "ended", label: "已结束" },
+];
+
+function SessionFilterBar({
+  keyword,
+  onKeywordChange,
+  status,
+  onStatusChange,
+  counts,
+}: SessionFilterBarProps) {
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+      {/* 搜索框 */}
+      <div className="relative flex h-7 min-w-0 flex-1 items-center">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-2 text-xs text-muted-foreground/60"
+        >
+          🔍
+        </span>
+        <input
+          type="text"
+          value={keyword}
+          onChange={(e) => onKeywordChange(e.target.value)}
+          placeholder="搜索 session…"
+          className="h-7 w-full rounded-md border border-border bg-background pl-7 pr-6 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+          aria-label="搜索 session"
+        />
+        {keyword.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onKeywordChange("")}
+            className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+            title="清除搜索"
+            aria-label="清除搜索"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {/* 状态 tab */}
+      <div className="flex shrink-0 items-center gap-1">
+        {STATUS_TABS.map((tab) => {
+          const active = status === tab.key;
+          const count = counts[tab.key];
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => onStatusChange(tab.key)}
+              className={`flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors ${
+                active
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+              aria-pressed={active}
+            >
+              <span>{tab.label}</span>
+              <span
+                className={`tabular-nums ${active ? "text-primary/80" : "text-muted-foreground/60"}`}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -395,6 +554,51 @@ export function ActiveSessionList({
   selectedSessionId,
   onSelectSession,
 }: ActiveSessionListProps) {
+  const [keyword, setKeyword] = useState("");
+  const [status, setStatus] = useState<SessionStatusFilter>("all");
+
+  // 项目切换时重置筛选状态（官方「在 props 变化时调整 state」模式）
+  const [lastProjectId, setLastProjectId] = useState(projectId);
+  if (lastProjectId !== projectId) {
+    setLastProjectId(projectId);
+    setKeyword("");
+    setStatus("all");
+  }
+
+  // 预计算各状态 tab 的计数（仅受 keyword 过滤影响，不含当前 status）
+  const countsByStatus: Record<SessionStatusFilter, number> = useMemo(() => {
+    const base = applySessionFilters(sessions, keyword, "all");
+    const counts: Record<SessionStatusFilter, number> = {
+      all: base.length,
+      running: 0,
+      idle: 0,
+      ended: 0,
+    };
+    for (const s of base) {
+      switch (s.execution_status) {
+        case "running":
+          counts.running += 1;
+          break;
+        case "idle":
+          counts.idle += 1;
+          break;
+        case "completed":
+        case "failed":
+        case "interrupted":
+          counts.ended += 1;
+          break;
+      }
+    }
+    return counts;
+  }, [sessions, keyword]);
+
+  const filteredSessions = useMemo(
+    () => applySessionFilters(sessions, keyword, status),
+    [sessions, keyword, status],
+  );
+
+  const roots = useMemo(() => groupSessionsByStory(filteredSessions), [filteredSessions]);
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -403,18 +607,8 @@ export function ActiveSessionList({
     );
   }
 
-  if (sessions.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-sm font-medium text-muted-foreground">暂无活跃会话</p>
-        <p className="text-xs text-muted-foreground/60">
-          点击左侧 Agent 的「打开会话」按钮来创建或恢复会话
-        </p>
-      </div>
-    );
-  }
-
-  const roots = groupSessionsByStory(sessions);
+  const isEmpty = sessions.length === 0;
+  const isFilteredEmpty = !isEmpty && filteredSessions.length === 0;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -426,36 +620,67 @@ export function ActiveSessionList({
           </span>
           <div>
             <p className="text-sm font-semibold tracking-tight text-foreground">活跃会话</p>
-            <p className="text-xs text-muted-foreground">{sessions.length} 个会话</p>
+            <p className="text-xs text-muted-foreground">
+              {isEmpty
+                ? "0 个会话"
+                : keyword || status !== "all"
+                  ? `${filteredSessions.length} / ${sessions.length} 个会话`
+                  : `${sessions.length} 个会话`}
+            </p>
           </div>
         </div>
       </div>
 
+      {/* 筛选条（有 session 才显示） */}
+      {!isEmpty && (
+        <SessionFilterBar
+          keyword={keyword}
+          onKeywordChange={setKeyword}
+          status={status}
+          onStatusChange={setStatus}
+          counts={countsByStatus}
+        />
+      )}
+
       {/* 列表 */}
       <div className="flex-1 overflow-y-auto">
-        {roots.map((root) => {
-          if (root.kind === "story") {
+        {isEmpty ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-sm font-medium text-muted-foreground">暂无活跃会话</p>
+            <p className="text-xs text-muted-foreground/60">
+              点击左侧 Agent 的「打开会话」按钮来创建或恢复会话
+            </p>
+          </div>
+        ) : isFilteredEmpty ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-sm font-medium text-muted-foreground">未匹配到会话</p>
+            <p className="text-xs text-muted-foreground/60">请调整搜索关键词或状态筛选</p>
+          </div>
+        ) : (
+          roots.map((root) => {
+            if (root.kind === "story") {
+              return (
+                <StoryGroup
+                  key={root.session.session_id}
+                  node={root}
+                  projectId={projectId}
+                  selectedSessionId={selectedSessionId}
+                  onSelectSession={onSelectSession}
+                />
+              );
+            }
+            // orphan / project：根级 line-row + companions
             return (
-              <StoryGroup
+              <SessionSubtree
                 key={root.session.session_id}
                 node={root}
-                projectId={projectId}
                 selectedSessionId={selectedSessionId}
                 onSelectSession={onSelectSession}
+                indent={0}
               />
             );
-          }
-          // orphan / project：根级 line-row + companions
-          return (
-            <SessionSubtree
-              key={root.session.session_id}
-              node={root}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={onSelectSession}
-              indent={0}
-            />
-          );
-        })}
+          })
+        )}
       </div>
     </div>
   );

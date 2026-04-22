@@ -1,6 +1,7 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optString, optStringField } from "../api/mappers";
 import type {
+  CapabilityDirective,
   HookRulePreset,
   ContextStrategy,
   GateStrategy,
@@ -198,17 +199,42 @@ function mapLifecycleEdge(raw: unknown): LifecycleEdge {
   };
 }
 
+function mapCapabilityDirective(raw: unknown, index: number): CapabilityDirective {
+  const value = asRecord(raw);
+  if (!value) {
+    throw new Error(`capability_directives[${index}] 必须是对象`);
+  }
+  const add = value.add;
+  const remove = value.remove;
+  if (typeof add === "string") {
+    if (add.trim().length === 0) {
+      throw new Error(`capability_directives[${index}].add 不能为空`);
+    }
+    return { add };
+  }
+  if (typeof remove === "string") {
+    if (remove.trim().length === 0) {
+      throw new Error(`capability_directives[${index}].remove 不能为空`);
+    }
+    return { remove };
+  }
+  throw new Error(`capability_directives[${index}] 缺少 add / remove 字段`);
+}
+
 function mapWorkflowContract(raw: unknown): WorkflowContract {
   const value = asRecord(raw);
   if (!value) {
     throw new Error("workflow contract 缺失或不是对象");
   }
+  const directivesRaw = Array.isArray(value.capability_directives)
+    ? value.capability_directives
+    : [];
   return {
     injection: mapWorkflowInjectionSpec(value.injection),
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
     completion: mapWorkflowCompletionSpec(value.completion),
-    capabilities: asStringArray(value.capabilities),
+    capability_directives: directivesRaw.map((item, idx) => mapCapabilityDirective(item, idx)),
     recommended_output_ports: asRecordArray(value.recommended_output_ports ?? value.output_ports).map(mapOutputPortDefinition),
     recommended_input_ports: asRecordArray(value.recommended_input_ports ?? value.input_ports).map(mapInputPortDefinition),
   };

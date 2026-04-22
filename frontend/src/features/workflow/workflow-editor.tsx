@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  CapabilityEntry,
+  CapabilityDirective,
   HookRulePreset,
   McpPresetDto,
   OutputPortDefinition,
@@ -18,7 +18,16 @@ import type {
   GateStrategy,
   ContextStrategy,
 } from "../../types";
-import { capabilityEntryKey } from "../../types/workflow";
+import {
+  addDirective,
+  capabilityBlockedByWorkflow,
+  listDeclaredCapabilityKeys,
+  makeAddCapability,
+  makeRemoveCapability,
+  makeRemoveTool,
+  removeDirective,
+  toolBlockedByWorkflow,
+} from "./capability-directive-ops";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../services/mcpPreset";
 import { fetchToolCatalog } from "../../services/workflow";
@@ -479,13 +488,13 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
 
 // ─── Capabilities Editor ──────────────────────────────
 //
-// 本编辑器操作 `CapabilityEntry[]`（支持简写 string 和结构化 object 两种形式），
-// 在 UI 层拆分为 well-known 能力、MCP Preset、未识别 key 三段，
-// 并支持展开 capability 下属工具列表进行工具级排除。
+// 操作 `CapabilityDirective[]` —— 扁平的 Add / Remove 指令序列。
+// UI 分为两区：
+//   1. 基线能力（auto_granted baseline） —— 按 target_kind 计算，可直接「屏蔽此能力」/ 展开屏蔽单个工具
+//   2. 工作流追加能力 —— 非 baseline 的显式 Add（如 workflow_management、mcp:*）
+//
+// 每个按钮动作对应一条独立 Directive，与后端 slot 归约契约一一映射。
 
-// 注：`file_system` 是后端兼容用的别名（展开为 file_read + file_write + shell_execute），
-// 前端只暴露细粒度 key，避免"父别名 + 子 key"并列时出现重复工具面板。
-// 老数据里的 `file_system` 条目会落入「其他（不识别）」区提示用户迁移。
 const CAP_EDITOR_WELL_KNOWN_KEYS = [
   "file_read",
   "file_write",
@@ -527,6 +536,15 @@ const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> 
   workflow_management: "MCP workflow 管理工具",
 };
 
+// 各 target_kind 下 auto_granted=true 的能力基线。
+// 镜像自后端 `crates/agentdash-spi/src/tool_capability.rs::default_visibility_rules`。
+// 若后端 visibility rule 调整，此处需同步更新。
+const AUTO_GRANTED_BASELINE: Record<WorkflowTargetKind, WellKnownCapabilityKey[]> = {
+  project: ["file_read", "file_write", "shell_execute", "canvas", "collaboration", "relay_management"],
+  story: ["file_read", "file_write", "shell_execute", "story_management"],
+  task: ["file_read", "file_write", "shell_execute", "task_management"],
+};
+
 function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {
   return (CAP_EDITOR_WELL_KNOWN_KEYS as readonly string[]).includes(key);
 }
@@ -535,76 +553,211 @@ function extractMcpPresetName(key: string): string | null {
   return key.startsWith("mcp:") ? key.slice(4) : null;
 }
 
-/** 从 CapabilityEntry 中提取 exclude_tools 列表。 */
-function getExcludedTools(entry: CapabilityEntry): string[] {
-  return typeof entry === "string" ? [] : entry.exclude_tools ?? [];
+/** 工具行 — 展示单个工具，带「屏蔽此工具」/「恢复」按钮。 */
+function ToolRow({
+  capKey,
+  tool,
+  isBlocked,
+  onToggleBlock,
+}: {
+  capKey: string;
+  tool: ToolDescriptor;
+  isBlocked: boolean;
+  onToggleBlock: (capKey: string, toolName: string) => void;
+}) {
+  const scopeLabel =
+    tool.source.type === "platform_mcp"
+      ? tool.source.scope
+      : tool.source.type === "mcp"
+        ? tool.source.server_name
+        : tool.source.cluster;
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-md border px-2 py-1 text-[11px] transition-colors ${
+        isBlocked
+          ? "border-destructive/30 bg-destructive/5 text-destructive line-through"
+          : "border-border bg-background text-foreground"
+      }`}
+      title={`${tool.display_name}: ${tool.description}`}
+    >
+      <code className="font-mono">{tool.name}</code>
+      <span className="rounded bg-secondary/60 px-1 py-0.5 text-[9px] text-muted-foreground">
+        {scopeLabel}
+      </span>
+      {isBlocked && <span className="text-[9px]">(屏蔽)</span>}
+      <button
+        type="button"
+        onClick={() => onToggleBlock(capKey, tool.name)}
+        className={`ml-auto rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+          isBlocked
+            ? "text-primary hover:bg-primary/10"
+            : "text-destructive hover:bg-destructive/10"
+        }`}
+      >
+        {isBlocked ? "恢复" : "屏蔽此工具"}
+      </button>
+    </div>
+  );
 }
 
-/** 根据 key 在 capabilities 数组中查找对应 entry。 */
-function findEntryByKey(capabilities: CapabilityEntry[], key: string): CapabilityEntry | undefined {
-  return capabilities.find((e) => capabilityEntryKey(e) === key);
-}
-
-/** 替换指定 key 对应的 entry，或追加新 entry。 */
-function upsertEntry(capabilities: CapabilityEntry[], key: string, entry: CapabilityEntry): CapabilityEntry[] {
-  const idx = capabilities.findIndex((e) => capabilityEntryKey(e) === key);
-  if (idx >= 0) {
-    const next = [...capabilities];
-    next[idx] = entry;
-    return next;
-  }
-  return [...capabilities, entry];
-}
-
-/** 工具级排除面板 — 展开某个 capability 后展示下属工具，可单独排除。 */
-function ToolExclusionPanel({
+/** 工具列表面板 — 展开一个 capability 后按 directive 序列判定每个工具的屏蔽状态。 */
+function ToolListPanel({
   capKey,
   tools,
-  excludedTools,
-  onToggleTool,
+  directives,
+  onToggleToolBlock,
 }: {
   capKey: string;
   tools: ToolDescriptor[];
-  excludedTools: string[];
-  onToggleTool: (capKey: string, toolName: string) => void;
+  directives: CapabilityDirective[];
+  onToggleToolBlock: (capKey: string, toolName: string) => void;
 }) {
-  const excluded = new Set(excludedTools);
   if (tools.length === 0) {
     return <p className="pl-4 py-1 text-[11px] text-muted-foreground">此能力无下属平台工具</p>;
   }
   return (
-    <div className="pl-4 mt-1 flex flex-wrap gap-1">
-      {tools.map((tool) => {
-        const isExcluded = excluded.has(tool.name);
-        return (
+    <div className="pl-4 mt-1 flex flex-col gap-1">
+      {tools.map((tool) => (
+        <ToolRow
+          key={tool.name}
+          capKey={capKey}
+          tool={tool}
+          isBlocked={toolBlockedByWorkflow(directives, capKey, tool.name)}
+          onToggleBlock={onToggleToolBlock}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Capability 行 — 基线/追加两区共用的渲染单元。 */
+function CapabilityRow({
+  capKey,
+  label,
+  description,
+  isBaseline,
+  isBlocked,
+  isExpanded,
+  tools,
+  directives,
+  onToggleBlock,
+  onRemoveAdd,
+  onToggleExpand,
+  onToggleToolBlock,
+  extraBadge,
+}: {
+  capKey: string;
+  label: string;
+  description: string;
+  isBaseline: boolean;
+  isBlocked: boolean;
+  isExpanded: boolean;
+  tools: ToolDescriptor[];
+  directives: CapabilityDirective[];
+  onToggleBlock?: () => void;
+  onRemoveAdd?: () => void;
+  onToggleExpand: () => void;
+  onToggleToolBlock: (capKey: string, toolName: string) => void;
+  extraBadge?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`rounded-[8px] border px-3 py-2 transition-colors ${
+        isBlocked
+          ? "border-destructive/30 bg-destructive/5"
+          : "border-border bg-secondary/20"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`text-xs font-medium ${
+                isBlocked ? "text-destructive line-through" : "text-foreground"
+              }`}
+            >
+              {label}
+            </span>
+            {extraBadge}
+            {isBlocked && (
+              <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[9px] text-destructive">
+                已屏蔽
+              </span>
+            )}
+            {!isBaseline && !isBlocked && (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary/70">
+                追加
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted-foreground leading-[1.35]">
+            {description}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <button
-            key={tool.name}
             type="button"
-            onClick={() => onToggleTool(capKey, tool.name)}
-            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-all duration-120 ${
-              isExcluded
-                ? "border-destructive/30 bg-destructive/5 text-destructive line-through"
-                : "border-border bg-background text-foreground hover:border-primary/20"
-            }`}
-            title={`${tool.display_name}: ${tool.description}${isExcluded ? " (已排除)" : ""}`}
+            onClick={onToggleExpand}
+            className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+            title={isExpanded ? "收起工具列表" : "展开工具列表"}
           >
-            <code className="font-mono">{tool.name}</code>
-            {isExcluded && <span className="text-[9px]">(排除)</span>}
+            <svg
+              className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
           </button>
-        );
-      })}
+          {isBaseline && onToggleBlock && (
+            <button
+              type="button"
+              onClick={onToggleBlock}
+              className={`rounded-[6px] border px-2 py-0.5 text-[11px] transition-colors ${
+                isBlocked
+                  ? "border-primary/30 text-primary hover:bg-primary/5"
+                  : "border-destructive/30 text-destructive hover:bg-destructive/5"
+              }`}
+            >
+              {isBlocked ? "恢复此能力" : "屏蔽此能力"}
+            </button>
+          )}
+          {!isBaseline && onRemoveAdd && (
+            <button
+              type="button"
+              onClick={onRemoveAdd}
+              className="rounded-[6px] border border-destructive/30 px-2 py-0.5 text-[11px] text-destructive hover:bg-destructive/5"
+              title="移除此追加能力"
+            >
+              移除
+            </button>
+          )}
+        </div>
+      </div>
+      {isExpanded && (
+        <ToolListPanel
+          capKey={capKey}
+          tools={tools}
+          directives={directives}
+          onToggleToolBlock={onToggleToolBlock}
+        />
+      )}
     </div>
   );
 }
 
 function CapabilitiesEditor({
   projectId,
-  capabilities,
+  targetKind,
+  directives,
   onChange,
 }: {
   projectId: string;
-  capabilities: CapabilityEntry[];
-  onChange: (next: CapabilityEntry[]) => void;
+  targetKind: WorkflowTargetKind;
+  directives: CapabilityDirective[];
+  onChange: (next: CapabilityDirective[]) => void;
 }) {
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
@@ -612,8 +765,10 @@ function CapabilitiesEditor({
 
   // 已展开工具面板的 capability key 集合
   const [expandedCaps, setExpandedCaps] = useState<Set<string>>(new Set());
-  // 工具目录缓存：key → ToolDescriptor[]
+  // 工具目录缓存：capability key → ToolDescriptor[]
   const [toolCatalogCache, setToolCatalogCache] = useState<Record<string, ToolDescriptor[]>>({});
+  // 「+ 添加能力」picker 是否展开
+  const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
@@ -634,218 +789,307 @@ function CapabilitiesEditor({
         if (!cancelled) setPresetsLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
-  const { wellKnownSet, mcpSet, unknownList } = useMemo(() => {
-    const wellKnown = new Set<string>();
-    const mcp = new Set<string>();
-    const unknown: string[] = [];
-    for (const entry of capabilities) {
-      const key = capabilityEntryKey(entry);
-      if (isWellKnownCapability(key)) {
-        wellKnown.add(key);
-      } else if (extractMcpPresetName(key) !== null) {
-        mcp.add(key);
+  const baselineKeys = AUTO_GRANTED_BASELINE[targetKind];
+  const baselineSet = useMemo(() => new Set<string>(baselineKeys), [baselineKeys]);
+
+  // 当前所有显式 Add 的 capability key（短 path + 长 path 合并）
+  const declaredAddKeys = useMemo(
+    () => new Set(listDeclaredCapabilityKeys(directives)),
+    [directives],
+  );
+
+  // 「追加能力」区展示的 key 列表：显式 Add 中不属于 baseline 的部分
+  const extraKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const key of declaredAddKeys) {
+      if (!baselineSet.has(key)) keys.push(key);
+    }
+    return keys;
+  }, [declaredAddKeys, baselineSet]);
+
+  // 展开/收起 capability 工具面板 —— 按需拉取 tool catalog
+  const toggleExpand = useCallback(
+    async (key: string) => {
+      setExpandedCaps((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        return next;
+      });
+      if (!toolCatalogCache[key]) {
+        try {
+          const tools = await fetchToolCatalog([key]);
+          setToolCatalogCache((prev) => ({ ...prev, [key]: tools }));
+        } catch {
+          setToolCatalogCache((prev) => ({ ...prev, [key]: [] }));
+        }
+      }
+    },
+    [toolCatalogCache],
+  );
+
+  // 切换 baseline 能力的屏蔽状态：发出 Remove(cap) / 撤销该 Remove
+  const toggleBaselineBlock = useCallback(
+    (key: string) => {
+      const target = makeRemoveCapability(key);
+      if (capabilityBlockedByWorkflow(directives, key)) {
+        onChange(removeDirective(directives, target));
       } else {
-        unknown.push(key);
+        onChange(addDirective(directives, target));
       }
-    }
-    return { wellKnownSet: wellKnown, mcpSet: mcp, unknownList: unknown };
-  }, [capabilities]);
+    },
+    [directives, onChange],
+  );
 
-  const toggleWellKnown = (key: WellKnownCapabilityKey) => {
-    if (wellKnownSet.has(key)) {
-      onChange(capabilities.filter((e) => capabilityEntryKey(e) !== key));
-      setExpandedCaps((prev) => { const next = new Set(prev); next.delete(key); return next; });
-    } else {
-      onChange([...capabilities, key]);
-    }
-  };
-
-  const toggleMcpPreset = (presetName: string) => {
-    const compositeKey = `mcp:${presetName}`;
-    if (mcpSet.has(compositeKey)) {
-      onChange(capabilities.filter((e) => capabilityEntryKey(e) !== compositeKey));
-    } else {
-      onChange([...capabilities, compositeKey]);
-    }
-  };
-
-  const removeUnknown = (key: string) => {
-    onChange(capabilities.filter((e) => capabilityEntryKey(e) !== key));
-  };
-
-  // 展开/收起 capability 工具面板
-  const toggleExpand = useCallback(async (key: string) => {
-    setExpandedCaps((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) { next.delete(key); } else { next.add(key); }
-      return next;
-    });
-    if (!toolCatalogCache[key]) {
-      try {
-        const tools = await fetchToolCatalog([key]);
-        setToolCatalogCache((prev) => ({ ...prev, [key]: tools }));
-      } catch {
-        setToolCatalogCache((prev) => ({ ...prev, [key]: [] }));
+  // 切换单个工具的屏蔽状态：发出 Remove(cap::tool) / 撤销该 Remove
+  const toggleToolBlock = useCallback(
+    (capKey: string, toolName: string) => {
+      const target = makeRemoveTool(capKey, toolName);
+      if (toolBlockedByWorkflow(directives, capKey, toolName)) {
+        onChange(removeDirective(directives, target));
+      } else {
+        onChange(addDirective(directives, target));
       }
-    }
-  }, [toolCatalogCache]);
+    },
+    [directives, onChange],
+  );
 
-  // 切换单个工具的排除状态
-  const toggleToolExclusion = useCallback((capKey: string, toolName: string) => {
-    const existing = findEntryByKey(capabilities, capKey);
-    const currentExcluded = existing ? getExcludedTools(existing) : [];
-    const isCurrentlyExcluded = currentExcluded.includes(toolName);
-    const newExcluded = isCurrentlyExcluded
-      ? currentExcluded.filter((t) => t !== toolName)
-      : [...currentExcluded, toolName];
+  // 追加区：添加一条新的能力级 Add
+  const addExtraCapability = useCallback(
+    (key: string) => {
+      onChange(addDirective(directives, makeAddCapability(key)));
+      setShowPicker(false);
+    },
+    [directives, onChange],
+  );
 
-    const newEntry: CapabilityEntry = newExcluded.length === 0
-      ? capKey
-      : { key: capKey, exclude_tools: newExcluded };
-    onChange(upsertEntry(capabilities, capKey, newEntry));
-  }, [capabilities, onChange]);
+  // 追加区：移除某能力的所有相关 Add directive（能力级 + 该能力下的工具级 Add）
+  const removeExtraCapability = useCallback(
+    (key: string) => {
+      const next = directives.filter((d) => {
+        if (!("add" in d)) return true;
+        const qualified = d.add;
+        // 匹配 "<key>" 或 "<key>::<tool>"
+        if (qualified === key) return false;
+        if (qualified.startsWith(`${key}::`)) return false;
+        return true;
+      });
+      onChange(next);
+      setExpandedCaps((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(key);
+        return nextSet;
+      });
+    },
+    [directives, onChange],
+  );
+
+  // 可追加选项：well-known 中未被 baseline 覆盖也未被显式 Add 的
+  const wellKnownAddable = useMemo(() => {
+    return CAP_EDITOR_WELL_KNOWN_KEYS.filter(
+      (k) => !baselineSet.has(k) && !declaredAddKeys.has(k),
+    );
+  }, [baselineSet, declaredAddKeys]);
+
+  // 可追加的 MCP preset：当前 project 已注册且未被显式 Add 的
+  const mcpAddable = useMemo(() => {
+    return presets.filter((p) => !declaredAddKeys.has(`mcp:${p.name}`));
+  }, [presets, declaredAddKeys]);
 
   return (
-    <div className="space-y-4">
-      {/* Well-known 能力多选 */}
+    <div className="space-y-5">
+      {/* 基线能力 */}
       <div>
-        <label className="agentdash-form-label">Well-known 能力</label>
-        <p className="mb-1.5 text-[11px] text-muted-foreground">
-          后端 CapabilityResolver 直接识别的内置能力 key。点击能力按钮右侧的展开图标可查看/排除下属工具。
+        <label className="agentdash-form-label">
+          基线能力（{TARGET_KIND_LABEL[targetKind]}）
+        </label>
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          根据挂载类型自动授予的能力基线（<code className="rounded bg-secondary/50 px-1">auto_granted</code>）。
+          每条能力可单独屏蔽，或展开后屏蔽下属某个工具。镜像自后端 visibility rule。
         </p>
-        <div className="space-y-1">
-          {CAP_EDITOR_WELL_KNOWN_KEYS.map((key) => {
-            const on = wellKnownSet.has(key);
+        <div className="space-y-1.5">
+          {baselineKeys.map((key) => {
+            const isBlocked = capabilityBlockedByWorkflow(directives, key);
             const isExpanded = expandedCaps.has(key);
-            const entry = findEntryByKey(capabilities, key);
-            const excluded = entry ? getExcludedTools(entry) : [];
+            const tools = toolCatalogCache[key] ?? [];
             return (
-              <div key={key}>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleWellKnown(key)}
-                    className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
-                      on
-                        ? "border-primary/30 bg-primary/8 text-primary"
-                        : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                    }`}
-                    title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
-                  >
-                    {WELL_KNOWN_CAPABILITY_LABEL[key]}
-                    {excluded.length > 0 && (
-                      <span className="ml-1 text-[9px] text-destructive">(-{excluded.length})</span>
-                    )}
-                  </button>
-                  {on && (
-                    <button
-                      type="button"
-                      onClick={() => toggleExpand(key)}
-                      className="rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-                      title={isExpanded ? "收起工具列表" : "展开工具列表"}
-                    >
-                      <svg className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-                {on && isExpanded && (
-                  <ToolExclusionPanel
-                    capKey={key}
-                    tools={toolCatalogCache[key] ?? []}
-                    excludedTools={excluded}
-                    onToggleTool={toggleToolExclusion}
-                  />
-                )}
-              </div>
+              <CapabilityRow
+                key={key}
+                capKey={key}
+                label={WELL_KNOWN_CAPABILITY_LABEL[key]}
+                description={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+                isBaseline
+                isBlocked={isBlocked}
+                isExpanded={isExpanded}
+                tools={tools}
+                directives={directives}
+                onToggleBlock={() => toggleBaselineBlock(key)}
+                onToggleExpand={() => void toggleExpand(key)}
+                onToggleToolBlock={toggleToolBlock}
+              />
             );
           })}
         </div>
       </div>
 
-      {/* MCP Preset 引用 */}
+      {/* 追加能力 */}
       <div>
-        <label className="agentdash-form-label">MCP Preset 引用</label>
-        <p className="mb-1.5 text-[11px] text-muted-foreground">
-          选中后以 <code className="rounded bg-secondary/50 px-1">mcp:&lt;preset_name&gt;</code> 写入 capabilities，由后端展开为 McpServerDecl 注入 session。
+        <label className="agentdash-form-label">工作流追加能力</label>
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          基线之外的能力 —— 例如 <code className="rounded bg-secondary/50 px-1">workflow_management</code>、
+          <code className="rounded bg-secondary/50 px-1">mcp:&lt;preset&gt;</code>。每条以 <code className="rounded bg-secondary/50 px-1">Add</code>{" "}
+          指令写入 contract。
         </p>
-        {presetsError && (
-          <p className="mb-1.5 rounded-[8px] border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
-            加载 MCP Preset 失败：{presetsError}
-          </p>
+        {extraKeys.length === 0 && !showPicker && (
+          <p className="py-2 text-center text-xs text-muted-foreground">暂无追加能力</p>
         )}
-        {presetsLoading ? (
-          <p className="py-2 text-center text-xs text-muted-foreground">加载中…</p>
-        ) : presets.length === 0 ? (
-          <p className="py-2 text-center text-xs text-muted-foreground">
-            当前 project 无 MCP Preset — 可在 Assets 页创建
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {presets.map((preset) => {
-              const compositeKey = `mcp:${preset.name}`;
-              const on = mcpSet.has(compositeKey);
-              const sourceLabel = preset.source === "builtin" ? "builtin" : "user";
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => toggleMcpPreset(preset.name)}
-                  className={`flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
-                    on
-                      ? "border-primary/30 bg-primary/8 text-primary"
-                      : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                  }`}
-                  title={preset.description ?? preset.name}
-                >
-                  <span>{preset.name}</span>
-                  <span
-                    className={`rounded px-1 py-0.5 text-[9px] font-mono ${
-                      preset.source === "builtin"
-                        ? "bg-amber-500/15 text-amber-700"
-                        : "bg-secondary text-muted-foreground"
-                    }`}
-                  >
-                    {sourceLabel}
-                  </span>
-                </button>
-              );
-            })}
+        <div className="space-y-1.5">
+          {extraKeys.map((key) => {
+            const isWellKnown = isWellKnownCapability(key);
+            const mcpName = extractMcpPresetName(key);
+            const label = isWellKnown
+              ? WELL_KNOWN_CAPABILITY_LABEL[key]
+              : mcpName
+                ? `MCP · ${mcpName}`
+                : key;
+            const description = isWellKnown
+              ? WELL_KNOWN_CAPABILITY_DESCRIPTION[key]
+              : mcpName
+                ? `用户自定义 MCP Preset 引用。由后端展开为 McpServerDecl 注入 session。`
+                : "未识别的 capability key —— 建议清理。";
+            const isBlocked = capabilityBlockedByWorkflow(directives, key);
+            // 追加能力不需要 baseline 的「屏蔽」语义（移除 Add 即可），
+            // 但若用户同时声明了 Add + Remove，仍以 Remove 为真
+            const isExpanded = expandedCaps.has(key);
+            const tools = toolCatalogCache[key] ?? [];
+            const badge = mcpName ? (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-mono text-amber-700">
+                mcp
+              </span>
+            ) : !isWellKnown ? (
+              <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[9px] text-destructive">
+                未知
+              </span>
+            ) : null;
+            return (
+              <CapabilityRow
+                key={key}
+                capKey={key}
+                label={label}
+                description={description}
+                isBaseline={false}
+                isBlocked={isBlocked}
+                isExpanded={isExpanded}
+                tools={tools}
+                directives={directives}
+                onRemoveAdd={() => removeExtraCapability(key)}
+                onToggleExpand={() => void toggleExpand(key)}
+                onToggleToolBlock={toggleToolBlock}
+                extraBadge={badge}
+              />
+            );
+          })}
+        </div>
+
+        {/* Picker */}
+        {showPicker ? (
+          <div className="mt-2 rounded-[10px] border-2 border-dashed border-primary/30 bg-primary/5 p-3 space-y-3">
+            {presetsError && (
+              <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
+                加载 MCP Preset 失败：{presetsError}
+              </p>
+            )}
+
+            {/* Well-known 可追加 */}
+            <div>
+              <p className="mb-1 text-[11px] font-medium text-muted-foreground">Well-known 能力</p>
+              {wellKnownAddable.length === 0 ? (
+                <p className="py-1 text-[11px] text-muted-foreground">
+                  所有 well-known 能力已在基线或已追加
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {wellKnownAddable.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => addExtraCapability(key)}
+                      className="rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-foreground hover:border-primary/30 hover:bg-primary/5"
+                      title={WELL_KNOWN_CAPABILITY_DESCRIPTION[key]}
+                    >
+                      {WELL_KNOWN_CAPABILITY_LABEL[key]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* MCP Preset 可追加 */}
+            <div>
+              <p className="mb-1 text-[11px] font-medium text-muted-foreground">MCP Preset 引用</p>
+              {presetsLoading ? (
+                <p className="py-1 text-[11px] text-muted-foreground">加载中…</p>
+              ) : mcpAddable.length === 0 ? (
+                <p className="py-1 text-[11px] text-muted-foreground">
+                  无可追加的 MCP Preset（当前 project 未注册或均已追加）
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {mcpAddable.map((preset) => {
+                    const sourceLabel = preset.source === "builtin" ? "builtin" : "user";
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => addExtraCapability(`mcp:${preset.name}`)}
+                        className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-foreground hover:border-primary/30 hover:bg-primary/5"
+                        title={preset.description ?? preset.name}
+                      >
+                        <span>{preset.name}</span>
+                        <span
+                          className={`rounded px-1 py-0.5 text-[9px] font-mono ${
+                            preset.source === "builtin"
+                              ? "bg-amber-500/15 text-amber-700"
+                              : "bg-secondary text-muted-foreground"
+                          }`}
+                        >
+                          {sourceLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPicker(false)}
+                className="agentdash-button-secondary text-xs px-3 py-1"
+              >
+                关闭
+              </button>
+            </div>
           </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            className="mt-2 w-full rounded-[10px] border-2 border-dashed border-border/60 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary/70 transition-colors"
+          >
+            + 添加能力
+          </button>
         )}
       </div>
-
-      {/* 未识别 key — 仅显示 + 删除 */}
-      {unknownList.length > 0 && (
-        <div>
-          <label className="agentdash-form-label">其他（不识别）</label>
-          <p className="mb-1.5 text-[11px] text-muted-foreground">
-            既非 well-known 也不是 <code className="rounded bg-secondary/50 px-1">mcp:</code> 前缀，建议清理。
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {unknownList.map((key) => (
-              <span
-                key={key}
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-dashed border-destructive/40 bg-destructive/5 px-2 py-1 text-xs text-destructive"
-              >
-                <code className="font-mono text-[11px]">{key}</code>
-                <button
-                  type="button"
-                  onClick={() => removeUnknown(key)}
-                  className="text-destructive/70 hover:text-destructive"
-                  title="删除此 key"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1032,13 +1276,14 @@ export function WorkflowEditor() {
 
       {/* Agent 工具能力 */}
       <DetailSection
-        title={`Agent 工具能力 (${draft.contract.capabilities.length})`}
-        description="声明此 workflow 下 agent 可用的工具基线。well-known 能力与 project MCP Preset 二选一。"
+        title={`Agent 工具能力 (${draft.contract.capability_directives.length})`}
+        description="声明此 workflow 下 agent 可用的工具基线。每个按钮动作对应一条 Add / Remove 指令，与后端 slot 归约契约一一映射。"
       >
         <CapabilitiesEditor
           projectId={draft.project_id}
-          capabilities={draft.contract.capabilities}
-          onChange={(capabilities) => updateDraft({ contract: { ...draft.contract, capabilities } })}
+          targetKind={draft.target_kind}
+          directives={draft.contract.capability_directives}
+          onChange={(capability_directives) => updateDraft({ contract: { ...draft.contract, capability_directives } })}
         />
       </DetailSection>
 

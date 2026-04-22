@@ -135,30 +135,90 @@ export type LifecycleEdge =
     };
 
 /**
- * 工具能力的结构化声明。
+ * Capability 路径 —— 统一表达「能力级」和「工具级」两种寻址。
  *
- * 支持简写（纯 key string）和结构化（带工具级裁剪 object）两种形式。
+ * - `capability` 是 capability key（如 `"file_read"` 或 `"mcp:code_analyzer"`）
+ * - `tool` 为 `null` 表示短 path（整个能力），非空字符串表示长 path（能力下的某个工具）
+ *
+ * 分隔符统一为 `::`（与 Rust 模块路径同构），与 `mcp:<server>` 的单冒号前缀不冲突。
+ *
+ * JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
+ * / `"mcp:code_analyzer"` / `"mcp:workflow_management::upsert"`。
  */
-export type CapabilityEntry =
-  | string
-  | {
-      key: string;
-      /** 白名单：仅启用此 capability 下属的指定工具。为空数组或省略表示启用全部。 */
-      include_tools?: string[];
-      /** 黑名单：从此 capability 下属工具中排除指定工具。 */
-      exclude_tools?: string[];
-    };
+export interface CapabilityPath {
+  capability: string;
+  /** null 表示短 path；非空字符串表示长 path（工具级） */
+  tool: string | null;
+}
 
-/** 提取 CapabilityEntry 的 key */
-export function capabilityEntryKey(entry: CapabilityEntry): string {
-  return typeof entry === "string" ? entry : entry.key;
+/**
+ * Workflow 级能力指令 —— 在 agent baseline 上 Add / Remove 能力或工具。
+ *
+ * JSON 形态（Rust serde externally-tagged enum, snake_case）：
+ * ```json
+ * { "add": "file_read" }
+ * { "add": "file_read::fs_read" }
+ * { "remove": "shell_execute" }
+ * { "remove": "file_read::fs_grep" }
+ * ```
+ */
+export type CapabilityDirective =
+  | { add: string }
+  | { remove: string };
+
+const CAPABILITY_PATH_SEPARATOR = "::";
+
+/** 序列化 CapabilityPath 为 qualified string —— `"cap"` 或 `"cap::tool"`。 */
+export function toQualifiedString(path: CapabilityPath): string {
+  return path.tool === null || path.tool === ""
+    ? path.capability
+    : `${path.capability}${CAPABILITY_PATH_SEPARATOR}${path.tool}`;
+}
+
+/**
+ * 解析 qualified string —— 反向对应 `toQualifiedString`。
+ *
+ * 规则（与后端 Rust `CapabilityPath::parse` 对齐）：
+ * - 空字符串 → throw
+ * - 恰好一个 `::` → long path；两边均不得为空
+ * - 多于一个 `::` → throw（不允许多级嵌套）
+ * - 无 `::` → short path
+ */
+export function parseCapabilityPath(qualified: string): CapabilityPath {
+  const trimmed = qualified.trim();
+  if (trimmed.length === 0) {
+    throw new Error("CapabilityPath 不能为空");
+  }
+  const parts = trimmed.split(CAPABILITY_PATH_SEPARATOR);
+  if (parts.length === 1) {
+    return { capability: trimmed, tool: null };
+  }
+  if (parts.length === 2) {
+    const [cap, tool] = parts;
+    if (cap.length === 0 || tool.length === 0) {
+      throw new Error(`CapabilityPath 非法：${qualified}`);
+    }
+    return { capability: cap, tool };
+  }
+  throw new Error(`CapabilityPath 不允许多级嵌套：${qualified}`);
+}
+
+/** 提取 Directive 携带的 qualified path 字符串。 */
+export function directivePath(directive: CapabilityDirective): string {
+  return "add" in directive ? directive.add : directive.remove;
+}
+
+/** 判定 Directive 种类。 */
+export function directiveKind(directive: CapabilityDirective): "add" | "remove" {
+  return "add" in directive ? "add" : "remove";
 }
 
 /**
  * 平台 well-known capability key 常量。
  *
- * - `file_system` 是别名，自动展开为 file_read + file_write + shell_execute
- * - `file_read` / `file_write` / `shell_execute` 是拆分后的细粒度 key
+ * - `file_read` / `file_write` / `shell_execute` 是细粒度文件系统能力
+ * - 所有 key 的权威列表以后端 `crates/agentdash-spi/src/tool_capability.rs`
+ *   的 WELL_KNOWN_KEYS 为准
  */
 export const WELL_KNOWN_CAPABILITY_KEYS = [
   "file_read",
@@ -173,13 +233,12 @@ export const WELL_KNOWN_CAPABILITY_KEYS = [
   "workflow_management",
 ] as const;
 
-export const CAPABILITY_ALIASES: Record<string, string[]> = {
-  file_system: ["file_read", "file_write", "shell_execute"],
-};
-
 // ─── Tool Descriptor（统一工具元数据）──────────────────
 
-export type ToolSourceType = "platform" | "mcp";
+export type ToolSourceType = "platform" | "platform_mcp" | "mcp";
+
+/** 平台 MCP scope —— 与后端 `PlatformMcpScope` 对齐。 */
+export type PlatformMcpScope = "relay" | "story" | "task" | "workflow";
 
 export interface ToolDescriptor {
   name: string;
@@ -187,6 +246,7 @@ export interface ToolDescriptor {
   description: string;
   source:
     | { type: "platform"; cluster: string }
+    | { type: "platform_mcp"; scope: PlatformMcpScope }
     | { type: "mcp"; server_name: string };
   capability_key: string;
 }
@@ -199,15 +259,19 @@ export interface WorkflowContract {
   constraints: WorkflowConstraintSpec[];
   completion: WorkflowCompletionSpec;
   /**
-   * Workflow 级基线能力集合。
+   * Workflow 级能力指令序列 —— 在 agent baseline 上 Add / Remove 能力或工具。
    *
-   * 每个条目可以是：
-   * - 简写形式：`"file_read"` — 启用整个能力的全部工具
-   * - 结构化形式：`{ key: "file_read", exclude_tools: ["fs_grep"] }` — 带工具级裁剪
-   * - 平台别名：`"file_system"` — 自动展开为 file_read + file_write + shell_execute
-   * - 自定义 MCP：`"mcp:<preset_name>"` — 指向 project 级 McpPreset
+   * 每条指令：
+   * - `{ add: "<path>" }` —— 追加能力（短 path）或启用某个工具（长 path）
+   * - `{ remove: "<path>" }` —— 屏蔽能力（短 path）或屏蔽某个工具（长 path）
+   *
+   * Path 语法：
+   * - 短 path（能力级）：`"file_read"` / `"mcp:code_analyzer"`
+   * - 长 path（工具级）：`"file_read::fs_grep"` / `"mcp:workflow_management::upsert"`
+   *
+   * 运行时 hook 可叠加 delta 指令；后端 `compute_effective_capabilities` 走同一条归约路径。
    */
-  capabilities: CapabilityEntry[];
+  capability_directives: CapabilityDirective[];
   /** 推荐 ports（模板用途，运行时产出约束由 step 级 ports 定义） */
   recommended_output_ports?: OutputPortDefinition[];
   recommended_input_ports?: InputPortDefinition[];

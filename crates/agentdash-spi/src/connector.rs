@@ -126,7 +126,7 @@ pub enum ToolCluster {
     Write,
     /// 命令执行：shell_exec
     Execute,
-    /// Workflow 产出汇报：report_workflow_artifact
+    /// Workflow 节点终结：complete_lifecycle_node
     Workflow,
     /// 协作与交互：companion_request, companion_respond
     Collaboration,

@@ -185,7 +185,6 @@ pub struct HookRulePreset {
 | `approve`                      | `(reason) -> Map`                  | `{ approval: { reason } }`  | 快捷审批请求              |
 | `complete`                     | `(mode, satisfied, reason) -> Map` | `{ completion: { ... } }`   | 快捷完成信号              |
 | `log`                          | `(message) -> Map`                 | `{ diagnostics: [...] }`    | 快捷诊断日志              |
-| `is_workflow_artifact_tool`    | `(name) -> bool`                   | —                           | 判断是否为 artifact 上报工具 |
 | `requires_supervised_approval` | `(name) -> bool`                   | —                           | 判断是否需要监管审批          |
 
 
@@ -289,7 +288,6 @@ HookScriptEngine.eval_script(inline_script, ctx, None)
 - `validate_catches_syntax_error` — 语法错误被捕获
 - `validate_accepts_good_script` — 合法脚本通过验证
 - `preset_registration_and_eval` — preset 注册后可执行
-- `helper_is_workflow_artifact_tool` — 辅助函数可用
 - `shortcut_block/inject/approve/complete/log` — 快捷函数正确返回
 
 #### rules 集成测试（已更新）

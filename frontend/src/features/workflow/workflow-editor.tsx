@@ -483,8 +483,10 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
 // 在 UI 层拆分为 well-known 能力、MCP Preset、未识别 key 三段，
 // 并支持展开 capability 下属工具列表进行工具级排除。
 
+// 注：`file_system` 是后端兼容用的别名（展开为 file_read + file_write + shell_execute），
+// 前端只暴露细粒度 key，避免"父别名 + 子 key"并列时出现重复工具面板。
+// 老数据里的 `file_system` 条目会落入「其他（不识别）」区提示用户迁移。
 const CAP_EDITOR_WELL_KNOWN_KEYS = [
-  "file_system",
   "file_read",
   "file_write",
   "shell_execute",
@@ -500,7 +502,6 @@ const CAP_EDITOR_WELL_KNOWN_KEYS = [
 type WellKnownCapabilityKey = (typeof CAP_EDITOR_WELL_KNOWN_KEYS)[number];
 
 const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
-  file_system: "文件系统（全部）",
   file_read: "文件读取",
   file_write: "文件写入",
   shell_execute: "Shell 执行",
@@ -514,7 +515,6 @@ const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
 };
 
 const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> = {
-  file_system: "读写工作空间文件（file_read + file_write + shell_execute 的别名）",
   file_read: "只读文件系统访问（fs_read、fs_glob、fs_grep 等）",
   file_write: "文件写入操作（fs_apply_patch）",
   shell_execute: "执行 shell 命令（shell_exec）",

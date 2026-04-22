@@ -272,13 +272,12 @@ pub fn summarize_tool_visibility_with_context(
 }
 
 /// 根据 session owner 类型返回应注入的流程工具名。
-/// - `report_workflow_artifact`：所有 task/story session 可用
+/// - `complete_lifecycle_node`：task/story session（以及 owner 未知时）可用的 lifecycle 节点终结工具
 /// - `companion_request` / `companion_respond`：统一 companion 信道工具
 fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
     let mut tools = Vec::new();
     match owner_type {
         Some(SessionOwnerType::Task) => {
-            tools.push("report_workflow_artifact".to_string());
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
@@ -287,7 +286,6 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
             tools.push("present_canvas".to_string());
         }
         Some(SessionOwnerType::Story) => {
-            tools.push("report_workflow_artifact".to_string());
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
@@ -305,7 +303,6 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
             tools.push("present_canvas".to_string());
         }
         None => {
-            tools.push("report_workflow_artifact".to_string());
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());

@@ -483,10 +483,6 @@ impl HookScriptEngine {
     }
 
     fn register_helpers(engine: &mut Engine) {
-        engine.register_fn("is_workflow_artifact_tool", |name: &str| -> bool {
-            name.ends_with("report_workflow_artifact")
-        });
-
         engine.register_fn("requires_supervised_approval", |name: &str| -> bool {
             let normalized = name.to_ascii_lowercase();
             normalized.ends_with("shell_exec")
@@ -739,25 +735,6 @@ mod tests {
         };
         let result = engine.eval_preset("test_preset", &ctx, None).unwrap();
         assert_eq!(result.block.as_deref(), Some("from preset"));
-    }
-
-    #[test]
-    fn helper_is_workflow_artifact_tool() {
-        let engine = test_engine();
-        let (snapshot, query) = base_ctx();
-        let ctx = HookEvaluationContext {
-            snapshot: &snapshot,
-            query: &query,
-        };
-        let script = r#"
-            if is_workflow_artifact_tool("mcp_agentdash_workflow_tools_report_workflow_artifact") {
-                #{ block: "yes" }
-            } else {
-                #{}
-            }
-        "#;
-        let result = engine.eval_script(script, &ctx, None).unwrap();
-        assert_eq!(result.block.as_deref(), Some("yes"));
     }
 
     #[test]

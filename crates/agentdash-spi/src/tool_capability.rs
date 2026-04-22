@@ -126,7 +126,7 @@ pub fn is_known_key(key: &str) -> bool {
 pub const CLUSTER_READ_TOOLS: &[&str] = &["mounts_list", "fs_read", "fs_glob", "fs_grep"];
 pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
-pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["report_workflow_artifact"];
+pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
 pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
 pub const CLUSTER_CANVAS_TOOLS: &[&str] = &["canvases_list", "canvas_start", "bind_canvas_data", "present_canvas"];
 

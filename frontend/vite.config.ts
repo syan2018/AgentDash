@@ -18,7 +18,7 @@ export default defineConfig({
             if (id.includes('react-router-dom') || id.includes('@remix-run') || id.includes('react-dom') || id.includes('/react/')) {
               return 'react-vendor'
             }
-            if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('mdast') || id.includes('micromark')) {
+            if (id.includes('streamdown') || id.includes('@streamdown/') || id.includes('mdast') || id.includes('micromark') || id.includes('shiki') || id.includes('katex')) {
               return 'markdown-vendor'
             }
             if (id.includes('@agentclientprotocol/sdk') || id.includes('fast-json-patch')) {

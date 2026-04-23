@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件改造约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量基线"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型约束"}
+{"file": ".trellis/spec/tech-stack.md", "reason": "确认 React/Tailwind/Vite 版本约束"}

@@ -1,6 +1,9 @@
 import { memo, useState, type ReactNode } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import { cjk } from "@streamdown/cjk";
 import {
   FILE_PILL_BADGE_CLASS,
   FILE_PILL_CLASS,
@@ -106,7 +109,7 @@ export const AcpMessageCard = memo(function AcpMessageCard({
               {renderTextWithFilePills(content)}
             </p>
           ) : (
-            <MarkdownRenderer content={content} />
+            <MarkdownRenderer content={content} isStreaming={isStreaming} />
           )}
 
           {isStreaming && (
@@ -148,41 +151,21 @@ const MESSAGE_CONFIG = {
   },
 } as const;
 
-const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: string }) {
+const MarkdownRenderer = memo(function MarkdownRenderer({
+  content,
+  isStreaming,
+}: {
+  content: string;
+  isStreaming?: boolean;
+}) {
   return (
     <div className="agentdash-chat-markdown">
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          pre({ children }) {
-            return <pre className="agentdash-chat-code-block">{children}</pre>;
-          },
-          code({ children, className }) {
-            const isBlock = className?.startsWith("language-");
-            if (isBlock) {
-              return <code>{children}</code>;
-            }
-
-            return <code>{children}</code>;
-          },
-          table({ children }) {
-            return (
-              <div className="overflow-auto">
-                <table>{children}</table>
-              </div>
-            );
-          },
-          a({ children, href }) {
-            return (
-              <a href={href} target="_blank" rel="noopener noreferrer">
-                {children}
-              </a>
-            );
-          },
-        }}
+      <Streamdown
+        isAnimating={isStreaming ?? false}
+        plugins={{ code, math, mermaid, cjk }}
       >
         {content}
-      </Markdown>
+      </Streamdown>
     </div>
   );
 });

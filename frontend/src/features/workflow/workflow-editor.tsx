@@ -30,7 +30,7 @@ import {
   toolBlockedByWorkflow,
 } from "./capability-directive-ops";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { fetchProjectMcpPresets, probeMcpPreset } from "../../services/mcpPreset";
+import { fetchProjectMcpPresets, probeMcpTransport } from "../../services/mcpPreset";
 import { fetchToolCatalog } from "../../services/workflow";
 import {
   TARGET_KIND_LABEL,
@@ -905,7 +905,7 @@ function CapabilitiesEditor({
           return;
         }
         try {
-          const result = await probeMcpPreset(preset.project_id, preset.id);
+          const result = await probeMcpTransport(preset.project_id, preset.transport);
           setToolCatalogCache((prev) => ({
             ...prev,
             [key]: mapProbeToDescriptors(key, mcpServerName, result),

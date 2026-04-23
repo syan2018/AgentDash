@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
+use agentdash_domain::mcp_preset::McpTransportConfig;
 use rmcp::{
     ServiceExt,
     transport::streamable_http_client::{
@@ -43,9 +43,13 @@ pub struct ProbeTool {
     pub description: String,
 }
 
-/// 执行 probe。
-pub async fn probe_mcp_preset(preset: &McpPreset) -> ProbeResult {
-    match &preset.transport {
+/// 根据 transport 配置执行 probe（连通性检查 + 工具发现合一）。
+///
+/// 行为：
+/// - Http / Sse：建立临时连接 → `tools/list` → 关闭
+/// - Stdio：返回 `Unsupported`（后续通过 relay 下发给 local 端）
+pub async fn probe_transport(transport: &McpTransportConfig) -> ProbeResult {
+    match transport {
         McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
             probe_http(url).await
         }
@@ -96,31 +100,19 @@ async fn probe_http(url: &str) -> ProbeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::mcp_preset::{McpEnvVar, McpRoutePolicy};
-    use uuid::Uuid;
-
-    fn stdio_preset() -> McpPreset {
-        McpPreset::new_user(
-            Uuid::new_v4(),
-            "local-fs",
-            "Local FS",
-            None,
-            McpTransportConfig::Stdio {
-                command: "npx".to_string(),
-                args: vec!["@modelcontextprotocol/server-filesystem".to_string()],
-                env: vec![McpEnvVar {
-                    name: "FOO".to_string(),
-                    value: "bar".to_string(),
-                }],
-            },
-            McpRoutePolicy::Auto,
-        )
-    }
+    use agentdash_domain::mcp_preset::McpEnvVar;
 
     #[tokio::test]
-    async fn stdio_preset_returns_unsupported() {
-        let preset = stdio_preset();
-        match probe_mcp_preset(&preset).await {
+    async fn stdio_transport_returns_unsupported() {
+        let transport = McpTransportConfig::Stdio {
+            command: "npx".to_string(),
+            args: vec!["@modelcontextprotocol/server-filesystem".to_string()],
+            env: vec![McpEnvVar {
+                name: "FOO".to_string(),
+                value: "bar".to_string(),
+            }],
+        };
+        match probe_transport(&transport).await {
             ProbeResult::Unsupported { reason } => {
                 assert!(reason.contains("Stdio"));
             }
@@ -131,18 +123,11 @@ mod tests {
     #[tokio::test]
     async fn http_probe_fails_gracefully_on_unreachable() {
         // 使用 localhost 上一个不存在的端口，预期快速失败
-        let preset = McpPreset::new_user(
-            Uuid::new_v4(),
-            "unreach",
-            "Unreach",
-            None,
-            McpTransportConfig::Http {
-                url: "http://127.0.0.1:1/mcp".to_string(),
-                headers: vec![],
-            },
-            McpRoutePolicy::Direct,
-        );
-        match probe_mcp_preset(&preset).await {
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![],
+        };
+        match probe_transport(&transport).await {
             ProbeResult::Error { error } => {
                 assert!(!error.is_empty(), "error 信息不应为空");
             }

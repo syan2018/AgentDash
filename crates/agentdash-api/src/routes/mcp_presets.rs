@@ -12,9 +12,9 @@ use uuid::Uuid;
 
 use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
-    UpdateMcpPresetInput, probe_mcp_preset,
+    UpdateMcpPresetInput, probe_transport,
 };
-use agentdash_domain::mcp_preset::McpPreset;
+use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -257,28 +257,33 @@ pub async fn bootstrap_mcp_presets(
     Ok(Json(presets.into_iter().map(Into::into).collect()))
 }
 
-/// POST `/api/projects/:project_id/mcp-presets/:id/probe`
+/// POST `/api/projects/:project_id/mcp-presets/probe`
 ///
-/// 临时连接 MCP Server 并获取工具列表（连通性检查 + 工具发现合一）。
+/// 对任意 transport 配置进行 probe —— 不绑定已落库的 Preset，调用方直接
+/// 传入当前要验证的 transport（卡片传已保存的；detail dialog 传编辑中的）。
+///
 /// - Http/Sse：云端直连，返回 tools 列表 + 延迟
-/// - Stdio：返回 unsupported（需要通过 relay 探测，当前阶段不支持）
+/// - Stdio：返回 unsupported（后续通过 relay 下发给 local 端，当前不支持）
 /// - 连接失败/超时：返回 error 状态 + 错误信息
 ///
-/// 需要 project View 权限。超时上限 15 秒。
-pub async fn probe_mcp_preset_handler(
+/// 需要 project View 权限（project id 仅用于鉴权，transport 不落库）。
+/// 超时上限 15 秒。
+pub async fn probe_mcp_transport_handler(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(path): Path<McpPresetItemPath>,
+    Path(path): Path<ProjectMcpPresetsPath>,
+    Json(transport): Json<McpTransportConfig>,
 ) -> Result<Json<ProbeMcpPresetResponse>, ApiError> {
-    let (_project_id, preset) = load_preset_with_project(
+    let project_id = parse_project_id(&path.project_id)?;
+    load_project_with_permission(
         state.as_ref(),
         &current_user,
-        &path,
+        project_id,
         ProjectPermission::View,
     )
     .await?;
 
-    let result = probe_mcp_preset(&preset).await;
+    let result = probe_transport(&transport).await;
     Ok(Json(result))
 }
 

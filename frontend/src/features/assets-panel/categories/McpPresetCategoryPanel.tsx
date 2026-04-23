@@ -29,7 +29,7 @@ import {
   createMcpPreset,
   deleteMcpPreset,
   fetchProjectMcpPresets,
-  probeMcpPreset,
+  probeMcpTransport,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
 import type {
@@ -486,15 +486,16 @@ function McpPresetCard({
   // 卡片挂载即触发 probe；失败/unsupported 状态下的 UI 由 ToolCapsules 自行区分
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+  // 单调递增计数：手动 recheck 触发后 +1，驱动 effect 重跑
+  const [probeTrigger, setProbeTrigger] = useState(0);
 
   useEffect(() => {
-    // Stdio transport 目前 backend 直接返回 unsupported —— 依然走一次以拿到统一文案
     let cancelled = false;
     setProbing(true);
     setProbeResult(null);
     void (async () => {
       try {
-        const result = await probeMcpPreset(preset.project_id, preset.id);
+        const result = await probeMcpTransport(preset.project_id, preset.transport);
         if (!cancelled) setProbeResult(result);
       } catch (err) {
         if (!cancelled) {
@@ -510,7 +511,7 @@ function McpPresetCard({
     return () => {
       cancelled = true;
     };
-  }, [preset.project_id, preset.id]);
+  }, [preset.project_id, preset.transport, probeTrigger]);
 
   return (
     <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
@@ -531,7 +532,11 @@ function McpPresetCard({
         </p>
       )}
 
-      <ToolCapsules probing={probing} result={probeResult} />
+      <ToolCapsules
+        probing={probing}
+        result={probeResult}
+        onRecheck={() => setProbeTrigger((t) => t + 1)}
+      />
 
       <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
         <span>更新于 {formatDateTime(preset.updated_at)}</span>
@@ -575,22 +580,53 @@ function McpPresetCard({
   );
 }
 
-/* ─── 工具 capsule 预览：auto-probe 后展示前 N 个工具 ─── */
-
-const CARD_TOOL_LIMIT = 10;
+/* ─── 工具 capsule 预览：auto-probe 后展示工具列表（带手动重测）─── */
 
 function ToolCapsules({
+  probing,
+  result,
+  onRecheck,
+}: {
+  probing: boolean;
+  result: ProbeMcpPresetResponse | null;
+  onRecheck: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
+        <span>
+          {probing
+            ? "探测中…"
+            : result?.status === "ok"
+              ? `发现 ${result.tools.length} 个工具（${result.latency_ms} ms）`
+              : "可用工具"}
+        </span>
+        <button
+          type="button"
+          onClick={onRecheck}
+          disabled={probing}
+          className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+          title="重新检测连通性并刷新工具列表"
+        >
+          {probing ? "…" : "重新检测"}
+        </button>
+      </div>
+      <ToolCapsulesBody probing={probing} result={result} />
+    </div>
+  );
+}
+
+function ToolCapsulesBody({
   probing,
   result,
 }: {
   probing: boolean;
   result: ProbeMcpPresetResponse | null;
 }) {
-  // 统一容器，避免不同状态高度抖动
   const box =
-    "mt-3 flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]";
+    "flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]";
 
-  if (probing) {
+  if (probing && !result) {
     return (
       <div className={box}>
         <span className="text-muted-foreground">探测中…</span>
@@ -614,7 +650,6 @@ function ToolCapsules({
     );
   }
   if (result.status === "error") {
-    // 错误信息可能很长，做截断 + title 悬浮完整
     const short =
       result.error.length > 80 ? `${result.error.slice(0, 80)}…` : result.error;
     return (
@@ -626,7 +661,6 @@ function ToolCapsules({
     );
   }
 
-  // ok
   const tools = result.tools;
   if (tools.length === 0) {
     return (
@@ -635,11 +669,18 @@ function ToolCapsules({
       </div>
     );
   }
-  const shown = tools.slice(0, CARD_TOOL_LIMIT);
-  const more = tools.length - shown.length;
+  return <ToolCapsuleGrid tools={tools} />;
+}
+
+/** 通用 capsule 网格：展示全部工具，hover 显示描述。 */
+function ToolCapsuleGrid({
+  tools,
+}: {
+  tools: ReadonlyArray<{ name: string; description: string }>;
+}) {
   return (
-    <div className={box}>
-      {shown.map((tool) => (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
+      {tools.map((tool) => (
         <span
           key={tool.name}
           className="max-w-full truncate rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
@@ -648,11 +689,6 @@ function ToolCapsules({
           {tool.name}
         </span>
       ))}
-      {more > 0 && (
-        <span className="rounded-full bg-secondary px-2 py-0.5 text-[10.5px] text-muted-foreground">
-          +{more}
-        </span>
-      )}
     </div>
   );
 }
@@ -674,6 +710,7 @@ function McpPresetDetailDialog({
   onCreate: (input: CreateMcpPresetRequest) => Promise<void>;
   onUpdate: (presetId: string, patch: UpdateMcpPresetRequest) => Promise<void>;
 }) {
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const target = useMemo(() => {
     if (detail.kind === "edit" || detail.kind === "view") {
       return presets.find((p) => p.id === detail.presetId) ?? null;
@@ -686,16 +723,17 @@ function McpPresetDetailDialog({
   const [form, setForm] = useState<FormState>(() => buildInitialForm(target));
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Probe 状态：仅对已持久化的 Preset 可用（需要 preset id）。
+  // Probe 状态：使用当前表单里的 transport（所见即所测），
+  // 不依赖 preset id，因此新建模式也可以预先验证。
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
 
   const runProbe = async () => {
-    if (!target) return;
+    if (!currentProjectId) return;
     setProbing(true);
     setProbeResult(null);
     try {
-      const result = await probeMcpPreset(target.project_id, target.id);
+      const result = await probeMcpTransport(currentProjectId, form.transport);
       setProbeResult(result);
     } catch (err) {
       setProbeResult({
@@ -952,18 +990,9 @@ function ProbePanel({
                   : "未返回工具"}
               </p>
               {result.tools.length > 0 && (
-                <ul className="mt-1.5 max-h-48 space-y-1 overflow-y-auto rounded-[6px] border border-border bg-background px-2 py-1.5">
-                  {result.tools.map((tool) => (
-                    <li key={tool.name} className="text-[11px]">
-                      <code className="font-mono text-foreground">{tool.name}</code>
-                      {tool.description && (
-                        <span className="ml-2 text-muted-foreground">
-                          {tool.description}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-1.5 max-h-48 overflow-y-auto">
+                  <ToolCapsuleGrid tools={result.tools} />
+                </div>
               )}
             </div>
           )}

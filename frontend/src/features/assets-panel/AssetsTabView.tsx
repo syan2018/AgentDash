@@ -77,7 +77,7 @@ export function AssetsTabView() {
               <NavLink
                 key={cat.segment}
                 to={`/dashboard/assets/${cat.segment}`}
-                className={({ isActive }) =>
+                className={({ isActive }: { isActive: boolean }) =>
                   `flex flex-col gap-0.5 rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
                     isActive
                       ? "border-primary/20 bg-secondary/70 font-medium text-foreground"

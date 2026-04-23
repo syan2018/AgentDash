@@ -29,6 +29,7 @@ import {
   createMcpPreset,
   deleteMcpPreset,
   fetchProjectMcpPresets,
+  probeMcpPreset,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
 import type {
@@ -36,6 +37,7 @@ import type {
   McpPresetDto,
   McpRoutePolicy,
   McpTransportConfig,
+  ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../../../types";
 import {
@@ -479,8 +481,36 @@ function McpPresetCard({
   onDelete: () => void;
   isBusy: boolean;
 }) {
-  const transport = preset.transport;
   const isBuiltin = preset.source === "builtin";
+
+  // 卡片挂载即触发 probe；失败/unsupported 状态下的 UI 由 ToolCapsules 自行区分
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+
+  useEffect(() => {
+    // Stdio transport 目前 backend 直接返回 unsupported —— 依然走一次以拿到统一文案
+    let cancelled = false;
+    setProbing(true);
+    setProbeResult(null);
+    void (async () => {
+      try {
+        const result = await probeMcpPreset(preset.project_id, preset.id);
+        if (!cancelled) setProbeResult(result);
+      } catch (err) {
+        if (!cancelled) {
+          setProbeResult({
+            status: "error",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } finally {
+        if (!cancelled) setProbing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preset.project_id, preset.id]);
 
   return (
     <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
@@ -490,7 +520,6 @@ function McpPresetCard({
           <p className="mt-0.5 truncate text-xs text-muted-foreground">key: {preset.key}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <TransportBadge transport={transport.type} />
           <RoutePolicyBadge policy={preset.route_policy} />
           <SourceBadge source={preset.source} />
         </div>
@@ -502,7 +531,7 @@ function McpPresetCard({
         </p>
       )}
 
-      <ServerPreview transport={transport} />
+      <ToolCapsules probing={probing} result={probeResult} />
 
       <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
         <span>更新于 {formatDateTime(preset.updated_at)}</span>
@@ -546,52 +575,84 @@ function McpPresetCard({
   );
 }
 
-/* ─── 只读预览：按 transport 区分 ─── */
+/* ─── 工具 capsule 预览：auto-probe 后展示前 N 个工具 ─── */
 
-function ServerPreview({ transport }: { transport: McpTransportConfig }) {
-  if (transport.type === "http" || transport.type === "sse") {
-    const headerCount = transport.headers?.length ?? 0;
+const CARD_TOOL_LIMIT = 10;
+
+function ToolCapsules({
+  probing,
+  result,
+}: {
+  probing: boolean;
+  result: ProbeMcpPresetResponse | null;
+}) {
+  // 统一容器，避免不同状态高度抖动
+  const box =
+    "mt-3 flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]";
+
+  if (probing) {
     return (
-      <div className="mt-3 space-y-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <span className="shrink-0 text-foreground/70">URL</span>
-          <span className="min-w-0 truncate font-mono" title={transport.url}>
-            {transport.url || "(未配置)"}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-1.5 text-muted-foreground">
-          <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5">
-            {headerCount} header{headerCount === 1 ? "" : "s"}
-          </span>
-        </div>
+      <div className={box}>
+        <span className="text-muted-foreground">探测中…</span>
+      </div>
+    );
+  }
+  if (!result) {
+    return (
+      <div className={box}>
+        <span className="text-muted-foreground/60">尚未探测</span>
+      </div>
+    );
+  }
+  if (result.status === "unsupported") {
+    return (
+      <div className={box}>
+        <span className="text-muted-foreground" title={result.reason}>
+          ⚠ {result.reason}
+        </span>
+      </div>
+    );
+  }
+  if (result.status === "error") {
+    // 错误信息可能很长，做截断 + title 悬浮完整
+    const short =
+      result.error.length > 80 ? `${result.error.slice(0, 80)}…` : result.error;
+    return (
+      <div className={box}>
+        <span className="text-destructive" title={result.error}>
+          ✗ {short}
+        </span>
       </div>
     );
   }
 
-  // stdio
-  const args = transport.args ?? [];
-  const envCount = transport.env?.length ?? 0;
-  const argsPreview = args.length > 0 ? args.join(" ") : "(无参数)";
-
+  // ok
+  const tools = result.tools;
+  if (tools.length === 0) {
+    return (
+      <div className={box}>
+        <span className="text-muted-foreground">（未返回工具）</span>
+      </div>
+    );
+  }
+  const shown = tools.slice(0, CARD_TOOL_LIMIT);
+  const more = tools.length - shown.length;
   return (
-    <div className="mt-3 space-y-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <span className="shrink-0 text-foreground/70">command</span>
-        <span className="min-w-0 truncate font-mono" title={transport.command}>
-          {transport.command || "(未配置)"}
+    <div className={box}>
+      {shown.map((tool) => (
+        <span
+          key={tool.name}
+          className="max-w-full truncate rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
+          title={tool.description ? `${tool.name} — ${tool.description}` : tool.name}
+        >
+          {tool.name}
         </span>
-      </div>
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <span className="shrink-0 text-foreground/70">args</span>
-        <span className="min-w-0 truncate font-mono" title={argsPreview}>
-          {argsPreview}
+      ))}
+      {more > 0 && (
+        <span className="rounded-full bg-secondary px-2 py-0.5 text-[10.5px] text-muted-foreground">
+          +{more}
         </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5 text-muted-foreground">
-        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5">
-          {envCount} env
-        </span>
-      </div>
+      )}
     </div>
   );
 }
@@ -624,6 +685,27 @@ function McpPresetDetailDialog({
 
   const [form, setForm] = useState<FormState>(() => buildInitialForm(target));
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Probe 状态：仅对已持久化的 Preset 可用（需要 preset id）。
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+
+  const runProbe = async () => {
+    if (!target) return;
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const result = await probeMcpPreset(target.project_id, target.id);
+      setProbeResult(result);
+    } catch (err) {
+      setProbeResult({
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setProbing(false);
+    }
+  };
 
   // 切换 detail（编辑不同 Preset / 切到新建）由外层 `<McpPresetDetailDialog key=... />`
   // 触发组件重挂载，表单初始值通过 useState 懒初始化；此处无需 useEffect 同步 props。
@@ -775,6 +857,15 @@ function McpPresetDetailDialog({
               />
             </div>
 
+            {!isCreating && target && (
+              <ProbePanel
+                probing={probing}
+                result={probeResult}
+                transportType={form.transport.type}
+                onProbe={() => void runProbe()}
+              />
+            )}
+
             {validationError && (
               <p className="text-xs text-destructive">{validationError}</p>
             )}
@@ -807,6 +898,86 @@ function McpPresetDetailDialog({
         </div>
       </div>
     </>
+  );
+}
+
+/* ─── Probe 面板（Test Connection + 工具列表）─── */
+
+function ProbePanel({
+  probing,
+  result,
+  transportType,
+  onProbe,
+}: {
+  probing: boolean;
+  result: ProbeMcpPresetResponse | null;
+  transportType: McpTransportConfig["type"];
+  onProbe: () => void;
+}) {
+  // Stdio 云端探测当前不支持——按钮直接 disabled 并通过 title 提示用户，
+  // 避免用户点了再等一次网络往返才知道不支持。
+  const isStdio = transportType === "stdio";
+  const stdioHint = isStdio
+    ? "Stdio transport 当前不支持云端探测（需通过本机 relay）"
+    : null;
+
+  return (
+    <div className="rounded-[10px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-foreground">连通性 & 工具发现</p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground/70">
+            {stdioHint ?? "实时连接 MCP Server 并调用 tools/list；15 秒超时"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onProbe}
+          disabled={probing || isStdio}
+          title={stdioHint ?? undefined}
+          className="agentdash-button-secondary shrink-0"
+        >
+          {probing ? "探测中…" : "Test Connection"}
+        </button>
+      </div>
+
+      {result && (
+        <div className="mt-2.5">
+          {result.status === "ok" && (
+            <div>
+              <p className="text-xs text-emerald-600">
+                ✓ 连接成功（{result.latency_ms} ms）·{" "}
+                {result.tools.length > 0
+                  ? `发现 ${result.tools.length} 个工具`
+                  : "未返回工具"}
+              </p>
+              {result.tools.length > 0 && (
+                <ul className="mt-1.5 max-h-48 space-y-1 overflow-y-auto rounded-[6px] border border-border bg-background px-2 py-1.5">
+                  {result.tools.map((tool) => (
+                    <li key={tool.name} className="text-[11px]">
+                      <code className="font-mono text-foreground">{tool.name}</code>
+                      {tool.description && (
+                        <span className="ml-2 text-muted-foreground">
+                          {tool.description}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {result.status === "error" && (
+            <p className="text-xs text-destructive">✗ 探测失败：{result.error}</p>
+          )}
+          {result.status === "unsupported" && (
+            <p className="text-xs text-muted-foreground">
+              ⚠ {result.reason}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -861,20 +1032,6 @@ function ConfirmDeleteDialog({
 }
 
 /* ─── Badges ─── */
-
-function TransportBadge({ transport }: { transport: "http" | "sse" | "stdio" }) {
-  const style =
-    transport === "http"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : transport === "sse"
-        ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300"
-        : "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300";
-  return (
-    <span className={`shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-medium ${style}`}>
-      {transport}
-    </span>
-  );
-}
 
 function SourceBadge({ source }: { source: "builtin" | "user" }) {
   if (source === "builtin") {

@@ -37,6 +37,7 @@ fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
         server: agent_client_protocol::McpServer::Http(
             agent_client_protocol::McpServerHttp::new(name, url),
         ),
+        uses_relay: false,
     }
 }
 

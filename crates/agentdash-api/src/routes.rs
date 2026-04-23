@@ -181,6 +181,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{project_id}/mcp-presets/{id}/clone",
             post(mcp_presets::clone_mcp_preset),
         )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}/probe",
+            post(mcp_presets::probe_mcp_preset_handler),
+        )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
             "/projects/{project_id}/workspaces",

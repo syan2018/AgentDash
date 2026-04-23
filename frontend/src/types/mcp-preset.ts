@@ -89,3 +89,23 @@ export interface BootstrapMcpPresetRequest {
 export interface ListMcpPresetQuery {
   source?: McpPresetSource;
 }
+
+/**
+ * Probe 发现的单个工具信息。
+ */
+export interface ProbeMcpToolInfo {
+  name: string;
+  description: string;
+}
+
+/**
+ * Probe 响应 —— 使用 tagged union，`status` 字段为 discriminator。
+ *
+ * - `ok`：连接成功，`tools` 为 MCP Server 通过 `tools/list` 返回的工具列表
+ * - `error`：连接失败或超时，`error` 为人类可读错误信息
+ * - `unsupported`：当前 transport 不支持云端 probe（如 stdio）
+ */
+export type ProbeMcpPresetResponse =
+  | { status: "ok"; latency_ms: number; tools: ProbeMcpToolInfo[] }
+  | { status: "error"; error: string }
+  | { status: "unsupported"; reason: string };

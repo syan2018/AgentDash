@@ -213,10 +213,10 @@ function LifecycleDagEditorInner() {
       // 仅 workflowDefinitions / entry_step_key 变了 → 就地 patch node data
       const wfMap = new Map(workflowDefinitions.map((d) => [d.key, d]));
       const stepKeys = new Set(draft.steps.map((s) => s.key));
-      setNodes((nds) =>
+      setNodes((nds: Node<DagNodeData>[]) =>
         nds
-          .filter((node) => stepKeys.has(node.id))
-          .map((node) => {
+          .filter((node: Node<DagNodeData>) => stepKeys.has(node.id))
+          .map((node: Node<DagNodeData>) => {
             const step = draft.steps.find((s) => s.key === node.id)!;
             const wf = step.workflow_key ? wfMap.get(step.workflow_key) ?? null : null;
             return {

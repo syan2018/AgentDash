@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
+use agentdash_application::mcp_preset::ProbeResult;
 use agentdash_domain::mcp_preset::{
     McpPreset, McpPresetSource, McpRoutePolicy, McpTransportConfig,
 };
@@ -115,6 +116,14 @@ pub struct ListMcpPresetQuery {
     #[serde(default)]
     pub source: Option<String>,
 }
+
+/// Probe 响应 DTO——直接复用 application 层的 `ProbeResult`。
+///
+/// 序列化形状（通过 tagged enum `#[serde(tag = "status")]`）：
+/// - `{ "status": "ok", "latency_ms": 123, "tools": [...] }`
+/// - `{ "status": "error", "error": "..." }`
+/// - `{ "status": "unsupported", "reason": "..." }`
+pub type ProbeMcpPresetResponse = ProbeResult;
 
 /// 自定义反序列化：把「字段缺失 / 显式 null / 有值」三态映射到 `Option<Option<T>>`。
 ///

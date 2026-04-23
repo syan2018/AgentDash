@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
-    UpdateMcpPresetInput,
+    UpdateMcpPresetInput, probe_mcp_preset,
 };
 use agentdash_domain::mcp_preset::McpPreset;
 
@@ -20,7 +20,7 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     BootstrapMcpPresetRequest, CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery,
-    McpPresetResponse, UpdateMcpPresetRequest,
+    McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -255,6 +255,31 @@ pub async fn bootstrap_mcp_presets(
         _ => service.bootstrap_builtins(project_id).await?,
     };
     Ok(Json(presets.into_iter().map(Into::into).collect()))
+}
+
+/// POST `/api/projects/:project_id/mcp-presets/:id/probe`
+///
+/// 临时连接 MCP Server 并获取工具列表（连通性检查 + 工具发现合一）。
+/// - Http/Sse：云端直连，返回 tools 列表 + 延迟
+/// - Stdio：返回 unsupported（需要通过 relay 探测，当前阶段不支持）
+/// - 连接失败/超时：返回 error 状态 + 错误信息
+///
+/// 需要 project View 权限。超时上限 15 秒。
+pub async fn probe_mcp_preset_handler(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<McpPresetItemPath>,
+) -> Result<Json<ProbeMcpPresetResponse>, ApiError> {
+    let (_project_id, preset) = load_preset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let result = probe_mcp_preset(&preset).await;
+    Ok(Json(result))
 }
 
 /// 载入并校验：preset 存在 + 属于路径中的 project + 当前用户具备所需权限。

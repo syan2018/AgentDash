@@ -9,6 +9,7 @@ import type {
   McpPresetSource,
   McpRoutePolicy,
   McpTransportConfig,
+  ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../types";
 
@@ -137,4 +138,20 @@ export async function bootstrapMcpPresets(
     input,
   );
   return raw.map(mapMcpPreset);
+}
+
+/**
+ * 触发 MCP Preset 的 probe —— 临时连接 MCP Server 获取工具列表和连通性状态。
+ *
+ * 后端约束：15 秒超时；Stdio transport 返回 `unsupported`；Http/Sse 直连探测。
+ * 响应体形状为 tagged union（`status` 为 discriminator），前端需按 status 分支处理。
+ */
+export async function probeMcpPreset(
+  projectId: string,
+  presetId: string,
+): Promise<ProbeMcpPresetResponse> {
+  return await api.post<ProbeMcpPresetResponse>(
+    `/projects/${encodeURIComponent(projectId)}/mcp-presets/${encodeURIComponent(presetId)}/probe`,
+    {},
+  );
 }

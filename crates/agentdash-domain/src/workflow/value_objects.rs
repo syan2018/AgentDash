@@ -157,46 +157,26 @@ pub struct WorkflowInjectionSpec {
     pub context_bindings: Vec<WorkflowContextBinding>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowConstraintKind {
-    BlockStopUntilChecksPass,
-    Custom,
-}
-
+/// Standalone 场景下 input port 的满足策略。
+///
+/// Lifecycle 内运行时由 edge wire 自动满足；standalone（如主 agent 给子 agent
+/// 分配 workflow）时由此字段指示调用方如何提供输入。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct WorkflowConstraintSpec {
-    pub key: String,
-    pub kind: WorkflowConstraintKind,
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowCheckKind {
-    ArtifactExists,
-    ArtifactCountGte,
-    SessionTerminalIn,
-    ChecklistEvidencePresent,
-    ExplicitActionReceived,
-    Custom,
+pub enum StandaloneFulfillment {
+    /// 调用方必须在启动前通过 `lifecycle://artifacts/{key}` 写入
+    Required,
+    /// 可选输入，未提供时使用 default_value
+    Optional {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_value: Option<String>,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct WorkflowCheckSpec {
-    pub key: String,
-    pub kind: WorkflowCheckKind,
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
-pub struct WorkflowCompletionSpec {
-    #[serde(default)]
-    pub checks: Vec<WorkflowCheckSpec>,
+impl Default for StandaloneFulfillment {
+    fn default() -> Self {
+        Self::Required
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -343,21 +323,19 @@ impl<'de> Deserialize<'de> for CapabilityPath {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
 pub struct WorkflowContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
-    #[serde(default)]
-    pub constraints: Vec<WorkflowConstraintSpec>,
-    #[serde(default)]
-    pub completion: WorkflowCompletionSpec,
-    /// 推荐 ports（模板用途）。运行时产出约束由 LifecycleStepDefinition 级 ports 定义。
-    #[serde(default, alias = "output_ports", skip_serializing_if = "Vec::is_empty")]
-    pub recommended_output_ports: Vec<OutputPortDefinition>,
-    #[serde(default, alias = "input_ports", skip_serializing_if = "Vec::is_empty")]
-    pub recommended_input_ports: Vec<InputPortDefinition>,
+    /// Workflow 产出声明 — 同时作为完成条件：port gate 门禁根据 `gate_strategy` 检查交付。
+    ///
+    /// Lifecycle step 绑定 workflow 时自动继承这些 ports 作为默认值，step 编辑器可 override。
+    #[serde(default, alias = "recommended_output_ports", skip_serializing_if = "Vec::is_empty")]
+    pub output_ports: Vec<OutputPortDefinition>,
+    /// Workflow 输入声明 — 同时作为运行约束：lifecycle 内由 edge wire 满足，standalone 由调用方写入。
+    #[serde(default, alias = "recommended_input_ports", skip_serializing_if = "Vec::is_empty")]
+    pub input_ports: Vec<InputPortDefinition>,
     /// Workflow 级能力指令序列。
     ///
     /// 每条指令在 agent baseline 上应用 Add / Remove：
@@ -448,6 +426,9 @@ pub struct InputPortDefinition {
     pub context_strategy: ContextStrategy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_template: Option<String>,
+    /// Standalone 运行时（非 lifecycle edge wire）如何满足此 input port。
+    #[serde(default)]
+    pub standalone_fulfillment: StandaloneFulfillment,
 }
 
 /// 运行时能力指令 —— 在 agent baseline 上执行 Add/Remove。
@@ -765,10 +746,6 @@ pub struct EffectiveSessionContract {
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
-    #[serde(default)]
-    pub constraints: Vec<WorkflowConstraintSpec>,
-    #[serde(default)]
-    pub completion: WorkflowCompletionSpec,
 }
 
 pub fn validate_workflow_definition(
@@ -863,73 +840,37 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
         }
     }
 
-    let mut seen_constraint_keys = std::collections::BTreeSet::new();
-    for (index, constraint) in contract.constraints.iter().enumerate() {
-        validate_identity(
-            &format!("{field_path}.constraints[{index}].key"),
-            &constraint.key,
-        )?;
-        validate_non_empty(
-            &format!("{field_path}.constraints[{index}].description"),
-            &constraint.description,
-        )?;
-        if !seen_constraint_keys.insert(constraint.key.clone()) {
-            return Err(format!(
-                "{field_path}.constraints[{index}].key 重复: {}",
-                constraint.key
-            ));
-        }
-    }
-
-    let mut seen_check_keys = std::collections::BTreeSet::new();
-    for (index, check) in contract.completion.checks.iter().enumerate() {
-        validate_identity(
-            &format!("{field_path}.completion.checks[{index}].key"),
-            &check.key,
-        )?;
-        validate_non_empty(
-            &format!("{field_path}.completion.checks[{index}].description"),
-            &check.description,
-        )?;
-        if !seen_check_keys.insert(check.key.clone()) {
-            return Err(format!(
-                "{field_path}.completion.checks[{index}].key 重复: {}",
-                check.key
-            ));
-        }
-    }
-
     let mut seen_output_port_keys = std::collections::BTreeSet::new();
-    for (index, port) in contract.recommended_output_ports.iter().enumerate() {
+    for (index, port) in contract.output_ports.iter().enumerate() {
         validate_identity(
-            &format!("{field_path}.recommended_output_ports[{index}].key"),
+            &format!("{field_path}.output_ports[{index}].key"),
             &port.key,
         )?;
         validate_non_empty(
-            &format!("{field_path}.recommended_output_ports[{index}].description"),
+            &format!("{field_path}.output_ports[{index}].description"),
             &port.description,
         )?;
         if !seen_output_port_keys.insert(port.key.clone()) {
             return Err(format!(
-                "{field_path}.recommended_output_ports[{index}].key 重复: {}",
+                "{field_path}.output_ports[{index}].key 重复: {}",
                 port.key
             ));
         }
     }
 
     let mut seen_input_port_keys = std::collections::BTreeSet::new();
-    for (index, port) in contract.recommended_input_ports.iter().enumerate() {
+    for (index, port) in contract.input_ports.iter().enumerate() {
         validate_identity(
-            &format!("{field_path}.recommended_input_ports[{index}].key"),
+            &format!("{field_path}.input_ports[{index}].key"),
             &port.key,
         )?;
         validate_non_empty(
-            &format!("{field_path}.recommended_input_ports[{index}].description"),
+            &format!("{field_path}.input_ports[{index}].description"),
             &port.description,
         )?;
         if !seen_input_port_keys.insert(port.key.clone()) {
             return Err(format!(
-                "{field_path}.recommended_input_ports[{index}].key 重复: {}",
+                "{field_path}.input_ports[{index}].key 重复: {}",
                 port.key
             ));
         }
@@ -1108,20 +1049,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_workflow_definition_rejects_duplicate_constraint_keys() {
+    fn validate_workflow_definition_rejects_duplicate_output_port_keys() {
         let mut contract = sample_contract();
-        contract.constraints = vec![
-            WorkflowConstraintSpec {
+        contract.output_ports = vec![
+            OutputPortDefinition {
                 key: "a".to_string(),
-                kind: WorkflowConstraintKind::Custom,
                 description: "x".to_string(),
-                payload: None,
+                gate_strategy: GateStrategy::Existence,
+                gate_params: None,
             },
-            WorkflowConstraintSpec {
+            OutputPortDefinition {
                 key: "a".to_string(),
-                kind: WorkflowConstraintKind::Custom,
                 description: "y".to_string(),
-                payload: None,
+                gate_strategy: GateStrategy::Existence,
+                gate_params: None,
             },
         ];
 
@@ -1556,15 +1497,12 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_rejects_legacy_capabilities_field() {
-        // hard cutover：老 `capabilities` 字段必须 fail-fast 报错，不得静默忽略
-        let json = r#"{"capabilities":["workflow_management"]}"#;
-        let err = serde_json::from_str::<WorkflowContract>(json)
-            .expect_err("老 capabilities 字段应当被 deny_unknown_fields 拒绝");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("unknown field") && msg.contains("capabilities"),
-            "错误信息应明确指出未知字段 capabilities，实际：{msg}"
-        );
+    fn workflow_contract_ignores_legacy_fields_gracefully() {
+        // 旧数据可能残留 constraints / completion / capabilities 字段，
+        // 移除 deny_unknown_fields 后应静默忽略
+        let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
+        let contract: WorkflowContract =
+            serde_json::from_str(json).expect("旧数据应当可反序列化");
+        assert!(contract.output_ports.is_empty());
     }
 }

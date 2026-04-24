@@ -469,8 +469,8 @@ function LifecycleDagEditorInner() {
     if (!step.workflow_key) return;
     const wf = workflowDefinitions.find((d) => d.key === step.workflow_key);
     if (!wf) return;
-    const recOut = wf.contract.recommended_output_ports ?? [];
-    const recIn = wf.contract.recommended_input_ports ?? [];
+    const recOut = wf.contract.output_ports ?? [];
+    const recIn = wf.contract.input_ports ?? [];
     // 合并：跳过已存在的同名 port
     const existingOutKeys = new Set(step.output_ports.map((p) => p.key));
     const existingInKeys = new Set(step.input_ports.map((p) => p.key));

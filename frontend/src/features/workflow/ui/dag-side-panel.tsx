@@ -172,8 +172,8 @@ function BasicInfoTab({
     ? availableWorkflows.find((w) => w.key === step.workflow_key)
     : null;
   const hasRecommendedPorts =
-    (boundWorkflow?.contract.recommended_output_ports?.length ?? 0) > 0 ||
-    (boundWorkflow?.contract.recommended_input_ports?.length ?? 0) > 0;
+    (boundWorkflow?.contract.output_ports?.length ?? 0) > 0 ||
+    (boundWorkflow?.contract.input_ports?.length ?? 0) > 0;
 
   return (
     <div className="space-y-4">

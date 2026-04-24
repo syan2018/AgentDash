@@ -209,7 +209,6 @@ pub(crate) fn rule_apply_supervised_tool_approval(
 mod tests {
     use super::*;
 
-    use crate::workflow::{WorkflowCompletionSignalSet, evaluate_step_completion};
     use agentdash_spi::{HookInjection, HookOwnerSummary, HookTrigger, SessionHookSnapshot};
 
     use super::super::presets::builtin_preset_scripts;
@@ -274,8 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn before_stop_requires_checklist_completion_when_evidence_missing() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed");
+    fn before_stop_port_output_gate_blocks_when_ports_unfulfilled() {
+        let snapshot = snapshot_with_workflow_ports(
+            "check",
+            "checklist_passed",
+            &["report", "summary"],
+            &[],
+        );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -304,15 +308,20 @@ mod tests {
             resolution
                 .matched_rule_keys
                 .iter()
-                .any(|k| k.contains("stop_gate_checks_pending")),
-            "expected matched_rule_keys to contain stop_gate_checks_pending, got: {:?}",
+                .any(|k| k.contains("port_output_gate")),
+            "expected matched_rule_keys to contain port_output_gate, got: {:?}",
             resolution.matched_rule_keys
         );
     }
 
     #[test]
-    fn before_stop_requires_checklist_evidence_when_auto_checks_enabled() {
-        let snapshot = snapshot_with_workflow("check", "checklist_passed");
+    fn before_stop_port_output_gate_blocks_when_partially_fulfilled() {
+        let snapshot = snapshot_with_workflow_ports(
+            "check",
+            "checklist_passed",
+            &["report", "summary"],
+            &["report"],
+        );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -341,15 +350,20 @@ mod tests {
             resolution
                 .matched_rule_keys
                 .iter()
-                .any(|k| k.contains("stop_gate_checks_pending")),
-            "expected matched_rule_keys to contain stop_gate_checks_pending, got: {:?}",
+                .any(|k| k.contains("port_output_gate")),
+            "expected port_output_gate to fire for partially fulfilled ports, got: {:?}",
             resolution.matched_rule_keys
         );
     }
 
     #[test]
-    fn before_stop_allows_checklist_completion_with_evidence() {
-        let snapshot = snapshot_with_workflow_and_evidence("check", "checklist_passed", true);
+    fn before_stop_port_output_gate_allows_when_all_fulfilled() {
+        let snapshot = snapshot_with_workflow_ports(
+            "check",
+            "checklist_passed",
+            &["report", "summary"],
+            &["report", "summary"],
+        );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
@@ -374,7 +388,6 @@ mod tests {
         );
 
         assert!(resolution.injections.is_empty());
-        assert!(resolution.matched_rule_keys.is_empty());
     }
 
     #[test]
@@ -411,26 +424,6 @@ mod tests {
 
         assert!(resolution.injections.is_empty());
         assert!(resolution.matched_rule_keys.is_empty());
-    }
-
-    #[test]
-    fn before_stop_allows_checklist_completion_when_evidence_present() {
-        let snapshot = snapshot_with_workflow_and_evidence("check", "checklist_passed", true);
-        let contract = active_workflow_contract(&snapshot).expect("contract");
-        let decision = evaluate_step_completion(
-            Some(&contract.completion),
-            &WorkflowCompletionSignalSet {
-                checklist_evidence_present: true,
-                ..WorkflowCompletionSignalSet::default()
-            },
-        );
-
-        assert!(decision.satisfied);
-        assert!(decision.should_complete_step);
-        assert_eq!(
-            decision.summary.as_deref(),
-            Some("All completion checks passed")
-        );
     }
 
     #[test]

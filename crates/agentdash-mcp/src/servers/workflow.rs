@@ -17,9 +17,8 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind, LifecycleNodeType,
     LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity, WorkflowBindingKind,
-    WorkflowBindingRole, WorkflowCompletionSpec, WorkflowConstraintSpec, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec,
+    WorkflowBindingRole, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
 };
 
 use crate::error::McpError;
@@ -61,14 +60,10 @@ pub struct WorkflowContractInput {
     pub injection: Option<WorkflowInjectionSpec>,
     #[schemars(description = "Hook 规则列表")]
     pub hook_rules: Option<Vec<HookRuleInput>>,
-    #[schemars(description = "行为约束列表")]
-    pub constraints: Option<Vec<WorkflowConstraintSpec>>,
-    #[schemars(description = "完成条件定义")]
-    pub completion: Option<WorkflowCompletionSpec>,
-    #[schemars(description = "推荐的输出端口（WorkflowContract 级，非 step 级）")]
-    pub recommended_output_ports: Option<Vec<OutputPortInput>>,
-    #[schemars(description = "推荐的输入端口（WorkflowContract 级，非 step 级）")]
-    pub recommended_input_ports: Option<Vec<InputPortInput>>,
+    #[schemars(description = "输出端口定义 — 同时作为完成门禁（output 全部交付才可推进）")]
+    pub output_ports: Option<Vec<OutputPortInput>>,
+    #[schemars(description = "输入端口定义 — 声明本 workflow 所需的外部数据")]
+    pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(
         description = "Workflow 基线能力 key 集合。平台 well-known key（如 file_system、workflow_management），或自定义 MCP 引用 mcp:<preset_name>。"
     )]
@@ -417,17 +412,8 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
             Some(rules) => build_hook_rules(rules)?,
             None => Vec::new(),
         },
-        constraints: input.constraints.clone().unwrap_or_default(),
-        completion: input.completion.clone().unwrap_or_default(),
-        recommended_output_ports: build_output_ports(
-            input
-                .recommended_output_ports
-                .as_deref()
-                .unwrap_or_default(),
-        ),
-        recommended_input_ports: build_input_ports(
-            input.recommended_input_ports.as_deref().unwrap_or_default(),
-        ),
+        output_ports: build_output_ports(input.output_ports.as_deref().unwrap_or_default()),
+        input_ports: build_input_ports(input.input_ports.as_deref().unwrap_or_default()),
         capability_directives: input
             .capabilities
             .as_deref()
@@ -446,6 +432,7 @@ fn build_input_ports(inputs: &[InputPortInput]) -> Vec<InputPortDefinition> {
             description: p.description.clone().unwrap_or_default(),
             context_strategy: Default::default(),
             context_template: None,
+            standalone_fulfillment: Default::default(),
         })
         .collect()
 }
@@ -678,7 +665,7 @@ impl ServerHandler for WorkflowMcpServer {
 
 ## 领域模型
 
-- **WorkflowDefinition**：单步行为契约，定义一个 Agent session 的注入规则、约束、完成条件和 hook 脚本。
+- **WorkflowDefinition**：单步行为契约，定义一个 Agent session 的注入规则、I/O ports 和 hook 脚本。output ports 同时作为完成门禁。
 - **LifecycleDefinition**：多步 DAG 编排，由多个 step 组成，每个 step 可绑定一个 Workflow，step 之间通过 port + edge 声明数据依赖。
 
 ## 推荐流程

@@ -34,15 +34,6 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             source: PresetSource::Builtin,
         },
         HookRulePreset {
-            key: "stop_gate_checks_pending",
-            trigger: WorkflowHookTrigger::BeforeStop,
-            label: "完成条件门禁",
-            description: "在 completion checks 全部满足前，阻止 Agent 结束 session",
-            param_schema: None,
-            script: include_str!("../../scripts/hook-presets/stop_gate_checks_pending.rhai"),
-            source: PresetSource::Builtin,
-        },
-        HookRulePreset {
             key: "manual_step_notice",
             trigger: WorkflowHookTrigger::BeforeStop,
             label: "手动推进通知",

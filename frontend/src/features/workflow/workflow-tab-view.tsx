@@ -315,8 +315,8 @@ function WorkflowCardGrid({
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {sorted.map((wf) => {
         const bindCount = wf.contract.injection.context_bindings.length;
-        const ruleCount = wf.contract.constraints.length;
-        const checkCount = wf.contract.completion.checks.length;
+        const portCount = (wf.contract.output_ports?.length ?? 0) + (wf.contract.input_ports?.length ?? 0);
+        const hookCount = wf.contract.hook_rules.length;
         return (
           <button
             key={wf.id}
@@ -333,9 +333,9 @@ function WorkflowCardGrid({
             <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
               <div className="flex gap-2">
                 {bindCount > 0 && <span>{bindCount} bind</span>}
-                {ruleCount > 0 && <span>{ruleCount} rule</span>}
-                {checkCount > 0 && <span>{checkCount} check</span>}
-                {bindCount + ruleCount + checkCount === 0 && <span>空 contract</span>}
+                {portCount > 0 && <span>{portCount} port</span>}
+                {hookCount > 0 && <span>{hookCount} hook</span>}
+                {bindCount + portCount + hookCount === 0 && <span>空 contract</span>}
               </div>
               <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                 <span

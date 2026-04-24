@@ -342,7 +342,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             &workflow.active_step.key,
                             workflow.primary_workflow.as_ref(),
                         )),
-                        checklist_evidence_present: None,
                         output_port_keys: {
                             // port 归属已迁移到 step 级别
                             let port_keys: Vec<String> = workflow
@@ -396,19 +395,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     .injections
                     .extend(build_workflow_step_fragments(&workflow, &wf_source));
 
-                // Add workflow constraint injections
-                snapshot.injections.extend(
-                    workflow
-                        .active_contract()
-                        .map(|c| c.constraints.as_slice())
-                        .unwrap_or(&[])
-                        .iter()
-                        .map(|constraint| HookInjection {
-                            slot: "constraint".to_string(),
-                            content: constraint.description.clone(),
-                            source: wf_source.clone(),
-                        }),
-                );
             }
 
             snapshot.owners.push(owner);
@@ -488,9 +474,8 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
             HookTrigger::SessionTerminal => {
                 // owner_default_hook_rules 会为 task owner 自动注入
-                // task_session_terminal preset；workflow contract 的 completion 需求
-                // 一律由用户声明的 hook rule（如 stop_gate_checks_pending preset）驱动，
-                // 不在此处硬编码 evaluate_step_completion。
+                // task_session_terminal preset；port 完成门禁由 port_output_gate
+                // preset 在 BeforeStop 阶段驱动。
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,

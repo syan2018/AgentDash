@@ -8,10 +8,6 @@ import type {
   InputPortDefinition,
   ProbeMcpPresetResponse,
   ToolDescriptor,
-  WorkflowCheckKind,
-  WorkflowCompletionSpec,
-  WorkflowConstraintKind,
-  WorkflowConstraintSpec,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -1417,212 +1413,28 @@ export function WorkflowEditor() {
         />
       </DetailSection>
 
-      {/* 完成条件 */}
-      <DetailSection title="完成条件" description="定义 step 完成时的默认 artifact 设置和检查条件。">
-        <CompletionEditor
-          completion={draft.contract.completion}
-          onChange={(completion) => updateDraft({ contract: { ...draft.contract, completion } })}
-        />
-      </DetailSection>
-
-      {/* 运行约束 */}
+      {/* I/O Ports */}
       <DetailSection
-        title={`运行约束 (${draft.contract.constraints.length})`}
-        description="运行时的阻断策略，如等待检查通过后才允许推进。"
+        title={`Ports (${(draft.contract.output_ports?.length ?? 0) + (draft.contract.input_ports?.length ?? 0)})`}
+        description="Output ports 同时作为完成门禁（全部交付才可推进）；Input ports 声明所需的外部数据。"
       >
-        <ConstraintListEditor
-          constraints={draft.contract.constraints}
-          onChange={(constraints) => updateDraft({ contract: { ...draft.contract, constraints } })}
-        />
-      </DetailSection>
-
-      {/* 推荐 Ports */}
-      <DetailSection
-        title="推荐 Ports"
-        description="定义此 Workflow 典型的输入输出 port 模板，lifecycle step 绑定时可一键导入。"
-      >
-        <RecommendedPortsEditor
-          outputPorts={draft.contract.recommended_output_ports ?? []}
-          inputPorts={draft.contract.recommended_input_ports ?? []}
-          onOutputChange={(recommended_output_ports) => updateDraft({ contract: { ...draft.contract, recommended_output_ports } })}
-          onInputChange={(recommended_input_ports) => updateDraft({ contract: { ...draft.contract, recommended_input_ports } })}
+        <PortsEditor
+          outputPorts={draft.contract.output_ports ?? []}
+          inputPorts={draft.contract.input_ports ?? []}
+          onOutputChange={(output_ports) => updateDraft({ contract: { ...draft.contract, output_ports } })}
+          onInputChange={(input_ports) => updateDraft({ contract: { ...draft.contract, input_ports } })}
         />
       </DetailSection>
     </div>
   );
 }
 
-// ─── Completion Editor ──────────────────────────────────
-
-const CHECK_KIND_LABEL: Record<WorkflowCheckKind, string> = {
-  artifact_exists: "产物存在",
-  artifact_count_gte: "产物数量 ≥",
-  session_terminal_in: "Session 终态匹配",
-  checklist_evidence_present: "Checklist 证据存在",
-  explicit_action_received: "显式操作确认",
-  custom: "自定义",
-};
-
-function CompletionEditor({
-  completion,
-  onChange,
-}: {
-  completion: WorkflowCompletionSpec;
-  onChange: (c: WorkflowCompletionSpec) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div>
-        <div className="flex items-center justify-between">
-          <label className="agentdash-form-label">完成检查 ({completion.checks.length})</label>
-          <button
-            type="button"
-            onClick={() => onChange({ ...completion, checks: [...completion.checks, { key: "", kind: "artifact_exists", description: "" }] })}
-            className="agentdash-button-secondary px-2 py-1 text-xs"
-          >
-            + 添加
-          </button>
-        </div>
-        <div className="mt-2 space-y-2">
-          {completion.checks.map((check, idx) => (
-            <div key={idx} className="flex items-start gap-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-              <div className="flex-1 space-y-2">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    value={check.key}
-                    onChange={(e) => {
-                      const next = [...completion.checks];
-                      next[idx] = { ...check, key: e.target.value };
-                      onChange({ ...completion, checks: next });
-                    }}
-                    className="agentdash-form-input"
-                    placeholder="check key"
-                  />
-                  <select
-                    value={check.kind}
-                    onChange={(e) => {
-                      const next = [...completion.checks];
-                      next[idx] = { ...check, kind: e.target.value as WorkflowCheckKind };
-                      onChange({ ...completion, checks: next });
-                    }}
-                    className="agentdash-form-select"
-                  >
-                    {(Object.entries(CHECK_KIND_LABEL) as [WorkflowCheckKind, string][]).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
-                    ))}
-                  </select>
-                </div>
-                <input
-                  value={check.description}
-                  onChange={(e) => {
-                    const next = [...completion.checks];
-                    next[idx] = { ...check, description: e.target.value };
-                    onChange({ ...completion, checks: next });
-                  }}
-                  className="agentdash-form-input"
-                  placeholder="检查描述"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => onChange({ ...completion, checks: completion.checks.filter((_, i) => i !== idx) })}
-                className="mt-1 shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-              </button>
-            </div>
-          ))}
-          {completion.checks.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">暂无完成检查</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Constraint List Editor ─────────────────────────────
-
-const CONSTRAINT_KIND_LABEL: Record<WorkflowConstraintKind, string> = {
-  block_stop_until_checks_pass: "等待检查通过后才允许停止",
-  custom: "自定义",
-};
-
-function ConstraintListEditor({
-  constraints,
-  onChange,
-}: {
-  constraints: WorkflowConstraintSpec[];
-  onChange: (c: WorkflowConstraintSpec[]) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => onChange([...constraints, { key: "", kind: "block_stop_until_checks_pass", description: "" }])}
-          className="agentdash-button-secondary px-2 py-1 text-xs"
-        >
-          + 添加
-        </button>
-      </div>
-      {constraints.map((c, idx) => (
-        <div key={idx} className="flex items-start gap-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-          <div className="flex-1 space-y-2">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input
-                value={c.key}
-                onChange={(e) => {
-                  const next = [...constraints];
-                  next[idx] = { ...c, key: e.target.value };
-                  onChange(next);
-                }}
-                className="agentdash-form-input"
-                placeholder="constraint key"
-              />
-              <select
-                value={c.kind}
-                onChange={(e) => {
-                  const next = [...constraints];
-                  next[idx] = { ...c, kind: e.target.value as WorkflowConstraintKind };
-                  onChange(next);
-                }}
-                className="agentdash-form-select"
-              >
-                {(Object.entries(CONSTRAINT_KIND_LABEL) as [WorkflowConstraintKind, string][]).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-            </div>
-            <input
-              value={c.description}
-              onChange={(e) => {
-                const next = [...constraints];
-                next[idx] = { ...c, description: e.target.value };
-                onChange(next);
-              }}
-              className="agentdash-form-input"
-              placeholder="约束描述"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => onChange(constraints.filter((_, i) => i !== idx))}
-            className="mt-1 shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-          </button>
-        </div>
-      ))}
-      {constraints.length === 0 && <p className="py-3 text-center text-xs text-muted-foreground">暂无运行约束</p>}
-    </div>
-  );
-}
-
-// ─── Recommended Ports Editor ───────────────────────────
+// ─── Ports Editor ───────────────────────────────────────
 
 const GATE_LABEL: Record<GateStrategy, string> = { existence: "文件存在", schema: "Schema（预留）", llm_judge: "LLM（预留）" };
 const CTX_LABEL: Record<ContextStrategy, string> = { full: "完整", summary: "摘要（预留）", metadata_only: "元信息（预留）", custom: "自定义（预留）" };
 
-function RecommendedPortsEditor({
+function PortsEditor({
   outputPorts,
   inputPorts,
   onOutputChange,
@@ -1654,7 +1466,7 @@ function RecommendedPortsEditor({
               </button>
             </div>
           ))}
-          {outputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无推荐 output port</p>}
+          {outputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无 output port</p>}
         </div>
       </div>
 
@@ -1677,7 +1489,7 @@ function RecommendedPortsEditor({
               </button>
             </div>
           ))}
-          {inputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无推荐 input port</p>}
+          {inputPorts.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">暂无 input port</p>}
         </div>
       </div>
     </div>

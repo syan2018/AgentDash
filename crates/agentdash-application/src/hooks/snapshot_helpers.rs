@@ -3,9 +3,6 @@ use agentdash_spi::{
     ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, SessionHookSnapshot,
 };
 
-#[cfg(test)]
-use agentdash_domain::workflow::EffectiveSessionContract;
-
 pub struct ResolvedOwnerSummary {
     pub summary: HookOwnerSummary,
     pub diagnostics: Vec<HookDiagnosticEntry>,
@@ -27,23 +24,6 @@ fn active_workflow(snapshot: &SessionHookSnapshot) -> Option<&ActiveWorkflowMeta
     snapshot.metadata.as_ref()?.active_workflow.as_ref()
 }
 
-pub(crate) fn workflow_transition_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    active_workflow(snapshot)?.transition_policy.as_deref()
-}
-
-pub(crate) fn workflow_auto_completion_snapshot(snapshot: &SessionHookSnapshot) -> bool {
-    matches!(
-        workflow_transition_policy(snapshot),
-        Some("auto" | "all_checks_pass" | "any_checks_pass" | "session_terminal_matches",)
-    )
-}
-
-pub(crate) fn active_workflow_checklist_evidence(snapshot: &SessionHookSnapshot) -> bool {
-    active_workflow(snapshot)
-        .and_then(|aw| aw.checklist_evidence_present)
-        .unwrap_or(false)
-}
-
 pub(crate) fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Option<&str> {
     snapshot.metadata.as_ref()?.permission_policy.as_deref()
 }
@@ -62,17 +42,6 @@ pub(crate) fn requires_supervised_tool_approval(tool_name: &str) -> bool {
 
 pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> {
     active_workflow(snapshot)?.step_key.as_deref()
-}
-
-#[cfg(test)]
-pub(crate) fn active_workflow_contract(
-    snapshot: &SessionHookSnapshot,
-) -> Option<EffectiveSessionContract> {
-    active_workflow(snapshot)?.effective_contract.clone()
-}
-
-pub(crate) fn checklist_evidence_present(snapshot: &SessionHookSnapshot) -> bool {
-    active_workflow_checklist_evidence(snapshot)
 }
 
 /// 检查 snapshot 是否关联了 task owner

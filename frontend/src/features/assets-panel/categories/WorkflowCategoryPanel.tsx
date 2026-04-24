@@ -431,8 +431,7 @@ function WorkflowAssetCard({
   isDeleting: boolean;
 }) {
   const bindCount = item.contract.injection.context_bindings.length;
-  const ruleCount = item.contract.constraints.length;
-  const checkCount = item.contract.completion.checks.length;
+  const portCount = (item.contract.output_ports?.length ?? 0) + (item.contract.input_ports?.length ?? 0);
   const hookCount = item.contract.hook_rules.length;
 
   return (
@@ -462,17 +461,12 @@ function WorkflowAssetCard({
             {hookCount} hook
           </span>
         )}
-        {ruleCount > 0 && (
+        {portCount > 0 && (
           <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            {ruleCount} rule
+            {portCount} port
           </span>
         )}
-        {checkCount > 0 && (
-          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            {checkCount} check
-          </span>
-        )}
-        {bindCount + ruleCount + checkCount + hookCount === 0 && (
+        {bindCount + portCount + hookCount === 0 && (
           <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
             空 contract
           </span>

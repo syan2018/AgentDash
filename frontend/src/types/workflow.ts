@@ -21,37 +21,11 @@ export type WorkflowStepExecutionStatus =
   | "failed"
   | "skipped";
 
-export type WorkflowConstraintKind =
-  | "block_stop_until_checks_pass"
-  | "custom";
-
-export type WorkflowCheckKind =
-  | "artifact_exists"
-  | "artifact_count_gte"
-  | "session_terminal_in"
-  | "checklist_evidence_present"
-  | "explicit_action_received"
-  | "custom";
-
 export interface WorkflowContextBinding {
   locator: string;
   reason: string;
   required: boolean;
   title?: string | null;
-}
-
-export interface WorkflowConstraintSpec {
-  key: string;
-  kind: WorkflowConstraintKind;
-  description: string;
-  payload?: Record<string, unknown> | null;
-}
-
-export interface WorkflowCheckSpec {
-  key: string;
-  kind: WorkflowCheckKind;
-  description: string;
-  payload?: Record<string, unknown> | null;
 }
 
 export interface WorkflowInjectionSpec {
@@ -60,9 +34,7 @@ export interface WorkflowInjectionSpec {
   context_bindings: WorkflowContextBinding[];
 }
 
-export interface WorkflowCompletionSpec {
-  checks: WorkflowCheckSpec[];
-}
+export type StandaloneFulfillment = "none" | "text_input" | "file_upload";
 
 export type WorkflowHookTrigger =
   | "user_prompt_submit"
@@ -114,6 +86,7 @@ export interface InputPortDefinition {
   description: string;
   context_strategy?: ContextStrategy;
   context_template?: string | null;
+  standalone_fulfillment?: StandaloneFulfillment;
 }
 
 export type LifecycleEdgeKind = "flow" | "artifact";
@@ -256,8 +229,6 @@ export interface ToolDescriptor {
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
   hook_rules: WorkflowHookRuleSpec[];
-  constraints: WorkflowConstraintSpec[];
-  completion: WorkflowCompletionSpec;
   /**
    * Workflow 级能力指令序列 —— 在 agent baseline 上 Add / Remove 能力或工具。
    *
@@ -272,9 +243,10 @@ export interface WorkflowContract {
    * 运行时 hook 可叠加 delta 指令；后端 `compute_effective_capabilities` 走同一条归约路径。
    */
   capability_directives: CapabilityDirective[];
-  /** 推荐 ports（模板用途，运行时产出约束由 step 级 ports 定义） */
-  recommended_output_ports?: OutputPortDefinition[];
-  recommended_input_ports?: InputPortDefinition[];
+  /** Output ports — 同时作为完成门禁（全部交付才可推进） */
+  output_ports: OutputPortDefinition[];
+  /** Input ports — 声明本 workflow 所需的外部数据 */
+  input_ports: InputPortDefinition[];
 }
 
 export type WorkflowDefinitionSource =
@@ -379,8 +351,6 @@ export interface WorkflowStepState {
 export type LifecycleExecutionEventKind =
   | "step_activated"
   | "step_completed"
-  | "constraint_blocked"
-  | "completion_evaluated"
   | "artifact_appended"
   | "context_injected";
 

@@ -12,10 +12,7 @@ pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
 pub use catalog::WorkflowCatalogService;
-pub use completion::{
-    WorkflowCompletionDecision, WorkflowCompletionEvidence, WorkflowCompletionSignalSet,
-    evaluate_step_completion, session_terminal_state_tag, session_terminal_summary,
-};
+pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
     BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,

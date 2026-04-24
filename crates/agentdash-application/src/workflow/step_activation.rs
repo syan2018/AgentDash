@@ -656,6 +656,7 @@ mod tests {
                 description: "前驱上下文".to_string(),
                 context_strategy: Default::default(),
                 context_template: None,
+                standalone_fulfillment: Default::default(),
             }],
         };
         let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];

@@ -139,8 +139,6 @@ pub struct ActiveWorkflowMeta {
     pub step_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checklist_evidence_present: Option<bool>,
 
     /// 当前 node 的 output port key 列表（来自 WorkflowContract）
     #[serde(default, skip_serializing_if = "Option::is_none")]

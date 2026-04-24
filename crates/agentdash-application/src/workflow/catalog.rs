@@ -511,7 +511,7 @@ mod tests {
         input_ports: &[&str],
     ) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            recommended_output_ports: output_ports
+            output_ports: output_ports
                 .iter()
                 .map(|port_key| OutputPortDefinition {
                     key: (*port_key).to_string(),
@@ -520,13 +520,14 @@ mod tests {
                     gate_params: None,
                 })
                 .collect(),
-            recommended_input_ports: input_ports
+            input_ports: input_ports
                 .iter()
                 .map(|port_key| InputPortDefinition {
                     key: (*port_key).to_string(),
                     description: format!("input {port_key}"),
                     context_strategy: ContextStrategy::Full,
                     context_template: None,
+                    standalone_fulfillment: Default::default(),
                 })
                 .collect(),
             ..Default::default()
@@ -643,6 +644,7 @@ mod tests {
                         description: "input".to_string(),
                         context_strategy: ContextStrategy::Full,
                         context_template: None,
+                        standalone_fulfillment: Default::default(),
                     }],
                 },
                 LifecycleStepDefinition {
@@ -661,6 +663,7 @@ mod tests {
                         description: "input".to_string(),
                         context_strategy: ContextStrategy::Full,
                         context_template: None,
+                        standalone_fulfillment: Default::default(),
                     }],
                 },
             ],

@@ -4,7 +4,6 @@ use std::sync::RwLock;
 
 use rhai::{AST, Dynamic, Engine, Scope};
 
-use agentdash_domain::workflow::WorkflowConstraintKind;
 use agentdash_spi::{
     HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
     HookEffect, HookInjection, HookTrigger,
@@ -242,33 +241,6 @@ impl HookScriptEngine {
             .and_then(|m| m.active_workflow.as_ref());
         let contract = aw.and_then(|a| a.effective_contract.as_ref());
 
-        let auto_completion = workflow_auto_completion_snapshot(ctx.snapshot);
-        let evidence_present = checklist_evidence_present(ctx.snapshot);
-        let has_block_stop = contract
-            .map(|c| {
-                c.constraints
-                    .iter()
-                    .any(|cs| cs.kind == WorkflowConstraintKind::BlockStopUntilChecksPass)
-            })
-            .unwrap_or(false);
-
-        let completion_satisfied = if auto_completion && has_block_stop {
-            contract
-                .map(|c| {
-                    crate::workflow::evaluate_step_completion(
-                        Some(&c.completion),
-                        &crate::workflow::WorkflowCompletionSignalSet {
-                            checklist_evidence_present: evidence_present,
-                            ..Default::default()
-                        },
-                    )
-                    .satisfied
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
         let tool_failed = super::helpers::tool_call_failed(ctx.query.payload.as_ref());
 
         let trigger_str = match ctx.query.trigger {
@@ -314,8 +286,6 @@ impl HookScriptEngine {
                 "transition_policy": aw.and_then(|a| a.transition_policy.as_deref()),
                 "run_status": aw.and_then(|a| a.run_status.as_ref().map(|s| format!("{s:?}").to_ascii_lowercase())),
                 "run_id": aw.and_then(|a| a.run_id.map(|id| id.to_string())),
-                "checklist_evidence_present": evidence_present,
-                "auto_completion": auto_completion,
                 "source": wf_source,
                 "output_port_keys": aw.and_then(|a| a.output_port_keys.as_ref()),
                 "fulfilled_port_keys": aw.and_then(|a| a.fulfilled_port_keys.as_ref()),
@@ -324,8 +294,6 @@ impl HookScriptEngine {
 
             "contract": {
                 "hook_rules": contract.map(|c| &c.hook_rules),
-                "constraints": contract.map(|c| &c.constraints),
-                "checks": contract.map(|c| &c.completion.checks),
             },
 
             "meta": {
@@ -346,13 +314,7 @@ impl HookScriptEngine {
             "params": params.unwrap_or(&serde_json::Value::Null),
 
             "signals": {
-                "auto_completion": auto_completion,
-                "completion_satisfied": completion_satisfied,
-                "has_block_stop_constraint": has_block_stop,
-                "checklist_evidence_present": evidence_present,
                 "tool_call_failed": tool_failed,
-                "is_artifact_report_tool": false,
-                "denied_artifact_types": serde_json::Value::Array(vec![]),
             },
         })
     }

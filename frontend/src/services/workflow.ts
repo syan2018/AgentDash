@@ -13,11 +13,6 @@ import type {
   LifecycleStepDefinition,
   ToolDescriptor,
   WorkflowAgentRole,
-  WorkflowCheckKind,
-  WorkflowCheckSpec,
-  WorkflowCompletionSpec,
-  WorkflowConstraintKind,
-  WorkflowConstraintSpec,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
@@ -39,11 +34,6 @@ import type {
 
 const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story", "task"]);
 const WORKFLOW_AGENT_ROLES = new Set<string>(["project", "story", "task"]);
-const WORKFLOW_CONSTRAINT_KINDS = new Set<string>(["block_stop_until_checks_pass", "custom"]);
-const WORKFLOW_CHECK_KINDS = new Set<string>([
-  "artifact_exists", "artifact_count_gte", "session_terminal_in",
-  "checklist_evidence_present", "explicit_action_received", "custom",
-]);
 const WORKFLOW_RUN_STATUSES = new Set<string>([
   "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",
 ]);
@@ -61,8 +51,7 @@ const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);
 const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
 const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", "custom"]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
-  "step_activated", "step_completed", "constraint_blocked",
-  "completion_evaluated", "artifact_appended", "context_injected",
+  "step_activated", "step_completed", "artifact_appended", "context_injected",
 ]);
 
 function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, field: string): T {
@@ -101,24 +90,6 @@ function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContex
   };
 }
 
-function mapWorkflowConstraintSpec(raw: Record<string, unknown>): WorkflowConstraintSpec {
-  return {
-    key: requireStringField(raw, "key"),
-    kind: normalizeEnum<WorkflowConstraintKind>(raw.kind, WORKFLOW_CONSTRAINT_KINDS, "workflow constraint kind"),
-    description: optStringField(raw, "description"),
-    payload: asRecord(raw.payload),
-  };
-}
-
-function mapWorkflowCheckSpec(raw: Record<string, unknown>): WorkflowCheckSpec {
-  return {
-    key: requireStringField(raw, "key"),
-    kind: normalizeEnum<WorkflowCheckKind>(raw.kind, WORKFLOW_CHECK_KINDS, "workflow check kind"),
-    description: optStringField(raw, "description"),
-    payload: asRecord(raw.payload),
-  };
-}
-
 function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
   const value = asRecord(raw);
   if (!value) {
@@ -128,16 +99,6 @@ function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
     goal: optString(value.goal),
     instructions: asStringArray(value.instructions),
     context_bindings: asRecordArray(value.context_bindings).map(mapWorkflowContextBinding),
-  };
-}
-
-function mapWorkflowCompletionSpec(raw: unknown): WorkflowCompletionSpec {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("workflow contract 缺少 completion");
-  }
-  return {
-    checks: asRecordArray(value.checks).map(mapWorkflowCheckSpec),
   };
 }
 
@@ -232,11 +193,9 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
   return {
     injection: mapWorkflowInjectionSpec(value.injection),
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
-    constraints: asRecordArray(value.constraints).map(mapWorkflowConstraintSpec),
-    completion: mapWorkflowCompletionSpec(value.completion),
     capability_directives: directivesRaw.map((item, idx) => mapCapabilityDirective(item, idx)),
-    recommended_output_ports: asRecordArray(value.recommended_output_ports ?? value.output_ports).map(mapOutputPortDefinition),
-    recommended_input_ports: asRecordArray(value.recommended_input_ports ?? value.input_ports).map(mapInputPortDefinition),
+    output_ports: asRecordArray(value.output_ports ?? value.recommended_output_ports).map(mapOutputPortDefinition),
+    input_ports: asRecordArray(value.input_ports ?? value.recommended_input_ports).map(mapInputPortDefinition),
   };
 }
 

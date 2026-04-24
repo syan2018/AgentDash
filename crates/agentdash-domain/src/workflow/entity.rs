@@ -525,8 +525,6 @@ pub fn build_effective_contract(
             active_step_key: Some(active_step_key.to_string()),
             injection: w.contract.injection.clone(),
             hook_rules: w.contract.hook_rules.clone(),
-            constraints: w.contract.constraints.clone(),
-            completion: w.contract.completion.clone(),
         },
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
@@ -539,10 +537,7 @@ pub fn build_effective_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::value_objects::{
-        WorkflowCompletionSpec, WorkflowConstraintKind, WorkflowConstraintSpec,
-        WorkflowContextBinding, WorkflowInjectionSpec,
-    };
+    use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowInjectionSpec};
 
     fn contract() -> WorkflowContract {
         WorkflowContract {
@@ -556,13 +551,6 @@ mod tests {
                 }],
                 ..WorkflowInjectionSpec::default()
             },
-            constraints: vec![WorkflowConstraintSpec {
-                key: "c1".to_string(),
-                kind: WorkflowConstraintKind::Custom,
-                description: "constraint".to_string(),
-                payload: None,
-            }],
-            completion: WorkflowCompletionSpec::default(),
             ..WorkflowContract::default()
         }
     }
@@ -728,7 +716,7 @@ mod tests {
         .expect("primary");
 
         let effective = build_effective_contract("lc", "step", Some(&primary));
-        assert_eq!(effective.constraints.len(), 1);
+        assert_eq!(effective.hook_rules.len(), 0);
     }
 
     #[test]

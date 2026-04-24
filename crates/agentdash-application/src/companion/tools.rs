@@ -77,6 +77,8 @@ pub struct CompanionRequestTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     agent_repo: Arc<dyn AgentRepository>,
     agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+    repos: crate::repository_set::RepositorySet,
+    platform_config: crate::platform_config::SharedPlatformConfig,
     session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
@@ -93,6 +95,8 @@ impl CompanionRequestTool {
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+        repos: crate::repository_set::RepositorySet,
+        platform_config: crate::platform_config::SharedPlatformConfig,
         session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
     ) -> Self {
@@ -100,6 +104,8 @@ impl CompanionRequestTool {
             session_binding_repo,
             agent_repo,
             agent_link_repo,
+            repos,
+            platform_config,
             session_hub_handle,
             current_session_id: context
                 .hook_session
@@ -130,7 +136,8 @@ impl AgentTool for CompanionRequestTool {
          ▸ target=human 问用户：{\"type\":\"approval\", \"prompt\":\"...\", \"options\":[\"A\",\"B\"]}\n\
          ▸ target=human 通知：{\"type\":\"notification\", \"message\":\"...\"}\n\n\
          agent_key（仅 target=sub）：可选，指定执行子任务的 agent 名称（如 \"code-reviewer\"），必须是当前项目已关联的 agent。\
-         不指定则使用当前会话的执行器配置。可用 agent 列表见系统上下文中的 Companion Agents 章节。"
+         不指定则使用当前会话的执行器配置。可用 agent 列表见系统上下文中的 Companion Agents 章节。\n\n\
+         workflow_key（仅 target=sub）：可选，为子 agent 分配一个 workflow。指定后子 session 会自动创建 lifecycle run 并获得 workflow 的 port 门禁、能力指令和上下文注入。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -247,6 +254,7 @@ impl CompanionRequestTool {
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
         let agent_key = payload.get("agent_key").and_then(|v| v.as_str());
+        let workflow_key = payload.get("workflow_key").and_then(|v| v.as_str());
 
         let companion_executor_config = if let Some(key) = agent_key {
             self.resolve_companion_agent_config(hook_session.as_ref(), key)
@@ -369,14 +377,28 @@ impl CompanionRequestTool {
             identity: None,
             post_turn_handler: None,
         };
-        let prepared = crate::session::compose_companion(crate::session::CompanionSpec {
+
+        let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
             parent_mcp_servers: &self.mcp_servers,
             parent_system_context: self.system_context.as_deref(),
             slice_mode,
             companion_executor_config,
             dispatch_prompt: final_prompt,
-        });
+        };
+
+        let prepared = if let Some(wf_key) = workflow_key {
+            self.setup_companion_workflow(
+                hook_session.as_ref(),
+                &target_binding,
+                &companion_spec,
+                wf_key,
+            )
+            .await?
+        } else {
+            crate::session::compose_companion(companion_spec)
+        };
+
         let turn_id = session_hub
             .start_prompt_with_follow_up(
                 &target_binding.session_id,
@@ -798,6 +820,144 @@ impl CompanionRequestTool {
                 })),
             })
         }
+    }
+
+    /// 为 companion session 设置 workflow overlay：
+    /// 查找 workflow → 搜索包含该 workflow 的 lifecycle → 创建 LifecycleRun →
+    /// 创建 lifecycle binding → 通过 builder 组合 companion + workflow。
+    async fn setup_companion_workflow(
+        &self,
+        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+        target_binding: &SessionBinding,
+        companion_spec: &crate::session::CompanionSpec<'_>,
+        workflow_key: &str,
+    ) -> Result<crate::session::PreparedSessionInputs, AgentToolError> {
+        let snapshot = hook_session.snapshot();
+        let project_id = snapshot
+            .owners
+            .first()
+            .and_then(|o| o.project_id.as_deref())
+            .and_then(|id| id.parse::<Uuid>().ok())
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "无法从当前 session 确定 project_id，无法解析 workflow_key".to_string(),
+                )
+            })?;
+
+        let workflow = self
+            .repos
+            .workflow_definition_repo
+            .get_by_project_and_key(project_id, workflow_key)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(format!("查询 workflow 失败: {e}")))?
+            .ok_or_else(|| {
+                AgentToolError::InvalidArguments(format!(
+                    "当前项目中未找到 workflow_key=`{workflow_key}`"
+                ))
+            })?;
+
+        // 搜索项目中包含该 workflow 的 lifecycle（选择 entry step 使用该 workflow 的第一个）
+        let (lifecycle, entry_step) = self
+            .find_lifecycle_for_workflow(project_id, workflow_key)
+            .await?;
+
+        let run_service = crate::workflow::LifecycleRunService::new(
+            self.repos.lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+        );
+        let run = run_service
+            .start_run(crate::workflow::StartLifecycleRunCommand {
+                project_id,
+                lifecycle_id: Some(lifecycle.id),
+                lifecycle_key: Some(lifecycle.key.clone()),
+                session_id: target_binding.session_id.clone(),
+            })
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}")))?;
+
+        let node_label = crate::workflow::build_lifecycle_node_label(&entry_step.key);
+        let lifecycle_binding = SessionBinding::new(
+            project_id,
+            target_binding.session_id.clone(),
+            agentdash_domain::session_binding::SessionOwnerType::Project,
+            project_id,
+            node_label,
+        );
+        self.session_binding_repo
+            .create(&lifecycle_binding)
+            .await
+            .map_err(|e| {
+                AgentToolError::ExecutionFailed(format!("创建 lifecycle session binding 失败: {e}"))
+            })?;
+
+        let output = crate::session::compose_companion_with_workflow(
+            &self.repos,
+            &self.platform_config,
+            crate::session::CompanionWorkflowSpec {
+                companion: crate::session::CompanionSpec {
+                    parent_vfs: companion_spec.parent_vfs,
+                    parent_mcp_servers: companion_spec.parent_mcp_servers,
+                    parent_system_context: companion_spec.parent_system_context,
+                    slice_mode: companion_spec.slice_mode,
+                    companion_executor_config: companion_spec.companion_executor_config.clone(),
+                    dispatch_prompt: companion_spec.dispatch_prompt.clone(),
+                },
+                run: &run,
+                lifecycle: &lifecycle,
+                step: &entry_step,
+                workflow: Some(&workflow),
+            },
+        )
+        .await
+        .map_err(|e| AgentToolError::ExecutionFailed(format!("compose companion+workflow 失败: {e}")))?;
+
+        Ok(output.prepared)
+    }
+
+    /// 在项目的 lifecycle 定义中搜索第一个 entry step 绑定到指定 workflow 的 lifecycle。
+    async fn find_lifecycle_for_workflow(
+        &self,
+        project_id: Uuid,
+        workflow_key: &str,
+    ) -> Result<
+        (
+            agentdash_domain::workflow::LifecycleDefinition,
+            agentdash_domain::workflow::LifecycleStepDefinition,
+        ),
+        AgentToolError,
+    > {
+        let lifecycles = self
+            .repos
+            .lifecycle_definition_repo
+            .list_by_project(project_id)
+            .await
+            .map_err(|e| AgentToolError::ExecutionFailed(format!("查询 lifecycles 失败: {e}")))?;
+
+        for lifecycle in &lifecycles {
+            let entry = lifecycle
+                .steps
+                .iter()
+                .find(|s| s.key == lifecycle.entry_step_key);
+            if let Some(step) = entry {
+                if step.effective_workflow_key() == Some(workflow_key) {
+                    return Ok((lifecycle.clone(), step.clone()));
+                }
+            }
+        }
+
+        // fallback: 搜索所有 step 中引用该 workflow 的第一个 lifecycle
+        for lifecycle in &lifecycles {
+            for step in &lifecycle.steps {
+                if step.effective_workflow_key() == Some(workflow_key) {
+                    return Ok((lifecycle.clone(), step.clone()));
+                }
+            }
+        }
+
+        Err(AgentToolError::ExecutionFailed(format!(
+            "当前项目中没有任何 lifecycle 引用 workflow_key=`{workflow_key}`，\
+             请先创建一个包含此 workflow 的 lifecycle"
+        )))
     }
 
     async fn resolve_companion_agent_config(

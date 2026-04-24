@@ -24,10 +24,12 @@ pub mod turn_processor;
 pub mod types;
 
 pub use assembler::{
-    AgentLevelMcp, CompanionSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle,
-    OwnerScope, PreparedSessionInputs, SessionRequestAssembler, TaskRuntimeOutput,
+    AgentLevelMcp, CompanionSpec, CompanionWorkflowOutput, CompanionWorkflowSpec,
+    LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+    PreparedSessionInputs, SessionAssemblyBuilder, SessionRequestAssembler, TaskRuntimeOutput,
     TaskRuntimePhase, TaskRuntimeSpec, acp_mcp_servers_to_runtime, compose_companion,
-    compose_lifecycle_node, extract_agent_mcp_entries, finalize_request, load_available_presets,
+    compose_companion_with_workflow, compose_lifecycle_node, extract_agent_mcp_entries,
+    finalize_request, load_available_presets,
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use context::ExecutorResolution;

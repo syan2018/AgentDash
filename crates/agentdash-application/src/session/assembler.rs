@@ -131,6 +131,261 @@ pub fn finalize_request(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// SECTION 1.5:SessionAssemblyBuilder — 组合式 session 装配
+// ═══════════════════════════════════════════════════════════════════
+
+/// 声明式 session 装配 builder。
+///
+/// 将 session 启动拆为 6 个正交关注点（VFS / 能力 / MCP / 系统上下文 / Prompt / 工作流），
+/// 每个关注点通过独立的 `with_*` 方法注入，`build()` 统一产出 `PreparedSessionInputs`。
+///
+/// ## 设计原则
+///
+/// - **每个层独立**：`with_*` 方法只写入自己关注的字段，不覆盖其他层
+/// - **追加友好**：MCP / relay 等集合字段支持多次 `append`
+/// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
+/// - **新组合无需新函数**：companion + workflow 只需叠加对应层
+#[derive(Debug, Clone, Default)]
+pub struct SessionAssemblyBuilder {
+    // ── VFS 层 ──
+    vfs: Option<Vfs>,
+
+    // ── 能力层 ──
+    flow_capabilities: Option<FlowCapabilities>,
+    effective_capability_keys: Option<BTreeSet<String>>,
+
+    // ── MCP 层 ──
+    mcp_servers: Vec<agent_client_protocol::McpServer>,
+    relay_mcp_server_names: HashSet<String>,
+
+    // ── 系统上下文层 ──
+    system_context: Option<String>,
+
+    // ── Prompt 层 ──
+    prompt_blocks: Option<Vec<serde_json::Value>>,
+    executor_config: Option<AgentConfig>,
+    bootstrap_action: SessionBootstrapAction,
+
+    // ── 元信息层 ──
+    workspace_defaults: Option<Workspace>,
+}
+
+impl SessionAssemblyBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // ── VFS 层方法 ────────────────────────────────────────────────
+
+    /// 直接设置完整 VFS（owner 构建 / lifecycle 激活产出等场景）。
+    pub fn with_vfs(mut self, vfs: Vfs) -> Self {
+        self.vfs = Some(vfs);
+        self
+    }
+
+    /// 从父 session 切片生成 companion VFS。
+    pub fn with_companion_vfs(mut self, parent_vfs: Option<&Vfs>, mode: CompanionSliceMode) -> Self {
+        use crate::companion::tools::build_companion_execution_slice;
+        let slice = build_companion_execution_slice(parent_vfs, &[], mode);
+        self.vfs = slice.vfs;
+        self
+    }
+
+    /// 在已有 VFS 上追加 lifecycle mount（task runtime 场景）。
+    pub fn append_lifecycle_mount(
+        mut self,
+        run_id: Uuid,
+        lifecycle_key: &str,
+        writable_port_keys: &[String],
+    ) -> Self {
+        if let Some(space) = self.vfs.as_mut() {
+            space
+                .mounts
+                .push(build_lifecycle_mount_with_ports(run_id, lifecycle_key, writable_port_keys));
+        }
+        self
+    }
+
+    /// 在已有 VFS 上追加 canvas mount。
+    pub async fn append_canvas_mounts(
+        mut self,
+        canvas_repo: &dyn CanvasRepository,
+        project_id: Uuid,
+        mount_ids: &[String],
+    ) -> Result<Self, String> {
+        if let Some(space) = self.vfs.as_mut() {
+            append_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(self)
+    }
+
+    // ── 能力层方法 ────────────────────────────────────────────────
+
+    /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
+    pub fn with_resolved_capabilities(
+        mut self,
+        flow_capabilities: FlowCapabilities,
+        effective_keys: BTreeSet<String>,
+    ) -> Self {
+        self.flow_capabilities = Some(flow_capabilities);
+        self.effective_capability_keys = Some(effective_keys);
+        self
+    }
+
+    /// 使用 companion 专属能力裁剪。
+    pub fn with_companion_capabilities(mut self, mode: CompanionSliceMode) -> Self {
+        let mapped = map_slice_mode(mode);
+        let flow_caps = CapabilityResolver::resolve_companion_caps(mapped);
+        self.flow_capabilities = Some(flow_caps);
+        self
+    }
+
+    // ── MCP 层方法 ────────────────────────────────────────────────
+
+    /// 设置 MCP server 列表（覆盖）。
+    pub fn with_mcp_servers(mut self, servers: Vec<agent_client_protocol::McpServer>) -> Self {
+        self.mcp_servers = servers;
+        self
+    }
+
+    /// 追加 MCP server 到列表。
+    pub fn append_mcp_servers(mut self, servers: impl IntoIterator<Item = agent_client_protocol::McpServer>) -> Self {
+        self.mcp_servers.extend(servers);
+        self
+    }
+
+    /// 追加 relay MCP server name 集合。
+    pub fn append_relay_mcp_names(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.relay_mcp_server_names.extend(names);
+        self
+    }
+
+    // ── 系统上下文层方法 ──────────────────────────────────────────
+
+    /// 设置 system_context 字符串。
+    pub fn with_system_context(mut self, context: String) -> Self {
+        self.system_context = Some(context);
+        self
+    }
+
+    /// 可选设置 system_context。
+    pub fn with_optional_system_context(mut self, context: Option<String>) -> Self {
+        self.system_context = context;
+        self
+    }
+
+    // ── Prompt 层方法 ─────────────────────────────────────────────
+
+    /// 设置 prompt blocks。
+    pub fn with_prompt_blocks(mut self, blocks: Vec<serde_json::Value>) -> Self {
+        self.prompt_blocks = Some(blocks);
+        self
+    }
+
+    /// 设置执行器配置。
+    pub fn with_executor_config(mut self, config: AgentConfig) -> Self {
+        self.executor_config = Some(config);
+        self
+    }
+
+    /// 设置 bootstrap action。
+    pub fn with_bootstrap_action(mut self, action: SessionBootstrapAction) -> Self {
+        self.bootstrap_action = action;
+        self
+    }
+
+    // ── 元信息层方法 ──────────────────────────────────────────────
+
+    /// 设置 workspace 默认值（用于 VFS/working_dir 回填）。
+    pub fn with_workspace_defaults(mut self, workspace: Workspace) -> Self {
+        self.workspace_defaults = Some(workspace);
+        self
+    }
+
+    /// 可选设置 workspace 默认值。
+    pub fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
+        self.workspace_defaults = workspace;
+        self
+    }
+
+    // ── 复合便利方法 ──────────────────────────────────────────────
+
+    /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
+    pub fn apply_companion_slice(
+        self,
+        parent_vfs: Option<&Vfs>,
+        parent_mcp_servers: &[agent_client_protocol::McpServer],
+        parent_system_context: Option<&str>,
+        mode: CompanionSliceMode,
+        executor_config: AgentConfig,
+        dispatch_prompt: String,
+    ) -> Self {
+        use crate::companion::tools::build_companion_execution_slice;
+
+        let slice = build_companion_execution_slice(parent_vfs, parent_mcp_servers, mode);
+        let mapped = map_slice_mode(mode);
+        let flow_caps = CapabilityResolver::resolve_companion_caps(mapped);
+
+        let prompt_blocks = vec![serde_json::json!({
+            "type": "text",
+            "text": dispatch_prompt,
+        })];
+
+        Self {
+            vfs: slice.vfs,
+            flow_capabilities: Some(flow_caps),
+            effective_capability_keys: None,
+            mcp_servers: slice.mcp_servers,
+            relay_mcp_server_names: HashSet::new(),
+            system_context: parent_system_context.map(|s| s.to_string()),
+            prompt_blocks: Some(prompt_blocks),
+            executor_config: Some(executor_config),
+            bootstrap_action: SessionBootstrapAction::OwnerContext,
+            workspace_defaults: None,
+        }
+    }
+
+    /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。
+    pub fn apply_lifecycle_activation(
+        mut self,
+        activation: &crate::workflow::StepActivation,
+        inherited_executor_config: Option<AgentConfig>,
+    ) -> Self {
+        let kickoff_prompt = activation.kickoff_prompt.to_default_prompt();
+        self.vfs = Some(activation.lifecycle_vfs.clone());
+        self.flow_capabilities = Some(activation.flow_capabilities.clone());
+        self.effective_capability_keys = Some(activation.capability_keys.clone());
+        self.mcp_servers = activation.mcp_servers.clone();
+        self.prompt_blocks = Some(vec![serde_json::json!({
+            "type": "text",
+            "text": kickoff_prompt,
+        })]);
+        self.executor_config = inherited_executor_config;
+        self
+    }
+
+    // ── 构建 ──────────────────────────────────────────────────────
+
+    /// 将累积的声明合并为 `PreparedSessionInputs`。
+    pub fn build(self) -> PreparedSessionInputs {
+        PreparedSessionInputs {
+            prompt_blocks: self.prompt_blocks,
+            executor_config: self.executor_config,
+            mcp_servers: self.mcp_servers,
+            relay_mcp_server_names: self.relay_mcp_server_names,
+            vfs: self.vfs,
+            flow_capabilities: self.flow_capabilities,
+            effective_capability_keys: self.effective_capability_keys,
+            system_context: self.system_context,
+            bootstrap_action: self.bootstrap_action,
+            workspace_defaults: self.workspace_defaults,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // SECTION 2:Assembler 共享服务容器
 // ═══════════════════════════════════════════════════════════════════
 
@@ -551,21 +806,26 @@ impl<'a> SessionRequestAssembler<'a> {
             .map(|c| c.key().to_string())
             .collect();
 
-        Ok(PreparedSessionInputs {
-            prompt_blocks: Some(prompt_blocks),
-            executor_config: Some(spec.executor_config),
-            mcp_servers: effective_mcp_servers,
-            relay_mcp_server_names,
-            vfs,
-            flow_capabilities: Some(cap_output.flow_capabilities),
-            effective_capability_keys: Some(effective_capability_keys),
-            system_context,
-            bootstrap_action,
-            workspace_defaults: match &spec.owner {
-                OwnerScope::Story { workspace, .. } => workspace.cloned(),
-                OwnerScope::Project { workspace, .. } => workspace.as_deref().cloned(),
-            },
-        })
+        let workspace_defaults = match &spec.owner {
+            OwnerScope::Story { workspace, .. } => workspace.cloned(),
+            OwnerScope::Project { workspace, .. } => workspace.as_deref().cloned(),
+        };
+
+        let mut builder = SessionAssemblyBuilder::new()
+            .with_prompt_blocks(prompt_blocks)
+            .with_executor_config(spec.executor_config)
+            .with_mcp_servers(effective_mcp_servers)
+            .append_relay_mcp_names(relay_mcp_server_names)
+            .with_resolved_capabilities(cap_output.flow_capabilities, effective_capability_keys)
+            .with_optional_system_context(system_context)
+            .with_bootstrap_action(bootstrap_action)
+            .with_optional_workspace_defaults(workspace_defaults);
+
+        if let Some(vfs) = vfs {
+            builder = builder.with_vfs(vfs);
+        }
+
+        Ok(builder.build())
     }
 
     /// Task 运行时(lazy bootstrap),合并 turn_context + session_runtime_inputs 两处重复。
@@ -800,13 +1060,13 @@ impl<'a> SessionRequestAssembler<'a> {
 
 /// Workflow AgentNode session 激活(脱离 `SessionRequestAssembler`,方便 orchestrator
 /// 等不持有完整 service 集合的调用方使用)。
+///
+/// 内部委托给 `SessionAssemblyBuilder::apply_lifecycle_activation`。
 pub async fn compose_lifecycle_node(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
 ) -> Result<PreparedSessionInputs, String> {
-    // owner_ctx 推导:orchestrator 场景下父 session 是 Project 级 agent session,
-    // 新 AgentNode session 同样是 Project 级。未来 parent_owner_ctx 由上游显式传入。
     let owner_ctx = SessionOwnerCtx::Project {
         project_id: spec.run.project_id,
     };
@@ -833,50 +1093,26 @@ pub async fn compose_lifecycle_node(
         platform_config,
     );
 
-    let kickoff_prompt = activation.kickoff_prompt.to_default_prompt();
-    let prompt_blocks = vec![serde_json::json!({
-        "type": "text",
-        "text": kickoff_prompt,
-    })];
-
-    Ok(PreparedSessionInputs {
-        prompt_blocks: Some(prompt_blocks),
-        executor_config: spec.inherited_executor_config,
-        mcp_servers: activation.mcp_servers,
-        relay_mcp_server_names: HashSet::new(),
-        vfs: Some(activation.lifecycle_vfs),
-        flow_capabilities: Some(activation.flow_capabilities),
-        effective_capability_keys: Some(activation.capability_keys),
-        system_context: None,
-        bootstrap_action: SessionBootstrapAction::None,
-        workspace_defaults: None,
-    })
+    Ok(SessionAssemblyBuilder::new()
+        .apply_lifecycle_activation(&activation, spec.inherited_executor_config)
+        .build())
 }
 
 /// Companion 子 session 组装(脱离 `SessionRequestAssembler`,companion tool
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
+///
+/// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
 pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
-    use crate::companion::tools::build_companion_execution_slice;
-
-    let slice =
-        build_companion_execution_slice(spec.parent_vfs, spec.parent_mcp_servers, spec.slice_mode);
-    let flow_caps = CapabilityResolver::resolve_companion_caps(map_slice_mode(spec.slice_mode));
-
-    PreparedSessionInputs {
-        prompt_blocks: Some(vec![serde_json::json!({
-            "type": "text",
-            "text": spec.dispatch_prompt,
-        })]),
-        executor_config: Some(spec.companion_executor_config),
-        mcp_servers: slice.mcp_servers.clone(),
-        relay_mcp_server_names: HashSet::new(),
-        vfs: slice.vfs.clone(),
-        flow_capabilities: Some(flow_caps),
-        effective_capability_keys: None,
-        system_context: spec.parent_system_context.map(|s| s.to_string()),
-        bootstrap_action: SessionBootstrapAction::OwnerContext,
-        workspace_defaults: None,
-    }
+    SessionAssemblyBuilder::new()
+        .apply_companion_slice(
+            spec.parent_vfs,
+            spec.parent_mcp_servers,
+            spec.parent_system_context,
+            spec.slice_mode,
+            spec.companion_executor_config,
+            spec.dispatch_prompt,
+        )
+        .build()
 }
 
 /// `companion::tools::CompanionSliceMode` → `capability::resolver::CompanionSliceMode`。
@@ -952,6 +1188,124 @@ pub struct CompanionSpec<'a> {
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
+}
+
+/// Companion + Workflow 组合 compose 输入。
+pub struct CompanionWorkflowSpec<'a> {
+    pub companion: CompanionSpec<'a>,
+    /// 已创建的 lifecycle run。
+    pub run: &'a LifecycleRun,
+    pub lifecycle: &'a LifecycleDefinition,
+    pub step: &'a LifecycleStepDefinition,
+    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+}
+
+/// Companion + Workflow 返回值。
+pub struct CompanionWorkflowOutput {
+    pub prepared: PreparedSessionInputs,
+    pub activation: crate::workflow::StepActivation,
+}
+
+/// Companion + Workflow 组合组装。
+///
+/// 基于 companion VFS slice 叠加 lifecycle mount 和 workflow 能力/MCP，
+/// 通过 `SessionAssemblyBuilder` 声明式组合两个关注点。
+pub async fn compose_companion_with_workflow(
+    repos: &RepositorySet,
+    platform_config: &PlatformConfig,
+    spec: CompanionWorkflowSpec<'_>,
+) -> Result<CompanionWorkflowOutput, String> {
+    use crate::companion::tools::build_companion_execution_slice;
+
+    let project_id = spec.run.project_id;
+    let comp = &spec.companion;
+
+    // ── 1. Companion VFS slice 作为基础 ──
+    let slice = build_companion_execution_slice(
+        comp.parent_vfs,
+        comp.parent_mcp_servers,
+        comp.slice_mode,
+    );
+
+    // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
+    let owner_ctx = SessionOwnerCtx::Project { project_id };
+    let port_output_map =
+        load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
+
+    let activation = activate_step_with_platform(
+        &StepActivationInput {
+            owner_ctx,
+            active_step: spec.step,
+            workflow: spec.workflow,
+            run_id: spec.run.id,
+            lifecycle_key: &spec.lifecycle.key,
+            edges: &spec.lifecycle.edges,
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: load_available_presets(repos, project_id).await,
+            companion_slice_mode: Some(map_slice_mode(comp.slice_mode)),
+            baseline_override: None,
+            capability_directives: &[],
+            ready_port_keys,
+        },
+        platform_config,
+    );
+
+    // ── 3. 用 builder 组合 companion + workflow 两个层 ──
+    let mut vfs = slice.vfs.unwrap_or_default();
+    vfs.mounts.push(activation.lifecycle_mount.clone());
+
+    let workflow_injection = spec.workflow.map(|w| {
+        let inj = &w.contract.injection;
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(goal) = &inj.goal {
+            if !goal.trim().is_empty() {
+                parts.push(format!("## Workflow Goal\n{goal}"));
+            }
+        }
+        if !inj.instructions.is_empty() {
+            parts.push(format!(
+                "## Workflow Instructions\n{}",
+                inj.instructions
+                    .iter()
+                    .map(|i| format!("- {i}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        parts.join("\n\n")
+    }).filter(|s| !s.is_empty());
+    let system_context = match (comp.parent_system_context, workflow_injection) {
+        (Some(parent), Some(wf_inject)) => Some(format!("{parent}\n\n{wf_inject}")),
+        (Some(parent), None) => Some(parent.to_string()),
+        (None, Some(wf_inject)) => Some(wf_inject),
+        (None, None) => None,
+    };
+
+    let prompt_blocks = vec![serde_json::json!({
+        "type": "text",
+        "text": comp.dispatch_prompt,
+    })];
+
+    let prepared = SessionAssemblyBuilder::new()
+        .with_vfs(vfs)
+        .with_resolved_capabilities(
+            activation.flow_capabilities.clone(),
+            activation.capability_keys.clone(),
+        )
+        .with_mcp_servers(slice.mcp_servers)
+        .append_mcp_servers(activation.mcp_servers.clone())
+        .with_optional_system_context(system_context)
+        .with_prompt_blocks(prompt_blocks)
+        .with_executor_config(comp.companion_executor_config.clone())
+        .with_bootstrap_action(SessionBootstrapAction::OwnerContext)
+        .build();
+
+    Ok(CompanionWorkflowOutput {
+        prepared,
+        activation,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════

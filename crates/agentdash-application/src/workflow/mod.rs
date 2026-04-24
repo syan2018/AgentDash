@@ -33,7 +33,7 @@ pub use run::{
     BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
     LifecycleRunService, RecordGateCollisionCommand, StartLifecycleRunCommand, select_active_run,
 };
-pub use session_association::LIFECYCLE_NODE_LABEL_PREFIX;
+pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label};
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
     agent_mcp_entries_from_servers, apply_to_prompt_request, apply_to_running_session,

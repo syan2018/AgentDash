@@ -165,6 +165,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.repos.session_binding_repo.clone(),
                 self.repos.agent_repo.clone(),
                 self.repos.agent_link_repo.clone(),
+                self.repos.clone(),
+                self.platform_config.clone(),
                 self.session_hub_handle.clone(),
                 context,
             )));

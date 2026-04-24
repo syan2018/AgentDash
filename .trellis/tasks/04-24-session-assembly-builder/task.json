@@ -1,0 +1,34 @@
+{
+  "id": "session-assembly-builder",
+  "name": "session-assembly-builder",
+  "title": "Session 组合式装配工厂 + Companion Workflow 支持",
+  "description": "重构 SessionRequestAssembler 为组合式 SessionAssemblyBuilder，将 VFS/能力/MCP/系统上下文/Prompt/Workflow 拆为独立可叠加层，取代现有 5 条硬编码 compose 函数。同时支持 companion session 接受 workflow 分配。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-04-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "04-24-workflow-ports-ssot"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-application/src/session/assembler.rs",
+    "crates/agentdash-application/src/session/mod.rs",
+    "crates/agentdash-application/src/companion/tools.rs",
+    "crates/agentdash-application/src/vfs/tools/provider.rs",
+    "crates/agentdash-application/src/workflow/mod.rs"
+  ],
+  "notes": "",
+  "meta": {}
+}

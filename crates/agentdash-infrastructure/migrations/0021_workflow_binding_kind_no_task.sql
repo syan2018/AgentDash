@@ -24,7 +24,8 @@ WHERE binding_kind = 'task';
 
 -- workflow_definitions.recommended_binding_roles 是 TEXT 存的 JSON 数组；
 -- 将其中含 "task" 的元素替换为 "story"，并对已经存在 "story" 的做去重。
--- 风格：尽量用 jsonb 运算；字段里若不是合法 JSON（极端异常数据）则保持原样。
+-- 风格：尽量用 jsonb 运算；本迁移假设字段内容是合法 JSON 数组。
+-- 若历史数据里存在非法 JSON 文本，本段会失败，需要先手工修复坏数据再重跑迁移。
 UPDATE workflow_definitions
 SET recommended_binding_roles = (
     SELECT jsonb_agg(DISTINCT role)::text

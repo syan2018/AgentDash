@@ -17,6 +17,22 @@ pub enum TaskStatus {
     Failed,
 }
 
+impl std::str::FromStr for TaskStatus {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim() {
+            "pending" => Ok(Self::Pending),
+            "assigned" => Ok(Self::Assigned),
+            "running" => Ok(Self::Running),
+            "awaiting_verification" => Ok(Self::AwaitingVerification),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("Unknown task status: {other}")),
+        }
+    }
+}
+
 /// Task 执行模式 — 控制失败后的自动处理策略
 ///
 /// 不同模式决定了 Turn Monitor 和 State Reconciler 在 Task 失败时的行为。

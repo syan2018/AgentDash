@@ -30,7 +30,11 @@ pub struct Task {
     pub description: String,
     /// 执行状态：只读投影字段，外部不可直写（M2）。
     pub(crate) status: TaskStatus,
-    /// 执行器原生会话 ID（用于 follow-up/resume）
+    /// 执行器原生会话 ID（用于 follow-up / resume）。
+    ///
+    /// 注意：这不是 AgentDash 内部的 `session_id`。
+    /// AgentDash 内部会话归属统一通过
+    /// `SessionBinding(owner_type=Task, label="execution")` 解析。
     pub executor_session_id: Option<String>,
     /// 执行模式 — 控制失败后的自动处理策略
     pub execution_mode: TaskExecutionMode,

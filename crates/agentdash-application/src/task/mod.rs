@@ -8,7 +8,6 @@ pub mod meta;
 pub mod restart_tracker;
 pub mod service;
 pub mod view_projector;
-pub mod tools;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};

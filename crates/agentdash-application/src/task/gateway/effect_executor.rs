@@ -139,14 +139,7 @@ impl TaskHookEffectExecutor {
             .and_then(|v| v.as_str())
             .unwrap_or("hook_effect");
 
-        let next_status = match status_str {
-            "completed" => TaskStatus::Completed,
-            "awaiting_verification" => TaskStatus::AwaitingVerification,
-            "failed" => TaskStatus::Failed,
-            "running" => TaskStatus::Running,
-            "pending" => TaskStatus::Pending,
-            other => return Err(format!("Unknown task status: {other}")),
-        };
+        let next_status = status_str.parse::<TaskStatus>()?;
 
         let context = serde_json::json!({
             "session_id": self.session_id,

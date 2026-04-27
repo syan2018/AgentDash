@@ -539,7 +539,6 @@ const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> 
 const AUTO_GRANTED_BASELINE: Record<WorkflowTargetKind, WellKnownCapabilityKey[]> = {
   project: ["file_read", "file_write", "shell_execute", "canvas", "collaboration", "relay_management"],
   story: ["file_read", "file_write", "shell_execute", "story_management"],
-  task: ["file_read", "file_write", "shell_execute", "task_management"],
 };
 
 function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {

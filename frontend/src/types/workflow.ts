@@ -1,6 +1,6 @@
 // ─── Workflow ─────────────────────────────────────────
 
-export type WorkflowTargetKind = "project" | "story" | "task";
+export type WorkflowTargetKind = "project" | "story";
 
 export type WorkflowAgentRole = "project" | "story" | "task";
 

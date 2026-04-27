@@ -1,134 +1,188 @@
-# story/task 模块重构 · 清理收尾
+# story/task 模块 Model C 收官收口
 
 ## Goal
 
-主线任务 [04-27-slim-runtime-layer-session-owner](../04-27-slim-runtime-layer-session-owner/prd.md) 在 Model C 下完成核心架构重构（Task 合入 Story aggregate、状态真相单一化、task 启动路径并入标准 workflow 装配、Story-as-durable-session 文档化），本任务承接主线路径之外的独立清理与决议。
+主线任务 [04-27-slim-runtime-layer-session-owner](../04-27-slim-runtime-layer-session-owner/prd.md) 已完成 Model C 的主体重构方向，但代码层仍残留几类“已定方向、未完全收口”的问题：
 
-每一项可独立评估、独立落地 PR。
+1. `start_task` / `continue_task` 仍未真正收口到 `activate_story_step`
+2. Story root session 的创建/查询/唯一性契约尚未固化
+3. execution DTO / session 路由 / 过渡容器仍带有旧 task-runtime 痕迹
+4. 少量 migration、前端 target kind、空壳模块、尾巴字段与死代码仍未清掉
+5. `TaskLock` / `RestartTracker` / `Story.status` 等剩余建模决议尚未冻结
 
-## 依赖
+本任务不再按“cleanup tail 的散点收纳”推进，而是作为 **Model C 收官收口任务** 一次性完成：先补主线未真收口的前提，再统一契约、清过渡层、冻结剩余建模决议。
 
-**必须等主线任务完成**。主线锁定三层架构定位（Story aggregate 含 Vec<Task> · 独立 LifecycleRun 挂 Story session · Session event 为唯一审计源）后，本任务的每一项决议都建立在这个基础上。
+## Why One PRD
 
-## 范围
+虽然这些问题表面上像独立尾巴，但实际存在强依赖：
 
-### 1. 半迁移空壳模块清理（R4）
-- [task/tools/mod.rs](../../../crates/agentdash-application/src/task/tools/mod.rs) 仅剩一行注释"已迁移到 crate::companion 模块"
-- 目标：删除整个目录
+- `TaskLock` 的去留依赖 task 启动是否真的已并入 `activate_story_step`
+- execution DTO / 路由边界依赖 Story session 与 child session 的契约是否先收口
+- `executor_session_id` 的语义依赖 session / child session / executor follow-up 的边界定义
+- `Story.status` 的定位依赖 command 路径、terminal cancel 与 runtime 真相分层
 
-### 2. ACP meta 桥接下沉（R7）
-- [task/meta.rs](../../../crates/agentdash-application/src/task/meta.rs) 60 行的 ACP meta 工具（`build_task_lifecycle_meta` / `extract_turn_id_from_meta` / `turn_matches` / `parse_turn_event`）
-- Model C 下 session event stream 是真相，ACP meta 桥接更适合作为 session 消息层通用能力
-- 目标：下沉到 session 消息层或 `agentdash_acp_meta` crate
+若拆成多个小 PRD，会在前提未稳定时反复改文档与代码；因此本任务采用**一个 PRD 管总范围**，但内部仍按里程碑顺序落地。
 
-### 3. TaskLock 语义决议（R8）
-- [task/lock.rs](../../../crates/agentdash-application/src/task/lock.rs) 207 行 per-task 锁
-- M5 之后 task 启动走 `activate_story_step`，串行化约束应由 Story session / LifecycleRun 层保证
-- 决议：保留作为幂等闸门 / 改造 / 删除
-- 前置：核查 session hub 并发语义
+## What I already know
 
-### 4. RestartTracker 归属层次（R9）
-- [task/restart_tracker.rs](../../../crates/agentdash-application/src/task/restart_tracker.rs) 330 行 AutoRetry 指数退避
-- 决议：保留 task 级（task 重试策略）/ 下沉到 step（step-level retry）/ 下沉到 session
-- 可能影响 `Task.execution_mode` 字段未来
+- 主线已经完成：
+  - Task 合入 Story aggregate
+  - `WorkflowBindingKind` 收敛为 `Project / Story`
+  - 启动期 projector 与 terminal cancel 已拆为两个方向
+  - `compose_task_runtime` 已删除，`compose_story_step` / `activate_story_step` 已出现
+- 当前未完全收口的事实：
+  - `activate_story_step` 仍是预留 facade，`start_task_inner` / `continue_task_inner` 仍在走旧主链
+  - Story session API 仍允许任意 `label`，而运行期查询硬编码只认 `"companion"`
+  - `Task::set_status` / `push_artifact` / `artifacts_mut` 仍对 application 层公开
+  - 前端仍暴露 `WorkflowTargetKind = "task"`
+  - `0021_workflow_binding_kind_no_task.sql` 的注释与非法 JSON 处理实现不一致
 
-### 5. Task.executor_session_id 尾巴字段（R10）
-- [task/entity.rs:25](../../../crates/agentdash-domain/src/task/entity.rs#L25) 字段仍在，注释已声明迁移
-- M1 后 Task 合入 Story aggregate，这个字段随 Task 结构变动
-- 决议：
-  - 彻底迁到 SessionBinding metadata / session 自身
-  - 或保留并明确语义为 "executor 原生会话 id（非 AgentDash 内部 session id）"
-- 评估对 executor follow-up / resume 路径影响
+## Requirements
 
-### 6. execution.rs DTO 梳理（R11）
-- [task/execution.rs](../../../crates/agentdash-application/src/task/execution.rs) 67 行 DTO
-- M5 之后 `start_task` 走 `activate_story_step` facade，部分 DTO 字段可能不再需要
-- 决议：与 session hub / lifecycle step 入口的 DTO 复用 / 清晰划分
+### M0 · activation path 真收口
 
-### 7. API 路由重叠核查（R14）
-- [routes/task_execution.rs](../../../crates/agentdash-api/src/routes/task_execution.rs)
-- [routes/story_sessions.rs](../../../crates/agentdash-api/src/routes/story_sessions.rs)
-- [routes/acp_sessions.rs](../../../crates/agentdash-api/src/routes/acp_sessions.rs)
-- [routes/project_sessions.rs](../../../crates/agentdash-api/src/routes/project_sessions.rs)
-- 四条路由都涉及 session 发起/操作，盘点职责边界与是否有死路径
+- `start_task` / `continue_task` 保留 facade 名字，但内部必须真正委托到 `activate_story_step`
+- task 启动主链路统一为：
+  - task facade
+  - `activate_story_step`
+  - `compose_story_step`
+  - `PreparedSessionInputs`
+  - `finalize_request`
+  - session dispatch
+- `PreparedTurnContext` 若暂时保留，只能作为薄 wrapper；不再代表 task-runtime 特例分支
+- 旧式“task service 自己创建/绑定/派发 task owner session”的主路径必须退出
 
-### 8. Story.status 定位决议（R15）
-- Model C 下 Story.status 是**面向用户的业务审计字段**（非 runtime 真相投影），与 Task.status（step state 投影）性质不同
-- 决议：
-  - 保留纯业务字段，用户/API 直接写入
-  - 是否引入 "suggested transition" 机制（如 all steps done → suggest Completed，但不强制）
-  - RuntimeReconciler 对 Story 终态的级联策略
+### M1 · Story root session 契约固化
 
-### 9. WorkflowBindingKind::Task 历史数据迁移收尾（R16 扩展）
-- 主线 M4 删除 `WorkflowBindingKind::Task` 分支
-- 若 DB 里存在 `binding_kind='task'` 的 lifecycle definition 实例，主线 migration 未能一次搞定的收尾
-- enum 向后兼容策略落地（如需要）
+- Story root session 的 label 值集固定，不再允许客户端透传任意字符串
+- 同一 Story 的 root binding 必须唯一；不得依赖 `LIMIT 1` 选择
+- `find_story_session_id` / `activate_story_step` / story session API 必须共享同一 root session 约定
+- 历史数据若存在不符合约定的 Story binding，需要补迁移或兼容策略说明
 
-### 10. 前端 WorkflowTargetKind = "task" 清理（M4 frontend follow-up）
-- 主线 M4 已在后端删除 `WorkflowBindingKind::Task`，但前端仍保留该选项
-- 需改动：
-  - `frontend/src/types/workflow.ts`：`WorkflowTargetKind = "project" | "story"`（去 `"task"`）
-  - `frontend/src/services/workflow.ts:35`：`WORKFLOW_TARGET_KINDS` 数组去 `"task"`
-  - `TARGET_KIND_LABEL` / `AUTO_GRANTED_BASELINE` 相关入口更新
-  - `frontend/src/features/workflow/workflow-editor.tsx:1316` dropdown 去 task
-  - `frontend/src/components/dag-lifecycle-panel.tsx:104` dropdown 去 task
-- 独立 frontend subtask；20 行 diff，纯 UI 修复
-- 后端已先行 enforce（MCP 解析 `"task"` 报错），即使前端未改也不会造成 runtime 灾难，只是 UX 残留
+### M2 · DTO / route / 字段语义收口
 
-### 11. Projector 事务边界 tx-a（D-M2-3 [UNRESOLVED]）
-- 主线 M2 projector 采用 tx-b 非事务语义：`story_repo.update + state_change.append_change` 两步 IO 各自提交
-- 失败场景：story view 已更新但 state_change 漏写 → 索引与真相短暂不一致
-- 目标：引入 `UnitOfWork` / `TransactionalRepositories` 使两步写入 ACID 事务
-- 代价：Repository trait 可能需加 `&mut Transaction` 参数，跨 domain/infrastructure crate 改动面大
-- 参考：`LifecycleStepProjector` doc comment 已记录 fallback 策略
+- 明确 `Task.executor_session_id` 的最终语义：
+  - 若保留，只能表示 executor 原生会话 id，不能再与 AgentDash 内部 session id 混用
+  - 若迁走，需补迁移与调用链调整
+- `task/execution.rs` 与实际 activation 链路对齐，删除只服务旧路径的 DTO 壳
+- 盘点并收口以下路由的职责边界：
+  - `routes/task_execution.rs`
+  - `routes/story_sessions.rs`
+  - `routes/acp_sessions.rs`
+  - `routes/project_sessions.rs`
+- 前端去掉 `WorkflowTargetKind = "task"`，与后端 M4 一致
 
-### 12. 命令路径彻底走 workflow transition（D-M2-4 方案 1）
-- 主线 M2-c 命令路径采用方案 2（双写保留）：直接写 task.status + append state_change
-- 目标：让 projector 成为 `TaskStatusChanged` 的**唯一**写入源 —— 所有命令路径（API PATCH / task service start/continue/cancel / MCP update_task_status / gateway::update_task_status）改为通过 `LifecycleRunService` 的 step transition 完成状态变化
-- 代价：破坏现有"强制完成/失败"业务语义（比如标记已完成但跳过 workflow step transition 的场景需要单独处理）
-- 前置工作：分类每个 TaskStatus 变化能否自然映射到 step transition
+### M3 · 过渡层与尾巴清理
 
-### 13. LifecycleRunRepository::list_active_by_project 性能优化
-- 主线 M2-c 的 `view_projector` 走 `list_by_project` 全量拉取后内存过滤
-- 如 project 下历史 run 累积，加 `list_active_by_project(project_id)` repo 方法 + 索引
-- 现阶段数据规模不是性能瓶颈；等实际 metrics 再说
+- 删除 `task/tools/` 空壳模块
+- 清理明确死代码与明显过时注释
+- 修正 `0021_workflow_binding_kind_no_task.sql` 的注释/实现不一致问题
+- 评估 `task/meta.rs` 的 ACP meta 桥接归属：
+  - 若成本低，直接下沉到 session 消息层
+  - 若改动面过大，本次至少冻结归属决议并写进 spec
 
-### 14. PreparedTurnContext 下沉到 PreparedSessionInputs + wrapper
-- M5 后 `task/gateway/turn_context.rs` 的 `PreparedTurnContext` 保留作为 identity + post_turn_handler 的过渡容器
-- `acp_sessions.rs::augment_session_prompt` 仍消费 PreparedTurnContext 的中间字段（built / vfs / resolved_config 独立存放）
-- 目标：评估 `augment_session_prompt` 改走 `PreparedSessionInputs` + wrapper 后，`turn_context.rs`（当前 337 行）整体删除的可行性
-- 当前是 gateway 目录最胖的文件之一
+### M4 · 剩余建模决议冻结
 
-### 15. persist_turn_failure_artifact 死代码清理
-- M7 搬家时发现 `artifact_ops.rs::persist_turn_failure_artifact` 第 223-224 行有 `let (story_id, project_id) = (story.id, story.project_id); let _ = (story_id, project_id);` 这种"先绑再丢"的无效赋值
-- 早期 refactor 遗留，可以直接删
-
-### 16. effect_executor.rs 字符串 → TaskStatus 映射（R6 延伸）
-- M7 确认 `effect_executor.rs:138-145` 仍存在 `"completed" => TaskStatus::Completed ...` 手写映射
-- 主线 M2 已让 Task.status 变只读投影，但 hook effect payload 走 `update_task_status` 命令路径仍用字符串
-- 决议：若 hook 规则仍保留字符串形态 effect payload，考虑统一到 `FromStr` / serde；若能改走 step transition，随 #12 一起解决
+- `TaskLock`：明确保留 / 收窄 / 删除的理由
+- `RestartTracker`：明确属于 task / step / session 哪一层
+- `Story.status`：明确是否保持“纯业务审计字段”定位，是否引入 suggested transition
+- effect payload 中字符串状态映射的去向需要明确：
+  - 若本次保留字符串协议，需统一到 `FromStr` / serde 入口
+  - 若转向 workflow transition，需写清楚本次只冻结方向、不强行一步到位
 
 ## Acceptance Criteria
 
-- [ ] 16 项决议每项都有明确去向（保留 / 改造 / 删除）与理由
-- [ ] 可被 ≤ 16 个独立 PR 依次落地
-- [ ] 不重复动主线已改过的代码
-- [ ] `.trellis/spec/backend/story-task-runtime.md` 补充本任务决议
+- [ ] `start_task` / `continue_task` 的主链路统一到 `activate_story_step`
+- [ ] Story root session 的创建、查询、唯一性语义一致，API 与运行期不再各说各话
+- [ ] `Task.executor_session_id` / internal session id / child session 的语义明确，代码与文档一致
+- [ ] 前端不再暴露 `WorkflowTargetKind = "task"`
+- [ ] 空壳模块、死代码、明显错误注释与 migration 风险已清理
+- [ ] `TaskLock` / `RestartTracker` / `Story.status` 都有明确决议与理由
+- [ ] `.trellis/spec/backend/story-task-runtime.md` 同步本任务结论
+- [ ] 本次不新增新的 runtime 特例层；已有过渡层若保留，必须在 PRD 与代码注释中说明保留原因
+
+## Definition of Done
+
+- `cargo check`
+- 受影响 crate 的相关单测通过
+- 受影响前端类型检查通过
+- spec / task 文档与实现一致
+- 不引入新的双真相或新的 session 语义分叉
+
+## Technical Approach
+
+### 阶段顺序
+
+1. 先收口 activation path
+2. 再固化 Story root session 契约
+3. 再定 `executor_session_id` 与 execution DTO
+4. 再清路由与前端 target kind
+5. 再删空壳与死代码
+6. 最后冻结 `TaskLock` / `RestartTracker` / `Story.status` 的建模决议
+7. 最后统一更新 spec
+
+### 关键设计原则
+
+- 不在“前提未稳定”时先处理依赖它的尾巴项
+- 对外 facade 名字可以保留，但内部链路必须真实统一
+- Story root session 与 child session 的边界优先于字段与 DTO 清理
+- 需要讨论的项先冻结决议，再决定是否同 PR 落代码
+
+## Decision (ADR-lite)
+
+**Context**
+
+原 cleanup-tail PRD 把所有尾巴项视为“彼此独立的清理项”，但代码 review 说明这不成立：M5 仍未真收口，Story root session 契约也未固定，导致 lock / retry / DTO / route 等多项收尾都缺少稳定前提。
+
+**Decision**
+
+本任务不再按“16 条离散 cleanup 项”推进，而是合并为一个收官 PRD，按 `activation path → session contract → DTO/route → cleanup → modeling decisions` 的顺序执行。
+
+**Consequences**
+
+- 优点：避免在错误抽象上重复清理，减少返工
+- 代价：单任务范围更大，需要严格按里程碑推进，避免再次扩散
+- 结果：本任务完成后，story/task 在 Model C 下应进入“无明显主线遗留”的稳定状态
 
 ## Out of Scope
 
-- 主线任务覆盖的 M1–M8 范围——不重复处理
-- 新增 runtime 实体 / 新增业务面
-- **已在主线处理的原 R 项不再列入**：R1/R2/R3/R5/R6/R12/R13/R16（主线 M2/M4/M7）、R17（主线 M1 完整落地 Task 合入 Story）、R18/R19（主线 M3/M5）、R20（Model C 下消解）
+- 再次重做主线 M1-M8 的主体重构
+- 新增 runtime 实体或新业务面
+- 为兼容历史错误设计保留长期双轨实现
+- 强制在本次完成所有 projector transaction / workflow transition 的彻底理想化收敛
+  - 这些可以定方向，但若改动面失控，可在本次只冻结原则，不强行一步到位
 
-## Notes
+## Technical Notes
 
-### 建议落地顺序
-1. R4（纯删除，无决策）
-2. R10（字段决议，配合 M1 完成后的 Task 结构）
-3. R7（ACP meta 下沉）
-4. R11（DTO 梳理，配合 M5 完成后的 facade 链路）
-5. R14（路由盘点）
-6. R15（Story.status 定位）
-7. R16 扩展（enum 迁移收尾）
-8. R8 / R9（锁与重试归属，最需要讨论）
+### 当前已识别的关键残留
+
+- `task/service.rs` 中 `activate_story_step` 仍为预留 facade，旧主链仍在
+- `story_sessions.rs` 仍允许任意 `label`
+- `session_binding_repository.rs` 尚无 Story root binding 唯一性约束
+- `task/entity.rs` 中投影字段写入口仍对 application 层可见
+- `task/gateway/turn_context.rs` 仍承载大量过渡逻辑
+- `0021_workflow_binding_kind_no_task.sql` 对非法 JSON 的注释与实现不一致
+
+### 相关文件
+
+- [task/service.rs](../../../crates/agentdash-application/src/task/service.rs)
+- [task/gateway/turn_context.rs](../../../crates/agentdash-application/src/task/gateway/turn_context.rs)
+- [session/assembler.rs](../../../crates/agentdash-application/src/session/assembler.rs)
+- [routes/story_sessions.rs](../../../crates/agentdash-api/src/routes/story_sessions.rs)
+- [session_binding_repository.rs](../../../crates/agentdash-infrastructure/src/persistence/postgres/session_binding_repository.rs)
+- [task/entity.rs](../../../crates/agentdash-domain/src/task/entity.rs)
+- [task/execution.rs](../../../crates/agentdash-application/src/task/execution.rs)
+- [story-task-runtime.md](../../spec/backend/story-task-runtime.md)
+
+### 与旧 cleanup-tail 条目的映射
+
+- R4 → M3
+- R7 → M3 / M4
+- R8 → M4
+- R9 → M4
+- R10 → M2
+- R11 → M2
+- R14 → M2
+- R15 → M4
+- 原“前端 WorkflowTargetKind=task 清理” → M2
+- 原“Projector tx-a / command path 全转 workflow transition” → 本次只冻结方向，必要时不强制一步到位

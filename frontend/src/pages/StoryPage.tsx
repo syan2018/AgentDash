@@ -622,7 +622,6 @@ export function StoryPage() {
       <TaskDrawer
         key={selectedTask?.id ?? "no-task-selected"}
         task={selectedTask}
-        projectId={story.project_id}
         workspaces={workspaces}
         projectConfig={currentProject?.config}
         onTaskUpdated={handleTaskUpdated}

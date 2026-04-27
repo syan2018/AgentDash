@@ -67,6 +67,25 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
             )));
         }
 
+        if binding.owner_type == SessionOwnerType::Story {
+            let existing_story_root: Option<(String,)> = sqlx::query_as(
+                "SELECT session_id FROM session_bindings WHERE owner_type = $1 AND owner_id = $2 AND label = $3 LIMIT 1",
+            )
+            .bind(binding.owner_type.to_string())
+            .bind(binding.owner_id.to_string())
+            .bind(&binding.label)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+            if let Some((existing_session_id,)) = existing_story_root {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Story `{}` 已存在 label=`{}` 的 root session 绑定（session_id={}）",
+                    binding.owner_id, binding.label, existing_session_id
+                )));
+            }
+        }
+
         sqlx::query(
             "INSERT INTO session_bindings (id, project_id, session_id, owner_type, owner_id, label, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)",

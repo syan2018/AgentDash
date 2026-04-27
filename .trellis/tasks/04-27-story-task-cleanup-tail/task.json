@@ -1,7 +1,7 @@
 {
   "id": "story-task-cleanup-tail",
   "name": "story-task-cleanup-tail",
-  "title": "story/task 模块全量重构 · 清理收尾（ACP meta 下沉、TaskLock/RestartTracker 归属、尾巴字段、API 路由核查等）",
+  "title": "story/task 模块 Model C 收官收口（activation path、Story root session、DTO/路由与尾巴清理）",
   "description": "",
   "status": "planning",
   "dev_type": null,

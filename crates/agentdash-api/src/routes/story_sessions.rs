@@ -227,6 +227,15 @@ pub struct CreateStorySessionRequest {
     pub label: Option<String>,
 }
 
+fn normalize_story_root_label(raw: Option<String>) -> Result<String, ApiError> {
+    match raw.as_deref().map(str::trim) {
+        None | Some("") | Some("companion") => Ok("companion".to_string()),
+        Some(other) => Err(ApiError::BadRequest(format!(
+            "Story root session 仅支持 label=companion，收到: {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +275,33 @@ mod tests {
         assert_eq!(request.session_id.as_deref(), Some("sess-1"));
         assert_eq!(request.label.as_deref(), Some("companion"));
     }
+
+    #[test]
+    fn normalize_story_root_label_accepts_default_and_companion() {
+        assert_eq!(
+            normalize_story_root_label(None).expect("default label"),
+            "companion"
+        );
+        assert_eq!(
+            normalize_story_root_label(Some("companion".to_string())).expect("companion label"),
+            "companion"
+        );
+        assert_eq!(
+            normalize_story_root_label(Some("  ".to_string())).expect("blank label"),
+            "companion"
+        );
+    }
+
+    #[test]
+    fn normalize_story_root_label_rejects_non_companion() {
+        let err = normalize_story_root_label(Some("review".to_string())).expect_err("reject");
+        match err {
+            ApiError::BadRequest(message) => {
+                assert!(message.contains("label=companion"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }
 
 /// POST /stories/{id}/sessions
@@ -287,7 +323,7 @@ pub async fn create_story_session(
     )
     .await?;
 
-    let label = req.label.unwrap_or_else(|| "companion".to_string());
+    let label = normalize_story_root_label(req.label)?;
 
     let created_new_session = req.session_id.is_none();
     let session_id = match (req.session_id, req.title) {

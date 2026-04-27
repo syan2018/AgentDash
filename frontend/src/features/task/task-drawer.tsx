@@ -15,11 +15,9 @@ import {
   normalizeAgentBinding,
 } from "./agent-binding";
 import { TaskAgentSessionPanel } from "./task-agent-session-panel";
-import { TaskWorkflowPanel } from "../workflow/task-workflow-panel";
 
 interface TaskDrawerProps {
   task: Task | null;
-  projectId: string;
   workspaces: Workspace[];
   projectConfig?: ProjectConfig;
   onTaskUpdated: (task: Task) => void;
@@ -63,7 +61,6 @@ function ArtifactBlock({ artifact }: { artifact: Artifact }) {
 
 export function TaskDrawer({
   task,
-  projectId,
   workspaces,
   projectConfig,
   onTaskUpdated,
@@ -271,13 +268,6 @@ export function TaskDrawer({
                   }}
                 />
               </div>
-            </DetailSection>
-
-            <DetailSection
-              title="Workflow 执行"
-              description="按工作流步骤推进任务执行。"
-            >
-              <TaskWorkflowPanel task={task} projectId={projectId} />
             </DetailSection>
 
             <DetailSection

@@ -14,18 +14,26 @@ use agentdash_domain::{
 use crate::canvas::append_visible_canvas_mounts;
 use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
-use crate::session::{SessionExecutionState, SessionHub};
+use crate::session::{
+    PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
+    StoryStepSpec, TaskRuntimePhase, UserPromptInput, finalize_request,
+};
 use crate::task::lock::TaskLockMap;
 use crate::task::restart_tracker::RestartTracker;
 use crate::vfs::RelayVfsService;
+use crate::workflow::{
+    BindAndActivateLifecycleStepCommand, LifecycleRunService, build_step_projector_from_repos,
+    resolve_workflow_projection_by_run,
+};
 use crate::workspace::BackendAvailability;
 
 use super::execution::*;
 use super::gateway::{
-    PreparedTurnContext, TaskTurnServices, append_task_change as gw_append_task_change,
+    PreparedTurnContext, append_task_change as gw_append_task_change,
     bridge_task_status_event_to_session_notification,
+    clear_task_session_binding,
     create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
-    get_task as gw_get_task, map_domain_error, prepare_task_turn_context,
+    get_task as gw_get_task, load_related_context, map_connector_error, map_domain_error,
     resolve_project_scope_for_owner, resolve_task_backend_id,
 };
 
@@ -122,33 +130,216 @@ impl TaskLifecycleService {
         additional_prompt: Option<&str>,
         executor_config: Option<&AgentConfig>,
         identity: Option<agentdash_spi::auth::AuthIdentity>,
-    ) -> Result<StartedTurn, TaskExecutionError> {
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // 1. story → story session binding（label="companion"）
         let story_session_id = self.find_story_session_id(story_id).await?;
 
         // 2. 查活跃 lifecycle run
         let active_run = self.find_active_run_for_story_session(&story_session_id).await?;
 
-        // 3. 定位 step → task_id
-        let (task, step_key_resolved) = self
+        // 3. 定位 step → task_id，并补齐 compose 所需上下文
+        let (task, step_key_resolved, lifecycle) = self
             .resolve_task_for_step(&active_run, step_key.as_deref())
             .await?;
+        let step = lifecycle
+            .steps
+            .iter()
+            .find(|item| item.key == step_key_resolved)
+            .cloned()
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "lifecycle {} 中不存在 step '{}'",
+                    lifecycle.id, step_key_resolved
+                ))
+            })?;
+        let (story, project, workspace) = load_related_context(&self.repos, &task).await?;
+        let backend_id =
+            resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
 
-        // 4-5. 复用 dispatch_prepared_turn 的 compose + hub.start_prompt 链路。
-        //
-        // 注：未来 cleanup tail 把 `PreparedTurnContext` 替换成 `PreparedSessionInputs`
-        // 后，此处会改成直接调用 `compose_story_step` + `finalize_request`。
-        let _ = step_key_resolved;
-        self.dispatch_prepared_turn(
-            &task,
-            &story_session_id,
-            phase,
-            override_prompt,
-            additional_prompt,
-            executor_config,
-            identity,
+        let session_id = match phase {
+            ExecutionPhase::Start => {
+                if self.resolve_execution_session_id(task.id).await?.is_some() {
+                    return Err(TaskExecutionError::Conflict(
+                        "Task 已绑定 Session，请使用 continue 接口继续执行".into(),
+                    ));
+                }
+
+                let session_meta = gw_create_task_session(&self.hub, &task).await?;
+                let session_id = session_meta.id;
+                self.bind_session_to_owner(&session_id, "task", task.id, "execution")
+                    .await?;
+
+                let run_service = LifecycleRunService::new(
+                    self.repos.lifecycle_definition_repo.as_ref(),
+                    self.repos.lifecycle_run_repo.as_ref(),
+                )
+                .with_projector(build_step_projector_from_repos(&self.repos));
+
+                if let Err(err) = run_service
+                    .bind_session_and_activate_step(BindAndActivateLifecycleStepCommand {
+                        run_id: active_run.id,
+                        step_key: step.key.clone(),
+                        session_id: session_id.clone(),
+                    })
+                    .await
+                {
+                    let _ = self
+                        .repos
+                        .session_binding_repo
+                        .delete_by_session_and_owner(
+                            &session_id,
+                            SessionOwnerType::Task,
+                            task.id,
+                        )
+                        .await;
+                    return Err(TaskExecutionError::Conflict(err.to_string()));
+                }
+
+                session_id
+            }
+            ExecutionPhase::Continue => {
+                let session_id = self
+                    .resolve_execution_session_id(task.id)
+                    .await?
+                    .ok_or_else(|| {
+                        TaskExecutionError::UnprocessableEntity(
+                            "Task 尚未启动，请先执行 start".into(),
+                        )
+                    })?;
+
+                if self.is_task_session_running(&session_id).await? {
+                    return Err(TaskExecutionError::Conflict("该任务已有执行进行中".into()));
+                }
+
+                session_id
+            }
+        };
+
+        let active_workflow = resolve_workflow_projection_by_run(
+            active_run.id,
+            &step.key,
+            self.repos.workflow_definition_repo.as_ref(),
+            self.repos.lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
         )
         .await
+        .map_err(TaskExecutionError::Internal)?;
+
+        let assembler = SessionRequestAssembler::new(
+            self.vfs_service.as_ref(),
+            self.repos.canvas_repo.as_ref(),
+            self.backend_availability.as_ref(),
+            &self.repos,
+            &self.platform_config,
+            self.contributor_registry.as_ref(),
+        );
+        let mut prepared = assembler
+            .compose_story_step(StoryStepSpec {
+                run: &active_run,
+                lifecycle: &lifecycle,
+                step: &step,
+                task: &task,
+                story: &story,
+                project: &project,
+                workspace: workspace.as_ref(),
+                phase: match phase {
+                    ExecutionPhase::Start => TaskRuntimePhase::Start,
+                    ExecutionPhase::Continue => TaskRuntimePhase::Continue,
+                },
+                override_prompt,
+                additional_prompt,
+                explicit_executor_config: executor_config.cloned(),
+                strict_config_resolution: true,
+                active_workflow,
+            })
+            .await?;
+
+        if let Some(vfs) = prepared.vfs.as_mut()
+            && let Ok(Some(meta)) = self.hub.get_session_meta(&session_id).await
+        {
+            append_visible_canvas_mounts(
+                self.repos.canvas_repo.as_ref(),
+                task.project_id,
+                vfs,
+                &meta.visible_canvas_mount_ids,
+            )
+            .await
+            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+        }
+
+        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
+        let context_sources = prepared.source_summary.clone();
+        let mut req = finalize_request(base, prepared);
+        req.identity = identity;
+        req.post_turn_handler = Some(Arc::new(
+            super::gateway::effect_executor::TaskHookEffectExecutor {
+                repos: self.repos.clone(),
+                restart_tracker: self.restart_tracker.clone(),
+                task_id: task.id,
+                session_id: session_id.clone(),
+                backend_id: backend_id.clone(),
+            },
+        )
+            as crate::session::post_turn_handler::DynPostTurnHandler);
+
+        let turn_id = match self.hub.start_prompt(&session_id, req).await {
+            Ok(turn_id) => turn_id,
+            Err(err) => {
+                if phase == ExecutionPhase::Start {
+                    let run_service = LifecycleRunService::new(
+                        self.repos.lifecycle_definition_repo.as_ref(),
+                        self.repos.lifecycle_run_repo.as_ref(),
+                    )
+                    .with_projector(build_step_projector_from_repos(&self.repos));
+                    let _ = run_service
+                        .fail_step(crate::workflow::FailLifecycleStepCommand {
+                            run_id: active_run.id,
+                            step_key: step.key.clone(),
+                            summary: Some(format!("start_prompt_failed: {err}")),
+                        })
+                        .await;
+                    clear_task_session_binding(&self.repos, task.id, &backend_id, "start_failed")
+                        .await;
+                }
+                return Err(map_connector_error(err));
+            }
+        };
+
+        let latest_task = gw_get_task(&self.repos, task.id).await?;
+
+        self.bridge_status_event(
+            &session_id,
+            &turn_id,
+            match phase {
+                ExecutionPhase::Start => "task_start_accepted",
+                ExecutionPhase::Continue => "task_continue_accepted",
+            },
+            match phase {
+                ExecutionPhase::Start => "Task 已开始执行",
+                ExecutionPhase::Continue => "Task 已继续执行",
+            },
+            json!({
+                "task_id": latest_task.id,
+                "story_id": latest_task.story_id,
+                "session_id": session_id,
+                "executor_session_id": latest_task.executor_session_id,
+                "phase": match phase {
+                    ExecutionPhase::Start => "start",
+                    ExecutionPhase::Continue => "continue",
+                },
+                "status": latest_task.status().clone(),
+            }),
+        )
+        .await;
+
+        Ok(TaskExecutionResult {
+            task_id: latest_task.id,
+            session_id,
+            executor_session_id: latest_task.executor_session_id.clone(),
+            turn_id,
+            status: latest_task.status().clone(),
+            context_sources,
+        })
     }
 
     async fn find_story_session_id(&self, story_id: Uuid) -> Result<String, TaskExecutionError> {
@@ -188,7 +379,14 @@ impl TaskLifecycleService {
         &self,
         run: &agentdash_domain::workflow::LifecycleRun,
         step_key_hint: Option<&str>,
-    ) -> Result<(Task, String), TaskExecutionError> {
+    ) -> Result<
+        (
+            Task,
+            String,
+            agentdash_domain::workflow::LifecycleDefinition,
+        ),
+        TaskExecutionError,
+    > {
         let lifecycle = self
             .repos
             .lifecycle_definition_repo
@@ -242,7 +440,7 @@ impl TaskLifecycleService {
             ))
         })?;
         let task = gw_get_task(&self.repos, task_id).await?;
-        Ok((task, step.key))
+        Ok((task, step.key, lifecycle))
     }
 
     pub async fn get_task_session(
@@ -291,197 +489,36 @@ impl TaskLifecycleService {
         &self,
         cmd: TaskExecutionCommand,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
-
-        let existing_session = self.resolve_execution_session_id(task.id).await?;
-        if existing_session.is_some() {
-            return Err(TaskExecutionError::Conflict(
-                "Task 已绑定 Session，请使用 continue 接口继续执行".into(),
-            ));
-        }
-
-        let backend_id =
-            resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
-        let session_meta = gw_create_task_session(&self.hub, &task).await?;
-        let session_id = session_meta.id;
-        let previous_status = task.status().clone();
-
-        // SessionBinding 是 session 归属的唯一事实来源
-        self.bind_session_to_owner(&session_id, "task", task.id, "execution")
-            .await?;
-
-        task.executor_session_id = None;
-        task.set_status(TaskStatus::Running);
-        self.persist_task(&task).await?;
-
-        gw_append_task_change(
-            &self.repos,
-            task.id,
-            &backend_id,
-            ChangeKind::TaskUpdated,
-            json!({
-                "reason": "task_session_bound",
-                "task_id": task.id, "story_id": task.story_id,
-                "session_id": session_id,
-                "executor_session_id": task.executor_session_id,
-            }),
+        let task = gw_get_task(&self.repos, cmd.task_id).await?;
+        let step_key = self.resolve_step_key_for_task(task.story_id, task.id).await?;
+        self.activate_story_step(
+            task.story_id,
+            Some(step_key),
+            ExecutionPhase::Start,
+            cmd.prompt.as_deref(),
+            None,
+            cmd.executor_config.as_ref(),
+            cmd.identity,
         )
         .await
-        .map_err(map_domain_error)?;
-
-        if &previous_status != task.status() {
-            gw_append_task_change(
-                &self.repos,
-                task.id,
-                &backend_id,
-                ChangeKind::TaskStatusChanged,
-                json!({
-                    "reason": "task_start_accepted",
-                    "task_id": task.id, "story_id": task.story_id,
-                    "session_id": session_id,
-                    "executor_session_id": task.executor_session_id,
-                    "from": previous_status.clone(), "to": task.status().clone(),
-                }),
-            )
-            .await
-            .map_err(map_domain_error)?;
-        }
-
-        let started_turn = match self
-            .dispatch_prepared_turn(
-                &task,
-                &session_id,
-                ExecutionPhase::Start,
-                cmd.prompt.as_deref(),
-                None,
-                cmd.executor_config.as_ref(),
-                cmd.identity,
-            )
-            .await
-        {
-            Ok(t) => t,
-            Err(err) => {
-                let mut fail_task = task.clone();
-                fail_task.set_status(TaskStatus::Failed);
-                let _ = self.persist_task(&fail_task).await;
-                let _ = gw_append_task_change(
-                    &self.repos,
-                    fail_task.id,
-                    &backend_id,
-                    ChangeKind::TaskStatusChanged,
-                    json!({
-                        "reason": "task_start_failed",
-                        "task_id": fail_task.id, "story_id": fail_task.story_id,
-                        "session_id": session_id,
-                        "executor_session_id": fail_task.executor_session_id,
-                        "from": TaskStatus::Running, "to": TaskStatus::Failed,
-                        "error": err.to_string(),
-                    }),
-                )
-                .await;
-                return Err(err);
-            }
-        };
-
-        self.bridge_status_event(
-            &session_id,
-            &started_turn.turn_id,
-            "task_start_accepted",
-            "Task 已开始执行",
-            json!({
-                "task_id": task.id, "story_id": task.story_id,
-                "session_id": session_id,
-                "executor_session_id": task.executor_session_id,
-                "from": previous_status, "to": task.status().clone(),
-            }),
-        )
-        .await;
-
-        Ok(TaskExecutionResult {
-            task_id: task.id,
-            session_id,
-            executor_session_id: task.executor_session_id.clone(),
-            turn_id: started_turn.turn_id,
-            status: task.status().clone(),
-            context_sources: started_turn.context_sources,
-        })
     }
 
     async fn continue_task_inner(
         &self,
         cmd: TaskExecutionCommand,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let mut task = gw_get_task(&self.repos, cmd.task_id).await?;
-        let session_id = self
-            .resolve_execution_session_id(task.id)
-            .await?
-            .ok_or_else(|| {
-                TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
-            })?;
-
-        if self.is_task_session_running(&session_id).await? {
-            return Err(TaskExecutionError::Conflict("该任务已有执行进行中".into()));
-        }
-
-        let backend_id =
-            resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
-
-        let started_turn = self
-            .dispatch_prepared_turn(
-                &task,
-                &session_id,
-                ExecutionPhase::Continue,
-                None,
-                cmd.prompt.as_deref(),
-                cmd.executor_config.as_ref(),
-                cmd.identity,
-            )
-            .await?;
-
-        let previous_status = task.status().clone();
-        task.set_status(TaskStatus::Running);
-        self.persist_task(&task).await?;
-
-        if &previous_status != task.status() {
-            gw_append_task_change(
-                &self.repos,
-                task.id,
-                &backend_id,
-                ChangeKind::TaskStatusChanged,
-                json!({
-                    "reason": "task_continue_accepted",
-                    "task_id": task.id, "story_id": task.story_id,
-                    "session_id": session_id,
-                    "executor_session_id": task.executor_session_id,
-                    "from": previous_status.clone(), "to": task.status().clone(),
-                }),
-            )
-            .await
-            .map_err(map_domain_error)?;
-        }
-
-        self.bridge_status_event(
-            &session_id,
-            &started_turn.turn_id,
-            "task_continue_accepted",
-            "Task 已继续执行",
-            json!({
-                "task_id": task.id, "story_id": task.story_id,
-                "session_id": session_id,
-                "executor_session_id": task.executor_session_id,
-                "from": previous_status, "to": task.status().clone(),
-            }),
+        let task = gw_get_task(&self.repos, cmd.task_id).await?;
+        let step_key = self.resolve_step_key_for_task(task.story_id, task.id).await?;
+        self.activate_story_step(
+            task.story_id,
+            Some(step_key),
+            ExecutionPhase::Continue,
+            None,
+            cmd.prompt.as_deref(),
+            cmd.executor_config.as_ref(),
+            cmd.identity,
         )
-        .await;
-
-        Ok(TaskExecutionResult {
-            task_id: task.id,
-            session_id,
-            executor_session_id: task.executor_session_id.clone(),
-            turn_id: started_turn.turn_id,
-            status: task.status().clone(),
-            context_sources: started_turn.context_sources,
-        })
+        .await
     }
 
     async fn cancel_task_inner(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
@@ -574,63 +611,36 @@ impl TaskLifecycleService {
             .map_err(map_domain_error)
     }
 
-    async fn dispatch_prepared_turn(
+    async fn resolve_step_key_for_task(
         &self,
-        task: &Task,
-        session_id: &str,
-        phase: ExecutionPhase,
-        override_prompt: Option<&str>,
-        additional_prompt: Option<&str>,
-        executor_config: Option<&AgentConfig>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
-    ) -> Result<StartedTurn, TaskExecutionError> {
-        let svc = TaskTurnServices {
-            repos: &self.repos,
-            availability: self.backend_availability.as_ref(),
-            vfs_service: &self.vfs_service,
-            contributor_registry: &self.contributor_registry,
-            platform_config: &self.platform_config,
-        };
-        let mut ctx = prepare_task_turn_context(
-            &svc,
-            task,
-            phase,
-            override_prompt,
-            additional_prompt,
-            executor_config,
-        )
-        .await?;
-        if let Some(vfs) = ctx.vfs.as_mut()
-            && let Ok(Some(meta)) = self.hub.get_session_meta(session_id).await
-        {
-            append_visible_canvas_mounts(
-                self.repos.canvas_repo.as_ref(),
-                task.project_id,
-                vfs,
-                &meta.visible_canvas_mount_ids,
-            )
+        story_id: Uuid,
+        task_id: Uuid,
+    ) -> Result<String, TaskExecutionError> {
+        let story_session_id = self.find_story_session_id(story_id).await?;
+        let active_run = self.find_active_run_for_story_session(&story_session_id).await?;
+        let lifecycle = self
+            .repos
+            .lifecycle_definition_repo
+            .get_by_id(active_run.lifecycle_id)
             .await
-            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
-        }
-        ctx.identity = identity;
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "lifecycle_definition {} 不存在",
+                    active_run.lifecycle_id
+                ))
+            })?;
 
-        {
-            let backend_id =
-                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), task)
-                    .await
-                    .unwrap_or_default();
-            let handler = super::gateway::effect_executor::TaskHookEffectExecutor {
-                repos: self.repos.clone(),
-                restart_tracker: self.restart_tracker.clone(),
-                task_id: task.id,
-                session_id: session_id.to_string(),
-                backend_id,
-            };
-            ctx.post_turn_handler =
-                Some(Arc::new(handler) as crate::session::post_turn_handler::DynPostTurnHandler);
-        }
-
-        self.dispatcher.dispatch_turn(session_id, ctx).await
+        lifecycle
+            .steps
+            .iter()
+            .find(|step| step.task_id == Some(task_id))
+            .map(|step| step.key.clone())
+            .ok_or_else(|| {
+                TaskExecutionError::UnprocessableEntity(format!(
+                    "Story {story_id} 的活跃 lifecycle 中不存在绑定 Task {task_id} 的 step"
+                ))
+            })
     }
 
     async fn resolve_execution_session_id(

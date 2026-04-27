@@ -32,7 +32,7 @@ import type {
 
 // ─── 枚举 normalizer（将后端字符串收窄到前端联合类型）───
 
-const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story", "task"]);
+const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story"]);
 const WORKFLOW_AGENT_ROLES = new Set<string>(["project", "story", "task"]);
 const WORKFLOW_RUN_STATUSES = new Set<string>([
   "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",

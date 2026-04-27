@@ -305,18 +305,17 @@ pub async fn load_task_story_project_with_permission(
     task_id: Uuid,
     permission: ProjectPermission,
 ) -> Result<(Task, Story, Project), ApiError> {
-    let task = state
-        .repos
-        .task_repo
-        .get_by_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    // M1-b：Task 查询经 Story aggregate；`find_by_task_id` 一次性拿到 Story + Task
     let story = state
         .repos
         .story_repo
-        .get_by_id(task.story_id)
+        .find_by_task_id(task_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    let task = story
+        .find_task(task_id)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
     let project =
         load_project_with_permission(state, current_user, task.project_id, permission).await?;
     Ok((task, story, project))

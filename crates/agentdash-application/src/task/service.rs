@@ -163,11 +163,7 @@ impl TaskLifecycleService {
 
         task.executor_session_id = None;
         task.status = TaskStatus::Running;
-        self.repos
-            .task_repo
-            .update(&task)
-            .await
-            .map_err(map_domain_error)?;
+        self.persist_task(&task).await?;
 
         gw_append_task_change(
             &self.repos,
@@ -218,7 +214,7 @@ impl TaskLifecycleService {
             Err(err) => {
                 let mut fail_task = task.clone();
                 fail_task.status = TaskStatus::Failed;
-                let _ = self.repos.task_repo.update(&fail_task).await;
+                let _ = self.persist_task(&fail_task).await;
                 let _ = gw_append_task_change(
                     &self.repos,
                     fail_task.id,
@@ -295,11 +291,7 @@ impl TaskLifecycleService {
 
         let previous_status = task.status.clone();
         task.status = TaskStatus::Running;
-        self.repos
-            .task_repo
-            .update(&task)
-            .await
-            .map_err(map_domain_error)?;
+        self.persist_task(&task).await?;
 
         if previous_status != task.status {
             gw_append_task_change(
@@ -361,11 +353,7 @@ impl TaskLifecycleService {
                     .await?;
             let previous_status = task.status.clone();
             task.status = TaskStatus::Failed;
-            self.repos
-                .task_repo
-                .update(&task)
-                .await
-                .map_err(map_domain_error)?;
+            self.persist_task(&task).await?;
 
             gw_append_task_change(
                 &self.repos,
@@ -388,6 +376,41 @@ impl TaskLifecycleService {
     }
 
     // ─── private helpers ──────────────────────────────────────
+
+    /// 将 Task mutation 通过 Story aggregate 写回持久层。
+    ///
+    /// M1-b：Task 已合入 Story aggregate（`stories.tasks` JSONB 列），
+    /// 所有 task 写入必须经 `Story::update_task` 维护聚合不变量。
+    async fn persist_task(&self, task: &Task) -> Result<(), TaskExecutionError> {
+        let mut story = self
+            .repos
+            .story_repo
+            .get_by_id(task.story_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "Task 所属 Story {} 不存在",
+                    task.story_id
+                ))
+            })?;
+
+        let updated = story.update_task(task.id, |existing| {
+            *existing = task.clone();
+        });
+        if !updated {
+            return Err(TaskExecutionError::NotFound(format!(
+                "Task {} 不属于 Story {}",
+                task.id, task.story_id
+            )));
+        }
+
+        self.repos
+            .story_repo
+            .update(&story)
+            .await
+            .map_err(map_domain_error)
+    }
 
     async fn dispatch_prepared_turn(
         &self,

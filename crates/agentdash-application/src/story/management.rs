@@ -7,9 +7,7 @@ use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
-use agentdash_domain::task::{
-    AgentBinding, Task, TaskAggregateCommandRepository, TaskRepository, TaskStatus,
-};
+use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
 
 #[derive(Debug, Clone, Default)]
 pub struct StoryMutationInput {
@@ -161,15 +159,9 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
 pub async fn delete_story_aggregate(
     story_repo: &dyn StoryRepository,
     state_change_repo: &dyn StateChangeRepository,
-    task_repo: &dyn TaskRepository,
-    task_command_repo: &dyn TaskAggregateCommandRepository,
     story: &Story,
 ) -> Result<(), agentdash_domain::DomainError> {
-    let tasks = task_repo.list_by_story(story.id).await?;
-    for task in tasks {
-        task_command_repo.delete_for_story(task.id).await?;
-    }
-
+    // Story aggregate 持有 Vec<Task>，删 story 即级联清理 tasks（`stories.tasks` JSONB）。
     story_repo.delete(story.id).await?;
     state_change_repo
         .append_change(

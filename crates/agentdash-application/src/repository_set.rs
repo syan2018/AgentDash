@@ -13,7 +13,6 @@ use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
-use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
@@ -23,6 +22,9 @@ use agentdash_domain::workspace::WorkspaceRepository;
 ///
 /// 在 application 层定义，使 gateway / service 可直接持有仓储引用，
 /// 无需依赖 api 层的 `AppState`。
+///
+/// **M1-b 更新**：Task 合入 Story aggregate（`stories.tasks` JSONB），删除独立
+/// `task_repo` / `task_command_repo`；所有 task CRUD 经 `story_repo` 整体写回。
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
@@ -30,8 +32,6 @@ pub struct RepositorySet {
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
-    pub task_repo: Arc<dyn TaskRepository>,
-    pub task_command_repo: Arc<dyn TaskAggregateCommandRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,

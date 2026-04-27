@@ -4,7 +4,6 @@ use agentdash_application::story::{
     AgentBindingInput, StoryMutationInput, TaskMutationInput, apply_story_mutation,
     apply_task_mutation, build_agent_binding, build_story, build_task, delete_story_aggregate,
 };
-use agentdash_application::task::management::{create_task_aggregate, delete_task_aggregate};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -293,8 +292,6 @@ pub async fn delete_story(
     delete_story_aggregate(
         state.repos.story_repo.as_ref(),
         state.repos.state_change_repo.as_ref(),
-        state.repos.task_repo.as_ref(),
-        state.repos.task_command_repo.as_ref(),
         &story,
     )
     .await?;
@@ -316,8 +313,16 @@ pub async fn list_tasks(
         ProjectPermission::View,
     )
     .await?;
-    let tasks = state.repos.task_repo.list_by_story(story_id).await?;
-    Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
+    // M1-b：Story aggregate 已持有 tasks
+    let story = state
+        .repos
+        .story_repo
+        .get_by_id(story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
+    Ok(Json(
+        story.tasks.into_iter().map(TaskResponse::from).collect(),
+    ))
 }
 
 pub async fn create_task(
@@ -406,7 +411,16 @@ pub async fn create_task(
         agent_binding,
     );
 
-    create_task_aggregate(state.repos.task_command_repo.as_ref(), &task).await?;
+    // M1-b：task create 走 Story aggregate `add_task` + `StoryRepository::update`
+    let task_clone = task.clone();
+    let mut story = state
+        .repos
+        .story_repo
+        .get_by_id(story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
+    story.add_task(task_clone);
+    state.repos.story_repo.update(&story).await?;
 
     Ok(Json(TaskResponse::from(task)))
 }
@@ -505,7 +519,24 @@ pub async fn update_task(
         },
     );
 
-    state.repos.task_repo.update(&task).await?;
+    // M1-b：task update 经 Story aggregate 整体写回
+    let mut story_aggregate = state
+        .repos
+        .story_repo
+        .get_by_id(task.story_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
+    let task_clone = task.clone();
+    let updated = story_aggregate.update_task(task.id, |existing| {
+        *existing = task_clone.clone();
+    });
+    if !updated {
+        return Err(ApiError::NotFound(format!(
+            "Task {} 不属于 Story {}",
+            task.id, task.story_id
+        )));
+    }
+    state.repos.story_repo.update(&story_aggregate).await?;
 
     let change_kind = classify_task_change_kind(&old_status, &task.status);
     let payload = serde_json::to_value(&task)
@@ -550,7 +581,17 @@ pub async fn delete_task(
     )
     .await?;
 
-    delete_task_aggregate(state.repos.task_command_repo.as_ref(), task_id).await?;
+    // M1-b：task delete 经 Story aggregate `remove_task` + `StoryRepository::update`
+    let mut story = state
+        .repos
+        .story_repo
+        .find_by_task_id(task_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    let _ = story
+        .remove_task(task_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    state.repos.story_repo.update(&story).await?;
 
     state.task_runtime.restart_tracker.clear(task_id);
 

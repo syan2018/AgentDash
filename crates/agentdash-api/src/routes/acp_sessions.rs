@@ -816,16 +816,19 @@ pub async fn get_session_bindings(
                 }
             }
             SessionOwnerType::Task => {
-                if let Some(task) = state
+                // M1-b：Task 查询经 Story aggregate
+                if let Some(story) = state
                     .repos
-                    .task_repo
-                    .get_by_id(binding.owner_id)
+                    .story_repo
+                    .find_by_task_id(binding.owner_id)
                     .await
                     .map_err(|e| ApiError::Internal(e.to_string()))?
                 {
-                    owner_title = Some(task.title);
-                    story_id = Some(task.story_id.to_string());
-                    task_id = Some(task.id.to_string());
+                    if let Some(task) = story.find_task(binding.owner_id) {
+                        owner_title = Some(task.title.clone());
+                        story_id = Some(task.story_id.to_string());
+                        task_id = Some(task.id.to_string());
+                    }
                 }
             }
         }
@@ -1342,12 +1345,17 @@ async fn build_task_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
-    let task = state
+    // M1-b：Task 查询经 Story aggregate
+    let story = state
         .repos
-        .task_repo
-        .get_by_id(task_id)
+        .story_repo
+        .find_by_task_id(task_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+    let task = story
+        .find_task(task_id)
+        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
 
     let effective_executor_config = req

@@ -54,9 +54,7 @@ pub fn normalize_backend_id(raw: &str) -> Result<&str, TaskExecutionError> {
 // ─── repo-based data operations ─────────────────────────────
 
 pub async fn get_task(repos: &RepositorySet, task_id: Uuid) -> Result<Task, TaskExecutionError> {
-    repos
-        .task_repo
-        .get_by_id(task_id)
+    crate::task::load_task(repos.story_repo.as_ref(), task_id)
         .await
         .map_err(map_domain_error)?
         .ok_or_else(|| TaskExecutionError::NotFound(format!("Task {task_id} 不存在")))
@@ -69,9 +67,7 @@ pub async fn append_task_change(
     kind: ChangeKind,
     payload: Value,
 ) -> Result<(), DomainError> {
-    let task = repos
-        .task_repo
-        .get_by_id(task_id)
+    let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
         .await?
         .ok_or_else(|| DomainError::NotFound {
             entity: "task",
@@ -96,29 +92,34 @@ pub async fn update_task_status(
     reason: &str,
     context: Value,
 ) -> Result<bool, DomainError> {
-    let mut task = match repos.task_repo.get_by_id(task_id).await? {
-        Some(task) => task,
-        None => return Ok(false),
+    let Some(mut story) = repos.story_repo.find_by_task_id(task_id).await? else {
+        return Ok(false);
     };
 
-    if task.status == next_status {
+    let Some(previous_task) = story.find_task(task_id).cloned() else {
+        return Ok(false);
+    };
+
+    if previous_task.status == next_status {
         return Ok(false);
     }
 
-    let previous_status = task.status.clone();
-    task.status = next_status.clone();
-    repos.task_repo.update(&task).await?;
+    let previous_status = previous_task.status.clone();
+    story.update_task(task_id, |task| {
+        task.status = next_status.clone();
+    });
+    repos.story_repo.update(&story).await?;
 
     append_task_change(
         repos,
-        task.id,
+        previous_task.id,
         backend_id,
         ChangeKind::TaskStatusChanged,
         json!({
             "reason": reason,
-            "task_id": task.id,
-            "story_id": task.story_id,
-            "executor_session_id": task.executor_session_id,
+            "task_id": previous_task.id,
+            "story_id": previous_task.story_id,
+            "executor_session_id": previous_task.executor_session_id,
             "from": previous_status,
             "to": next_status,
             "context": context,
@@ -143,13 +144,16 @@ pub async fn persist_tool_call_artifact(
     repos: &RepositorySet,
     input: ToolCallArtifactInput<'_>,
 ) -> Result<(), DomainError> {
-    let mut task = match repos.task_repo.get_by_id(input.task_id).await? {
-        Some(task) => task,
-        None => return Ok(()),
+    let Some(mut story) = repos.story_repo.find_by_task_id(input.task_id).await? else {
+        return Ok(());
+    };
+    let Some(task_snapshot) = story.find_task(input.task_id).cloned() else {
+        return Ok(());
     };
 
+    let mut updated_task = task_snapshot.clone();
     let changed = upsert_tool_execution_artifact(
-        &mut task,
+        &mut updated_task,
         input.session_id,
         input.turn_id,
         input.tool_call_id,
@@ -159,16 +163,19 @@ pub async fn persist_tool_call_artifact(
         return Ok(());
     }
 
-    repos.task_repo.update(&task).await?;
+    story.update_task(input.task_id, |task| {
+        *task = updated_task.clone();
+    });
+    repos.story_repo.update(&story).await?;
     append_task_change(
         repos,
-        task.id,
+        updated_task.id,
         input.backend_id,
         ChangeKind::TaskArtifactAdded,
         json!({
             "reason": input.reason,
-            "task_id": task.id,
-            "story_id": task.story_id,
+            "task_id": updated_task.id,
+            "story_id": updated_task.story_id,
             "session_id": input.session_id,
             "turn_id": input.turn_id,
             "tool_call_id": input.tool_call_id,
@@ -188,12 +195,14 @@ pub async fn persist_turn_failure_artifact(
     turn_id: &str,
     error_message: &str,
 ) -> Result<(), DomainError> {
-    let mut task = match repos.task_repo.get_by_id(task_id).await? {
-        Some(task) => task,
-        None => return Ok(()),
+    let Some(mut story) = repos.story_repo.find_by_task_id(task_id).await? else {
+        return Ok(());
     };
+    if story.find_task(task_id).is_none() {
+        return Ok(());
+    }
 
-    task.artifacts.push(Artifact {
+    let new_artifact = Artifact {
         id: Uuid::new_v4(),
         artifact_type: ArtifactType::LogOutput,
         content: json!({
@@ -204,18 +213,22 @@ pub async fn persist_turn_failure_artifact(
             "created_at": chrono::Utc::now().to_rfc3339(),
         }),
         created_at: chrono::Utc::now(),
+    };
+    story.update_task(task_id, |task| {
+        task.artifacts.push(new_artifact.clone());
     });
-
-    repos.task_repo.update(&task).await?;
+    let (story_id, project_id) = (story.id, story.project_id);
+    let _ = (story_id, project_id);
+    repos.story_repo.update(&story).await?;
     append_task_change(
         repos,
-        task.id,
+        task_id,
         backend_id,
         ChangeKind::TaskArtifactAdded,
         json!({
             "reason": "turn_failed_error_summary",
-            "task_id": task.id,
-            "story_id": task.story_id,
+            "task_id": task_id,
+            "story_id": story.id,
             "session_id": session_id,
             "turn_id": turn_id,
             "artifact_type": "log_output",
@@ -234,26 +247,31 @@ pub async fn bind_executor_session_id(
     turn_id: &str,
     executor_session_id: &str,
 ) -> Result<(), DomainError> {
-    let Some(mut task) = repos.task_repo.get_by_id(task_id).await? else {
+    let Some(mut story) = repos.story_repo.find_by_task_id(task_id).await? else {
         return Ok(());
     };
-
-    if task.executor_session_id.as_deref() == Some(executor_session_id) {
+    let Some(existing) = story.find_task(task_id) else {
+        return Ok(());
+    };
+    if existing.executor_session_id.as_deref() == Some(executor_session_id) {
         return Ok(());
     }
+    let story_id = story.id;
 
-    task.executor_session_id = Some(executor_session_id.to_string());
-    repos.task_repo.update(&task).await?;
+    story.update_task(task_id, |task| {
+        task.executor_session_id = Some(executor_session_id.to_string());
+    });
+    repos.story_repo.update(&story).await?;
 
     append_task_change(
         repos,
-        task.id,
+        task_id,
         backend_id,
         ChangeKind::TaskUpdated,
         json!({
             "reason": "executor_session_bound",
-            "task_id": task.id,
-            "story_id": task.story_id,
+            "task_id": task_id,
+            "story_id": story_id,
             "session_id": session_id,
             "turn_id": turn_id,
             "executor_session_id": executor_session_id,
@@ -276,9 +294,11 @@ pub async fn clear_task_session_binding(
     let result: Result<(), DomainError> = async {
         use agentdash_domain::session_binding::SessionOwnerType;
 
-        let mut task = match repos.task_repo.get_by_id(task_id).await? {
-            Some(task) => task,
-            None => return Ok(()),
+        let Some(mut story) = repos.story_repo.find_by_task_id(task_id).await? else {
+            return Ok(());
+        };
+        let Some(existing_task) = story.find_task(task_id).cloned() else {
+            return Ok(());
         };
 
         let execution_binding = repos
@@ -287,7 +307,7 @@ pub async fn clear_task_session_binding(
             .await?;
 
         let cleared_session_id = execution_binding.as_ref().map(|b| b.session_id.clone());
-        let cleared_executor_session_id = task.executor_session_id.take();
+        let cleared_executor_session_id = existing_task.executor_session_id.clone();
 
         if cleared_session_id.is_none() && cleared_executor_session_id.is_none() {
             return Ok(());
@@ -300,18 +320,23 @@ pub async fn clear_task_session_binding(
                 .await?;
         }
 
-        repos.task_repo.update(&task).await?;
+        story.update_task(task_id, |task| {
+            task.executor_session_id = None;
+        });
+        let project_id = story.project_id;
+        let story_id = story.id;
+        repos.story_repo.update(&story).await?;
         repos
             .state_change_repo
             .append_change(
-                task.project_id,
-                task.id,
+                project_id,
+                task_id,
                 ChangeKind::TaskUpdated,
                 json!({
                     "reason": format!("session_cleared_{reason}"),
-                    "task_id": task.id,
-                    "project_id": task.project_id,
-                    "story_id": task.story_id,
+                    "task_id": task_id,
+                    "project_id": project_id,
+                    "story_id": story_id,
                     "cleared_session_id": cleared_session_id,
                     "cleared_executor_session_id": cleared_executor_session_id,
                 }),
@@ -468,9 +493,7 @@ pub async fn resolve_project_scope_for_owner(
             .map_err(map_domain_error)?
             .map(|story| story.project_id)
             .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {owner_id} 不存在"))),
-        SessionOwnerType::Task => repos
-            .task_repo
-            .get_by_id(owner_id)
+        SessionOwnerType::Task => crate::task::load_task(repos.story_repo.as_ref(), owner_id)
             .await
             .map_err(map_domain_error)?
             .map(|task| task.project_id)

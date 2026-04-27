@@ -386,14 +386,18 @@ impl StoryMcpServer {
             ..Default::default()
         };
 
+        // M1-b：task create 走 Story aggregate `add_task` + `StoryRepository::update`
+        let task_id = task.id;
+        let mut story = self.load_story().await?;
+        story.add_task(task);
         self.services
-            .task_command_repo
-            .create_for_story(&task)
+            .story_repo
+            .update(&story)
             .await
             .map_err(McpError::from)?;
 
         let result = serde_json::json!({
-            "task_id": task.id.to_string(),
+            "task_id": task_id.to_string(),
             "story_id": self.story_id.to_string(),
             "status": "pending",
             "message": "Task 已创建",
@@ -412,6 +416,8 @@ impl StoryMcpServer {
         use agentdash_domain::task::{AgentBinding, Task};
 
         let mut created_ids = Vec::new();
+        // M1-b：批量 create 也走 Story aggregate；一次加载一次保存避免多次 IO
+        let mut story = self.load_story().await?;
 
         for input in &params.tasks {
             let workspace_id = input
@@ -443,14 +449,16 @@ impl StoryMcpServer {
                 ..Default::default()
             };
 
-            self.services
-                .task_command_repo
-                .create_for_story(&task)
-                .await
-                .map_err(McpError::from)?;
-
-            created_ids.push(task.id.to_string());
+            let task_id = task.id;
+            story.add_task(task);
+            created_ids.push(task_id.to_string());
         }
+
+        self.services
+            .story_repo
+            .update(&story)
+            .await
+            .map_err(McpError::from)?;
 
         let result = serde_json::json!({
             "story_id": self.story_id.to_string(),
@@ -465,12 +473,8 @@ impl StoryMcpServer {
 
     #[tool(description = "列出当前 Story 下的所有 Task 及其状态")]
     async fn list_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        let tasks = self
-            .services
-            .task_repo
-            .list_by_story(self.story_id)
-            .await
-            .map_err(McpError::from)?;
+        let story = self.load_story().await?;
+        let tasks = &story.tasks;
 
         let result: Vec<serde_json::Value> = tasks
             .iter()

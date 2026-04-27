@@ -4,6 +4,7 @@ use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
     ChangeKind, Story, StoryContext, StoryPriority, StoryRepository, StoryStatus, StoryType,
 };
+use agentdash_domain::task::Task;
 
 use super::state_change_store::{append_state_change_in_tx, initialize_state_changes_schema};
 
@@ -31,6 +32,7 @@ impl PostgresStoryRepository {
                 tags TEXT NOT NULL DEFAULT '[]',
                 task_count INTEGER NOT NULL DEFAULT 0,
                 context TEXT NOT NULL DEFAULT '{}',
+                tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -41,6 +43,14 @@ impl PostgresStoryRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        // 防御性：即便老库已存在 stories 表且无 tasks 列，这里兜底补列
+        // （真正的数据迁移靠 migrations/0020_stories_tasks_jsonb.sql）
+        let _ = sqlx::query(
+            "ALTER TABLE stories ADD COLUMN IF NOT EXISTS tasks JSONB NOT NULL DEFAULT '[]'::jsonb",
+        )
+        .execute(&self.pool)
+        .await;
 
         initialize_state_changes_schema(&self.pool).await?;
 
@@ -57,9 +67,12 @@ impl StoryRepository for PostgresStoryRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        let tasks_json = tasks_to_json(&story.tasks)?;
+        let task_count = story.tasks.len() as i32;
+
         sqlx::query(
-            "INSERT INTO stories (id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            "INSERT INTO stories (id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, tasks, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(story.id.to_string())
         .bind(story.project_id.to_string())
@@ -70,8 +83,9 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.tags)?)
-        .bind(story.task_count as i32)
+        .bind(task_count)
         .bind(serde_json::to_string(&story.context)?)
+        .bind(tasks_json)
         .bind(story.created_at.to_rfc3339())
         .bind(story.updated_at.to_rfc3339())
         .execute(&mut *tx)
@@ -96,7 +110,7 @@ impl StoryRepository for PostgresStoryRepository {
 
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<Story>, DomainError> {
         let row = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
+            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, tasks, created_at, updated_at
              FROM stories WHERE id = $1",
         )
         .bind(id.to_string())
@@ -109,7 +123,7 @@ impl StoryRepository for PostgresStoryRepository {
 
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Story>, DomainError> {
         let rows = sqlx::query_as::<_, StoryRow>(
-            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, created_at, updated_at
+            "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, tasks, created_at, updated_at
              FROM stories WHERE project_id = $1 ORDER BY created_at DESC",
         )
         .bind(project_id.to_string())
@@ -127,9 +141,12 @@ impl StoryRepository for PostgresStoryRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        let tasks_json = tasks_to_json(&story.tasks)?;
+        let task_count = story.tasks.len() as i32;
+
         let result = sqlx::query(
-            "UPDATE stories SET project_id = $1, default_workspace_id = $2, title = $3, description = $4, status = $5, priority = $6, story_type = $7, tags = $8, task_count = $9, context = $10, updated_at = $11
-             WHERE id = $12",
+            "UPDATE stories SET project_id = $1, default_workspace_id = $2, title = $3, description = $4, status = $5, priority = $6, story_type = $7, tags = $8, task_count = $9, context = $10, tasks = $11, updated_at = $12
+             WHERE id = $13",
         )
         .bind(story.project_id.to_string())
         .bind(story.default_workspace_id.map(|id| id.to_string()))
@@ -139,8 +156,9 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
         .bind(serde_json::to_string(&story.tags)?)
-        .bind(story.task_count as i32)
+        .bind(task_count)
         .bind(serde_json::to_string(&story.context)?)
+        .bind(tasks_json)
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(story.id.to_string())
         .execute(&mut *tx)
@@ -185,6 +203,33 @@ impl StoryRepository for PostgresStoryRepository {
         }
         Ok(())
     }
+
+    async fn find_by_task_id(
+        &self,
+        task_id: uuid::Uuid,
+    ) -> Result<Option<Story>, DomainError> {
+        // 使用 JSONB containment 查找包含指定 task.id 的 story 行
+        let story_id: Option<(String,)> = sqlx::query_as(
+            r#"SELECT id FROM stories
+                 WHERE tasks @> jsonb_build_array(jsonb_build_object('id', $1::text))
+                 LIMIT 1"#,
+        )
+        .bind(task_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let Some((story_id,)) = story_id else {
+            return Ok(None);
+        };
+
+        let parsed = story_id.parse().map_err(|_| DomainError::NotFound {
+            entity: "story",
+            id: story_id.clone(),
+        })?;
+
+        self.get_by_id(parsed).await
+    }
 }
 
 // --- SQLx 行映射辅助结构 ---
@@ -202,6 +247,8 @@ struct StoryRow {
     tags: String,
     task_count: i32,
     context: String,
+    /// JSONB 列 → 直接由 sqlx 反序列化为 serde_json::Value
+    tasks: sqlx::types::Json<serde_json::Value>,
     created_at: String,
     updated_at: String,
 }
@@ -228,6 +275,14 @@ impl TryFrom<StoryRow> for Story {
             })
             .transpose()?;
 
+        let tasks: Vec<Task> = serde_json::from_value(row.tasks.0.clone())
+            .map_err(|e| DomainError::InvalidConfig(format!("stories.tasks: {e}")))?;
+
+        // 读出的 task_count 以 tasks.len() 为准（防止冗余列漂移）；
+        // 保留 `row.task_count` 以兼容老行。
+        let effective_task_count = tasks.len() as u32;
+        let _ = row.task_count;
+
         Ok(Story {
             id: row.id.parse().map_err(|_| DomainError::NotFound {
                 entity: "story",
@@ -241,12 +296,18 @@ impl TryFrom<StoryRow> for Story {
             priority: parse_story_priority(&row.priority)?,
             story_type: parse_story_type(&row.story_type)?,
             tags,
-            task_count: row.task_count.max(0) as u32,
+            task_count: effective_task_count,
             context,
+            tasks,
             created_at: super::parse_pg_timestamp_checked(&row.created_at, "stories.created_at")?,
             updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "stories.updated_at")?,
         })
     }
+}
+
+fn tasks_to_json(tasks: &[Task]) -> Result<serde_json::Value, DomainError> {
+    serde_json::to_value(tasks)
+        .map_err(|e| DomainError::InvalidConfig(format!("stories.tasks.encode: {e}")))
 }
 
 fn story_payload(story: &Story) -> Result<serde_json::Value, DomainError> {

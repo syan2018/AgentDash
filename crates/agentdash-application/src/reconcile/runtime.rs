@@ -8,27 +8,27 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::StoryStatus;
-use agentdash_domain::task::{TaskRepository, TaskStatus};
+use agentdash_domain::story::{StoryRepository, StoryStatus};
+use agentdash_domain::task::TaskStatus;
 
 use crate::session::SessionHub;
 
 /// 运行时对账服务 — 在状态变更路径上被调用
 pub struct RuntimeReconciler {
     session_hub: SessionHub,
-    task_repo: Arc<dyn TaskRepository>,
+    story_repo: Arc<dyn StoryRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
 }
 
 impl RuntimeReconciler {
     pub fn new(
         session_hub: SessionHub,
-        task_repo: Arc<dyn TaskRepository>,
+        story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
     ) -> Self {
         Self {
             session_hub,
-            task_repo,
+            story_repo,
             session_binding_repo,
         }
     }
@@ -72,8 +72,15 @@ impl RuntimeReconciler {
             return;
         }
 
-        let tasks = match self.task_repo.list_by_story(story_id).await {
-            Ok(tasks) => tasks,
+        let tasks = match self.story_repo.get_by_id(story_id).await {
+            Ok(Some(story)) => story.tasks,
+            Ok(None) => {
+                tracing::warn!(
+                    story_id = %story_id,
+                    "运行时对账：Story 不存在，跳过级联取消"
+                );
+                return;
+            }
             Err(err) => {
                 tracing::warn!(
                     story_id = %story_id,

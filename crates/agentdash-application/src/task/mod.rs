@@ -4,7 +4,6 @@ pub mod context_builder;
 pub mod execution;
 pub mod gateway;
 pub mod lock;
-pub mod management;
 pub mod meta;
 pub mod restart_tracker;
 pub mod service;
@@ -14,6 +13,8 @@ pub mod tools;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
+use agentdash_domain::story::StoryRepository;
+use agentdash_domain::task::Task;
 use uuid::Uuid;
 
 /// 从 SessionBinding 查询 Task 的执行 session ID。
@@ -28,4 +29,18 @@ pub async fn find_task_execution_session_id(
         .find_by_owner_and_label(SessionOwnerType::Task, task_id, "execution")
         .await?;
     Ok(binding.map(|b| b.session_id))
+}
+
+/// 通过 Story aggregate 读取指定 Task（只读副本）。
+///
+/// M1-b 过渡期辅助函数：原 `TaskRepository::get_by_id` 的替代。
+/// 返回 `None` 表示 task 所属 story 不存在或 task 已被移除。
+pub async fn load_task(
+    story_repo: &dyn StoryRepository,
+    task_id: Uuid,
+) -> Result<Option<Task>, DomainError> {
+    let Some(story) = story_repo.find_by_task_id(task_id).await? else {
+        return Ok(None);
+    };
+    Ok(story.find_task(task_id).cloned())
 }

@@ -28,11 +28,8 @@ use agentdash_application::vfs::tools::provider::{
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_domain::story::StateChangeRepository;
-use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
-use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
+use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
@@ -41,8 +38,7 @@ use agentdash_infrastructure::{
     PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
     PostgresRoutineRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
     PostgresSettingsRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresTaskRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
-    PostgresWorkspaceRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -136,7 +132,6 @@ impl AppState {
         let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
         let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
-        let task_repo = Arc::new(PostgresTaskRepository::new(pool.clone()));
         let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
         let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
 
@@ -190,8 +185,6 @@ impl AppState {
             workspace_repo: workspace_repo.clone(),
             story_repo: story_repo.clone(),
             state_change_repo: state_change_repo.clone(),
-            task_repo: task_repo.clone(),
-            task_command_repo: task_repo.clone(),
             session_binding_repo: session_binding_repo.clone(),
             backend_repo: backend_repo.clone(),
             auth_session_repo: auth_session_repo.clone(),
@@ -283,7 +276,6 @@ impl AppState {
         let hook_provider = Arc::new(AppExecutionHookProvider::new(
             project_repo.clone(),
             story_repo.clone(),
-            task_repo.clone(),
             session_binding_repo.clone(),
             agent_repo.clone(),
             agent_repo.clone(),
@@ -323,8 +315,7 @@ impl AppState {
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
         let state_change_repo_port: Arc<dyn StateChangeRepository> = state_change_repo.clone();
-        let task_repo_port: Arc<dyn TaskRepository> = task_repo.clone();
-        let task_command_repo_port: Arc<dyn TaskAggregateCommandRepository> = task_repo.clone();
+        let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
 
         // 启动对账管线：Session → Task → Infrastructure（有序不可跳过）
         {
@@ -332,7 +323,7 @@ impl AppState {
                 session_hub: session_hub.clone(),
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
-                task_repo: task_repo_port.clone(),
+                story_repo: story_repo_port.clone(),
                 session_binding_repo: session_binding_repo.clone(),
                 restart_tracker: restart_tracker.clone(),
                 session_state_reader: Arc::new(HubSessionStateReader {
@@ -367,7 +358,7 @@ impl AppState {
         let runtime_reconciler = Arc::new(
             agentdash_application::reconcile::runtime::RuntimeReconciler::new(
                 session_hub.clone(),
-                task_repo_port.clone(),
+                story_repo_port.clone(),
                 repos.session_binding_repo.clone(),
             ),
         );

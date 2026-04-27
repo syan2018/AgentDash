@@ -79,12 +79,35 @@ impl TaskMcpServer {
     }
 
     async fn load_task(&self) -> Result<agentdash_domain::task::Task, McpError> {
-        self.services
-            .task_repo
-            .get_by_id(self.task_id)
+        // M1-b：Task 查询经 Story aggregate（find_by_task_id）
+        let story = self
+            .services
+            .story_repo
+            .find_by_task_id(self.task_id)
             .await
             .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
+        story
+            .find_task(self.task_id)
+            .cloned()
             .ok_or_else(|| McpError::not_found("Task", self.task_id))
+    }
+
+    async fn load_story_with_task(
+        &self,
+    ) -> Result<(agentdash_domain::story::Story, agentdash_domain::task::Task), McpError> {
+        let story = self
+            .services
+            .story_repo
+            .find_by_task_id(self.task_id)
+            .await
+            .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
+        let task = story
+            .find_task(self.task_id)
+            .cloned()
+            .ok_or_else(|| McpError::not_found("Task", self.task_id))?;
+        Ok((story, task))
     }
 }
 
@@ -134,9 +157,15 @@ impl TaskMcpServer {
             "Task 状态更新"
         );
 
+        // M1-b：经 Story aggregate 写入 task 状态
+        let (mut story, _) = self.load_story_with_task().await?;
+        story.update_task(self.task_id, |task| {
+            task.status = new_status.clone();
+            task.updated_at = chrono::Utc::now();
+        });
         self.services
-            .task_repo
-            .update_status(self.task_id, new_status)
+            .story_repo
+            .update(&story)
             .await
             .map_err(McpError::from)?;
 
@@ -169,14 +198,17 @@ impl TaskMcpServer {
             created_at: chrono::Utc::now(),
         };
 
-        let mut task = self.load_task().await?;
+        let (mut story, _) = self.load_story_with_task().await?;
         let artifact_id = artifact.id;
-        task.artifacts.push(artifact);
-        task.updated_at = chrono::Utc::now();
+        let artifact_clone = artifact.clone();
+        story.update_task(self.task_id, |task| {
+            task.artifacts.push(artifact_clone.clone());
+            task.updated_at = chrono::Utc::now();
+        });
 
         self.services
-            .task_repo
-            .update(&task)
+            .story_repo
+            .update(&story)
             .await
             .map_err(McpError::from)?;
 
@@ -188,12 +220,14 @@ impl TaskMcpServer {
 
     #[tool(description = "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）")]
     async fn get_sibling_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        let tasks = self
+        let story = self
             .services
-            .task_repo
-            .list_by_story(self.story_id)
+            .story_repo
+            .get_by_id(self.story_id)
             .await
-            .map_err(McpError::from)?;
+            .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("Story", self.story_id))?;
+        let tasks = &story.tasks;
 
         let result: Vec<serde_json::Value> = tasks
             .iter()
@@ -241,14 +275,18 @@ impl TaskMcpServer {
         &self,
         Parameters(params): Parameters<AppendTaskDescriptionParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let mut task = self.load_task().await?;
+        let (mut story, task) = self.load_story_with_task().await?;
+        let new_description =
+            format!("{}\n\n---\n{}", task.description, params.append_text);
 
-        task.description = format!("{}\n\n---\n{}", task.description, params.append_text);
-        task.updated_at = chrono::Utc::now();
+        story.update_task(self.task_id, |task| {
+            task.description = new_description.clone();
+            task.updated_at = chrono::Utc::now();
+        });
 
         self.services
-            .task_repo
-            .update(&task)
+            .story_repo
+            .update(&story)
             .await
             .map_err(McpError::from)?;
 

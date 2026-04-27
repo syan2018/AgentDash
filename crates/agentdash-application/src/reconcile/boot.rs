@@ -10,15 +10,14 @@ use crate::task::restart_tracker::RestartTracker;
 use crate::task::state_reconciler::{TaskSessionStateReader, reconcile_running_tasks_on_boot};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::StateChangeRepository;
-use agentdash_domain::task::TaskRepository;
+use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 
 /// 启动对账管线的依赖集合
 pub struct BootReconcileDeps {
     pub session_hub: SessionHub,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
-    pub task_repo: Arc<dyn TaskRepository>,
+    pub story_repo: Arc<dyn StoryRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub restart_tracker: Arc<RestartTracker>,
     pub session_state_reader: Arc<dyn TaskSessionStateReader>,
@@ -109,7 +108,7 @@ async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
     match reconcile_running_tasks_on_boot(
         &deps.project_repo,
         &deps.state_change_repo,
-        &deps.task_repo,
+        &deps.story_repo,
         &deps.session_binding_repo,
         deps.session_state_reader.as_ref(),
         Some(deps.restart_tracker.as_ref()),

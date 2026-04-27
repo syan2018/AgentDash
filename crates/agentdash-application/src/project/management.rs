@@ -4,7 +4,6 @@ use uuid::Uuid;
 use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
 use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::{TaskAggregateCommandRepository, TaskRepository};
 use agentdash_domain::workspace::WorkspaceRepository;
 
 #[derive(Debug, Clone, Default)]
@@ -96,17 +95,12 @@ pub fn build_cloned_project(
 pub async fn delete_project_aggregate(
     project_repo: &dyn ProjectRepository,
     story_repo: &dyn StoryRepository,
-    task_repo: &dyn TaskRepository,
-    task_command_repo: &dyn TaskAggregateCommandRepository,
     workspace_repo: &dyn WorkspaceRepository,
     project_id: Uuid,
 ) -> Result<(), agentdash_domain::DomainError> {
+    // Story aggregate 已持有 Vec<Task>（stories.tasks JSONB）；删除 story 即级联清理 tasks。
     let stories = story_repo.list_by_project(project_id).await?;
     for story in stories {
-        let tasks = task_repo.list_by_story(story.id).await?;
-        for task in tasks {
-            task_command_repo.delete_for_story(task.id).await?;
-        }
         story_repo.delete(story.id).await?;
     }
 

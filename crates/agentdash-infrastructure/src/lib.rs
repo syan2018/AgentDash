@@ -17,7 +17,6 @@ pub use persistence::postgres::PostgresSessionRepository;
 pub use persistence::postgres::PostgresSettingsRepository;
 pub use persistence::postgres::PostgresStateChangeRepository;
 pub use persistence::postgres::PostgresStoryRepository;
-pub use persistence::postgres::PostgresTaskRepository;
 pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceRepository;

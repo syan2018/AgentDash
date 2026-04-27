@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::{ChangeKind, StateChangeRepository};
-use agentdash_domain::task::{Task, TaskExecutionMode, TaskRepository, TaskStatus};
+use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
+use agentdash_domain::task::{Task, TaskExecutionMode, TaskStatus};
 
 use super::restart_tracker::{RestartDecision, RestartTracker};
 
@@ -141,7 +141,7 @@ fn plan_for_running_task(
 
 async fn apply_reconcile_update(
     state_change_repo: &Arc<dyn StateChangeRepository>,
-    task_repo: &Arc<dyn TaskRepository>,
+    story_repo: &Arc<dyn StoryRepository>,
     task: &mut Task,
     session_id: Option<&str>,
     plan: StatusReconcilePlan,
@@ -152,7 +152,28 @@ async fn apply_reconcile_update(
 
     let previous_status = task.status.clone();
     task.status = plan.next_status.clone();
-    task_repo.update(task).await?;
+
+    // M1-b：Task 写入经 Story aggregate `update_task` 完成
+    let mut story = story_repo
+        .get_by_id(task.story_id)
+        .await?
+        .ok_or_else(|| agentdash_domain::DomainError::NotFound {
+            entity: "story",
+            id: task.story_id.to_string(),
+        })?;
+    let task_clone = task.clone();
+    let updated = story.update_task(task.id, |existing| {
+        *existing = task_clone.clone();
+    });
+    if !updated {
+        return Err(TaskStateReconcileError::Domain(
+            agentdash_domain::DomainError::NotFound {
+                entity: "task",
+                id: task.id.to_string(),
+            },
+        ));
+    }
+    story_repo.update(&story).await?;
 
     state_change_repo
         .append_change(
@@ -189,7 +210,7 @@ async fn apply_reconcile_update(
 pub async fn reconcile_running_tasks_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
-    task_repo: &Arc<dyn TaskRepository>,
+    story_repo: &Arc<dyn StoryRepository>,
     session_binding_repo: &Arc<dyn SessionBindingRepository>,
     session_state_reader: &dyn TaskSessionStateReader,
     restart_tracker: Option<&RestartTracker>,
@@ -198,8 +219,13 @@ pub async fn reconcile_running_tasks_on_boot(
     let mut touched = 0usize;
     let mut pending_retry = 0usize;
 
+    // M1-b：Task 真相源为 `stories.tasks` JSONB；遍历 project 下 stories 再扁平化 tasks。
     for project in projects {
-        let tasks = task_repo.list_by_project(project.id).await?;
+        let stories = story_repo.list_by_project(project.id).await?;
+        let tasks: Vec<Task> = stories
+            .into_iter()
+            .flat_map(|story| story.tasks.into_iter())
+            .collect();
 
         for mut task in tasks {
             if task.status != TaskStatus::Running {
@@ -236,7 +262,7 @@ pub async fn reconcile_running_tasks_on_boot(
 
             if apply_reconcile_update(
                 state_change_repo,
-                task_repo,
+                story_repo,
                 &mut task,
                 session_id.as_deref(),
                 plan,

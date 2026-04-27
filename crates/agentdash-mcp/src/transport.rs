@@ -181,10 +181,11 @@ impl McpHttpRouterState {
             return Ok(service);
         }
 
-        let task = self
+        // M1-b：Task 查询经 Story aggregate（find_by_task_id 一步拿到 Story）
+        let story = self
             .services
-            .task_repo
-            .get_by_id(task_id)
+            .story_repo
+            .find_by_task_id(task_id)
             .await
             .map_err(|error| {
                 tracing::error!(%task_id, ?error, "加载 Task 以建立 MCP HTTP 服务失败");
@@ -194,22 +195,9 @@ impl McpHttpRouterState {
                 )
             })?
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
-
-        let story = self
-            .services
-            .story_repo
-            .get_by_id(task.story_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(task_id=%task.id, story_id=%task.story_id, ?error, "加载 Task 所属 Story 失败");
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("加载 Task 所属 Story 失败: {error}"))
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("Task 关联的 Story 不存在: {}", task.story_id),
-                )
-            })?;
+        let task = story
+            .find_task(task_id)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
 
         let service = create_task_http_service(
             self.services.clone(),

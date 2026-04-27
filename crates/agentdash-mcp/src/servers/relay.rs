@@ -280,12 +280,8 @@ impl RelayMcpServer {
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", &params.story_id))?;
 
-        let tasks = self
-            .services
-            .task_repo
-            .list_by_story(story_id)
-            .await
-            .map_err(McpError::from)?;
+        // M1-b：Story aggregate 已持有 tasks；直接从 story.tasks 读取
+        let tasks = story.tasks.clone();
 
         let result = serde_json::json!({
             "story": {

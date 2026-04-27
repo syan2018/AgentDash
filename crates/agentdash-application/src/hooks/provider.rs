@@ -5,7 +5,6 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
-use agentdash_domain::task::TaskRepository;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     build_effective_contract,
@@ -65,7 +64,6 @@ impl AppExecutionHookProvider {
     pub fn new(
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
-        task_repo: Arc<dyn TaskRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
@@ -82,7 +80,7 @@ impl AppExecutionHookProvider {
             agent_repo,
             agent_link_repo,
             inline_file_repo,
-            owner_resolver: SessionOwnerResolver::new(project_repo, story_repo, task_repo),
+            owner_resolver: SessionOwnerResolver::new(project_repo, story_repo),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 wf_binding,
                 workflow_definition_repo,
@@ -261,11 +259,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             if let Some(task_id) = owner.task_id.as_deref() {
                 snapshot.tags.push(format!("task:{task_id}"));
 
-                if let Ok(Some(task)) = self
-                    .owner_resolver
-                    .task_repo()
-                    .get_by_id(task_id.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil()))
-                    .await
+                let task_uuid = task_id.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil());
+                if let Ok(Some(task)) = crate::task::load_task(
+                    self.owner_resolver.story_repo(),
+                    task_uuid,
+                )
+                .await
                 {
                     if let Some(meta) = snapshot.metadata.as_mut() {
                         meta.extra.insert(

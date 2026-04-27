@@ -31,7 +31,9 @@ pub async fn build_task_session_context(
     task_id: Uuid,
     session_meta: Option<&crate::session::SessionMeta>,
 ) -> Option<BuiltTaskSessionContext> {
-    let task = repos.task_repo.get_by_id(task_id).await.ok()??;
+    let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
+        .await
+        .ok()??;
     let story = repos.story_repo.get_by_id(task.story_id).await.ok()??;
     let project = repos.project_repo.get_by_id(task.project_id).await.ok()??;
     let workspace = if let Some(ws_id) = task.workspace_id {

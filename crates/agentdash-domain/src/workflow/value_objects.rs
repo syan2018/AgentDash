@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
@@ -667,6 +668,15 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
+    /// 本 step 对应的 Task（可选）—— Model C · M2-b 引入。
+    ///
+    /// 当 step 对应某个 Story aggregate 内的 Task 时，在这里声明 `task_id`。
+    /// Lifecycle 运行时会在 step state 推进时由 projector 把 step state 投影
+    /// 到 `Story.tasks[id=task_id].status / artifacts`。
+    ///
+    /// 详见 `.trellis/spec/backend/story-task-runtime.md` §2.3 / §2.4 / §6。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<Uuid>,
 }
 
 impl LifecycleStepDefinition {
@@ -1089,6 +1099,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            task_id: None,
         }];
 
         let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
@@ -1106,6 +1117,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1114,6 +1126,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
@@ -1122,6 +1135,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                task_id: None,
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -1145,6 +1159,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1153,6 +1168,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                task_id: None,
             },
         ];
         let edges = vec![LifecycleEdge::artifact("b", "out", "a", "in")];
@@ -1169,6 +1185,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            task_id: None,
         }
     }
 

@@ -283,6 +283,7 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             inline_file_repo.clone(),
+            state_change_repo.clone(),
         ));
         let mut session_hub = SessionHub::new_with_hooks_and_persistence(
             None,

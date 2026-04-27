@@ -864,7 +864,8 @@ impl CompanionRequestTool {
         let run_service = crate::workflow::LifecycleRunService::new(
             self.repos.lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
-        );
+        )
+        .with_projector(crate::workflow::build_step_projector_from_repos(&self.repos));
         let run = run_service
             .start_run(crate::workflow::StartLifecycleRunCommand {
                 project_id,

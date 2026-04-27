@@ -64,6 +64,7 @@ pub async fn reconcile_task_states_on_boot(
         session_binding_repo,
         &session_state_reader,
         Some(restart_tracker),
+        None,
     )
     .await
     .map_err(|e| anyhow::anyhow!("{e}"))

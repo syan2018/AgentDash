@@ -561,6 +561,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    task_id: None,
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -569,6 +570,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    task_id: None,
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -577,6 +579,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    task_id: None,
                 },
             ],
             edges,
@@ -627,6 +630,7 @@ mod tests {
                         gate_params: None,
                     }],
                     input_ports: vec![],
+                    task_id: None,
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -646,6 +650,7 @@ mod tests {
                         context_template: None,
                         standalone_fulfillment: Default::default(),
                     }],
+                    task_id: None,
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -665,6 +670,7 @@ mod tests {
                         context_template: None,
                         standalone_fulfillment: Default::default(),
                     }],
+                    task_id: None,
                 },
             ],
             vec![

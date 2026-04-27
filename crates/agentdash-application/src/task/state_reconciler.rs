@@ -7,6 +7,7 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::{Task, TaskExecutionMode, TaskStatus};
+use agentdash_domain::workflow::LifecycleRunRepository;
 
 use super::restart_tracker::{RestartDecision, RestartTracker};
 
@@ -211,10 +212,12 @@ pub async fn reconcile_running_tasks_on_boot(
     session_binding_repo: &Arc<dyn SessionBindingRepository>,
     session_state_reader: &dyn TaskSessionStateReader,
     restart_tracker: Option<&RestartTracker>,
+    lifecycle_run_repo: Option<&Arc<dyn LifecycleRunRepository>>,
 ) -> Result<(), TaskStateReconcileError> {
     let projects = project_repo.list_all().await?;
     let mut touched = 0usize;
     let mut pending_retry = 0usize;
+    let projected_from_step = 0usize;
 
     // M1-b：Task 真相源为 `stories.tasks` JSONB；遍历 project 下 stories 再扁平化 tasks。
     for project in projects {
@@ -228,6 +231,13 @@ pub async fn reconcile_running_tasks_on_boot(
             if task.status() != &TaskStatus::Running {
                 continue;
             }
+
+            // M2-b（stub）：未来若 LifecycleRunRepository 提供"按 story_id 查 run"
+            // 的查询入口，此处应先尝试"从 LifecycleRun.step_states 投影到 Task"
+            // （通过 step.task_id 匹配）。当前 repo port 缺相应查询方法，保留
+            // 传统 session 信号路径兜底；真正落地延到 M5 "activate_story_step"
+            // 阶段一并完成（届时 lifecycle_run_repo 参数会被消费）。
+            let _ = lifecycle_run_repo;
 
             let session_id =
                 super::find_task_execution_session_id(session_binding_repo.as_ref(), task.id)
@@ -277,7 +287,9 @@ pub async fn reconcile_running_tasks_on_boot(
     tracing::info!(
         reconciled_count = touched,
         pending_retry = pending_retry,
+        projected_from_step = projected_from_step,
         "启动阶段 Task 状态回收完成"
     );
     Ok(())
 }
+

@@ -4,7 +4,7 @@ use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::StoryRepository;
+use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     build_effective_contract,
@@ -71,10 +71,13 @@ impl AppExecutionHookProvider {
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        state_change_repo: Arc<dyn StateChangeRepository>,
     ) -> Self {
         let preset_scripts = builtin_preset_scripts();
         let wf_binding = session_binding_repo.clone();
         let wf_inline = inline_file_repo.clone();
+        let wf_story = story_repo.clone();
+        let wf_state = state_change_repo.clone();
         Self {
             session_binding_repo,
             agent_repo,
@@ -87,6 +90,8 @@ impl AppExecutionHookProvider {
                 lifecycle_definition_repo,
                 lifecycle_run_repo,
                 wf_inline,
+                wf_story,
+                wf_state,
             ),
             script_engine: HookScriptEngine::new(&preset_scripts),
         }

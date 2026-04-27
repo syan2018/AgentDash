@@ -31,7 +31,8 @@ pub use projection::{
 pub use run::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
-    LifecycleRunService, RecordGateCollisionCommand, StartLifecycleRunCommand, select_active_run,
+    LifecycleRunService, LifecycleStepProjector, RecordGateCollisionCommand,
+    StartLifecycleRunCommand, build_step_projector_from_repos, select_active_run,
 };
 pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label};
 pub use step_activation::{

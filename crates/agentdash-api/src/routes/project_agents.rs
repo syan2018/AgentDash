@@ -836,6 +836,7 @@ async fn resolve_lifecycle_key_for_link(
                     node_type: Default::default(),
                     output_ports: vec![],
                     input_ports: vec![],
+                    task_id: None,
                 }],
                 edges: vec![],
                 entry_step_key: "main".to_string(),
@@ -973,12 +974,15 @@ async fn auto_start_lifecycle_run(
     session_id: &str,
     lifecycle_key: &str,
 ) -> Result<(), String> {
-    use agentdash_application::workflow::{LifecycleRunService, StartLifecycleRunCommand};
+    use agentdash_application::workflow::{
+        LifecycleRunService, StartLifecycleRunCommand, build_step_projector_from_repos,
+    };
 
     let service = LifecycleRunService::new(
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    );
+    )
+    .with_projector(build_step_projector_from_repos(&state.repos));
 
     let cmd = StartLifecycleRunCommand {
         project_id,

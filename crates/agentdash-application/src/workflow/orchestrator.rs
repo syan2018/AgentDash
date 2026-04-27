@@ -33,8 +33,8 @@ use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
     RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    apply_to_running_session, capability_delta_directives, capability_directives_from_keys,
-    load_port_output_map,
+    apply_to_running_session, build_step_projector_from_repos, capability_delta_directives,
+    capability_directives_from_keys, load_port_output_map,
 };
 
 #[derive(Debug)]
@@ -168,7 +168,8 @@ impl LifecycleOrchestrator {
         let service = LifecycleRunService::new(
             self.repos.lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
-        );
+        )
+        .with_projector(build_step_projector_from_repos(&self.repos));
 
         let current_run = self.load_run(input.run_id).await?;
 
@@ -390,7 +391,8 @@ impl LifecycleOrchestrator {
                     let service = LifecycleRunService::new(
                         self.repos.lifecycle_definition_repo.as_ref(),
                         self.repos.lifecycle_run_repo.as_ref(),
-                    );
+                    )
+                    .with_projector(build_step_projector_from_repos(&self.repos));
                     if let Err(e) = service
                         .activate_step(ActivateLifecycleStepCommand {
                             run_id,
@@ -597,7 +599,8 @@ impl LifecycleOrchestrator {
         let service = LifecycleRunService::new(
             self.repos.lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
-        );
+        )
+        .with_projector(build_step_projector_from_repos(&self.repos));
         service
             .bind_session_and_activate_step(BindAndActivateLifecycleStepCommand {
                 run_id,

@@ -463,6 +463,7 @@ mod tests {
             node_type: Default::default(),
             output_ports,
             input_ports: vec![],
+            task_id: None,
         }
     }
 
@@ -658,6 +659,7 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
+            task_id: None,
         };
         let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();

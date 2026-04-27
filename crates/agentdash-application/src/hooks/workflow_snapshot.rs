@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
+use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
@@ -11,7 +12,7 @@ use uuid::Uuid;
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
-    resolve_active_workflow_projection_for_session,
+    LifecycleStepProjector, resolve_active_workflow_projection_for_session,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -25,6 +26,8 @@ pub struct WorkflowSnapshotBuilder {
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
+    story_repo: Arc<dyn StoryRepository>,
+    state_change_repo: Arc<dyn StateChangeRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
@@ -34,6 +37,8 @@ impl WorkflowSnapshotBuilder {
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        story_repo: Arc<dyn StoryRepository>,
+        state_change_repo: Arc<dyn StateChangeRepository>,
     ) -> Self {
         Self {
             session_binding_repo,
@@ -41,6 +46,15 @@ impl WorkflowSnapshotBuilder {
             lifecycle_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
+            story_repo,
+            state_change_repo,
+        }
+    }
+
+    fn build_projector(&self) -> LifecycleStepProjector {
+        LifecycleStepProjector {
+            story_repo: self.story_repo.clone(),
+            state_change_repo: self.state_change_repo.clone(),
         }
     }
 
@@ -83,7 +97,8 @@ impl WorkflowSnapshotBuilder {
         let service = LifecycleRunService::new(
             self.lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
-        );
+        )
+        .with_projector(self.build_projector());
         service
             .complete_step(CompleteLifecycleStepCommand {
                 run_id,

@@ -112,6 +112,7 @@ async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.session_binding_repo,
         deps.session_state_reader.as_ref(),
         Some(deps.restart_tracker.as_ref()),
+        None,
     )
     .await
     {

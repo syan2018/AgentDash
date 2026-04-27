@@ -11,7 +11,8 @@ use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivateLifecycleStepCommand, BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand,
     LifecycleOrchestrator, LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
-    build_builtin_workflow_bundle, list_builtin_workflow_templates,
+    build_builtin_workflow_bundle, build_step_projector_from_repos,
+    list_builtin_workflow_templates,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
@@ -243,7 +244,8 @@ pub async fn start_lifecycle_run(
     let service = LifecycleRunService::new(
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    );
+    )
+    .with_projector(build_step_projector_from_repos(&state.repos));
     let run = service
         .start_run(StartLifecycleRunCommand {
             project_id,
@@ -338,7 +340,8 @@ pub async fn activate_workflow_step(
     let service = LifecycleRunService::new(
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    );
+    )
+    .with_projector(build_step_projector_from_repos(&state.repos));
     let run = service
         .activate_step(ActivateLifecycleStepCommand { run_id, step_key })
         .await?;
@@ -363,7 +366,8 @@ pub async fn complete_workflow_step(
     let service = LifecycleRunService::new(
         state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    );
+    )
+    .with_projector(build_step_projector_from_repos(&state.repos));
     let run = service
         .complete_step(CompleteLifecycleStepCommand {
             run_id,

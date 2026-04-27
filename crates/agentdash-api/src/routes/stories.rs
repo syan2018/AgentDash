@@ -261,10 +261,10 @@ pub async fn update_story(
     .map_err(ApiError::Internal)?;
 
     if status_changed {
-        let reconciler = state.services.runtime_reconciler.clone();
+        let coordinator = state.services.terminal_cancel_coordinator.clone();
         let story_id = story.id;
         tokio::spawn(async move {
-            reconciler
+            coordinator
                 .on_story_status_changed(story_id, &new_status)
                 .await;
         });
@@ -558,13 +558,13 @@ pub async fn update_task(
     )
     .await?;
 
-    // 运行时对账：Task 进入终态时取消关联 session
+    // 业务终态 → session cancel：Task 进入终态时取消关联 session
     if &old_status != task.status() {
-        let reconciler = state.services.runtime_reconciler.clone();
+        let coordinator = state.services.terminal_cancel_coordinator.clone();
         let task_id = task.id;
         let new_status = task.status().clone();
         tokio::spawn(async move {
-            reconciler
+            coordinator
                 .on_task_status_changed(task_id, &new_status)
                 .await;
         });

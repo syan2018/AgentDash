@@ -1,4 +1,8 @@
-//! 启动期 Task view 对账 — 从 LifecycleRun/step state 反投影到 `Story.tasks[i].status`。
+//! 启动期 Task view 投影器 — 从 LifecycleRun/step state 反投影到 `Story.tasks[i].status`。
+//!
+//! **方向**：session/lifecycle 真相源 → Task view（只读投影），属于 projection 方向。
+//! 对应运行期反向（业务终态 → session cancel）的 command 通道见
+//! [`crate::reconcile::terminal_cancel`]。
 //!
 //! M2-c（Model C）：真相源 = LifecycleRun 的 step state；Task view 仅为只读投影。
 //! 启动流程在此处按 Scheme A（见 research/m2-decision-points.md D-M2-5）实现：
@@ -28,26 +32,28 @@ use agentdash_domain::workflow::{
 use super::restart_tracker::{RestartDecision, RestartTracker};
 
 #[derive(Debug, thiserror::Error)]
-pub enum TaskStateReconcileError {
+pub enum TaskViewProjectionError {
     #[error(transparent)]
     Domain(#[from] agentdash_domain::DomainError),
 }
 
-/// 启动期 Task view 对账入口（Scheme A）。
+/// 启动期 Task view 投影入口（Scheme A）。
+///
+/// 方向：LifecycleRun/step state → Story.tasks 只读 view。
 ///
 /// 参数：
 /// - `project_repo` / `story_repo` / `state_change_repo`：基础领域仓储
 /// - `lifecycle_def_repo`：lifecycle definition 仓储（反查 step.task_id 绑定）
-/// - `lifecycle_run_repo`：lifecycle run 仓储（本次对账的事实源）
+/// - `lifecycle_run_repo`：lifecycle run 仓储（本次投影的事实源）
 /// - `restart_tracker`：Optional；对孤儿 Running task 做自动重试决策
-pub async fn reconcile_running_tasks_on_boot(
+pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
     lifecycle_def_repo: &Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
     restart_tracker: Option<&RestartTracker>,
-) -> Result<(), TaskStateReconcileError> {
+) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
     let mut projected_from_step: usize = 0;
     let mut orphan_fallback: usize = 0;
@@ -71,7 +77,7 @@ pub async fn reconcile_running_tasks_on_boot(
                     tracing::warn!(
                         run_id = %run.id,
                         lifecycle_id = %run.lifecycle_id,
-                        "启动对账：lifecycle definition 不存在，跳过 run"
+                        "Task view 投影：lifecycle definition 不存在，跳过 run"
                     );
                     continue;
                 }
@@ -92,7 +98,7 @@ pub async fn reconcile_running_tasks_on_boot(
                         task_id = %task_id,
                         run_id = %run.id,
                         step_key = %state.step_key,
-                        "启动对账：step 绑定的 task 对应 story 不存在，跳过"
+                        "Task view 投影：step 绑定的 task 对应 story 不存在，跳过"
                     );
                     continue;
                 };
@@ -137,7 +143,7 @@ pub async fn reconcile_running_tasks_on_boot(
                         task_id = %task_id,
                         run_id = %run.id,
                         error = %err,
-                        "启动对账：state_change 追加失败（story 已更新）"
+                        "Task view 投影：state_change 追加失败（story 已更新）"
                     );
                 }
 
@@ -150,7 +156,7 @@ pub async fn reconcile_running_tasks_on_boot(
                     step_key = %state.step_key,
                     from = ?previous_status,
                     to = ?next_status,
-                    "启动对账：已从 step state 投影 Task view"
+                    "Task view 投影：已从 step state 投影 Task view"
                 );
             }
         }
@@ -216,7 +222,7 @@ pub async fn reconcile_running_tasks_on_boot(
                     tracing::warn!(
                         task_id = %task_id,
                         error = %err,
-                        "启动对账 fallback：state_change 追加失败"
+                        "Task view 投影 fallback：state_change 追加失败"
                     );
                 }
 
@@ -231,7 +237,7 @@ pub async fn reconcile_running_tasks_on_boot(
                     reason = reason,
                     from = ?previous_status,
                     to = ?next_status,
-                    "启动对账 fallback：孤儿 Running task 已回收"
+                    "Task view 投影 fallback：孤儿 Running task 已回收"
                 );
             }
         }
@@ -241,7 +247,7 @@ pub async fn reconcile_running_tasks_on_boot(
         projected_from_step,
         orphan_fallback,
         pending_retry,
-        "启动阶段 Task 状态对账完成（Scheme A · step state 投影）"
+        "启动阶段 Task view 投影完成（Scheme A · step state → task view）"
     );
     Ok(())
 }
@@ -676,7 +682,7 @@ mod tests {
                 runs: Mutex::new(vec![run]),
             });
 
-        reconcile_running_tasks_on_boot(
+        project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
@@ -748,7 +754,7 @@ mod tests {
                 runs: Mutex::new(vec![run]),
             });
 
-        reconcile_running_tasks_on_boot(
+        project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
@@ -798,7 +804,7 @@ mod tests {
                 runs: Mutex::new(vec![]),
             });
 
-        reconcile_running_tasks_on_boot(
+        project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
@@ -870,7 +876,7 @@ mod tests {
                 runs: Mutex::new(vec![run]),
             });
 
-        reconcile_running_tasks_on_boot(
+        project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,
@@ -941,7 +947,7 @@ mod tests {
                 runs: Mutex::new(vec![run]),
             });
 
-        reconcile_running_tasks_on_boot(
+        project_task_views_on_boot(
             &project_repo,
             &state_change_repo,
             &story_repo,

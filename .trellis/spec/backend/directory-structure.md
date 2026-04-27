@@ -94,7 +94,7 @@ crates/
 │       │   ├── execution.rs     # TaskExecutionGateway trait
 │       │   ├── lock.rs          # Per-Task 异步锁
 │       │   ├── restart_tracker.rs # 重启追踪器
-│       │   ├── state_reconciler.rs # 启动时状态修复
+│       │   ├── view_projector.rs  # 启动时 Task view 投影（lifecycle → task view）
 │       │   ├── gateway/         # gateway 核心逻辑（从 api 迁入）
 │       │   │   ├── repo_ops.rs  # 纯 repo 操作辅助函数
 │       │   │   ├── turn_context.rs # turn 上下文准备

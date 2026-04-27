@@ -1,20 +1,24 @@
 //! 通用启动对账管线
 //!
-//! 服务重启后按固定顺序执行对账：Session → Task → Infrastructure。
-//! Phase 之间存在依赖：Task 对账依赖 Session 先完成（否则会误判 session 仍在运行）。
+//! 服务重启后按固定顺序执行：Session 恢复 → Task view 投影 → Infrastructure。
+//! Phase 之间存在依赖：Task view 投影依赖 Session 先完成（否则会误判 session 仍在运行）。
+//!
+//! **定位说明**：本管线只覆盖 projection 方向（session/lifecycle 真相源 → Task view）。
+//! 运行期反向（业务终态 → session cancel）的 command 通道见
+//! [`crate::reconcile::terminal_cancel`]。
 
 use std::sync::Arc;
 
 use crate::session::SessionHub;
 use crate::task::restart_tracker::RestartTracker;
-use crate::task::state_reconciler::reconcile_running_tasks_on_boot;
+use crate::task::view_projector::project_task_views_on_boot;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
 
 /// 启动对账管线的依赖集合
 ///
-/// M2-c：Task 对账改为"从 LifecycleRun/step state 反投影"（Scheme A），
+/// M2-c：Task view 改为"从 LifecycleRun/step state 反投影"（Scheme A），
 /// 不再依赖 `TaskSessionStateReader` / `SessionBindingRepository`。
 pub struct BootReconcileDeps {
     pub session_hub: SessionHub,
@@ -53,8 +57,8 @@ impl BootReconcileReport {
 /// 执行完整的启动对账管线。
 ///
 /// 阶段执行顺序固定且不可跳过：
-/// 1. **Session 对账** — 将残留 running 状态的 session 标记为 interrupted
-/// 2. **Task 对账** — 根据 session 终态推进 task 状态
+/// 1. **Session 恢复** — 将残留 running 状态的 session 标记为 interrupted
+/// 2. **Task view 投影** — 根据 LifecycleRun/step state 反投影 Task view
 /// 3. **Infrastructure 恢复** — 预留（定时触发器重建等）
 pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport {
     let mut phases = Vec::with_capacity(3);
@@ -63,8 +67,8 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
     let session_report = run_session_reconcile(&deps.session_hub).await;
     phases.push(session_report);
 
-    // ── Phase 2: Task Reconcile ─────────────────────────────
-    let task_report = run_task_reconcile(deps).await;
+    // ── Phase 2: Task View Projection ───────────────────────
+    let task_report = run_task_view_projection(deps).await;
     phases.push(task_report);
 
     // ── Phase 3: Infrastructure Restore ─────────────────────
@@ -89,17 +93,17 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
 async fn run_session_reconcile(session_hub: &SessionHub) -> PhaseReport {
     match session_hub.recover_interrupted_sessions().await {
         Ok(()) => {
-            tracing::info!("Phase 1 (Session Reconcile) 完成");
+            tracing::info!("Phase 1 (Session Recovery) 完成");
             PhaseReport {
-                phase: "session_reconcile",
+                phase: "session_recovery",
                 reconciled: 0, // recover_interrupted_sessions 暂未返回计数
                 errors: Vec::new(),
             }
         }
         Err(err) => {
-            tracing::warn!(error = %err, "Phase 1 (Session Reconcile) 出错（非致命）");
+            tracing::warn!(error = %err, "Phase 1 (Session Recovery) 出错（非致命）");
             PhaseReport {
-                phase: "session_reconcile",
+                phase: "session_recovery",
                 reconciled: 0,
                 errors: vec![err.to_string()],
             }
@@ -107,8 +111,8 @@ async fn run_session_reconcile(session_hub: &SessionHub) -> PhaseReport {
     }
 }
 
-async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
-    match reconcile_running_tasks_on_boot(
+async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
+    match project_task_views_on_boot(
         &deps.project_repo,
         &deps.state_change_repo,
         &deps.story_repo,
@@ -119,17 +123,17 @@ async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
     .await
     {
         Ok(()) => {
-            tracing::info!("Phase 2 (Task Reconcile) 完成");
+            tracing::info!("Phase 2 (Task View Projection) 完成");
             PhaseReport {
-                phase: "task_reconcile",
+                phase: "task_view_projection",
                 reconciled: 0,
                 errors: Vec::new(),
             }
         }
         Err(err) => {
-            tracing::error!(error = %err, "Phase 2 (Task Reconcile) 失败");
+            tracing::error!(error = %err, "Phase 2 (Task View Projection) 失败");
             PhaseReport {
-                phase: "task_reconcile",
+                phase: "task_view_projection",
                 reconciled: 0,
                 errors: vec![err.to_string()],
             }

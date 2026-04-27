@@ -1,6 +1,11 @@
-//! 事件驱动的运行时对账
+//! 业务终态 → session cancel 指令通道。
 //!
-//! 当 Story/Task 状态被外部变更为终态时，自动取消关联的 running session。
+//! **方向**：业务决策（Task/Story 被外部写入 Completed/Failed/Cancelled）
+//! → 取消关联的 running session。属于 command 方向。
+//!
+//! 对应启动期反向（session/lifecycle 真相源 → Task view 只读投影）的
+//! projection 通道见 [`crate::task::view_projector`]。
+//!
 //! 这是"安全网"行为：确保业务状态与 session 生命周期一致。
 
 use std::sync::Arc;
@@ -13,14 +18,17 @@ use agentdash_domain::task::TaskStatus;
 
 use crate::session::SessionHub;
 
-/// 运行时对账服务 — 在状态变更路径上被调用
-pub struct RuntimeReconciler {
+/// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
+///
+/// 当业务状态进入终态时，触发关联 session 的 cancel 指令。
+/// 不做反向 projection（projection 方向见 [`crate::task::view_projector`]）。
+pub struct TerminalCancelCoordinator {
     session_hub: SessionHub,
     story_repo: Arc<dyn StoryRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
 }
 
-impl RuntimeReconciler {
+impl TerminalCancelCoordinator {
     pub fn new(
         session_hub: SessionHub,
         story_repo: Arc<dyn StoryRepository>,
@@ -54,14 +62,14 @@ impl RuntimeReconciler {
                 task_id = %task_id,
                 session_id = %session_id,
                 error = %err,
-                "运行时对账：Task 进入终态后取消关联 session 失败"
+                "终态取消协调器：Task 进入终态后取消关联 session 失败"
             );
         } else {
             tracing::info!(
                 task_id = %task_id,
                 session_id = %session_id,
                 new_status = ?new_status,
-                "运行时对账：Task 进入终态，已取消关联 session"
+                "终态取消协调器：Task 进入终态，已取消关联 session"
             );
         }
     }
@@ -77,7 +85,7 @@ impl RuntimeReconciler {
             Ok(None) => {
                 tracing::warn!(
                     story_id = %story_id,
-                    "运行时对账：Story 不存在，跳过级联取消"
+                    "终态取消协调器：Story 不存在，跳过级联取消"
                 );
                 return;
             }
@@ -85,7 +93,7 @@ impl RuntimeReconciler {
                 tracing::warn!(
                     story_id = %story_id,
                     error = %err,
-                    "运行时对账：查询 Story 下属 Task 失败"
+                    "终态取消协调器：查询 Story 下属 Task 失败"
                 );
                 return;
             }
@@ -110,7 +118,7 @@ impl RuntimeReconciler {
                     task_id = %task.id,
                     session_id = %session_id,
                     error = %err,
-                    "运行时对账：Story 终态级联取消 session 失败"
+                    "终态取消协调器：Story 终态级联取消 session 失败"
                 );
             } else {
                 cancelled += 1;
@@ -122,7 +130,7 @@ impl RuntimeReconciler {
                 story_id = %story_id,
                 new_status = ?new_status,
                 cancelled_sessions = cancelled,
-                "运行时对账：Story 进入终态，已级联取消关联 session"
+                "终态取消协调器：Story 进入终态，已级联取消关联 session"
             );
         }
     }

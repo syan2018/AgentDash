@@ -63,8 +63,9 @@ pub struct ServiceSet {
     pub hook_provider: Arc<AppExecutionHookProvider>,
     /// 统一认证会话服务（application 层）
     pub auth_session_service: Arc<AuthSessionService>,
-    /// 运行时对账服务 — Story/Task 状态变更时联动 session 取消
-    pub runtime_reconciler: Arc<agentdash_application::reconcile::runtime::RuntimeReconciler>,
+    /// 业务终态 → session cancel 指令通道 — Story/Task 状态变更时联动 session 取消
+    pub terminal_cancel_coordinator:
+        Arc<agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator>,
     /// Cron 调度器句柄 — 配置变更时调用 `notify_config_changed()` 触发热重载
     pub cron_scheduler: CronSchedulerHandle,
     /// Routine 执行器 — 统一处理定时/Webhook/插件触发
@@ -355,8 +356,8 @@ impl AppState {
 
         let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
 
-        let runtime_reconciler = Arc::new(
-            agentdash_application::reconcile::runtime::RuntimeReconciler::new(
+        let terminal_cancel_coordinator = Arc::new(
+            agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_hub.clone(),
                 story_repo_port.clone(),
                 repos.session_binding_repo.clone(),
@@ -393,7 +394,7 @@ impl AppState {
                 task_lifecycle_service,
                 hook_provider,
                 auth_session_service,
-                runtime_reconciler,
+                terminal_cancel_coordinator,
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: None,
             },

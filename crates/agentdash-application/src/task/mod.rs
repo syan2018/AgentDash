@@ -7,7 +7,7 @@ pub mod lock;
 pub mod meta;
 pub mod restart_tracker;
 pub mod service;
-pub mod state_reconciler;
+pub mod view_projector;
 pub mod tools;
 
 use agentdash_domain::common::error::DomainError;

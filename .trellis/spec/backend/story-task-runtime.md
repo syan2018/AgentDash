@@ -264,7 +264,8 @@ Task.status / Task.artifacts 作为**只读投影**由 step state 反投射。
 
 - **Task projector**：监听 Story session event 中"LifecycleStepState 变更"类事件 → 计算目标 Task 的 status / artifacts → 更新 Story aggregate（或直接 patch JSONB 中的 task 子元素，取决于实现策略）→ 同事务 append 一条 `state_changes` 记录。
 - **Story projector**：监听"业务级 story 状态"事件（如人工归档、验证通过）→ 更新 `Story.status` + append `state_changes`。
-- **启动期 rebuild**：应用启动时，`state_reconciler::reconcile_running_tasks_on_boot` 变为"replay Story session events → 重建 Task view"；不再依赖旧的多路写入合并策略。
+- **启动期 rebuild**：应用启动时，`task::view_projector::project_task_views_on_boot` 从 LifecycleRun/step state 反投影到 Task view（未来可演进为 replay Story session events → 重建 Task view）；不再依赖旧的多路写入合并策略。
+- **业务终态 → session cancel 指令通道**（与 projection 方向相反）：`reconcile::terminal_cancel::TerminalCancelCoordinator` 在 Task/Story 进入终态时，对关联 running session 发起 cancel，保证业务状态与 session 生命周期一致。
 
 ### 6.4 跨 session 全局游标
 

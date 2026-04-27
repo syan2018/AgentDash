@@ -26,4 +26,4 @@ pub mod workspace;
 pub use task::lock as task_lock;
 pub use task::restart_tracker as task_restart_tracker;
 pub use task::service as task_service;
-pub use task::state_reconciler as task_state_reconciler;
+pub use task::view_projector as task_view_projector;

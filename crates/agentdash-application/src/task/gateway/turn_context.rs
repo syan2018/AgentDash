@@ -8,7 +8,7 @@ use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::TaskRuntimePhase;
 use crate::task::execution::{ExecutionPhase, TaskExecutionError};
-use crate::task::gateway::repo_ops::{load_related_context, map_internal_error};
+use crate::task::gateway::{load_related_context, map_internal_error};
 use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 use agentdash_domain::common::AgentConfig;

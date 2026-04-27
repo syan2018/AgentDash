@@ -93,7 +93,7 @@ impl RuntimeReconciler {
 
         let mut cancelled = 0usize;
         for task in tasks {
-            if task.status != TaskStatus::Running {
+            if task.status() != &TaskStatus::Running {
                 continue;
             }
             let session_id = match crate::task::find_task_execution_session_id(

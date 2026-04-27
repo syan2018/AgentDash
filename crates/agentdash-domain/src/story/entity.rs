@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
-use crate::task::Task;
+use crate::task::{Task, TaskSpecMut};
+use crate::workflow::LifecycleStepState;
 
 /// Story — 用户价值单元
 ///
@@ -71,20 +72,89 @@ impl Story {
         self.updated_at = Utc::now();
     }
 
-    /// 通过闭包就地修改聚合内的某个 Task。
+    /// 通过闭包就地修改聚合内某个 Task 的 **spec 字段**。
+    ///
+    /// M2：closure 只拿到 [`TaskSpecMut`] 视图，无法改 `status` / `artifacts`（投影字段）。
+    /// 投影字段由 [`Story::apply_task_projection`] 经 projector 修改。
     ///
     /// 若 task 不存在返回 `false`；存在则执行 mutator 并刷新 `updated_at`。
-    pub fn update_task<F>(&mut self, task_id: Uuid, mutator: F) -> bool
+    pub fn update_task<F, R>(&mut self, task_id: Uuid, mutator: F) -> Option<R>
     where
-        F: FnOnce(&mut Task),
+        F: FnOnce(&mut TaskSpecMut<'_>) -> R,
     {
-        if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-            mutator(task);
-            self.updated_at = Utc::now();
-            true
-        } else {
-            false
+        let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
+        let mut view = TaskSpecMut::from_task(task);
+        let result = mutator(&mut view);
+        self.updated_at = Utc::now();
+        Some(result)
+    }
+
+    /// 强制设置 task.status — 为保留 MCP / API 层"用户或 agent 主动标记 task 状态"
+    /// 的命令路径而暴露。调用路径会写 `ChangeKind::TaskStatusChanged`。
+    ///
+    /// M2 强约束：runtime 真相源是 LifecycleStepState + [`Story::apply_task_projection`]；
+    /// 此方法仅用于**用户意图**（例如人工标记"已验收"、MCP agent 工具主动推进）。
+    /// 运行时投影路径**禁止**使用此方法。
+    ///
+    /// 返回 `Some(true)` 表示状态发生变化，`Some(false)` 表示无变化，`None` 表示 task 不存在。
+    pub fn force_set_task_status(
+        &mut self,
+        task_id: Uuid,
+        next: crate::task::TaskStatus,
+    ) -> Option<bool> {
+        let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
+        if task.status() == &next {
+            return Some(false);
         }
+        task.set_status_internal(next);
+        self.updated_at = Utc::now();
+        Some(true)
+    }
+
+    /// 追加一条 artifact（MCP / API 层命令入口）。
+    ///
+    /// 注意：`Artifact` 也被归类为投影字段，但 `report_artifact` 这类命令需要直接追加；
+    /// 暂作为 "mixed command"（写 TaskArtifactAdded）。M2 后续可评估是否全部下沉到 projector。
+    pub fn push_task_artifact(
+        &mut self,
+        task_id: Uuid,
+        artifact: crate::task::Artifact,
+    ) -> Option<()> {
+        let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
+        task.push_artifact_internal(artifact);
+        self.updated_at = Utc::now();
+        Some(())
+    }
+
+    /// 对 tasks 投影字段的受控可变访问 — 仅 artifact projector 使用。
+    pub fn mutate_task_artifacts<F, R>(&mut self, task_id: Uuid, mutator: F) -> Option<R>
+    where
+        F: FnOnce(&mut Vec<crate::task::Artifact>) -> R,
+    {
+        let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
+        let result = mutator(task.artifacts_internal_mut());
+        self.updated_at = Utc::now();
+        Some(result)
+    }
+
+    /// M2 projector 入口：将 LifecycleStepState 的状态投射到指定 Task。
+    ///
+    /// 返回 `Some(true)` 表示投影后 task.status 发生变化；
+    /// `Some(false)` 表示 task 存在但状态不变；`None` 表示 task 不存在。
+    ///
+    /// 只修改投影字段（status / artifacts 等），不触达 spec 字段；
+    /// 仅由 `LifecycleRunService` 在 step 状态推进时调用。
+    pub fn apply_task_projection(
+        &mut self,
+        task_id: Uuid,
+        step: &LifecycleStepState,
+    ) -> Option<bool> {
+        let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
+        let changed = task.apply_projection(step.status);
+        if changed {
+            self.updated_at = Utc::now();
+        }
+        Some(changed)
     }
 
     /// 从聚合中移除指定 Task；返回被移除的实体。
@@ -160,19 +230,19 @@ mod tests {
         let task_id = task.id;
         story.add_task(task);
 
-        let ok = story.update_task(task_id, |t| {
-            t.title = "new".to_string();
+        let res = story.update_task(task_id, |t| {
+            *t.title = "new".to_string();
         });
-        assert!(ok);
+        assert!(res.is_some());
         assert_eq!(story.find_task(task_id).map(|t| t.title.as_str()), Some("new"));
     }
 
     #[test]
-    fn update_task_returns_false_for_unknown_id() {
+    fn update_task_returns_none_for_unknown_id() {
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let ok = story.update_task(Uuid::new_v4(), |_t| {});
-        assert!(!ok);
+        let res = story.update_task(Uuid::new_v4(), |_t| {});
+        assert!(res.is_none());
     }
 
     #[test]
@@ -196,6 +266,91 @@ mod tests {
         let mut story = Story::new(project_id, "S".into(), "".into());
         let removed = story.remove_task(Uuid::new_v4());
         assert!(removed.is_none());
+    }
+
+    #[test]
+    fn apply_task_projection_maps_step_status() {
+        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
+        use crate::task::TaskStatus;
+
+        let project_id = Uuid::new_v4();
+        let mut story = Story::new(project_id, "S".into(), "".into());
+        let task = sample_task(story.id, project_id, "T");
+        let task_id = task.id;
+        story.add_task(task);
+
+        let make_step = |status: LifecycleStepExecutionStatus| LifecycleStepState {
+            step_key: "step".to_string(),
+            status,
+            session_id: None,
+            started_at: None,
+            completed_at: None,
+            summary: None,
+            context_snapshot: None,
+            gate_collision_count: 0,
+        };
+
+        // Pending → Pending (no change initially)
+        let changed = story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Pending))
+            .expect("task exists");
+        assert!(!changed);
+        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Pending);
+
+        // Ready → Assigned
+        let changed = story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Ready))
+            .expect("task exists");
+        assert!(changed);
+        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Assigned);
+
+        // Running → Running
+        story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Running))
+            .expect("task exists");
+        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Running);
+
+        // Completed → AwaitingVerification
+        story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Completed))
+            .expect("task exists");
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::AwaitingVerification
+        );
+
+        // Failed → Failed
+        story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Failed))
+            .expect("task exists");
+        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Failed);
+
+        // Skipped → Completed
+        story
+            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Skipped))
+            .expect("task exists");
+        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Completed);
+    }
+
+    #[test]
+    fn apply_task_projection_returns_none_for_unknown_task() {
+        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
+        let project_id = Uuid::new_v4();
+        let mut story = Story::new(project_id, "S".into(), "".into());
+        let res = story.apply_task_projection(
+            Uuid::new_v4(),
+            &LifecycleStepState {
+                step_key: "s".into(),
+                status: LifecycleStepExecutionStatus::Running,
+                session_id: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+                context_snapshot: None,
+                gate_collision_count: 0,
+            },
+        );
+        assert!(res.is_none());
     }
 
     #[test]

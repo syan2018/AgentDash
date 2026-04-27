@@ -124,14 +124,14 @@ impl TaskMcpServer {
             "story_id": task.story_id.to_string(),
             "title": task.title,
             "description": task.description,
-            "status": task.status,
+            "status": task.status(),
             "workspace_id": task.workspace_id.map(|w| w.to_string()),
             "agent_binding": {
                 "agent_type": task.agent_binding.agent_type,
                 "preset_name": task.agent_binding.preset_name,
                 "initial_context": task.agent_binding.initial_context,
             },
-            "artifact_count": task.artifacts.len(),
+            "artifact_count": task.artifacts().len(),
             "executor_session_id": task.executor_session_id,
         });
 
@@ -157,12 +157,11 @@ impl TaskMcpServer {
             "Task 状态更新"
         );
 
-        // M1-b：经 Story aggregate 写入 task 状态
+        // M2：MCP "用户 / agent 主动标记状态" 属于业务命令路径，走
+        // `Story::force_set_task_status`（命令级写入 TaskStatusChanged）。
+        // Runtime 真相走 projector，不经此入口。
         let (mut story, _) = self.load_story_with_task().await?;
-        story.update_task(self.task_id, |task| {
-            task.status = new_status.clone();
-            task.updated_at = chrono::Utc::now();
-        });
+        story.force_set_task_status(self.task_id, new_status.clone());
         self.services
             .story_repo
             .update(&story)
@@ -200,11 +199,8 @@ impl TaskMcpServer {
 
         let (mut story, _) = self.load_story_with_task().await?;
         let artifact_id = artifact.id;
-        let artifact_clone = artifact.clone();
-        story.update_task(self.task_id, |task| {
-            task.artifacts.push(artifact_clone.clone());
-            task.updated_at = chrono::Utc::now();
-        });
+        // M2：MCP 主动上报 artifact 走命令级 `Story::push_task_artifact` 入口。
+        story.push_task_artifact(self.task_id, artifact.clone());
 
         self.services
             .story_repo
@@ -235,7 +231,7 @@ impl TaskMcpServer {
                 serde_json::json!({
                     "id": t.id.to_string(),
                     "title": t.title,
-                    "status": t.status,
+                    "status": t.status(),
                     "is_self": t.id == self.task_id,
                 })
             })
@@ -280,8 +276,7 @@ impl TaskMcpServer {
             format!("{}\n\n---\n{}", task.description, params.append_text);
 
         story.update_task(self.task_id, |task| {
-            task.description = new_description.clone();
-            task.updated_at = chrono::Utc::now();
+            *task.description = new_description.clone();
         });
 
         self.services

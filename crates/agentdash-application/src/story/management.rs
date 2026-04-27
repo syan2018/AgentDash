@@ -115,7 +115,9 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
         task.workspace_id = workspace_id;
     }
     if let Some(status) = input.status {
-        task.status = status;
+        // M2：apply_task_mutation 保留 status 字段以兼容命令型编辑（管理 API）。
+        // 运行时投影通过 `Story::apply_task_projection` 走，不经此路径。
+        task.set_status(status);
     }
     if let Some(agent_binding) = input.agent_binding {
         task.agent_binding = agent_binding;
@@ -258,7 +260,7 @@ mod tests {
         );
 
         assert_eq!(task.workspace_id, Some(workspace_id));
-        assert_eq!(task.status, TaskStatus::Running);
+        assert_eq!(*task.status(), TaskStatus::Running);
         assert_eq!(task.agent_binding.agent_type, binding.agent_type);
     }
 }

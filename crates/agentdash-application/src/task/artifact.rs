@@ -22,7 +22,7 @@ pub fn upsert_tool_execution_artifact(
     patch.insert("tool_call_id".to_string(), json!(tool_call_id));
     patch.insert("updated_at".to_string(), json!(now_str));
 
-    for artifact in &task.artifacts {
+    for artifact in task.artifacts() {
         if artifact.artifact_type == ArtifactType::ToolExecution && !artifact.content.is_object() {
             return Err(DomainError::InvalidConfig(format!(
                 "tool_execution artifact 内容不是对象: {}",
@@ -31,12 +31,12 @@ pub fn upsert_tool_execution_artifact(
         }
     }
 
-    if let Some(index) = task
-        .artifacts
+    let artifacts_mut = task.artifacts_mut();
+    if let Some(index) = artifacts_mut
         .iter()
         .position(|item| is_same_tool_execution_artifact(item, turn_id, tool_call_id))
     {
-        let artifact = &mut task.artifacts[index];
+        let artifact = &mut artifacts_mut[index];
         let before = artifact.content.clone();
         let mut content = artifact
             .content
@@ -64,7 +64,7 @@ pub fn upsert_tool_execution_artifact(
         patch.insert("started_at".to_string(), json!(now_str));
     }
 
-    task.artifacts.push(Artifact {
+    task.push_artifact(Artifact {
         id: Uuid::new_v4(),
         artifact_type: ArtifactType::ToolExecution,
         content: Value::Object(patch),
@@ -253,7 +253,7 @@ mod tests {
             "task".to_string(),
             String::new(),
         );
-        task.artifacts.push(Artifact {
+        task.push_artifact(Artifact {
             id: Uuid::new_v4(),
             artifact_type: ArtifactType::ToolExecution,
             content: json!(["bad"]),

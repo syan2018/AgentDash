@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
+use serde_json::json;
 use uuid::Uuid;
 
+use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus,
+    LifecycleRunStatus, LifecycleStepState,
 };
 
 use super::error::WorkflowApplicationError;
@@ -82,9 +86,112 @@ fn active_run_status_priority(status: LifecycleRunStatus) -> i32 {
     }
 }
 
+/// M2 projection sink — LifecycleStepState 推进到 Task view 的投影路径。
+///
+/// 决策 D-M2-2（α · service 内 explicit append）：projector 逻辑住在 service 内；
+/// 当 `projector` 字段 `Some` 时，每次 step state 变更都会：
+///
+/// 1. 尝试从 `step.task_id` 反查所属 Story；若无 task_id 则跳过（非 Task 绑定 step）。
+///    注：当前 `LifecycleStepState` 尚无 `task_id` 字段，此处通过 LifecycleDefinition 的
+///    `workflow_key` / step metadata 推断关联 task。M2 阶段仅在 step 直接绑定到 task
+///    的场景生效；更广义的 lifecycle-step-to-task 映射由 M5 补齐。
+/// 2. 在 Story aggregate 上调 `apply_task_projection`，写 `stories.tasks JSONB`。
+/// 3. 同事务追加 `state_changes` 全局投影索引（kind = TaskStatusChanged）。
+///
+/// 事务说明（D-M2-3）：当前实现为 tx-b（非事务），story update 与 state_change append
+/// 两步独立提交。若任一步失败，会记 warning 但不阻塞主 run.update。
+/// 事务化 (tx-a) 留待后续任务，参见 `.trellis/spec/backend/story-task-runtime.md` §9。
+pub struct LifecycleStepProjector {
+    pub story_repo: Arc<dyn StoryRepository>,
+    pub state_change_repo: Arc<dyn StateChangeRepository>,
+}
+
+impl LifecycleStepProjector {
+    /// 对单个 step state 应用投影：定位 task → 更新 Story → append state_change。
+    ///
+    /// 当前版本通过 step.session_id 上挂的 task_binding 来定位 task；由于 step 没有
+    /// 显式 task_id 字段，M2 实现策略是：
+    ///   - 扫描 session_binding 找到 owner_type=Task 的绑定
+    ///   - 从 binding.owner_id 定位 task（走 story_repo.find_by_task_id）
+    ///
+    /// 为避免在本 M2 引入额外的 repo 依赖，projector 退化为接受调用方显式传入 task_id：
+    /// 调用方（LifecycleRunService）负责从 step.session_id → task_id 的解析（目前通过
+    /// 后续 M5 引入的 step.task_id 字段进一步收敛）。
+    ///
+    /// 本方法因此暂未在生产路径中被主动调用；占位是为了让主线 M5 可接手 projector 注入。
+    /// 详见 implementation 报告中的 M2 验收说明。
+    pub async fn project_step(
+        &self,
+        task_id: Uuid,
+        step: &LifecycleStepState,
+        run_id: Uuid,
+        lifecycle_id: Uuid,
+    ) -> Result<bool, WorkflowApplicationError> {
+        let Some(mut story) = self
+            .story_repo
+            .find_by_task_id(task_id)
+            .await
+            .map_err(WorkflowApplicationError::from)?
+        else {
+            return Ok(false);
+        };
+
+        let previous_status = story
+            .find_task(task_id)
+            .map(|t| t.status().clone());
+
+        let applied = story.apply_task_projection(task_id, step);
+        let changed = matches!(applied, Some(true));
+        if !changed {
+            return Ok(false);
+        }
+
+        let project_id = story.project_id;
+        let story_id = story.id;
+        self.story_repo
+            .update(&story)
+            .await
+            .map_err(WorkflowApplicationError::from)?;
+
+        let next_status = story.find_task(task_id).map(|t| t.status().clone());
+        let payload = json!({
+            "reason": "lifecycle_step_projection",
+            "task_id": task_id,
+            "story_id": story_id,
+            "run_id": run_id,
+            "lifecycle_id": lifecycle_id,
+            "step_key": step.step_key,
+            "step_status": step.status,
+            "from": previous_status,
+            "to": next_status,
+        });
+
+        if let Err(err) = self
+            .state_change_repo
+            .append_change(
+                project_id,
+                task_id,
+                ChangeKind::TaskStatusChanged,
+                payload,
+                None,
+            )
+            .await
+        {
+            tracing::warn!(
+                task_id = %task_id,
+                run_id = %run_id,
+                error = %err,
+                "M2 projector: state_change 追加失败（story 已更新），不阻塞主流程"
+            );
+        }
+        Ok(true)
+    }
+}
+
 pub struct LifecycleRunService<'a, L: ?Sized, R: ?Sized> {
     lifecycle_repo: &'a L,
     run_repo: &'a R,
+    projector: Option<LifecycleStepProjector>,
 }
 
 impl<'a, L: ?Sized, R: ?Sized> LifecycleRunService<'a, L, R>
@@ -96,7 +203,14 @@ where
         Self {
             lifecycle_repo,
             run_repo,
+            projector: None,
         }
+    }
+
+    /// 注入投影器（M2）。未注入时 service 行为与 M1 保持一致。
+    pub fn with_projector(mut self, projector: LifecycleStepProjector) -> Self {
+        self.projector = Some(projector);
+        self
     }
 
     pub async fn start_run(
@@ -143,6 +257,7 @@ where
         run.activate_step(&cmd.step_key)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
+        self.project_step_if_applicable(&run, &cmd.step_key).await;
         Ok(run)
     }
 
@@ -156,6 +271,7 @@ where
         run.complete_step(&cmd.step_key, cmd.summary, &lifecycle.edges)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
+        self.project_step_if_applicable(&run, &cmd.step_key).await;
         Ok(run)
     }
 
@@ -167,6 +283,7 @@ where
         run.fail_step(&cmd.step_key, cmd.summary)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
+        self.project_step_if_applicable(&run, &cmd.step_key).await;
         Ok(run)
     }
 
@@ -203,6 +320,7 @@ where
         run.activate_step(&cmd.step_key)
             .map_err(WorkflowApplicationError::Conflict)?;
         self.run_repo.update(&run).await?;
+        self.project_step_if_applicable(&run, &cmd.step_key).await;
         Ok(run)
     }
 
@@ -251,4 +369,23 @@ where
             WorkflowApplicationError::NotFound(format!("lifecycle_run 不存在: {}", run_id))
         })
     }
+
+    /// M2 projection 钩子：若 projector 已注入，尝试把 step state 投影到对应 task。
+    ///
+    /// 由于 LifecycleStepState 暂未携带 `task_id` 字段，本实现通过 step.session_id
+    /// 绑定的 SessionBinding（owner_type=Task）反查 task_id 的路径需要额外 repo 依赖，
+    /// 本 M2 版本采用**保守路径**：不主动投影（除非显式通过 `project_step`）。
+    ///
+    /// 这是一个 `[UNRESOLVED]`：主线 M5 在引入 `LifecycleStepDefinition.task_id` 或
+    /// 等价 step-task binding 后，这里改为直接 `projector.project_step(task_id, step, ...)`。
+    async fn project_step_if_applicable(&self, _run: &LifecycleRun, _step_key: &str) {
+        if self.projector.is_none() {
+            return;
+        }
+        // 当前为 no-op；M5 补齐 step→task 定位后激活投影路径。
+        // 设计约束：
+        //   - step 与 task 的映射语义在本任务范围外（M5 接手）；
+        //   - projector 已注册但暂不工作，其他路径（state_reconciler 的启动期重建）继续负责真相校准。
+    }
 }
+

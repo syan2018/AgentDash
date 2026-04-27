@@ -184,7 +184,7 @@ impl ContextContributor for CoreContextContributor {
                 input.task.id,
                 trim_or_dash(&input.task.title),
                 trim_or_dash(&input.task.description),
-                input.task.status
+                input.task.status()
             ),
         });
 

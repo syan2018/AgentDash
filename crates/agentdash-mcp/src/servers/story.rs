@@ -483,7 +483,7 @@ impl StoryMcpServer {
                     "id": t.id.to_string(),
                     "title": t.title,
                     "description": t.description,
-                    "status": t.status,
+                    "status": t.status(),
                     "workspace_id": t.workspace_id.map(|w| w.to_string()),
                     "agent_type": t.agent_binding.agent_type,
                     "executor_session_id": t.executor_session_id,

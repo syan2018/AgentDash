@@ -100,14 +100,14 @@ pub async fn update_task_status(
         return Ok(false);
     };
 
-    if previous_task.status == next_status {
+    if previous_task.status() == &next_status {
         return Ok(false);
     }
 
-    let previous_status = previous_task.status.clone();
-    story.update_task(task_id, |task| {
-        task.status = next_status.clone();
-    });
+    let previous_status = previous_task.status().clone();
+    // M2：命令型状态写入走 `force_set_task_status`（非 projector 路径）；
+    // runtime 真相由 LifecycleRunService → projector 产出。
+    story.force_set_task_status(task_id, next_status.clone());
     repos.story_repo.update(&story).await?;
 
     append_task_change(
@@ -163,8 +163,13 @@ pub async fn persist_tool_call_artifact(
         return Ok(());
     }
 
-    story.update_task(input.task_id, |task| {
-        *task = updated_task.clone();
+    // artifact 已经在 updated_task 上加好了，直接替换 story 内的 task。
+    story.mutate_task_artifacts(input.task_id, |artifacts| {
+        *artifacts = updated_task.artifacts().to_vec();
+    });
+    // 同步 spec 字段（title 等可能也被间接修改，虽然本路径主要改 artifacts）。
+    story.update_task(input.task_id, |view| {
+        *view.executor_session_id = updated_task.executor_session_id.clone();
     });
     repos.story_repo.update(&story).await?;
     append_task_change(
@@ -214,9 +219,7 @@ pub async fn persist_turn_failure_artifact(
         }),
         created_at: chrono::Utc::now(),
     };
-    story.update_task(task_id, |task| {
-        task.artifacts.push(new_artifact.clone());
-    });
+    story.push_task_artifact(task_id, new_artifact.clone());
     let (story_id, project_id) = (story.id, story.project_id);
     let _ = (story_id, project_id);
     repos.story_repo.update(&story).await?;
@@ -259,7 +262,7 @@ pub async fn bind_executor_session_id(
     let story_id = story.id;
 
     story.update_task(task_id, |task| {
-        task.executor_session_id = Some(executor_session_id.to_string());
+        *task.executor_session_id = Some(executor_session_id.to_string());
     });
     repos.story_repo.update(&story).await?;
 
@@ -321,7 +324,7 @@ pub async fn clear_task_session_binding(
         }
 
         story.update_task(task_id, |task| {
-            task.executor_session_id = None;
+            *task.executor_session_id = None;
         });
         let project_id = story.project_id;
         let story_id = story.id;

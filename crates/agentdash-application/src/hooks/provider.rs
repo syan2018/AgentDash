@@ -273,7 +273,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         );
                         meta.extra.insert(
                             "task_status".to_string(),
-                            serde_json::Value::String(format!("{:?}", task.status)),
+                            serde_json::Value::String(format!("{:?}", task.status())),
                         );
                         meta.extra.insert(
                             "task_id".to_string(),

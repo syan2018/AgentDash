@@ -299,7 +299,7 @@ impl RelayMcpServer {
             "tasks": tasks.iter().map(|t| serde_json::json!({
                 "id": t.id.to_string(),
                 "title": t.title,
-                "status": t.status,
+                "status": t.status(),
                 "workspace_id": t.workspace_id.map(|w| w.to_string()),
             })).collect::<Vec<_>>(),
         });

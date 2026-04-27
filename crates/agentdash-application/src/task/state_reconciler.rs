@@ -146,14 +146,14 @@ async fn apply_reconcile_update(
     session_id: Option<&str>,
     plan: StatusReconcilePlan,
 ) -> Result<bool, TaskStateReconcileError> {
-    if task.status == plan.next_status {
+    if task.status() == &plan.next_status {
         return Ok(false);
     }
 
-    let previous_status = task.status.clone();
-    task.status = plan.next_status.clone();
+    let previous_status = task.status().clone();
+    task.set_status(plan.next_status.clone());
 
-    // M1-b：Task 写入经 Story aggregate `update_task` 完成
+    // M2：Task 写入经 Story aggregate `force_set_task_status`（命令型恢复路径）。
     let mut story = story_repo
         .get_by_id(task.story_id)
         .await?
@@ -161,11 +161,8 @@ async fn apply_reconcile_update(
             entity: "story",
             id: task.story_id.to_string(),
         })?;
-    let task_clone = task.clone();
-    let updated = story.update_task(task.id, |existing| {
-        *existing = task_clone.clone();
-    });
-    if !updated {
+    let applied = story.force_set_task_status(task.id, plan.next_status.clone());
+    if applied.is_none() {
         return Err(TaskStateReconcileError::Domain(
             agentdash_domain::DomainError::NotFound {
                 entity: "task",
@@ -200,7 +197,7 @@ async fn apply_reconcile_update(
         story_id = %task.story_id,
         reason = plan.reason,
         from = "running",
-        to = ?task.status,
+        to = ?task.status(),
         "启动阶段已回收 Task 运行状态"
     );
 
@@ -228,7 +225,7 @@ pub async fn reconcile_running_tasks_on_boot(
             .collect();
 
         for mut task in tasks {
-            if task.status != TaskStatus::Running {
+            if task.status() != &TaskStatus::Running {
                 continue;
             }
 

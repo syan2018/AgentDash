@@ -461,7 +461,7 @@ pub async fn update_task(
     )
     .await?;
 
-    let old_status = task.status.clone();
+    let old_status = task.status().clone();
 
     let title = match req.title {
         Some(title) => {
@@ -519,26 +519,33 @@ pub async fn update_task(
         },
     );
 
-    // M1-b：task update 经 Story aggregate 整体写回
+    // M2：API 编辑 task 走 Story aggregate 的命令级入口：
+    //  - spec 字段经 `update_task`（TaskSpecMut 视图）
+    //  - 命令型 status 变更经 `force_set_task_status`
     let mut story_aggregate = state
         .repos
         .story_repo
         .get_by_id(task.story_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id)))?;
-    let task_clone = task.clone();
-    let updated = story_aggregate.update_task(task.id, |existing| {
-        *existing = task_clone.clone();
+    let updated_spec = story_aggregate.update_task(task.id, |view| {
+        *view.title = task.title.clone();
+        *view.description = task.description.clone();
+        *view.workspace_id = task.workspace_id;
+        *view.executor_session_id = task.executor_session_id.clone();
+        *view.execution_mode = task.execution_mode.clone();
+        *view.agent_binding = task.agent_binding.clone();
     });
-    if !updated {
+    if updated_spec.is_none() {
         return Err(ApiError::NotFound(format!(
             "Task {} 不属于 Story {}",
             task.id, task.story_id
         )));
     }
+    story_aggregate.force_set_task_status(task.id, task.status().clone());
     state.repos.story_repo.update(&story_aggregate).await?;
 
-    let change_kind = classify_task_change_kind(&old_status, &task.status);
+    let change_kind = classify_task_change_kind(&old_status, task.status());
     let payload = serde_json::to_value(&task)
         .map_err(|err| ApiError::Internal(format!("序列化 Task 状态变更失败: {err}")))?;
     append_required_story_change(
@@ -552,10 +559,10 @@ pub async fn update_task(
     .await?;
 
     // 运行时对账：Task 进入终态时取消关联 session
-    if old_status != task.status {
+    if &old_status != task.status() {
         let reconciler = state.services.runtime_reconciler.clone();
         let task_id = task.id;
-        let new_status = task.status.clone();
+        let new_status = task.status().clone();
         tokio::spawn(async move {
             reconciler
                 .on_task_status_changed(task_id, &new_status)

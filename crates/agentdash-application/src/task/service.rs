@@ -127,9 +127,9 @@ impl TaskLifecycleService {
         Ok(TaskSessionResult {
             task_id: task.id,
             session_id,
-            executor_session_id: task.executor_session_id,
-            task_status: task.status,
+            task_status: task.status().clone(),
             session_execution_status,
+            executor_session_id: task.executor_session_id,
             agent_binding: task.agent_binding,
             session_title,
             last_activity,
@@ -155,14 +155,14 @@ impl TaskLifecycleService {
             resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
         let session_meta = gw_create_task_session(&self.hub, &task).await?;
         let session_id = session_meta.id;
-        let previous_status = task.status.clone();
+        let previous_status = task.status().clone();
 
         // SessionBinding 是 session 归属的唯一事实来源
         self.bind_session_to_owner(&session_id, "task", task.id, "execution")
             .await?;
 
         task.executor_session_id = None;
-        task.status = TaskStatus::Running;
+        task.set_status(TaskStatus::Running);
         self.persist_task(&task).await?;
 
         gw_append_task_change(
@@ -180,7 +180,7 @@ impl TaskLifecycleService {
         .await
         .map_err(map_domain_error)?;
 
-        if previous_status != task.status {
+        if &previous_status != task.status() {
             gw_append_task_change(
                 &self.repos,
                 task.id,
@@ -191,7 +191,7 @@ impl TaskLifecycleService {
                     "task_id": task.id, "story_id": task.story_id,
                     "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
-                    "from": previous_status.clone(), "to": task.status.clone(),
+                    "from": previous_status.clone(), "to": task.status().clone(),
                 }),
             )
             .await
@@ -213,7 +213,7 @@ impl TaskLifecycleService {
             Ok(t) => t,
             Err(err) => {
                 let mut fail_task = task.clone();
-                fail_task.status = TaskStatus::Failed;
+                fail_task.set_status(TaskStatus::Failed);
                 let _ = self.persist_task(&fail_task).await;
                 let _ = gw_append_task_change(
                     &self.repos,
@@ -243,7 +243,7 @@ impl TaskLifecycleService {
                 "task_id": task.id, "story_id": task.story_id,
                 "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
-                "from": previous_status, "to": task.status,
+                "from": previous_status, "to": task.status().clone(),
             }),
         )
         .await;
@@ -253,7 +253,7 @@ impl TaskLifecycleService {
             session_id,
             executor_session_id: task.executor_session_id.clone(),
             turn_id: started_turn.turn_id,
-            status: task.status,
+            status: task.status().clone(),
             context_sources: started_turn.context_sources,
         })
     }
@@ -289,11 +289,11 @@ impl TaskLifecycleService {
             )
             .await?;
 
-        let previous_status = task.status.clone();
-        task.status = TaskStatus::Running;
+        let previous_status = task.status().clone();
+        task.set_status(TaskStatus::Running);
         self.persist_task(&task).await?;
 
-        if previous_status != task.status {
+        if &previous_status != task.status() {
             gw_append_task_change(
                 &self.repos,
                 task.id,
@@ -304,7 +304,7 @@ impl TaskLifecycleService {
                     "task_id": task.id, "story_id": task.story_id,
                     "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
-                    "from": previous_status.clone(), "to": task.status.clone(),
+                    "from": previous_status.clone(), "to": task.status().clone(),
                 }),
             )
             .await
@@ -320,7 +320,7 @@ impl TaskLifecycleService {
                 "task_id": task.id, "story_id": task.story_id,
                 "session_id": session_id,
                 "executor_session_id": task.executor_session_id,
-                "from": previous_status, "to": task.status,
+                "from": previous_status, "to": task.status().clone(),
             }),
         )
         .await;
@@ -330,7 +330,7 @@ impl TaskLifecycleService {
             session_id,
             executor_session_id: task.executor_session_id.clone(),
             turn_id: started_turn.turn_id,
-            status: task.status,
+            status: task.status().clone(),
             context_sources: started_turn.context_sources,
         })
     }
@@ -351,8 +351,8 @@ impl TaskLifecycleService {
             let backend_id =
                 resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
                     .await?;
-            let previous_status = task.status.clone();
-            task.status = TaskStatus::Failed;
+            let previous_status = task.status().clone();
+            task.set_status(TaskStatus::Failed);
             self.persist_task(&task).await?;
 
             gw_append_task_change(
@@ -365,7 +365,7 @@ impl TaskLifecycleService {
                     "task_id": task.id, "story_id": task.story_id,
                     "session_id": session_id,
                     "executor_session_id": task.executor_session_id,
-                    "from": previous_status, "to": task.status,
+                    "from": previous_status, "to": task.status().clone(),
                 }),
             )
             .await
@@ -395,15 +395,28 @@ impl TaskLifecycleService {
                 ))
             })?;
 
-        let updated = story.update_task(task.id, |existing| {
-            *existing = task.clone();
+        // M2：拆成"spec 字段 update_task（走 TaskSpecMut）" + "status 走 force_set_task_status"
+        // 两条路径，保证投影字段不会被 closure 直接覆盖。
+        let updated_spec = story.update_task(task.id, |view| {
+            *view.title = task.title.clone();
+            *view.description = task.description.clone();
+            *view.workspace_id = task.workspace_id;
+            *view.executor_session_id = task.executor_session_id.clone();
+            *view.execution_mode = task.execution_mode.clone();
+            *view.agent_binding = task.agent_binding.clone();
         });
-        if !updated {
+        if updated_spec.is_none() {
             return Err(TaskExecutionError::NotFound(format!(
                 "Task {} 不属于 Story {}",
                 task.id, task.story_id
             )));
         }
+        // 同步命令型 status（本路径的状态写入仍保留）
+        story.force_set_task_status(task.id, task.status().clone());
+        // 同步 artifacts（命令型覆写：直接替换）
+        story.mutate_task_artifacts(task.id, |artifacts| {
+            *artifacts = task.artifacts().to_vec();
+        });
 
         self.repos
             .story_repo

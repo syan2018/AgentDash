@@ -7,20 +7,23 @@ use std::sync::Arc;
 
 use crate::session::SessionHub;
 use crate::task::restart_tracker::RestartTracker;
-use crate::task::state_reconciler::{TaskSessionStateReader, reconcile_running_tasks_on_boot};
+use crate::task::state_reconciler::reconcile_running_tasks_on_boot;
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
+use agentdash_domain::workflow::{LifecycleDefinitionRepository, LifecycleRunRepository};
 
 /// 启动对账管线的依赖集合
+///
+/// M2-c：Task 对账改为"从 LifecycleRun/step state 反投影"（Scheme A），
+/// 不再依赖 `TaskSessionStateReader` / `SessionBindingRepository`。
 pub struct BootReconcileDeps {
     pub session_hub: SessionHub,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
-    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
+    pub lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub restart_tracker: Arc<RestartTracker>,
-    pub session_state_reader: Arc<dyn TaskSessionStateReader>,
 }
 
 /// 单阶段对账结果
@@ -109,10 +112,9 @@ async fn run_task_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.project_repo,
         &deps.state_change_repo,
         &deps.story_repo,
-        &deps.session_binding_repo,
-        deps.session_state_reader.as_ref(),
+        &deps.lifecycle_def_repo,
+        &deps.lifecycle_run_repo,
         Some(deps.restart_tracker.as_ref()),
-        None,
     )
     .await
     {

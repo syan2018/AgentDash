@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::bootstrap::task_state_reconcile::HubSessionStateReader;
 use crate::mount_providers::RelayFsMountProvider;
 use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
@@ -319,17 +318,17 @@ impl AppState {
         let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
 
         // 启动对账管线：Session → Task → Infrastructure（有序不可跳过）
+        //
+        // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
                 session_hub: session_hub.clone(),
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                session_binding_repo: session_binding_repo.clone(),
+                lifecycle_def_repo: workflow_repo.clone(),
+                lifecycle_run_repo: workflow_repo.clone(),
                 restart_tracker: restart_tracker.clone(),
-                session_state_reader: Arc::new(HubSessionStateReader {
-                    hub: session_hub.clone(),
-                }),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {

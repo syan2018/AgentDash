@@ -157,16 +157,46 @@ impl TaskMcpServer {
             "Task 状态更新"
         );
 
-        // M2：MCP "用户 / agent 主动标记状态" 属于业务命令路径，走
-        // `Story::force_set_task_status`（命令级写入 TaskStatusChanged）。
-        // Runtime 真相走 projector，不经此入口。
-        let (mut story, _) = self.load_story_with_task().await?;
-        story.force_set_task_status(self.task_id, new_status.clone());
+        // M2-c：MCP "用户 / agent 主动标记状态" 属于业务命令路径，走
+        // `Story::force_set_task_status`（命令级写入）。命令路径与 runtime projector
+        // 并行共同产出 `TaskStatusChanged` 投影索引（D-M2-4 方案 2）；
+        // [UNRESOLVED] 命令路径完全走 workflow step transition 的方案留待后续任务。
+        let (mut story, task_before) = self.load_story_with_task().await?;
+        let previous_status = task_before.status().clone();
+        let applied = story.force_set_task_status(self.task_id, new_status.clone());
         self.services
             .story_repo
             .update(&story)
             .await
             .map_err(McpError::from)?;
+
+        if matches!(applied, Some(true)) {
+            if let Err(err) = self
+                .services
+                .state_change_repo
+                .append_change(
+                    story.project_id,
+                    self.task_id,
+                    agentdash_domain::story::ChangeKind::TaskStatusChanged,
+                    serde_json::json!({
+                        "reason": params.reason.as_deref().unwrap_or("mcp_update_task_status"),
+                        "task_id": self.task_id,
+                        "story_id": story.id,
+                        "source": "mcp_command",
+                        "from": previous_status,
+                        "to": new_status,
+                    }),
+                    None,
+                )
+                .await
+            {
+                tracing::warn!(
+                    task_id = %self.task_id,
+                    error = %err,
+                    "MCP update_task_status：state_change 追加失败（story 已更新）"
+                );
+            }
+        }
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Task {} 状态已更新为 {}",

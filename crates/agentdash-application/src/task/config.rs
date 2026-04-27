@@ -7,6 +7,46 @@ use crate::runtime::{AgentConfig, SystemPromptMode, ThinkingLevel};
 
 use super::execution::TaskExecutionError;
 
+/// 诊断用标签：描述本次 task executor config 从哪个来源解析而来。
+///
+/// 结果进入 `ExecutorResolution.source`，供运行时 metadata 展示。
+/// 原先重复定义在 `task/session_runtime_inputs.rs` 与 `session/assembler.rs`,
+/// M5 后收敛到此处作为唯一副本。
+pub fn resolve_task_executor_source(
+    task: &Task,
+    project: &Project,
+    explicit_config: Option<&AgentConfig>,
+) -> String {
+    if explicit_config.is_some() {
+        return "explicit.executor_config".to_string();
+    }
+    if task
+        .agent_binding
+        .agent_type
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return "task.agent_binding.agent_type".to_string();
+    }
+    if task
+        .agent_binding
+        .preset_name
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return "task.agent_binding.preset_name".to_string();
+    }
+    if project
+        .config
+        .default_agent_type
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return "project.config.default_agent_type".to_string();
+    }
+    "unresolved".to_string()
+}
+
 /// 确定 Task 最终使用的 executor 配置
 ///
 /// 优先级：显式传入 > Task.agent_binding > Preset → Project default

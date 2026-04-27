@@ -7,7 +7,7 @@
 //! | 路径 | 实现入口 |
 //! |---|---|
 //! | ACP Story/Project | `api::routes::acp_sessions` → `SessionRequestAssembler::compose_owner_bootstrap` |
-//! | Task runtime | `task::gateway::turn_context` → `SessionRequestAssembler::compose_task_runtime` |
+//! | Task runtime | `task::service::TaskLifecycleService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
@@ -45,7 +45,7 @@ use crate::capability::{
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
-    BuiltTaskAgentContext, ContextContributor, ContextContributorRegistry, McpContextContributor,
+    ContextContributor, ContextContributorRegistry, McpContextContributor,
     StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
     WorkflowContextBindingsContributor, build_declared_source_warning_fragment,
     build_task_agent_context, resolve_workspace_declared_sources,
@@ -59,12 +59,12 @@ use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
 use crate::story::context_builder::{StoryContextBuildInput, build_story_context_markdown};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
-    RelayVfsService, ResolveBindingsOutput, SessionMountTarget, build_lifecycle_mount_with_ports,
+    RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports,
     resolve_context_bindings,
 };
 use crate::workflow::{
     ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
-    load_port_output_map, resolve_active_workflow_projection_for_session,
+    load_port_output_map,
 };
 use crate::workspace::BackendAvailability;
 
@@ -89,6 +89,11 @@ pub struct PreparedSessionInputs {
     pub bootstrap_action: SessionBootstrapAction,
     /// workspace 默认值注入的数据源(session 中 vfs/working_dir 回填用)。
     pub workspace_defaults: Option<Workspace>,
+    /// Story step(task 启动)场景下 compose 产出的 working_dir 覆盖值；
+    /// 仅在需要绕过 workspace_defaults 的 task 启动路径使用。
+    pub working_dir: Option<String>,
+    /// Context contributor pipeline 的诊断摘要（供 StartedTurn.context_sources）。
+    pub source_summary: Vec<String>,
 }
 
 /// 把 `PreparedSessionInputs` 合并进一个 base `PromptSessionRequest`。
@@ -115,6 +120,9 @@ pub fn finalize_request(
         &mut req.vfs,
         prepared.workspace_defaults.as_ref(),
     );
+    if let Some(wd) = prepared.working_dir {
+        req.user_input.working_dir = Some(wd);
+    }
     if req.vfs.is_none() {
         req.vfs = prepared.vfs;
     } else if prepared.vfs.is_some() {
@@ -168,6 +176,10 @@ pub struct SessionAssemblyBuilder {
 
     // ── 元信息层 ──
     workspace_defaults: Option<Workspace>,
+
+    // ── 其它平坦字段 ──
+    working_dir: Option<String>,
+    source_summary: Vec<String>,
 }
 
 impl SessionAssemblyBuilder {
@@ -310,6 +322,18 @@ impl SessionAssemblyBuilder {
         self
     }
 
+    /// 设置 compose 产出的 working_dir（task 启动场景覆盖 base working_dir）。
+    pub fn with_working_dir(mut self, working_dir: Option<String>) -> Self {
+        self.working_dir = working_dir;
+        self
+    }
+
+    /// 设置 source summary（context contributor pipeline 诊断）。
+    pub fn with_source_summary(mut self, summary: Vec<String>) -> Self {
+        self.source_summary = summary;
+        self
+    }
+
     // ── 复合便利方法 ──────────────────────────────────────────────
 
     /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
@@ -344,6 +368,8 @@ impl SessionAssemblyBuilder {
             executor_config: Some(executor_config),
             bootstrap_action: SessionBootstrapAction::OwnerContext,
             workspace_defaults: None,
+            working_dir: None,
+            source_summary: Vec::new(),
         }
     }
 
@@ -381,6 +407,8 @@ impl SessionAssemblyBuilder {
             system_context: self.system_context,
             bootstrap_action: self.bootstrap_action,
             workspace_defaults: self.workspace_defaults,
+            working_dir: self.working_dir,
+            source_summary: self.source_summary,
         }
     }
 }
@@ -828,23 +856,34 @@ impl<'a> SessionRequestAssembler<'a> {
         Ok(builder.build())
     }
 
-    /// Task 运行时(lazy bootstrap),合并 turn_context + session_runtime_inputs 两处重复。
-    pub async fn compose_task_runtime(
+    /// Story step(task 启动)场景下组装 session — 合并原 `compose_task_runtime`
+    /// 与 `build_task_session_runtime_inputs` 两处重复。
+    ///
+    /// 内部走 6 个阶段:
+    /// 1. 解析 executor config（来源诊断保留给 tracing/metadata）
+    /// 2. 查找活跃 lifecycle run 对应的 `ActiveWorkflowProjection`（由调用方传入）
+    /// 3. 构建 VFS（workspace mount + lifecycle mount，cloud-native 场景）
+    /// 4. 解析 context bindings（需要 VFS 已就绪）
+    /// 5. CapabilityResolver（以 workflow baseline 或空集为输入）
+    /// 6. build_task_agent_context（走 contributor pipeline 产出 prompt / system context）
+    ///
+    /// 输出统一为 `PreparedSessionInputs`；调用方通过 `finalize_request` 合入 base
+    /// `PromptSessionRequest` 后交 `session_hub.start_prompt` 派发。
+    pub async fn compose_story_step(
         &self,
-        spec: TaskRuntimeSpec<'_>,
-    ) -> Result<TaskRuntimeOutput, TaskExecutionError> {
+        spec: StoryStepSpec<'_>,
+    ) -> Result<PreparedSessionInputs, TaskExecutionError> {
         // ── 1. 解析 executor config ──
         use crate::session::ExecutorResolution;
-        use crate::task::config::resolve_task_executor_config;
-        use crate::task::session_runtime_inputs::resolve_task_executor_source;
+        use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
 
         let executor_source = resolve_task_executor_source(
             spec.task,
             spec.project,
             spec.explicit_executor_config.as_ref(),
         );
-        let (resolved_config, executor_resolution) = match resolve_task_executor_config(
-            spec.explicit_executor_config,
+        let (resolved_config, _executor_resolution) = match resolve_task_executor_config(
+            spec.explicit_executor_config.clone(),
             spec.task,
             spec.project,
         ) {
@@ -861,8 +900,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .as_ref()
             .is_some_and(|c| c.is_cloud_native());
 
-        // ── 2. 解析 active workflow projection(从 task session bindings 反查) ──
-        let workflow = resolve_workflow_via_task_sessions(self.repos, spec.task).await?;
+        let workflow = spec.active_workflow.clone();
 
         // ── 3. VFS(workspace + lifecycle mount) ──
         let vfs = if use_cloud_native {
@@ -940,17 +978,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
         let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
-        let mut mcp_servers_for_context: Vec<RuntimeMcpServer> = platform_mcp_configs
-            .iter()
-            .map(|c| crate::runtime_bridge::acp_mcp_server_to_runtime(&c.to_acp_mcp_server()))
-            .collect();
-        mcp_servers_for_context.extend(
-            cap_output
-                .custom_mcp_servers
-                .iter()
-                .map(crate::runtime_bridge::acp_mcp_server_to_runtime),
-        );
-        let relay_mcp_server_names = cap_output
+        let relay_mcp_server_names: HashSet<String> = cap_output
             .custom_relay_mcp_server_names
             .iter()
             .cloned()
@@ -1025,19 +1053,34 @@ impl<'a> SessionRequestAssembler<'a> {
         )
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
-        Ok(TaskRuntimeOutput {
-            built,
-            vfs,
-            resolved_config,
-            executor_resolution,
-            use_cloud_native_agent: use_cloud_native,
-            workspace: workspace_ref.cloned(),
-            flow_capabilities,
-            effective_capability_keys,
-            relay_mcp_server_names,
-            workflow,
-            resolved_bindings,
-        })
+        // ── 汇总 MCP 列表：platform + custom + contributor 产出 ──
+        let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = platform_mcp_configs
+            .iter()
+            .map(|c| c.to_acp_mcp_server())
+            .collect();
+        effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
+        effective_mcp_servers.extend(
+            crate::runtime_bridge::runtime_mcp_servers_to_acp(&built.mcp_servers),
+        );
+
+        let mut builder = SessionAssemblyBuilder::new()
+            .with_prompt_blocks(built.prompt_blocks)
+            .with_mcp_servers(effective_mcp_servers)
+            .append_relay_mcp_names(relay_mcp_server_names)
+            .with_resolved_capabilities(flow_capabilities, effective_capability_keys)
+            .with_optional_system_context(built.system_context)
+            .with_working_dir(built.working_dir)
+            .with_source_summary(built.source_summary)
+            .with_optional_workspace_defaults(workspace_ref.cloned());
+
+        if let Some(vfs) = vfs {
+            builder = builder.with_vfs(vfs);
+        }
+        if let Some(cfg) = resolved_config {
+            builder = builder.with_executor_config(cfg);
+        }
+
+        Ok(builder.build())
     }
 
     /// Workflow AgentNode session 激活(orchestrator 创建子 session 的场景)。
@@ -1141,8 +1184,20 @@ pub enum TaskRuntimePhase {
     Continue,
 }
 
-/// Task runtime compose 输入。
-pub struct TaskRuntimeSpec<'a> {
+/// Story step 场景下 compose 所需的完整上下文。
+///
+/// 用于 `TaskLifecycleService` facade 的 task 启动路径
+/// （`start_task` / `continue_task` 内部先定位 task 对应 step，再调 compose）。
+///
+/// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
+/// - `StoryStepSpec` 持有 task/story/project/workspace 完整 entity 引用
+/// - 承载 user prompt 注入（`override_prompt` / `additional_prompt`）
+/// - 承载 explicit executor config（HTTP 请求透传）
+/// - 承载 `ActiveWorkflowProjection`（由 facade 通过 SessionBinding 两跳定位后传入）
+pub struct StoryStepSpec<'a> {
+    pub run: &'a LifecycleRun,
+    pub lifecycle: &'a LifecycleDefinition,
+    pub step: &'a LifecycleStepDefinition,
     pub task: &'a Task,
     pub story: &'a Story,
     pub project: &'a Project,
@@ -1153,22 +1208,8 @@ pub struct TaskRuntimeSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-}
-
-/// Task runtime compose 输出 —— 比 `PreparedSessionInputs` 多携带 task 路径
-/// 特有的辅助字段(turn dispatcher 需要这些)。
-pub struct TaskRuntimeOutput {
-    pub built: BuiltTaskAgentContext,
-    pub vfs: Option<Vfs>,
-    pub resolved_config: Option<AgentConfig>,
-    pub executor_resolution: crate::session::ExecutorResolution,
-    pub use_cloud_native_agent: bool,
-    pub workspace: Option<Workspace>,
-    pub flow_capabilities: FlowCapabilities,
-    pub effective_capability_keys: BTreeSet<String>,
-    pub relay_mcp_server_names: HashSet<String>,
-    pub workflow: Option<ActiveWorkflowProjection>,
-    pub resolved_bindings: Option<ResolveBindingsOutput>,
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 SessionBinding 两跳定位后传入）。
+    pub active_workflow: Option<ActiveWorkflowProjection>,
 }
 
 /// Lifecycle AgentNode compose 输入。
@@ -1370,36 +1411,6 @@ async fn resolve_owner_workflow_capability_directives(
         .flatten()?;
 
     Some(capability_directives_from_active_workflow(&workflow))
-}
-
-/// 通过 task 的 session binding 查找是否有 session 关联了活跃的 lifecycle run。
-async fn resolve_workflow_via_task_sessions(
-    repos: &RepositorySet,
-    task: &Task,
-) -> Result<Option<ActiveWorkflowProjection>, TaskExecutionError> {
-    use agentdash_domain::session_binding::SessionOwnerType;
-
-    let bindings = repos
-        .session_binding_repo
-        .list_by_owner(SessionOwnerType::Task, task.id)
-        .await
-        .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
-
-    for binding in &bindings {
-        if let Some(projection) = resolve_active_workflow_projection_for_session(
-            &binding.session_id,
-            repos.session_binding_repo.as_ref(),
-            repos.workflow_definition_repo.as_ref(),
-            repos.lifecycle_definition_repo.as_ref(),
-            repos.lifecycle_run_repo.as_ref(),
-        )
-        .await
-        .map_err(TaskExecutionError::Internal)?
-        {
-            return Ok(Some(projection));
-        }
-    }
-    Ok(None)
 }
 
 // 允许未使用的 re-export,为 PR4-B..F 保留扩展点

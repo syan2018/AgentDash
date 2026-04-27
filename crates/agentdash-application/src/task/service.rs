@@ -96,6 +96,155 @@ impl TaskLifecycleService {
         result
     }
 
+    /// 统一激活 Story session 下某个 lifecycle step（M5 facade 入口）。
+    ///
+    /// 这是 Story-as-durable-session 模型下 task 启动 / 续跑的唯一领域级入口。
+    /// `start_task` / `continue_task` 仅作为对外签名兼容的 facade，内部委托本方法。
+    ///
+    /// 内部链路（5 步）：
+    /// 1. 通过 story_id → `SessionBinding(Story, "companion")` → `session_id`
+    /// 2. `lifecycle_run_repo.list_by_session(session_id)` + `select_active_run` 找到活跃 run
+    /// 3. 根据 step_key 定位 `LifecycleStepDefinition`；再读 `step.task_id` 回指 Task
+    /// 4. `compose_story_step(StoryStepSpec { ... })` 产出 `PreparedSessionInputs`
+    /// 5. `finalize_request(base, prepared)` + `session_hub.start_prompt` 派发
+    ///
+    /// [M5 注]：由于当前 `start_task_inner` 仍负责 session 创建 / binding / 状态写入的
+    /// 全流程，本方法目前作为分层预留入口，实际调用仍由 `start_task_inner` 与
+    /// `continue_task_inner` 组合而成。`step_key` 的显式查询在后续 cleanup 任务中
+    /// 与 `LifecycleRunService::activate_step` 对齐。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn activate_story_step(
+        &self,
+        story_id: Uuid,
+        step_key: Option<String>,
+        phase: ExecutionPhase,
+        override_prompt: Option<&str>,
+        additional_prompt: Option<&str>,
+        executor_config: Option<&AgentConfig>,
+        identity: Option<agentdash_spi::auth::AuthIdentity>,
+    ) -> Result<StartedTurn, TaskExecutionError> {
+        // 1. story → story session binding（label="companion"）
+        let story_session_id = self.find_story_session_id(story_id).await?;
+
+        // 2. 查活跃 lifecycle run
+        let active_run = self.find_active_run_for_story_session(&story_session_id).await?;
+
+        // 3. 定位 step → task_id
+        let (task, step_key_resolved) = self
+            .resolve_task_for_step(&active_run, step_key.as_deref())
+            .await?;
+
+        // 4-5. 复用 dispatch_prepared_turn 的 compose + hub.start_prompt 链路。
+        //
+        // 注：未来 cleanup tail 把 `PreparedTurnContext` 替换成 `PreparedSessionInputs`
+        // 后，此处会改成直接调用 `compose_story_step` + `finalize_request`。
+        let _ = step_key_resolved;
+        self.dispatch_prepared_turn(
+            &task,
+            &story_session_id,
+            phase,
+            override_prompt,
+            additional_prompt,
+            executor_config,
+            identity,
+        )
+        .await
+    }
+
+    async fn find_story_session_id(&self, story_id: Uuid) -> Result<String, TaskExecutionError> {
+        let binding = self
+            .repos
+            .session_binding_repo
+            .find_by_owner_and_label(SessionOwnerType::Story, story_id, "companion")
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "Story {story_id} 未绑定 companion session"
+                ))
+            })?;
+        Ok(binding.session_id)
+    }
+
+    async fn find_active_run_for_story_session(
+        &self,
+        session_id: &str,
+    ) -> Result<agentdash_domain::workflow::LifecycleRun, TaskExecutionError> {
+        let runs = self
+            .repos
+            .lifecycle_run_repo
+            .list_by_session(session_id)
+            .await
+            .map_err(map_domain_error)?;
+        crate::workflow::select_active_run(runs).ok_or_else(|| {
+            TaskExecutionError::UnprocessableEntity(format!(
+                "Story session {session_id} 无活跃 lifecycle run"
+            ))
+        })
+    }
+
+    /// 根据 step_key（可选）从 lifecycle definition 定位 step → task_id → Task。
+    async fn resolve_task_for_step(
+        &self,
+        run: &agentdash_domain::workflow::LifecycleRun,
+        step_key_hint: Option<&str>,
+    ) -> Result<(Task, String), TaskExecutionError> {
+        let lifecycle = self
+            .repos
+            .lifecycle_definition_repo
+            .get_by_id(run.lifecycle_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "lifecycle_definition {} 不存在",
+                    run.lifecycle_id
+                ))
+            })?;
+
+        let step = match step_key_hint {
+            Some(key) => lifecycle
+                .steps
+                .iter()
+                .find(|s| s.key == key)
+                .cloned()
+                .ok_or_else(|| {
+                    TaskExecutionError::NotFound(format!(
+                        "lifecycle {} 中不存在 step '{}'",
+                        lifecycle.id, key
+                    ))
+                })?,
+            None => {
+                // 回退到当前活跃 step
+                let active_key = run.current_step_key().ok_or_else(|| {
+                    TaskExecutionError::UnprocessableEntity(
+                        "LifecycleRun 无活跃 step".to_string(),
+                    )
+                })?;
+                lifecycle
+                    .steps
+                    .iter()
+                    .find(|s| s.key == active_key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        TaskExecutionError::NotFound(format!(
+                            "lifecycle {} 中不存在 step '{}'",
+                            lifecycle.id, active_key
+                        ))
+                    })?
+            }
+        };
+
+        let task_id = step.task_id.ok_or_else(|| {
+            TaskExecutionError::UnprocessableEntity(format!(
+                "step '{}' 未绑定 task",
+                step.key
+            ))
+        })?;
+        let task = gw_get_task(&self.repos, task_id).await?;
+        Ok((task, step.key))
+    }
+
     pub async fn get_task_session(
         &self,
         task_id: Uuid,

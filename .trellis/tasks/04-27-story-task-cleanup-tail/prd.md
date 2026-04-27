@@ -75,10 +75,43 @@
 - 独立 frontend subtask；20 行 diff，纯 UI 修复
 - 后端已先行 enforce（MCP 解析 `"task"` 报错），即使前端未改也不会造成 runtime 灾难，只是 UX 残留
 
+### 11. Projector 事务边界 tx-a（D-M2-3 [UNRESOLVED]）
+- 主线 M2 projector 采用 tx-b 非事务语义：`story_repo.update + state_change.append_change` 两步 IO 各自提交
+- 失败场景：story view 已更新但 state_change 漏写 → 索引与真相短暂不一致
+- 目标：引入 `UnitOfWork` / `TransactionalRepositories` 使两步写入 ACID 事务
+- 代价：Repository trait 可能需加 `&mut Transaction` 参数，跨 domain/infrastructure crate 改动面大
+- 参考：`LifecycleStepProjector` doc comment 已记录 fallback 策略
+
+### 12. 命令路径彻底走 workflow transition（D-M2-4 方案 1）
+- 主线 M2-c 命令路径采用方案 2（双写保留）：直接写 task.status + append state_change
+- 目标：让 projector 成为 `TaskStatusChanged` 的**唯一**写入源 —— 所有命令路径（API PATCH / task service start/continue/cancel / MCP update_task_status / gateway::update_task_status）改为通过 `LifecycleRunService` 的 step transition 完成状态变化
+- 代价：破坏现有"强制完成/失败"业务语义（比如标记已完成但跳过 workflow step transition 的场景需要单独处理）
+- 前置工作：分类每个 TaskStatus 变化能否自然映射到 step transition
+
+### 13. LifecycleRunRepository::list_active_by_project 性能优化
+- 主线 M2-c 的 `view_projector` 走 `list_by_project` 全量拉取后内存过滤
+- 如 project 下历史 run 累积，加 `list_active_by_project(project_id)` repo 方法 + 索引
+- 现阶段数据规模不是性能瓶颈；等实际 metrics 再说
+
+### 14. PreparedTurnContext 下沉到 PreparedSessionInputs + wrapper
+- M5 后 `task/gateway/turn_context.rs` 的 `PreparedTurnContext` 保留作为 identity + post_turn_handler 的过渡容器
+- `acp_sessions.rs::augment_session_prompt` 仍消费 PreparedTurnContext 的中间字段（built / vfs / resolved_config 独立存放）
+- 目标：评估 `augment_session_prompt` 改走 `PreparedSessionInputs` + wrapper 后，`turn_context.rs`（当前 337 行）整体删除的可行性
+- 当前是 gateway 目录最胖的文件之一
+
+### 15. persist_turn_failure_artifact 死代码清理
+- M7 搬家时发现 `artifact_ops.rs::persist_turn_failure_artifact` 第 223-224 行有 `let (story_id, project_id) = (story.id, story.project_id); let _ = (story_id, project_id);` 这种"先绑再丢"的无效赋值
+- 早期 refactor 遗留，可以直接删
+
+### 16. effect_executor.rs 字符串 → TaskStatus 映射（R6 延伸）
+- M7 确认 `effect_executor.rs:138-145` 仍存在 `"completed" => TaskStatus::Completed ...` 手写映射
+- 主线 M2 已让 Task.status 变只读投影，但 hook effect payload 走 `update_task_status` 命令路径仍用字符串
+- 决议：若 hook 规则仍保留字符串形态 effect payload，考虑统一到 `FromStr` / serde；若能改走 step transition，随 #12 一起解决
+
 ## Acceptance Criteria
 
-- [ ] 9 项决议每项都有明确去向（保留 / 改造 / 删除）与理由
-- [ ] 可被 ≤ 9 个独立 PR 依次落地
+- [ ] 16 项决议每项都有明确去向（保留 / 改造 / 删除）与理由
+- [ ] 可被 ≤ 16 个独立 PR 依次落地
 - [ ] 不重复动主线已改过的代码
 - [ ] `.trellis/spec/backend/story-task-runtime.md` 补充本任务决议
 

@@ -1,0 +1,8 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "验证 Story aggregate 持久化是否整体写回"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证 migration 正确性"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "验证 Task view 只读投影类型"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "验证 session event 作为唯一审计源的落地"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试覆盖 / CI 质量门"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层一致性自检"}

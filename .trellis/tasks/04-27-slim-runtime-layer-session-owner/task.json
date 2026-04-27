@@ -1,0 +1,28 @@
+{
+  "id": "slim-runtime-layer-session-owner",
+  "name": "slim-runtime-layer-session-owner",
+  "title": "story/task 重构：Story≡durable session 业务视图 · Task 合入 Story 聚合 · Session event 为真相唯一源",
+  "description": "Model C 下锁定架构：Story 是 durable session 的业务视图（stories 表保留启动参数与业务审计），Story session 是其运行外壳；LifecycleRun 独立 entity 挂 Story session（1:1）；child session 为实际对话/companion/step 远程执行；Task 合入 Story aggregate（Vec<Task>，无独立 repository，物理合进 stories.tasks JSONB 列）；StateChange 合并入 Session events（真相单一）。8 项主线：M1 Task 合入 Story aggregate（+ DB migration）；M2 状态真相单一化（Task.status/artifacts 降为投影 + StateChange 合入 session events + projection 三路收口）；M3 Story session/child session 语义统一（命名与类型对齐）；M4 WorkflowBindingKind 收敛为 Project/Story；M5 compose_task_runtime 并入 compose_lifecycle_node + 新增 activate_story_step 统一 service 入口（start_task facade 保留）；M6 reconciler 命名纠正；M7 万能 gateway 拆分；M8 Story-as-durable-session spec 文档化。痛点驱动：P1 状态真相模糊→M2；P2 代码杂乱→M1/M6/M7；P3 task 启动路径与 workflow 分袍→M5。杂项清理（R4/R7-R11/R14/R15）在 child task 04-27-story-task-cleanup-tail。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "04-27-story-task-cleanup-tail"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

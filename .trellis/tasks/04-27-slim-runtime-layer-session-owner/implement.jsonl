@@ -1,0 +1,11 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Task 合入 Story aggregate 的持久化规范与 StoryRepository::update 整体写回"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "DB migration: tasks 表合并为 stories.tasks JSONB 列"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-edge.md", "reason": "LifecycleRun 与 step state 的推进/完成语义"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "Task.status/artifacts 作为 step state 只读投影的类型设计"}
+{"file": ".trellis/spec/backend/architecture-evolution.md", "reason": "架构演化上下文与既有 story/task 模块历史"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "Session event stream / ACP meta 作为 StateChange 的统一审计源"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 domain/application/api/db 重构的思维 checklist"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "DomainError / TaskExecutionError 在 aggregate 合并后的错误传播"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "重构的测试门槛"}

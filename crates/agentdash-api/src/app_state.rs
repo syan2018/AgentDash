@@ -17,9 +17,8 @@ pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
-use agentdash_application::task::service::TaskLifecycleService;
+use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
-use agentdash_application::task_restart_tracker::RestartTracker;
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionHubHandle,
@@ -57,8 +56,8 @@ pub struct ServiceSet {
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
     pub mount_provider_registry: Arc<MountProviderRegistry>,
-    /// Task 生命周期服务 — Application 层直接编排 task start/continue/cancel
-    pub task_lifecycle_service: Arc<TaskLifecycleService>,
+    /// Story step activation 服务 — task route 仅作为用户入口转发到这里
+    pub story_step_activation_service: Arc<StoryStepActivationService>,
     /// Hook 提供者 — 供 API 层验证脚本等管理接口使用
     pub hook_provider: Arc<AppExecutionHookProvider>,
     /// 统一认证会话服务（application 层）
@@ -72,16 +71,6 @@ pub struct ServiceSet {
     pub routine_executor: Option<Arc<RoutineExecutor>>,
 }
 
-/// Task 执行运行时状态 — 并发锁与重试控制
-///
-/// 与 `TaskLifecycleService` 共享同一套实例（通过 `Arc`）。
-pub struct TaskRuntime {
-    /// Per-Task 异步操作锁，确保同一 Task 的生命周期操作串行执行
-    pub lock_map: Arc<TaskLockMap>,
-    /// Per-Task 重启追踪器，控制失败后的自动重试策略
-    pub restart_tracker: Arc<RestartTracker>,
-}
-
 /// 应用级配置
 pub struct AppConfig {
     /// 进程级平台配置（MCP base URL 等不变量，`Arc` 共享避免逐层透传）
@@ -93,11 +82,10 @@ pub struct AppConfig {
 /// 全局应用状态
 ///
 /// 通过 Axum 的 State extractor 注入到各路由处理函数中。
-/// 按职责分为 4 个子集：repos / services / task_runtime / config。
+/// 按职责分为 3 个子集：repos / services / config。
 pub struct AppState {
     pub repos: RepositorySet,
     pub services: ServiceSet,
-    pub task_runtime: TaskRuntime,
     pub config: AppConfig,
     /// 认证/授权提供者（由插件注入，None 表示无认证）
     pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
@@ -311,7 +299,6 @@ impl AppState {
 
         session_hub_handle.set(session_hub.clone()).await;
 
-        let restart_tracker = Arc::new(RestartTracker::default());
         let lock_map = Arc::new(TaskLockMap::new());
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
@@ -329,7 +316,6 @@ impl AppState {
                 story_repo: story_repo_port.clone(),
                 lifecycle_def_repo: workflow_repo.clone(),
                 lifecycle_run_repo: workflow_repo.clone(),
-                restart_tracker: restart_tracker.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {
@@ -364,12 +350,10 @@ impl AppState {
             ),
         );
 
-        let dispatcher = crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(
-            session_hub.clone(),
-            backend_registry.clone(),
-        );
+        let dispatcher =
+            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
 
-        let task_lifecycle_service = Arc::new(TaskLifecycleService {
+        let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
             hub: session_hub.clone(),
             vfs_service: vfs_service.clone(),
@@ -377,7 +361,6 @@ impl AppState {
             platform_config: platform_config.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
-            restart_tracker: restart_tracker.clone(),
             lock_map: lock_map.clone(),
         });
 
@@ -391,16 +374,12 @@ impl AppState {
                 contributor_registry: contributor_registry.clone(),
                 vfs_registry,
                 mount_provider_registry,
-                task_lifecycle_service,
+                story_step_activation_service,
                 hook_provider,
                 auth_session_service,
                 terminal_cancel_coordinator,
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: None,
-            },
-            task_runtime: TaskRuntime {
-                lock_map,
-                restart_tracker,
             },
             config: AppConfig {
                 platform_config,

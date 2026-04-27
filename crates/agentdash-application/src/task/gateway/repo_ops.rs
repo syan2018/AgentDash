@@ -88,7 +88,6 @@ pub async fn update_task_status(
             "reason": reason,
             "task_id": previous_task.id,
             "story_id": previous_task.story_id,
-            "executor_session_id": previous_task.executor_session_id,
             "from": previous_status,
             "to": next_status,
             "context": context,

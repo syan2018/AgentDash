@@ -66,7 +66,7 @@ pub(crate) fn owner_default_hook_rules(
         rules.push(WorkflowHookRuleSpec {
             key: "builtin:task_session_terminal".to_string(),
             trigger: WorkflowHookTrigger::SessionTerminal,
-            description: "Task 默认 lifecycle: session 终止时根据 execution_mode 转换 task 状态"
+            description: "Task 默认 lifecycle: session 终止时根据 terminal_state 转换 task 状态"
                 .to_string(),
             preset: Some("task_session_terminal".to_string()),
             params: None,

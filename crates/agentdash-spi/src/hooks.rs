@@ -404,7 +404,7 @@ pub struct HookResolution {
     /// Hook 规则（Rhai 脚本 / preset）通过返回 `effects` 数组声明需要在 pipeline 中
     /// 执行的领域级副作用。Pipeline 将 effects 转交给注册的 `HookEffectExecutor` 分派执行。
     ///
-    /// kind 约定格式 `domain:action`，如 `"task:set_status"`、`"task:retry"`。
+    /// kind 约定格式 `domain:action`，如 `"task:set_status"`。
     /// 载荷由 kind 消费方定义，SPI 层不对 payload 做类型约束。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<HookEffect>,
@@ -424,7 +424,6 @@ pub struct HookResolution {
 ///
 /// `kind` 约定格式 `domain:action`，示例：
 /// - `"task:set_status"` — 设置关联 task 的状态
-/// - `"task:retry"` — 请求 task 自动重试
 /// - `"task:clear_binding"` — 清理 task 的 session 绑定
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

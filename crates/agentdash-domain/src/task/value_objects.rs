@@ -33,22 +33,6 @@ impl std::str::FromStr for TaskStatus {
     }
 }
 
-/// Task 执行模式 — 控制失败后的自动处理策略
-///
-/// 不同模式决定了 Turn Monitor 和 State Reconciler 在 Task 失败时的行为。
-/// 参考 Actant LaunchMode 策略模式，适配 AgentDashboard 的 Story → Task 场景。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskExecutionMode {
-    /// 失败后标记 Failed，等待人工介入（默认行为）
-    #[default]
-    Standard,
-    /// 失败后自动重试（配合 RestartTracker 指数退避策略）
-    AutoRetry,
-    /// 一次性执行：完成或失败后自动清理 session 绑定
-    OneShot,
-}
-
 /// 结构化 Agent 绑定信息
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentBinding {

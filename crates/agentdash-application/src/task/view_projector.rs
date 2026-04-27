@@ -12,7 +12,7 @@
 //!    `Story::apply_task_projection` 将 step state 反投影到 task view
 //! 3. 同步 append 一条 `state_changes` 全局投影索引（`kind = TaskStatusChanged`）
 //! 4. 对于仍处于 `Running` 但没有任何活跃 run 覆盖的孤儿 task，作为 fallback
-//!    置为 `Failed`（配合 `RestartTracker` 的 auto-retry 决策保留 M1-b 语义）
+//!    置为 `Failed`
 //!
 //! 注：M2-c 放弃 `TaskSessionStateReader` 的 session turn state 查询路径；
 //! session turn state 只是派生结果，已不再是真相源。
@@ -24,12 +24,10 @@ use serde_json::json;
 
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
-use agentdash_domain::task::{TaskExecutionMode, TaskStatus};
+use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
     LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleRunStatus,
 };
-
-use super::restart_tracker::{RestartDecision, RestartTracker};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskViewProjectionError {
@@ -45,19 +43,16 @@ pub enum TaskViewProjectionError {
 /// - `project_repo` / `story_repo` / `state_change_repo`：基础领域仓储
 /// - `lifecycle_def_repo`：lifecycle definition 仓储（反查 step.task_id 绑定）
 /// - `lifecycle_run_repo`：lifecycle run 仓储（本次投影的事实源）
-/// - `restart_tracker`：Optional；对孤儿 Running task 做自动重试决策
 pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
     lifecycle_def_repo: &Arc<dyn LifecycleDefinitionRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
-    restart_tracker: Option<&RestartTracker>,
 ) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
     let mut projected_from_step: usize = 0;
     let mut orphan_fallback: usize = 0;
-    let mut pending_retry: usize = 0;
 
     // 记录本次已投影到的 task_id，用于识别"孤儿 Running task"。
     let mut covered_tasks: HashSet<uuid::Uuid> = HashSet::new();
@@ -173,21 +168,8 @@ pub async fn project_task_views_on_boot(
                 }
 
                 // 孤儿 Running task：没有活跃 lifecycle run 覆盖；判定为 Interrupted 语义。
-                // AutoRetry 模式下给一次重试机会，否则直接 Failed。
-                let (next_status, reason, is_retry) = if task.execution_mode
-                    == TaskExecutionMode::AutoRetry
-                    && let Some(tracker) = restart_tracker
-                    && let RestartDecision::Allowed { .. } = tracker.report_failure(task.id)
-                {
-                    (
-                        TaskStatus::AwaitingVerification,
-                        "boot_reconcile_orphan_running_pending_retry",
-                        true,
-                    )
-                } else {
-                    (TaskStatus::Failed, "boot_reconcile_orphan_running", false)
-                };
-
+                let next_status = TaskStatus::Failed;
+                let reason = "boot_reconcile_orphan_running";
                 let previous_status = task.status().clone();
                 let task_id = task.id;
                 let mut story_mut = match story_repo.get_by_id(story.id).await? {
@@ -211,7 +193,6 @@ pub async fn project_task_views_on_boot(
                             "reason": reason,
                             "task_id": task_id,
                             "story_id": story_id,
-                            "execution_mode": task.execution_mode,
                             "from": previous_status,
                             "to": next_status,
                         }),
@@ -227,9 +208,6 @@ pub async fn project_task_views_on_boot(
                 }
 
                 orphan_fallback += 1;
-                if is_retry {
-                    pending_retry += 1;
-                }
 
                 tracing::info!(
                     task_id = %task_id,
@@ -246,7 +224,6 @@ pub async fn project_task_views_on_boot(
     tracing::info!(
         projected_from_step,
         orphan_fallback,
-        pending_retry,
         "启动阶段 Task view 投影完成（Scheme A · step state → task view）"
     );
     Ok(())
@@ -688,7 +665,6 @@ mod tests {
             &story_repo,
             &lifecycle_def_repo,
             &lifecycle_run_repo,
-            None,
         )
         .await
         .expect("reconcile ok");
@@ -760,7 +736,6 @@ mod tests {
             &story_repo,
             &lifecycle_def_repo,
             &lifecycle_run_repo,
-            None,
         )
         .await
         .expect("reconcile ok");
@@ -810,7 +785,6 @@ mod tests {
             &story_repo,
             &lifecycle_def_repo,
             &lifecycle_run_repo,
-            None,
         )
         .await
         .expect("reconcile ok");
@@ -882,7 +856,6 @@ mod tests {
             &story_repo,
             &lifecycle_def_repo,
             &lifecycle_run_repo,
-            None,
         )
         .await
         .expect("reconcile ok");
@@ -953,7 +926,6 @@ mod tests {
             &story_repo,
             &lifecycle_def_repo,
             &lifecycle_run_repo,
-            None,
         )
         .await
         .expect("reconcile ok");

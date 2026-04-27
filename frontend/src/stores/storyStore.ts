@@ -28,7 +28,6 @@ export interface TaskSessionInfo {
   task_id: string;
   workspace_id: string | null;
   session_id: string | null;
-  executor_session_id: string | null;
   task_status: Task["status"];
   agent_binding: AgentBinding;
   session_title: string | null;
@@ -184,19 +183,6 @@ const normalizeTaskStatus = (value: string): Task['status'] => {
       return 'failed';
     default:
       throw new Error(`未知 Task 状态: ${value}`);
-  }
-};
-
-const normalizeTaskExecutionMode = (value: unknown): Task['execution_mode'] => {
-  switch (value) {
-    case 'standard':
-      return 'standard';
-    case 'auto_retry':
-      return 'auto_retry';
-    case 'one_shot':
-      return 'one_shot';
-    default:
-      throw new Error(`未知 Task execution_mode: ${String(value)}`);
   }
 };
 
@@ -487,11 +473,9 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     project_id: requireStringField(raw, 'project_id'),
     story_id: requireStringField(raw, 'story_id'),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
-    executor_session_id: raw.executor_session_id ? String(raw.executor_session_id) : null,
     title: requireStringField(raw, 'title'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(requireStringField(raw, 'status')),
-    execution_mode: normalizeTaskExecutionMode(raw.execution_mode),
     agent_binding: mapAgentBinding(raw.agent_binding),
     artifacts: raw.artifacts == null
       ? []
@@ -743,7 +727,6 @@ export const useStoryStore = create<StoryState>((set) => ({
         task_id: requireStringField(raw, 'task_id'),
         workspace_id: readNullableStringField(raw, 'workspace_id'),
         session_id: readNullableStringField(raw, 'session_id'),
-        executor_session_id: readNullableStringField(raw, 'executor_session_id'),
         task_status: normalizeTaskStatus(requireStringField(raw, 'task_status')),
         agent_binding: mapAgentBinding(raw.agent_binding),
         session_title: readNullableStringField(raw, 'session_title'),

@@ -273,10 +273,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 {
                     if let Some(meta) = snapshot.metadata.as_mut() {
                         meta.extra.insert(
-                            "task_execution_mode".to_string(),
-                            serde_json::Value::String(format!("{:?}", task.execution_mode)),
-                        );
-                        meta.extra.insert(
                             "task_status".to_string(),
                             serde_json::Value::String(format!("{:?}", task.status())),
                         );

@@ -12,9 +12,10 @@
 
 - **Story 是一个 aggregate root**，表达"一条持久化的业务工作单元"。它不是一个执行器、不是一条运行队列、也不是一堆自管的子实体；它是 **某个 durable session 的业务视图**。
 - 每个 Story 在运行时对应 **一个 Story session**（`SessionBinding(owner_type=Story)` 绑定），这个 session 的 event stream 是 story 内一切状态变更的唯一审计源。
-- **Task 是 Story aggregate 下的 child entity**，描述"story 内某一段执行单元的 durable spec"（标题、描述、agent binding、workspace 约束等），不是独立 aggregate、没有独立 repository、没有独立表（合入 `stories.tasks` JSONB 列）。
+- **Task 是 Story aggregate 下的 child entity**，描述"story 内某一段执行单元的用户可见状态视图与声明"（标题、描述、agent binding、workspace 约束、状态、产物等），不是独立 aggregate、没有独立 repository、没有独立表（合入 `stories.tasks` JSONB 列）。
+- **Task 不承载 runtime 业务**：不持有 AgentDash 内部 `session_id`、不持有执行器原生 `executor_session_id`、不持有 one-shot / auto-retry 等执行策略。Task 只通过 `SessionBinding(owner_type=Task, label="execution")` 指向可查看的 execution child session；执行器 resume id 只归属 `SessionMeta.executor_session_id`。
 - **LifecycleRun 是独立 domain entity**，1:1 挂在 Story session 上；其 step 的 `task_id` 回指 Story aggregate 内的 Task。**Task.status / Task.artifacts 是 step state 的只读投影**，不是独立真相。
-- **child session**（对话、companion、step 的远程执行、多次问答）都是 Story session 的子 session，通过 companion 或 step binding 与 Story session 挂钩。
+- **child session**（对话、companion、step 的远程执行、多次问答）都是 Story session 的子 session，通过 companion 或 step binding 与 Story session 挂钩。Task 最多提供“查看对应 child session”的入口，不拥有独立 runtime lifecycle。
 - 对外 API 的 `start_task` / `continue_task` / `cancel_task` 等入口保留名字，内部统一委托给 `activate_story_step(story_id, step_key, user_input)` 服务命令——**Task 启动路径 = 标准 workflow 装配**，不存在 `compose_task_runtime` 这种特例分支。
 - `state_changes` 表不再是业务事件的独立写入源，降级为"跨 session 全局游标索引"（D3-β），由 Story session event stream 的变更通过投影自动维护；`/events/since` API 保持兼容。
 
@@ -95,7 +96,6 @@ Task 是 Story aggregate 内某段执行单元的 durable spec。
   - `workspace_id: Option<Uuid>`
   - `title / description / tags`
   - `agent_binding: AgentBinding`
-  - `execution_mode`（可选）
   - `created_at / updated_at`
 - **投影字段**（由 LifecycleRun/step state 反投射；**外部不可直接写**）：
   - `status: TaskStatus`
@@ -107,6 +107,7 @@ Task 是 Story aggregate 内某段执行单元的 durable spec。
   - `status` / `artifacts` 字段私有化 + 仅暴露 `apply_projection(&StepState)` 内部方法；或
   - Task 拆分为 `TaskSpec`（外部可变）+ `TaskView`（只读投影视图）两种表达，API 层返回合并视图。
 - 具体机制在 M2 实现阶段敲定；本 spec 强制的契约是：**`grep "task.status\s*="` 在生产代码中不能出现业务直接写入**。
+- Task entity 禁止新增 runtime 字段；`executor_session_id`、`session_id`、`execution_mode`、retry policy 等属于 session / lifecycle step 策略层，不属于 Task。
 
 **持久化**：
 
@@ -183,7 +184,7 @@ child session 是 Story session 下的子 session，覆盖以下场景：
 | owner_type | label 值 | 语义 | 备注 |
 |-----------|----------|------|------|
 | `Story` | `"companion"` | Story session 的 root 绑定（story-level owner session） | 现状实际值唯一为 `"companion"`（见 research） |
-| `Task` | `"execution"` | Task 对应的 child session（若该 task 的 step 产生了独立 session） | 现状硬编码 |
+| `Task` | `"execution"` | Task 状态视图对应的 execution child session（用于会话查看） | 现状硬编码 |
 | `Project` | `"execution"` | Project session（本 spec 不处理 Project 详细语义） | — |
 
 ### 4.2 实施约束
@@ -300,6 +301,7 @@ start_task(task_id, user_input)
 **关键原则**：
 
 - `compose_task_runtime` / `TaskRuntimeSpec` / `TaskRuntimeOutput` 三者**彻底删除**（M5），不再存在 Task-specific 的装配分支。
+- `PreparedTurnContext` 过渡壳已删除；task owner prompt augmentation 也必须走 `SessionRequestAssembler::compose_story_step`。
 - `LifecycleNodeSpec` 补齐 user prompt 注入（`override_prompt` / `additional_prompt`）、explicit executor config；Task 侧所需的上下文组装全部并入 lifecycle node context pipeline（吸纳 `build_task_agent_context` / `TaskAgentBuildInput` 的逻辑）。
 - `task/session_runtime_inputs.rs` 整个文件删除；`resolve_workflow_via_task_sessions` 反查消失。
 - Story session / LifecycleRun 的定位通过 `find_active_run_for_story(story_id)` 完成（repo 层新增查询方法，或通过 SessionBinding → session_id → lifecycle_run 两跳）。
@@ -343,12 +345,13 @@ async fn activate_story_step(
 
 以下问题本 spec 不定论，留给主线后续阶段或 cleanup tail：
 
-1. **Story.status 的最终定位**：本 spec 将其定位为"业务审计字段"（面向用户的 story 粒度状态），但与"LifecycleRun 终态""Task view 汇总状态"的关系需要 M2/M6 确定。是否引入"suggested transition"、是否让 Story.status 也成为投影字段，留待 cleanup tail R15。
+1. **Story.status 的最终定位**：保持"业务审计字段"（面向用户的 story 粒度状态），不是 runtime projection 真相。LifecycleRun / step state / session event 是运行时事实；未来可以由 runtime 给出 suggested transition，但本 spec 不引入新 projector。
 2. **Task 投影字段的类型机制**：是采用 `TaskSpec` + `TaskView` 拆分，还是让 Task 私有化 setter 仅 projector 可调，由 M2 实现阶段选择。本 spec 强制的契约仅是"外部不可直接写"。
 3. **`state_changes` 表最终去留**：D3-β 选择降级为索引；若未来引入 `session_events.global_seq` 或独立 outbox，可以进一步废弃 `state_changes` 表。
-4. **Task facade 彻底下线**：`start_task` 等入口是否长期保留由产品决策；spec 约束的是"内部链路统一"，不是"对外 API 永久保留"。
+4. **Task facade 彻底下线**：`start_task` 等入口是否长期保留由产品决策；spec 约束的是"内部链路统一"，不是"对外 API 永久保留"。当前代码中 `StoryStepActivationService` 承载 activation 编排，task route 只是用户入口 facade。
 5. **多 Project 场景下的 aggregate 激进合并**：若未来要把 Project 也纳入同类 owner session 模型，Story ↔ Project 的关系需要独立讨论。
 6. **PRD 与 research 对 `state_changes` 的位置表达**：PRD 主文多处描述 state_changes "降级为全局投影索引"，research TBD-2 指出 "schema 互不兼容，不能简单映射"。本 spec 采纳 PRD D3-β 的最终解释（降级为索引，由 projector 维护，schema 保留），若后续实现层遇到跨 session 游标需求，需回到 research 的评估重新设计全局游标方案，不应当成"已解决"。
+7. **Task retry / execution mode**：`Task.execution_mode`、`RestartTracker`、`task:retry` effect 已从 Model C task 层删除。若未来需要自动重试，应作为 session 或 lifecycle step execution policy 独立建模，不能回写到 Task durable spec。
 
 ---
 

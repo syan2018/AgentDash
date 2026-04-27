@@ -27,7 +27,7 @@ pub use assembler::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowOutput, CompanionWorkflowSpec,
     LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
     PreparedSessionInputs, SessionAssemblyBuilder, SessionRequestAssembler, StoryStepSpec,
-    TaskRuntimePhase, acp_mcp_servers_to_runtime, compose_companion,
+    StoryStepPhase, acp_mcp_servers_to_runtime, compose_companion,
     compose_companion_with_workflow, compose_lifecycle_node, extract_agent_mcp_entries,
     finalize_request, load_available_presets,
 };

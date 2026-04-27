@@ -33,7 +33,6 @@ pub struct StartTaskRequest {
 pub struct StartTaskResponse {
     pub task_id: Uuid,
     pub session_id: String,
-    pub executor_session_id: Option<String>,
     pub turn_id: String,
     pub status: TaskStatus,
     pub context_sources: Vec<String>,
@@ -51,7 +50,6 @@ pub struct ContinueTaskRequest {
 pub struct ContinueTaskResponse {
     pub task_id: Uuid,
     pub session_id: String,
-    pub executor_session_id: Option<String>,
     pub turn_id: String,
     pub status: TaskStatus,
     pub context_sources: Vec<String>,
@@ -62,7 +60,6 @@ pub struct TaskSessionResponse {
     pub task_id: Uuid,
     pub workspace_id: Option<Uuid>,
     pub session_id: Option<String>,
-    pub executor_session_id: Option<String>,
     pub task_status: TaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_execution_status: Option<String>,
@@ -93,7 +90,7 @@ pub async fn start_task(
     .await?;
     let result = state
         .services
-        .task_lifecycle_service
+        .story_step_activation_service
         .start_task(TaskExecutionCommand {
             task_id,
             phase: ExecutionPhase::Start,
@@ -107,7 +104,6 @@ pub async fn start_task(
     Ok(Json(StartTaskResponse {
         task_id: result.task_id,
         session_id: result.session_id,
-        executor_session_id: result.executor_session_id,
         turn_id: result.turn_id,
         status: result.status,
         context_sources: result.context_sources,
@@ -130,7 +126,7 @@ pub async fn continue_task(
     .await?;
     let result = state
         .services
-        .task_lifecycle_service
+        .story_step_activation_service
         .continue_task(TaskExecutionCommand {
             task_id,
             phase: ExecutionPhase::Continue,
@@ -144,7 +140,6 @@ pub async fn continue_task(
     Ok(Json(ContinueTaskResponse {
         task_id: result.task_id,
         session_id: result.session_id,
-        executor_session_id: result.executor_session_id,
         turn_id: result.turn_id,
         status: result.status,
         context_sources: result.context_sources,
@@ -166,7 +161,7 @@ pub async fn cancel_task(
     .await?;
     let task = state
         .services
-        .task_lifecycle_service
+        .story_step_activation_service
         .cancel_task(task_id)
         .await
         .map_err(map_task_execution_error)?;
@@ -188,7 +183,7 @@ pub async fn get_task_session(
     .await?;
     let result = state
         .services
-        .task_lifecycle_service
+        .story_step_activation_service
         .get_task_session(task_id)
         .await
         .map_err(map_task_execution_error)?;
@@ -238,7 +233,6 @@ pub async fn get_task_session(
         task_id: result.task_id,
         workspace_id: task.workspace_id,
         session_id: result.session_id,
-        executor_session_id: result.executor_session_id,
         task_status: result.task_status,
         session_execution_status: result.session_execution_status,
         agent_binding: result.agent_binding,

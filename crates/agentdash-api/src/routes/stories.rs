@@ -532,8 +532,6 @@ pub async fn update_task(
         *view.title = task.title.clone();
         *view.description = task.description.clone();
         *view.workspace_id = task.workspace_id;
-        *view.executor_session_id = task.executor_session_id.clone();
-        *view.execution_mode = task.execution_mode.clone();
         *view.agent_binding = task.agent_binding.clone();
     });
     if updated_spec.is_none() {
@@ -599,8 +597,6 @@ pub async fn delete_task(
         .remove_task(task_id)
         .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
     state.repos.story_repo.update(&story).await?;
-
-    state.task_runtime.restart_tracker.clear(task_id);
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

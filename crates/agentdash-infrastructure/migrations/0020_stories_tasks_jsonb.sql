@@ -26,9 +26,9 @@ ALTER TABLE stories
 --
 -- 构造的 JSONB 对象字段必须与 Rust `Task` struct 的 serde 序列化形式保持一致：
 --   - snake_case 字段名
---   - workspace_id / executor_session_id 允许 null
+--   - workspace_id 允许 null
 --   - agent_binding / artifacts 在表中已是 JSON 字符串（TEXT），反解析后再嵌入
---   - status / execution_mode 为枚举字符串（小写 snake_case）
+--   - status 为枚举字符串（小写 snake_case）
 --   - created_at / updated_at 为 RFC3339 字符串
 --
 -- 注意：仅当 stories.tasks 当前为空数组（默认值）时才迁移，避免重跑覆盖。
@@ -50,7 +50,7 @@ BEGIN
 
         FOR task_row IN
             SELECT id, project_id, story_id, workspace_id, title, description,
-                   status, executor_session_id, execution_mode,
+                   status,
                    agent_binding, artifacts, created_at, updated_at
             FROM tasks
             WHERE story_id = story_row.id
@@ -79,8 +79,6 @@ BEGIN
                 'title', task_row.title,
                 'description', task_row.description,
                 'status', task_row.status,
-                'executor_session_id', task_row.executor_session_id,
-                'execution_mode', task_row.execution_mode,
                 'agent_binding', agent_binding_json,
                 'artifacts', artifacts_json,
                 'created_at', task_row.created_at,

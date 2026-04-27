@@ -130,7 +130,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             key: "task_session_terminal",
             trigger: WorkflowHookTrigger::SessionTerminal,
             label: "Task 终态状态转换",
-            description: "Task 伴生 session 进入终态时，根据 execution_mode 和 terminal_state 声明 task 状态变更/重试等副作用",
+            description: "Task 伴生 session 进入终态时，根据 terminal_state 声明 task 状态变更副作用",
             param_schema: None,
             script: include_str!("../../scripts/hook-presets/task_session_terminal.rhai"),
             source: PresetSource::Builtin,

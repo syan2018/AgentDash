@@ -52,10 +52,6 @@ pub async fn persist_tool_call_artifact(
     story.mutate_task_artifacts(input.task_id, |artifacts| {
         *artifacts = updated_task.artifacts().to_vec();
     });
-    // 同步 spec 字段（title 等可能也被间接修改，虽然本路径主要改 artifacts）。
-    story.update_task(input.task_id, |view| {
-        *view.executor_session_id = updated_task.executor_session_id.clone();
-    });
     repos.story_repo.update(&story).await?;
     append_task_change(
         repos,

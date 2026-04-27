@@ -301,7 +301,6 @@ impl HookScriptEngine {
                 "working_directory": ctx.snapshot.metadata.as_ref().and_then(|m| m.working_directory.as_deref()),
                 "connector_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.connector_id.as_deref()),
                 "executor": ctx.snapshot.metadata.as_ref().and_then(|m| m.executor.as_deref()),
-                "task_execution_mode": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_execution_mode")),
                 "task_status": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_status")),
                 "task_id": ctx.snapshot.metadata.as_ref().and_then(|m| m.extra.get("task_id")),
             },

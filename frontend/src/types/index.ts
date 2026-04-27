@@ -24,8 +24,6 @@ export type TaskStatus =
   | "completed"
   | "failed";
 
-export type TaskExecutionMode = "standard" | "auto_retry" | "one_shot";
-
 export type BackendType = "local" | "remote";
 export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
 export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
@@ -393,11 +391,9 @@ export interface Task {
   project_id: string;
   story_id: string;
   workspace_id?: string | null;
-  executor_session_id?: string | null;
   title: string;
   description?: string;
   status: TaskStatus;
-  execution_mode: TaskExecutionMode;
   agent_binding: AgentBinding;
   artifacts: Artifact[];
   created_at: string;

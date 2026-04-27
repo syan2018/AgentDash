@@ -132,7 +132,6 @@ impl TaskMcpServer {
                 "initial_context": task.agent_binding.initial_context,
             },
             "artifact_count": task.artifacts().len(),
-            "executor_session_id": task.executor_session_id,
         });
 
         Ok(CallToolResult::success(vec![Content::text(

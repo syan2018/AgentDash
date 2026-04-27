@@ -2,15 +2,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{AgentBinding, Artifact, TaskExecutionMode, TaskStatus};
+use super::value_objects::{AgentBinding, Artifact, TaskStatus};
 
-/// Task — 用户工作项与 Session 策略壳
+/// Task — 用户工作项状态视图
 ///
-/// 面向用户展示的工作项容器，承载归属关系、独立业务状态机、Session 默认执行策略和结果摘要。
-/// 真实执行在 Session 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
+/// 面向用户展示的工作项容器，承载归属关系、状态投影、声明式执行偏好和结果摘要。
+/// 真实执行在 Session / LifecycleRun 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
 ///
 /// Session 归属关系通过 `SessionBinding` 管理（owner_type=task, label="execution"），
-/// Task entity 不再持有 session_id。
+/// Task entity 不持有 AgentDash 内部 session_id，也不持有执行器原生 resume id。
 ///
 /// **M2：投影字段可见性规则**（见 `.trellis/spec/backend/story-task-runtime.md` §2.4）
 ///
@@ -30,14 +30,6 @@ pub struct Task {
     pub description: String,
     /// 执行状态：只读投影字段，外部不可直写（M2）。
     pub(crate) status: TaskStatus,
-    /// 执行器原生会话 ID（用于 follow-up / resume）。
-    ///
-    /// 注意：这不是 AgentDash 内部的 `session_id`。
-    /// AgentDash 内部会话归属统一通过
-    /// `SessionBinding(owner_type=Task, label="execution")` 解析。
-    pub executor_session_id: Option<String>,
-    /// 执行模式 — 控制失败后的自动处理策略
-    pub execution_mode: TaskExecutionMode,
     /// 结构化 Agent 绑定信息
     pub agent_binding: AgentBinding,
     /// 结构化执行产物列表：只读投影字段，外部不可直写（M2）。
@@ -57,8 +49,6 @@ impl Task {
             title,
             description,
             status: TaskStatus::Pending,
-            executor_session_id: None,
-            execution_mode: TaskExecutionMode::default(),
             agent_binding: AgentBinding::default(),
             artifacts: vec![],
             created_at: now,
@@ -161,8 +151,6 @@ pub struct TaskSpecMut<'a> {
     pub title: &'a mut String,
     pub description: &'a mut String,
     pub workspace_id: &'a mut Option<Uuid>,
-    pub executor_session_id: &'a mut Option<String>,
-    pub execution_mode: &'a mut TaskExecutionMode,
     pub agent_binding: &'a mut AgentBinding,
     pub updated_at: &'a mut DateTime<Utc>,
 }
@@ -177,8 +165,6 @@ impl<'a> TaskSpecMut<'a> {
             title: &mut task.title,
             description: &mut task.description,
             workspace_id: &mut task.workspace_id,
-            executor_session_id: &mut task.executor_session_id,
-            execution_mode: &mut task.execution_mode,
             agent_binding: &mut task.agent_binding,
             updated_at: &mut task.updated_at,
         }

@@ -10,7 +10,6 @@
 use std::sync::Arc;
 
 use crate::session::SessionHub;
-use crate::task::restart_tracker::RestartTracker;
 use crate::task::view_projector::project_task_views_on_boot;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -27,7 +26,6 @@ pub struct BootReconcileDeps {
     pub story_repo: Arc<dyn StoryRepository>,
     pub lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub restart_tracker: Arc<RestartTracker>,
 }
 
 /// 单阶段对账结果
@@ -118,7 +116,6 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.story_repo,
         &deps.lifecycle_def_repo,
         &deps.lifecycle_run_repo,
-        Some(deps.restart_tracker.as_ref()),
     )
     .await
     {

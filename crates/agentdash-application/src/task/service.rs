@@ -16,10 +16,9 @@ use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
 use crate::session::{
     PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
-    StoryStepSpec, TaskRuntimePhase, UserPromptInput, finalize_request,
+    StoryStepPhase, StoryStepSpec, UserPromptInput, finalize_request,
 };
 use crate::task::lock::TaskLockMap;
-use crate::task::restart_tracker::RestartTracker;
 use crate::vfs::RelayVfsService;
 use crate::workflow::{
     BindAndActivateLifecycleStepCommand, LifecycleRunService, build_step_projector_from_repos,
@@ -29,7 +28,7 @@ use crate::workspace::BackendAvailability;
 
 use super::execution::*;
 use super::gateway::{
-    PreparedTurnContext, append_task_change as gw_append_task_change,
+    append_task_change as gw_append_task_change,
     bridge_task_status_event_to_session_notification,
     clear_task_session_binding,
     create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
@@ -43,22 +42,15 @@ use super::gateway::{
 /// 由 API/Host 层提供具体实现。
 #[async_trait]
 pub trait TurnDispatcher: Send + Sync {
-    /// 根据 PreparedTurnContext 将 turn 分发到合适的执行通道
-    async fn dispatch_turn(
-        &self,
-        session_id: &str,
-        ctx: PreparedTurnContext,
-    ) -> Result<StartedTurn, TaskExecutionError>;
-
     /// 取消会话执行（自动路由到本地 Hub 或远程中继）
     async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError>;
 }
 
-/// Task 执行 Service — Application 层直接编排
+/// Story step activation service — Application 层编排 step child session 的启动/续跑/取消。
 ///
 /// 持有所有必要的 Application 层依赖（repos / hub / context services），
 /// 仅通过 `TurnDispatcher` trait 依赖基础设施层的分发能力。
-pub struct TaskLifecycleService {
+pub struct StoryStepActivationService {
     pub repos: RepositorySet,
     pub hub: SessionHub,
     pub vfs_service: Arc<RelayVfsService>,
@@ -66,11 +58,10 @@ pub struct TaskLifecycleService {
     pub platform_config: crate::platform_config::SharedPlatformConfig,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
-    pub restart_tracker: Arc<RestartTracker>,
     pub lock_map: Arc<TaskLockMap>,
 }
 
-impl TaskLifecycleService {
+impl StoryStepActivationService {
     pub async fn start_task(
         &self,
         cmd: TaskExecutionCommand,
@@ -98,9 +89,6 @@ impl TaskLifecycleService {
             .lock_map
             .with_lock(task_id, || async { self.cancel_task_inner(task_id).await })
             .await;
-        if result.is_ok() {
-            self.restart_tracker.clear(task_id);
-        }
         result
     }
 
@@ -243,8 +231,8 @@ impl TaskLifecycleService {
                 project: &project,
                 workspace: workspace.as_ref(),
                 phase: match phase {
-                    ExecutionPhase::Start => TaskRuntimePhase::Start,
-                    ExecutionPhase::Continue => TaskRuntimePhase::Continue,
+                    ExecutionPhase::Start => StoryStepPhase::Start,
+                    ExecutionPhase::Continue => StoryStepPhase::Continue,
                 },
                 override_prompt,
                 additional_prompt,
@@ -274,7 +262,6 @@ impl TaskLifecycleService {
         req.post_turn_handler = Some(Arc::new(
             super::gateway::effect_executor::TaskHookEffectExecutor {
                 repos: self.repos.clone(),
-                restart_tracker: self.restart_tracker.clone(),
                 task_id: task.id,
                 session_id: session_id.clone(),
                 backend_id: backend_id.clone(),
@@ -322,7 +309,6 @@ impl TaskLifecycleService {
                 "task_id": latest_task.id,
                 "story_id": latest_task.story_id,
                 "session_id": session_id,
-                "executor_session_id": latest_task.executor_session_id,
                 "phase": match phase {
                     ExecutionPhase::Start => "start",
                     ExecutionPhase::Continue => "continue",
@@ -335,7 +321,6 @@ impl TaskLifecycleService {
         Ok(TaskExecutionResult {
             task_id: latest_task.id,
             session_id,
-            executor_session_id: latest_task.executor_session_id.clone(),
             turn_id,
             status: latest_task.status().clone(),
             context_sources,
@@ -476,7 +461,6 @@ impl TaskLifecycleService {
             session_id,
             task_status: task.status().clone(),
             session_execution_status,
-            executor_session_id: task.executor_session_id,
             agent_binding: task.agent_binding,
             session_title,
             last_activity,
@@ -550,7 +534,6 @@ impl TaskLifecycleService {
                     "reason": "task_cancel_requested",
                     "task_id": task.id, "story_id": task.story_id,
                     "session_id": session_id,
-                    "executor_session_id": task.executor_session_id,
                     "from": previous_status, "to": task.status().clone(),
                 }),
             )
@@ -587,8 +570,6 @@ impl TaskLifecycleService {
             *view.title = task.title.clone();
             *view.description = task.description.clone();
             *view.workspace_id = task.workspace_id;
-            *view.executor_session_id = task.executor_session_id.clone();
-            *view.execution_mode = task.execution_mode.clone();
             *view.agent_binding = task.agent_binding.clone();
         });
         if updated_spec.is_none() {

@@ -8,7 +8,7 @@
 2. Story root session 的创建/查询/唯一性契约尚未固化
 3. execution DTO / session 路由 / 过渡容器仍带有旧 task-runtime 痕迹
 4. 少量 migration、前端 target kind、空壳模块、尾巴字段与死代码仍未清掉
-5. `TaskLock` / `RestartTracker` / `Story.status` 等剩余建模决议尚未冻结
+5. `TaskLock` / `Story.status` 等剩余建模决议尚未冻结，`RestartTracker` 等旧 task runtime 策略待删除
 
 本任务不再按“cleanup tail 的散点收纳”推进，而是作为 **Model C 收官收口任务** 一次性完成：先补主线未真收口的前提，再统一契约、清过渡层、冻结剩余建模决议。
 
@@ -18,7 +18,7 @@
 
 - `TaskLock` 的去留依赖 task 启动是否真的已并入 `activate_story_step`
 - execution DTO / 路由边界依赖 Story session 与 child session 的契约是否先收口
-- `executor_session_id` 的语义依赖 session / child session / executor follow-up 的边界定义
+- `executor_session_id` 的语义依赖 session / child session / executor follow-up 的边界定义；最终结论是只归属 `SessionMeta`
 - `Story.status` 的定位依赖 command 路径、terminal cancel 与 runtime 真相分层
 
 若拆成多个小 PRD，会在前提未稳定时反复改文档与代码；因此本任务采用**一个 PRD 管总范围**，但内部仍按里程碑顺序落地。
@@ -49,7 +49,7 @@
   - `PreparedSessionInputs`
   - `finalize_request`
   - session dispatch
-- `PreparedTurnContext` 若暂时保留，只能作为薄 wrapper；不再代表 task-runtime 特例分支
+- `PreparedTurnContext` 必须删除；`acp_sessions.rs` 的 task owner prompt 路径也走 `SessionRequestAssembler::compose_story_step`
 - 旧式“task service 自己创建/绑定/派发 task owner session”的主路径必须退出
 
 ### M1 · Story root session 契约固化
@@ -61,9 +61,13 @@
 
 ### M2 · DTO / route / 字段语义收口
 
-- 明确 `Task.executor_session_id` 的最终语义：
-  - 若保留，只能表示 executor 原生会话 id，不能再与 AgentDash 内部 session id 混用
-  - 若迁走，需补迁移与调用链调整
+- `Task.executor_session_id` 必须移除：
+  - 执行器原生 follow-up / resume id 只归属 `SessionMeta.executor_session_id`
+  - Task 只通过 `SessionBinding(owner_type=Task, label="execution")` 找到可查看的 child session
+  - Task DTO / MCP 输出 / frontend store 不再暴露该字段
+- `Task.execution_mode` / `RestartTracker` / `task:retry` 必须移除：
+  - Task 不承载 one-shot / auto-retry 等 runtime 策略
+  - session 终态只投影为 task 状态展示：completed → awaiting_verification，failed/interrupted → failed
 - `task/execution.rs` 与实际 activation 链路对齐，删除只服务旧路径的 DTO 壳
 - 盘点并收口以下路由的职责边界：
   - `routes/task_execution.rs`
@@ -83,23 +87,28 @@
 
 ### M4 · 剩余建模决议冻结
 
-- `TaskLock`：明确保留 / 收窄 / 删除的理由
-- `RestartTracker`：明确属于 task / step / session 哪一层
-- `Story.status`：明确是否保持“纯业务审计字段”定位，是否引入 suggested transition
+- `TaskLock`：保留为 `StoryStepActivationService` facade 的并发闸门
+  - 锁不表达 Task runtime 所有权，只防止同一 task 查看入口触发重复 start/continue/cancel
+  - 后续若 step activation API 成为主入口，可把锁 key 从 `task_id` 迁到 `(story_id, step_key)` 或 `session_id`
+- `RestartTracker`：删除；本轮不保留 task 级 auto-retry 策略
+- `Story.status`：保留为业务审计字段，不作为 runtime 投影真相
+  - runtime 真相仍是 Story session event stream + LifecycleRun/step state
+  - 运行时可以在未来给出 suggested transition，但本任务不引入新 projector
 - effect payload 中字符串状态映射的去向需要明确：
-  - 若本次保留字符串协议，需统一到 `FromStr` / serde 入口
-  - 若转向 workflow transition，需写清楚本次只冻结方向、不强行一步到位
+  - 本次保留 `task:set_status` 字符串 payload，但统一走 `TaskStatus::from_str`
+  - `task:retry` effect 删除；后续重试若需要，应建在 session/lifecycle step 策略层
 
 ## Acceptance Criteria
 
-- [ ] `start_task` / `continue_task` 的主链路统一到 `activate_story_step`
-- [ ] Story root session 的创建、查询、唯一性语义一致，API 与运行期不再各说各话
-- [ ] `Task.executor_session_id` / internal session id / child session 的语义明确，代码与文档一致
-- [ ] 前端不再暴露 `WorkflowTargetKind = "task"`
-- [ ] 空壳模块、死代码、明显错误注释与 migration 风险已清理
-- [ ] `TaskLock` / `RestartTracker` / `Story.status` 都有明确决议与理由
-- [ ] `.trellis/spec/backend/story-task-runtime.md` 同步本任务结论
-- [ ] 本次不新增新的 runtime 特例层；已有过渡层若保留，必须在 PRD 与代码注释中说明保留原因
+- [x] `start_task` / `continue_task` 的主链路统一到 `activate_story_step`
+- [x] Story root session 的创建、查询、唯一性语义一致，API 与运行期不再各说各话
+- [x] `Task.executor_session_id` / internal session id / child session 的语义明确，代码与文档一致：Task 字段删除，executor id 只留在 SessionMeta
+- [x] `Task.execution_mode` / `RestartTracker` / `task:retry` 已删除，Task 不再承载 runtime retry 策略
+- [x] 前端不再暴露 `WorkflowTargetKind = "task"`
+- [x] 空壳模块、死代码、明显错误注释与 migration 风险已清理
+- [x] `TaskLock` / `Story.status` 都有明确决议与理由
+- [x] `.trellis/spec/backend/story-task-runtime.md` 同步本任务结论
+- [x] 本次不新增新的 runtime 特例层；`PreparedTurnContext` 旧壳已删除
 
 ## Definition of Done
 
@@ -115,10 +124,10 @@
 
 1. 先收口 activation path
 2. 再固化 Story root session 契约
-3. 再定 `executor_session_id` 与 execution DTO
+3. 再定 `executor_session_id`、`execution_mode` 与 execution DTO
 4. 再清路由与前端 target kind
 5. 再删空壳与死代码
-6. 最后冻结 `TaskLock` / `RestartTracker` / `Story.status` 的建模决议
+6. 最后冻结 `TaskLock` / `Story.status` 的建模决议
 7. 最后统一更新 spec
 
 ### 关键设计原则
@@ -156,11 +165,11 @@
 
 ### 当前已识别的关键残留
 
-- `task/service.rs` 中 `activate_story_step` 仍为预留 facade，旧主链仍在
-- `story_sessions.rs` 仍允许任意 `label`
-- `session_binding_repository.rs` 尚无 Story root binding 唯一性约束
+- `task/service.rs` 已重命名核心服务为 `StoryStepActivationService`，`start_task` / `continue_task` 仅作为 task route facade
+- `story_sessions.rs` 已固定 Story root session label 为 `"companion"`
+- `session_binding_repository.rs` 已拒绝同一 Story 重复 root binding
 - `task/entity.rs` 中投影字段写入口仍对 application 层可见
-- `task/gateway/turn_context.rs` 仍承载大量过渡逻辑
+- `task/gateway/turn_context.rs` 已删除，ACP task owner prompt 改走 `compose_story_step`
 - `0021_workflow_binding_kind_no_task.sql` 对非法 JSON 的注释与实现不一致
 
 ### 相关文件

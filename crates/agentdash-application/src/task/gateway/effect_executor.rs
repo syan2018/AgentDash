@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
 use agent_client_protocol::SessionNotification;
 use agentdash_spi::hooks::HookEffect;
 use uuid::Uuid;
 
 use crate::repository_set::RepositorySet;
 use crate::session::PostTurnHandler;
-use crate::task::restart_tracker::{RestartDecision, RestartTracker};
 
 use super::{
     artifact_ops::{ToolCallArtifactInput, persist_tool_call_artifact},
@@ -24,7 +21,6 @@ use agentdash_domain::task::TaskStatus;
 /// 本执行器仅负责按声明执行数据库操作。
 pub struct TaskHookEffectExecutor {
     pub repos: RepositorySet,
-    pub restart_tracker: Arc<RestartTracker>,
     pub task_id: Uuid,
     pub session_id: String,
     pub backend_id: String,
@@ -57,7 +53,7 @@ impl PostTurnHandler for TaskHookEffectExecutor {
 impl TaskHookEffectExecutor {
     /// 本 executor 能处理的 effect kinds。
     /// 任何不在此列表中的 kind 会产生运行时 warning。
-    pub const SUPPORTED_KINDS: &[&str] = &["task:set_status", "task:retry", "task:clear_binding"];
+    pub const SUPPORTED_KINDS: &[&str] = &["task:set_status", "task:clear_binding"];
 
     async fn handle_event(&self, _session_id: &str, notification: &SessionNotification) {
         use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
@@ -111,7 +107,6 @@ impl TaskHookEffectExecutor {
     ) -> Result<(), String> {
         match effect.kind.as_str() {
             "task:set_status" => self.handle_set_status(turn_id, &effect.payload).await,
-            "task:retry" => self.handle_retry(turn_id, &effect.payload).await,
             "task:clear_binding" => self.handle_clear_binding(&effect.payload).await,
             other => {
                 tracing::warn!(
@@ -144,7 +139,6 @@ impl TaskHookEffectExecutor {
         let context = serde_json::json!({
             "session_id": self.session_id,
             "turn_id": turn_id,
-            "execution_mode": payload.get("execution_mode"),
             "reason": reason,
             "source": "hook_effect",
         });
@@ -161,71 +155,6 @@ impl TaskHookEffectExecutor {
         .map_err(|e| e.to_string())?;
 
         Ok(())
-    }
-
-    async fn handle_retry(&self, turn_id: &str, payload: &serde_json::Value) -> Result<(), String> {
-        let reason = payload
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("hook_retry");
-
-        let decision = self.restart_tracker.report_failure(self.task_id);
-        match decision {
-            RestartDecision::Allowed { attempt, delay } => {
-                tracing::info!(
-                    task_id = %self.task_id,
-                    attempt,
-                    delay_ms = delay.as_millis() as u64,
-                    reason,
-                    "Hook effect: AutoRetry allowed"
-                );
-                let context = serde_json::json!({
-                    "session_id": self.session_id,
-                    "turn_id": turn_id,
-                    "retry_attempt": attempt,
-                    "retry_delay_ms": delay.as_millis() as u64,
-                    "reason": reason,
-                    "source": "hook_effect",
-                });
-                update_task_status(
-                    &self.repos,
-                    self.task_id,
-                    &self.backend_id,
-                    TaskStatus::AwaitingVerification,
-                    &format!("{reason}_pending_retry"),
-                    context,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-                Ok(())
-            }
-            RestartDecision::Denied { attempts_exhausted } => {
-                tracing::warn!(
-                    task_id = %self.task_id,
-                    attempts_exhausted,
-                    reason,
-                    "Hook effect: AutoRetry exhausted, marking Failed"
-                );
-                let context = serde_json::json!({
-                    "session_id": self.session_id,
-                    "turn_id": turn_id,
-                    "attempts_exhausted": attempts_exhausted,
-                    "reason": reason,
-                    "source": "hook_effect",
-                });
-                update_task_status(
-                    &self.repos,
-                    self.task_id,
-                    &self.backend_id,
-                    TaskStatus::Failed,
-                    &format!("{reason}_retry_exhausted"),
-                    context,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-                Ok(())
-            }
-        }
     }
 
     async fn handle_clear_binding(&self, payload: &serde_json::Value) -> Result<(), String> {

@@ -7,7 +7,7 @@
 //! | 路径 | 实现入口 |
 //! |---|---|
 //! | ACP Story/Project | `api::routes::acp_sessions` → `SessionRequestAssembler::compose_owner_bootstrap` |
-//! | Task runtime | `task::service::TaskLifecycleService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
+//! | Story step activation | `task::service::StoryStepActivationService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
@@ -92,7 +92,7 @@ pub struct PreparedSessionInputs {
     /// Story step(task 启动)场景下 compose 产出的 working_dir 覆盖值；
     /// 仅在需要绕过 workspace_defaults 的 task 启动路径使用。
     pub working_dir: Option<String>,
-    /// Context contributor pipeline 的诊断摘要（供 StartedTurn.context_sources）。
+    /// Context contributor pipeline 的诊断摘要（供启动响应展示）。
     pub source_summary: Vec<String>,
 }
 
@@ -203,7 +203,7 @@ impl SessionAssemblyBuilder {
         self
     }
 
-    /// 在已有 VFS 上追加 lifecycle mount（task runtime 场景）。
+    /// 在已有 VFS 上追加 lifecycle mount（story step activation 场景）。
     pub fn append_lifecycle_mount(
         mut self,
         run_id: Uuid,
@@ -856,8 +856,7 @@ impl<'a> SessionRequestAssembler<'a> {
         Ok(builder.build())
     }
 
-    /// Story step(task 启动)场景下组装 session — 合并原 `compose_task_runtime`
-    /// 与 `build_task_session_runtime_inputs` 两处重复。
+    /// Story step activation 场景下组装 child session。
     ///
     /// 内部走 6 个阶段:
     /// 1. 解析 executor config（来源诊断保留给 tracing/metadata）
@@ -1033,8 +1032,8 @@ impl<'a> SessionRequestAssembler<'a> {
         }
 
         let task_phase = match spec.phase {
-            TaskRuntimePhase::Start => TaskExecutionPhase::Start,
-            TaskRuntimePhase::Continue => TaskExecutionPhase::Continue,
+            StoryStepPhase::Start => TaskExecutionPhase::Start,
+            StoryStepPhase::Continue => TaskExecutionPhase::Continue,
         };
         let built = build_task_agent_context(
             TaskAgentBuildInput {
@@ -1177,16 +1176,16 @@ fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSlice
 // SECTION 5:其余 Spec 结构 + 辅助函数
 // ═══════════════════════════════════════════════════════════════════
 
-/// Task runtime 的 phase(与 `crate::task::execution::ExecutionPhase` 映射)。
+/// Story step activation 的 phase(与 `crate::task::execution::ExecutionPhase` 映射)。
 #[derive(Debug, Clone, Copy)]
-pub enum TaskRuntimePhase {
+pub enum StoryStepPhase {
     Start,
     Continue,
 }
 
 /// Story step 场景下 compose 所需的完整上下文。
 ///
-/// 用于 `TaskLifecycleService` facade 的 task 启动路径
+/// 用于 `StoryStepActivationService` facade 的 step activation 路径
 /// （`start_task` / `continue_task` 内部先定位 task 对应 step，再调 compose）。
 ///
 /// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
@@ -1202,7 +1201,7 @@ pub struct StoryStepSpec<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub phase: TaskRuntimePhase,
+    pub phase: StoryStepPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,
     pub explicit_executor_config: Option<AgentConfig>,

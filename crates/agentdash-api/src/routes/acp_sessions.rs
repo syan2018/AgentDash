@@ -21,11 +21,11 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PromptSessionRequest,
     SessionBootstrapAction, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, SessionRequestAssembler, UserPromptInput, finalize_request,
-    resolve_session_prompt_lifecycle,
+    SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
+    UserPromptInput, finalize_request, resolve_session_prompt_lifecycle,
 };
-use agentdash_application::task::execution::ExecutionPhase;
-use agentdash_application::task::gateway::{TaskTurnServices, prepare_task_turn_context};
+use agentdash_application::task::gateway::resolve_effective_task_workspace;
+use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
@@ -44,7 +44,6 @@ use crate::auth::{
 };
 use crate::routes::vfs_surfaces::build_surface_summary;
 use crate::routes::{project_sessions, story_sessions, task_execution};
-use crate::runtime_bridge::runtime_mcp_servers_to_acp;
 use agentdash_application::session::context::apply_workspace_defaults;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
@@ -615,7 +614,7 @@ pub async fn get_session_context(
             .await?;
             let result = state
                 .services
-                .task_lifecycle_service
+                .story_step_activation_service
                 .get_task_session(task_id)
                 .await
                 .map_err(task_execution::map_task_execution_error)?;
@@ -1363,26 +1362,53 @@ async fn build_task_owner_prompt_request(
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
-    let services = TaskTurnServices {
-        repos: &state.repos,
-        availability: state.services.backend_registry.as_ref(),
-        vfs_service: state.services.vfs_service.as_ref(),
-        contributor_registry: state.services.contributor_registry.as_ref(),
-        platform_config: &state.config.platform_config,
-    };
-    let prepared = prepare_task_turn_context(
-        &services,
-        &task,
-        ExecutionPhase::Continue,
-        None,
-        None,
-        effective_executor_config.as_ref(),
+
+    let project = state
+        .repos
+        .project_repo
+        .get_by_id(story.project_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
+    let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
+        .await
+        .map_err(task_execution::map_task_execution_error)?;
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.session_binding_repo.as_ref(),
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(task_execution::map_task_execution_error)?;
+    .map_err(ApiError::Internal)?
+    .ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "Task session {session_id} 未绑定活跃 lifecycle step"
+        ))
+    })?;
 
-    let mut vfs = prepared.vfs.clone();
-    if let Some(space) = vfs.as_mut() {
+    let assembler = build_session_assembler(state);
+    let mut prepared = assembler
+        .compose_story_step(StoryStepSpec {
+            run: &active_workflow.run,
+            lifecycle: &active_workflow.lifecycle,
+            step: &active_workflow.active_step,
+            task: &task,
+            story: &story,
+            project: &project,
+            workspace: workspace.as_ref(),
+            phase: StoryStepPhase::Continue,
+            override_prompt: None,
+            additional_prompt: None,
+            explicit_executor_config: effective_executor_config.clone(),
+            strict_config_resolution: true,
+            active_workflow: Some(active_workflow.clone()),
+        })
+        .await
+        .map_err(task_execution::map_task_execution_error)?;
+
+    if let Some(space) = prepared.vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             task.project_id,
@@ -1399,7 +1425,6 @@ async fn build_task_owner_prompt_request(
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     let task_context_markdown = prepared
-        .built
         .system_context
         .clone()
         .filter(|value| !value.trim().is_empty());
@@ -1409,8 +1434,10 @@ async fn build_task_owner_prompt_request(
 
     match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => {
-            if !prepared.built.prompt_blocks.is_empty() {
-                let mut next_blocks = prepared.built.prompt_blocks.clone();
+            if let Some(prepared_blocks) = prepared.prompt_blocks.take()
+                && !prepared_blocks.is_empty()
+            {
+                let mut next_blocks = prepared_blocks;
                 next_blocks.extend(prompt_blocks);
                 prompt_blocks = next_blocks;
             }
@@ -1435,19 +1462,28 @@ async fn build_task_owner_prompt_request(
         SessionPromptLifecycle::Plain => {}
     }
 
-    if let Some(config) = effective_executor_config {
+    if let Some(config) = prepared.executor_config.take().or(effective_executor_config) {
         req.user_input.executor_config = Some(config);
     }
+
+    let flow_capabilities = prepared.flow_capabilities.take().ok_or_else(|| {
+        ApiError::Internal("Task session compose 未产出 flow_capabilities".to_string())
+    })?;
+    let effective_capability_keys = prepared.effective_capability_keys.take().ok_or_else(|| {
+        ApiError::Internal("Task session compose 未产出 capability keys".to_string())
+    })?;
+    req.relay_mcp_server_names
+        .extend(prepared.relay_mcp_server_names);
 
     finalize_augmented_request(
         &mut req,
         system_context,
         prompt_blocks,
-        prepared.workspace.as_ref(),
-        vfs,
-        runtime_mcp_servers_to_acp(&prepared.built.mcp_servers),
-        prepared.flow_capabilities,
-        prepared.effective_capability_keys,
+        prepared.workspace_defaults.as_ref(),
+        prepared.vfs,
+        prepared.mcp_servers,
+        flow_capabilities,
+        effective_capability_keys,
         bootstrap_action,
     );
 

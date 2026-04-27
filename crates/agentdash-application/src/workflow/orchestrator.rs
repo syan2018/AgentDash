@@ -542,6 +542,8 @@ impl LifecycleOrchestrator {
     ) -> Result<String, String> {
         let node_key = &step_def.key;
         let run_id = run.id;
+        // run.session_id 即 Story root session（StorySessionId 别名）。
+        // 后继创建的 agent node session 是它的 child session。
         let parent_session_id = &run.session_id;
         let lifecycle_key = &lifecycle.key;
 

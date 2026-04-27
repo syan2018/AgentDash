@@ -149,7 +149,8 @@ mod tests {
             .expect("build bundle");
 
         assert_eq!(bundle.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Task);
+        // Model C 收敛：trellis_dag_task 的 binding_kind 从 "task" 迁移到 "story"
+        assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Story);
     }
 
     #[test]

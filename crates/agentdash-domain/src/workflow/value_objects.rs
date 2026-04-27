@@ -5,20 +5,23 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::session_binding::SessionOwnerType;
+use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 owner。
 /// 这里只描述绑定范围，不表达 workflow 自身的业务主语。
 ///
-/// 当前与 `WorkflowBindingRole` 1:1 同构——预留扩展点：
-/// 未来若引入跨 owner 共享 workflow（如 Story-bound workflow 推荐给 Task），
-/// Kind 保持不变，Role 可引入新变体。
+/// **Model C 收敛（2026-04-27）**：原先的 `Task` 变体已被移除——Task 不再作为独立
+/// aggregate，而是 Story aggregate 下的 child entity；task-scope lifecycle
+/// definition 统一归到 Story binding。详见
+/// `.trellis/spec/backend/story-task-runtime.md`。
+///
+/// 注意：`SessionOwnerType::Task` 仍然存在（session binding 的 owner 坐标系
+/// 不受影响），但当需要把它映射到 `WorkflowBindingKind` 时，会落到 `Story`。
 pub enum WorkflowBindingKind {
     Project,
     Story,
-    Task,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -26,11 +29,10 @@ pub enum WorkflowBindingKind {
 /// Workflow 建议由哪一类 owner/session 使用。
 /// 它是绑定层提示，不是 workflow 内建业务角色。
 ///
-/// 当前与 `WorkflowBindingKind` 1:1 同构——见 Kind 注释说明预留扩展理由。
+/// 与 `WorkflowBindingKind` 1:1 对应；同步收敛为 `Project / Story`。
 pub enum WorkflowBindingRole {
     Project,
     Story,
-    Task,
 }
 
 impl WorkflowBindingKind {
@@ -38,7 +40,6 @@ impl WorkflowBindingKind {
         match self {
             Self::Project => "project",
             Self::Story => "story",
-            Self::Task => "task",
         }
     }
 
@@ -46,7 +47,6 @@ impl WorkflowBindingKind {
         match raw.trim().to_ascii_lowercase().as_str() {
             "project" => Some(Self::Project),
             "story" => Some(Self::Story),
-            "task" => Some(Self::Task),
             _ => None,
         }
     }
@@ -61,17 +61,23 @@ impl WorkflowBindingRole {
         match self {
             Self::Project => "project",
             Self::Story => "story",
-            Self::Task => "task",
         }
     }
 }
 
 impl From<SessionOwnerType> for WorkflowBindingKind {
+    /// 将 session owner 类型映射为 workflow binding kind。
+    ///
+    /// **Model C 决策**：`SessionOwnerType::Task` 映射到 `WorkflowBindingKind::Story`。
+    /// 理由：Task 所属的 Story 是 binding 定义的自然归属；task 级的 lifecycle
+    /// 统一由 Story-bound lifecycle 承载（一个 Story 下每个 task 激活其对应的
+    /// step）。这里会丢掉 task_id 信息——上层若需要区分 task，必须通过
+    /// `SessionOwnerCtx::Task { story_id, task_id, .. }` 单独保留，而不是依赖
+    /// `WorkflowBindingKind`。
     fn from(value: SessionOwnerType) -> Self {
         match value {
             SessionOwnerType::Project => Self::Project,
-            SessionOwnerType::Story => Self::Story,
-            SessionOwnerType::Task => Self::Task,
+            SessionOwnerType::Story | SessionOwnerType::Task => Self::Story,
         }
     }
 }
@@ -81,7 +87,6 @@ impl From<WorkflowBindingKind> for WorkflowBindingRole {
         match value {
             WorkflowBindingKind::Project => Self::Project,
             WorkflowBindingKind::Story => Self::Story,
-            WorkflowBindingKind::Task => Self::Task,
         }
     }
 }
@@ -701,8 +706,13 @@ pub enum LifecycleStepExecutionStatus {
 pub struct LifecycleStepState {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
+    /// 若该 step 开启独立 child session（AgentNode 语义），绑定在此。
+    ///
+    /// Model C 下 step 子会话是挂在 Story root session 下的派生会话，参见
+    /// `.trellis/spec/backend/story-task-runtime.md` §2.5。物理上仍是会话
+    /// 字符串 ID；此处以 [`ChildSessionId`] 别名明确"这不是 Story root"。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    pub session_id: Option<ChildSessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1237,13 +1247,15 @@ mod tests {
     #[test]
     fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
         assert_eq!(
-            WorkflowBindingKind::from_owner_type(" task "),
-            Some(WorkflowBindingKind::Task)
-        );
-        assert_eq!(
-            WorkflowBindingKind::from_binding_scope("story"),
+            WorkflowBindingKind::from_owner_type(" story "),
             Some(WorkflowBindingKind::Story)
         );
+        assert_eq!(
+            WorkflowBindingKind::from_binding_scope("project"),
+            Some(WorkflowBindingKind::Project)
+        );
+        // Model C 收敛：binding_kind 不再接受 "task"
+        assert_eq!(WorkflowBindingKind::from_owner_type("task"), None);
         assert_eq!(WorkflowBindingKind::from_owner_type("session"), None);
     }
 
@@ -1257,7 +1269,22 @@ mod tests {
             WorkflowBindingRole::from(WorkflowBindingKind::Story).binding_scope_key(),
             "story"
         );
-        assert_eq!(WorkflowBindingKind::Task.binding_scope_key(), "task");
+        assert_eq!(WorkflowBindingKind::Project.binding_scope_key(), "project");
+        assert_eq!(WorkflowBindingKind::Story.binding_scope_key(), "story");
+    }
+
+    #[test]
+    fn workflow_binding_kind_from_session_owner_task_maps_to_story() {
+        // Model C: SessionOwnerType::Task 映射到 WorkflowBindingKind::Story
+        // 因为 task 级 lifecycle 统一由 Story-bound lifecycle 承载
+        assert_eq!(
+            WorkflowBindingKind::from(SessionOwnerType::Task),
+            WorkflowBindingKind::Story
+        );
+        assert_eq!(
+            WorkflowBindingKind::from(SessionOwnerType::Story),
+            WorkflowBindingKind::Story
+        );
     }
 
     #[test]

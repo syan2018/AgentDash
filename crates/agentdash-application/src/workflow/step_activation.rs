@@ -476,7 +476,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )

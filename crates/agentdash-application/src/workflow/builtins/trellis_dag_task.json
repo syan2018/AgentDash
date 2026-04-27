@@ -2,8 +2,8 @@
   "key": "trellis_dag_task",
   "name": "Trellis DAG Lifecycle / Task",
   "description": "DAG 编排示例：research (AgentNode) → implement (AgentNode)，每个 node 创建独立 session。",
-  "binding_kind": "task",
-  "recommended_binding_roles": ["task"],
+  "binding_kind": "story",
+  "recommended_binding_roles": ["story"],
   "workflows": [
     {
       "key": "trellis_dag_task_research",

@@ -331,10 +331,15 @@ fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, McpError> {
     match raw {
         "project" => Ok(WorkflowBindingKind::Project),
         "story" => Ok(WorkflowBindingKind::Story),
-        "task" => Ok(WorkflowBindingKind::Task),
+        // Model C 收敛（2026-04-27）：task binding kind 已废弃。Task 不再作为
+        // 独立 aggregate，task 级 lifecycle 统一归到 Story binding。
+        "task" => Err(McpError::invalid_param(
+            "binding_kind",
+            "binding_kind=\"task\" 已废弃，请改用 \"story\"（Task 级 lifecycle 现统一由 Story-bound lifecycle 承载）",
+        )),
         other => Err(McpError::invalid_param(
             "binding_kind",
-            format!("不支持的绑定类型: {other}，可选值: project / story / task"),
+            format!("不支持的绑定类型: {other}，可选值: project / story"),
         )),
     }
 }
@@ -344,7 +349,11 @@ fn parse_binding_roles(raw: &[String]) -> Result<Vec<WorkflowBindingRole>, McpEr
         .map(|s| match s.as_str() {
             "project" => Ok(WorkflowBindingRole::Project),
             "story" => Ok(WorkflowBindingRole::Story),
-            "task" => Ok(WorkflowBindingRole::Task),
+            // Model C 收敛：task role 已废弃，请改用 story
+            "task" => Err(McpError::invalid_param(
+                "recommended_binding_roles",
+                "recommended_binding_roles 中的 \"task\" 已废弃，请改用 \"story\"",
+            )),
             other => Err(McpError::invalid_param(
                 "recommended_binding_roles",
                 format!("不支持的角色: {other}"),

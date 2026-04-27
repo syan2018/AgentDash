@@ -537,7 +537,7 @@ mod tests {
             key,
             format!("workflow {key}"),
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )
@@ -550,7 +550,7 @@ mod tests {
             "dag",
             "dag",
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::UserAuthored,
             "research",
             vec![
@@ -611,7 +611,7 @@ mod tests {
             "dag",
             "dag",
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::UserAuthored,
             "research",
             vec![

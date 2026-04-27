@@ -12,7 +12,7 @@ use agentdash_acp_meta::{
 };
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType,
+    SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
 };
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
@@ -1788,7 +1788,8 @@ pub struct CompanionDispatchSlice {
 pub struct CompanionDispatchPlan {
     pub dispatch_id: String,
     pub companion_label: String,
-    pub parent_session_id: String,
+    /// 主（父）Story session ID — companion 的 owner（Model C: Story root）。
+    pub parent_session_id: StorySessionId,
     pub parent_turn_id: String,
     pub adoption_mode: CompanionAdoptionMode,
     pub slice: CompanionDispatchSlice,
@@ -1858,6 +1859,7 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
 }
 
 struct CompanionDispatchConfig<'a> {
+    /// 主（父）Story session ID（borrow；类型语义等价于 `&StorySessionId`）。
     parent_session_id: &'a str,
     parent_turn_id: &'a str,
     companion_label: &'a str,

@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::session_binding::StorySessionId;
+
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
@@ -149,8 +151,14 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    /// 父 session ID — lifecycle run 跟着 session 走，不绑定 Task/Story。
-    pub session_id: String,
+    /// 所属 Story 的 root session ID（Model C：Story session）。
+    ///
+    /// Model C 下 Story ↔ Story session ↔ LifecycleRun 三者 1:1 绑定，此字段
+    /// 指向当前 run 的根会话。详见
+    /// `.trellis/spec/backend/story-task-runtime.md` §2.2 / §2.3。
+    ///
+    /// 物理上仍是会话字符串 ID；此处以 [`StorySessionId`] 别名明确语义归属。
+    pub session_id: StorySessionId,
     pub status: LifecycleRunStatus,
     /// 当前所有可执行（Ready/Running）的 node key 集合。
     /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
@@ -709,7 +717,7 @@ mod tests {
             "wf_primary",
             "Primary",
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::BuiltinSeed,
             contract(),
         )
@@ -726,7 +734,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "desc",
-            WorkflowBindingKind::Task,
+            WorkflowBindingKind::Story,
             WorkflowDefinitionSource::BuiltinSeed,
             "start",
             vec![step("start", "wf_start")],

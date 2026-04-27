@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
 
+use agentdash_domain::session_binding::StorySessionId;
 use agentdash_spi::{PromptPayload, Vfs};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -192,7 +193,13 @@ impl UserPromptInput {
 #[serde(rename_all = "camelCase")]
 pub struct CompanionSessionContext {
     pub dispatch_id: String,
-    pub parent_session_id: String,
+    /// 主（父）Story session ID — companion 的 owner。
+    ///
+    /// Model C 下 companion session 是 Story root session 的子会话（见
+    /// `.trellis/spec/backend/story-task-runtime.md` §2.5）。JSON wire 字段
+    /// 名保持 `parentSessionId`（camelCase）不变；类型改为 [`StorySessionId`]
+    /// 只是在签名上明示"这个 ID 指向 Story root"。
+    pub parent_session_id: StorySessionId,
     pub parent_turn_id: String,
     pub companion_label: String,
     pub slice_mode: String,

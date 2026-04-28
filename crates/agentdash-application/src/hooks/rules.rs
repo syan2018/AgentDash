@@ -274,12 +274,8 @@ mod tests {
 
     #[test]
     fn before_stop_port_output_gate_blocks_when_ports_unfulfilled() {
-        let snapshot = snapshot_with_workflow_ports(
-            "check",
-            "checklist_passed",
-            &["report", "summary"],
-            &[],
-        );
+        let snapshot =
+            snapshot_with_workflow_ports("check", "checklist_passed", &["report", "summary"], &[]);
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),

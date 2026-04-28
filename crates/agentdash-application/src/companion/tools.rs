@@ -865,7 +865,9 @@ impl CompanionRequestTool {
             self.repos.lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
-        .with_projector(crate::workflow::build_step_projector_from_repos(&self.repos));
+        .with_projector(crate::workflow::build_step_projector_from_repos(
+            &self.repos,
+        ));
         let run = run_service
             .start_run(crate::workflow::StartLifecycleRunCommand {
                 project_id,
@@ -874,7 +876,9 @@ impl CompanionRequestTool {
                 session_id: target_binding.session_id.clone(),
             })
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}")))?;
+            .map_err(|e| {
+                AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}"))
+            })?;
 
         let node_label = crate::workflow::build_lifecycle_node_label(&entry_step.key);
         let lifecycle_binding = SessionBinding::new(
@@ -910,7 +914,9 @@ impl CompanionRequestTool {
             },
         )
         .await
-        .map_err(|e| AgentToolError::ExecutionFailed(format!("compose companion+workflow 失败: {e}")))?;
+        .map_err(|e| {
+            AgentToolError::ExecutionFailed(format!("compose companion+workflow 失败: {e}"))
+        })?;
 
         Ok(output.prepared)
     }

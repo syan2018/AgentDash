@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::CapabilityDirective;
-use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::ToolCluster;
+use agentdash_spi::hooks::CapabilityDelta;
 use uuid::Uuid;
 
 use crate::capability::{
@@ -34,9 +34,9 @@ fn platform() -> PlatformConfig {
 fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
     AgentMcpServerEntry {
         name: name.to_string(),
-        server: agent_client_protocol::McpServer::Http(
-            agent_client_protocol::McpServerHttp::new(name, url),
-        ),
+        server: agent_client_protocol::McpServer::Http(agent_client_protocol::McpServerHttp::new(
+            name, url,
+        )),
         uses_relay: false,
     }
 }

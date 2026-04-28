@@ -93,7 +93,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id: None,
         };
         let project_id = Uuid::new_v4();
         let lifecycle = LifecycleDefinition::new(

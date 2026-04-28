@@ -28,12 +28,11 @@ use crate::workspace::BackendAvailability;
 
 use super::execution::*;
 use super::gateway::{
-    append_task_change as gw_append_task_change,
-    bridge_task_status_event_to_session_notification,
-    clear_task_session_binding,
-    create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
-    get_task as gw_get_task, load_related_context, map_connector_error, map_domain_error,
-    resolve_project_scope_for_owner, resolve_task_backend_id,
+    append_task_change as gw_append_task_change, bridge_task_status_event_to_session_notification,
+    clear_task_session_binding, create_task_session as gw_create_task_session,
+    get_session_overview as gw_get_session_overview, get_task as gw_get_task, load_related_context,
+    map_connector_error, map_domain_error, resolve_project_scope_for_owner,
+    resolve_task_backend_id,
 };
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
@@ -100,7 +99,8 @@ impl StoryStepActivationService {
     /// 内部链路（5 步）：
     /// 1. 通过 story_id → `SessionBinding(Story, "companion")` → `session_id`
     /// 2. `lifecycle_run_repo.list_by_session(session_id)` + `select_active_run` 找到活跃 run
-    /// 3. 根据 step_key 定位 `LifecycleStepDefinition`；再读 `step.task_id` 回指 Task
+    /// 3. 根据 step_key 定位 `LifecycleStepDefinition`；再从 Story aggregate 中找到
+    ///    `Task.lifecycle_step_key == step_key` 的 Task
     /// 4. `compose_story_step(StoryStepSpec { ... })` 产出 `PreparedSessionInputs`
     /// 5. `finalize_request(base, prepared)` + `session_hub.start_prompt` 派发
     ///
@@ -123,11 +123,13 @@ impl StoryStepActivationService {
         let story_session_id = self.find_story_session_id(story_id).await?;
 
         // 2. 查活跃 lifecycle run
-        let active_run = self.find_active_run_for_story_session(&story_session_id).await?;
+        let mut active_run = self
+            .find_active_run_for_story_session(&story_session_id)
+            .await?;
 
-        // 3. 定位 step → task_id，并补齐 compose 所需上下文
+        // 3. 定位 step → Task，并补齐 compose 所需上下文
         let (task, step_key_resolved, lifecycle) = self
-            .resolve_task_for_step(&active_run, step_key.as_deref())
+            .resolve_task_for_step(story_id, &active_run, step_key.as_deref())
             .await?;
         let step = lifecycle
             .steps
@@ -163,7 +165,7 @@ impl StoryStepActivationService {
                 )
                 .with_projector(build_step_projector_from_repos(&self.repos));
 
-                if let Err(err) = run_service
+                match run_service
                     .bind_session_and_activate_step(BindAndActivateLifecycleStepCommand {
                         run_id: active_run.id,
                         step_key: step.key.clone(),
@@ -171,16 +173,21 @@ impl StoryStepActivationService {
                     })
                     .await
                 {
-                    let _ = self
-                        .repos
-                        .session_binding_repo
-                        .delete_by_session_and_owner(
-                            &session_id,
-                            SessionOwnerType::Task,
-                            task.id,
-                        )
-                        .await;
-                    return Err(TaskExecutionError::Conflict(err.to_string()));
+                    Ok(updated_run) => {
+                        active_run = updated_run;
+                    }
+                    Err(err) => {
+                        let _ = self
+                            .repos
+                            .session_binding_repo
+                            .delete_by_session_and_owner(
+                                &session_id,
+                                SessionOwnerType::Task,
+                                task.id,
+                            )
+                            .await;
+                        return Err(TaskExecutionError::Conflict(err.to_string()));
+                    }
                 }
 
                 session_id
@@ -335,9 +342,7 @@ impl StoryStepActivationService {
             .await
             .map_err(map_domain_error)?
             .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!(
-                    "Story {story_id} 未绑定 companion session"
-                ))
+                TaskExecutionError::NotFound(format!("Story {story_id} 未绑定 companion session"))
             })?;
         Ok(binding.session_id)
     }
@@ -359,9 +364,11 @@ impl StoryStepActivationService {
         })
     }
 
-    /// 根据 step_key（可选）从 lifecycle definition 定位 step → task_id → Task。
+    /// 根据 step_key（可选）从 lifecycle definition 定位 step，再通过
+    /// `Task.lifecycle_step_key` 找到对应 Task。
     async fn resolve_task_for_step(
         &self,
+        story_id: Uuid,
         run: &agentdash_domain::workflow::LifecycleRun,
         step_key_hint: Option<&str>,
     ) -> Result<
@@ -400,9 +407,7 @@ impl StoryStepActivationService {
             None => {
                 // 回退到当前活跃 step
                 let active_key = run.current_step_key().ok_or_else(|| {
-                    TaskExecutionError::UnprocessableEntity(
-                        "LifecycleRun 无活跃 step".to_string(),
-                    )
+                    TaskExecutionError::UnprocessableEntity("LifecycleRun 无活跃 step".to_string())
                 })?;
                 lifecycle
                     .steps
@@ -418,13 +423,24 @@ impl StoryStepActivationService {
             }
         };
 
-        let task_id = step.task_id.ok_or_else(|| {
-            TaskExecutionError::UnprocessableEntity(format!(
-                "step '{}' 未绑定 task",
-                step.key
-            ))
-        })?;
-        let task = gw_get_task(&self.repos, task_id).await?;
+        let story = self
+            .repos
+            .story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {story_id} 不存在")))?;
+        let task = story
+            .tasks
+            .iter()
+            .find(|task| task.lifecycle_step_key.as_deref() == Some(step.key.as_str()))
+            .cloned()
+            .ok_or_else(|| {
+                TaskExecutionError::UnprocessableEntity(format!(
+                    "Story {story_id} 中不存在绑定 lifecycle step '{}' 的 Task",
+                    step.key
+                ))
+            })?;
         Ok((task, step.key, lifecycle))
     }
 
@@ -474,7 +490,9 @@ impl StoryStepActivationService {
         cmd: TaskExecutionCommand,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let task = gw_get_task(&self.repos, cmd.task_id).await?;
-        let step_key = self.resolve_step_key_for_task(task.story_id, task.id).await?;
+        let step_key = self
+            .resolve_or_bind_step_key_for_task(task.story_id, task.id)
+            .await?;
         self.activate_story_step(
             task.story_id,
             Some(step_key),
@@ -492,7 +510,9 @@ impl StoryStepActivationService {
         cmd: TaskExecutionCommand,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         let task = gw_get_task(&self.repos, cmd.task_id).await?;
-        let step_key = self.resolve_step_key_for_task(task.story_id, task.id).await?;
+        let step_key = self
+            .resolve_or_bind_step_key_for_task(task.story_id, task.id)
+            .await?;
         self.activate_story_step(
             task.story_id,
             Some(step_key),
@@ -558,10 +578,7 @@ impl StoryStepActivationService {
             .await
             .map_err(map_domain_error)?
             .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!(
-                    "Task 所属 Story {} 不存在",
-                    task.story_id
-                ))
+                TaskExecutionError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id))
             })?;
 
         // M2：拆成"spec 字段 update_task（走 TaskSpecMut）" + "status 走 force_set_task_status"
@@ -570,6 +587,7 @@ impl StoryStepActivationService {
             *view.title = task.title.clone();
             *view.description = task.description.clone();
             *view.workspace_id = task.workspace_id;
+            *view.lifecycle_step_key = task.lifecycle_step_key.clone();
             *view.agent_binding = task.agent_binding.clone();
         });
         if updated_spec.is_none() {
@@ -592,13 +610,30 @@ impl StoryStepActivationService {
             .map_err(map_domain_error)
     }
 
-    async fn resolve_step_key_for_task(
+    async fn resolve_or_bind_step_key_for_task(
         &self,
         story_id: Uuid,
         task_id: Uuid,
     ) -> Result<String, TaskExecutionError> {
+        let story = self
+            .repos
+            .story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {story_id} 不存在")))?;
+        let task = story.find_task(task_id).ok_or_else(|| {
+            TaskExecutionError::NotFound(format!("Task {task_id} 不属于 Story {story_id}"))
+        })?;
+        if let Some(step_key) = task.lifecycle_step_key.as_deref().filter(|s| !s.is_empty()) {
+            self.validate_step_key_for_story(story_id, step_key).await?;
+            return Ok(step_key.to_string());
+        }
+
         let story_session_id = self.find_story_session_id(story_id).await?;
-        let active_run = self.find_active_run_for_story_session(&story_session_id).await?;
+        let active_run = self
+            .find_active_run_for_story_session(&story_session_id)
+            .await?;
         let lifecycle = self
             .repos
             .lifecycle_definition_repo
@@ -612,16 +647,82 @@ impl StoryStepActivationService {
                 ))
             })?;
 
-        lifecycle
-            .steps
+        let step_key = active_run
+            .active_node_keys
             .iter()
-            .find(|step| step.task_id == Some(task_id))
-            .map(|step| step.key.clone())
+            .find(|key| {
+                lifecycle.steps.iter().any(|step| step.key == **key)
+                    && !story.tasks.iter().any(|task| {
+                        task.id != task_id && task.lifecycle_step_key.as_deref() == Some(key.as_str())
+                    })
+            })
+            .cloned()
+            .or_else(|| {
+                let only_step = lifecycle.steps.first()?;
+                let occupied = story.tasks.iter().any(|task| {
+                    task.id != task_id
+                        && task.lifecycle_step_key.as_deref() == Some(only_step.key.as_str())
+                });
+                (!occupied && lifecycle.steps.len() == 1).then(|| only_step.key.clone())
+            })
             .ok_or_else(|| {
                 TaskExecutionError::UnprocessableEntity(format!(
-                    "Story {story_id} 的活跃 lifecycle 中不存在绑定 Task {task_id} 的 step"
+                    "Task {task_id} 尚未绑定 lifecycle step，且 Story {story_id} 的活跃 lifecycle 无可自动绑定 step"
                 ))
-            })
+            })?;
+
+        let mut story_to_update = self
+            .repos
+            .story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {story_id} 不存在")))?;
+        let updated = story_to_update.update_task(task_id, |view| {
+            *view.lifecycle_step_key = Some(step_key.clone());
+        });
+        if updated.is_none() {
+            return Err(TaskExecutionError::NotFound(format!(
+                "Task {task_id} 不属于 Story {story_id}"
+            )));
+        }
+        self.repos
+            .story_repo
+            .update(&story_to_update)
+            .await
+            .map_err(map_domain_error)?;
+
+        Ok(step_key)
+    }
+
+    async fn validate_step_key_for_story(
+        &self,
+        story_id: Uuid,
+        step_key: &str,
+    ) -> Result<(), TaskExecutionError> {
+        let story_session_id = self.find_story_session_id(story_id).await?;
+        let active_run = self
+            .find_active_run_for_story_session(&story_session_id)
+            .await?;
+        let lifecycle = self
+            .repos
+            .lifecycle_definition_repo
+            .get_by_id(active_run.lifecycle_id)
+            .await
+            .map_err(map_domain_error)?
+            .ok_or_else(|| {
+                TaskExecutionError::NotFound(format!(
+                    "lifecycle_definition {} 不存在",
+                    active_run.lifecycle_id
+                ))
+            })?;
+        if lifecycle.steps.iter().any(|step| step.key == step_key) {
+            Ok(())
+        } else {
+            Err(TaskExecutionError::UnprocessableEntity(format!(
+                "Task 绑定的 lifecycle step '{step_key}' 不存在于 Story {story_id} 的活跃 lifecycle"
+            )))
+        }
     }
 
     async fn resolve_execution_session_id(

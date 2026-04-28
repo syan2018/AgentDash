@@ -479,7 +479,6 @@ fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, Mcp
                 output_ports: build_output_ports(
                     step.output_ports.as_deref().unwrap_or_default(),
                 ),
-                task_id: None,
             })
         })
         .collect()

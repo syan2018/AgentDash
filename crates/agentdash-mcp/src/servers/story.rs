@@ -70,6 +70,10 @@ pub struct CreateTaskParams {
     pub description: String,
     #[schemars(description = "关联的 Workspace UUID（可选）")]
     pub workspace_id: Option<String>,
+    #[schemars(
+        description = "绑定的 lifecycle step key（可选；未提供时启动 Task 会自动绑定当前可执行 step）"
+    )]
+    pub lifecycle_step_key: Option<String>,
     #[schemars(description = "Agent 类型提示（如 claude-code / codex）")]
     pub agent_type: Option<String>,
     #[schemars(description = "初始上下文（拼接在提示词前的额外信息）")]
@@ -89,6 +93,7 @@ pub struct TaskInput {
     pub title: String,
     pub description: String,
     pub workspace_id: Option<String>,
+    pub lifecycle_step_key: Option<String>,
     pub agent_type: Option<String>,
     pub initial_context: Option<String>,
     pub context_sources: Option<Vec<ContextSourceRefInput>>,
@@ -201,6 +206,17 @@ impl StoryMcpServer {
             .filter(|item| !item.is_empty())
             .collect()
     }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 // ─── 工具实现 ──────────────────────────────────────────────────
@@ -374,6 +390,7 @@ impl StoryMcpServer {
             params.description,
         );
         task.workspace_id = workspace_id;
+        task.lifecycle_step_key = normalize_optional_string(params.lifecycle_step_key);
         task.agent_binding = AgentBinding {
             agent_type: params.agent_type,
             initial_context: params.initial_context,
@@ -386,13 +403,12 @@ impl StoryMcpServer {
             ..Default::default()
         };
 
-        // M1-b：task create 走 Story aggregate `add_task` + `StoryRepository::update`
+        // M1-b：task create 走 Story aggregate 命令路径，保证 TaskCreated 事件与
+        // stories.tasks 写入在同一事务内落地。
         let task_id = task.id;
-        let mut story = self.load_story().await?;
-        story.add_task(task);
         self.services
             .story_repo
-            .update(&story)
+            .add_task_to_story(self.story_id, &task)
             .await
             .map_err(McpError::from)?;
 
@@ -416,8 +432,7 @@ impl StoryMcpServer {
         use agentdash_domain::task::{AgentBinding, Task};
 
         let mut created_ids = Vec::new();
-        // M1-b：批量 create 也走 Story aggregate；一次加载一次保存避免多次 IO
-        let mut story = self.load_story().await?;
+        let mut tasks_to_create = Vec::new();
 
         for input in &params.tasks {
             let workspace_id = input
@@ -436,6 +451,7 @@ impl StoryMcpServer {
                 input.description.clone(),
             );
             task.workspace_id = workspace_id;
+            task.lifecycle_step_key = normalize_optional_string(input.lifecycle_step_key.clone());
             task.agent_binding = AgentBinding {
                 agent_type: input.agent_type.clone(),
                 initial_context: input.initial_context.clone(),
@@ -450,13 +466,13 @@ impl StoryMcpServer {
             };
 
             let task_id = task.id;
-            story.add_task(task);
+            tasks_to_create.push(task);
             created_ids.push(task_id.to_string());
         }
 
         self.services
             .story_repo
-            .update(&story)
+            .add_tasks_to_story(self.story_id, &tasks_to_create)
             .await
             .map_err(McpError::from)?;
 
@@ -485,6 +501,7 @@ impl StoryMcpServer {
                     "description": t.description,
                     "status": t.status(),
                     "workspace_id": t.workspace_id.map(|w| w.to_string()),
+                    "lifecycle_step_key": t.lifecycle_step_key,
                     "agent_type": t.agent_binding.agent_type,
                 })
             })

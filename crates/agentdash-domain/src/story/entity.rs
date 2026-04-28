@@ -219,7 +219,10 @@ mod tests {
         assert_eq!(story.tasks.len(), 1);
         assert_eq!(story.task_count, 1);
         assert!(story.updated_at >= original_updated_at);
-        assert_eq!(story.find_task(task_id).map(|t| t.title.as_str()), Some("T1"));
+        assert_eq!(
+            story.find_task(task_id).map(|t| t.title.as_str()),
+            Some("T1")
+        );
     }
 
     #[test]
@@ -234,7 +237,10 @@ mod tests {
             *t.title = "new".to_string();
         });
         assert!(res.is_some());
-        assert_eq!(story.find_task(task_id).map(|t| t.title.as_str()), Some("new"));
+        assert_eq!(
+            story.find_task(task_id).map(|t| t.title.as_str()),
+            Some("new")
+        );
     }
 
     #[test]
@@ -270,8 +276,8 @@ mod tests {
 
     #[test]
     fn apply_task_projection_maps_step_status() {
-        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
         use crate::task::TaskStatus;
+        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
 
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
@@ -295,20 +301,29 @@ mod tests {
             .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Pending))
             .expect("task exists");
         assert!(!changed);
-        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Pending);
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::Pending
+        );
 
         // Ready → Assigned
         let changed = story
             .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Ready))
             .expect("task exists");
         assert!(changed);
-        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Assigned);
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::Assigned
+        );
 
         // Running → Running
         story
             .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Running))
             .expect("task exists");
-        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Running);
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::Running
+        );
 
         // Completed → AwaitingVerification
         story
@@ -323,13 +338,19 @@ mod tests {
         story
             .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Failed))
             .expect("task exists");
-        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Failed);
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::Failed
+        );
 
         // Skipped → Completed
         story
             .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Skipped))
             .expect("task exists");
-        assert_eq!(*story.find_task(task_id).unwrap().status(), TaskStatus::Completed);
+        assert_eq!(
+            *story.find_task(task_id).unwrap().status(),
+            TaskStatus::Completed
+        );
     }
 
     #[test]

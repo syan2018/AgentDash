@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
@@ -337,10 +336,18 @@ pub struct WorkflowContract {
     /// Workflow 产出声明 — 同时作为完成条件：port gate 门禁根据 `gate_strategy` 检查交付。
     ///
     /// Lifecycle step 绑定 workflow 时自动继承这些 ports 作为默认值，step 编辑器可 override。
-    #[serde(default, alias = "recommended_output_ports", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        alias = "recommended_output_ports",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub output_ports: Vec<OutputPortDefinition>,
     /// Workflow 输入声明 — 同时作为运行约束：lifecycle 内由 edge wire 满足，standalone 由调用方写入。
-    #[serde(default, alias = "recommended_input_ports", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        alias = "recommended_input_ports",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub input_ports: Vec<InputPortDefinition>,
     /// Workflow 级能力指令序列。
     ///
@@ -668,15 +675,6 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
-    /// 本 step 对应的 Task（可选）—— Model C · M2-b 引入。
-    ///
-    /// 当 step 对应某个 Story aggregate 内的 Task 时，在这里声明 `task_id`。
-    /// Lifecycle 运行时会在 step state 推进时由 projector 把 step state 投影
-    /// 到 `Story.tasks[id=task_id].status / artifacts`。
-    ///
-    /// 详见 `.trellis/spec/backend/story-task-runtime.md` §2.3 / §2.4 / §6。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<Uuid>,
 }
 
 impl LifecycleStepDefinition {
@@ -880,10 +878,7 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
 
     let mut seen_input_port_keys = std::collections::BTreeSet::new();
     for (index, port) in contract.input_ports.iter().enumerate() {
-        validate_identity(
-            &format!("{field_path}.input_ports[{index}].key"),
-            &port.key,
-        )?;
+        validate_identity(&format!("{field_path}.input_ports[{index}].key"), &port.key)?;
         validate_non_empty(
             &format!("{field_path}.input_ports[{index}].description"),
             &port.description,
@@ -1099,7 +1094,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id: None,
         }];
 
         let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
@@ -1117,7 +1111,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1126,7 +1119,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
@@ -1135,7 +1127,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                task_id: None,
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -1159,7 +1150,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                task_id: None,
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1168,7 +1158,6 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
-                task_id: None,
             },
         ];
         let edges = vec![LifecycleEdge::artifact("b", "out", "a", "in")];
@@ -1185,7 +1174,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id: None,
         }
     }
 
@@ -1545,8 +1533,7 @@ mod tests {
         // 旧数据可能残留 constraints / completion / capabilities 字段，
         // 移除 deny_unknown_fields 后应静默忽略
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: WorkflowContract =
-            serde_json::from_str(json).expect("旧数据应当可反序列化");
+        let contract: WorkflowContract = serde_json::from_str(json).expect("旧数据应当可反序列化");
         assert!(contract.output_ports.is_empty());
     }
 }

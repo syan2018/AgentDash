@@ -21,6 +21,7 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   workspace_id?: string | null;
+  lifecycle_step_key?: string | null;
   agent_binding?: AgentBinding;
 }
 
@@ -89,6 +90,7 @@ interface StoryState {
       title?: string;
       description?: string;
       workspace_id?: string | null;
+      lifecycle_step_key?: string | null;
       status?: Task["status"];
       agent_binding?: AgentBinding;
     },
@@ -473,6 +475,7 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     project_id: requireStringField(raw, 'project_id'),
     story_id: requireStringField(raw, 'story_id'),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
+    lifecycle_step_key: raw.lifecycle_step_key ? String(raw.lifecycle_step_key) : null,
     title: requireStringField(raw, 'title'),
     description: raw.description ? String(raw.description) : '',
     status: normalizeTaskStatus(requireStringField(raw, 'status')),

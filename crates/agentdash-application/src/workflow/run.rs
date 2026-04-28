@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 use uuid::Uuid;
 
+use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
@@ -91,10 +92,9 @@ fn active_run_status_priority(status: LifecycleRunStatus) -> i32 {
 /// 决策 D-M2-2（α · service 内 explicit append）：projector 逻辑住在 service 内；
 /// 当 `projector` 字段 `Some` 时，每次 step state 变更都会：
 ///
-/// 1. 尝试从 `step.task_id` 反查所属 Story；若无 task_id 则跳过（非 Task 绑定 step）。
-///    注：当前 `LifecycleStepState` 尚无 `task_id` 字段，此处通过 LifecycleDefinition 的
-///    `workflow_key` / step metadata 推断关联 task。M2 阶段仅在 step 直接绑定到 task
-///    的场景生效；更广义的 lifecycle-step-to-task 映射由 M5 补齐。
+/// 1. 通过 `run.session_id` 找到 Story owner binding，再在 Story aggregate 的
+///    `Task.lifecycle_step_key` 上定位对应 Task。Lifecycle definition 是可复用模板，
+///    不持有具体 task id。
 /// 2. 在 Story aggregate 上调 `apply_task_projection`，写 `stories.tasks JSONB`。
 /// 3. 同事务追加 `state_changes` 全局投影索引（kind = TaskStatusChanged）。
 ///
@@ -104,41 +104,29 @@ fn active_run_status_priority(status: LifecycleRunStatus) -> i32 {
 pub struct LifecycleStepProjector {
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
+    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
 }
 
 impl LifecycleStepProjector {
-    /// 对单个 step state 应用投影：定位 task → 更新 Story → append state_change。
-    ///
-    /// 当前版本通过 step.session_id 上挂的 task_binding 来定位 task；由于 step 没有
-    /// 显式 task_id 字段，M2 实现策略是：
-    ///   - 扫描 session_binding 找到 owner_type=Task 的绑定
-    ///   - 从 binding.owner_id 定位 task（走 story_repo.find_by_task_id）
-    ///
-    /// 为避免在本 M2 引入额外的 repo 依赖，projector 退化为接受调用方显式传入 task_id：
-    /// 调用方（LifecycleRunService）负责从 step.session_id → task_id 的解析（目前通过
-    /// 后续 M5 引入的 step.task_id 字段进一步收敛）。
-    ///
-    /// 本方法因此暂未在生产路径中被主动调用；占位是为了让主线 M5 可接手 projector 注入。
-    /// 详见 implementation 报告中的 M2 验收说明。
+    /// 对单个 step state 应用投影：Story session → Story → step key → Task。
     pub async fn project_step(
         &self,
-        task_id: Uuid,
+        run: &LifecycleRun,
         step: &LifecycleStepState,
-        run_id: Uuid,
-        lifecycle_id: Uuid,
     ) -> Result<bool, WorkflowApplicationError> {
-        let Some(mut story) = self
-            .story_repo
-            .find_by_task_id(task_id)
-            .await
-            .map_err(WorkflowApplicationError::from)?
+        let Some(mut story) = self.story_for_run_session(&run.session_id).await? else {
+            return Ok(false);
+        };
+        let Some(task_id) = story
+            .tasks
+            .iter()
+            .find(|task| task.lifecycle_step_key.as_deref() == Some(step.step_key.as_str()))
+            .map(|task| task.id)
         else {
             return Ok(false);
         };
 
-        let previous_status = story
-            .find_task(task_id)
-            .map(|t| t.status().clone());
+        let previous_status = story.find_task(task_id).map(|t| t.status().clone());
 
         let applied = story.apply_task_projection(task_id, step);
         let changed = matches!(applied, Some(true));
@@ -158,8 +146,8 @@ impl LifecycleStepProjector {
             "reason": "lifecycle_step_projection",
             "task_id": task_id,
             "story_id": story_id,
-            "run_id": run_id,
-            "lifecycle_id": lifecycle_id,
+            "run_id": run.id,
+            "lifecycle_id": run.lifecycle_id,
             "step_key": step.step_key,
             "step_status": step.status,
             "from": previous_status,
@@ -179,12 +167,33 @@ impl LifecycleStepProjector {
         {
             tracing::warn!(
                 task_id = %task_id,
-                run_id = %run_id,
+                run_id = %run.id,
                 error = %err,
                 "M2 projector: state_change 追加失败（story 已更新），不阻塞主流程"
             );
         }
         Ok(true)
+    }
+
+    async fn story_for_run_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<agentdash_domain::story::Story>, WorkflowApplicationError> {
+        let bindings = self
+            .session_binding_repo
+            .list_by_session(session_id)
+            .await
+            .map_err(WorkflowApplicationError::from)?;
+        let Some(story_binding) = bindings
+            .iter()
+            .find(|binding| binding.owner_type == SessionOwnerType::Story)
+        else {
+            return Ok(None);
+        };
+        self.story_repo
+            .get_by_id(story_binding.owner_id)
+            .await
+            .map_err(WorkflowApplicationError::from)
     }
 }
 
@@ -211,6 +220,7 @@ pub fn build_step_projector_from_repos(
     LifecycleStepProjector {
         story_repo: repos.story_repo.clone(),
         state_change_repo: repos.state_change_repo.clone(),
+        session_binding_repo: repos.session_binding_repo.clone(),
     }
 }
 
@@ -392,8 +402,8 @@ where
 
     /// M2-b projection 钩子：若 projector 已注入，把 step state 投影到对应 task。
     ///
-    /// 绑定信号：`LifecycleStepDefinition.task_id`（M2-b 引入）。
-    /// 仅当 definition 声明了 `task_id` 时触发投影；否则静默跳过（非 task-bound step）。
+    /// 绑定信号：Story aggregate 内 `Task.lifecycle_step_key == step_key`。
+    /// Lifecycle definition 是可复用模板，不持有具体 Task id。
     ///
     /// 失败策略：projector 失败仅记 warn，不阻塞主 run.update（与 tx-b 非事务语义一致）。
     /// 详见 [`LifecycleStepProjector`] 文档。
@@ -405,43 +415,8 @@ where
             return;
         };
 
-        // 从 lifecycle definition 找 step.task_id 绑定
-        let task_id = match self.lifecycle_repo.get_by_id(run.lifecycle_id).await {
-            Ok(Some(lifecycle)) => lifecycle
-                .steps
-                .iter()
-                .find(|s| s.key == step_key)
-                .and_then(|s| s.task_id),
-            Ok(None) => {
-                tracing::warn!(
-                    run_id = %run.id,
-                    lifecycle_id = %run.lifecycle_id,
-                    step_key = %step_key,
-                    "M2-b projector: lifecycle definition 不存在，跳过投影"
-                );
-                return;
-            }
-            Err(err) => {
-                tracing::warn!(
-                    run_id = %run.id,
-                    step_key = %step_key,
-                    error = %err,
-                    "M2-b projector: 加载 lifecycle definition 失败，跳过投影"
-                );
-                return;
-            }
-        };
-
-        let Some(task_id) = task_id else {
-            return;
-        };
-
-        if let Err(err) = projector
-            .project_step(task_id, state, run.id, run.lifecycle_id)
-            .await
-        {
+        if let Err(err) = projector.project_step(run, state).await {
             tracing::warn!(
-                task_id = %task_id,
                 run_id = %run.id,
                 step_key = %step_key,
                 error = %err,
@@ -458,7 +433,10 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_domain::DomainError;
-    use agentdash_domain::story::{ChangeKind, StateChange, StateChangeRepository, Story, StoryRepository};
+    use agentdash_domain::session_binding::{ProjectSessionBinding, SessionBinding};
+    use agentdash_domain::story::{
+        ChangeKind, StateChange, StateChangeRepository, Story, StoryRepository,
+    };
     use agentdash_domain::task::{Task, TaskStatus};
     use agentdash_domain::workflow::{
         LifecycleDefinition, LifecycleDefinitionRepository, LifecycleEdge, LifecycleRun,
@@ -487,7 +465,13 @@ mod tests {
         }
 
         async fn get_by_id(&self, id: Uuid) -> Result<Option<Story>, DomainError> {
-            Ok(self.stories.lock().unwrap().iter().find(|s| s.id == id).cloned())
+            Ok(self
+                .stories
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id == id)
+                .cloned())
         }
 
         async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Story>, DomainError> {
@@ -557,10 +541,7 @@ mod tests {
         async fn latest_event_id(&self) -> Result<i64, DomainError> {
             Ok(0)
         }
-        async fn latest_event_id_by_project(
-            &self,
-            _project_id: Uuid,
-        ) -> Result<i64, DomainError> {
+        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> {
             Ok(0)
         }
         async fn append_change(
@@ -589,10 +570,7 @@ mod tests {
             self.definitions.lock().unwrap().push(def.clone());
             Ok(())
         }
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError> {
             Ok(self
                 .definitions
                 .lock()
@@ -601,10 +579,7 @@ mod tests {
                 .find(|d| d.id == id)
                 .cloned())
         }
-        async fn get_by_key(
-            &self,
-            key: &str,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
+        async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError> {
             Ok(self
                 .definitions
                 .lock()
@@ -679,7 +654,13 @@ mod tests {
             Ok(())
         }
         async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().iter().find(|r| r.id == id).cloned())
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.id == id)
+                .cloned())
         }
         async fn list_by_project(
             &self,
@@ -733,8 +714,113 @@ mod tests {
         }
     }
 
+    struct InMemorySessionBindingRepo {
+        bindings: Mutex<Vec<SessionBinding>>,
+    }
+
+    #[async_trait]
+    impl SessionBindingRepository for InMemorySessionBindingRepo {
+        async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().push(binding.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().retain(|b| b.id != id);
+            Ok(())
+        }
+
+        async fn delete_by_session_and_owner(
+            &self,
+            session_id: &str,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+        ) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().retain(|b| {
+                !(b.session_id == session_id
+                    && b.owner_type == owner_type
+                    && b.owner_id == owner_id)
+            });
+            Ok(())
+        }
+
+        async fn list_by_owner(
+            &self,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+        ) -> Result<Vec<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.owner_type == owner_type && b.owner_id == owner_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Vec<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.session_id == session_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn find_by_owner_and_label(
+            &self,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+            label: &str,
+        ) -> Result<Option<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|b| b.owner_type == owner_type && b.owner_id == owner_id && b.label == label)
+                .cloned())
+        }
+
+        async fn list_bound_session_ids(&self) -> Result<Vec<String>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|b| b.session_id.clone())
+                .collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectSessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.project_id == project_id)
+                .cloned()
+                .map(|binding| ProjectSessionBinding {
+                    binding,
+                    story_title: None,
+                    story_id: None,
+                    owner_title: None,
+                })
+                .collect())
+        }
+    }
+
     // ── fixtures ─────────────────────────────────────────────────
-    fn make_step_with_task(key: &str, task_id: Option<Uuid>) -> LifecycleStepDefinition {
+    fn make_step(key: &str) -> LifecycleStepDefinition {
         LifecycleStepDefinition {
             key: key.to_string(),
             description: String::new(),
@@ -742,29 +828,44 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id,
         }
     }
 
-    fn setup_story_with_task() -> (Story, Uuid, Uuid) {
+    fn setup_story_with_task(step_key: Option<&str>) -> (Story, Uuid, Uuid) {
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let task = Task::new(project_id, story.id, "T".into(), String::new());
+        let mut task = Task::new(project_id, story.id, "T".into(), String::new());
+        task.lifecycle_step_key = step_key.map(str::to_string);
         let task_id = task.id;
         story.add_task(task);
         (story, project_id, task_id)
+    }
+
+    fn session_bindings_for_story(
+        project_id: Uuid,
+        story_id: Uuid,
+        session_id: &str,
+    ) -> Arc<dyn SessionBindingRepository> {
+        Arc::new(InMemorySessionBindingRepo {
+            bindings: Mutex::new(vec![SessionBinding::new(
+                project_id,
+                session_id.to_string(),
+                SessionOwnerType::Story,
+                story_id,
+                "companion",
+            )]),
+        })
     }
 
     // ── 实际断言测试 ─────────────────────────────────────────────
 
     #[tokio::test]
     async fn projector_projects_task_on_complete_step() {
-        let (story, project_id, task_id) = setup_story_with_task();
+        let (story, project_id, task_id) = setup_story_with_task(Some("start"));
+        let story_id = story.id;
+        let session_id = "sess-test-m2b";
 
-        let steps = vec![
-            make_step_with_task("start", Some(task_id)),
-            make_step_with_task("finish", None),
-        ];
+        let steps = vec![make_step("start"), make_step("finish")];
         let edges = vec![LifecycleEdge::flow("start", "finish")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
@@ -795,7 +896,7 @@ mod tests {
         let run = LifecycleRun::new(
             project_id,
             lifecycle_id,
-            "sess-test-m2b",
+            session_id,
             &lifecycle.steps,
             "start",
             &lifecycle.edges,
@@ -808,6 +909,7 @@ mod tests {
             LifecycleStepProjector {
                 story_repo: story_repo.clone(),
                 state_change_repo: state_change_repo.clone(),
+                session_binding_repo: session_bindings_for_story(project_id, story_id, session_id),
             },
         );
 
@@ -837,8 +939,10 @@ mod tests {
 
     #[tokio::test]
     async fn projector_projects_task_on_activate_step() {
-        let (story, project_id, task_id) = setup_story_with_task();
-        let steps = vec![make_step_with_task("only", Some(task_id))];
+        let (story, project_id, task_id) = setup_story_with_task(Some("only"));
+        let story_id = story.id;
+        let session_id = "sess-m2b-activate";
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -865,7 +969,7 @@ mod tests {
         let run = LifecycleRun::new(
             project_id,
             lifecycle_id,
-            "sess-m2b-activate",
+            session_id,
             &lifecycle.steps,
             "only",
             &[],
@@ -878,6 +982,7 @@ mod tests {
             LifecycleStepProjector {
                 story_repo: story_repo.clone(),
                 state_change_repo,
+                session_binding_repo: session_bindings_for_story(project_id, story_id, session_id),
             },
         );
 
@@ -904,8 +1009,10 @@ mod tests {
 
     #[tokio::test]
     async fn projector_projects_task_on_fail_step() {
-        let (story, project_id, task_id) = setup_story_with_task();
-        let steps = vec![make_step_with_task("only", Some(task_id))];
+        let (story, project_id, task_id) = setup_story_with_task(Some("only"));
+        let story_id = story.id;
+        let session_id = "sess-m2b-fail";
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -932,7 +1039,7 @@ mod tests {
         let run = LifecycleRun::new(
             project_id,
             lifecycle_id,
-            "sess-m2b-fail",
+            session_id,
             &lifecycle.steps,
             "only",
             &[],
@@ -945,6 +1052,7 @@ mod tests {
             LifecycleStepProjector {
                 story_repo: story_repo.clone(),
                 state_change_repo,
+                session_binding_repo: session_bindings_for_story(project_id, story_id, session_id),
             },
         );
 
@@ -971,10 +1079,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn projector_skips_when_step_has_no_task_binding() {
-        let (story, project_id, task_id) = setup_story_with_task();
+    async fn projector_skips_when_task_has_no_step_binding() {
+        let (story, project_id, task_id) = setup_story_with_task(None);
+        let story_id = story.id;
+        let session_id = "sess-m2b-notask";
         let original_status = story.find_task(task_id).unwrap().status().clone();
-        let steps = vec![make_step_with_task("only", None)]; // 无 task_id 绑定
+        let steps = vec![make_step("only")]; // Task 未绑定 step key
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -1001,7 +1111,7 @@ mod tests {
         let run = LifecycleRun::new(
             project_id,
             lifecycle_id,
-            "sess-m2b-notask",
+            session_id,
             &lifecycle.steps,
             "only",
             &[],
@@ -1014,6 +1124,7 @@ mod tests {
             LifecycleStepProjector {
                 story_repo: story_repo.clone(),
                 state_change_repo,
+                session_binding_repo: session_bindings_for_story(project_id, story_id, session_id),
             },
         );
 
@@ -1035,14 +1146,14 @@ mod tests {
         assert_eq!(
             *task.status(),
             original_status,
-            "step 未绑定 task_id 时,task 状态不应被投影改写"
+            "task 未绑定 lifecycle_step_key 时,task 状态不应被投影改写"
         );
     }
 
     #[tokio::test]
     async fn service_without_projector_noops_silently() {
-        let (story, project_id, task_id) = setup_story_with_task();
-        let steps = vec![make_step_with_task("only", Some(task_id))];
+        let (story, project_id, task_id) = setup_story_with_task(Some("only"));
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",

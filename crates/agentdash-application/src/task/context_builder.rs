@@ -61,10 +61,14 @@ pub async fn build_task_session_context(
 
     // ── 解析 executor config（非 strict：失败时降级为 None）──
     let executor_source = resolve_task_executor_source(&task, &project, None);
-    let (resolved_config, executor_resolution) = match resolve_task_executor_config(None, &task, &project) {
-        Ok(config) => (config, ExecutorResolution::resolved(executor_source)),
-        Err(err) => (None, ExecutorResolution::failed(executor_source, err.to_string())),
-    };
+    let (resolved_config, executor_resolution) =
+        match resolve_task_executor_config(None, &task, &project) {
+            Ok(config) => (config, ExecutorResolution::resolved(executor_source)),
+            Err(err) => (
+                None,
+                ExecutorResolution::failed(executor_source, err.to_string()),
+            ),
+        };
 
     // ── 定位 task 关联的活跃 lifecycle run projection ──
     let workflow = find_active_workflow_via_task_sessions(repos, task.id).await;

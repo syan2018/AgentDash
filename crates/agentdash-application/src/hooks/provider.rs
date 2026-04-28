@@ -265,11 +265,8 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 snapshot.tags.push(format!("task:{task_id}"));
 
                 let task_uuid = task_id.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil());
-                if let Ok(Some(task)) = crate::task::load_task(
-                    self.owner_resolver.story_repo(),
-                    task_uuid,
-                )
-                .await
+                if let Ok(Some(task)) =
+                    crate::task::load_task(self.owner_resolver.story_repo(), task_uuid).await
                 {
                     if let Some(meta) = snapshot.metadata.as_mut() {
                         meta.extra.insert(
@@ -394,7 +391,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 snapshot
                     .injections
                     .extend(build_workflow_step_fragments(&workflow, &wf_source));
-
             }
 
             snapshot.owners.push(owner);

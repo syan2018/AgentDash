@@ -26,6 +26,12 @@ pub struct Task {
     pub story_id: Uuid,
     /// 关联的 Workspace（外键，替代原 workspace_path 字符串）
     pub workspace_id: Option<Uuid>,
+    /// 绑定的 lifecycle step key。
+    ///
+    /// Task 属于 Story aggregate，是外层用户可见执行单元；LifecycleStepDefinition 是可复用模板，
+    /// 不应反向持有具体 task id。这里由 Task 指向它要启动/投影的 step key。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_step_key: Option<String>,
     pub title: String,
     pub description: String,
     /// 执行状态：只读投影字段，外部不可直写（M2）。
@@ -46,6 +52,7 @@ impl Task {
             project_id,
             story_id,
             workspace_id: None,
+            lifecycle_step_key: None,
             title,
             description,
             status: TaskStatus::Pending,
@@ -151,6 +158,7 @@ pub struct TaskSpecMut<'a> {
     pub title: &'a mut String,
     pub description: &'a mut String,
     pub workspace_id: &'a mut Option<Uuid>,
+    pub lifecycle_step_key: &'a mut Option<String>,
     pub agent_binding: &'a mut AgentBinding,
     pub updated_at: &'a mut DateTime<Utc>,
 }
@@ -165,6 +173,7 @@ impl<'a> TaskSpecMut<'a> {
             title: &mut task.title,
             description: &mut task.description,
             workspace_id: &mut task.workspace_id,
+            lifecycle_step_key: &mut task.lifecycle_step_key,
             agent_binding: &mut task.agent_binding,
             updated_at: &mut task.updated_at,
         }

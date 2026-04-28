@@ -59,8 +59,7 @@ use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
 use crate::story::context_builder::{StoryContextBuildInput, build_story_context_markdown};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
-    RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports,
-    resolve_context_bindings,
+    RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::workflow::{
     ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
@@ -196,7 +195,11 @@ impl SessionAssemblyBuilder {
     }
 
     /// 从父 session 切片生成 companion VFS。
-    pub fn with_companion_vfs(mut self, parent_vfs: Option<&Vfs>, mode: CompanionSliceMode) -> Self {
+    pub fn with_companion_vfs(
+        mut self,
+        parent_vfs: Option<&Vfs>,
+        mode: CompanionSliceMode,
+    ) -> Self {
         use crate::companion::tools::build_companion_execution_slice;
         let slice = build_companion_execution_slice(parent_vfs, &[], mode);
         self.vfs = slice.vfs;
@@ -211,9 +214,11 @@ impl SessionAssemblyBuilder {
         writable_port_keys: &[String],
     ) -> Self {
         if let Some(space) = self.vfs.as_mut() {
-            space
-                .mounts
-                .push(build_lifecycle_mount_with_ports(run_id, lifecycle_key, writable_port_keys));
+            space.mounts.push(build_lifecycle_mount_with_ports(
+                run_id,
+                lifecycle_key,
+                writable_port_keys,
+            ));
         }
         self
     }
@@ -263,7 +268,10 @@ impl SessionAssemblyBuilder {
     }
 
     /// 追加 MCP server 到列表。
-    pub fn append_mcp_servers(mut self, servers: impl IntoIterator<Item = agent_client_protocol::McpServer>) -> Self {
+    pub fn append_mcp_servers(
+        mut self,
+        servers: impl IntoIterator<Item = agent_client_protocol::McpServer>,
+    ) -> Self {
         self.mcp_servers.extend(servers);
         self
     }
@@ -1058,9 +1066,9 @@ impl<'a> SessionRequestAssembler<'a> {
             .map(|c| c.to_acp_mcp_server())
             .collect();
         effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
-        effective_mcp_servers.extend(
-            crate::runtime_bridge::runtime_mcp_servers_to_acp(&built.mcp_servers),
-        );
+        effective_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_acp(
+            &built.mcp_servers,
+        ));
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(built.prompt_blocks)
@@ -1261,16 +1269,12 @@ pub async fn compose_companion_with_workflow(
     let comp = &spec.companion;
 
     // ── 1. Companion VFS slice 作为基础 ──
-    let slice = build_companion_execution_slice(
-        comp.parent_vfs,
-        comp.parent_mcp_servers,
-        comp.slice_mode,
-    );
+    let slice =
+        build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
 
     // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = SessionOwnerCtx::Project { project_id };
-    let port_output_map =
-        load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let activation = activate_step_with_platform(
@@ -1296,26 +1300,29 @@ pub async fn compose_companion_with_workflow(
     let mut vfs = slice.vfs.unwrap_or_default();
     vfs.mounts.push(activation.lifecycle_mount.clone());
 
-    let workflow_injection = spec.workflow.map(|w| {
-        let inj = &w.contract.injection;
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(goal) = &inj.goal {
-            if !goal.trim().is_empty() {
-                parts.push(format!("## Workflow Goal\n{goal}"));
+    let workflow_injection = spec
+        .workflow
+        .map(|w| {
+            let inj = &w.contract.injection;
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(goal) = &inj.goal {
+                if !goal.trim().is_empty() {
+                    parts.push(format!("## Workflow Goal\n{goal}"));
+                }
             }
-        }
-        if !inj.instructions.is_empty() {
-            parts.push(format!(
-                "## Workflow Instructions\n{}",
-                inj.instructions
-                    .iter()
-                    .map(|i| format!("- {i}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        parts.join("\n\n")
-    }).filter(|s| !s.is_empty());
+            if !inj.instructions.is_empty() {
+                parts.push(format!(
+                    "## Workflow Instructions\n{}",
+                    inj.instructions
+                        .iter()
+                        .map(|i| format!("- {i}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
+            }
+            parts.join("\n\n")
+        })
+        .filter(|s| !s.is_empty());
     let system_context = match (comp.parent_system_context, workflow_injection) {
         (Some(parent), Some(wf_inject)) => Some(format!("{parent}\n\n{wf_inject}")),
         (Some(parent), None) => Some(parent.to_string()),

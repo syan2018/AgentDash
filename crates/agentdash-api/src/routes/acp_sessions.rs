@@ -1462,7 +1462,11 @@ async fn build_task_owner_prompt_request(
         SessionPromptLifecycle::Plain => {}
     }
 
-    if let Some(config) = prepared.executor_config.take().or(effective_executor_config) {
+    if let Some(config) = prepared
+        .executor_config
+        .take()
+        .or(effective_executor_config)
+    {
         req.user_input.executor_config = Some(config);
     }
 

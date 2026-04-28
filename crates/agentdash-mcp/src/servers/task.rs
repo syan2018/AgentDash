@@ -301,8 +301,7 @@ impl TaskMcpServer {
         Parameters(params): Parameters<AppendTaskDescriptionParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let (mut story, task) = self.load_story_with_task().await?;
-        let new_description =
-            format!("{}\n\n---\n{}", task.description, params.append_text);
+        let new_description = format!("{}\n\n---\n{}", task.description, params.append_text);
 
         story.update_task(self.task_id, |task| {
             *task.description = new_description.clone();

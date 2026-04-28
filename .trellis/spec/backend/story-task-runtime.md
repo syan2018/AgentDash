@@ -14,7 +14,7 @@
 - 每个 Story 在运行时对应 **一个 Story session**（`SessionBinding(owner_type=Story)` 绑定），这个 session 的 event stream 是 story 内一切状态变更的唯一审计源。
 - **Task 是 Story aggregate 下的 child entity**，描述"story 内某一段执行单元的用户可见状态视图与声明"（标题、描述、agent binding、workspace 约束、状态、产物等），不是独立 aggregate、没有独立 repository、没有独立表（合入 `stories.tasks` JSONB 列）。
 - **Task 不承载 runtime 业务**：不持有 AgentDash 内部 `session_id`、不持有执行器原生 `executor_session_id`、不持有 one-shot / auto-retry 等执行策略。Task 只通过 `SessionBinding(owner_type=Task, label="execution")` 指向可查看的 execution child session；执行器 resume id 只归属 `SessionMeta.executor_session_id`。
-- **LifecycleRun 是独立 domain entity**，1:1 挂在 Story session 上；其 step 的 `task_id` 回指 Story aggregate 内的 Task。**Task.status / Task.artifacts 是 step state 的只读投影**，不是独立真相。
+- **LifecycleRun 是独立 domain entity**，1:1 挂在 Story session 上；它只记录 step 运行态，不持有具体 Task 实例 id。Task 通过 `lifecycle_step_key` 指向对应 step。**Task.status / Task.artifacts 是 step state 的只读投影**，不是独立真相。
 - **child session**（对话、companion、step 的远程执行、多次问答）都是 Story session 的子 session，通过 companion 或 step binding 与 Story session 挂钩。Task 最多提供“查看对应 child session”的入口，不拥有独立 runtime lifecycle。
 - 对外 API 的 `start_task` / `continue_task` / `cancel_task` 等入口保留名字，内部统一委托给 `activate_story_step(story_id, step_key, user_input)` 服务命令——**Task 启动路径 = 标准 workflow 装配**，不存在 `compose_task_runtime` 这种特例分支。
 - `state_changes` 表不再是业务事件的独立写入源，降级为"跨 session 全局游标索引"（D3-β），由 Story session event stream 的变更通过投影自动维护；`/events/since` API 保持兼容。
@@ -75,12 +75,12 @@ LifecycleRun 是 workflow 推进的运行态，独立 domain entity。
 
 - `LifecycleRun.session_id` 指向 Story session（1:1）。
 - 一个 Story session 同时至多挂 1 个活跃 LifecycleRun。
-- `LifecycleRun.steps: Vec<LifecycleStepState>`，每个 step 可选携带 `task_id` 指向 Story aggregate 内的 Task。
+- `LifecycleRun.steps: Vec<LifecycleStepState>` 只表达 workflow step 的运行态；step state 不携带 Task id。
 - Step state 是 Task 投影的真相源：Task.status / Task.artifacts 从对应 step 的 state 推导而来。
 
 **约束**：
 
-- `LifecycleRun` 不直接 owner 任何 Task；它通过 step.task_id 引用 aggregate 内的 Task。
+- `LifecycleRun` 不直接 owner 任何 Task，也不通过 definition/run state 反向引用 Task。Task → step 的绑定在 Story aggregate 内的 `Task.lifecycle_step_key` 上表达。
 - step 推进 → step state 变化 → 投影到 Task.status / Task.artifacts（M2 收口）。
 - Run 的详细边/推进规则见 [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md)。
 
@@ -94,6 +94,7 @@ Task 是 Story aggregate 内某段执行单元的 durable spec。
   - `id: Uuid`
   - `story_id: Uuid`
   - `workspace_id: Option<Uuid>`
+  - `lifecycle_step_key: Option<String>`：Task 指向 Story lifecycle 中的 step key；这是外层 Task 到内层 step 模板的绑定，不允许反向写入 `LifecycleStepDefinition`。
   - `title / description / tags`
   - `agent_binding: AgentBinding`
   - `created_at / updated_at`
@@ -136,11 +137,11 @@ child session 是 Story session 下的子 session，覆盖以下场景：
 |  Vec<Task> (child entities; 物理 = stories.tasks JSONB)         |
 +-----------------------------------------------------------------+
              |                             |
-             | 1:1 (via SessionBinding)    | child Task 被 step 引用
+             | 1:1 (via SessionBinding)    | Task.lifecycle_step_key -> step_key
              v                             v
 +-----------------------------------+    +-------------------------+
 |    Story session (kind=Story)     |<---|  LifecycleStepState     |
-|  sessions / session_bindings /    |    |   task_id? -> Task.id   |
+|  sessions / session_bindings /    |    |   step_key              |
 |  session_events                   |    +-------------------------+
 |                                   |             ^
 |  event stream = 真相源             |             | belongs to
@@ -170,7 +171,7 @@ child session 是 Story session 下的子 session，覆盖以下场景：
 | Story ↔ Story session | 1:1 | `SessionBinding(owner_type=Story, owner_id=story_id)` |
 | Story session ↔ LifecycleRun | 1:1（活跃） | `LifecycleRun.session_id = story_session_id` |
 | Story ↔ Task | 1:N | Story aggregate 持有 `Vec<Task>` |
-| LifecycleStep ↔ Task | 0..1:1 | `step.task_id` (Option) |
+| LifecycleStep ↔ Task | 0..1:1 | `Task.lifecycle_step_key -> LifecycleStepDefinition.key` |
 | Story session ↔ child session | 1:N | `CompanionContext.parent_session_id` 或 step-owned session 的 parent 关系 |
 
 ---
@@ -263,7 +264,7 @@ Task.status / Task.artifacts 作为**只读投影**由 step state 反投射。
 
 ### 6.3 投影器（projector）
 
-- **Task projector**：监听 Story session event 中"LifecycleStepState 变更"类事件 → 计算目标 Task 的 status / artifacts → 更新 Story aggregate（或直接 patch JSONB 中的 task 子元素，取决于实现策略）→ 同事务 append 一条 `state_changes` 记录。
+- **Task projector**：监听 Story session event 中"LifecycleStepState 变更"类事件 → 通过 `run.session_id` 找 Story binding → 在 `Story.tasks` 中按 `Task.lifecycle_step_key == step_key` 定位目标 Task → 计算目标 Task 的 status / artifacts → 更新 Story aggregate（或直接 patch JSONB 中的 task 子元素，取决于实现策略）→ 同事务 append 一条 `state_changes` 记录。
 - **Story projector**：监听"业务级 story 状态"事件（如人工归档、验证通过）→ 更新 `Story.status` + append `state_changes`。
 - **启动期 rebuild**：应用启动时，`task::view_projector::project_task_views_on_boot` 从 LifecycleRun/step state 反投影到 Task view（未来可演进为 replay Story session events → 重建 Task view）；不再依赖旧的多路写入合并策略。
 - **业务终态 → session cancel 指令通道**（与 projection 方向相反）：`reconcile::terminal_cancel::TerminalCancelCoordinator` 在 Task/Story 进入终态时，对关联 running session 发起 cancel，保证业务状态与 session 生命周期一致。
@@ -292,7 +293,7 @@ Task.status / Task.artifacts 作为**只读投影**由 step state 反投射。
 
 ```
 start_task(task_id, user_input)
-  └─ 定位 task → 找到 story_id + 对应 step_key
+  └─ 定位 task → 读取/补齐 Task.lifecycle_step_key → 找到 story_id + 对应 step_key
       └─ activate_story_step(story_id, step_key, user_input)
           └─ LifecycleRunService::activate_step(run_id, step_key)
               + session 装配: compose_lifecycle_node(...) (产出 PreparedSessionInputs)

@@ -29,6 +29,7 @@ pub struct TaskMutationInput {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<Option<Uuid>>,
+    pub lifecycle_step_key: Option<Option<String>>,
     pub status: Option<TaskStatus>,
     pub agent_binding: Option<AgentBinding>,
 }
@@ -96,10 +97,12 @@ pub fn build_task(
     title: String,
     description: String,
     workspace_id: Option<Uuid>,
+    lifecycle_step_key: Option<String>,
     agent_binding: AgentBinding,
 ) -> Task {
     let mut task = Task::new(project_id, story_id, title, description);
     task.workspace_id = workspace_id;
+    task.lifecycle_step_key = lifecycle_step_key;
     task.agent_binding = agent_binding;
     task
 }
@@ -113,6 +116,9 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
     }
     if let Some(workspace_id) = input.workspace_id {
         task.workspace_id = workspace_id;
+    }
+    if let Some(lifecycle_step_key) = input.lifecycle_step_key {
+        task.lifecycle_step_key = lifecycle_step_key.and_then(normalize_string);
     }
     if let Some(status) = input.status {
         // M2：apply_task_mutation 保留 status 字段以兼容命令型编辑（管理 API）。
@@ -140,14 +146,16 @@ pub fn build_agent_binding(input: Option<AgentBindingInput>) -> AgentBinding {
 }
 
 fn normalize_option(value: Option<String>) -> Option<String> {
-    value.and_then(|v| {
-        let trimmed = v.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
+    value.and_then(normalize_string)
+}
+
+fn normalize_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn normalize_string_list(values: Vec<String>) -> Vec<String> {

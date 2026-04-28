@@ -55,6 +55,7 @@ impl WorkflowSnapshotBuilder {
         LifecycleStepProjector {
             story_repo: self.story_repo.clone(),
             state_change_repo: self.state_change_repo.clone(),
+            session_binding_repo: self.session_binding_repo.clone(),
         }
     }
 

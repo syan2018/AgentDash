@@ -1,4 +1,6 @@
-use sqlx::PgPool;
+use std::collections::BTreeMap;
+
+use sqlx::{PgPool, Postgres, Transaction};
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{
@@ -141,43 +143,20 @@ impl StoryRepository for PostgresStoryRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let tasks_json = tasks_to_json(&story.tasks)?;
-        let task_count = story.tasks.len() as i32;
+        let current = load_story_for_update(&mut tx, story.id).await?;
+        let mut story_to_write = story.clone();
+        story_to_write.tasks = merge_task_snapshots(&current.tasks, &story.tasks);
+        story_to_write.task_count = story_to_write.tasks.len() as u32;
+        story_to_write.updated_at = chrono::Utc::now();
 
-        let result = sqlx::query(
-            "UPDATE stories SET project_id = $1, default_workspace_id = $2, title = $3, description = $4, status = $5, priority = $6, story_type = $7, tags = $8, task_count = $9, context = $10, tasks = $11, updated_at = $12
-             WHERE id = $13",
-        )
-        .bind(story.project_id.to_string())
-        .bind(story.default_workspace_id.map(|id| id.to_string()))
-        .bind(&story.title)
-        .bind(&story.description)
-        .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.tags)?)
-        .bind(task_count)
-        .bind(serde_json::to_string(&story.context)?)
-        .bind(tasks_json)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(story.id.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        if result.rows_affected() == 0 {
-            return Err(DomainError::NotFound {
-                entity: "story",
-                id: story.id.to_string(),
-            });
-        }
+        update_story_row_in_tx(&mut tx, &story_to_write).await?;
 
         append_state_change_in_tx(
             &mut tx,
-            story.project_id,
-            story.id,
+            story_to_write.project_id,
+            story_to_write.id,
             ChangeKind::StoryUpdated,
-            story_payload(story)?,
+            story_payload(&story_to_write)?,
             None,
         )
         .await?;
@@ -204,10 +183,7 @@ impl StoryRepository for PostgresStoryRepository {
         Ok(())
     }
 
-    async fn find_by_task_id(
-        &self,
-        task_id: uuid::Uuid,
-    ) -> Result<Option<Story>, DomainError> {
+    async fn find_by_task_id(&self, task_id: uuid::Uuid) -> Result<Option<Story>, DomainError> {
         // 使用 JSONB containment 查找包含指定 task.id 的 story 行
         let story_id: Option<(String,)> = sqlx::query_as(
             r#"SELECT id FROM stories
@@ -229,6 +205,131 @@ impl StoryRepository for PostgresStoryRepository {
         })?;
 
         self.get_by_id(parsed).await
+    }
+
+    async fn add_task_to_story(
+        &self,
+        story_id: uuid::Uuid,
+        task: &Task,
+    ) -> Result<(), DomainError> {
+        self.add_tasks_to_story(story_id, std::slice::from_ref(task))
+            .await
+    }
+
+    async fn add_tasks_to_story(
+        &self,
+        story_id: uuid::Uuid,
+        tasks: &[Task],
+    ) -> Result<(), DomainError> {
+        if tasks.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let mut story = load_story_for_update(&mut tx, story_id).await?;
+        for task in tasks {
+            if task.story_id != story_id {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Task {} 不属于 Story {}",
+                    task.id, story_id
+                )));
+            }
+            if task.project_id != story.project_id {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Task {} 的 project_id 与 Story {} 不一致",
+                    task.id, story_id
+                )));
+            }
+            if story.find_task(task.id).is_some() {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Task {} 已存在于 Story {}",
+                    task.id, story_id
+                )));
+            }
+            story.add_task(task.clone());
+        }
+        story.updated_at = chrono::Utc::now();
+
+        update_story_row_in_tx(&mut tx, &story).await?;
+
+        for task in tasks {
+            append_state_change_in_tx(
+                &mut tx,
+                task.project_id,
+                task.id,
+                ChangeKind::TaskCreated,
+                task_created_payload(task)?,
+                None,
+            )
+            .await?;
+        }
+        append_state_change_in_tx(
+            &mut tx,
+            story.project_id,
+            story.id,
+            ChangeKind::StoryUpdated,
+            story_payload(&story)?,
+            None,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn remove_task_from_story(&self, task_id: uuid::Uuid) -> Result<Task, DomainError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let mut story = load_story_by_task_for_update(&mut tx, task_id).await?;
+        let removed = story
+            .remove_task(task_id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "task",
+                id: task_id.to_string(),
+            })?;
+        story.updated_at = chrono::Utc::now();
+
+        update_story_row_in_tx(&mut tx, &story).await?;
+
+        append_state_change_in_tx(
+            &mut tx,
+            removed.project_id,
+            removed.id,
+            ChangeKind::TaskDeleted,
+            serde_json::json!({
+                "task_id": removed.id,
+                "project_id": removed.project_id,
+                "story_id": removed.story_id,
+                "reason": "task_deleted_by_user",
+            }),
+            None,
+        )
+        .await?;
+        append_state_change_in_tx(
+            &mut tx,
+            story.project_id,
+            story.id,
+            ChangeKind::StoryUpdated,
+            story_payload(&story)?,
+            None,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        Ok(removed)
     }
 }
 
@@ -308,6 +409,158 @@ impl TryFrom<StoryRow> for Story {
 fn tasks_to_json(tasks: &[Task]) -> Result<serde_json::Value, DomainError> {
     serde_json::to_value(tasks)
         .map_err(|e| DomainError::InvalidConfig(format!("stories.tasks.encode: {e}")))
+}
+
+async fn load_story_for_update(
+    tx: &mut Transaction<'_, Postgres>,
+    story_id: uuid::Uuid,
+) -> Result<Story, DomainError> {
+    let row = sqlx::query_as::<_, StoryRow>(
+        "SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, tasks, created_at, updated_at
+         FROM stories WHERE id = $1 FOR UPDATE",
+    )
+    .bind(story_id.to_string())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+    .ok_or_else(|| DomainError::NotFound {
+        entity: "story",
+        id: story_id.to_string(),
+    })?;
+
+    row.try_into()
+}
+
+async fn load_story_by_task_for_update(
+    tx: &mut Transaction<'_, Postgres>,
+    task_id: uuid::Uuid,
+) -> Result<Story, DomainError> {
+    let row = sqlx::query_as::<_, StoryRow>(
+        r#"SELECT id, project_id, default_workspace_id, title, description, status, priority, story_type, tags, task_count, context, tasks, created_at, updated_at
+           FROM stories
+           WHERE tasks @> jsonb_build_array(jsonb_build_object('id', $1::text))
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(task_id.to_string())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+    .ok_or_else(|| DomainError::NotFound {
+        entity: "task",
+        id: task_id.to_string(),
+    })?;
+
+    row.try_into()
+}
+
+async fn update_story_row_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    story: &Story,
+) -> Result<(), DomainError> {
+    let tasks_json = tasks_to_json(&story.tasks)?;
+    let task_count = story.tasks.len() as i32;
+
+    let result = sqlx::query(
+        "UPDATE stories SET project_id = $1, default_workspace_id = $2, title = $3, description = $4, status = $5, priority = $6, story_type = $7, tags = $8, task_count = $9, context = $10, tasks = $11, updated_at = $12
+         WHERE id = $13",
+    )
+    .bind(story.project_id.to_string())
+    .bind(story.default_workspace_id.map(|id| id.to_string()))
+    .bind(&story.title)
+    .bind(&story.description)
+    .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
+    .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
+    .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
+    .bind(serde_json::to_string(&story.tags)?)
+    .bind(task_count)
+    .bind(serde_json::to_string(&story.context)?)
+    .bind(tasks_json)
+    .bind(story.updated_at.to_rfc3339())
+    .bind(story.id.to_string())
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(DomainError::NotFound {
+            entity: "story",
+            id: story.id.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn merge_task_snapshots(current: &[Task], incoming: &[Task]) -> Vec<Task> {
+    let mut merged: BTreeMap<uuid::Uuid, Task> = current
+        .iter()
+        .cloned()
+        .map(|task| (task.id, task))
+        .collect();
+
+    for incoming_task in incoming {
+        match merged.remove(&incoming_task.id) {
+            Some(current_task) => {
+                merged.insert(
+                    incoming_task.id,
+                    merge_task_snapshot(&current_task, incoming_task),
+                );
+            }
+            None => {
+                merged.insert(incoming_task.id, incoming_task.clone());
+            }
+        }
+    }
+
+    let mut tasks: Vec<Task> = merged.into_values().collect();
+    tasks.sort_by_key(|task| task.created_at);
+    tasks
+}
+
+fn merge_task_snapshot(current: &Task, incoming: &Task) -> Task {
+    let prefer_incoming = incoming.updated_at >= current.updated_at;
+    let mut merged = if prefer_incoming {
+        incoming.clone()
+    } else {
+        current.clone()
+    };
+
+    let mut artifacts: BTreeMap<uuid::Uuid, agentdash_domain::task::Artifact> = BTreeMap::new();
+    let (first, second) = if prefer_incoming {
+        (current.artifacts(), incoming.artifacts())
+    } else {
+        (incoming.artifacts(), current.artifacts())
+    };
+    for artifact in first {
+        artifacts.insert(artifact.id, artifact.clone());
+    }
+    for artifact in second {
+        artifacts.insert(artifact.id, artifact.clone());
+    }
+    let mut artifacts: Vec<_> = artifacts.into_values().collect();
+    artifacts.sort_by_key(|artifact| artifact.created_at);
+    *merged.artifacts_mut() = artifacts;
+
+    merged
+}
+
+fn task_created_payload(task: &Task) -> Result<serde_json::Value, DomainError> {
+    let mut payload = serde_json::to_value(task)
+        .map_err(|error| DomainError::InvalidConfig(format!("tasks.state_payload: {error}")))?;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert(
+            "reason".to_string(),
+            serde_json::Value::String("task_created_by_user".to_string()),
+        );
+        return Ok(payload);
+    }
+
+    Ok(serde_json::json!({
+        "task_id": task.id,
+        "project_id": task.project_id,
+        "story_id": task.story_id,
+        "reason": "task_created_by_user",
+    }))
 }
 
 fn story_payload(story: &Story) -> Result<serde_json::Value, DomainError> {

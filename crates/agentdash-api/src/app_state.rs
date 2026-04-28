@@ -314,7 +314,7 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                lifecycle_def_repo: workflow_repo.clone(),
+                session_binding_repo: session_binding_repo.clone(),
                 lifecycle_run_repo: workflow_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;

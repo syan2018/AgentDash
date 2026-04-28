@@ -8,7 +8,8 @@
 //! 启动流程在此处按 Scheme A（见 research/m2-decision-points.md D-M2-5）实现：
 //!
 //! 1. 遍历所有 project 的 active LifecycleRun（`Ready | Running | Blocked`）
-//! 2. 扁平化 `run.step_states`，对每个持有 `task_id` 绑定的 step，调
+//! 2. 通过 Story session binding 找到 Story，对每个能匹配
+//!    `Task.lifecycle_step_key` 的 step，调
 //!    `Story::apply_task_projection` 将 step state 反投影到 task view
 //! 3. 同步 append 一条 `state_changes` 全局投影索引（`kind = TaskStatusChanged`）
 //! 4. 对于仍处于 `Running` 但没有任何活跃 run 覆盖的孤儿 task，作为 fallback
@@ -23,11 +24,10 @@ use std::sync::Arc;
 use serde_json::json;
 
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::TaskStatus;
-use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, LifecycleRunStatus,
-};
+use agentdash_domain::workflow::{LifecycleRunRepository, LifecycleRunStatus};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskViewProjectionError {
@@ -41,13 +41,13 @@ pub enum TaskViewProjectionError {
 ///
 /// 参数：
 /// - `project_repo` / `story_repo` / `state_change_repo`：基础领域仓储
-/// - `lifecycle_def_repo`：lifecycle definition 仓储（反查 step.task_id 绑定）
+/// - `session_binding_repo`：从 run.session_id 反查 Story owner binding
 /// - `lifecycle_run_repo`：lifecycle run 仓储（本次投影的事实源）
 pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
-    lifecycle_def_repo: &Arc<dyn LifecycleDefinitionRepository>,
+    session_binding_repo: &Arc<dyn SessionBindingRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
 ) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
@@ -65,36 +65,40 @@ pub async fn project_task_views_on_boot(
                 continue;
             }
 
-            // 加载 lifecycle definition，一次性拿到 step.task_id 映射
-            let lifecycle = match lifecycle_def_repo.get_by_id(run.lifecycle_id).await? {
-                Some(lc) => lc,
+            let story_binding = match session_binding_repo
+                .list_by_session(&run.session_id)
+                .await?
+                .into_iter()
+                .find(|binding| binding.owner_type == SessionOwnerType::Story)
+            {
+                Some(binding) => binding,
                 None => {
                     tracing::warn!(
                         run_id = %run.id,
-                        lifecycle_id = %run.lifecycle_id,
-                        "Task view 投影：lifecycle definition 不存在，跳过 run"
+                        session_id = %run.session_id,
+                        "Task view 投影：run 未绑定 Story session owner，跳过 run"
                     );
                     continue;
                 }
             };
+            let Some(mut story) = story_repo.get_by_id(story_binding.owner_id).await? else {
+                tracing::warn!(
+                    run_id = %run.id,
+                    story_id = %story_binding.owner_id,
+                    "Task view 投影：run 绑定的 Story 不存在，跳过 run"
+                );
+                continue;
+            };
 
             for state in &run.step_states {
-                let Some(task_id) = lifecycle
-                    .steps
+                let Some(task_id) = story
+                    .tasks
                     .iter()
-                    .find(|s| s.key == state.step_key)
-                    .and_then(|s| s.task_id)
+                    .find(|task| {
+                        task.lifecycle_step_key.as_deref() == Some(state.step_key.as_str())
+                    })
+                    .map(|task| task.id)
                 else {
-                    continue; // 非 task-bound step
-                };
-
-                let Some(mut story) = story_repo.find_by_task_id(task_id).await? else {
-                    tracing::warn!(
-                        task_id = %task_id,
-                        run_id = %run.id,
-                        step_key = %state.step_key,
-                        "Task view 投影：step 绑定的 task 对应 story 不存在，跳过"
-                    );
                     continue;
                 };
 
@@ -247,6 +251,9 @@ mod tests {
     use agentdash_domain::project::{
         Project, ProjectRepository, ProjectSubjectGrant, ProjectSubjectType,
     };
+    use agentdash_domain::session_binding::{
+        ProjectSessionBinding, SessionBinding, SessionBindingRepository,
+    };
     use agentdash_domain::story::{StateChange, Story};
     use agentdash_domain::task::Task;
     use agentdash_domain::workflow::{
@@ -386,10 +393,7 @@ mod tests {
         async fn latest_event_id(&self) -> Result<i64, DomainError> {
             Ok(0)
         }
-        async fn latest_event_id_by_project(
-            &self,
-            _project_id: Uuid,
-        ) -> Result<i64, DomainError> {
+        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> {
             Ok(0)
         }
         async fn append_change(
@@ -404,95 +408,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((project_id, entity_id, kind));
-            Ok(())
-        }
-    }
-
-    struct InMemoryLifecycleDefRepo {
-        definitions: Mutex<Vec<LifecycleDefinition>>,
-    }
-
-    #[async_trait]
-    impl LifecycleDefinitionRepository for InMemoryLifecycleDefRepo {
-        async fn create(&self, def: &LifecycleDefinition) -> Result<(), DomainError> {
-            self.definitions.lock().unwrap().push(def.clone());
-            Ok(())
-        }
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|d| d.id == id)
-                .cloned())
-        }
-        async fn get_by_key(
-            &self,
-            key: &str,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|d| d.key == key)
-                .cloned())
-        }
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|d| d.project_id == project_id && d.key == key)
-                .cloned())
-        }
-        async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError> {
-            Ok(self.definitions.lock().unwrap().clone())
-        }
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|d| d.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-        async fn list_by_binding_kind(
-            &self,
-            binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .definitions
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|d| d.binding_kind == binding_kind)
-                .cloned()
-                .collect())
-        }
-        async fn update(&self, def: &LifecycleDefinition) -> Result<(), DomainError> {
-            let mut guard = self.definitions.lock().unwrap();
-            if let Some(existing) = guard.iter_mut().find(|d| d.id == def.id) {
-                *existing = def.clone();
-            }
-            Ok(())
-        }
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.definitions.lock().unwrap().retain(|d| d.id != id);
             Ok(())
         }
     }
@@ -568,9 +483,114 @@ mod tests {
         }
     }
 
+    struct InMemorySessionBindingRepo {
+        bindings: Mutex<Vec<SessionBinding>>,
+    }
+
+    #[async_trait]
+    impl SessionBindingRepository for InMemorySessionBindingRepo {
+        async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().push(binding.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().retain(|b| b.id != id);
+            Ok(())
+        }
+
+        async fn delete_by_session_and_owner(
+            &self,
+            session_id: &str,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+        ) -> Result<(), DomainError> {
+            self.bindings.lock().unwrap().retain(|b| {
+                !(b.session_id == session_id
+                    && b.owner_type == owner_type
+                    && b.owner_id == owner_id)
+            });
+            Ok(())
+        }
+
+        async fn list_by_owner(
+            &self,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+        ) -> Result<Vec<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.owner_type == owner_type && b.owner_id == owner_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Vec<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.session_id == session_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn find_by_owner_and_label(
+            &self,
+            owner_type: SessionOwnerType,
+            owner_id: Uuid,
+            label: &str,
+        ) -> Result<Option<SessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|b| b.owner_type == owner_type && b.owner_id == owner_id && b.label == label)
+                .cloned())
+        }
+
+        async fn list_bound_session_ids(&self) -> Result<Vec<String>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|b| b.session_id.clone())
+                .collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectSessionBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|b| b.project_id == project_id)
+                .cloned()
+                .map(|binding| ProjectSessionBinding {
+                    binding,
+                    story_title: None,
+                    story_id: None,
+                    owner_title: None,
+                })
+                .collect())
+        }
+    }
+
     // ── Fixtures ─────────────────────────────────────────────────
 
-    fn make_step(key: &str, task_id: Option<Uuid>) -> LifecycleStepDefinition {
+    fn make_step(key: &str) -> LifecycleStepDefinition {
         LifecycleStepDefinition {
             key: key.to_string(),
             description: String::new(),
@@ -578,8 +598,23 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id,
         }
+    }
+
+    fn session_bindings_for_story(
+        project_id: Uuid,
+        story_id: Uuid,
+        session_id: &str,
+    ) -> Arc<dyn SessionBindingRepository> {
+        Arc::new(InMemorySessionBindingRepo {
+            bindings: Mutex::new(vec![SessionBinding::new(
+                project_id,
+                session_id.to_string(),
+                SessionOwnerType::Story,
+                story_id,
+                "companion",
+            )]),
+        })
     }
 
     /// 构造一个 run 并把 step_states 手动覆盖为测试目标状态。
@@ -614,11 +649,13 @@ mod tests {
         let project_id = project.id;
 
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let task = Task::new(project_id, story.id, "T".into(), String::new());
+        let mut task = Task::new(project_id, story.id, "T".into(), String::new());
+        task.lifecycle_step_key = Some("only".to_string());
         let task_id = task.id;
+        let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only", Some(task_id))];
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -646,14 +683,11 @@ mod tests {
         let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
             stories: Mutex::new(vec![story]),
         });
-        let state_change_repo: Arc<dyn StateChangeRepository> =
-            Arc::new(InMemoryStateChangeRepo {
-                changes: Mutex::new(Vec::new()),
-            });
-        let lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository> =
-            Arc::new(InMemoryLifecycleDefRepo {
-                definitions: Mutex::new(vec![lifecycle.clone()]),
-            });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let session_binding_repo =
+            session_bindings_for_story(project_id, story_id, "sess-boot-running");
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -663,7 +697,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &lifecycle_def_repo,
+            &session_binding_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -683,13 +717,15 @@ mod tests {
         let project_id = project.id;
 
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let task = Task::new(project_id, story.id, "T".into(), String::new());
+        let mut task = Task::new(project_id, story.id, "T".into(), String::new());
+        task.lifecycle_step_key = Some("only".to_string());
         let task_id = task.id;
+        let story_id = story.id;
         story.add_task(task);
         // 模拟旧状态为 Running，实际 step 已 Completed，投影应把 task 推进到 AwaitingVerification
         story.force_set_task_status(task_id, TaskStatus::Running);
 
-        let steps = vec![make_step("only", Some(task_id))];
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -717,14 +753,11 @@ mod tests {
         let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
             stories: Mutex::new(vec![story]),
         });
-        let state_change_repo: Arc<dyn StateChangeRepository> =
-            Arc::new(InMemoryStateChangeRepo {
-                changes: Mutex::new(Vec::new()),
-            });
-        let lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository> =
-            Arc::new(InMemoryLifecycleDefRepo {
-                definitions: Mutex::new(vec![lifecycle]),
-            });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let session_binding_repo =
+            session_bindings_for_story(project_id, story_id, "sess-boot-completed");
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -734,7 +767,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &lifecycle_def_repo,
+            &session_binding_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -756,6 +789,7 @@ mod tests {
         let mut story = Story::new(project_id, "S".into(), "".into());
         let task = Task::new(project_id, story.id, "T".into(), String::new());
         let task_id = task.id;
+        let story_id = story.id;
         story.add_task(task);
         // 人为把 task 置为 Running，但没有任何活跃 run
         story.force_set_task_status(task_id, TaskStatus::Running);
@@ -766,14 +800,10 @@ mod tests {
         let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
             stories: Mutex::new(vec![story]),
         });
-        let state_change_repo: Arc<dyn StateChangeRepository> =
-            Arc::new(InMemoryStateChangeRepo {
-                changes: Mutex::new(Vec::new()),
-            });
-        let lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository> =
-            Arc::new(InMemoryLifecycleDefRepo {
-                definitions: Mutex::new(vec![]),
-            });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let session_binding_repo = session_bindings_for_story(project_id, story_id, "unused");
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![]),
@@ -783,7 +813,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &lifecycle_def_repo,
+            &session_binding_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -804,11 +834,13 @@ mod tests {
         let project_id = project.id;
 
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let task = Task::new(project_id, story.id, "T".into(), String::new());
+        let mut task = Task::new(project_id, story.id, "T".into(), String::new());
+        task.lifecycle_step_key = Some("only".to_string());
         let task_id = task.id;
+        let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only", Some(task_id))];
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -837,14 +869,11 @@ mod tests {
         let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
             stories: Mutex::new(vec![story]),
         });
-        let state_change_repo: Arc<dyn StateChangeRepository> =
-            Arc::new(InMemoryStateChangeRepo {
-                changes: Mutex::new(Vec::new()),
-            });
-        let lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository> =
-            Arc::new(InMemoryLifecycleDefRepo {
-                definitions: Mutex::new(vec![lifecycle]),
-            });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let session_binding_repo =
+            session_bindings_for_story(project_id, story_id, "sess-boot-inactive");
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -854,7 +883,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &lifecycle_def_repo,
+            &session_binding_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -877,9 +906,10 @@ mod tests {
         let mut story = Story::new(project_id, "S".into(), "".into());
         let task = Task::new(project_id, story.id, "T".into(), String::new());
         let task_id = task.id;
+        let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only", None)];
+        let steps = vec![make_step("only")];
         let lifecycle = LifecycleDefinition::new(
             project_id,
             "lc",
@@ -907,14 +937,11 @@ mod tests {
         let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
             stories: Mutex::new(vec![story]),
         });
-        let state_change_repo: Arc<dyn StateChangeRepository> =
-            Arc::new(InMemoryStateChangeRepo {
-                changes: Mutex::new(Vec::new()),
-            });
-        let lifecycle_def_repo: Arc<dyn LifecycleDefinitionRepository> =
-            Arc::new(InMemoryLifecycleDefRepo {
-                definitions: Mutex::new(vec![lifecycle]),
-            });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let session_binding_repo =
+            session_bindings_for_story(project_id, story_id, "sess-boot-nobinding");
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -924,7 +951,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &lifecycle_def_repo,
+            &session_binding_repo,
             &lifecycle_run_repo,
         )
         .await

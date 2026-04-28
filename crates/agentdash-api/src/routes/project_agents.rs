@@ -836,7 +836,6 @@ async fn resolve_lifecycle_key_for_link(
                     node_type: Default::default(),
                     output_ports: vec![],
                     input_ports: vec![],
-                    task_id: None,
                 }],
                 edges: vec![],
                 entry_step_key: "main".to_string(),

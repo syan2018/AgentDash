@@ -78,6 +78,7 @@ pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
+    pub lifecycle_step_key: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,
 }
 
@@ -87,6 +88,7 @@ pub struct UpdateTaskRequest {
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
     pub workspace_id: Option<String>,
+    pub lifecycle_step_key: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,
 }
 
@@ -408,19 +410,17 @@ pub async fn create_task(
         title.to_string(),
         req.description.unwrap_or_default(),
         workspace_id,
+        normalize_optional_string(req.lifecycle_step_key),
         agent_binding,
     );
 
-    // M1-b：task create 走 Story aggregate `add_task` + `StoryRepository::update`
-    let task_clone = task.clone();
-    let mut story = state
+    // M1-b：task create 走 Story aggregate 命令路径；Postgres 实现在同一事务内
+    // 更新 stories.tasks 并追加 TaskCreated / StoryUpdated。
+    state
         .repos
         .story_repo
-        .get_by_id(story_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Story {story_id} 不存在")))?;
-    story.add_task(task_clone);
-    state.repos.story_repo.update(&story).await?;
+        .add_task_to_story(story_id, &task)
+        .await?;
 
     Ok(Json(TaskResponse::from(task)))
 }
@@ -498,6 +498,10 @@ pub async fn update_task(
         None
     };
 
+    let lifecycle_step_key = req
+        .lifecycle_step_key
+        .map(|raw| normalize_optional_string(Some(raw)));
+
     let agent_binding = req.agent_binding.map(|value| {
         build_agent_binding(Some(AgentBindingInput {
             agent_type: value.agent_type,
@@ -514,6 +518,7 @@ pub async fn update_task(
             title,
             description: req.description,
             workspace_id,
+            lifecycle_step_key,
             status: req.status,
             agent_binding,
         },
@@ -532,6 +537,7 @@ pub async fn update_task(
         *view.title = task.title.clone();
         *view.description = task.description.clone();
         *view.workspace_id = task.workspace_id;
+        *view.lifecycle_step_key = task.lifecycle_step_key.clone();
         *view.agent_binding = task.agent_binding.clone();
     });
     if updated_spec.is_none() {
@@ -586,17 +592,13 @@ pub async fn delete_task(
     )
     .await?;
 
-    // M1-b：task delete 经 Story aggregate `remove_task` + `StoryRepository::update`
-    let mut story = state
+    // M1-b：task delete 走 Story aggregate 命令路径；Postgres 实现在同一事务内
+    // 更新 stories.tasks 并追加 TaskDeleted / StoryUpdated。
+    state
         .repos
         .story_repo
-        .find_by_task_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let _ = story
-        .remove_task(task_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    state.repos.story_repo.update(&story).await?;
+        .remove_task_from_story(task_id)
+        .await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -620,6 +622,17 @@ fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -
     } else {
         ChangeKind::TaskUpdated
     }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 async fn append_required_story_change(

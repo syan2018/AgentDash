@@ -552,7 +552,6 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
-            task_id: None,
         };
         LifecycleDefinition::new(
             project_id,

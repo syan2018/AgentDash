@@ -353,6 +353,86 @@ pub async fn reorder_providers(
     Ok(Json(serde_json::json!({ "reordered": true })))
 }
 
+// ─── Probe models ───
+
+#[derive(Debug, Deserialize)]
+pub struct ProbeModelsRequest {
+    pub protocol: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub discovery_url: Option<String>,
+    #[serde(default)]
+    pub env_api_key: Option<String>,
+    /// 若来自已有 provider，传 id 可回退到 DB 中保存的 api_key
+    #[serde(default)]
+    pub provider_id: Option<String>,
+}
+
+/// 用给定的 credentials 实时探测远端可用模型列表，不写入 DB。
+pub async fn probe_models(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<ProbeModelsRequest>,
+) -> Result<Json<Vec<agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::ProbeModelResult>>, ApiError> {
+    require_system_access(&current_user)?;
+
+    let protocol = WireProtocol::from_str(&req.protocol).ok_or_else(|| {
+        ApiError::BadRequest(format!("无效的 protocol: {}", req.protocol))
+    })?;
+
+    let api_key = resolve_probe_api_key(&req, &state).await;
+
+    let base_url = req
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let discovery_url = req
+        .discovery_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let models = agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+        protocol,
+        &api_key,
+        base_url,
+        discovery_url,
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(format!("探测失败: {e}")))?;
+
+    Ok(Json(models))
+}
+
+async fn resolve_probe_api_key(req: &ProbeModelsRequest, state: &AppState) -> String {
+    if let Some(key) = &req.api_key {
+        if !key.is_empty() && !is_masked_placeholder(key) {
+            return key.clone();
+        }
+    }
+    if let Some(env_key) = &req.env_api_key {
+        if let Ok(val) = std::env::var(env_key.trim()) {
+            if !val.is_empty() {
+                return val;
+            }
+        }
+    }
+    if let Some(pid) = &req.provider_id {
+        if let Ok(id) = Uuid::parse_str(pid) {
+            if let Ok(Some(provider)) = state.repos.llm_provider_repo.get_by_id(id).await {
+                if let Some(resolved) = provider.resolve_api_key() {
+                    return resolved;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 // ─── Helpers ───
 
 fn parse_id(id: &str) -> Result<Uuid, ApiError> {

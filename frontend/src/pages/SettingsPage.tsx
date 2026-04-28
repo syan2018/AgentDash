@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useDebugPrefs } from "../hooks/use-debug-prefs";
@@ -9,7 +9,8 @@ import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
-import type { LlmProvider, UpdateLlmProviderRequest } from "../api/llmProviders";
+import { llmProvidersApi } from "../api/llmProviders";
+import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ interface ProviderPreset {
 const PROVIDER_PRESETS: ProviderPreset[] = [
   { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY", default_model: "claude-sonnet-4-6-20250514" },
   { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY", default_model: "gemini-2.5-flash" },
-  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY", default_model: "gpt-5.4" },
+  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY", default_model: "" },
   { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY", default_model: "deepseek-chat" },
   { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY", default_model: "llama-3.3-70b-versatile" },
   { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY", default_model: "grok-3" },
@@ -472,13 +473,33 @@ function LlmProviderForm({
   const [blockedModels, setBlockedModels] = useState<string[]>(parseStringList(provider.blocked_models));
   const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
 
+  // 实时探测状态：用当前表单 credentials 探测到的模型列表
+  const [probedModels, setProbedModels] = useState<ProbeModelEntry[] | null>(null);
+  const [isProbing, setIsProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
   const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic";
   const showWireApi = provider.protocol === "openai_compatible";
   const showDefaultModel = true; // all protocols support default model
 
+  // 合并来源：probe 结果优先（当存在时替代 discovery 结果），否则用全局 discovery
+  const effectiveDiscoveredModels: ModelInfo[] = useMemo(() => {
+    if (probedModels !== null) {
+      return probedModels.map((m) => ({
+        id: m.id,
+        name: m.name,
+        provider_id: provider.slug,
+        reasoning: false,
+        context_window: 200_000,
+        blocked: false,
+      }));
+    }
+    return discoveredModels;
+  }, [probedModels, discoveredModels, provider.slug]);
+
   const defaultModelOptions = useMemo(() => {
-    const fromDiscovered = discoveredModels
-      .filter((c) => c.id.trim().length > 0 && c.blocked !== true)
+    const fromDiscovered = effectiveDiscoveredModels
+      .filter((c) => c.id.trim().length > 0 && !blockedModels.includes(c.id))
       .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
     const fromCustom = models
       .filter((c) => c.id.trim().length > 0)
@@ -491,7 +512,7 @@ function LlmProviderForm({
     }
 
     return options.filter((c, i, list) => list.findIndex((x) => x.id === c.id) === i);
-  }, [discoveredModels, defaultModel, models]);
+  }, [effectiveDiscoveredModels, defaultModel, models, blockedModels]);
 
   const toggleBlockedModel = (modelId: string) => {
     setBlockedModels((current) => {
@@ -520,6 +541,27 @@ function LlmProviderForm({
       setBlockedModelsTouched(false);
     }
   };
+
+  // 用当前表单 credentials 实时探测模型，不保存、不折叠
+  const handleProbeModels = useCallback(async () => {
+    setIsProbing(true);
+    setProbeError(null);
+    try {
+      const result = await llmProvidersApi.probeModels({
+        protocol: provider.protocol,
+        api_key: apiKeyTouched ? apiKey : undefined,
+        base_url: baseUrl || undefined,
+        discovery_url: undefined,
+        env_api_key: provider.env_api_key || undefined,
+        provider_id: provider.id,
+      });
+      setProbedModels(result);
+    } catch (e) {
+      setProbeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsProbing(false);
+    }
+  }, [provider.id, provider.protocol, provider.env_api_key, apiKey, apiKeyTouched, baseUrl]);
 
   const handleAddModel = (initial?: ModelConfig) => {
     const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true };
@@ -603,7 +645,7 @@ function LlmProviderForm({
               type="text"
               className={inputCls}
               value={defaultModel}
-              placeholder="例如 gpt-5.4"
+              placeholder="保存配置后自动发现，或手动输入"
               onChange={(e) => setDefaultModel(e.target.value)}
             />
           )}
@@ -635,15 +677,16 @@ function LlmProviderForm({
 
       {/* Model Management */}
       <ModelManagementSection
-        discoveredModels={discoveredModels}
+        discoveredModels={effectiveDiscoveredModels}
         customModels={models}
         blockedModels={blockedModels}
-        isLoadingModels={isLoadingModels}
-        onRefreshModels={onRefreshModels}
+        isLoadingModels={isProbing || isLoadingModels}
+        onRefreshModels={handleProbeModels}
         onToggleBlocked={toggleBlockedModel}
         onAddModel={handleAddModel}
         onRemoveModel={handleRemoveModel}
         onUpdateModel={handleUpdateModel}
+        probeError={probeError}
       />
 
       <div className="flex justify-between pt-1">
@@ -691,6 +734,7 @@ function ModelManagementSection({
   onAddModel,
   onRemoveModel,
   onUpdateModel,
+  probeError,
 }: {
   discoveredModels: ModelInfo[];
   customModels: ModelConfig[];
@@ -701,9 +745,32 @@ function ModelManagementSection({
   onAddModel: (initial?: ModelConfig) => void;
   onRemoveModel: (index: number) => void;
   onUpdateModel: (index: number, field: keyof ModelConfig, value: string | number | boolean) => void;
+  probeError?: string | null;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  // 按压滑动批量切换：记录拖拽期间的目标操作和已处理的 model id
+  const dragRef = useRef<{ action: "block" | "unblock"; touched: Set<string> } | null>(null);
+
+  const handleDragStart = (modelId: string) => {
+    const isBlocked = blockedModels.includes(modelId);
+    const action = isBlocked ? "unblock" : "block";
+    dragRef.current = { action, touched: new Set([modelId]) };
+    onToggleBlocked(modelId);
+  };
+
+  const handleDragEnter = (modelId: string) => {
+    const drag = dragRef.current;
+    if (!drag || drag.touched.has(modelId)) return;
+    drag.touched.add(modelId);
+    const isBlocked = blockedModels.includes(modelId);
+    if ((drag.action === "block" && !isBlocked) || (drag.action === "unblock" && isBlocked)) {
+      onToggleBlocked(modelId);
+    }
+  };
+
+  const handleDragEnd = () => { dragRef.current = null; };
 
   const hasAny = discoveredModels.length > 0 || customModels.length > 0;
   const totalCount = discoveredModels.length + customModels.length;
@@ -717,8 +784,8 @@ function ModelManagementSection({
           <span className="text-sm font-medium text-foreground">模型管理</span>
           <p className="text-xs text-muted-foreground">
             {hasAny
-              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），点击切换启用/屏蔽`
-              : "暂无模型，请先保存 Provider 配置后刷新"}
+              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），按压滑动可批量切换`
+              : "暂无模型，点击「探测」用当前配置发现可用模型"}
           </p>
         </div>
         <button
@@ -726,7 +793,7 @@ function ModelManagementSection({
           onClick={onRefreshModels}
           disabled={isLoadingModels}
           className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-          title="重新发现可用模型"
+          title="用当前表单配置实时探测可用模型（无需先保存）"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -743,12 +810,23 @@ function ModelManagementSection({
             <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
             <path d="M21 3v5h-5" />
           </svg>
-          {isLoadingModels ? "发现中…" : "刷新"}
+          {isLoadingModels ? "探测中…" : "探测"}
         </button>
       </div>
 
+      {probeError && (
+        <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          探测失败: {probeError}
+        </p>
+      )}
+
       {/* 统一的模型列表：发现 + 自定义混排 */}
-      <div className="flex flex-wrap gap-1.5">
+      {/* onPointerUp / onPointerLeave 终止拖拽 */}
+      <div
+        className="flex flex-wrap gap-1.5 select-none"
+        onPointerUp={handleDragEnd}
+        onPointerLeave={handleDragEnd}
+      >
         {/* 自动发现的模型 */}
         {discoveredModels.map((model) => {
           const enabled = !blockedModels.includes(model.id);
@@ -756,9 +834,10 @@ function ModelManagementSection({
             <button
               key={`d-${model.id}`}
               type="button"
-              onClick={() => onToggleBlocked(model.id)}
+              onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
+              onPointerEnter={() => handleDragEnter(model.id)}
               title={buildModelTooltip(model)}
-              className={`group inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+              className={`group inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
                 enabled
                   ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
                   : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"

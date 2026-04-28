@@ -52,6 +52,20 @@ export interface UpdateLlmProviderRequest {
   enabled?: boolean;
 }
 
+export interface ProbeModelsRequest {
+  protocol: string;
+  api_key?: string;
+  base_url?: string;
+  discovery_url?: string;
+  env_api_key?: string;
+  provider_id?: string;
+}
+
+export interface ProbeModelEntry {
+  id: string;
+  name: string;
+}
+
 // ─── API ───
 
 export const llmProvidersApi = {
@@ -69,4 +83,7 @@ export const llmProvidersApi = {
 
   reorder: (ids: string[]) =>
     api.post<{ reordered: boolean }>('/llm-providers/reorder', { ids }),
+
+  probeModels: (req: ProbeModelsRequest) =>
+    api.post<ProbeModelEntry[]>('/llm-providers/probe-models', req),
 };

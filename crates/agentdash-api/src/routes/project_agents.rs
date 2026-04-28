@@ -89,7 +89,7 @@ mod tests {
             executor: ProjectAgentExecutorResponse {
                 executor: "PI_AGENT".to_string(),
                 provider_id: Some("openai".to_string()),
-                model_id: Some("gpt-5.4".to_string()),
+                model_id: Some("test-model".to_string()),
                 agent_id: None,
                 thinking_level: None,
                 permission_policy: Some("AUTO".to_string()),

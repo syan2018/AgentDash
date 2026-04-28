@@ -104,6 +104,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(llm_providers::reorder_providers),
         )
         .route(
+            "/llm-providers/probe-models",
+            post(llm_providers::probe_models),
+        )
+        .route(
             "/llm-providers/{id}",
             get(llm_providers::get_provider)
                 .put(llm_providers::update_provider)

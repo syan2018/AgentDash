@@ -1,6 +1,6 @@
 mod connector;
 pub(crate) mod pi_agent_mcp;
-pub(crate) mod pi_agent_provider_registry;
+pub mod pi_agent_provider_registry;
 pub(crate) mod relay_mcp;
 pub(crate) mod rig_bridge;
 mod stream_mapper;

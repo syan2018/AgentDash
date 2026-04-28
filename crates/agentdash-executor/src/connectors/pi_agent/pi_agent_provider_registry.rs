@@ -240,11 +240,13 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
 
     let default_model = if db_provider.default_model.is_empty() {
         let fallback = default_model_for_protocol(db_provider.protocol);
-        tracing::warn!(
-            "PiAgentConnector: provider={} 未配置 default_model，使用协议默认值 {}",
-            db_provider.slug,
-            fallback,
-        );
+        if !fallback.is_empty() {
+            tracing::warn!(
+                "PiAgentConnector: provider={} 未配置 default_model，使用协议默认值 {}",
+                db_provider.slug,
+                fallback,
+            );
+        }
         fallback
     } else {
         db_provider.default_model.clone()
@@ -340,7 +342,9 @@ fn default_model_for_protocol(protocol: WireProtocol) -> String {
     match protocol {
         WireProtocol::Anthropic => "claude-sonnet-4-6-20250514".to_string(),
         WireProtocol::Gemini => "gemini-2.5-flash".to_string(),
-        WireProtocol::OpenaiCompatible => "gpt-5.4".to_string(),
+        // OpenAI 兼容协议涵盖多种第三方端点，无法假设具体模型名，
+        // 留空由 API 动态发现或用户手动指定
+        WireProtocol::OpenaiCompatible => String::new(),
     }
 }
 
@@ -646,7 +650,6 @@ fn infer_context_window(model_id: &str) -> u64 {
     if model_id.contains("gemini")
         || model_id.contains("opus")
         || model_id.contains("sonnet")
-        || model_id.contains("5.4")
     {
         return CONTEXT_WINDOW_1M;
     }
@@ -674,6 +677,51 @@ fn format_model_name(model_id: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// ─── Public probe API ───
+
+/// 探测结果：简化的模型条目，只包含 id 和 name
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeModelResult {
+    pub id: String,
+    pub name: String,
+}
+
+/// 用给定 credentials 实时探测远端可用模型列表。
+/// 返回 Ok(vec) 表示成功，Err(string) 表示失败原因。
+pub async fn probe_models_for_protocol(
+    protocol: WireProtocol,
+    api_key: &str,
+    base_url: Option<&str>,
+    discovery_url: Option<&str>,
+) -> Result<Vec<ProbeModelResult>, String> {
+    match protocol {
+        WireProtocol::OpenaiCompatible => {
+            let effective_url = discovery_url
+                .or(base_url)
+                .unwrap_or("https://api.openai.com/v1");
+            let models = list_openai_compatible_models(effective_url, api_key).await?;
+            Ok(models
+                .into_iter()
+                .map(|m| ProbeModelResult {
+                    name: m.name,
+                    id: m.id,
+                })
+                .collect())
+        }
+        WireProtocol::Gemini => {
+            let models = list_gemini_models(api_key).await?;
+            Ok(models
+                .into_iter()
+                .map(|m| ProbeModelResult {
+                    name: m.name,
+                    id: m.id,
+                })
+                .collect())
+        }
+        WireProtocol::Anthropic => Ok(vec![]),
+    }
 }
 
 #[cfg(test)]

@@ -10,10 +10,6 @@ import type {
 const STORAGE_KEY = "agentdash:executor-config-v2";
 const RECENT_KEY = "agentdash:recent-executors";
 const MAX_RECENT = 8;
-const DEFAULT_THINKING_LEVEL = "medium";
-
-// 默认执行器标识
-const DEFAULT_EXECUTOR = "PI_AGENT";
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
@@ -56,13 +52,8 @@ function persistConfig(config: PersistedExecutorConfig): void {
   }
 }
 
-function loadOrDefault(field: keyof PersistedExecutorConfig): string {
-  const persisted = loadPersistedConfig()?.[field];
-  if (persisted) return persisted;
-  // 如果没有本地存储配置，返回默认值
-  if (field === "executor") return DEFAULT_EXECUTOR;
-  if (field === "thinkingLevel") return DEFAULT_THINKING_LEVEL;
-  return "";
+function loadPersistedField(field: keyof PersistedExecutorConfig): string {
+  return loadPersistedConfig()?.[field] ?? "";
 }
 
 function loadRecentEntries(): RecentExecutorEntry[] {
@@ -116,7 +107,7 @@ export interface UseExecutorConfigOptions {
  * 切换 executor 时自动清除 modelId。
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
  *
- * 初始优先级：`initialSource`（非空字段）> localStorage > 硬编码默认值。
+ * 初始优先级：`initialSource`（非空字段）> localStorage > 空值（由 UI 提示选择）。
  * 后续可用 `hydrate(source)` 在 session 切换时重新注入外部默认。
  */
 export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecutorConfigResult {
@@ -124,23 +115,23 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
   // 也读 localStorage 并合并，避免在 render 期访问 ref。
   const [executor, setExecutorRaw] = useState(() => {
     const src = normalizeSource(options?.initialSource);
-    return src.executor ?? loadOrDefault("executor");
+    return src.executor ?? loadPersistedField("executor");
   });
   const [providerId, setProviderIdRaw] = useState(() => {
     const src = normalizeSource(options?.initialSource);
-    return src.providerId ?? loadOrDefault("providerId");
+    return src.providerId ?? loadPersistedField("providerId");
   });
   const [modelId, setModelIdRaw] = useState(() => {
     const src = normalizeSource(options?.initialSource);
-    return src.modelId ?? loadOrDefault("modelId");
+    return src.modelId ?? loadPersistedField("modelId");
   });
   const [thinkingLevel, setThinkingLevelRaw] = useState(() => {
     const src = normalizeSource(options?.initialSource);
-    return src.thinkingLevel ?? loadOrDefault("thinkingLevel");
+    return src.thinkingLevel ?? loadPersistedField("thinkingLevel");
   });
   const [permissionPolicy, setPolicyRaw] = useState(() => {
     const src = normalizeSource(options?.initialSource);
-    return src.permissionPolicy ?? loadOrDefault("permissionPolicy");
+    return src.permissionPolicy ?? loadPersistedField("permissionPolicy");
   });
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
 
@@ -186,13 +177,13 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
       setExecutorRaw(v);
       setProviderIdRaw("");
       setModelIdRaw("");
-      setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
+      setThinkingLevelRaw("");
       setPolicyRaw("");
       persistPatch({
         executor: v,
         providerId: "",
         modelId: "",
-        thinkingLevel: DEFAULT_THINKING_LEVEL,
+        thinkingLevel: "",
         permissionPolicy: "",
       });
     },
@@ -245,16 +236,16 @@ export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecut
   }, [executor, providerId, modelId]);
 
   const reset = useCallback(() => {
-    setExecutorRaw(DEFAULT_EXECUTOR);
+    setExecutorRaw("");
     setProviderIdRaw("");
     setModelIdRaw("");
-    setThinkingLevelRaw(DEFAULT_THINKING_LEVEL);
+    setThinkingLevelRaw("");
     setPolicyRaw("");
     persistedStateRef.current = {
-      executor: DEFAULT_EXECUTOR,
+      executor: "",
       providerId: "",
       modelId: "",
-      thinkingLevel: DEFAULT_THINKING_LEVEL,
+      thinkingLevel: "",
       permissionPolicy: "",
     };
     try {

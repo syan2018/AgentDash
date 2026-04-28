@@ -312,6 +312,7 @@ export function ExecutorSelector({
                 onChange={(e) => onThinkingLevelChange(e.target.value)}
                 className={SELECT_CLASS}
               >
+                <option value="">默认（不指定）</option>
                 {THINKING_LEVEL_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}

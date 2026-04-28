@@ -1,0 +1,57 @@
+{
+  "id": "tauri-desktop-unified-architecture",
+  "name": "tauri-desktop-unified-architecture",
+  "title": "Tauri 桌面端架构规划：Web Dashboard + Local 管理一体化",
+  "description": "为 AgentDashboard 规划 Tauri v2 桌面端架构，实现：\n1. 主 Web Dashboard 完整复用的 Tauri 版本（用户本地使用，不需要云端 server）\n2. agentdash-local 作为 library 内嵌进 Tauri 进程，前端通过 invoke() 直接调用\n3. local 管理设置页（MCP servers 配置、backend 状态、进程监控等）作为 Tauri 前端中的独立路由\n4. 通过 monorepo 共享前端包（app-web / app-tauri / ui-shared）实现零重复代码\n\n设计要点：\n- Tauri v2（Windows 10+ 自带 WebView2，打包 ~3-5MB）\n- agentdash-local 从纯 bin 重构为 lib + optional bin\n- 新增 agentdash-local-tauri 作为薄 Tauri 壳 crate\n- 前端拆分为 packages/app-web（Web 版入口）+ packages/app-tauri（Tauri 版入口 + 设置页）+ packages/ui-shared（共享组件/路由）\n- Tauri 版不走 WebSocket，local backend 作为进程内 library 直接调用",
+  "status": "planning",
+  "dev_type": "architecture",
+  "scope": "cross-layer",
+  "package": "agentdash-local",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-04-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "id": "1",
+      "title": "阶段 1: agentdash-local 重构（bin → lib + optional bin）",
+      "status": "pending",
+      "detail": "src/main.rs 收拢入口逻辑，暴露 lib.rs 作为核心 API；bin 目标加 `required-features = [\"standalone\"]`"
+    },
+    {
+      "id": "2",
+      "title": "阶段 2: 前端 monorepo 重构",
+      "status": "pending",
+      "detail": "frontend/ → packages/app-web/, 新建 packages/app-tauri/ 和 packages/ui-shared/；pnpm-workspace.yaml 更新"
+    },
+    {
+      "id": "3",
+      "title": "阶段 3: Tauri 壳 crate (agentdash-local-tauri)",
+      "status": "pending",
+      "detail": "依赖 agentdash-local lib，挂载 Tauri v2 shell；暴露 command 给前端调用 local backend"
+    },
+    {
+      "id": "4",
+      "title": "阶段 4: Tauri 前端实现（Dashboard 复用 + 设置页）",
+      "status": "pending",
+      "detail": "app-tauri 路由聚拢 Web dashboard 页面 + 本地设置页；设置页功能：MCP 配置、backend 状态、进程监控、日志查看"
+    },
+    {
+      "id": "5",
+      "title": "阶段 5: 打包与分发验证",
+      "status": "pending",
+      "detail": "Tauri bundle 生成 Windows exe；验证双路由（dashboard + settings）；验证 invoke 调用 local backend"
+    }
+  ],
+  "children": ["04-13-local-dashboard-ui"],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "2026-04-28 claude-agent 创建。\n\n此任务是对 04-13-local-dashboard-ui 的扩展和升级：原 task 仅关注 local backend 的轻量 Web 管理页，本 task 将视野扩大到完整的 Tauri 桌面端架构，包括 Web dashboard 复用 + local 内嵌管理一体化。04-13-local-dashboard-ui 将成为本 task 的子任务（child），其原始需求映射到 subtask #4（Tauri 前端设置页）。\n\n架构决策依据：\n- 选 Tauri v2 而非 Electron：项目已有 React + Tailwind 生产力，不需要牺牲包体积换 Chromium\n- 选 Tauri 而非 egui/Slint：设置页需要复杂 UI（自定义输入、列表、弹窗），React 效率远超纯 Rust 声明式 UI\n- 选 monorepo 共享包而非 fork 前端：Dashboard 页面不应重复实现，路由组合优于复制粘贴",
+  "meta": {}
+}

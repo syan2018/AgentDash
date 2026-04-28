@@ -11,16 +11,14 @@
   "creator": "claude-agent",
   "assignee": "claude-agent",
   "createdAt": "2026-04-27",
-  "completedAt": "2026-04-27",
+  "completedAt": "2026-04-28",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
   "commit": "8d37a01",
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "04-27-story-task-cleanup-tail"
-  ],
+  "children": [],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

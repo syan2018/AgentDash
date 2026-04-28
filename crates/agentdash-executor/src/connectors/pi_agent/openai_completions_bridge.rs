@@ -174,7 +174,7 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
 
     if let Some(ref sp) = request.system_prompt {
         if !sp.is_empty() {
-            messages.push(serde_json::json!({ "role": "developer", "content": sp }));
+            messages.push(serde_json::json!({ "role": "system", "content": sp }));
         }
     }
 

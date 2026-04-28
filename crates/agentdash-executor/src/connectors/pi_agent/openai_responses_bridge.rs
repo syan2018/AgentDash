@@ -166,7 +166,7 @@ fn convert_input(request: &BridgeRequest) -> Vec<serde_json::Value> {
 
     if let Some(ref sp) = request.system_prompt {
         if !sp.is_empty() {
-            input.push(serde_json::json!({ "role": "developer", "content": sp }));
+            input.push(serde_json::json!({ "role": "system", "content": sp }));
         }
     }
 

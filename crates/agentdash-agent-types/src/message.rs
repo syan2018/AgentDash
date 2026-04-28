@@ -129,7 +129,7 @@ impl AgentMessage {
     pub fn error_assistant(error_message: impl Into<String>, aborted: bool) -> Self {
         let msg = error_message.into();
         Self::Assistant {
-            content: vec![ContentPart::text("")],
+            content: vec![ContentPart::text(&msg)],
             tool_calls: vec![],
             stop_reason: Some(if aborted {
                 StopReason::Aborted

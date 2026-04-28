@@ -160,6 +160,8 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
 }
 
 fn convert_input(request: &BridgeRequest) -> Vec<serde_json::Value> {
+    use agentdash_agent::types::StopReason;
+
     let mut input = Vec::new();
 
     if let Some(ref sp) = request.system_prompt {
@@ -183,6 +185,12 @@ fn convert_input(request: &BridgeRequest) -> Vec<serde_json::Value> {
                 if !parts.is_empty() {
                     input.push(serde_json::json!({ "role": "user", "content": parts }));
                 }
+            }
+            AgentMessage::Assistant {
+                stop_reason: Some(StopReason::Error | StopReason::Aborted),
+                ..
+            } => {
+                continue;
             }
             AgentMessage::Assistant {
                 content,

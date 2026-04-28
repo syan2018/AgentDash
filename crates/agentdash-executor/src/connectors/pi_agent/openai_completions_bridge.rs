@@ -168,6 +168,8 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
 }
 
 fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
+    use agentdash_agent::types::StopReason;
+
     let mut messages = Vec::new();
 
     if let Some(ref sp) = request.system_prompt {
@@ -187,6 +189,15 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                 if !text.is_empty() {
                     messages.push(serde_json::json!({ "role": "user", "content": text }));
                 }
+            }
+            AgentMessage::Assistant {
+                stop_reason: Some(StopReason::Error | StopReason::Aborted),
+                ..
+            } => {
+                // 对齐 pi-mono transform-messages.ts:
+                // 跳过 error/aborted 的 assistant 消息，这些不完整的 turn 不应被重放，
+                // 否则会导致后续 LLM 请求因格式无效而失败。
+                continue;
             }
             AgentMessage::Assistant {
                 content,

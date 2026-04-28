@@ -3,8 +3,7 @@ use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
-    ContextComposer, build_owner_prompt_blocks, resolve_declared_sources, trim_or_dash,
-    workspace_context_fragment,
+    ContextComposer, resolve_declared_sources, trim_or_dash, workspace_context_fragment,
 };
 use crate::runtime::{RuntimeMcpServer, Vfs};
 use crate::session::plan::{
@@ -134,17 +133,3 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
     composer.compose()
 }
 
-/// 构建 Story Owner 的 prompt_blocks
-///
-/// 将 context markdown 打包为 resource block + user blocks。
-pub fn build_story_owner_prompt_blocks(
-    story_id: uuid::Uuid,
-    context_markdown: String,
-    user_prompt_blocks: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    build_owner_prompt_blocks(
-        &format!("agentdash://story-context/{}", story_id),
-        &context_markdown,
-        user_prompt_blocks,
-    )
-}

@@ -169,7 +169,11 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let prompt_text = prompt.to_fallback_text();
+        let user_text = prompt.to_fallback_text();
+        let prompt_text = match &context.system_context {
+            Some(ctx) if !ctx.trim().is_empty() => format!("{ctx}\n\n{user_text}"),
+            _ => user_text,
+        };
         let prompt_text = prompt_text.trim().to_string();
         if prompt_text.is_empty() {
             return Err(ConnectorError::InvalidConfig(

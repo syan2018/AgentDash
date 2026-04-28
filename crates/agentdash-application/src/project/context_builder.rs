@@ -1,9 +1,7 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
 use agentdash_spi::MergeStrategy;
 
-use crate::context::{
-    ContextComposer, build_owner_prompt_blocks, trim_or_dash, workspace_context_fragment,
-};
+use crate::context::{ContextComposer, trim_or_dash, workspace_context_fragment};
 use crate::runtime::{RuntimeMcpServer, Vfs};
 use crate::session::plan::{SessionPlanInput, SessionPlanPhase, build_session_plan_fragments};
 
@@ -80,14 +78,3 @@ pub fn build_project_context_markdown(
     composer.compose()
 }
 
-pub fn build_project_owner_prompt_blocks(
-    project_id: uuid::Uuid,
-    context_markdown: String,
-    user_prompt_blocks: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    build_owner_prompt_blocks(
-        &format!("agentdash://project-context/{}", project_id),
-        &context_markdown,
-        user_prompt_blocks,
-    )
-}

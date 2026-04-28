@@ -646,29 +646,6 @@ fn build_owner_context_markdown_sync(
     }
 }
 
-/// 把 Story/Project 各自的 owner-bootstrap prompt 包裹(外层系统语境 + 用户 blocks)。
-fn wrap_owner_bootstrap_blocks(
-    owner: &OwnerScope<'_>,
-    system_markdown: &str,
-    user_blocks: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    match owner {
-        OwnerScope::Story { story, .. } => {
-            crate::story::context_builder::build_story_owner_prompt_blocks(
-                story.id,
-                system_markdown.to_string(),
-                user_blocks,
-            )
-        }
-        OwnerScope::Project { project, .. } => {
-            crate::project::context_builder::build_project_owner_prompt_blocks(
-                project.id,
-                system_markdown.to_string(),
-                user_blocks,
-            )
-        }
-    }
-}
 
 impl<'a> SessionRequestAssembler<'a> {
     pub fn new(
@@ -804,14 +781,14 @@ impl<'a> SessionRequestAssembler<'a> {
         );
 
         // ── 6. Prompt lifecycle 三态 → system_context + prompt_blocks + bootstrap_action ──
+        //
+        // context_markdown 统一通过 system_context 传递给 connector（Pi Agent 放入
+        // system prompt；Vibe Kanban 在 prompt 前拼接）。prompt_blocks 只保留用户
+        // 原始输入，避免 context 混入后污染标题生成 / 会话历史等下游消费者。
         let (system_context, prompt_blocks, bootstrap_action) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
                 Some(context_markdown.clone()),
-                wrap_owner_bootstrap_blocks(
-                    &spec.owner,
-                    &context_markdown,
-                    spec.user_prompt_blocks,
-                ),
+                spec.user_prompt_blocks,
                 SessionBootstrapAction::OwnerContext,
             ),
             OwnerPromptLifecycle::RepositoryRehydrate {

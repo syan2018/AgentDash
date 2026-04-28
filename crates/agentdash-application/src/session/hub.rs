@@ -1,15 +1,17 @@
 use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
 
 use agent_client_protocol::{McpServer, SessionNotification, SessionUpdate};
-use agentdash_acp_meta::AgentDashSourceV1;
-use agentdash_agent_types::AgentMessage;
+use agentdash_acp_meta::{
+    AgentDashMetaV1, AgentDashSourceV1, merge_agentdash_meta, parse_agentdash_meta,
+};
+use agentdash_agent_types::{AgentMessage, MessageRef};
 use tokio::sync::{Mutex, broadcast};
 
 use super::augmenter::SharedPromptRequestAugmenter;
 use super::companion_wait::CompanionWaitRegistry;
 use super::continuation::{
     build_companion_human_response_notification, build_continuation_system_context_from_events,
-    build_restored_session_messages_from_events,
+    build_projected_transcript_from_events, build_restored_session_messages_from_events,
 };
 use super::event_bridge::HookTriggerInput;
 use super::hook_messages as msg;
@@ -627,6 +629,9 @@ impl SessionHub {
         session_id: &str,
         notification: SessionNotification,
     ) -> io::Result<super::persistence::PersistedSessionEvent> {
+        let notification = self
+            .maybe_enrich_compaction_notification(session_id, notification)
+            .await?;
         let persisted = self
             .persistence
             .append_event(session_id, &notification)
@@ -642,6 +647,84 @@ impl SessionHub {
         };
         let _ = tx.send(persisted.clone());
         Ok(persisted)
+    }
+
+    async fn maybe_enrich_compaction_notification(
+        &self,
+        session_id: &str,
+        mut notification: SessionNotification,
+    ) -> io::Result<SessionNotification> {
+        let SessionUpdate::SessionInfoUpdate(info) = &mut notification.update else {
+            return Ok(notification);
+        };
+        let Some(meta) = info.meta.as_ref() else {
+            return Ok(notification);
+        };
+        let Some(parsed) = parse_agentdash_meta(meta) else {
+            return Ok(notification);
+        };
+        let Some(mut event) = parsed.event.clone() else {
+            return Ok(notification);
+        };
+        if event.r#type != "context_compacted" {
+            return Ok(notification);
+        }
+
+        let Some(data) = event
+            .data
+            .as_mut()
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            return Ok(notification);
+        };
+        let has_boundary_ref = data
+            .get("compacted_until_ref")
+            .and_then(|value| serde_json::from_value::<MessageRef>(value.clone()).ok())
+            .is_some();
+        if has_boundary_ref {
+            return Ok(notification);
+        }
+
+        let messages_compacted = data
+            .get("messages_compacted")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or_default();
+        let Some(compacted_until_ref) = self
+            .derive_compaction_boundary_ref(session_id, messages_compacted)
+            .await?
+        else {
+            return Ok(notification);
+        };
+
+        data.insert(
+            "compacted_until_ref".to_string(),
+            serde_json::to_value(compacted_until_ref).unwrap_or(serde_json::Value::Null),
+        );
+        info.meta = merge_agentdash_meta(
+            info.meta.clone(),
+            &AgentDashMetaV1::new()
+                .source(parsed.source)
+                .trace(parsed.trace)
+                .event(Some(event)),
+        );
+        Ok(notification)
+    }
+
+    async fn derive_compaction_boundary_ref(
+        &self,
+        session_id: &str,
+        messages_compacted: u32,
+    ) -> io::Result<Option<MessageRef>> {
+        if messages_compacted == 0 {
+            return Ok(None);
+        }
+
+        let events = self.persistence.list_all_events(session_id).await?;
+        Ok(derive_compaction_boundary_ref_from_events(
+            &events,
+            messages_compacted,
+        ))
     }
 
     /// 查找所有超过指定超时时间无活动的 running session，返回其 session_id 列表。
@@ -766,6 +849,44 @@ impl SessionHub {
 
         Ok(())
     }
+}
+
+fn derive_compaction_boundary_ref_from_events(
+    events: &[super::persistence::PersistedSessionEvent],
+    messages_compacted: u32,
+) -> Option<MessageRef> {
+    if messages_compacted == 0 {
+        return None;
+    }
+
+    let transcript = build_projected_transcript_from_events(events);
+    let first_entry = transcript.entries.first()?;
+    let (start_index, previously_compacted, previous_boundary_ref) = match &first_entry.message {
+        AgentMessage::CompactionSummary {
+            messages_compacted,
+            compacted_until_ref,
+            ..
+        } => (
+            1_usize,
+            usize::try_from(*messages_compacted).ok()?,
+            compacted_until_ref.clone(),
+        ),
+        _ => (0, 0, None),
+    };
+
+    let total_compacted = usize::try_from(messages_compacted).ok()?;
+    if total_compacted < previously_compacted {
+        return None;
+    }
+    if total_compacted == previously_compacted {
+        return previous_boundary_ref;
+    }
+
+    let cut = start_index.checked_add(total_compacted - previously_compacted)?;
+    transcript
+        .entries
+        .get(cut.checked_sub(1)?)
+        .map(|entry| entry.message_ref.clone())
 }
 
 #[cfg(test)]
@@ -1600,15 +1721,112 @@ mod tests {
                 summary,
                 tokens_before,
                 messages_compacted,
+                compacted_until_ref,
                 ..
             } => {
                 assert!(summary.contains("历史摘要"));
                 assert_eq!(*tokens_before, 42_000);
                 assert_eq!(*messages_compacted, 2);
+                assert_eq!(
+                    compacted_until_ref
+                        .as_ref()
+                        .map(|message_ref| (message_ref.turn_id.as_str(), message_ref.entry_index)),
+                    Some(("t-2", 0))
+                );
             }
             other => panic!("unexpected first message: {other:?}"),
         }
         assert_eq!(restored[1].first_text(), Some("最近用户消息"));
+    }
+
+    #[tokio::test]
+    async fn build_restored_session_messages_enriches_follow_up_compaction_checkpoint() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            Some(local_workspace_vfs(&base.path().to_path_buf())),
+            Arc::new(SessionStartAwareConnector::default()),
+            None,
+            persistence,
+        );
+        let session = hub.create_session("test").await.expect("create session");
+        let source = AgentDashSourceV1::new("test", "unit");
+
+        for (turn_id, entry_index, text) in [
+            ("t-1", 0_u32, "历史用户消息 1"),
+            ("t-2", 0_u32, "历史用户消息 2"),
+            ("t-3", 0_u32, "阶段性保留消息"),
+            ("t-4", 0_u32, "最新保留消息"),
+        ] {
+            hub.inject_notification(
+                &session.id,
+                SessionNotification::new(
+                    SessionId::new(session.id.clone()),
+                    SessionUpdate::UserMessageChunk(
+                        ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                            .meta(Some(test_meta(&source, turn_id, entry_index))),
+                    ),
+                ),
+            )
+            .await
+            .expect("inject user notification");
+        }
+
+        for (turn_id, summary, messages_compacted) in [
+            ("t-3", "## 第一版历史摘要\n- 已压缩前两条", 2_u32),
+            ("t-4", "## 第二版历史摘要\n- 又压缩了一条", 3_u32),
+        ] {
+            let compaction_meta = test_event_meta(
+                &source,
+                turn_id,
+                0,
+                "context_compacted",
+                serde_json::json!({
+                    "summary": summary,
+                    "tokens_before": 42000,
+                    "messages_compacted": messages_compacted,
+                    "newly_compacted_messages": 1,
+                    "timestamp_ms": 1710000000000_u64,
+                }),
+            );
+            hub.inject_notification(
+                &session.id,
+                SessionNotification::new(
+                    SessionId::new(session.id.clone()),
+                    SessionUpdate::SessionInfoUpdate(
+                        SessionInfoUpdate::new().meta(compaction_meta),
+                    ),
+                ),
+            )
+            .await
+            .expect("inject compaction checkpoint");
+        }
+
+        let restored = hub
+            .build_restored_session_messages(&session.id)
+            .await
+            .expect("messages should build");
+
+        assert_eq!(restored.len(), 2);
+        match &restored[0] {
+            agentdash_spi::AgentMessage::CompactionSummary {
+                summary,
+                messages_compacted,
+                compacted_until_ref,
+                ..
+            } => {
+                assert!(summary.contains("第二版历史摘要"));
+                assert_eq!(*messages_compacted, 3);
+                assert_eq!(
+                    compacted_until_ref
+                        .as_ref()
+                        .map(|message_ref| (message_ref.turn_id.as_str(), message_ref.entry_index)),
+                    Some(("t-3", 0))
+                );
+            }
+            other => panic!("unexpected first message: {other:?}"),
+        }
+        assert_eq!(restored[1].first_text(), Some("最新保留消息"));
     }
 
     #[tokio::test]

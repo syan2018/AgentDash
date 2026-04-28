@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
     session_id TEXT,
+    executor_session_id TEXT,
+    execution_mode TEXT NOT NULL DEFAULT 'standard',
     agent_binding TEXT NOT NULL DEFAULT '{}',
     artifacts TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,

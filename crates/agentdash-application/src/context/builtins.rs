@@ -79,24 +79,6 @@ pub fn build_owner_context_resource_block(uri: &str, markdown: &str) -> Value {
     })
 }
 
-/// 将 context markdown 包装为 resource block，拼接用户 blocks。
-///
-/// Project / Story owner 路径共享此"resource prefix + user blocks"模式。
-pub fn build_owner_prompt_blocks(
-    context_uri: &str,
-    context_markdown: &str,
-    user_prompt_blocks: Vec<Value>,
-) -> Vec<Value> {
-    let mut blocks = Vec::new();
-    if !context_markdown.trim().is_empty() {
-        blocks.push(build_owner_context_resource_block(
-            context_uri,
-            context_markdown,
-        ));
-    }
-    blocks.extend(user_prompt_blocks);
-    blocks
-}
 
 // ─── 指令模板 ────────────────────────────────────────────────
 

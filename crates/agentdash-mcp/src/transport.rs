@@ -37,13 +37,13 @@ use uuid::Uuid;
 use crate::servers::{RelayMcpServer, StoryMcpServer, TaskMcpServer, WorkflowMcpServer};
 use crate::services::McpServices;
 
+type McpHttpService<S> = StreamableHttpService<S, LocalSessionManager>;
+
 /// 创建 Relay 层的 Streamable HTTP 服务
-pub fn create_relay_http_service(
-    services: Arc<McpServices>,
-) -> StreamableHttpService<RelayMcpServer> {
+pub fn create_relay_http_service(services: Arc<McpServices>) -> McpHttpService<RelayMcpServer> {
     StreamableHttpService::new(
         move || Ok(RelayMcpServer::new(services.clone())),
-        LocalSessionManager::default().into(),
+        Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     )
 }
@@ -52,10 +52,10 @@ fn create_story_http_service(
     services: Arc<McpServices>,
     project_id: Uuid,
     story_id: Uuid,
-) -> StreamableHttpService<StoryMcpServer> {
+) -> McpHttpService<StoryMcpServer> {
     StreamableHttpService::new(
         move || Ok(StoryMcpServer::new(services.clone(), project_id, story_id)),
-        LocalSessionManager::default().into(),
+        Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     )
 }
@@ -65,7 +65,7 @@ fn create_task_http_service(
     project_id: Uuid,
     story_id: Uuid,
     task_id: Uuid,
-) -> StreamableHttpService<TaskMcpServer> {
+) -> McpHttpService<TaskMcpServer> {
     StreamableHttpService::new(
         move || {
             Ok(TaskMcpServer::new(
@@ -75,7 +75,7 @@ fn create_task_http_service(
                 task_id,
             ))
         },
-        LocalSessionManager::default().into(),
+        Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     )
 }
@@ -112,9 +112,9 @@ pub async fn serve_task_via_stdio(
 #[derive(Clone)]
 struct McpHttpRouterState {
     services: Arc<McpServices>,
-    story_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<StoryMcpServer>>>>,
-    task_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<TaskMcpServer>>>>,
-    workflow_services: Arc<Mutex<HashMap<Uuid, StreamableHttpService<WorkflowMcpServer>>>>,
+    story_services: Arc<Mutex<HashMap<Uuid, McpHttpService<StoryMcpServer>>>>,
+    task_services: Arc<Mutex<HashMap<Uuid, McpHttpService<TaskMcpServer>>>>,
+    workflow_services: Arc<Mutex<HashMap<Uuid, McpHttpService<WorkflowMcpServer>>>>,
 }
 
 impl McpHttpRouterState {
@@ -130,7 +130,7 @@ impl McpHttpRouterState {
     async fn story_service(
         &self,
         story_id: Uuid,
-    ) -> Result<StreamableHttpService<StoryMcpServer>, (StatusCode, String)> {
+    ) -> Result<McpHttpService<StoryMcpServer>, (StatusCode, String)> {
         if let Some(service) = self
             .story_services
             .lock()
@@ -170,7 +170,7 @@ impl McpHttpRouterState {
     async fn task_service(
         &self,
         task_id: Uuid,
-    ) -> Result<StreamableHttpService<TaskMcpServer>, (StatusCode, String)> {
+    ) -> Result<McpHttpService<TaskMcpServer>, (StatusCode, String)> {
         if let Some(service) = self
             .task_services
             .lock()
@@ -219,7 +219,7 @@ impl McpHttpRouterState {
     fn workflow_service(
         &self,
         project_id: Uuid,
-    ) -> Result<StreamableHttpService<WorkflowMcpServer>, (StatusCode, String)> {
+    ) -> Result<McpHttpService<WorkflowMcpServer>, (StatusCode, String)> {
         if let Some(service) = self
             .workflow_services
             .lock()
@@ -235,7 +235,7 @@ impl McpHttpRouterState {
                 let services = self.services.clone();
                 move || Ok(WorkflowMcpServer::new(services.clone(), project_id))
             },
-            LocalSessionManager::default().into(),
+            Arc::new(LocalSessionManager::default()),
             StreamableHttpServerConfig::default(),
         );
 

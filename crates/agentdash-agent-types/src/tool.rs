@@ -10,7 +10,7 @@ use crate::content::ContentPart;
 // ─── ToolDefinition ─────────────────────────────────────────
 
 /// 工具定义 — 仅 schema 级描述，不持有可执行实例。
-/// 替代 `rig::completion::ToolDefinition`，消除对 LLM SDK 的依赖。
+/// 工具定义 — 纯 schema 级描述，不持有可执行实例。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,

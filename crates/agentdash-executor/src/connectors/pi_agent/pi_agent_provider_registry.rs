@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::rig_bridge::RigBridge;
+use super::anthropic_bridge::AnthropicBridge;
+use super::openai_completions_bridge::OpenAiCompletionsBridge;
+use super::openai_responses_bridge::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
 use futures::future::BoxFuture;
-use rig::client::CompletionClient as _;
 use tokio::sync::RwLock;
 
 type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
@@ -238,19 +239,7 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
         Some(db_provider.base_url.clone())
     };
 
-    let default_model = if db_provider.default_model.is_empty() {
-        let fallback = default_model_for_protocol(db_provider.protocol);
-        if !fallback.is_empty() {
-            tracing::warn!(
-                "PiAgentConnector: provider={} 未配置 default_model，使用协议默认值 {}",
-                db_provider.slug,
-                fallback,
-            );
-        }
-        fallback
-    } else {
-        db_provider.default_model.clone()
-    };
+    let default_model = db_provider.default_model.clone();
 
     let openai_wire_api = if matches!(db_provider.protocol, WireProtocol::OpenaiCompatible) {
         let wire_api_setting = if db_provider.wire_api.is_empty() {
@@ -338,16 +327,6 @@ fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProvid
     })
 }
 
-fn default_model_for_protocol(protocol: WireProtocol) -> String {
-    match protocol {
-        WireProtocol::Anthropic => "claude-sonnet-4-6-20250514".to_string(),
-        WireProtocol::Gemini => "gemini-2.5-flash".to_string(),
-        // OpenAI 兼容协议涵盖多种第三方端点，无法假设具体模型名，
-        // 留空由 API 动态发现或用户手动指定
-        WireProtocol::OpenaiCompatible => String::new(),
-    }
-}
-
 fn build_bridge_factory_by_protocol(
     protocol: WireProtocol,
     api_key: String,
@@ -356,36 +335,41 @@ fn build_bridge_factory_by_protocol(
 ) -> BridgeFactory {
     match protocol {
         WireProtocol::Anthropic => {
-            let mut builder = rig::providers::anthropic::Client::builder().api_key(&api_key);
-            if let Some(ref url) = base_url {
-                builder = builder.base_url(url);
-            }
-            let client = builder.build().expect("构建 Anthropic rig client 失败");
+            let base = base_url;
             Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
+                Arc::new(AnthropicBridge::new(
+                    &api_key,
+                    model_id,
+                    base.as_deref(),
+                )) as Arc<dyn LlmBridge>
             })
         }
         WireProtocol::Gemini => {
-            let client =
-                rig::providers::gemini::Client::new(&api_key).expect("构建 Gemini rig client 失败");
+            // Gemini 走 OpenAI 兼容端点（Completions API）
+            let base = base_url.unwrap_or_else(|| {
+                "https://generativelanguage.googleapis.com/v1beta/openai".to_string()
+            });
             Arc::new(move |model_id: &str| {
-                Arc::new(RigBridge::new(client.completion_model(model_id))) as Arc<dyn LlmBridge>
+                Arc::new(OpenAiCompletionsBridge::new(
+                    &api_key,
+                    model_id,
+                    Some(&base),
+                )) as Arc<dyn LlmBridge>
             })
         }
         WireProtocol::OpenaiCompatible => {
-            let mut builder = rig::providers::openai::Client::builder().api_key(&api_key); // empty string is fine for keyless endpoints (e.g. Ollama)
-            if let Some(ref url) = base_url {
-                builder = builder.base_url(url);
-            }
-            let client = builder.build().expect("构建 OpenAI rig client 失败");
             let wire_api = openai_wire_api.unwrap_or(OpenAiWireApi::Responses);
+            let base = base_url;
             Arc::new(move |model_id: &str| match wire_api {
-                OpenAiWireApi::Responses => {
-                    Arc::new(RigBridge::new(client.completion_model(model_id)))
-                        as Arc<dyn LlmBridge>
-                }
-                OpenAiWireApi::Completions => Arc::new(RigBridge::new(
-                    client.completion_model(model_id).completions_api(),
+                OpenAiWireApi::Responses => Arc::new(OpenAiResponsesBridge::new(
+                    &api_key,
+                    model_id,
+                    base.as_deref(),
+                )) as Arc<dyn LlmBridge>,
+                OpenAiWireApi::Completions => Arc::new(OpenAiCompletionsBridge::new(
+                    &api_key,
+                    model_id,
+                    base.as_deref(),
                 )) as Arc<dyn LlmBridge>,
             })
         }

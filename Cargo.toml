@@ -74,9 +74,6 @@ agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local" }
 agentdash-plugin-api = { path = "crates/agentdash-plugin-api" }
 
-# Rig (LLM Agent SDK)
-rig-core = "0.34.0"
-
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 

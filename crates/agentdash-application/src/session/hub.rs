@@ -554,7 +554,7 @@ impl SessionHub {
     }
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        let (running, current_turn_id, tx) = {
+        let (running, current_turn_id, tx, processor_tx) = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = broadcast::channel(1024);
@@ -567,11 +567,40 @@ impl SessionHub {
                 runtime.running,
                 runtime.current_turn_id.clone(),
                 runtime.tx.clone(),
+                runtime.processor_tx.clone(),
             )
         };
 
         if running {
-            self.connector.cancel(session_id).await?;
+            match self.connector.cancel(session_id).await {
+                Ok(()) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %err,
+                        "connector.cancel 失败，继续通过 turn processor 兜底终止"
+                    );
+                }
+            }
+            if let Some(ptx) = processor_tx {
+                if ptx
+                    .send(super::turn_processor::TurnEvent::Terminal {
+                        kind: TurnTerminalKind::Interrupted,
+                        message: Some("执行已取消".to_string()),
+                    })
+                    .is_err()
+                {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "向 turn processor 发送 Terminal 失败（通道可能已关闭）"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    session_id = %session_id,
+                    "running=true 但 processor_tx 缺失，无法向 turn processor 发送终止信号"
+                );
+            }
             return Ok(());
         }
 

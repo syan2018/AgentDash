@@ -73,7 +73,10 @@ export function CanvasBindingsEditor({
   const [draftBindings, setDraftBindings] = useState<CanvasDataBinding[]>(value);
   const [isDirty, setIsDirty] = useState(false);
 
+  // 父级传入 value 变化时（切换到另一个编辑目标）重置本地草稿。
+  // 这是合法的 derived-state reset 模式；用 key 重建组件会丢掉 focus/scroll。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraftBindings(value);
     setIsDirty(false);
   }, [value]);

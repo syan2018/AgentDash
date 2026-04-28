@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import ts from "typescript";
 import type { CanvasRuntimeFile, CanvasRuntimeSnapshot } from "../../types";
 
@@ -38,15 +38,18 @@ const BLOB_REVOKE_DELAY_MS = 8_000;
 
 export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const frameIdRef = useRef(`canvas-preview-${Math.random().toString(36).slice(2)}`);
+  // 使用 React useId 生成渲染期稳定的 frame id，避免 Math.random 在 render 中被纯度规则拒绝。
+  const frameId = `canvas-preview-${useId()}`;
   const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
   const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
 
+  // snapshot 变化时重建预览文档。构建失败/成功都要把结果写回 UI 状态，属于合法的 derived state。
   useEffect(() => {
     if (!snapshot) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveSrcDoc(null);
       setBuildError(null);
       setRuntimeStatus("idle");
@@ -56,7 +59,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
 
     let built: BuiltPreviewDocument | null = null;
     try {
-      built = buildPreviewDocument(snapshot, frameIdRef.current);
+      built = buildPreviewDocument(snapshot, frameId);
       setActiveSrcDoc(built.srcDoc);
       setBuildError(null);
       setRuntimeStatus("building");
@@ -69,17 +72,19 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     }
 
     const capturedBuilt = built;
+    // 在 effect 执行时捕获 iframe 引用；组件挂载期间该 ref 指向同一节点，
+    // cleanup 使用捕获值可避免触发 react-hooks/exhaustive-deps 对 ref 的警告。
+    const capturedIframe = iframeRef.current;
     return () => {
       if (!capturedBuilt) return;
 
-      const iframe = iframeRef.current;
-      if (iframe) {
-        iframe.srcdoc = "";
+      if (capturedIframe) {
+        capturedIframe.srcdoc = "";
       }
 
       setTimeout(() => capturedBuilt.dispose(), BLOB_REVOKE_DELAY_MS);
     };
-  }, [snapshot]);
+  }, [snapshot, frameId]);
 
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
@@ -87,7 +92,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       return;
     }
     const payload = event.data;
-    if (!isPreviewEnvelope(payload) || payload.frame_id !== frameIdRef.current) {
+    if (!isPreviewEnvelope(payload) || payload.frame_id !== frameId) {
       return;
     }
 
@@ -98,7 +103,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, []);
+  }, [frameId]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);

@@ -296,12 +296,16 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
 
   const prevDisplayItemsRef = useRef<AcpDisplayItem[]>([]);
 
+  // 该 useMemo 在渲染期间读写 prevDisplayItemsRef 以复用上一次的 group/entry 引用，
+  // 使下游 React.memo 能命中——这是主动做的引用稳定化，而不是遗漏的副作用。
+  // useMemo 本身在每次 entries/enableAggregation 变化时重新计算，
+  // 不会出现"render 被 ref 写穿"导致跳过更新的 case。
+  /* eslint-disable react-hooks/refs */
   const displayItems = useMemo(() => {
     const next: AcpDisplayItem[] = enableAggregation
       ? aggregateEntries(entries)
       : (entries as AcpDisplayItem[]);
 
-    // 复用上一次的 group / entry 引用，使 React.memo 能命中
     const prev = prevDisplayItemsRef.current;
     if (prev.length === next.length) {
       let allEqual = true;
@@ -325,6 +329,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     prevDisplayItemsRef.current = next;
     return next;
   }, [entries, enableAggregation]);
+  /* eslint-enable react-hooks/refs */
 
   const streamingEntryId = useMemo(() => {
     if (!isReceiving || entries.length === 0) return null;
@@ -333,6 +338,9 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     return null;
   }, [isReceiving, entries]);
 
+  // displayItems 经过上面的引用稳定化 useMemo 产出，lint 规则把它视为 ref 来源；
+  // 这里的 return 只是把值透传给调用方，关闭规则。
+  /* eslint-disable react-hooks/refs */
   return {
     displayItems,
     rawEntries: entries,

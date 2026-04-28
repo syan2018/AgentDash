@@ -682,7 +682,9 @@ function ExecutionHistoryContent({ routineId }: { routineId: string }) {
   const executions = executionsByRoutineId[routineId] ?? [];
   const [loading, setLoading] = useState(false);
 
+  // 切换 routine 时重新加载执行列表；setLoading 是 fetch 的配套副作用。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     void fetchExecutions(routineId, 20, 0).finally(() => setLoading(false));
   }, [routineId, fetchExecutions]);

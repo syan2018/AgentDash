@@ -43,7 +43,9 @@ interface LifecycleNodeCardProps {
 function LifecycleNodeCard({ stepState, stepDef, isActive }: LifecycleNodeCardProps) {
   const [expanded, setExpanded] = useState(isActive);
 
+  // isActive 变为 true 时自动展开；用户之后仍可手动收起。合法的 prop→state 同步。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isActive) setExpanded(true);
   }, [isActive]);
 

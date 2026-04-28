@@ -104,6 +104,7 @@ function resolveExecutorFromHint(
   return matched?.id ?? trimmed;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function collectNewSystemEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number,

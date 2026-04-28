@@ -45,6 +45,7 @@ export interface PresetFormState {
   allowed_companions: string[];
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = preset?.config ?? {};
   const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
@@ -70,6 +71,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
   };
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function formToPreset(form: PresetFormState): AgentPreset {
   const config: Record<string, unknown> = {};
   if (form.display_name.trim()) config.display_name = form.display_name.trim();
@@ -683,6 +685,8 @@ function McpPresetPicker({
 
   useEffect(() => {
     void loadPresets();
+    // loadPresets 本身只依赖 projectId，把它纳入 deps 会因每次渲染重建函数引用导致无限 fetch。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const toggleKey = (key: string) => {
@@ -879,6 +883,7 @@ function McpPresetPicker({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAgentTypeOptions() {
   const { executors, isLoading } = useExecutorDiscovery();
   const options = useMemo(() => {
@@ -1151,8 +1156,10 @@ export function SinglePresetDialog({
   const [validationError, setValidationError] = useState<string | null>(null);
   const isEditing = Boolean(initialPreset);
 
-  // 当 initialPreset 变化时（打开不同的编辑目标），重新填充表单
+  // 当 initialPreset 变化时（打开不同的编辑目标），重新填充表单。
+  // 合法的 derived-state reset 模式；用 key 重建对话框会丢掉未保存输入及关闭动画。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(presetToForm(initialPreset));
     setValidationError(null);
   }, [initialPreset]);

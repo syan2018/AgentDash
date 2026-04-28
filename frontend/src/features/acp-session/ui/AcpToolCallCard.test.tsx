@@ -75,7 +75,7 @@ describe("AcpToolCallCard", () => {
               },
             },
           },
-        } as any}
+        } as unknown as Parameters<typeof AcpToolCallCard>[0]["update"]}
       />,
     );
 

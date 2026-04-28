@@ -29,6 +29,7 @@ function parseCapabilitiesBlock(block: ContentBlock): SessionBaselineCapabilitie
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function isSessionCapabilitiesBlock(block: ContentBlock): boolean {
   if (block.type !== "resource") return false;
   return block.resource?.uri?.startsWith(CAPABILITY_URI_PREFIX) ?? false;

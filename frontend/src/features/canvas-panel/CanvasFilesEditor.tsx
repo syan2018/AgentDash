@@ -40,17 +40,21 @@ export function CanvasFilesEditor({
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(entryFile || value[0]?.path || null);
   const [isDirty, setIsDirty] = useState(false);
 
+  // 父级 value/entryFile 变化时重置本地 draft。合法的 derived-state reset 模式。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraftFiles(value);
     setDraftEntryFile(entryFile);
     setSelectedFilePath(entryFile || value[0]?.path || null);
     setIsDirty(false);
   }, [entryFile, value]);
 
+  // 当 selectedFilePath 失效（对应文件被删）时重新指向入口文件。
   useEffect(() => {
     if (selectedFilePath && draftFiles.some((file) => file.path === selectedFilePath)) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedFilePath(draftEntryFile || draftFiles[0]?.path || null);
   }, [draftEntryFile, draftFiles, selectedFilePath]);
 

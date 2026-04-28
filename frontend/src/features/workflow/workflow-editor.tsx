@@ -1242,6 +1242,25 @@ export function WorkflowEditor() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
+  // Hooks 必须在所有 early return 之前无条件调用。draft 为空时回退空数组，渲染阶段再短路。
+  // 用 useMemo 稳定 hookRules 引用，避免下游 useMemo 每次渲染都重算。
+  const hookRules = useMemo(
+    () => draft?.contract.hook_rules ?? [],
+    [draft?.contract.hook_rules],
+  );
+  const existingKeys = useMemo(
+    () => new Set(hookRules.map((r) => r.key)),
+    [hookRules],
+  );
+  const processRules = useMemo(
+    () => hookRules.filter((r) => PROCESS_TRIGGERS.has(r.trigger)),
+    [hookRules],
+  );
+  const gateRules = useMemo(
+    () => hookRules.filter((r) => GATE_TRIGGERS.has(r.trigger)),
+    [hookRules],
+  );
+
   if (!draft) return null;
 
   const isNew = originalId === null;
@@ -1255,20 +1274,6 @@ export function WorkflowEditor() {
     const rule = draft.contract.hook_rules.find((r) => r.key === key);
     if (rule) updateDraftHookRule(key, { enabled: !rule.enabled });
   };
-
-  const existingKeys = useMemo(
-    () => new Set(draft.contract.hook_rules.map((r) => r.key)),
-    [draft.contract.hook_rules],
-  );
-
-  const processRules = useMemo(
-    () => draft.contract.hook_rules.filter((r) => PROCESS_TRIGGERS.has(r.trigger)),
-    [draft.contract.hook_rules],
-  );
-  const gateRules = useMemo(
-    () => draft.contract.hook_rules.filter((r) => GATE_TRIGGERS.has(r.trigger)),
-    [draft.contract.hook_rules],
-  );
 
   return (
     <div className="space-y-4 p-5">

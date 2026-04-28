@@ -27,6 +27,12 @@ export interface ExecutorSelectorProps {
   onPermissionPolicyChange: (policy: string) => void;
   onReset: () => void;
   onRefetch: () => void;
+
+  /**
+   * 默认是否展开完整配置。默认 false：只显示胶囊行 + 展开按钮。
+   * 在 agent-preset-editor 等强配置场景可传 true 常驻展开。
+   */
+  defaultExpanded?: boolean;
 }
 
 function ChevronDown({ className }: { className?: string }) {
@@ -61,8 +67,7 @@ const ACTION_BUTTON_CLASS =
 /**
  * 执行器选择器组件
  *
- * 提供执行器、变体、模型ID、权限策略的选择/输入界面。
- * 替代原来的纯文本输入框，提供下拉选择 + 手动输入的混合模式。
+ * 默认收起为一行胶囊摘要，点击右侧箭头可展开完整配置（执行器 / 模型 / 推理级别 / 高级选项）。
  */
 export function ExecutorSelector({
   executors,
@@ -84,37 +89,16 @@ export function ExecutorSelector({
   onPermissionPolicyChange,
   onReset,
   onRefetch,
+  defaultExpanded = false,
 }: ExecutorSelectorProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
   const selectedModelOptionValue = useMemo(() => {
     const trimmedModelId = modelId.trim();
     if (!trimmedModelId) return "";
     return `${providerId.trim()}::${trimmedModelId}`;
   }, [modelId, providerId]);
-
-  const errorBanner = error ? (
-    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-      <span>无法加载执行器列表: {error.message}</span>
-      <button
-        type="button"
-        onClick={onRefetch}
-        className="rounded-[8px] border border-destructive/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-destructive/10"
-      >
-        重试
-      </button>
-    </div>
-  ) : discoveredError ? (
-    <div className="flex items-center gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-      <span className="truncate">模型选项加载失败，可手动输入</span>
-      <button
-        type="button"
-        onClick={onDiscoveredReconnect}
-        className="shrink-0 rounded-[8px] border border-amber-500/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-amber-500/10"
-      >
-        重试
-      </button>
-    </div>
-  ) : null;
 
   const currentExecutorInfo = useMemo(
     () => executors.find((e) => e.id === executor),
@@ -168,9 +152,88 @@ export function ExecutorSelector({
   // 仅当选中模型支持 reasoning 时显示推理级别选择器；未选模型时默认显示
   const showThinkingSelector = !selectedModel || selectedModel.reasoning === true;
 
+  // ── 胶囊行（始终显示） ───────────────────────────────
+  const summaryRow = (
+    <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        {executor ? (
+          <>
+            <ConfigTag label={displayLabel} available={currentExecutorInfo?.available} />
+            {providerId && <ConfigTag label={`provider: ${providersById.get(providerId) ?? providerId}`} />}
+            {modelId && <ConfigTag label={`model: ${modelId}`} />}
+            {thinkingLevel && <ConfigTag label={`thinking: ${thinkingLevel}`} />}
+            {permissionPolicy && <ConfigTag label={`policy: ${permissionPolicy}`} />}
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">未选择执行器 · 点击展开配置</span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        title={expanded ? "收起配置" : "展开配置"}
+        aria-label={expanded ? "收起配置" : "展开配置"}
+        aria-expanded={expanded}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+        >
+          <path d="M4 10L8 6L12 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+
+  // ── 收起态：只渲染胶囊行 ────────────────────────────
+  if (!expanded) {
+    return (
+      <div className="rounded-full border border-border bg-secondary/45 px-3 py-1.5">
+        {summaryRow}
+      </div>
+    );
+  }
+
+  // ── 展开态：完整配置 ────────────────────────────────
+
+  const errorBanner = error ? (
+    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      <span>无法加载执行器列表: {error.message}</span>
+      <button
+        type="button"
+        onClick={onRefetch}
+        className="rounded-[8px] border border-destructive/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-destructive/10"
+      >
+        重试
+      </button>
+    </div>
+  ) : discoveredError ? (
+    <div className="flex items-center gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+      <span className="truncate">模型选项加载失败，可手动输入</span>
+      <button
+        type="button"
+        onClick={onDiscoveredReconnect}
+        className="shrink-0 rounded-[8px] border border-amber-500/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-amber-500/10"
+      >
+        重试
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-3 rounded-[14px] border border-border bg-secondary/45 p-3.5">
+      {/* 胶囊摘要 + 收起按钮 */}
+      <div className="border-b border-border/60 pb-3">
+        {summaryRow}
+      </div>
+
       {errorBanner}
+
       {/* 主选择行 */}
       <div className="flex flex-wrap items-end gap-3">
         {/* 执行器下拉 */}
@@ -267,7 +330,7 @@ export function ExecutorSelector({
             onClick={() => setShowAdvanced((p) => !p)}
             className={ACTION_BUTTON_CLASS}
           >
-            {showAdvanced ? "收起" : "高级"}
+            {showAdvanced ? "收起高级" : "高级"}
           </button>
           <button
             type="button"
@@ -299,22 +362,6 @@ export function ExecutorSelector({
           >
             {selectedModel.reasoning ? "支持推理" : "不支持推理"}
           </span>
-        </div>
-      )}
-
-      {/* 当前选择概览（紧凑标签） */}
-      {executor && (
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/70 pt-3">
-          <ConfigTag
-            label={displayLabel}
-            available={currentExecutorInfo?.available}
-          />
-          {providerId && <ConfigTag label={`provider: ${providerId}`} />}
-          {modelId && <ConfigTag label={`model: ${modelId}`} />}
-          {thinkingLevel && <ConfigTag label={`thinking: ${thinkingLevel}`} />}
-          {permissionPolicy && (
-            <ConfigTag label={`policy: ${permissionPolicy}`} />
-          )}
         </div>
       )}
 

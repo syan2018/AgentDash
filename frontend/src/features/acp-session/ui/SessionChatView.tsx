@@ -22,6 +22,9 @@ import {
   useExecutorDiscoveredOptions,
   ExecutorSelector,
 } from "../../executor-selector";
+import type { ExecutorConfigSource } from "../../executor-selector/model/types";
+import type { TaskSessionExecutorSummary } from "../../../types/context";
+import type { ProjectAgentExecutor } from "../../../types";
 import {
   useFileReference,
   FilePickerPopup,
@@ -37,6 +40,23 @@ import {
 import type { SessionExecutionState } from "../../../types";
 
 // ─── 工具函数 ──────────────────────────────────────────
+
+/**
+ * 把 ProjectAgentExecutor / TaskSessionExecutorSummary（snake_case）转成
+ * useExecutorConfig 要求的 camelCase ExecutorConfigSource。空字段会被过滤掉。
+ */
+function toExecutorConfigSource(
+  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | null | undefined,
+): ExecutorConfigSource | null {
+  if (!defaults) return null;
+  const source: ExecutorConfigSource = {};
+  if (defaults.executor) source.executor = defaults.executor;
+  if (defaults.provider_id) source.providerId = defaults.provider_id;
+  if (defaults.model_id) source.modelId = defaults.model_id;
+  if (defaults.thinking_level) source.thinkingLevel = defaults.thinking_level;
+  if (defaults.permission_policy) source.permissionPolicy = defaults.permission_policy;
+  return Object.keys(source).length === 0 ? null : source;
+}
 
 function getItemKey(item: AcpDisplayItem): string {
   if (isAggregatedGroup(item)) return item.groupKey;
@@ -208,6 +228,13 @@ export interface SessionChatViewProps {
   /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
   executorHint?: string | null;
 
+  /**
+   * 当前 session 绑定的执行器默认值（来自 agent 配置或 session context 真值）。
+   * 进入会话 / 切换会话时会被用来 hydrate 本地 executor 状态，避免默认显示"选择模型…"。
+   * 用户手动改过之后不会被再次覆盖（按 sessionId 计一次）。
+   */
+  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | null;
+
   /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
   showExecutorSelector?: boolean;
 
@@ -263,6 +290,7 @@ export function SessionChatView({
   onTurnEnd,
   onSystemEvent,
   executorHint,
+  agentDefaults,
   showExecutorSelector = true,
   customSend,
   headerSlot,
@@ -333,9 +361,18 @@ export function SessionChatView({
   // ─── 执行器配置 ──────────────────────────────────────
 
   const discovery = useExecutorDiscovery();
-  const execConfig = useExecutorConfig();
+
+  // 仅挂载时读一次 agentDefaults，作为 useExecutorConfig 的 initialSource
+  const initialExecutorSource = useMemo<ExecutorConfigSource | null>(
+    () => toExecutorConfigSource(agentDefaults),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const execConfig = useExecutorConfig({ initialSource: initialExecutorSource });
   const discovered = useExecutorDiscoveredOptions(execConfig.executor);
   const setExecutor = execConfig.setExecutor;
+  const hydrateExecutor = execConfig.hydrate;
   const execProviderId = execConfig.providerId;
   const execModelId = execConfig.modelId;
   const setExecProviderId = execConfig.setProviderId;
@@ -345,13 +382,30 @@ export function SessionChatView({
     [discovery.executors, executorHint],
   );
 
+  // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
+  // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。
+  const hydratedSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!sessionId || !resolvedHint) return;
-    const marker = `${sessionId}:${resolvedHint}`;
-    if (appliedHintRef.current === marker) return;
-    appliedHintRef.current = marker;
-    setExecutor(resolvedHint);
-  }, [resolvedHint, sessionId, setExecutor]);
+    if (!sessionId) return;
+    if (hydratedSessionRef.current === sessionId) return;
+
+    const source = toExecutorConfigSource(agentDefaults);
+    const hasSource = source && Object.keys(source).length > 0;
+    if (hasSource) {
+      hydratedSessionRef.current = sessionId;
+      hydrateExecutor(source);
+      return;
+    }
+    // 无 agentDefaults 时回退到 hint（保持旧行为）
+    if (resolvedHint) {
+      const marker = `${sessionId}:${resolvedHint}`;
+      if (appliedHintRef.current !== marker) {
+        appliedHintRef.current = marker;
+        hydratedSessionRef.current = sessionId;
+        setExecutor(resolvedHint);
+      }
+    }
+  }, [sessionId, agentDefaults, resolvedHint, hydrateExecutor, setExecutor]);
 
   useEffect(() => {
     if (execProviderId.trim() || !execModelId.trim()) return;

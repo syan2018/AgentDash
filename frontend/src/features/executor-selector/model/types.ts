@@ -124,6 +124,9 @@ export interface RecentExecutorEntry {
   timestamp: number;
 }
 
+/** 执行器配置来源（可选字段；空值或 undefined 会退回 localStorage / 硬编码默认） */
+export type ExecutorConfigSource = Partial<PersistedExecutorConfig>;
+
 /** 执行器配置 Hook 返回值 */
 export interface UseExecutorConfigResult {
   executor: string;
@@ -140,4 +143,9 @@ export interface UseExecutorConfigResult {
   setPermissionPolicy: (policy: string) => void;
   recordUsage: () => void;
   reset: () => void;
+  /**
+   * 用来自外部（agent 默认 / session context 真值）的配置原子性 hydrate 当前状态。
+   * 不会触发 setExecutor 的副作用清洗。仅当传入的字段非空（trim 后）时覆盖对应字段。
+   */
+  hydrate: (source: ExecutorConfigSource | null | undefined) => void;
 }

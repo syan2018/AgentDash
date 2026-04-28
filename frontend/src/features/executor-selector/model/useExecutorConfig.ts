@@ -1,5 +1,10 @@
-import { useCallback, useRef, useState } from "react";
-import type { PersistedExecutorConfig, RecentExecutorEntry, UseExecutorConfigResult } from "./types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  ExecutorConfigSource,
+  PersistedExecutorConfig,
+  RecentExecutorEntry,
+  UseExecutorConfigResult,
+} from "./types";
 
 // 当前唯一受支持的本地持久化格式。
 const STORAGE_KEY = "agentdash:executor-config-v2";
@@ -87,6 +92,22 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
   }
 }
 
+function normalizeSource(source: ExecutorConfigSource | null | undefined): Partial<PersistedExecutorConfig> {
+  if (!source) return {};
+  const out: Partial<PersistedExecutorConfig> = {};
+  if (typeof source.executor === "string" && source.executor.trim()) out.executor = source.executor.trim();
+  if (typeof source.providerId === "string" && source.providerId.trim()) out.providerId = source.providerId.trim();
+  if (typeof source.modelId === "string" && source.modelId.trim()) out.modelId = source.modelId.trim();
+  if (typeof source.thinkingLevel === "string" && source.thinkingLevel.trim()) out.thinkingLevel = source.thinkingLevel.trim();
+  if (typeof source.permissionPolicy === "string" && source.permissionPolicy.trim()) out.permissionPolicy = source.permissionPolicy.trim();
+  return out;
+}
+
+export interface UseExecutorConfigOptions {
+  /** 外部提供的初始配置（优先级高于 localStorage；仅挂载时生效） */
+  initialSource?: ExecutorConfigSource | null;
+}
+
 /**
  * 管理执行器选择配置，并自动持久化到 localStorage（v2 格式）。
  *
@@ -94,23 +115,56 @@ function persistRecentEntry(entry: RecentExecutorEntry): RecentExecutorEntry[] {
  * 组件挂载时自动恢复上次保存的配置（通过 useState 初始化器）。
  * 切换 executor 时自动清除 modelId。
  * 支持最近使用记录追踪（LRU，最多 MAX_RECENT 条）。
+ *
+ * 初始优先级：`initialSource`（非空字段）> localStorage > 硬编码默认值。
+ * 后续可用 `hydrate(source)` 在 session 切换时重新注入外部默认。
  */
-export function useExecutorConfig(): UseExecutorConfigResult {
-  const initialConfig = {
-    executor: loadOrDefault("executor"),
-    providerId: loadOrDefault("providerId"),
-    modelId: loadOrDefault("modelId"),
-    thinkingLevel: loadOrDefault("thinkingLevel"),
-    permissionPolicy: loadOrDefault("permissionPolicy"),
-  };
-  const persistedStateRef = useRef<PersistedExecutorConfig>({ ...initialConfig });
-
-  const [executor, setExecutorRaw] = useState(initialConfig.executor);
-  const [providerId, setProviderIdRaw] = useState(initialConfig.providerId ?? "");
-  const [modelId, setModelIdRaw] = useState(initialConfig.modelId ?? "");
-  const [thinkingLevel, setThinkingLevelRaw] = useState(initialConfig.thinkingLevel ?? "");
-  const [permissionPolicy, setPolicyRaw] = useState(initialConfig.permissionPolicy ?? "");
+export function useExecutorConfig(options?: UseExecutorConfigOptions): UseExecutorConfigResult {
+  // useState 的 lazy init 只在首次挂载时运行一次，这里既读 options.initialSource
+  // 也读 localStorage 并合并，避免在 render 期访问 ref。
+  const [executor, setExecutorRaw] = useState(() => {
+    const src = normalizeSource(options?.initialSource);
+    return src.executor ?? loadOrDefault("executor");
+  });
+  const [providerId, setProviderIdRaw] = useState(() => {
+    const src = normalizeSource(options?.initialSource);
+    return src.providerId ?? loadOrDefault("providerId");
+  });
+  const [modelId, setModelIdRaw] = useState(() => {
+    const src = normalizeSource(options?.initialSource);
+    return src.modelId ?? loadOrDefault("modelId");
+  });
+  const [thinkingLevel, setThinkingLevelRaw] = useState(() => {
+    const src = normalizeSource(options?.initialSource);
+    return src.thinkingLevel ?? loadOrDefault("thinkingLevel");
+  });
+  const [permissionPolicy, setPolicyRaw] = useState(() => {
+    const src = normalizeSource(options?.initialSource);
+    return src.permissionPolicy ?? loadOrDefault("permissionPolicy");
+  });
   const [recentEntries, setRecentEntries] = useState<RecentExecutorEntry[]>(() => loadRecentEntries());
+
+  // persistedStateRef 跟踪"已持久化"的快照，仅在 effect / event handler 中访问。
+  // 初值用已 useState 出来的局部变量构造（ref 初值仅在首次挂载有效）。
+  const persistedStateRef = useRef<PersistedExecutorConfig>({
+    executor,
+    providerId,
+    modelId,
+    thinkingLevel,
+    permissionPolicy,
+  });
+  // 初始 source 是否非空：仅挂载时一次性快照给 effect 使用
+  const hasInitialSourceRef = useRef<boolean>(
+    Object.keys(normalizeSource(options?.initialSource)).length > 0,
+  );
+
+  // 挂载时如来自外部 source，立即持久化一次，让下次刷新仍能命中
+  useEffect(() => {
+    if (hasInitialSourceRef.current) {
+      persistConfig(persistedStateRef.current);
+    }
+    // 仅挂载时触发一次（ref 不需要进依赖）
+  }, []);
 
   const persistPatch = useCallback(
     (patch: Partial<PersistedExecutorConfig>) => {
@@ -210,6 +264,23 @@ export function useExecutorConfig(): UseExecutorConfigResult {
     }
   }, []);
 
+  const hydrate = useCallback(
+    (source: ExecutorConfigSource | null | undefined) => {
+      const normalized = normalizeSource(source);
+      if (Object.keys(normalized).length === 0) return;
+
+      // 原子写入：跳过 setExecutor 的副作用，仅覆盖非空字段
+      if (normalized.executor !== undefined) setExecutorRaw(normalized.executor);
+      if (normalized.providerId !== undefined) setProviderIdRaw(normalized.providerId);
+      if (normalized.modelId !== undefined) setModelIdRaw(normalized.modelId);
+      if (normalized.thinkingLevel !== undefined) setThinkingLevelRaw(normalized.thinkingLevel);
+      if (normalized.permissionPolicy !== undefined) setPolicyRaw(normalized.permissionPolicy);
+
+      persistPatch(normalized);
+    },
+    [persistPatch],
+  );
+
   return {
     executor,
     providerId,
@@ -224,5 +295,6 @@ export function useExecutorConfig(): UseExecutorConfigResult {
     setPermissionPolicy,
     recordUsage,
     reset,
+    hydrate,
   };
 }

@@ -85,6 +85,10 @@ export function AgentTabView() {
     : null;
   // 当前选中会话的元数据（用于面包屑显示标题）
   const currentSession = sessions.find((s) => s.session_id === selectedSessionId);
+  // 当前选中会话所属 agent 的默认执行器配置（用来 hydrate 右侧配置条）
+  const currentAgentDefaults = selectedSessionId
+    ? (agents.find((a) => a.session?.session_id === selectedSessionId)?.executor ?? null)
+    : null;
 
   // 项目切换时：立即清空旧数据（防止短暂展示错误项目内容），再异步加载新数据
   const prevProjectIdRef = useRef<string | null>(null);
@@ -252,6 +256,7 @@ export function AgentTabView() {
                 workspaceId={workspaceId}
                 showStatusBar={false}
                 showExecutorSelector
+                agentDefaults={currentAgentDefaults}
                 onSystemEvent={handleSystemEvent}
                 onTurnEnd={handleTurnEnd}
               />

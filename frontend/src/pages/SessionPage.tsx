@@ -623,6 +623,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               onTurnEnd={handleTurnEnd}
               onSystemEvent={handleSystemEvent}
               executorHint={executorHint}
+              agentDefaults={taskExecutorSummary}
               inputPrefix={ownerBindingBar}
             />
           )}

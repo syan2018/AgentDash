@@ -2492,7 +2492,7 @@ mod tests {
         let mut provider =
             LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
         provider.api_key = "test-key".to_string();
-        provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
+        provider.default_model = "test-model".to_string();
         llm_repo.set_providers(vec![provider]);
 
         let refreshed = discover_options_state(&connector).await;
@@ -2502,7 +2502,7 @@ mod tests {
         );
         assert_eq!(
             refreshed["options"]["model_selector"]["default_model"],
-            serde_json::json!(rig::providers::anthropic::completion::CLAUDE_4_SONNET)
+            serde_json::json!("test-model")
         );
     }
 
@@ -2516,7 +2516,7 @@ mod tests {
         let mut provider =
             LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
         provider.api_key = "test-key".to_string();
-        provider.default_model = rig::providers::anthropic::completion::CLAUDE_4_SONNET.to_string();
+        provider.default_model = "test-model".to_string();
         llm_repo.set_providers(vec![provider]);
 
         let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())

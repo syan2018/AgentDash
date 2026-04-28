@@ -4,7 +4,7 @@
 /// - 所有 LLM 调用默认走 streaming
 /// - `StreamChunk` 对应 pi-mono 的 `AssistantMessageEvent`
 ///
-/// `LlmBridge` trait 定义在此；具体实现（如 `RigBridge`）在 `agentdash-executor` 中。
+/// `LlmBridge` trait 定义在此；具体实现在 `agentdash-executor` 中。
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -67,7 +67,7 @@ pub enum BridgeError {
     RequestBuildFailed(String),
 }
 
-/// LLM 桥接层 trait — 具体实现（RigBridge 等）在 executor 层
+/// LLM 桥接层 trait — 具体实现（OpenAI/Anthropic bridge 等）在 executor 层
 #[async_trait]
 pub trait LlmBridge: Send + Sync {
     async fn stream_complete(

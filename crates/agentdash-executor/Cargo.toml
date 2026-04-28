@@ -31,11 +31,10 @@ reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] 
 
 # Pi Agent 框架（仅云端编译）
 agentdash-agent = { workspace = true, optional = true }
-rig-core = { workspace = true, optional = true }
 
 [features]
 default = ["pi-agent"]
-pi-agent = ["dep:agentdash-agent", "dep:rig-core"]
+pi-agent = ["dep:agentdash-agent"]
 
 [dev-dependencies]
 tempfile = "3.18"

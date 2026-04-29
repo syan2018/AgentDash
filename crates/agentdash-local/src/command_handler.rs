@@ -84,6 +84,10 @@ impl CommandHandler {
                 vec![self.handle_discover_options(id, payload).await]
             }
 
+            RelayMessage::CommandWorkspaceDetect { id, payload } => {
+                vec![self.handle_workspace_detect(id, payload).await]
+            }
+
             RelayMessage::CommandToolFileRead { id, payload } => {
                 vec![self.handle_tool_file_read(id, payload).await]
             }
@@ -313,6 +317,49 @@ impl CommandHandler {
             error: RelayError::runtime_error(
                 "本机 relay 尚未实现 command.discover_options，请改走云端直连 discovery 管线",
             ),
+        }
+    }
+
+    async fn handle_workspace_detect(
+        &self,
+        id: String,
+        payload: CommandWorkspaceDetectPayload,
+    ) -> RelayMessage {
+        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.path) {
+            Ok(path) => path,
+            Err(error) => {
+                return RelayMessage::ResponseWorkspaceDetect {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_detect 路径校验失败: {error}"
+                    ))),
+                };
+            }
+        };
+
+        tracing::debug!(path = %workspace_root.display(), "workspace_detect");
+        let detected = match tokio::task::spawn_blocking(move || {
+            crate::workspace_probe::detect_workspace(&workspace_root)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return RelayMessage::ResponseWorkspaceDetect {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_detect 任务失败: {err}"
+                    ))),
+                };
+            }
+        };
+
+        RelayMessage::ResponseWorkspaceDetect {
+            id,
+            payload: Some(detected),
+            error: None,
         }
     }
 
@@ -558,27 +605,44 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceDetectGitPayload,
     ) -> RelayMessage {
-        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.path) {
-            Ok(path) => path,
-            Err(error) => {
+        let detected = match self
+            .handle_workspace_detect(
+                id.clone(),
+                CommandWorkspaceDetectPayload { path: payload.path },
+            )
+            .await
+        {
+            RelayMessage::ResponseWorkspaceDetect {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => payload,
+            RelayMessage::ResponseWorkspaceDetect {
+                error: Some(err), ..
+            } => {
                 return RelayMessage::ResponseWorkspaceDetectGit {
                     id,
                     payload: None,
-                    error: Some(RelayError::runtime_error(format!(
-                        "workspace_detect_git 路径校验失败: {error}"
-                    ))),
+                    error: Some(err),
+                };
+            }
+            _ => {
+                return RelayMessage::ResponseWorkspaceDetectGit {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error("workspace_detect 未返回可用结果")),
                 };
             }
         };
 
-        tracing::debug!(path = %workspace_root.display(), "workspace_detect_git");
+        let git = detected.git;
         RelayMessage::ResponseWorkspaceDetectGit {
             id,
             payload: Some(ResponseWorkspaceDetectGitPayload {
-                is_git: workspace_root.join(".git").exists(),
-                default_branch: None,
-                current_branch: None,
-                remote_url: None,
+                is_git: git.is_some(),
+                default_branch: git.as_ref().and_then(|item| item.default_branch.clone()),
+                current_branch: git.as_ref().and_then(|item| item.current_branch.clone()),
+                remote_url: git.as_ref().and_then(|item| item.remote_url.clone()),
             }),
             error: None,
         }

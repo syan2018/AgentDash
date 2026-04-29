@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use agentdash_application::backend_transport::{
-    BackendTransport, GitRepoInfo, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
-    RemoteExecutorInfo, TransportError,
+    BackendTransport, GitRepoInfo, P4WorkspaceInfo, RelayPromptRequest, RelayPromptTransport,
+    RelaySessionEvent, RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
 };
 pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
 use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{
-    AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, CommandWorkspaceDetectGitPayload,
+    AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, CommandWorkspaceDetectPayload,
     RelayMessage, ResponsePromptPayload,
 };
 use async_trait::async_trait;
@@ -32,17 +32,17 @@ impl BackendTransport for BackendRegistry {
         self.list_online_ids().await
     }
 
-    async fn detect_git_repo(
+    async fn detect_workspace(
         &self,
         backend_id: &str,
         root: &str,
-    ) -> Result<GitRepoInfo, TransportError> {
+    ) -> Result<WorkspaceProbeInfo, TransportError> {
         if !self.is_online(backend_id).await {
             return Err(TransportError::BackendOffline(backend_id.to_string()));
         }
-        let cmd = RelayMessage::CommandWorkspaceDetectGit {
-            id: RelayMessage::new_id("workspace-detect-git"),
-            payload: CommandWorkspaceDetectGitPayload {
+        let cmd = RelayMessage::CommandWorkspaceDetect {
+            id: RelayMessage::new_id("workspace-detect"),
+            payload: CommandWorkspaceDetectPayload {
                 path: root.to_string(),
             },
         };
@@ -52,27 +52,37 @@ impl BackendTransport for BackendRegistry {
             .map_err(|e| TransportError::OperationFailed(e.to_string()))?;
 
         match resp {
-            RelayMessage::ResponseWorkspaceDetectGit {
+            RelayMessage::ResponseWorkspaceDetect {
                 payload: Some(payload),
                 error: None,
                 ..
-            } => Ok(GitRepoInfo {
-                is_git_repo: payload.is_git,
-                source_repo: payload
-                    .remote_url
-                    .clone()
-                    .or_else(|| payload.is_git.then(|| root.to_string())),
-                branch: payload.current_branch.or(payload.default_branch),
-                commit_hash: None,
+            } => Ok(WorkspaceProbeInfo {
+                git: payload.git.map(|git| GitRepoInfo {
+                    is_git_repo: true,
+                    repo_root: Some(git.repo_root),
+                    source_repo: git.remote_url,
+                    default_branch: git.default_branch,
+                    branch: git.current_branch,
+                    commit_hash: git.commit_hash,
+                }),
+                p4: payload.p4.map(|p4| P4WorkspaceInfo {
+                    is_p4_workspace: true,
+                    workspace_root: Some(p4.workspace_root),
+                    client_name: p4.client_name,
+                    server_address: p4.server_address,
+                    user_name: p4.user_name,
+                    stream: p4.stream,
+                }),
+                warnings: payload.warnings,
             }),
-            RelayMessage::ResponseWorkspaceDetectGit {
+            RelayMessage::ResponseWorkspaceDetect {
                 error: Some(err), ..
             } => Err(TransportError::OperationFailed(format!(
-                "远程 workspace_detect_git 错误: {}",
+                "远程 workspace_detect 错误: {}",
                 err.message
             ))),
             _ => Err(TransportError::OperationFailed(
-                "远程 workspace_detect_git 返回了意外响应".into(),
+                "远程 workspace_detect 返回了意外响应".into(),
             )),
         }
     }

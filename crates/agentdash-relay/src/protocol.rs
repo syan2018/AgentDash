@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use agentdash_domain::workspace::WorkspaceIdentityKind;
+
 use crate::error::RelayError;
 
 // ─── 消息信封 ───────────────────────────────────────────────
@@ -515,6 +517,10 @@ pub struct CommandPromptPayload {
     pub prompt_blocks: Option<serde_json::Value>,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_identity_payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -938,6 +944,8 @@ mod tests {
             follow_up_session_id: None,
             prompt_blocks: None,
             mount_root_ref: "/new/workspace".to_string(),
+            workspace_identity_kind: None,
+            workspace_identity_payload: None,
             working_dir: None,
             env: std::collections::HashMap::new(),
             executor_config: None,

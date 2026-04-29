@@ -112,6 +112,8 @@ impl RelayPromptTransport for BackendRegistry {
                 follow_up_session_id: payload.follow_up_session_id,
                 prompt_blocks: payload.prompt_blocks,
                 mount_root_ref: payload.mount_root_ref,
+                workspace_identity_kind: payload.workspace_identity_kind,
+                workspace_identity_payload: payload.workspace_identity_payload,
                 working_dir: payload.working_dir,
                 env: payload.env,
                 executor_config: relay_config,

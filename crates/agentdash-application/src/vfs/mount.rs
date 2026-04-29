@@ -220,7 +220,12 @@ pub fn workspace_mount(workspace: &Workspace) -> Result<Mount, String> {
         } else {
             workspace.name.clone()
         },
-        metadata: serde_json::Value::Null,
+        metadata: serde_json::json!({
+            "workspace_id": workspace.id,
+            "workspace_identity_kind": workspace.identity_kind,
+            "workspace_identity_payload": workspace.identity_payload,
+            "workspace_binding_id": binding.id,
+        }),
     })
 }
 

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceResolutionPolicy,
-    identity_payload_matches_detected_facts,
+    identity_payload_matches_detected_facts, identity_payload_supports_local_prepare,
 };
 
 use crate::backend_transport::BackendTransport;
@@ -70,11 +70,21 @@ pub async fn resolve_workspace_binding(
             &binding.detected_facts,
             &binding.root_ref,
         ) {
-            warnings.push(format!(
-                "binding `{}` 的 detected_facts 与 workspace identity contract 不匹配",
-                binding.id
-            ));
-            continue;
+            if identity_payload_supports_local_prepare(
+                workspace.identity_kind.clone(),
+                &workspace.identity_payload,
+            ) {
+                warnings.push(format!(
+                    "binding `{}` 的 detected_facts 与 workspace identity contract 不匹配，将在本机 prompt 前尝试 prepare",
+                    binding.id
+                ));
+            } else {
+                warnings.push(format!(
+                    "binding `{}` 的 detected_facts 与 workspace identity contract 不匹配",
+                    binding.id
+                ));
+                continue;
+            }
         }
         let is_online = availability.is_online(backend_id).await;
         if !is_online {
@@ -268,18 +278,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_binding_when_p4_stream_contract_mismatches() {
+    async fn allows_binding_when_p4_stream_contract_mismatches_but_prepare_supported() {
         let avail = MockAvailability {
             online_backends: vec!["backend-a".to_string()],
         };
         let ws = p4_workspace_with_stream("//ExampleProject/release");
 
-        let err = resolve_workspace_binding(&avail, &ws)
+        let result = resolve_workspace_binding(&avail, &ws)
             .await
-            .expect_err("mismatched stream should not resolve");
+            .expect("prepare-capable mismatch should still resolve");
 
-        assert!(matches!(err, WorkspaceResolutionError::NoAvailable(_)));
-        assert!(err.to_string().contains("identity contract"));
+        assert_eq!(result.backend_id, "backend-a");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("尝试 prepare"))
+        );
     }
 
     #[tokio::test]

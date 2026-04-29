@@ -255,6 +255,24 @@ pub fn identity_payload_matches_detected_facts(
     )
 }
 
+pub fn identity_payload_supports_local_prepare(
+    kind: WorkspaceIdentityKind,
+    payload: &Value,
+) -> bool {
+    match kind {
+        WorkspaceIdentityKind::GitRepo => parse_git_contract(payload)
+            .map(|contract| {
+                matches!(
+                    contract.match_mode,
+                    GitWorkspaceMatchMode::RepoBranch | GitWorkspaceMatchMode::RepoCommit
+                )
+            })
+            .unwrap_or(false),
+        WorkspaceIdentityKind::P4Workspace => parse_p4_contract(payload).is_ok(),
+        WorkspaceIdentityKind::LocalDir => false,
+    }
+}
+
 pub fn identity_payload_from_detected_facts(
     kind: WorkspaceIdentityKind,
     detected_facts: &Value,

@@ -198,6 +198,44 @@ impl CommandHandler {
             }
         };
 
+        if follow_up.is_none() {
+            let prepare_result = tokio::task::spawn_blocking({
+                let workspace_root = workspace_root.clone();
+                let workspace_identity_kind = payload.workspace_identity_kind.clone();
+                let workspace_identity_payload = payload.workspace_identity_payload.clone();
+                move || {
+                    crate::workspace_prepare::prepare_workspace(
+                        &workspace_root,
+                        workspace_identity_kind,
+                        workspace_identity_payload.as_ref(),
+                    )
+                }
+            })
+            .await;
+
+            match prepare_result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return RelayMessage::ResponsePrompt {
+                        id,
+                        payload: None,
+                        error: Some(RelayError::runtime_error(format!(
+                            "workspace prepare 失败: {error}"
+                        ))),
+                    };
+                }
+                Err(error) => {
+                    return RelayMessage::ResponsePrompt {
+                        id,
+                        payload: None,
+                        error: Some(RelayError::runtime_error(format!(
+                            "workspace prepare 任务失败: {error}"
+                        ))),
+                    };
+                }
+            }
+        }
+
         let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
 
         let req = PromptSessionRequest {

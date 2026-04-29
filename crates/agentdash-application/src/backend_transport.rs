@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use agent_client_protocol::SessionNotification;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use agentdash_domain::workspace::WorkspaceIdentityKind;
 
 /// Application 层端口：后端在线探测 + workspace 检测
 ///
@@ -85,6 +86,8 @@ pub struct RelayPromptRequest {
     pub follow_up_session_id: Option<String>,
     pub prompt_blocks: Option<serde_json::Value>,
     pub mount_root_ref: String,
+    pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
+    pub workspace_identity_payload: Option<serde_json::Value>,
     pub working_dir: Option<String>,
     pub env: HashMap<String, String>,
     pub executor_config: Option<RelayExecutorConfig>,

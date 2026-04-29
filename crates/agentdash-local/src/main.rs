@@ -1,6 +1,7 @@
 mod command_handler;
 mod mcp_client_manager;
 mod tool_executor;
+mod workspace_prepare;
 mod workspace_probe;
 mod ws_client;
 

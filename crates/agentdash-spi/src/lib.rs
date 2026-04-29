@@ -8,6 +8,7 @@ pub mod mount;
 pub mod routine;
 pub mod schema;
 pub mod session_capabilities;
+pub mod session_context_bundle;
 pub mod skill;
 pub mod tool_capability;
 
@@ -34,9 +35,11 @@ pub use connector::{
     ToolCluster, content_block_to_text, workspace_path_from_context,
 };
 pub use context_injection::{
-    ContextFragment, InjectionError, MergeStrategy, ResolveSourcesOutput, ResolveSourcesRequest,
-    SelectorHint, SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
+    ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MergeStrategy,
+    ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint, SourceResolver, VfsContext,
+    VfsDescriptor, VfsDiscoveryProvider,
 };
+pub use session_context_bundle::SessionContextBundle;
 pub use hook_trace_notification::build_hook_trace_notification;
 pub use hooks::{
     ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,

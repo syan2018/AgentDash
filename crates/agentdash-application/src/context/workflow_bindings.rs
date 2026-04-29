@@ -27,79 +27,93 @@ impl WorkflowContextBindingsContributor {
 
 impl ContextContributor for WorkflowContextBindingsContributor {
     fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
-        let mut fragments = vec![ContextFragment {
-            slot: "workflow_context",
-            label: "workflow_projection_snapshot",
-            order: 83,
-            strategy: MergeStrategy::Append,
-            content: format!(
-                "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
-                self.workflow.lifecycle.name,
-                self.workflow.lifecycle.key,
-                self.workflow.active_step.key,
-                self.workflow
-                    .primary_workflow
-                    .as_ref()
-                    .map(|item| format!("{} (`{}`)", item.name, item.key))
-                    .unwrap_or_else(|| "(none)".to_string()),
-                enum_tag(&self.workflow.run.status),
-                self.workflow
-                    .active_contract()
-                    .map(|c| c.injection.context_bindings.len())
-                    .unwrap_or(0),
-                self.resolved_bindings.resolved.len()
-            ),
-        }];
-
-        for (index, binding) in self.resolved_bindings.resolved.iter().enumerate() {
-            let heading = binding
-                .title
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| {
-                    let reason = binding.reason.trim();
-                    if reason.is_empty() {
-                        binding.locator.as_str()
-                    } else {
-                        reason
-                    }
-                });
-            let body = binding.content.trim();
-            if body.is_empty() {
-                continue;
-            }
-            fragments.push(ContextFragment {
-                slot: "workflow_context",
-                label: "workflow_context_binding",
-                order: 84 + index as i32,
-                strategy: MergeStrategy::Append,
-                content: format!(
-                    "## {}\n- locator: `{}`\n- reason: {}\n\n{}",
-                    heading, binding.locator, binding.reason, body
-                ),
-            });
-        }
-
-        if !self.resolved_bindings.warnings.is_empty() {
-            fragments.push(ContextFragment {
-                slot: "workflow_context",
-                label: "workflow_context_warnings",
-                order: 89,
-                strategy: MergeStrategy::Append,
-                content: format!(
-                    "## Workflow Binding Warnings\n{}",
-                    self.resolved_bindings
-                        .warnings
-                        .iter()
-                        .map(|item| format!("- {item}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-            });
-        }
-
-        Contribution::fragments_only(fragments)
+        contribute_workflow_binding(&self.workflow, &self.resolved_bindings)
     }
+}
+
+/// Workflow context_bindings 片段（对应 `WorkflowContextBindingsContributor`）
+pub fn contribute_workflow_binding(
+    workflow: &ActiveWorkflowProjection,
+    resolved_bindings: &ResolveBindingsOutput,
+) -> Contribution {
+    let mut fragments = vec![ContextFragment {
+        slot: "workflow_context".to_string(),
+        label: "workflow_projection_snapshot".to_string(),
+        order: 83,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:contributor:workflow_bindings".to_string(),
+        content: format!(
+            "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
+            workflow.lifecycle.name,
+            workflow.lifecycle.key,
+            workflow.active_step.key,
+            workflow
+                .primary_workflow
+                .as_ref()
+                .map(|item| format!("{} (`{}`)", item.name, item.key))
+                .unwrap_or_else(|| "(none)".to_string()),
+            enum_tag(&workflow.run.status),
+            workflow
+                .active_contract()
+                .map(|c| c.injection.context_bindings.len())
+                .unwrap_or(0),
+            resolved_bindings.resolved.len()
+        ),
+    }];
+
+    for (index, binding) in resolved_bindings.resolved.iter().enumerate() {
+        let heading = binding
+            .title
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                let reason = binding.reason.trim();
+                if reason.is_empty() {
+                    binding.locator.as_str()
+                } else {
+                    reason
+                }
+            });
+        let body = binding.content.trim();
+        if body.is_empty() {
+            continue;
+        }
+        fragments.push(ContextFragment {
+            slot: "workflow_context".to_string(),
+            label: "workflow_context_binding".to_string(),
+            order: 84 + index as i32,
+            strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:contributor:workflow_bindings".to_string(),
+            content: format!(
+                "## {}\n- locator: `{}`\n- reason: {}\n\n{}",
+                heading, binding.locator, binding.reason, body
+            ),
+        });
+    }
+
+    if !resolved_bindings.warnings.is_empty() {
+        fragments.push(ContextFragment {
+            slot: "workflow_context".to_string(),
+            label: "workflow_context_warnings".to_string(),
+            order: 89,
+            strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:contributor:workflow_bindings".to_string(),
+            content: format!(
+                "## Workflow Binding Warnings\n{}",
+                resolved_bindings
+                    .warnings
+                    .iter()
+                    .map(|item| format!("- {item}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        });
+    }
+
+    Contribution::fragments_only(fragments)
 }
 
 fn enum_tag<T: serde::Serialize>(value: &T) -> String {
@@ -216,14 +230,14 @@ mod tests {
             additional_prompt: None,
         });
 
-        assert_eq!(contribution.context_fragments.len(), 2);
+        assert_eq!(contribution.fragments.len(), 2);
         assert!(
-            contribution.context_fragments[0]
+            contribution.fragments[0]
                 .content
                 .contains("resolved_binding_count: 1")
         );
         assert!(
-            contribution.context_fragments[1]
+            contribution.fragments[1]
                 .content
                 .contains("Workflow 总规则")
         );

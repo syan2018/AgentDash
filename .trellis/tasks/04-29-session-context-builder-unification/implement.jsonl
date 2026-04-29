@@ -1,0 +1,12 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "跨 spi/application/executor/api 多 crate 新增模块与重构，需对齐目录规范"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Hook 侧产出改产 ContextFragment，需理解现有 hook runtime 契约"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "PiAgent F1 build_runtime_system_prompt 按 Bundle 重写"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "assembler.rs 4 个 compose_* 入口改用 with_context_bundle"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "SessionContextBundle 跨多层传递 ExecutionContext"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Context Inspector 只读面板组件设计"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Inspector 轮询 /context/audit 与缓存"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "4 个 builtin contributor 迁移为 contribute_* 纯函数，重用 SessionPlan 模板"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Bundle 贯穿 spi→application→executor→api→frontend 5 层"}

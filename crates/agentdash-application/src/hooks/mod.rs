@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::workflow::ActiveWorkflowProjection;
 
+mod fragment_bridge;
 mod helpers;
 mod owner_resolver;
 pub mod presets;

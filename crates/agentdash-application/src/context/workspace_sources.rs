@@ -9,6 +9,17 @@ use crate::runtime::RuntimeFileEntry;
 use crate::vfs::{ListOptions, RelayVfsService, ResourceRef, selected_workspace_binding};
 use crate::workspace::BackendAvailability;
 
+use super::builder::Contribution;
+
+/// 把已解析完成的 workspace 静态来源片段薄包装为 `Contribution`。
+///
+/// 对应老路径下由 `StaticFragmentsContributor` 承载的"预解析声明式来源"——
+/// `resolve_workspace_declared_sources` 已经是纯异步函数，产出 `Vec<ContextFragment>`，
+/// 上层调用方可以在 await 之后直接调用本函数得到 Contribution 喂给 builder。
+pub fn contribute_workspace_static_sources(fragments: Vec<ContextFragment>) -> Contribution {
+    Contribution::fragments_only(fragments)
+}
+
 /// 解析 Story/Task 上声明式来源（File / ProjectSnapshot）为具体上下文片段
 ///
 /// 需要 Workspace 在线才能读取远端文件；如果 Backend 不在线或 Workspace 缺失，
@@ -154,10 +165,12 @@ async fn resolve_workspace_file_source(
         .map_err(|e| format!("工作空间文件读取失败: {e}"))?;
 
     Ok(ContextFragment {
-        slot: fragment_slot(&source.slot),
-        label: fragment_label(&source.kind),
+        slot: fragment_slot(&source.slot).to_string(),
+        label: fragment_label(&source.kind).to_string(),
         order,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:workspace_source:file".to_string(),
         content: render_source_section(
             source,
             truncate_text(
@@ -192,10 +205,12 @@ async fn resolve_workspace_snapshot_source(
         .map_err(|e| format!("项目快照读取失败: {e}"))?;
 
     Ok(ContextFragment {
-        slot: fragment_slot(&source.slot),
-        label: fragment_label(&source.kind),
+        slot: fragment_slot(&source.slot).to_string(),
+        label: fragment_label(&source.kind).to_string(),
         order,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:workspace_source:snapshot".to_string(),
         content: render_source_section(
             source,
             build_workspace_snapshot_from_entries(

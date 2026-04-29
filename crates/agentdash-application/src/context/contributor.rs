@@ -1,24 +1,11 @@
 use agentdash_domain::{project::Project, story::Story, task::Task, workspace::Workspace};
-use agentdash_spi::ContextFragment;
 use serde_json::Value;
 
 use crate::runtime::{RuntimeMcpServer, Vfs};
 
-/// Contributor 的结构化产出 — 同时包含上下文片段和 ACP MCP Server 声明
-pub struct Contribution {
-    pub context_fragments: Vec<ContextFragment>,
-    /// application 层 MCP server 抽象，边界层再转换为具体协议类型
-    pub mcp_servers: Vec<RuntimeMcpServer>,
-}
-
-impl Contribution {
-    pub fn fragments_only(fragments: Vec<ContextFragment>) -> Self {
-        Self {
-            context_fragments: fragments,
-            mcp_servers: vec![],
-        }
-    }
-}
+// Contribution 的权威定义在 `context/builder.rs`（零 domain 依赖的契约层）；
+// 本模块 re-export 之，避免旧调用方被迫跟随改动。
+pub use super::builder::Contribution;
 
 /// 上下文贡献者 — 所有上下文来源实现此 trait
 ///

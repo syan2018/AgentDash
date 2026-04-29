@@ -96,10 +96,12 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     if let Some(vfs) = input.vfs {
         let summary = summarize_vfs(vfs);
         fragments.push(ContextFragment {
-            slot: "vfs",
-            label: "vfs_summary",
+            slot: "vfs".to_string(),
+            label: "vfs_summary".to_string(),
             order: 35,
             strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:session_plan".to_string(),
             content: summary.markdown,
         });
     }
@@ -111,18 +113,22 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     );
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
-        slot: "tools",
-        label: "tool_visibility_summary",
+        slot: "tools".to_string(),
+        label: "tool_visibility_summary".to_string(),
         order: 36,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:session_plan".to_string(),
         content: tool_visibility.markdown,
     });
 
     fragments.push(ContextFragment {
-        slot: "persona",
-        label: "persona_summary",
+        slot: "persona".to_string(),
+        label: "persona_summary".to_string(),
         order: 37,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:session_plan".to_string(),
         content: build_persona_markdown(&input),
     });
 
@@ -134,19 +140,23 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         .enumerate()
     {
         fragments.push(ContextFragment {
-            slot: "required_context",
-            label: "required_context_block",
+            slot: "required_context".to_string(),
+            label: "required_context_block".to_string(),
             order: 38 + index as i32,
             strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:session_plan".to_string(),
             content: build_required_context_block_markdown(block),
         });
     }
 
     fragments.push(ContextFragment {
-        slot: "workflow",
-        label: "workflow_summary",
+        slot: "workflow".to_string(),
+        label: "workflow_summary".to_string(),
         order: 48,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:session_plan".to_string(),
         content: build_workflow_markdown(&input),
     });
 
@@ -157,10 +167,12 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         &tool_names,
     );
     fragments.push(ContextFragment {
-        slot: "runtime_policy",
-        label: "runtime_policy_summary",
+        slot: "runtime_policy".to_string(),
+        label: "runtime_policy_summary".to_string(),
         order: 49,
         strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:session_plan".to_string(),
         content: runtime_policy.markdown,
     });
 

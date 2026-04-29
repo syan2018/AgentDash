@@ -21,10 +21,12 @@ impl ContextComposer {
             return;
         }
         self.fragments.push(ContextFragment {
-            slot,
-            label,
+            slot: slot.to_string(),
+            label: label.to_string(),
             order,
             strategy,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:context_composer".to_string(),
             content,
         });
     }
@@ -38,13 +40,13 @@ impl ContextComposer {
     pub fn compose(mut self) -> (String, Vec<String>) {
         self.fragments.sort_by_key(|item| item.order);
 
-        let mut slot_order: Vec<&'static str> = Vec::new();
-        let mut slot_chunks: HashMap<&'static str, Vec<String>> = HashMap::new();
+        let mut slot_order: Vec<String> = Vec::new();
+        let mut slot_chunks: HashMap<String, Vec<String>> = HashMap::new();
         let mut source_summary: Vec<String> = Vec::new();
 
         for fragment in self.fragments {
-            if !slot_chunks.contains_key(fragment.slot) {
-                slot_order.push(fragment.slot);
+            if !slot_chunks.contains_key(&fragment.slot) {
+                slot_order.push(fragment.slot.clone());
             }
             source_summary.push(format!("{}({})", fragment.label, fragment.slot));
 
@@ -63,7 +65,7 @@ impl ContextComposer {
 
         let mut sections = Vec::new();
         for slot in slot_order {
-            if let Some(chunks) = slot_chunks.remove(slot) {
+            if let Some(chunks) = slot_chunks.remove(&slot) {
                 let merged = chunks
                     .into_iter()
                     .filter(|chunk| !chunk.trim().is_empty())

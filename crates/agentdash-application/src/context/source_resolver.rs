@@ -113,10 +113,12 @@ impl SourceResolver for ManualTextResolver {
         order: i32,
     ) -> Result<ContextFragment, InjectionError> {
         Ok(ContextFragment {
-            slot: fragment_slot(&source.slot),
-            label: fragment_label(&source.kind),
+            slot: fragment_slot(&source.slot).to_string(),
+            label: fragment_label(&source.kind).to_string(),
             order,
             strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "legacy:source_resolver:manual_text".to_string(),
             content: render_source_section(source, source.locator.clone()),
         })
     }

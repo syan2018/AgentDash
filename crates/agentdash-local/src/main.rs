@@ -1,9 +1,9 @@
 mod command_handler;
+mod local_backend_config;
 mod mcp_client_manager;
 mod tool_executor;
 mod workspace_prepare;
 mod workspace_probe;
-mod workspace_runtime_config;
 mod ws_client;
 
 use std::path::PathBuf;
@@ -85,11 +85,10 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let tool_exec = tool_executor::ToolExecutor::new(accessible_roots.clone());
-    let workspace_runtime_config =
-        workspace_runtime_config::load_workspace_runtime_config(&accessible_roots);
+    let local_backend_config =
+        local_backend_config::load_local_backend_config(&accessible_roots);
 
-    // 加载本机 MCP server 配置
-    let mcp_config = mcp_client_manager::McpClientManager::load_config(&accessible_roots);
+    let mcp_config = local_backend_config.mcp_servers.clone();
     let mcp_manager = if mcp_config.is_empty() {
         None
     } else {
@@ -151,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
         session_hub,
         connector,
         mcp_manager,
-        workspace_runtime_config,
+        workspace_contract_config: local_backend_config.workspace_contract,
     })
     .await
 }

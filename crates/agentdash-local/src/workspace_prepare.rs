@@ -6,16 +6,16 @@ use agentdash_domain::workspace::{
     P4WorkspaceMatchMode, WorkspaceIdentityKind, normalize_identity_payload,
 };
 
-use crate::workspace_runtime_config::WorkspaceRuntimeConfigFile;
+use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 
 pub fn prepare_workspace(
     path: &Path,
     identity_kind: Option<WorkspaceIdentityKind>,
     identity_payload: Option<&serde_json::Value>,
-    runtime_config: &WorkspaceRuntimeConfigFile,
+    runtime_config: &WorkspaceContractRuntimeConfig,
 ) -> Result<(), String> {
-    if !runtime_config.workspace_contract.enabled
-        || !runtime_config.workspace_contract.prepare_on_first_prompt
+    if !runtime_config.enabled
+        || !runtime_config.prepare_on_first_prompt
     {
         return Ok(());
     }
@@ -29,7 +29,7 @@ pub fn prepare_workspace(
 
     match identity_kind {
         WorkspaceIdentityKind::GitRepo => {
-            if !runtime_config.workspace_contract.git.enabled {
+            if !runtime_config.git.enabled {
                 return Ok(());
             }
             let contract = serde_json::from_value::<GitWorkspaceIdentityContract>(normalized)
@@ -37,7 +37,7 @@ pub fn prepare_workspace(
             prepare_git_workspace(path, &contract, runtime_config)
         }
         WorkspaceIdentityKind::P4Workspace => {
-            if !runtime_config.workspace_contract.p4.enabled {
+            if !runtime_config.p4.enabled {
                 return Ok(());
             }
             let contract = serde_json::from_value::<P4WorkspaceIdentityContract>(normalized)
@@ -51,7 +51,7 @@ pub fn prepare_workspace(
 fn prepare_git_workspace(
     path: &Path,
     contract: &GitWorkspaceIdentityContract,
-    runtime_config: &WorkspaceRuntimeConfigFile,
+    runtime_config: &WorkspaceContractRuntimeConfig,
 ) -> Result<(), String> {
     let branch = contract
         .prepare_profile
@@ -72,13 +72,13 @@ fn prepare_git_workspace(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| runtime_config.workspace_contract.git.default_remote.as_deref())
+        .or_else(|| runtime_config.git.default_remote.as_deref())
         .unwrap_or("origin");
 
     match contract.match_mode {
         GitWorkspaceMatchMode::RepoOnly => Ok(()),
         GitWorkspaceMatchMode::RepoBranch => {
-            if !runtime_config.workspace_contract.git.allow_branch_sync {
+            if !runtime_config.git.allow_branch_sync {
                 return Ok(());
             }
             let Some(branch) = branch else {
@@ -92,7 +92,7 @@ fn prepare_git_workspace(
             Ok(())
         }
         GitWorkspaceMatchMode::RepoCommit => {
-            if !runtime_config.workspace_contract.git.allow_commit_reset {
+            if !runtime_config.git.allow_commit_reset {
                 return Ok(());
             }
             let Some(commit_hash) = contract.commit_hash.as_deref() else {
@@ -108,7 +108,7 @@ fn prepare_git_workspace(
 fn prepare_p4_workspace(
     path: &Path,
     contract: &P4WorkspaceIdentityContract,
-    runtime_config: &WorkspaceRuntimeConfigFile,
+    runtime_config: &WorkspaceContractRuntimeConfig,
 ) -> Result<(), String> {
     let info_fields = run_p4_tagged(path, &["info"])?;
     let server_address = pick_tagged(
@@ -178,7 +178,7 @@ fn prepare_p4_workspace(
         .as_ref()
         .and_then(|profile| profile.get("force"))
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(runtime_config.workspace_contract.p4.force_sync);
+        .unwrap_or(runtime_config.p4.force_sync);
     if force {
         args.push("-f");
     }
@@ -294,29 +294,29 @@ fn render_process_error(
 mod tests {
     use super::prepare_workspace;
     use agentdash_domain::workspace::WorkspaceIdentityKind;
-    use crate::workspace_runtime_config::WorkspaceRuntimeConfigFile;
+    use crate::local_backend_config::{
+        GitWorkspaceRuntimeConfig, P4WorkspaceRuntimeConfig, WorkspaceContractRuntimeConfig,
+    };
 
     #[test]
     fn prepare_workspace_skips_when_contract_missing() {
-        let runtime_config = WorkspaceRuntimeConfigFile::default();
+        let runtime_config = WorkspaceContractRuntimeConfig::default();
         let result = prepare_workspace(std::path::Path::new("."), None, None, &runtime_config);
         assert!(result.is_ok());
     }
 
     #[test]
     fn prepare_workspace_rejects_invalid_git_contract() {
-        let runtime_config = WorkspaceRuntimeConfigFile {
-            workspace_contract: crate::workspace_runtime_config::WorkspaceContractRuntimeConfig {
+        let runtime_config = WorkspaceContractRuntimeConfig {
+            enabled: true,
+            prepare_on_first_prompt: true,
+            git: GitWorkspaceRuntimeConfig {
                 enabled: true,
-                prepare_on_first_prompt: true,
-                git: crate::workspace_runtime_config::GitWorkspaceRuntimeConfig {
-                    enabled: true,
-                    allow_branch_sync: true,
-                    allow_commit_reset: true,
-                    default_remote: None,
-                },
-                p4: Default::default(),
+                allow_branch_sync: true,
+                allow_commit_reset: true,
+                default_remote: None,
             },
+            p4: P4WorkspaceRuntimeConfig::default(),
         };
         let result = prepare_workspace(
             std::path::Path::new("."),

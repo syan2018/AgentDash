@@ -2,8 +2,12 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub const LOCAL_BACKEND_CONFIG_FILENAME: &str = "local-backend.json";
+
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct WorkspaceRuntimeConfigFile {
+pub struct LocalBackendConfigFile {
+    #[serde(default)]
+    pub mcp_servers: Vec<McpLocalServerEntry>,
     #[serde(default)]
     pub workspace_contract: WorkspaceContractRuntimeConfig,
 }
@@ -71,30 +75,50 @@ impl Default for P4WorkspaceRuntimeConfig {
     }
 }
 
-pub fn load_workspace_runtime_config(
-    accessible_roots: &[PathBuf],
-) -> WorkspaceRuntimeConfigFile {
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpLocalServerEntry {
+    pub name: String,
+    /// "stdio" | "http" | "sse"
+    pub transport: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<Vec<McpEnvEntry>>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpEnvEntry {
+    pub name: String,
+    pub value: String,
+}
+
+pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendConfigFile {
     let Some(root) = accessible_roots.first() else {
-        return WorkspaceRuntimeConfigFile::default();
+        return LocalBackendConfigFile::default();
     };
 
-    let config_path = root.join(".agentdash").join("workspace-runtime.json");
+    let config_path = root.join(".agentdash").join(LOCAL_BACKEND_CONFIG_FILENAME);
     if !config_path.exists() {
         tracing::debug!(
             path = %config_path.display(),
-            "Workspace runtime 配置文件不存在，使用默认关闭策略"
+            "Local backend 配置文件不存在，使用默认关闭策略"
         );
-        return WorkspaceRuntimeConfigFile::default();
+        return LocalBackendConfigFile::default();
     }
 
     match std::fs::read_to_string(&config_path) {
-        Ok(content) => match serde_json::from_str::<WorkspaceRuntimeConfigFile>(&content) {
+        Ok(content) => match serde_json::from_str::<LocalBackendConfigFile>(&content) {
             Ok(config) => {
                 tracing::info!(
                     path = %config_path.display(),
+                    mcp_server_count = config.mcp_servers.len(),
                     contract_enabled = config.workspace_contract.enabled,
                     prepare_on_first_prompt = config.workspace_contract.prepare_on_first_prompt,
-                    "已加载 workspace runtime 配置"
+                    "已加载 local backend 配置"
                 );
                 config
             }
@@ -102,18 +126,18 @@ pub fn load_workspace_runtime_config(
                 tracing::warn!(
                     error = %error,
                     path = %config_path.display(),
-                    "Workspace runtime 配置解析失败，使用默认关闭策略"
+                    "Local backend 配置解析失败，使用默认关闭策略"
                 );
-                WorkspaceRuntimeConfigFile::default()
+                LocalBackendConfigFile::default()
             }
         },
         Err(error) => {
             tracing::warn!(
                 error = %error,
                 path = %config_path.display(),
-                "读取 workspace runtime 配置失败，使用默认关闭策略"
+                "读取 local backend 配置失败，使用默认关闭策略"
             );
-            WorkspaceRuntimeConfigFile::default()
+            LocalBackendConfigFile::default()
         }
     }
 }
@@ -123,8 +147,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_runtime_config_is_disabled() {
-        let config = WorkspaceRuntimeConfigFile::default();
+    fn default_local_backend_config_is_disabled() {
+        let config = LocalBackendConfigFile::default();
+        assert!(config.mcp_servers.is_empty());
         assert!(!config.workspace_contract.enabled);
         assert!(!config.workspace_contract.prepare_on_first_prompt);
         assert!(!config.workspace_contract.git.enabled);

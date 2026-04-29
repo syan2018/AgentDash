@@ -1,7 +1,6 @@
 //! 本机 MCP Client 管理器 — 管理 stdio 进程和 localhost HTTP 连接
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use agentdash_relay::{McpServerInfoRelay, McpToolInfoRelay, ResponseMcpCallToolPayload};
 use rmcp::model::{CallToolRequestParams, Content};
@@ -11,39 +10,9 @@ use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
 };
 use rmcp::{RoleClient, ServiceExt};
-use serde::Deserialize;
 use tokio::sync::RwLock;
 
-// ─── 配置文件结构 ────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct McpLocalConfig {
-    #[serde(default)]
-    pub servers: Vec<McpLocalServerEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct McpLocalServerEntry {
-    pub name: String,
-    /// "stdio" | "http" | "sse"
-    pub transport: String,
-    // stdio 字段
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-    #[serde(default)]
-    pub env: Option<Vec<McpEnvEntry>>,
-    // http/sse 字段
-    #[serde(default)]
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct McpEnvEntry {
-    pub name: String,
-    pub value: String,
-}
+use crate::local_backend_config::McpLocalServerEntry;
 
 // ─── Client Manager ──────────────────────────────────────
 
@@ -57,42 +26,6 @@ impl McpClientManager {
         Self {
             config,
             clients: RwLock::new(HashMap::new()),
-        }
-    }
-
-    /// 从 `.agentdash/mcp-servers.json` 加载配置
-    pub fn load_config(accessible_roots: &[PathBuf]) -> Vec<McpLocalServerEntry> {
-        let Some(root) = accessible_roots.first() else {
-            return Vec::new();
-        };
-        let config_path = root.join(".agentdash").join("mcp-servers.json");
-        if !config_path.exists() {
-            tracing::debug!(path = %config_path.display(), "MCP 配置文件不存在，跳过");
-            return Vec::new();
-        }
-        match std::fs::read_to_string(&config_path) {
-            Ok(content) => match serde_json::from_str::<McpLocalConfig>(&content) {
-                Ok(cfg) => {
-                    tracing::info!(
-                        count = cfg.servers.len(),
-                        path = %config_path.display(),
-                        "已加载 MCP server 配置"
-                    );
-                    cfg.servers
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        path = %config_path.display(),
-                        "MCP 配置解析失败"
-                    );
-                    Vec::new()
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, path = %config_path.display(), "读取 MCP 配置失败");
-                Vec::new()
-            }
         }
     }
 

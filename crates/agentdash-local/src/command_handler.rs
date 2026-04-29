@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
+use crate::workspace_runtime_config::WorkspaceRuntimeConfigFile;
 use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use agentdash_spi::AgentConnector;
 
@@ -18,6 +19,7 @@ pub struct CommandHandler {
     session_hub: Option<SessionHub>,
     connector: Option<Arc<dyn AgentConnector>>,
     mcp_manager: Option<Arc<McpClientManager>>,
+    workspace_runtime_config: WorkspaceRuntimeConfigFile,
     /// 异步事件发送通道（用于 SessionNotification 等流式推送）
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 }
@@ -28,6 +30,7 @@ impl CommandHandler {
         session_hub: Option<SessionHub>,
         connector: Option<Arc<dyn AgentConnector>>,
         mcp_manager: Option<Arc<McpClientManager>>,
+        workspace_runtime_config: WorkspaceRuntimeConfigFile,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         Self {
@@ -35,6 +38,7 @@ impl CommandHandler {
             session_hub,
             connector,
             mcp_manager,
+            workspace_runtime_config,
             event_tx,
         }
     }
@@ -203,11 +207,13 @@ impl CommandHandler {
                 let workspace_root = workspace_root.clone();
                 let workspace_identity_kind = payload.workspace_identity_kind.clone();
                 let workspace_identity_payload = payload.workspace_identity_payload.clone();
+                let workspace_runtime_config = self.workspace_runtime_config.clone();
                 move || {
                     crate::workspace_prepare::prepare_workspace(
                         &workspace_root,
                         workspace_identity_kind,
                         workspace_identity_payload.as_ref(),
+                        &workspace_runtime_config,
                     )
                 }
             })

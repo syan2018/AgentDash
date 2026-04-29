@@ -3,6 +3,36 @@ use std::path::PathBuf;
 use agentdash_domain::context_source::ContextSourceRef;
 use serde::Serialize;
 
+/// Runtime agent 渲染 `SessionContextBundle` 时允许进入主 system prompt 的 slot。
+///
+/// 这是云端 Agent 上下文主数据面的唯一白名单；application 组装侧和 connector
+/// 消费侧必须引用同一份定义，避免新增 slot 后出现“bundle 已产出但 PiAgent 看不到”
+/// 的漂移。
+pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
+    "task",
+    "story",
+    "project",
+    "workspace",
+    "initial_context",
+    "vfs",
+    "tools",
+    "persona",
+    "required_context",
+    "workflow",
+    "workflow_context",
+    "story_context",
+    "runtime_policy",
+    "mcp_config",
+    "declared_source",
+    "static_fragment",
+    "requirements",
+    "constraints",
+    "codebase",
+    "references",
+    "instruction",
+    "instruction_append",
+];
+
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {
     #[error("缺少工作区，无法解析来源: {0}")]

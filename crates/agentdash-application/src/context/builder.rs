@@ -5,9 +5,7 @@
 //! 是纯合并 reducer（参见 PRD D6 决策）。领域自治的 `contribute_*` 纯函数负责
 //! 把 domain 对象解包成 `Contribution`，调用方按 phase 组装后喂给 builder。
 
-use agentdash_spi::{
-    ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle,
-};
+use agentdash_spi::{ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle};
 use uuid::Uuid;
 
 use crate::runtime::RuntimeMcpServer;
@@ -21,7 +19,7 @@ use crate::runtime::RuntimeMcpServer;
 /// Task 执行路径的 phase 标签（`start_task` / `continue_task`）。
 ///
 /// 主要用于 `contribute_instruction` 在首轮/续跑时选择合适的指令模板，
-/// 以及 `build_task_prompt_resource_block` 在 resource URI 上附加 phase 参数。
+/// 以及标记 bundle 的构建来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskExecutionPhase {
     Start,
@@ -141,7 +139,8 @@ pub fn build_continuation_bundle_from_markdown(
     session_id: Uuid,
     markdown: String,
 ) -> SessionContextBundle {
-    let mut bundle = SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
+    let mut bundle =
+        SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
     if markdown.trim().is_empty() {
         return bundle;
     }
@@ -197,11 +196,7 @@ mod bundle_tests {
         }
     }
 
-    fn frag_default_scope_empty(
-        slot: &str,
-        order: i32,
-        content: &str,
-    ) -> ContextFragment {
+    fn frag_default_scope_empty(slot: &str, order: i32, content: &str) -> ContextFragment {
         let mut f = frag(slot, order, content, MergeStrategy::Append);
         f.scope = FragmentScopeSet::empty();
         f
@@ -226,18 +221,9 @@ mod bundle_tests {
             phase: ContextBuildPhase::StoryOwner,
             default_scope: ContextFragment::default_scope(),
         };
-        let a = Contribution::fragments_only(vec![frag(
-            "task",
-            10,
-            "alpha",
-            MergeStrategy::Append,
-        )]);
-        let b = Contribution::fragments_only(vec![frag(
-            "task",
-            20,
-            "beta",
-            MergeStrategy::Append,
-        )]);
+        let a =
+            Contribution::fragments_only(vec![frag("task", 10, "alpha", MergeStrategy::Append)]);
+        let b = Contribution::fragments_only(vec![frag("task", 20, "beta", MergeStrategy::Append)]);
         let bundle = build_session_context_bundle(config, vec![a, b]);
         assert_eq!(bundle.fragments.len(), 1);
         let merged = &bundle.fragments[0];
@@ -300,7 +286,12 @@ mod bundle_tests {
         let fragments = vec![
             frag("task", 10, "task body", MergeStrategy::Append),
             frag("story", 20, "story body", MergeStrategy::Append),
-            frag("instruction", 30, "agent instruction", MergeStrategy::Append),
+            frag(
+                "instruction",
+                30,
+                "agent instruction",
+                MergeStrategy::Append,
+            ),
             frag("workflow", 40, "workflow binding", MergeStrategy::Append),
         ];
         let bundle =

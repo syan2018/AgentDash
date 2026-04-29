@@ -9,8 +9,12 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::hook_messages as msg;
+
+use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
+use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
     ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection, HookPendingAction,
@@ -21,6 +25,7 @@ use agentdash_spi::hooks::{
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
     default_mount_root_ref: Option<String>,
+    audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl HookRuntimeDelegate {
@@ -34,9 +39,19 @@ impl HookRuntimeDelegate {
         hook_session: SharedHookSessionRuntime,
         default_mount_root_ref: Option<String>,
     ) -> DynAgentRuntimeDelegate {
+        Self::new_with_mount_root_and_audit(hook_session, default_mount_root_ref, None)
+    }
+
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_mount_root_and_audit(
+        hook_session: SharedHookSessionRuntime,
+        default_mount_root_ref: Option<String>,
+        audit_bus: Option<SharedContextAuditBus>,
+    ) -> DynAgentRuntimeDelegate {
         Arc::new(Self {
             hook_session,
             default_mount_root_ref,
+            audit_bus,
         })
     }
 
@@ -81,6 +96,32 @@ impl HookRuntimeDelegate {
             resolution,
             runtime: self.hook_session.runtime_snapshot(),
         })
+    }
+
+    fn emit_hook_injection_fragments(&self, trigger: HookTrigger, injections: &[HookInjection]) {
+        let Some(bus) = self.audit_bus.as_ref() else {
+            return;
+        };
+        if injections.is_empty() {
+            return;
+        }
+
+        let bundle_id = Uuid::new_v4();
+        let bundle_session_uuid = Uuid::new_v4();
+        let trigger_label = format!("{trigger:?}");
+        for injection in injections.iter().cloned() {
+            let fragment = hook_injection_to_fragment(injection);
+            emit_fragment(
+                bus.as_ref(),
+                bundle_id,
+                self.hook_session.session_id(),
+                bundle_session_uuid,
+                AuditTrigger::HookInjection {
+                    trigger: trigger_label.clone(),
+                },
+                &fragment,
+            );
+        }
     }
 
     /// 从消息中提取最新的 LLM usage 并更新 session runtime 的 token stats
@@ -291,6 +332,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::UserPromptSubmit,
+            &evaluated.resolution.injections,
+        );
 
         // 2a. block_reason — hook 要求阻止当前用户输入
         if let Some(reason) = evaluated.resolution.block_reason.clone() {
@@ -497,6 +542,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::AfterTurn,
+            &evaluated.resolution.injections,
+        );
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
             &evaluated.resolution.injections,
@@ -552,6 +601,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::BeforeStop,
+            &evaluated.resolution.injections,
+        );
 
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
@@ -942,6 +995,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
+    use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
@@ -1463,6 +1517,44 @@ mod tests {
             "static companion injection should not produce duplicate trace events"
         );
         assert_eq!(submit_traces[0].decision, "context_injected");
+    }
+
+    #[tokio::test]
+    async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(StaticCompanionContextProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(100));
+        let delegate = HookRuntimeDelegate::new_with_mount_root_and_audit(
+            hook_session,
+            None,
+            Some(audit_bus.clone()),
+        );
+
+        delegate
+            .transform_context(
+                agentdash_spi::TransformContextInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![AgentMessage::user("hello")],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("transform_context should succeed");
+
+        let events = audit_bus.query("sess-hook", &AuditFilter::default());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].trigger.as_tag(), "hook:UserPromptSubmit");
+        assert_eq!(events[0].fragment.slot, "workflow");
+        assert!(events[0].fragment.content.contains("implement"));
     }
 
     #[test]

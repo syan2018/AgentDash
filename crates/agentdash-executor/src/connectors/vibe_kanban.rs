@@ -24,35 +24,9 @@ use executors::{
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload, workspace_path_from_context,
+    ExecutionContext, ExecutionStream, PromptPayload, RUNTIME_AGENT_CONTEXT_SLOTS,
+    workspace_path_from_context,
 };
-
-/// VibeKanban 连接器从 Bundle 渲染 runtime-agent 段落时使用的 slot 白名单。
-/// 与 PiAgent F1 保持一致的语义覆盖。
-const VIBE_KANBAN_CONTEXT_SLOTS: &[&str] = &[
-    "task",
-    "story",
-    "project",
-    "workspace",
-    "initial_context",
-    "vfs",
-    "tools",
-    "persona",
-    "required_context",
-    "workflow",
-    "workflow_context",
-    "story_context",
-    "runtime_policy",
-    "mcp_config",
-    "declared_source",
-    "static_fragment",
-    "requirements",
-    "constraints",
-    "codebase",
-    "references",
-    "instruction",
-    "instruction_append",
-];
 
 pub struct VibeKanbanExecutorsConnector {
     default_repo_root: PathBuf,
@@ -204,7 +178,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             .map(|bundle| {
                 bundle.render_section(
                     agentdash_spi::FragmentScope::RuntimeAgent,
-                    VIBE_KANBAN_CONTEXT_SLOTS,
+                    RUNTIME_AGENT_CONTEXT_SLOTS,
                 )
             })
             .unwrap_or_default();

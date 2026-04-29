@@ -19,6 +19,7 @@ use super::hook_runtime::HookSessionRuntime;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
 pub use super::types::*;
+use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
@@ -42,6 +43,9 @@ pub struct SessionHub {
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) prompt_augmenter: Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,
+    /// Context Inspector 使用的审计总线。Hub 内部创建 runtime delegate 时需要把它
+    /// 传给 hook 链路，记录每轮 HookInjection → ContextFragment 的动态片段。
+    pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
 }
 
 impl SessionHub {
@@ -63,6 +67,7 @@ impl SessionHub {
             title_generator: None,
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             prompt_augmenter: Arc::new(tokio::sync::RwLock::new(None)),
+            context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -113,6 +118,15 @@ impl SessionHub {
     /// 取出当前已注入的增强器（主要用于 hub 内部调用与测试检查）。
     pub(super) async fn current_prompt_augmenter(&self) -> Option<SharedPromptRequestAugmenter> {
         self.prompt_augmenter.read().await.clone()
+    }
+
+    /// 注入 Context Audit 总线，使 Hub 创建的 runtime delegate 能发出 hook fragment 审计。
+    pub async fn set_context_audit_bus(&self, bus: SharedContextAuditBus) {
+        *self.context_audit_bus.write().await = Some(bus);
+    }
+
+    pub(crate) async fn current_context_audit_bus(&self) -> Option<SharedContextAuditBus> {
+        self.context_audit_bus.read().await.clone()
     }
 
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。

@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node,
+    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node_with_audit,
     finalize_request,
 };
 
@@ -683,7 +683,8 @@ impl LifecycleOrchestrator {
             None => None,
         };
 
-        let prepared = compose_lifecycle_node(
+        let audit_bus = self.session_hub.current_context_audit_bus().await;
+        let prepared = compose_lifecycle_node_with_audit(
             &self.repos,
             &self.platform_config,
             LifecycleNodeSpec {
@@ -693,6 +694,8 @@ impl LifecycleOrchestrator {
                 workflow: workflow.as_ref(),
                 inherited_executor_config: executor_config,
             },
+            audit_bus,
+            Some(session_id),
         )
         .await?;
 

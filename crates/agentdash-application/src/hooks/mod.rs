@@ -13,6 +13,7 @@ mod snapshot_helpers;
 mod workflow_contribution;
 mod workflow_snapshot;
 
+pub(crate) use fragment_bridge::hook_injection_to_fragment;
 pub use owner_resolver::SessionOwnerResolver;
 pub use presets::{HookRulePreset, PresetSource, hook_rule_preset_registry};
 pub use provider::AppExecutionHookProvider;

@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "session prompt/request pipeline and event stream behavior"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Hook runtime injections and side effects are in scope"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "task/story owner session bootstrap and lifecycle node paths are in scope"}
+{"at":"2026-04-29T18:19:41+08:00","summary":"完成云端 Agent 上下文收口实现：runtime slot 白名单迁到 agentdash-spi；task/story step prompt 改为极简 trigger，业务上下文只走 SessionContextBundle；lifecycle AgentNode 产出 workflow/runtime_policy bundle 并接入审计；HookRuntimeDelegate 将 HookInjection 转 ContextFragment 后写入 ContextAuditBus。","files":["crates/agentdash-spi/src/context_injection.rs","crates/agentdash-application/src/session/assembler.rs","crates/agentdash-application/src/session/hook_delegate.rs","crates/agentdash-application/src/session/hub.rs","crates/agentdash-application/src/workflow/orchestrator.rs","crates/agentdash-executor/src/connectors/pi_agent/connector.rs","crates/agentdash-executor/src/connectors/vibe_kanban.rs","crates/agentdash-api/src/routes/acp_sessions.rs","crates/agentdash-api/src/app_state.rs"]}

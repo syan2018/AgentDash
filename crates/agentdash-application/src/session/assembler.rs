@@ -391,14 +391,13 @@ impl SessionAssemblyBuilder {
         activation: &crate::workflow::StepActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        let kickoff_prompt = activation.kickoff_prompt.to_default_prompt();
         self.vfs = Some(activation.lifecycle_vfs.clone());
         self.flow_capabilities = Some(activation.flow_capabilities.clone());
         self.effective_capability_keys = Some(activation.capability_keys.clone());
         self.mcp_servers = activation.mcp_servers.clone();
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
-            "text": kickoff_prompt,
+            "text": "请执行当前 lifecycle 节点。",
         })]);
         self.executor_config = inherited_executor_config;
         self
@@ -424,47 +423,6 @@ impl SessionAssemblyBuilder {
         }
     }
 }
-
-/// 把已渲染好的 task context markdown 封装成 ACP resource content block。
-fn build_task_prompt_resource_block(
-    task_id: String,
-    phase: TaskExecutionPhase,
-    markdown: String,
-) -> serde_json::Value {
-    let phase_label = match phase {
-        TaskExecutionPhase::Start => "start",
-        TaskExecutionPhase::Continue => "continue",
-    };
-    crate::context::build_owner_context_resource_block(
-        &format!("agentdash://task-context/{task_id}?phase={phase_label}"),
-        &markdown,
-    )
-}
-
-/// PiAgent F1 渲染 `## Project Context` 段时使用的 runtime-agent 可见 slot 白名单。
-pub const RUNTIME_AGENT_SLOT_WHITELIST: &[&str] = &[
-    "task",
-    "story",
-    "project",
-    "workspace",
-    "initial_context",
-    "vfs",
-    "tools",
-    "persona",
-    "required_context",
-    "workflow",
-    "workflow_context",
-    "runtime_policy",
-    "mcp_config",
-    "declared_source",
-    "static_fragment",
-    "requirements",
-    "constraints",
-    "codebase",
-    "references",
-    "instruction",
-    "instruction_append",
-];
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 2:Assembler 共享服务容器
@@ -707,7 +665,6 @@ fn owner_scope_phase(owner: &OwnerScope<'_>) -> ContextBuildPhase {
     }
 }
 
-
 impl<'a> SessionRequestAssembler<'a> {
     pub fn new(
         vfs_service: &'a RelayVfsService,
@@ -874,7 +831,11 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             vec![owner_contribution],
         );
-        self.audit_bundle(&context_bundle, spec.audit_session_key.as_deref(), AuditTrigger::SessionBootstrap);
+        self.audit_bundle(
+            &context_bundle,
+            spec.audit_session_key.as_deref(),
+            AuditTrigger::SessionBootstrap,
+        );
 
         // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / bootstrap_action ──
         //
@@ -891,19 +852,22 @@ impl<'a> SessionRequestAssembler<'a> {
                 prebuilt_continuation_bundle,
                 include_owner_bundle,
             } => {
-                let chosen_bundle = prebuilt_continuation_bundle
-                    .or_else(|| if include_owner_bundle { Some(context_bundle) } else { None });
+                let chosen_bundle = prebuilt_continuation_bundle.or_else(|| {
+                    if include_owner_bundle {
+                        Some(context_bundle)
+                    } else {
+                        None
+                    }
+                });
                 (
                     spec.user_prompt_blocks,
                     SessionBootstrapAction::None,
                     chosen_bundle,
                 )
             }
-            OwnerPromptLifecycle::Plain => (
-                spec.user_prompt_blocks,
-                SessionBootstrapAction::None,
-                None,
-            ),
+            OwnerPromptLifecycle::Plain => {
+                (spec.user_prompt_blocks, SessionBootstrapAction::None, None)
+            }
         };
 
         let effective_capability_keys: BTreeSet<String> = cap_output
@@ -1178,20 +1142,15 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             contributions,
         );
-        self.audit_bundle(&context_bundle, spec.audit_session_key.as_deref(), AuditTrigger::ComposerRebuild);
+        self.audit_bundle(
+            &context_bundle,
+            spec.audit_session_key.as_deref(),
+            AuditTrigger::ComposerRebuild,
+        );
 
-        // Prompt resource block —— 由 bundle 渲染后塞入。
-        let bundle_markdown =
-            context_bundle.render_section(agentdash_spi::FragmentScope::RuntimeAgent, RUNTIME_AGENT_SLOT_WHITELIST);
-        let prompt_blocks: Vec<serde_json::Value> = if bundle_markdown.trim().is_empty() {
-            Vec::new()
-        } else {
-            vec![build_task_prompt_resource_block(
-                spec.task.id.to_string(),
-                task_phase,
-                bundle_markdown,
-            )]
-        };
+        // Task 的业务上下文只进入 context_bundle/system prompt。这里保留一个非空
+        // turn trigger，避免把完整 owner context 再渲染进用户消息和标题生成输入。
+        let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
 
         let source_summary: Vec<String> = context_bundle
             .fragments
@@ -1238,7 +1197,14 @@ impl<'a> SessionRequestAssembler<'a> {
         &self,
         spec: LifecycleNodeSpec<'_>,
     ) -> Result<PreparedSessionInputs, String> {
-        compose_lifecycle_node(self.repos, self.platform_config, spec).await
+        compose_lifecycle_node_with_audit(
+            self.repos,
+            self.platform_config,
+            spec,
+            self.audit_bus.clone(),
+            None,
+        )
+        .await
     }
 
     /// Companion 子 session(父 session slice 继承场景)。
@@ -1257,6 +1223,16 @@ pub async fn compose_lifecycle_node(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
+) -> Result<PreparedSessionInputs, String> {
+    compose_lifecycle_node_with_audit(repos, platform_config, spec, None, None).await
+}
+
+pub async fn compose_lifecycle_node_with_audit(
+    repos: &RepositorySet,
+    platform_config: &PlatformConfig,
+    spec: LifecycleNodeSpec<'_>,
+    audit_bus: Option<SharedContextAuditBus>,
+    audit_session_key: Option<&str>,
 ) -> Result<PreparedSessionInputs, String> {
     let owner_ctx = SessionOwnerCtx::Project {
         project_id: spec.run.project_id,
@@ -1279,14 +1255,187 @@ pub async fn compose_lifecycle_node(
             companion_slice_mode: None,
             baseline_override: None,
             capability_directives: &[],
-            ready_port_keys,
+            ready_port_keys: ready_port_keys.clone(),
         },
         platform_config,
     );
 
+    let context_bundle = build_session_context_bundle(
+        SessionContextConfig {
+            session_id: Uuid::new_v4(),
+            phase: ContextBuildPhase::LifecycleNode,
+            default_scope: agentdash_spi::ContextFragment::default_scope(),
+        },
+        vec![contribute_lifecycle_context(
+            &spec,
+            &activation,
+            &ready_port_keys,
+        )],
+    );
+    if let (Some(bus), Some(session_key)) = (audit_bus.as_ref(), audit_session_key) {
+        emit_bundle_fragments(
+            bus.as_ref(),
+            &context_bundle,
+            session_key,
+            AuditTrigger::ComposerRebuild,
+        );
+    }
+    let source_summary = context_bundle
+        .fragments
+        .iter()
+        .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
+        .collect::<Vec<_>>();
+
     Ok(SessionAssemblyBuilder::new()
         .apply_lifecycle_activation(&activation, spec.inherited_executor_config)
+        .with_context_bundle(context_bundle)
+        .with_source_summary(source_summary)
         .build())
+}
+
+fn contribute_lifecycle_context(
+    spec: &LifecycleNodeSpec<'_>,
+    activation: &crate::workflow::StepActivation,
+    ready_port_keys: &BTreeSet<String>,
+) -> Contribution {
+    let mut fragments = Vec::new();
+
+    let step_desc = spec.step.description.trim();
+    let workflow_label = spec
+        .workflow
+        .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
+        .unwrap_or_else(|| "未绑定 workflow".to_string());
+    let mut lifecycle_lines = vec![
+        format!("- Lifecycle: `{}`", spec.lifecycle.key),
+        format!("- Run: `{}`", spec.run.id),
+        format!("- Step: `{}`", spec.step.key),
+        format!("- Node type: `{:?}`", spec.step.node_type),
+        format!("- Workflow: {workflow_label}"),
+    ];
+    if !step_desc.is_empty() {
+        lifecycle_lines.push(format!("- Step description: {step_desc}"));
+    }
+    if ready_port_keys.is_empty() {
+        lifecycle_lines.push("- Ready input ports: 无".to_string());
+    } else {
+        lifecycle_lines.push(format!(
+            "- Ready input ports: {}",
+            ready_port_keys
+                .iter()
+                .map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    fragments.push(agentdash_spi::ContextFragment {
+        slot: "workflow_context".to_string(),
+        label: "lifecycle_node_context".to_string(),
+        order: 80,
+        strategy: agentdash_spi::MergeStrategy::Append,
+        scope: agentdash_spi::ContextFragment::default_scope(),
+        source: "lifecycle:activation".to_string(),
+        content: format!("## Lifecycle Node\n{}", lifecycle_lines.join("\n")),
+    });
+
+    if let Some(workflow) = spec.workflow {
+        let injection = &workflow.contract.injection;
+        let mut parts = Vec::new();
+        if let Some(goal) = injection
+            .goal
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            parts.push(format!("## Workflow Goal\n{goal}"));
+        }
+        if !injection.instructions.is_empty() {
+            parts.push(format!(
+                "## Workflow Instructions\n{}",
+                injection
+                    .instructions
+                    .iter()
+                    .filter_map(|item| {
+                        let trimmed = item.trim();
+                        (!trimmed.is_empty()).then(|| format!("- {trimmed}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        if !injection.context_bindings.is_empty() {
+            parts.push(format!(
+                "## Workflow Context Bindings\n{}",
+                injection
+                    .context_bindings
+                    .iter()
+                    .map(|binding| {
+                        let title = binding
+                            .title
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(binding.locator.as_str());
+                        let required = if binding.required {
+                            "required"
+                        } else {
+                            "optional"
+                        };
+                        format!(
+                            "- `{}` ({required}) — {}: {}",
+                            binding.locator, title, binding.reason
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        let content = parts.join("\n\n");
+        if !content.trim().is_empty() {
+            fragments.push(agentdash_spi::ContextFragment {
+                slot: "workflow_context".to_string(),
+                label: "lifecycle_workflow_injection".to_string(),
+                order: 83,
+                strategy: agentdash_spi::MergeStrategy::Append,
+                scope: agentdash_spi::ContextFragment::default_scope(),
+                source: "lifecycle:workflow_injection".to_string(),
+                content,
+            });
+        }
+    }
+
+    let mut runtime_parts = vec![format!(
+        "## Lifecycle Runtime Policy\n{}\n\n完成当前节点后调用 `complete_lifecycle_node` 提交总结与产物。",
+        activation.kickoff_prompt.title_line
+    )];
+    if !activation.kickoff_prompt.output_section.trim().is_empty() {
+        runtime_parts.push(activation.kickoff_prompt.output_section.trim().to_string());
+    }
+    if !activation.kickoff_prompt.input_section.trim().is_empty() {
+        runtime_parts.push(activation.kickoff_prompt.input_section.trim().to_string());
+    }
+    if !activation.capability_keys.is_empty() {
+        runtime_parts.push(format!(
+            "## Effective Capabilities\n{}",
+            activation
+                .capability_keys
+                .iter()
+                .map(|key| format!("- `{key}`"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    fragments.push(agentdash_spi::ContextFragment {
+        slot: "runtime_policy".to_string(),
+        label: "lifecycle_runtime_policy".to_string(),
+        order: 84,
+        strategy: agentdash_spi::MergeStrategy::Append,
+        scope: agentdash_spi::ContextFragment::default_scope(),
+        source: "lifecycle:runtime_policy".to_string(),
+        content: runtime_parts.join("\n\n"),
+    });
+
+    Contribution::fragments_only(fragments)
 }
 
 /// Companion 子 session 组装(脱离 `SessionRequestAssembler`,companion tool
@@ -1319,6 +1468,17 @@ fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSlice
             crate::capability::CompanionSliceMode::ConstraintsOnly
         }
     }
+}
+
+fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
+    let text = match phase {
+        TaskExecutionPhase::Start => "请开始执行当前任务。",
+        TaskExecutionPhase::Continue => "请继续推进当前任务。",
+    };
+    vec![serde_json::json!({
+        "type": "text",
+        "text": text,
+    })]
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1584,3 +1744,145 @@ async fn resolve_owner_workflow_capability_directives(
 use crate::workflow::KickoffPromptFragment as _Kickoff;
 #[allow(unused_imports)]
 use crate::workflow::StepActivation as _StepActivation;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::workflow::{
+        InputPortDefinition, LifecycleDefinition, LifecycleStepDefinition, OutputPortDefinition,
+        WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+        WorkflowInjectionSpec,
+    };
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn story_step_trigger_prompt_does_not_embed_owner_context() {
+        for phase in [TaskExecutionPhase::Start, TaskExecutionPhase::Continue] {
+            let blocks = build_story_step_trigger_prompt_blocks(phase);
+            let text = blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(!text.trim().is_empty());
+            assert!(!text.contains("## Task"));
+            assert!(!text.contains("## Story"));
+            assert!(!text.contains("## Project"));
+            assert!(!text.contains("## Instruction"));
+            assert!(!text.contains("agentdash://task-context"));
+        }
+    }
+
+    #[test]
+    fn lifecycle_context_contribution_contains_workflow_and_runtime_fragments() {
+        let project_id = Uuid::new_v4();
+        let step = LifecycleStepDefinition {
+            key: "implement".to_string(),
+            description: "实现功能".to_string(),
+            workflow_key: Some("wf_impl".to_string()),
+            node_type: Default::default(),
+            output_ports: vec![OutputPortDefinition {
+                key: "summary".to_string(),
+                description: "实现摘要".to_string(),
+                gate_strategy: Default::default(),
+                gate_params: None,
+            }],
+            input_ports: vec![InputPortDefinition {
+                key: "design".to_string(),
+                description: "设计方案".to_string(),
+                context_strategy: Default::default(),
+                context_template: None,
+                standalone_fulfillment: Default::default(),
+            }],
+        };
+        let lifecycle = LifecycleDefinition::new(
+            project_id,
+            "dev",
+            "Dev",
+            "dev lifecycle",
+            WorkflowBindingKind::Story,
+            WorkflowDefinitionSource::BuiltinSeed,
+            "implement",
+            vec![step.clone()],
+            vec![],
+        )
+        .expect("lifecycle");
+        let run = agentdash_domain::workflow::LifecycleRun::new(
+            project_id,
+            lifecycle.id,
+            "sess-story",
+            &lifecycle.steps,
+            &lifecycle.entry_step_key,
+            &lifecycle.edges,
+        )
+        .expect("run");
+        let workflow = WorkflowDefinition::new(
+            project_id,
+            "wf_impl",
+            "Implementation",
+            "实现工作流",
+            WorkflowBindingKind::Story,
+            WorkflowDefinitionSource::BuiltinSeed,
+            WorkflowContract {
+                injection: WorkflowInjectionSpec {
+                    goal: Some("交付可验证实现".to_string()),
+                    instructions: vec!["保持上下文收口".to_string()],
+                    context_bindings: vec![],
+                },
+                ..WorkflowContract::default()
+            },
+        )
+        .expect("workflow");
+        let mount = crate::vfs::build_lifecycle_mount_with_ports(
+            run.id,
+            &lifecycle.key,
+            &["summary".into()],
+        );
+        let activation = crate::workflow::StepActivation {
+            flow_capabilities: Default::default(),
+            mcp_servers: vec![],
+            capability_keys: BTreeSet::from(["workflow_management".to_string()]),
+            kickoff_prompt: crate::workflow::KickoffPromptFragment {
+                title_line: "你正在执行 lifecycle `dev` 的 node `implement`。".to_string(),
+                output_section: "## 必须交付的产出\n- `summary`".to_string(),
+                input_section: "## 输入上下文\n- `design`".to_string(),
+            },
+            lifecycle_mount: mount.clone(),
+            lifecycle_vfs: Vfs {
+                mounts: vec![mount],
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            },
+        };
+
+        let spec = LifecycleNodeSpec {
+            run: &run,
+            lifecycle: &lifecycle,
+            step: &step,
+            workflow: Some(&workflow),
+            inherited_executor_config: None,
+        };
+        let contribution =
+            contribute_lifecycle_context(&spec, &activation, &BTreeSet::from(["design".into()]));
+        let bundle = build_session_context_bundle(
+            SessionContextConfig {
+                session_id: Uuid::new_v4(),
+                phase: ContextBuildPhase::LifecycleNode,
+                default_scope: agentdash_spi::ContextFragment::default_scope(),
+            },
+            vec![contribution],
+        );
+        let rendered = bundle.render_section(
+            agentdash_spi::FragmentScope::RuntimeAgent,
+            agentdash_spi::RUNTIME_AGENT_CONTEXT_SLOTS,
+        );
+
+        assert!(rendered.contains("## Lifecycle Node"));
+        assert!(rendered.contains("交付可验证实现"));
+        assert!(rendered.contains("complete_lifecycle_node"));
+        assert!(rendered.contains("workflow_management"));
+    }
+}

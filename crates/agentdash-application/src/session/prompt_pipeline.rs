@@ -158,10 +158,12 @@ impl SessionHub {
             }
         }
 
+        let context_audit_bus = self.current_context_audit_bus().await;
         let runtime_delegate = hook_session.as_ref().map(|hs| {
-            HookRuntimeDelegate::new_with_mount_root(
+            HookRuntimeDelegate::new_with_mount_root_and_audit(
                 hs.clone(),
                 Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+                context_audit_bus.clone(),
             )
         });
         let supports_repository_restore = self

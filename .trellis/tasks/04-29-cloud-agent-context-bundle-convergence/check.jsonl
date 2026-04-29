@@ -1,0 +1,8 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "quality gate for backend context pipeline changes"}
+{"at":"2026-04-29T18:19:41+08:00","command":"cargo test -p agentdash-spi session_context_bundle -- --nocapture","result":"passed","notes":"4 passed"}
+{"at":"2026-04-29T18:19:41+08:00","command":"cargo test -p agentdash-application context -- --nocapture","result":"passed","notes":"37 passed"}
+{"at":"2026-04-29T18:19:41+08:00","command":"cargo test -p agentdash-application hook_delegate -- --nocapture","result":"passed","notes":"7 passed"}
+{"at":"2026-04-29T18:19:41+08:00","command":"cargo test -p agentdash-executor runtime_system_prompt -- --nocapture","result":"passed","notes":"3 passed"}
+{"at":"2026-04-29T18:19:41+08:00","command":"cargo check -p agentdash-api","result":"passed_with_existing_warning","notes":"仅剩 routes/projects.rs 的 cleanup_cloned_project dead_code warning，非本任务引入"}

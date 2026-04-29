@@ -1448,22 +1448,16 @@ async fn build_task_owner_prompt_request(
     let task_context_markdown = prepared.context_bundle.as_ref().map(|bundle| {
         bundle.render_section(
             agentdash_spi::FragmentScope::RuntimeAgent,
-            agentdash_application::session::RUNTIME_AGENT_SLOT_WHITELIST,
+            agentdash_spi::RUNTIME_AGENT_CONTEXT_SLOTS,
         )
     });
-    let mut prompt_blocks = user_prompt_blocks;
+    let prompt_blocks = user_prompt_blocks;
     let mut context_bundle = prepared.context_bundle.clone();
     let mut bootstrap_action = SessionBootstrapAction::None;
 
     match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => {
-            if let Some(prepared_blocks) = prepared.prompt_blocks.take()
-                && !prepared_blocks.is_empty()
-            {
-                let mut next_blocks = prepared_blocks;
-                next_blocks.extend(prompt_blocks);
-                prompt_blocks = next_blocks;
-            }
+            let _ = prepared.prompt_blocks.take();
             bootstrap_action = SessionBootstrapAction::OwnerContext;
         }
         SessionPromptLifecycle::RepositoryRehydrate(
@@ -1476,7 +1470,9 @@ async fn build_task_owner_prompt_request(
                 .session_hub
                 .build_continuation_system_context(
                     session_id,
-                    task_context_markdown.as_deref().filter(|s| !s.trim().is_empty()),
+                    task_context_markdown
+                        .as_deref()
+                        .filter(|s| !s.trim().is_empty()),
                 )
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?;

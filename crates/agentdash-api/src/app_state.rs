@@ -353,6 +353,7 @@ impl AppState {
             crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
 
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
+        session_hub.set_context_audit_bus(audit_bus.clone()).await;
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),

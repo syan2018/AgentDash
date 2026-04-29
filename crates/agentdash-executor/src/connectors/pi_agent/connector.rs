@@ -27,8 +27,8 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::mcp_relay::McpRelayProvider;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload, SystemPromptMode,
-    workspace_path_from_context,
+    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload,
+    RUNTIME_AGENT_CONTEXT_SLOTS, SystemPromptMode, workspace_path_from_context,
 };
 
 /// 从 McpServer（外部类型）提取 server name
@@ -47,35 +47,6 @@ fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String 
 fn is_platform_mcp_server(server: &agent_client_protocol::McpServer) -> bool {
     extract_mcp_server_name(server).starts_with("agentdash-")
 }
-
-/// Bundle 渲染 `## Project Context` 段时覆盖的 slot 白名单。
-///
-/// 覆盖 application 层 `contribute_*` / `build_session_plan_fragments` /
-/// `workspace_sources` 引入的所有 runtime-agent 可见 slot。
-const RUNTIME_AGENT_PROJECT_CONTEXT_SLOTS: &[&str] = &[
-    "task",
-    "story",
-    "project",
-    "workspace",
-    "initial_context",
-    "vfs",
-    "tools",
-    "persona",
-    "required_context",
-    "workflow",
-    "workflow_context",
-    "story_context",
-    "runtime_policy",
-    "mcp_config",
-    "declared_source",
-    "static_fragment",
-    "requirements",
-    "constraints",
-    "codebase",
-    "references",
-    "instruction",
-    "instruction_append",
-];
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -301,7 +272,7 @@ impl PiAgentConnector {
         if let Some(bundle) = context.context_bundle.as_ref() {
             let project_context = bundle.render_section(
                 agentdash_spi::FragmentScope::RuntimeAgent,
-                RUNTIME_AGENT_PROJECT_CONTEXT_SLOTS,
+                RUNTIME_AGENT_CONTEXT_SLOTS,
             );
             if !project_context.trim().is_empty() {
                 sections.push(format!("## Project Context\n\n{project_context}"));

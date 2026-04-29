@@ -3,7 +3,7 @@ use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
-    ContextComposer, resolve_declared_sources, trim_or_dash, workspace_context_fragment,
+    Contribution, resolve_declared_sources, trim_or_dash, workspace_context_fragment,
 };
 use crate::runtime::{RuntimeMcpServer, Vfs};
 use crate::session::plan::{
@@ -24,39 +24,41 @@ pub struct StoryContextBuildInput<'a> {
     pub workspace_source_warnings: Vec<String>,
 }
 
-/// 构建 Story Owner Session 的 context markdown + source summary
-///
-/// 此函数不依赖任何基础设施，所有需要基础设施（仓库、中继）的数据
-/// 由调用方预先获取并通过 `StoryContextBuildInput` 传入。
-pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (String, Vec<String>) {
-    let mut composer = ContextComposer::default();
+/// 把 Story owner session 的业务上下文聚合为一个 `Contribution`，供
+/// `build_session_context_bundle` 消费。
+pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contribution {
+    let mut fragments = Vec::new();
 
-    composer.push(
-        "story",
-        "story_core",
-        10,
-        MergeStrategy::Append,
-        format!(
+    fragments.push(ContextFragment {
+        slot: "story".to_string(),
+        label: "story_core".to_string(),
+        order: 10,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:story_context".to_string(),
+        content: format!(
             "## Story\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
             input.story.id,
             trim_or_dash(&input.story.title),
             trim_or_dash(&input.story.description),
             input.story.status
         ),
-    );
-    composer.push(
-        "project",
-        "project_core",
-        20,
-        MergeStrategy::Append,
-        format!(
+    });
+    fragments.push(ContextFragment {
+        slot: "project".to_string(),
+        label: "project_core".to_string(),
+        order: 20,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:story_context".to_string(),
+        content: format!(
             "## Project\n- id: {}\n- name: {}",
             input.project.id,
             trim_or_dash(&input.project.name),
         ),
-    );
+    });
     if let Some(workspace) = input.workspace {
-        composer.push_fragment(workspace_context_fragment(workspace));
+        fragments.push(workspace_context_fragment(workspace));
     }
 
     let effective_session_composition = resolve_story_session_composition(Some(input.story));
@@ -75,9 +77,7 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
         has_initial_context: false,
         workspace_attached: input.workspace.is_some(),
     });
-    for fragment in session_plan.fragments {
-        composer.push_fragment(fragment);
-    }
+    fragments.extend(session_plan.fragments);
 
     let resolvable_sources = input
         .story
@@ -97,16 +97,16 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
         sources: &resolvable_sources,
         base_order: 50,
     }) {
-        for fragment in resolved.fragments {
-            composer.push_fragment(fragment);
-        }
+        fragments.extend(resolved.fragments);
         if !resolved.warnings.is_empty() {
-            composer.push(
-                "story_context",
-                "story_context_warnings",
-                59,
-                MergeStrategy::Append,
-                format!(
+            fragments.push(ContextFragment {
+                slot: "story_context".to_string(),
+                label: "story_context_warnings".to_string(),
+                order: 59,
+                strategy: MergeStrategy::Append,
+                scope: ContextFragment::default_scope(),
+                source: "legacy:story_context".to_string(),
+                content: format!(
                     "## Injection Notes\n{}",
                     resolved
                         .warnings
@@ -115,21 +115,19 @@ pub fn build_story_context_markdown(input: StoryContextBuildInput<'_>) -> (Strin
                         .collect::<Vec<_>>()
                         .join("\n")
                 ),
-            );
+            });
         }
     }
 
-    for fragment in input.workspace_source_fragments {
-        composer.push_fragment(fragment);
-    }
+    fragments.extend(input.workspace_source_fragments);
     if !input.workspace_source_warnings.is_empty() {
-        composer.push_fragment(crate::context::build_declared_source_warning_fragment(
+        fragments.push(crate::context::build_declared_source_warning_fragment(
             "story_context_warnings",
             69,
             &input.workspace_source_warnings,
         ));
     }
 
-    composer.compose()
+    Contribution::fragments_only(fragments)
 }
 

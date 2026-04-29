@@ -48,6 +48,35 @@ fn is_platform_mcp_server(server: &agent_client_protocol::McpServer) -> bool {
     extract_mcp_server_name(server).starts_with("agentdash-")
 }
 
+/// Bundle 渲染 `## Project Context` 段时覆盖的 slot 白名单。
+///
+/// 覆盖 application 层 `contribute_*` / `build_session_plan_fragments` /
+/// `workspace_sources` 引入的所有 runtime-agent 可见 slot。
+const RUNTIME_AGENT_PROJECT_CONTEXT_SLOTS: &[&str] = &[
+    "task",
+    "story",
+    "project",
+    "workspace",
+    "initial_context",
+    "vfs",
+    "tools",
+    "persona",
+    "required_context",
+    "workflow",
+    "workflow_context",
+    "story_context",
+    "runtime_policy",
+    "mcp_config",
+    "declared_source",
+    "static_fragment",
+    "requirements",
+    "constraints",
+    "codebase",
+    "references",
+    "instruction",
+    "instruction_append",
+];
+
 // ─── PiAgentConnector ───────────────────────────────────────────
 
 pub struct PiAgentConnector {
@@ -268,10 +297,15 @@ impl PiAgentConnector {
         }
 
         // ── 2. Project Context: 会话级 owner 业务上下文 ──
-        if let Some(ref ctx) = context.system_context
-            && !ctx.trim().is_empty()
-        {
-            sections.push(format!("## Project Context\n\n{ctx}"));
+        // 唯一数据源：结构化 SessionContextBundle。
+        if let Some(bundle) = context.context_bundle.as_ref() {
+            let project_context = bundle.render_section(
+                agentdash_spi::FragmentScope::RuntimeAgent,
+                RUNTIME_AGENT_PROJECT_CONTEXT_SLOTS,
+            );
+            if !project_context.trim().is_empty() {
+                sections.push(format!("## Project Context\n\n{project_context}"));
+            }
         }
 
         // ── 2b. Companion Agents: 从 session capabilities 注入 ──
@@ -2327,7 +2361,7 @@ mod tests {
             vfs: Some(test_vfs("/tmp/test-workspace")),
             hook_session: None,
             flow_capabilities: Default::default(),
-            system_context: None,
+            context_bundle: None,
             runtime_delegate: None,
             identity: None,
             restored_session_state: None,
@@ -2357,7 +2391,7 @@ mod tests {
             vfs: Some(test_vfs("/tmp/ws")),
             hook_session: None,
             flow_capabilities: Default::default(),
-            system_context: None,
+            context_bundle: None,
             runtime_delegate: None,
             identity: None,
             restored_session_state: None,
@@ -2414,7 +2448,7 @@ mod tests {
             vfs: Some(test_vfs("/tmp/ws")),
             hook_session: None,
             flow_capabilities: Default::default(),
-            system_context: None,
+            context_bundle: None,
             runtime_delegate: None,
             identity: None,
             restored_session_state: None,
@@ -2571,7 +2605,7 @@ mod tests {
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
-                    system_context: None,
+                    context_bundle: None,
                     runtime_delegate: None,
                     identity: None,
                     restored_session_state: None,
@@ -2610,7 +2644,22 @@ mod tests {
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     hook_session: None,
                     flow_capabilities: Default::default(),
-                    system_context: Some("## Owner Context\nproject".to_string()),
+                    context_bundle: Some({
+                        let mut bundle = agentdash_spi::SessionContextBundle::new(
+                            uuid::Uuid::new_v4(),
+                            "repository_rehydrate",
+                        );
+                        bundle.upsert_by_slot(agentdash_spi::ContextFragment {
+                            slot: "static_fragment".to_string(),
+                            label: "continuation_transcript".to_string(),
+                            order: 0,
+                            strategy: agentdash_spi::MergeStrategy::Append,
+                            scope: agentdash_spi::ContextFragment::default_scope(),
+                            source: "test:continuation".to_string(),
+                            content: "## Owner Context\nproject".to_string(),
+                        });
+                        bundle
+                    }),
                     runtime_delegate: None,
                     identity: None,
                     restored_session_state: Some(agentdash_spi::RestoredSessionState {

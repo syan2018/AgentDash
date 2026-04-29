@@ -1,11 +1,8 @@
 //! Hook 注入 → ContextFragment / Contribution 转换桥。
 //!
-//! 本模块实现 Step 4：把 Hook 链路产出的 `HookInjection` / `SessionHookSnapshot`
-//! 转换为统一的 `ContextFragment` / `Contribution`，让 Hook 数据可以与其他 contribution
-//! 一视同仁地进入 `build_session_context_bundle`。
-//!
-//! 注意：Step 4 **仅做转换实现**，不改运行时路径，不删除 `SESSION_BASELINE_INJECTION_SLOTS`
-//! 或 `filter_user_prompt_injections`——这些在 Step 8 才处理。
+//! 把 Hook 链路产出的 `HookInjection` / `SessionHookSnapshot` 转换为统一的
+//! `ContextFragment` / `Contribution`，让 Hook 数据可以与其他 contribution 一视同仁
+//! 地进入 `build_session_context_bundle`。Bundle 的 `upsert_by_slot` 承担去重语义。
 
 use agentdash_spi::{ContextFragment, HookInjection, MergeStrategy, SessionHookSnapshot};
 

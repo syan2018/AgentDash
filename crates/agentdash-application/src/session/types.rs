@@ -4,7 +4,7 @@ use agent_client_protocol::{ContentBlock, McpServer};
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
-use agentdash_spi::{PromptPayload, Vfs};
+use agentdash_spi::{PromptPayload, SessionContextBundle, Vfs};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -33,7 +33,8 @@ pub struct PromptSessionRequest {
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
     /// 已解析的 capability string key 集合（用于 hook runtime 初始化 capability tracking）
     pub effective_capability_keys: Option<std::collections::BTreeSet<String>>,
-    pub system_context: Option<String>,
+    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
+    pub context_bundle: Option<SessionContextBundle>,
     /// Session 模型判定出的 bootstrap 动作。
     /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
     /// route / frontend 只传原始用户输入。
@@ -56,7 +57,7 @@ impl PromptSessionRequest {
             vfs: None,
             flow_capabilities: None,
             effective_capability_keys: None,
-            system_context: None,
+            context_bundle: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,
             post_turn_handler: None,

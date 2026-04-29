@@ -1068,15 +1068,23 @@ pub(crate) async fn augment_prompt_request_for_owner(
         SessionRepositoryRehydrateMode::SystemContext,
     ) = lifecycle_kind
     {
-        let continuation_context = state
+        let markdown = state
             .services
             .session_hub
             .build_continuation_system_context(session_id, None)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let bundle_session_id =
+            uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let continuation_bundle = markdown.map(|md| {
+            agentdash_application::context::build_continuation_bundle_from_markdown(
+                bundle_session_id,
+                md,
+            )
+        });
         return Ok(apply_plain_lifecycle_request(
             req,
-            continuation_context,
+            continuation_bundle,
             SessionBootstrapAction::None,
         )?);
     }
@@ -1086,7 +1094,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
 
 fn finalize_augmented_request(
     req: &mut PromptSessionRequest,
-    system_context: Option<String>,
+    context_bundle: Option<agentdash_spi::SessionContextBundle>,
     prompt_blocks: Vec<serde_json::Value>,
     workspace: Option<&Workspace>,
     vfs: Option<agentdash_spi::Vfs>,
@@ -1096,7 +1104,7 @@ fn finalize_augmented_request(
     bootstrap_action: SessionBootstrapAction,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
-    req.system_context = system_context;
+    req.context_bundle = context_bundle;
     req.bootstrap_action = bootstrap_action;
 
     apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.vfs, workspace);
@@ -1110,7 +1118,7 @@ fn finalize_augmented_request(
 
 fn apply_plain_lifecycle_request(
     mut req: PromptSessionRequest,
-    system_context: Option<String>,
+    context_bundle: Option<agentdash_spi::SessionContextBundle>,
     bootstrap_action: SessionBootstrapAction,
 ) -> Result<PromptSessionRequest, ApiError> {
     let user_prompt_blocks = req
@@ -1119,7 +1127,7 @@ fn apply_plain_lifecycle_request(
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     req.user_input.prompt_blocks = Some(user_prompt_blocks);
-    req.system_context = system_context;
+    req.context_bundle = context_bundle;
     req.bootstrap_action = bootstrap_action;
     Ok(req)
 }
@@ -1281,55 +1289,62 @@ fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_>
         state.services.backend_registry.as_ref(),
         &state.repos,
         &state.config.platform_config,
-        state.services.contributor_registry.as_ref(),
     )
 }
 
-/// `SessionPromptLifecycle` → `OwnerPromptLifecycle`,预留 continuation_system_context 槽位。
+/// `SessionPromptLifecycle` → `OwnerPromptLifecycle`，预留 continuation bundle 槽位。
 fn map_owner_prompt_lifecycle(
     _state: &Arc<AppState>,
     _session_id: &str,
     kind: SessionPromptLifecycle,
-    prebuilt_continuation: Option<String>,
+    prebuilt_continuation_bundle: Option<agentdash_spi::SessionContextBundle>,
 ) -> OwnerPromptLifecycle {
     match kind {
         SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
         ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_system_context: prebuilt_continuation,
-            include_markdown_as_system_context: false,
+            prebuilt_continuation_bundle,
+            include_owner_bundle: false,
         },
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_system_context: None,
-            include_markdown_as_system_context: true,
+            prebuilt_continuation_bundle: None,
+            include_owner_bundle: true,
         },
         SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
     }
 }
 
-/// 对 `RepositoryRehydrate(SystemContext)` 预算 continuation system context(SessionHub IO)。
+/// 对 `RepositoryRehydrate(SystemContext)` 预算 continuation bundle（SessionHub IO）。
 async fn resolve_continuation_system_context(
     state: &Arc<AppState>,
     session_id: &str,
     lifecycle: OwnerPromptLifecycle,
 ) -> Result<OwnerPromptLifecycle, ApiError> {
     if let OwnerPromptLifecycle::RepositoryRehydrate {
-        prebuilt_continuation_system_context: None,
-        include_markdown_as_system_context: false,
+        prebuilt_continuation_bundle: None,
+        include_owner_bundle: false,
     } = lifecycle
     {
-        let ctx = state
+        let markdown = state
             .services
             .session_hub
             .build_continuation_system_context(session_id, None)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let bundle_session_id =
+            uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let prebuilt_continuation_bundle = markdown.map(|md| {
+            agentdash_application::context::build_continuation_bundle_from_markdown(
+                bundle_session_id,
+                md,
+            )
+        });
         return Ok(OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_system_context: ctx,
-            include_markdown_as_system_context: false,
+            prebuilt_continuation_bundle,
+            include_owner_bundle: false,
         });
     }
     Ok(lifecycle)
@@ -1424,12 +1439,16 @@ async fn build_task_owner_prompt_request(
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    let task_context_markdown = prepared
-        .system_context
-        .clone()
-        .filter(|value| !value.trim().is_empty());
+    // task context 已由 compose_story_step 装配到 prepared.context_bundle 中；
+    // 当前路径把 bundle 渲染成 markdown 作为 continuation 的 owner_context 参考。
+    let task_context_markdown = prepared.context_bundle.as_ref().map(|bundle| {
+        bundle.render_section(
+            agentdash_spi::FragmentScope::RuntimeAgent,
+            agentdash_application::session::RUNTIME_AGENT_SLOT_WHITELIST,
+        )
+    });
     let mut prompt_blocks = user_prompt_blocks;
-    let mut system_context = None;
+    let mut context_bundle = prepared.context_bundle.clone();
     let mut bootstrap_action = SessionBootstrapAction::None;
 
     match lifecycle_kind {
@@ -1441,25 +1460,39 @@ async fn build_task_owner_prompt_request(
                 next_blocks.extend(prompt_blocks);
                 prompt_blocks = next_blocks;
             }
-            system_context = task_context_markdown.clone();
             bootstrap_action = SessionBootstrapAction::OwnerContext;
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
         ) => {
-            system_context = state
+            // 用当前 task bundle 的 markdown 作为 owner_context 基线再接续历史事件，
+            // 产出 continuation Bundle 替代原 task bundle。
+            let markdown = state
                 .services
                 .session_hub
-                .build_continuation_system_context(session_id, task_context_markdown.as_deref())
+                .build_continuation_system_context(
+                    session_id,
+                    task_context_markdown.as_deref().filter(|s| !s.trim().is_empty()),
+                )
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let bundle_session_id =
+                uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+            context_bundle = markdown.map(|md| {
+                agentdash_application::context::build_continuation_bundle_from_markdown(
+                    bundle_session_id,
+                    md,
+                )
+            });
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => {
-            system_context = task_context_markdown.clone();
+            // 原生 executor restore：保持原 task bundle 作为 context_bundle。
         }
-        SessionPromptLifecycle::Plain => {}
+        SessionPromptLifecycle::Plain => {
+            context_bundle = None;
+        }
     }
 
     if let Some(config) = prepared
@@ -1481,7 +1514,7 @@ async fn build_task_owner_prompt_request(
 
     finalize_augmented_request(
         &mut req,
-        system_context,
+        context_bundle,
         prompt_blocks,
         prepared.workspace_defaults.as_ref(),
         prepared.vfs,

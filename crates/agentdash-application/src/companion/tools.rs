@@ -87,7 +87,7 @@ pub struct CompanionRequestTool {
     vfs: Option<Vfs>,
     mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
-    system_context: Option<String>,
+    context_bundle: Option<agentdash_spi::SessionContextBundle>,
 }
 
 impl CompanionRequestTool {
@@ -117,7 +117,7 @@ impl CompanionRequestTool {
             vfs: context.vfs.clone(),
             mcp_servers: context.mcp_servers.clone(),
             hook_session: context.hook_session.clone(),
-            system_context: context.system_context.clone(),
+            context_bundle: context.context_bundle.clone(),
         }
     }
 }
@@ -372,7 +372,7 @@ impl CompanionRequestTool {
             vfs: None,
             flow_capabilities: None,
             effective_capability_keys: None,
-            system_context: self.system_context.clone(),
+            context_bundle: self.context_bundle.clone(),
             bootstrap_action: crate::session::SessionBootstrapAction::None,
             identity: None,
             post_turn_handler: None,
@@ -381,7 +381,7 @@ impl CompanionRequestTool {
         let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
             parent_mcp_servers: &self.mcp_servers,
-            parent_system_context: self.system_context.as_deref(),
+            parent_context_bundle: self.context_bundle.as_ref(),
             slice_mode,
             companion_executor_config,
             dispatch_prompt: final_prompt,
@@ -902,7 +902,7 @@ impl CompanionRequestTool {
                 companion: crate::session::CompanionSpec {
                     parent_vfs: companion_spec.parent_vfs,
                     parent_mcp_servers: companion_spec.parent_mcp_servers,
-                    parent_system_context: companion_spec.parent_system_context,
+                    parent_context_bundle: companion_spec.parent_context_bundle,
                     slice_mode: companion_spec.slice_mode,
                     companion_executor_config: companion_spec.companion_executor_config.clone(),
                     dispatch_prompt: companion_spec.dispatch_prompt.clone(),
@@ -1493,7 +1493,7 @@ impl CompanionRespondTool {
                                 vfs: resume_vfs,
                                 flow_capabilities: None,
                                 effective_capability_keys: None,
-                                system_context: None,
+                                context_bundle: None,
                                 bootstrap_action: crate::session::SessionBootstrapAction::None,
                                 identity: None,
                                 post_turn_handler: None,

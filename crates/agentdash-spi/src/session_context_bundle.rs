@@ -55,9 +55,9 @@ impl SessionContextBundle {
     ///   - `Append`：在已有 fragment 之后追加（content 用 `\n\n` 连接、scope 与 source 取并集 / 合并）；
     ///   - `Override`：保留 label/source 信息但整体替换 content、order 取最小、scope 并集。
     ///
-    /// 注意：这里的"slot 唯一"指代 `filter_user_prompt_injections` 所要达到的"同一 slot
-    /// 不会被多个来源重复塞同样的占位内容"。如果调用方需要严格 append 语义（例如
-    /// `workflow_context` 多个 binding），应使用不同 order 的独立 slot 或 `merge` 接口保留多个条目。
+    /// 注意：这里的"slot 唯一"指"同一 slot 不会被多个来源重复塞同样的占位内容"，
+    /// 承接去重语义。如果调用方需要严格 append 语义（例如 `workflow_context` 多个 binding），
+    /// 应使用不同 order 的独立 slot 或 `push_raw` 接口保留多个条目。
     pub fn upsert_by_slot(&mut self, fragment: ContextFragment) {
         if let Some(existing) = self.fragments.iter_mut().find(|f| f.slot == fragment.slot) {
             match fragment.strategy {

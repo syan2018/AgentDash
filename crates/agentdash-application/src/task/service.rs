@@ -12,7 +12,6 @@ use agentdash_domain::{
 };
 
 use crate::canvas::append_visible_canvas_mounts;
-use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
 use crate::session::{
     PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
@@ -53,7 +52,6 @@ pub struct StoryStepActivationService {
     pub repos: RepositorySet,
     pub hub: SessionHub,
     pub vfs_service: Arc<RelayVfsService>,
-    pub contributor_registry: Arc<ContextContributorRegistry>,
     pub platform_config: crate::platform_config::SharedPlatformConfig,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
@@ -226,7 +224,6 @@ impl StoryStepActivationService {
             self.backend_availability.as_ref(),
             &self.repos,
             &self.platform_config,
-            self.contributor_registry.as_ref(),
         );
         let mut prepared = assembler
             .compose_story_step(StoryStepSpec {

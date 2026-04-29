@@ -12,7 +12,7 @@
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
 //!
-//! 5 条路径共享 4 个"策略轴":owner scope mount / system_context 生成 /
+//! 5 条路径共享 4 个"策略轴":owner scope mount / context bundle 生成 /
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
 //! 因此设计上采用**组合器+平坦末端**而非 sum type:
@@ -35,7 +35,7 @@ use agentdash_domain::task::Task;
 use agentdash_domain::workflow::CapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{FlowCapabilities, Vfs};
+use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
@@ -45,18 +45,19 @@ use crate::capability::{
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
-    ContextContributor, ContextContributorRegistry, McpContextContributor,
-    StaticFragmentsContributor, TaskAgentBuildInput, TaskExecutionPhase,
-    WorkflowContextBindingsContributor, build_declared_source_warning_fragment,
-    build_task_agent_context, resolve_workspace_declared_sources,
+    ContextBuildPhase, Contribution, SessionContextConfig, TaskExecutionPhase,
+    build_declared_source_warning_fragment, build_session_context_bundle,
+    contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
+    contribute_instruction, contribute_mcp, contribute_workflow_binding,
+    contribute_workspace_static_sources, resolve_workspace_declared_sources,
 };
 use crate::platform_config::PlatformConfig;
-use crate::project::context_builder::{ProjectContextBuildInput, build_project_context_markdown};
+use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
-use crate::story::context_builder::{StoryContextBuildInput, build_story_context_markdown};
+use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
     RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports, resolve_context_bindings,
@@ -84,7 +85,8 @@ pub struct PreparedSessionInputs {
     pub vfs: Option<Vfs>,
     pub flow_capabilities: Option<FlowCapabilities>,
     pub effective_capability_keys: Option<BTreeSet<String>>,
-    pub system_context: Option<String>,
+    /// 结构化 session 上下文 Bundle —— 所有 connector 的主数据源。
+    pub context_bundle: Option<SessionContextBundle>,
     pub bootstrap_action: SessionBootstrapAction,
     /// workspace 默认值注入的数据源(session 中 vfs/working_dir 回填用)。
     pub workspace_defaults: Option<Workspace>,
@@ -111,7 +113,7 @@ pub fn finalize_request(
     if let Some(cfg) = prepared.executor_config {
         req.user_input.executor_config = Some(cfg);
     }
-    req.system_context = prepared.system_context;
+    req.context_bundle = prepared.context_bundle;
     req.bootstrap_action = prepared.bootstrap_action;
 
     apply_workspace_defaults(
@@ -166,7 +168,7 @@ pub struct SessionAssemblyBuilder {
     relay_mcp_server_names: HashSet<String>,
 
     // ── 系统上下文层 ──
-    system_context: Option<String>,
+    context_bundle: Option<SessionContextBundle>,
 
     // ── Prompt 层 ──
     prompt_blocks: Option<Vec<serde_json::Value>>,
@@ -284,15 +286,17 @@ impl SessionAssemblyBuilder {
 
     // ── 系统上下文层方法 ──────────────────────────────────────────
 
-    /// 设置 system_context 字符串。
-    pub fn with_system_context(mut self, context: String) -> Self {
-        self.system_context = Some(context);
+    /// 设置结构化上下文 Bundle —— 所有 connector 的主数据源。
+    pub fn with_context_bundle(mut self, bundle: SessionContextBundle) -> Self {
+        self.context_bundle = Some(bundle);
         self
     }
 
-    /// 可选设置 system_context。
-    pub fn with_optional_system_context(mut self, context: Option<String>) -> Self {
-        self.system_context = context;
+    /// 可选设置 Bundle；为 `None` 时不覆盖已有值（用于 continuation 路径按条件注入）。
+    pub fn with_optional_context_bundle(mut self, bundle: Option<SessionContextBundle>) -> Self {
+        if bundle.is_some() {
+            self.context_bundle = bundle;
+        }
         self
     }
 
@@ -349,7 +353,7 @@ impl SessionAssemblyBuilder {
         self,
         parent_vfs: Option<&Vfs>,
         parent_mcp_servers: &[agent_client_protocol::McpServer],
-        parent_system_context: Option<&str>,
+        parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
         dispatch_prompt: String,
@@ -371,7 +375,7 @@ impl SessionAssemblyBuilder {
             effective_capability_keys: None,
             mcp_servers: slice.mcp_servers,
             relay_mcp_server_names: HashSet::new(),
-            system_context: parent_system_context.map(|s| s.to_string()),
+            context_bundle: parent_context_bundle.cloned(),
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
             bootstrap_action: SessionBootstrapAction::OwnerContext,
@@ -412,7 +416,7 @@ impl SessionAssemblyBuilder {
             vfs: self.vfs,
             flow_capabilities: self.flow_capabilities,
             effective_capability_keys: self.effective_capability_keys,
-            system_context: self.system_context,
+            context_bundle: self.context_bundle,
             bootstrap_action: self.bootstrap_action,
             workspace_defaults: self.workspace_defaults,
             working_dir: self.working_dir,
@@ -420,6 +424,47 @@ impl SessionAssemblyBuilder {
         }
     }
 }
+
+/// 把已渲染好的 task context markdown 封装成 ACP resource content block。
+fn build_task_prompt_resource_block(
+    task_id: String,
+    phase: TaskExecutionPhase,
+    markdown: String,
+) -> serde_json::Value {
+    let phase_label = match phase {
+        TaskExecutionPhase::Start => "start",
+        TaskExecutionPhase::Continue => "continue",
+    };
+    crate::context::build_owner_context_resource_block(
+        &format!("agentdash://task-context/{task_id}?phase={phase_label}"),
+        &markdown,
+    )
+}
+
+/// PiAgent F1 渲染 `## Project Context` 段时使用的 runtime-agent 可见 slot 白名单。
+pub const RUNTIME_AGENT_SLOT_WHITELIST: &[&str] = &[
+    "task",
+    "story",
+    "project",
+    "workspace",
+    "initial_context",
+    "vfs",
+    "tools",
+    "persona",
+    "required_context",
+    "workflow",
+    "workflow_context",
+    "runtime_policy",
+    "mcp_config",
+    "declared_source",
+    "static_fragment",
+    "requirements",
+    "constraints",
+    "codebase",
+    "references",
+    "instruction",
+    "instruction_append",
+];
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 2:Assembler 共享服务容器
@@ -435,7 +480,6 @@ pub struct SessionRequestAssembler<'a> {
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
-    pub contributor_registry: &'a ContextContributorRegistry,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -577,72 +621,80 @@ pub struct OwnerBootstrapSpec<'a> {
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
     pub agent_declared_capabilities: Option<Vec<String>>,
-    /// Session lifecycle 三态判定结果,决定 system_context / prompt_blocks 组装方式。
+    /// Session lifecycle 三态判定结果,决定 context bundle / prompt_blocks 组装方式。
     pub lifecycle: OwnerPromptLifecycle,
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
-/// 如何组装 system_context + prompt_blocks + bootstrap_action。
+/// 如何组装 context bundle + prompt_blocks + bootstrap_action。
 ///
 /// 与 `SessionPromptLifecycle` 结构等价,但这里只暴露 compose 所需的 3 个分支,
-/// continuation system_context(来自 SessionHub)由调用方在 Spec 里预先算好传入。
+/// continuation bundle(来自 SessionHub)由调用方在 Spec 里预先算好传入。
 pub enum OwnerPromptLifecycle {
-    /// owner 首次启动,需要把 context_markdown 注入 system_context 并包到 prompt blocks。
+    /// owner 首次启动,需要把 owner 上下文 Bundle 注入并包到 prompt blocks。
     OwnerBootstrap,
-    /// 已有 repository,compose 直接返回 continuation system_context 或 context_markdown。
+    /// 已有 repository，compose 使用预构建的 continuation bundle（当 connector
+    /// 不支持原生 repository restore 时）或直接复用 owner context bundle
+    /// （当 connector 支持原生消息历史恢复时）。
     RepositoryRehydrate {
-        prebuilt_continuation_system_context: Option<String>,
-        include_markdown_as_system_context: bool,
+        /// 由 SessionHub 预先把历史事件渲染成 continuation Bundle，用于不支持
+        /// `supports_repository_restore` 的 connector。
+        prebuilt_continuation_bundle: Option<SessionContextBundle>,
+        /// 是否把 owner context bundle 也一并附加（true = 继续用 owner bundle；
+        /// false = 只用 prebuilt_continuation_bundle）。
+        include_owner_bundle: bool,
     },
     /// 普通 turn,无 owner bootstrap。
     Plain,
 }
 
-/// Owner context markdown 的装配方式——Story 与 Project 各走自己的 builder。
-fn build_owner_context_markdown_sync(
+/// Owner 级 session 的上下文 Contribution 组装 —— Story 与 Project 各走自己的 contribute_*。
+fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
     vfs: Option<&Vfs>,
     mcp_servers: &[RuntimeMcpServer],
     effective_agent_type: &str,
     workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
     workspace_source_warnings: Vec<String>,
-) -> String {
+) -> Contribution {
     match owner {
         OwnerScope::Story {
             story,
             project,
             workspace,
-        } => {
-            let (md, _) = build_story_context_markdown(StoryContextBuildInput {
-                story,
-                project,
-                workspace: *workspace,
-                vfs,
-                mcp_servers,
-                effective_agent_type: Some(effective_agent_type),
-                workspace_source_fragments,
-                workspace_source_warnings,
-            });
-            md
-        }
+        } => contribute_story_context(StoryContextBuildInput {
+            story,
+            project,
+            workspace: *workspace,
+            vfs,
+            mcp_servers,
+            effective_agent_type: Some(effective_agent_type),
+            workspace_source_fragments,
+            workspace_source_warnings,
+        }),
         OwnerScope::Project {
             project,
             workspace,
             agent_display_name,
             preset_name,
             ..
-        } => {
-            let (md, _) = build_project_context_markdown(ProjectContextBuildInput {
-                project,
-                workspace: workspace.as_deref(),
-                vfs,
-                mcp_servers,
-                effective_agent_type: Some(effective_agent_type),
-                preset_name: preset_name.as_deref(),
-                agent_display_name,
-            });
-            md
-        }
+        } => contribute_project_context(ProjectContextBuildInput {
+            project,
+            workspace: workspace.as_deref(),
+            vfs,
+            mcp_servers,
+            effective_agent_type: Some(effective_agent_type),
+            preset_name: preset_name.as_deref(),
+            agent_display_name,
+        }),
+    }
+}
+
+/// Owner bootstrap 场景下把 `ContextBuildPhase` 映射到 Session 级的 phase 标签。
+fn owner_scope_phase(owner: &OwnerScope<'_>) -> ContextBuildPhase {
+    match owner {
+        OwnerScope::Story { .. } => ContextBuildPhase::StoryOwner,
+        OwnerScope::Project { .. } => ContextBuildPhase::ProjectAgent,
     }
 }
 
@@ -654,7 +706,6 @@ impl<'a> SessionRequestAssembler<'a> {
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
-        contributor_registry: &'a ContextContributorRegistry,
     ) -> Self {
         Self {
             vfs_service,
@@ -662,7 +713,6 @@ impl<'a> SessionRequestAssembler<'a> {
             availability,
             repos,
             platform_config,
-            contributor_registry,
         }
     }
 
@@ -771,7 +821,7 @@ impl<'a> SessionRequestAssembler<'a> {
             OwnerScope::Project { .. } => (Vec::new(), Vec::new()),
         };
 
-        let context_markdown = build_owner_context_markdown_sync(
+        let owner_contribution = build_owner_context_contribution(
             &spec.owner,
             runtime_vfs.as_ref(),
             &runtime_mcp_servers,
@@ -780,37 +830,46 @@ impl<'a> SessionRequestAssembler<'a> {
             workspace_warnings,
         );
 
-        // ── 6. Prompt lifecycle 三态 → system_context + prompt_blocks + bootstrap_action ──
+        // ── 5b. 聚合 Contribution → Bundle ──
+        let bundle_session_id = Uuid::new_v4();
+        let bundle_phase = owner_scope_phase(&spec.owner);
+        let context_bundle = build_session_context_bundle(
+            SessionContextConfig {
+                session_id: bundle_session_id,
+                phase: bundle_phase,
+                default_scope: agentdash_spi::ContextFragment::default_scope(),
+            },
+            vec![owner_contribution],
+        );
+
+        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / bootstrap_action ──
         //
-        // context_markdown 统一通过 system_context 传递给 connector（Pi Agent 放入
-        // system prompt；Vibe Kanban 在 prompt 前拼接）。prompt_blocks 只保留用户
-        // 原始输入，避免 context 混入后污染标题生成 / 会话历史等下游消费者。
-        let (system_context, prompt_blocks, bootstrap_action) = match spec.lifecycle {
+        // - OwnerBootstrap：使用新建的 owner context bundle
+        // - RepositoryRehydrate：根据 connector 能力，使用 continuation bundle 或 owner bundle
+        // - Plain：不附加 bundle
+        let (prompt_blocks, bootstrap_action, effective_bundle) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
-                Some(context_markdown.clone()),
                 spec.user_prompt_blocks,
                 SessionBootstrapAction::OwnerContext,
+                Some(context_bundle),
             ),
             OwnerPromptLifecycle::RepositoryRehydrate {
-                prebuilt_continuation_system_context,
-                include_markdown_as_system_context,
+                prebuilt_continuation_bundle,
+                include_owner_bundle,
             } => {
-                let sys_ctx = if prebuilt_continuation_system_context.is_some() {
-                    prebuilt_continuation_system_context
-                } else if include_markdown_as_system_context {
-                    Some(context_markdown.clone())
-                } else {
-                    None
-                };
+                let chosen_bundle = prebuilt_continuation_bundle
+                    .or_else(|| if include_owner_bundle { Some(context_bundle) } else { None });
                 (
-                    sys_ctx,
                     spec.user_prompt_blocks,
                     SessionBootstrapAction::None,
+                    chosen_bundle,
                 )
             }
-            OwnerPromptLifecycle::Plain => {
-                (None, spec.user_prompt_blocks, SessionBootstrapAction::None)
-            }
+            OwnerPromptLifecycle::Plain => (
+                spec.user_prompt_blocks,
+                SessionBootstrapAction::None,
+                None,
+            ),
         };
 
         let effective_capability_keys: BTreeSet<String> = cap_output
@@ -830,9 +889,9 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(effective_mcp_servers)
             .append_relay_mcp_names(relay_mcp_server_names)
             .with_resolved_capabilities(cap_output.flow_capabilities, effective_capability_keys)
-            .with_optional_system_context(system_context)
             .with_bootstrap_action(bootstrap_action)
-            .with_optional_workspace_defaults(workspace_defaults);
+            .with_optional_workspace_defaults(workspace_defaults)
+            .with_optional_context_bundle(effective_bundle);
 
         if let Some(vfs) = vfs {
             builder = builder.with_vfs(vfs);
@@ -849,7 +908,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 3. 构建 VFS（workspace mount + lifecycle mount，cloud-native 场景）
     /// 4. 解析 context bindings（需要 VFS 已就绪）
     /// 5. CapabilityResolver（以 workflow baseline 或空集为输入）
-    /// 6. build_task_agent_context（走 contributor pipeline 产出 prompt / system context）
+    /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `PreparedSessionInputs`；调用方通过 `finalize_request` 合入 base
     /// `PromptSessionRequest` 后交 `session_hub.start_prompt` 派发。
@@ -974,9 +1033,8 @@ impl<'a> SessionRequestAssembler<'a> {
             .map(|c| c.key().to_string())
             .collect();
 
-        // ── 6. 构造 task agent context(走 contributor pipeline) ──
+        // ── 6. 构造 task agent context（Bundle 路径） ──
         let (story_ref, project_ref, workspace_ref) = (spec.story, spec.project, spec.workspace);
-        let mut extra_contributors: Vec<Box<dyn ContextContributor>> = Vec::new();
 
         let mut declared_sources = story_ref.context.source_refs.clone();
         declared_sources.extend(spec.task.agent_binding.context_sources.clone());
@@ -990,71 +1048,142 @@ impl<'a> SessionRequestAssembler<'a> {
         .await
         .map_err(TaskExecutionError::UnprocessableEntity)?;
 
+        let task_phase = match spec.phase {
+            StoryStepPhase::Start => TaskExecutionPhase::Start,
+            StoryStepPhase::Continue => TaskExecutionPhase::Continue,
+        };
+
+        // 按依赖倒置：调用方聚合 Vec<Contribution>，builder 只做合并。
+        let mut contributions: Vec<Contribution> = Vec::new();
+        contributions.push(contribute_core_context(
+            spec.task,
+            story_ref,
+            project_ref,
+            workspace_ref,
+        ));
+        contributions.push(contribute_binding_initial_context(spec.task));
+        contributions.push(contribute_declared_sources(spec.task, story_ref));
         if !resolved_workspace_sources.fragments.is_empty() {
-            extra_contributors.push(Box::new(StaticFragmentsContributor::new(
-                resolved_workspace_sources.fragments,
-            )));
+            contributions.push(contribute_workspace_static_sources(
+                resolved_workspace_sources.fragments.clone(),
+            ));
         }
         if !resolved_workspace_sources.warnings.is_empty() {
-            extra_contributors.push(Box::new(StaticFragmentsContributor::new(vec![
+            contributions.push(Contribution::fragments_only(vec![
                 build_declared_source_warning_fragment(
                     "declared_source_warnings",
                     96,
                     &resolved_workspace_sources.warnings,
                 ),
-            ])));
+            ]));
         }
-
+        let mut task_mcp_servers: Vec<crate::runtime::RuntimeMcpServer> = Vec::new();
         for mcp_config in &platform_mcp_configs {
-            extra_contributors.push(Box::new(McpContextContributor::new(mcp_config.clone())));
+            let contrib = contribute_mcp(mcp_config);
+            task_mcp_servers.extend(contrib.mcp_servers.iter().cloned());
+            contributions.push(contrib);
         }
-
         if let (Some(wf), Some(bindings_out)) = (workflow.clone(), resolved_bindings.clone()) {
-            extra_contributors.push(Box::new(WorkflowContextBindingsContributor::new(
-                wf,
-                bindings_out,
-            )));
+            contributions.push(contribute_workflow_binding(&wf, &bindings_out));
         }
+        contributions.push(contribute_instruction(
+            spec.task,
+            story_ref,
+            workspace_ref,
+            task_phase,
+            spec.override_prompt,
+            spec.additional_prompt,
+        ));
 
-        let task_phase = match spec.phase {
-            StoryStepPhase::Start => TaskExecutionPhase::Start,
-            StoryStepPhase::Continue => TaskExecutionPhase::Continue,
-        };
-        let built = build_task_agent_context(
-            TaskAgentBuildInput {
-                task: spec.task,
-                story: story_ref,
-                project: project_ref,
-                workspace: workspace_ref,
+        // session plan fragments（vfs / tools / persona / workflow / runtime_policy）
+        let effective_session_composition =
+            crate::session::plan::resolve_story_session_composition(Some(story_ref));
+        let session_plan = crate::session::plan::build_session_plan_fragments(
+            crate::session::plan::SessionPlanInput {
+                owner_ctx: SessionOwnerCtx::Task {
+                    project_id: project_ref.id,
+                    story_id: story_ref.id,
+                    task_id: spec.task.id,
+                },
+                phase: match task_phase {
+                    TaskExecutionPhase::Start => crate::session::plan::SessionPlanPhase::TaskStart,
+                    TaskExecutionPhase::Continue => {
+                        crate::session::plan::SessionPlanPhase::TaskContinue
+                    }
+                },
                 vfs: vfs.as_ref(),
-                effective_agent_type,
-                phase: task_phase,
-                override_prompt: spec.override_prompt,
-                additional_prompt: spec.additional_prompt,
-                extra_contributors,
+                mcp_servers: &task_mcp_servers,
+                session_composition: effective_session_composition.as_ref(),
+                agent_type: effective_agent_type,
+                preset_name: spec.task.agent_binding.preset_name.as_deref(),
+                has_custom_prompt_template: spec
+                    .task
+                    .agent_binding
+                    .prompt_template
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                has_initial_context: spec
+                    .task
+                    .agent_binding
+                    .initial_context
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                workspace_attached: vfs.is_some(),
             },
-            self.contributor_registry,
-        )
-        .map_err(TaskExecutionError::UnprocessableEntity)?;
+        );
+        contributions.push(Contribution::fragments_only(session_plan.fragments));
 
-        // ── 汇总 MCP 列表：platform + custom + contributor 产出 ──
+        let context_bundle = build_session_context_bundle(
+            SessionContextConfig {
+                session_id: Uuid::new_v4(),
+                phase: match task_phase {
+                    TaskExecutionPhase::Start => ContextBuildPhase::TaskStart,
+                    TaskExecutionPhase::Continue => ContextBuildPhase::TaskContinue,
+                },
+                default_scope: agentdash_spi::ContextFragment::default_scope(),
+            },
+            contributions,
+        );
+
+        // Prompt resource block —— 由 bundle 渲染后塞入。
+        let bundle_markdown =
+            context_bundle.render_section(agentdash_spi::FragmentScope::RuntimeAgent, RUNTIME_AGENT_SLOT_WHITELIST);
+        let prompt_blocks: Vec<serde_json::Value> = if bundle_markdown.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![build_task_prompt_resource_block(
+                spec.task.id.to_string(),
+                task_phase,
+                bundle_markdown,
+            )]
+        };
+
+        let source_summary: Vec<String> = context_bundle
+            .fragments
+            .iter()
+            .map(|f| format!("{}({})", f.label, f.slot))
+            .collect();
+
+        let working_dir = workspace_ref.map(|_| ".".to_string());
+
+        // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
         let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = platform_mcp_configs
             .iter()
             .map(|c| c.to_acp_mcp_server())
             .collect();
         effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
         effective_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_acp(
-            &built.mcp_servers,
+            &task_mcp_servers,
         ));
 
         let mut builder = SessionAssemblyBuilder::new()
-            .with_prompt_blocks(built.prompt_blocks)
+            .with_prompt_blocks(prompt_blocks)
             .with_mcp_servers(effective_mcp_servers)
             .append_relay_mcp_names(relay_mcp_server_names)
             .with_resolved_capabilities(flow_capabilities, effective_capability_keys)
-            .with_optional_system_context(built.system_context)
-            .with_working_dir(built.working_dir)
-            .with_source_summary(built.source_summary)
+            .with_context_bundle(context_bundle)
+            .with_working_dir(working_dir)
+            .with_source_summary(source_summary)
             .with_optional_workspace_defaults(workspace_ref.cloned());
 
         if let Some(vfs) = vfs {
@@ -1134,7 +1263,7 @@ pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
         .apply_companion_slice(
             spec.parent_vfs,
             spec.parent_mcp_servers,
-            spec.parent_system_context,
+            spec.parent_context_bundle,
             spec.slice_mode,
             spec.companion_executor_config,
             spec.dispatch_prompt,
@@ -1209,7 +1338,8 @@ pub struct LifecycleNodeSpec<'a> {
 pub struct CompanionSpec<'a> {
     pub parent_vfs: Option<&'a Vfs>,
     pub parent_mcp_servers: &'a [agent_client_protocol::McpServer],
-    pub parent_system_context: Option<&'a str>,
+    /// 父 session 的结构化上下文 Bundle，companion 直接继承（按 slice_mode 过滤）。
+    pub parent_context_bundle: Option<&'a SessionContextBundle>,
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
@@ -1277,35 +1407,51 @@ pub async fn compose_companion_with_workflow(
     let mut vfs = slice.vfs.unwrap_or_default();
     vfs.mounts.push(activation.lifecycle_mount.clone());
 
-    let workflow_injection = spec
-        .workflow
-        .map(|w| {
-            let inj = &w.contract.injection;
-            let mut parts: Vec<String> = Vec::new();
-            if let Some(goal) = &inj.goal {
-                if !goal.trim().is_empty() {
-                    parts.push(format!("## Workflow Goal\n{goal}"));
+    // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
+    // fragment 注入 Bundle，替代旧的字符串拼接路径。
+    let mut merged_bundle = comp.parent_context_bundle.cloned();
+    if let Some(workflow) = spec.workflow {
+        let inj = &workflow.contract.injection;
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(goal) = &inj.goal {
+            if !goal.trim().is_empty() {
+                parts.push(format!("## Workflow Goal\n{goal}"));
+            }
+        }
+        if !inj.instructions.is_empty() {
+            parts.push(format!(
+                "## Workflow Instructions\n{}",
+                inj.instructions
+                    .iter()
+                    .map(|i| format!("- {i}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        let workflow_content = parts.join("\n\n");
+        if !workflow_content.is_empty() {
+            let workflow_fragment = agentdash_spi::ContextFragment {
+                slot: "workflow_context".to_string(),
+                label: "companion_workflow_injection".to_string(),
+                order: 83,
+                strategy: agentdash_spi::MergeStrategy::Append,
+                scope: agentdash_spi::ContextFragment::default_scope(),
+                source: "companion:workflow_injection".to_string(),
+                content: workflow_content,
+            };
+            match merged_bundle.as_mut() {
+                Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
+                None => {
+                    let mut bundle = agentdash_spi::SessionContextBundle::new(
+                        Uuid::new_v4(),
+                        ContextBuildPhase::Companion.as_tag(),
+                    );
+                    bundle.upsert_by_slot(workflow_fragment);
+                    merged_bundle = Some(bundle);
                 }
             }
-            if !inj.instructions.is_empty() {
-                parts.push(format!(
-                    "## Workflow Instructions\n{}",
-                    inj.instructions
-                        .iter()
-                        .map(|i| format!("- {i}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ));
-            }
-            parts.join("\n\n")
-        })
-        .filter(|s| !s.is_empty());
-    let system_context = match (comp.parent_system_context, workflow_injection) {
-        (Some(parent), Some(wf_inject)) => Some(format!("{parent}\n\n{wf_inject}")),
-        (Some(parent), None) => Some(parent.to_string()),
-        (None, Some(wf_inject)) => Some(wf_inject),
-        (None, None) => None,
-    };
+        }
+    }
 
     let prompt_blocks = vec![serde_json::json!({
         "type": "text",
@@ -1320,7 +1466,7 @@ pub async fn compose_companion_with_workflow(
         )
         .with_mcp_servers(slice.mcp_servers)
         .append_mcp_servers(activation.mcp_servers.clone())
-        .with_optional_system_context(system_context)
+        .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())
         .with_bootstrap_action(SessionBootstrapAction::OwnerContext)

@@ -9,7 +9,6 @@ use crate::plugins::{
 };
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::context::ContextContributorRegistry;
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
@@ -50,8 +49,6 @@ pub struct ServiceSet {
     pub vfs_service: Arc<RelayVfsService>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
-    /// 上下文贡献者注册表 — 持有常驻贡献者（Core/Binding/DeclaredSources/Instruction 等）
-    pub contributor_registry: Arc<ContextContributorRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -340,8 +337,6 @@ impl AppState {
             vfs_registry.register(provider);
         }
 
-        let contributor_registry = Arc::new(ContextContributorRegistry::with_builtins());
-
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_hub.clone(),
@@ -357,7 +352,6 @@ impl AppState {
             repos: repos.clone(),
             hub: session_hub.clone(),
             vfs_service: vfs_service.clone(),
-            contributor_registry: contributor_registry.clone(),
             platform_config: platform_config.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
@@ -371,7 +365,6 @@ impl AppState {
                 connector,
                 vfs_service,
                 backend_registry,
-                contributor_registry: contributor_registry.clone(),
                 vfs_registry,
                 mount_provider_registry,
                 story_step_activation_service,
@@ -392,7 +385,7 @@ impl AppState {
 
         // 注入 PromptRequestAugmenter：让 SessionHub 的 auto-resume 等内部 prompt
         // 路径与 HTTP 主通道共享同一条 `augment_prompt_request_for_owner`，
-        // 避免 owner / MCP / flow_capabilities / system_context 漂移。
+        // 避免 owner / MCP / flow_capabilities / context_bundle 漂移。
         {
             let augmenter = Arc::new(
                 crate::bootstrap::prompt_augmenter::AppStatePromptAugmenter::new(state.clone()),
@@ -418,7 +411,6 @@ impl AppState {
                 state.services.vfs_service.clone(),
                 state.services.connector.clone(),
                 state.config.platform_config.clone(),
-                state.services.contributor_registry.clone(),
                 state.services.backend_registry.clone(),
             ));
             // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）

@@ -1,11 +1,9 @@
 //! Context builder — 统一的 session 上下文 Bundle 构建入口。
 //!
-//! 本模块的 **新增公共 API**（`ContextBuildPhase` / `SessionContextConfig` /
+//! 本模块的公共 API（`ContextBuildPhase` / `SessionContextConfig` /
 //! `Contribution` / `build_session_context_bundle`）**不依赖任何 domain 类型**，
 //! 是纯合并 reducer（参见 PRD D6 决策）。领域自治的 `contribute_*` 纯函数负责
 //! 把 domain 对象解包成 `Contribution`，调用方按 phase 组装后喂给 builder。
-//!
-//! 旧函数 `build_task_agent_context` 保留过渡，仍依赖 domain；Step 6 才做替换。
 
 use agentdash_spi::{
     ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle,
@@ -20,6 +18,16 @@ use crate::runtime::RuntimeMcpServer;
 ///
 /// 与 `SessionPlanPhase` 互补：`SessionPlanPhase` 只区分 project/task start/continue/story 四类，
 /// 新增 phase 覆盖 owner bootstrap、lifecycle node、companion、repository rehydrate 等场景。
+/// Task 执行路径的 phase 标签（`start_task` / `continue_task`）。
+///
+/// 主要用于 `contribute_instruction` 在首轮/续跑时选择合适的指令模板，
+/// 以及 `build_task_prompt_resource_block` 在 resource URI 上附加 phase 参数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskExecutionPhase {
+    Start,
+    Continue,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextBuildPhase {
     ProjectAgent,
@@ -89,8 +97,8 @@ impl Contribution {
 /// 1. flatten 所有 contribution 的 fragment；
 /// 2. 对未显式声明 scope（`scope.is_empty()`）的 fragment 套用 `config.default_scope`；
 ///    若 `default_scope` 也为空则退化到 `ContextFragment::default_scope()`；
-/// 3. 依次走 `SessionContextBundle::upsert_by_slot` 做 slot 级合并
-///    （替代老的 `filter_user_prompt_injections` / `SESSION_BASELINE_INJECTION_SLOTS`）；
+/// 3. 依次走 `SessionContextBundle::upsert_by_slot` 做 slot 级合并（承接 user-prompt
+///    注入去重语义）；
 /// 4. 最后按 `fragment.order` 升序排序。
 ///
 /// **重要**：此函数不依赖任何 domain 类型，是依赖倒置后的 reducer。
@@ -119,130 +127,34 @@ pub fn build_session_context_bundle(
     bundle
 }
 
-// ─── 旧 API：build_task_agent_context（过渡期保留，允许依赖 domain） ─────
+// ─── 辅助 fragment 构造器 ────────────────────────────────────────
 
-use super::ContextComposer;
-use serde_json::Value;
-
-use super::builtins::build_owner_context_resource_block;
-use super::contributor::{
-    BuiltTaskAgentContext, ContextContributorRegistry, ContributorInput, TaskAgentBuildInput,
-    TaskExecutionPhase,
-};
-use crate::session::plan::{
-    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
-    resolve_story_session_composition,
-};
-
-pub fn build_task_agent_context(
-    input: TaskAgentBuildInput<'_>,
-    registry: &ContextContributorRegistry,
-) -> Result<BuiltTaskAgentContext, String> {
-    let contributor_input = ContributorInput {
-        task: input.task,
-        story: input.story,
-        project: input.project,
-        workspace: input.workspace,
-        phase: input.phase,
-        override_prompt: input.override_prompt,
-        additional_prompt: input.additional_prompt,
-    };
-
-    let working_dir = input.workspace.map(|_| ".".to_string());
-
-    let mut context_composer = ContextComposer::default();
-    let mut mcp_servers = Vec::new();
-
-    let all_contributors = registry
-        .contributors
-        .iter()
-        .map(|c| c.as_ref())
-        .chain(input.extra_contributors.iter().map(|c| c.as_ref()));
-
-    for contributor in all_contributors {
-        let contribution = contributor.contribute(&contributor_input);
-
-        mcp_servers.extend(contribution.mcp_servers);
-
-        for fragment in contribution.fragments {
-            if !matches!(fragment.slot.as_str(), "instruction" | "instruction_append") {
-                context_composer.push_fragment(fragment);
-            }
-        }
-    }
-
-    let effective_session_composition = resolve_story_session_composition(Some(input.story));
-    let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Task {
-            project_id: input.project.id,
-            story_id: input.story.id,
-            task_id: input.task.id,
-        },
-        phase: match input.phase {
-            TaskExecutionPhase::Start => SessionPlanPhase::TaskStart,
-            TaskExecutionPhase::Continue => SessionPlanPhase::TaskContinue,
-        },
-        vfs: input.vfs,
-        mcp_servers: &mcp_servers,
-        session_composition: effective_session_composition.as_ref(),
-        agent_type: input.effective_agent_type,
-        preset_name: input.task.agent_binding.preset_name.as_deref(),
-        has_custom_prompt_template: input
-            .task
-            .agent_binding
-            .prompt_template
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()),
-        has_initial_context: input
-            .task
-            .agent_binding
-            .initial_context
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()),
-        workspace_attached: input.workspace.is_some(),
-    });
-    for fragment in session_plan.fragments {
-        context_composer.push_fragment(fragment);
-    }
-
-    let (context_prompt, source_summary) = context_composer.compose();
-
-    if context_prompt.trim().is_empty() {
-        return Err("构建执行上下文失败：最终 prompt 为空".to_string());
-    }
-
-    let system_context = context_prompt.clone();
-    let mut prompt_blocks = Vec::new();
-    if !context_prompt.trim().is_empty() {
-        prompt_blocks.push(build_task_context_resource_block(
-            input.task.id.to_string(),
-            input.phase,
-            context_prompt,
-        ));
-    }
-
-    Ok(BuiltTaskAgentContext {
-        prompt_blocks,
-        working_dir,
-        source_summary,
-        mcp_servers,
-        system_context: Some(system_context),
-    })
-}
-
-fn build_task_context_resource_block(
-    task_id: String,
-    phase: TaskExecutionPhase,
+/// 把预构建的 continuation Markdown 包装成 `SessionContextBundle`。
+///
+/// 当 session 冷启动进入 RepositoryRehydrate 且 connector 不支持原生 repository
+/// restore 时，SessionHub 先根据历史事件渲染出连贯的 Markdown，再由此函数
+/// 封装为 Bundle 供 connector 层统一消费。
+///
+/// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、
+/// source=`session:continuation`。
+pub fn build_continuation_bundle_from_markdown(
+    session_id: Uuid,
     markdown: String,
-) -> Value {
-    let phase_label = match phase {
-        TaskExecutionPhase::Start => "start",
-        TaskExecutionPhase::Continue => "continue",
-    };
-    build_owner_context_resource_block(
-        &format!("agentdash://task-context/{task_id}?phase={phase_label}"),
-        &markdown,
-    )
+) -> SessionContextBundle {
+    let mut bundle = SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
+    if markdown.trim().is_empty() {
+        return bundle;
+    }
+    bundle.upsert_by_slot(ContextFragment {
+        slot: "static_fragment".to_string(),
+        label: "continuation_transcript".to_string(),
+        order: 0,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "session:continuation".to_string(),
+        content: markdown,
+    });
+    bundle
 }
 
 pub fn build_declared_source_warning_fragment(

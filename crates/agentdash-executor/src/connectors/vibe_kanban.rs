@@ -27,6 +27,33 @@ use agentdash_spi::{
     ExecutionContext, ExecutionStream, PromptPayload, workspace_path_from_context,
 };
 
+/// VibeKanban 连接器从 Bundle 渲染 runtime-agent 段落时使用的 slot 白名单。
+/// 与 PiAgent F1 保持一致的语义覆盖。
+const VIBE_KANBAN_CONTEXT_SLOTS: &[&str] = &[
+    "task",
+    "story",
+    "project",
+    "workspace",
+    "initial_context",
+    "vfs",
+    "tools",
+    "persona",
+    "required_context",
+    "workflow",
+    "workflow_context",
+    "story_context",
+    "runtime_policy",
+    "mcp_config",
+    "declared_source",
+    "static_fragment",
+    "requirements",
+    "constraints",
+    "codebase",
+    "references",
+    "instruction",
+    "instruction_append",
+];
+
 pub struct VibeKanbanExecutorsConnector {
     default_repo_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, executors::executors::CancellationToken>>>,
@@ -170,9 +197,21 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let user_text = prompt.to_fallback_text();
-        let prompt_text = match &context.system_context {
-            Some(ctx) if !ctx.trim().is_empty() => format!("{ctx}\n\n{user_text}"),
-            _ => user_text,
+        // 从 SessionContextBundle 渲染 runtime-agent 可见段落，拼接到用户消息前。
+        let system_context: String = context
+            .context_bundle
+            .as_ref()
+            .map(|bundle| {
+                bundle.render_section(
+                    agentdash_spi::FragmentScope::RuntimeAgent,
+                    VIBE_KANBAN_CONTEXT_SLOTS,
+                )
+            })
+            .unwrap_or_default();
+        let prompt_text = if system_context.trim().is_empty() {
+            user_text
+        } else {
+            format!("{system_context}\n\n{user_text}")
         };
         let prompt_text = prompt_text.trim().to_string();
         if prompt_text.is_empty() {

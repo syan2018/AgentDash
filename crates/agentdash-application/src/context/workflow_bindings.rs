@@ -2,36 +2,11 @@ use crate::vfs::ResolveBindingsOutput;
 use crate::workflow::ActiveWorkflowProjection;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
-use super::contributor::{ContextContributor, Contribution, ContributorInput};
+use super::Contribution;
 
-/// Workflow context_bindings 注入 Contributor
+/// Workflow context_bindings 片段。
 ///
-/// 负责把已解析的 workflow bindings 渲染为 task owner context 片段，
-/// 并附带一段 workflow 绑定解析摘要。
-pub struct WorkflowContextBindingsContributor {
-    workflow: ActiveWorkflowProjection,
-    resolved_bindings: ResolveBindingsOutput,
-}
-
-impl WorkflowContextBindingsContributor {
-    pub fn new(
-        workflow: ActiveWorkflowProjection,
-        resolved_bindings: ResolveBindingsOutput,
-    ) -> Self {
-        Self {
-            workflow,
-            resolved_bindings,
-        }
-    }
-}
-
-impl ContextContributor for WorkflowContextBindingsContributor {
-    fn contribute(&self, _input: &ContributorInput<'_>) -> Contribution {
-        contribute_workflow_binding(&self.workflow, &self.resolved_bindings)
-    }
-}
-
-/// Workflow context_bindings 片段（对应 `WorkflowContextBindingsContributor`）
+/// 把已解析的 workflow bindings 渲染为 task owner context 片段，并附带一段绑定摘要。
 pub fn contribute_workflow_binding(
     workflow: &ActiveWorkflowProjection,
     resolved_bindings: &ResolveBindingsOutput,
@@ -124,7 +99,6 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::contributor::TaskExecutionPhase;
     use super::*;
     use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
     use agentdash_domain::workflow::{
@@ -194,10 +168,10 @@ mod tests {
     }
 
     #[test]
-    fn workflow_context_bindings_contributor_renders_summary_and_bindings() {
-        let contributor = WorkflowContextBindingsContributor::new(
-            sample_workflow(),
-            ResolveBindingsOutput {
+    fn contribute_workflow_binding_renders_summary_and_bindings() {
+        let contribution = contribute_workflow_binding(
+            &sample_workflow(),
+            &ResolveBindingsOutput {
                 resolved: vec![ResolvedBinding {
                     locator: ".trellis/workflow.md".to_string(),
                     title: Some("Workflow 总规则".to_string()),
@@ -207,28 +181,6 @@ mod tests {
                 warnings: vec![],
             },
         );
-
-        let contribution = contributor.contribute(&ContributorInput {
-            task: &agentdash_domain::task::Task::new(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
-                "Task".to_string(),
-                "desc".to_string(),
-            ),
-            story: &agentdash_domain::story::Story::new(
-                Uuid::new_v4(),
-                "Story".to_string(),
-                "desc".to_string(),
-            ),
-            project: &agentdash_domain::project::Project::new(
-                "Project".to_string(),
-                "desc".to_string(),
-            ),
-            workspace: None,
-            phase: TaskExecutionPhase::Start,
-            override_prompt: None,
-            additional_prompt: None,
-        });
 
         assert_eq!(contribution.fragments.len(), 2);
         assert!(

@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
 use crate::session_capabilities::SessionBaselineCapabilities;
+use crate::session_context_bundle::SessionContextBundle;
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
@@ -59,7 +60,11 @@ pub struct ExecutionContext {
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     #[allow(clippy::type_complexity)]
     pub flow_capabilities: FlowCapabilities,
-    pub system_context: Option<String>,
+    /// 统一的 session 上下文 Bundle —— 所有 connector 的主数据源。
+    ///
+    /// 由 `SessionAssemblyBuilder::with_context_bundle` 注入，connector 侧按
+    /// `FragmentScope` 过滤渲染 F1 system prompt / 组装 prompt text。
+    pub context_bundle: Option<SessionContextBundle>,
     /// 预构建的 Agent Runtime Delegate（由 Application 层基于 hook_session 创建）。
     /// Connector 可直接使用，无需自行构造具体 delegate 类型。
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
@@ -82,6 +87,13 @@ impl std::fmt::Debug for ExecutionContext {
             .field(
                 "runtime_delegate",
                 &self.runtime_delegate.as_ref().map(|_| ".."),
+            )
+            .field(
+                "context_bundle",
+                &self
+                    .context_bundle
+                    .as_ref()
+                    .map(|b| (b.bundle_id, b.fragments.len())),
             )
             .field(
                 "restored_session_state",

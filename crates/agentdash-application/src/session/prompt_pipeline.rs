@@ -237,7 +237,7 @@ impl SessionHub {
             vfs: Some(effective_vfs),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
-            system_context: req.system_context,
+            context_bundle: req.context_bundle.clone(),
             runtime_delegate,
             identity: req.identity,
             restored_session_state,

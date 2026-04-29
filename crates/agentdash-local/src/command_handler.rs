@@ -214,7 +214,7 @@ impl CommandHandler {
             vfs: Some(vfs),
             flow_capabilities: None,
             effective_capability_keys: None,
-            system_context: None,
+            context_bundle: None,
             bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
             identity: None,
             post_turn_handler: None,

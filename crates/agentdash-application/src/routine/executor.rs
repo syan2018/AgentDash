@@ -11,7 +11,6 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
 
-use crate::context::ContextContributorRegistry;
 use crate::repository_set::RepositorySet;
 use crate::session::SessionHub;
 use crate::session::types::{
@@ -42,7 +41,6 @@ pub struct RoutineExecutor {
     vfs_service: Arc<RelayVfsService>,
     connector: Arc<dyn AgentConnector>,
     platform_config: crate::platform_config::SharedPlatformConfig,
-    contributor_registry: Arc<ContextContributorRegistry>,
     availability: Arc<dyn BackendAvailability>,
 }
 
@@ -63,7 +61,6 @@ impl RoutineExecutor {
         vfs_service: Arc<RelayVfsService>,
         connector: Arc<dyn AgentConnector>,
         platform_config: crate::platform_config::SharedPlatformConfig,
-        contributor_registry: Arc<ContextContributorRegistry>,
         availability: Arc<dyn BackendAvailability>,
     ) -> Self {
         Self {
@@ -72,7 +69,6 @@ impl RoutineExecutor {
             vfs_service,
             connector,
             platform_config,
-            contributor_registry,
             availability,
         }
     }
@@ -438,27 +434,31 @@ impl RoutineExecutor {
             "text": prompt,
         })];
 
-        // RepositoryRehydrate(SystemContext) 需要预查 continuation system context
+        // RepositoryRehydrate(SystemContext) 需要预查 continuation bundle
         let lifecycle = match kind {
             SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
             ) => {
-                let ctx = self
+                let markdown = self
                     .session_hub
                     .build_continuation_system_context(session_id, None)
                     .await
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
+                let bundle_session_id = Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
+                let prebuilt_continuation_bundle = markdown.map(|md| {
+                    crate::context::build_continuation_bundle_from_markdown(bundle_session_id, md)
+                });
                 OwnerPromptLifecycle::RepositoryRehydrate {
-                    prebuilt_continuation_system_context: ctx,
-                    include_markdown_as_system_context: false,
+                    prebuilt_continuation_bundle,
+                    include_owner_bundle: false,
                 }
             }
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => OwnerPromptLifecycle::RepositoryRehydrate {
-                prebuilt_continuation_system_context: None,
-                include_markdown_as_system_context: true,
+                prebuilt_continuation_bundle: None,
+                include_owner_bundle: true,
             },
             SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
         };
@@ -469,7 +469,6 @@ impl RoutineExecutor {
             self.availability.as_ref(),
             &self.repos,
             &self.platform_config,
-            self.contributor_registry.as_ref(),
         );
 
         let agent_declared_capabilities = agent_context

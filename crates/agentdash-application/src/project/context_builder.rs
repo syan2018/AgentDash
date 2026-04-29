@@ -1,7 +1,7 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
-use agentdash_spi::MergeStrategy;
+use agentdash_spi::{ContextFragment, MergeStrategy};
 
-use crate::context::{ContextComposer, trim_or_dash, workspace_context_fragment};
+use crate::context::{Contribution, trim_or_dash, workspace_context_fragment};
 use crate::runtime::{RuntimeMcpServer, Vfs};
 use crate::session::plan::{SessionPlanInput, SessionPlanPhase, build_session_plan_fragments};
 
@@ -15,30 +15,33 @@ pub struct ProjectContextBuildInput<'a> {
     pub agent_display_name: &'a str,
 }
 
-pub fn build_project_context_markdown(
-    input: ProjectContextBuildInput<'_>,
-) -> (String, Vec<String>) {
-    let mut composer = ContextComposer::default();
+/// 把 Project owner session 的业务上下文聚合为一个 `Contribution`。
+pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contribution {
+    let mut fragments = Vec::new();
 
-    composer.push(
-        "project",
-        "project_core",
-        10,
-        MergeStrategy::Append,
-        format!(
+    fragments.push(ContextFragment {
+        slot: "project".to_string(),
+        label: "project_core".to_string(),
+        order: 10,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:project_context".to_string(),
+        content: format!(
             "## Project\n- id: {}\n- name: {}\n- description: {}",
             input.project.id,
             trim_or_dash(&input.project.name),
             trim_or_dash(&input.project.description),
         ),
-    );
+    });
 
-    composer.push(
-        "project",
-        "project_agent_identity",
-        20,
-        MergeStrategy::Append,
-        format!(
+    fragments.push(ContextFragment {
+        slot: "project".to_string(),
+        label: "project_agent_identity".to_string(),
+        order: 20,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:project_context".to_string(),
+        content: format!(
             "## Project Agent\n- display_name: {}\n- preset_name: {}\n- default_agent_type: {}",
             trim_or_dash(input.agent_display_name),
             input.preset_name.unwrap_or("-"),
@@ -51,10 +54,10 @@ pub fn build_project_context_markdown(
                 .filter(|value| !value.is_empty())
                 .unwrap_or("-"),
         ),
-    );
+    });
 
     if let Some(workspace) = input.workspace {
-        composer.push_fragment(workspace_context_fragment(workspace));
+        fragments.push(workspace_context_fragment(workspace));
     }
 
     let session_plan = build_session_plan_fragments(SessionPlanInput {
@@ -71,10 +74,8 @@ pub fn build_project_context_markdown(
         has_initial_context: false,
         workspace_attached: input.workspace.is_some(),
     });
-    for fragment in session_plan.fragments {
-        composer.push_fragment(fragment);
-    }
+    fragments.extend(session_plan.fragments);
 
-    composer.compose()
+    Contribution::fragments_only(fragments)
 }
 

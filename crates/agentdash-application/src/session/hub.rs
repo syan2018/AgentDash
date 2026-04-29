@@ -773,7 +773,7 @@ impl SessionHub {
     /// the stream-processing spawn block (whose Future is not Send).
     ///
     /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 augmenter，
-    /// 否则 owner context / MCP / flow_capabilities / system_context 会漂移，
+    /// 否则 owner context / MCP / flow_capabilities / context_bundle 会漂移，
     /// Agent 失去工作流背景 → 复读上一轮。因此这里先从 hub 拿 augmenter 增强，
     /// 再调 `start_prompt`；若未注入 augmenter（测试 / 非正式 embedding 场景）
     /// 也不致命，但会打 warn，提示运营侧补齐。
@@ -967,7 +967,7 @@ mod tests {
             vfs: None,
             flow_capabilities: None,
             effective_capability_keys: None,
-            system_context: None,
+            context_bundle: None,
             bootstrap_action: SessionBootstrapAction::None,
             identity: None,
             post_turn_handler: None,
@@ -976,7 +976,11 @@ mod tests {
 
     fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PromptSessionRequest {
         let mut req = simple_prompt_request(prompt);
-        req.system_context = Some(system_context.to_string());
+        let bundle_session_id = uuid::Uuid::new_v4();
+        req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
+            bundle_session_id,
+            system_context.to_string(),
+        ));
         req.bootstrap_action = SessionBootstrapAction::OwnerContext;
         req
     }
@@ -1978,7 +1982,7 @@ mod tests {
         assert_eq!(restored.messages.len(), 2);
         assert_eq!(restored.messages[0].first_text(), Some("历史用户消息"));
         assert_eq!(restored.messages[1].first_text(), Some("历史助手消息"));
-        assert!(context.system_context.is_none());
+        assert!(context.context_bundle.is_none());
     }
 
     #[tokio::test]
@@ -2063,7 +2067,7 @@ mod tests {
                 vfs: Some(local_workspace_vfs(workspace.path())),
                 flow_capabilities: None,
                 effective_capability_keys: None,
-                system_context: None,
+                context_bundle: None,
                 bootstrap_action: SessionBootstrapAction::None,
                 identity: None,
                 post_turn_handler: None,

@@ -29,6 +29,7 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
     "constraints",
     "codebase",
     "references",
+    "project_guidelines",
     "instruction",
     "instruction_append",
 ];

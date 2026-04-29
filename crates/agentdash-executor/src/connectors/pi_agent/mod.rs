@@ -7,5 +7,6 @@ pub mod pi_agent_provider_registry;
 pub(crate) mod relay_mcp;
 mod sse;
 mod stream_mapper;
+pub mod system_prompt;
 
 pub use connector::*;

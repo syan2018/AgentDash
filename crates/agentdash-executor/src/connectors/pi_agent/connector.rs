@@ -59,7 +59,10 @@ pub struct PiAgentConnector {
     mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
+    /// Layer 0: 系统全局 base system prompt。
     system_prompt: String,
+    /// Layer 2: 用户偏好提示列表（每条独立的偏好指令）。
+    user_preferences: Vec<String>,
     agents: Arc<Mutex<HashMap<String, PiAgentSessionRuntime>>>,
 }
 
@@ -93,8 +96,13 @@ impl PiAgentConnector {
             settings_repo: None,
             llm_provider_repo: None,
             system_prompt: system_prompt.into(),
+            user_preferences: Vec::new(),
             agents: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn set_user_preferences(&mut self, preferences: Vec<String>) {
+        self.user_preferences = preferences;
     }
 
     pub fn default_bridge(&self) -> Arc<dyn LlmBridge> {
@@ -249,22 +257,45 @@ impl PiAgentConnector {
             .collect();
         let mut sections: Vec<String> = Vec::new();
 
-        // ── 1. Identity: 基础人设 ──
-        let agent_sp = context
-            .executor_config
-            .system_prompt
-            .as_deref()
-            .filter(|s| !s.trim().is_empty());
-        match (context.executor_config.system_prompt_mode, agent_sp) {
-            (Some(SystemPromptMode::Override), Some(sp)) => {
-                sections.push(format!("## Identity\n\n{sp}"));
+        // ── 1. Identity: 四层提示合并 ──
+        //   Layer 0: system base prompt（self.system_prompt）
+        //   Layer 1: agent-level system_prompt（executor_config.system_prompt + mode）
+        //   Layer 2: user preferences（self.user_preferences）
+        {
+            let agent_sp = context
+                .executor_config
+                .system_prompt
+                .as_deref()
+                .filter(|s| !s.trim().is_empty());
+
+            let mut identity = match (context.executor_config.system_prompt_mode, agent_sp) {
+                (Some(SystemPromptMode::Override), Some(sp)) => sp.to_string(),
+                (_, Some(sp)) => format!("{}\n\n{sp}", self.system_prompt),
+                _ => self.system_prompt.clone(),
+            };
+
+            if !self.user_preferences.is_empty() {
+                let prefs = self
+                    .user_preferences
+                    .iter()
+                    .map(|p| format!("- {p}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                identity.push_str(&format!("\n\n### User Preferences\n\n{prefs}"));
             }
-            (_, Some(sp)) => {
-                sections.push(format!("## Identity\n\n{}\n\n{sp}", self.system_prompt));
-            }
-            _ => {
-                sections.push(format!("## Identity\n\n{}", self.system_prompt));
-            }
+
+            sections.push(format!("## Identity\n\n{identity}"));
+        }
+
+        // ── 1b. Project Guidelines: Layer 3（AGENTS.md / MEMORY.md） ──
+        if !context.discovered_guidelines.is_empty() {
+            let guidelines_content = context
+                .discovered_guidelines
+                .iter()
+                .map(|g| format!("### {}\n\n{}", g.path, g.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            sections.push(format!("## Project Guidelines\n\n{guidelines_content}"));
         }
 
         // ── 2. Project Context: 会话级 owner 业务上下文 ──
@@ -1079,19 +1110,24 @@ impl LlmBridge for NoopBridge {
 /// 从 `LlmProviderRepository` 和 `SettingsRepository` 构建 `PiAgentConnector`。
 ///
 /// Provider 列表从 `llm_providers` DB 表加载。
-/// `settings_repo` 仅用于 `agent.pi.system_prompt` 等非 provider 设置。
+/// settings_repo 用于读取以下配置：
+/// - `agent.pi.base_system_prompt`：覆盖内置 Layer 0 system prompt
+/// - `agent.pi.user_preferences`：JSON 数组，用户偏好提示（Layer 2）
+/// - `agent.pi.system_prompt`：向后兼容旧键（当 user_preferences 不存在时回退为单条偏好）
+///
 /// 按 sort_order，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
     settings: &dyn agentdash_domain::settings::SettingsRepository,
     llm_provider_repo: &dyn LlmProviderRepository,
 ) -> Option<PiAgentConnector> {
-    let system_prompt = read_setting_str(settings, "agent.pi.system_prompt")
+    let system_prompt = read_setting_str(settings, "agent.pi.base_system_prompt")
         .await
         .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
         .unwrap_or_else(|| {
-            "你是 AgentDash 内置 AI 助手，一个通用的编程与任务执行 Agent。请用中文回复用户。"
-                .to_string()
+            super::system_prompt::DEFAULT_SYSTEM_PROMPT.to_string()
         });
+
+    let user_preferences = read_user_preferences(settings).await;
 
     let providers = build_provider_entries_from_db(llm_provider_repo).await;
 
@@ -1108,8 +1144,8 @@ pub async fn build_pi_agent_connector(
     };
 
     let mut connector = PiAgentConnector::new(global_default_bridge, system_prompt);
+    connector.set_user_preferences(user_preferences);
 
-    // 注册所有 provider（含第一个 provider）
     for provider in providers {
         connector.add_provider(provider.entry);
     }
@@ -1124,6 +1160,36 @@ pub async fn build_pi_agent_connector(
         );
     }
     Some(connector)
+}
+
+/// 从 settings 读取用户偏好提示列表。
+///
+/// 优先读取 `agent.pi.user_preferences`（JSON 数组），
+/// 若不存在则回退到旧 `agent.pi.system_prompt`（当作单条偏好）。
+async fn read_user_preferences(
+    settings: &dyn agentdash_domain::settings::SettingsRepository,
+) -> Vec<String> {
+    let scope = agentdash_domain::settings::SettingScope::system();
+
+    if let Ok(Some(setting)) = settings.get(&scope, "agent.pi.user_preferences").await {
+        if let Some(arr) = setting.value.as_array() {
+            let prefs: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            if !prefs.is_empty() {
+                return prefs;
+            }
+        }
+    }
+
+    // 向后兼容：旧 agent.pi.system_prompt 键当作单条偏好
+    if let Some(legacy) = read_setting_str(settings, "agent.pi.system_prompt").await {
+        return vec![legacy];
+    }
+
+    Vec::new()
 }
 
 async fn read_setting_str(
@@ -2337,6 +2403,7 @@ mod tests {
             identity: None,
             restored_session_state: None,
             session_capabilities: None,
+            discovered_guidelines: vec![],
         };
 
         let tools = mock_tools(&[("shell", "Run a shell command")]);
@@ -2367,6 +2434,7 @@ mod tests {
             identity: None,
             restored_session_state: None,
             session_capabilities: None,
+            discovered_guidelines: vec![],
         };
 
         let tools = vec![mock_tool_with_schema(
@@ -2444,6 +2512,7 @@ mod tests {
                     },
                 ],
             }),
+            discovered_guidelines: vec![],
         };
 
         let tools = mock_tools(&[("fs_read", "Read a file"), ("shell", "Run a shell command")]);
@@ -2581,6 +2650,7 @@ mod tests {
                     identity: None,
                     restored_session_state: None,
                     session_capabilities: None,
+                    discovered_guidelines: vec![],
                 },
             )
             .await;
@@ -2640,6 +2710,7 @@ mod tests {
                         ],
                     }),
                     session_capabilities: None,
+                    discovered_guidelines: vec![],
                 },
             )
             .await

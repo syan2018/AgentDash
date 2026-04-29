@@ -76,6 +76,23 @@ pub struct ExecutionContext {
     /// 会话级 baseline capabilities（companion agents + skills），
     /// 由 prompt pipeline 统一组装。
     pub session_capabilities: Option<SessionBaselineCapabilities>,
+    /// 从 VFS mount 中发现的项目级指导文件（AGENTS.md / MEMORY.md）。
+    /// 由 prompt pipeline 在 skill 扫描后填充，connector 渲染为
+    /// `## Project Guidelines` section。
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+}
+
+/// VFS 中发现的项目级指导文件。
+#[derive(Debug, Clone)]
+pub struct DiscoveredGuideline {
+    /// 文件名（如 `AGENTS.md`）。
+    pub file_name: String,
+    /// 所属 mount 标识。
+    pub mount_id: String,
+    /// 相对于 mount 根的路径（如 `AGENTS.md` 或 `packages/foo/AGENTS.md`）。
+    pub path: String,
+    /// 文件全文内容。
+    pub content: String,
 }
 
 impl std::fmt::Debug for ExecutionContext {

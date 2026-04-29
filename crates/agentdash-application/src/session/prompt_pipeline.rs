@@ -229,6 +229,37 @@ impl SessionHub {
         let session_capabilities =
             build_session_baseline_capabilities(hook_session.as_deref(), &discovered_skills);
 
+        // 通过 VFS service 扫描项目级约定文件（AGENTS.md / MEMORY.md）
+        let discovered_guidelines = if let Some(service) = &self.vfs_service {
+            let discovery_result = crate::context::mount_file_discovery::discover_mount_files(
+                service,
+                &effective_vfs,
+                crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
+            )
+            .await;
+            for diag in &discovery_result.diagnostics {
+                tracing::warn!(
+                    rule_key = %diag.rule_key,
+                    mount_id = %diag.mount_id,
+                    path = %diag.path,
+                    "guideline 发现诊断: {}",
+                    diag.message
+                );
+            }
+            discovery_result
+                .files
+                .into_iter()
+                .map(|f| agentdash_spi::DiscoveredGuideline {
+                    file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+                    mount_id: f.mount_id,
+                    path: f.path,
+                    content: f.content,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let context = ExecutionContext {
             turn_id: turn_id.clone(),
             working_directory,
@@ -244,6 +275,7 @@ impl SessionHub {
             identity: req.identity,
             restored_session_state,
             session_capabilities: Some(session_capabilities),
+            discovered_guidelines,
         };
 
         session_meta.updated_at = now;

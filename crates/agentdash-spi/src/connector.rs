@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
-use crate::session_capabilities::SessionBaselineCapabilities;
-use crate::session_context_bundle::SessionContextBundle;
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
@@ -52,34 +50,22 @@ pub struct ExecutionContext {
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
     pub mcp_servers: Vec<McpServer>,
-    /// 配置中显式标记为 relay 的 MCP server name 集合。
-    /// connector 根据此集合决定走 relay 路径还是直连路径。
-    #[allow(dead_code)]
     pub relay_mcp_server_names: std::collections::HashSet<String>,
     pub vfs: Option<Vfs>,
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
-    #[allow(clippy::type_complexity)]
     pub flow_capabilities: FlowCapabilities,
-    /// 统一的 session 上下文 Bundle —— 所有 connector 的主数据源。
-    ///
-    /// 由 `SessionAssemblyBuilder::with_context_bundle` 注入，connector 侧按
-    /// `FragmentScope` 过滤渲染 F1 system prompt / 组装 prompt text。
-    pub context_bundle: Option<SessionContextBundle>,
-    /// 预构建的 Agent Runtime Delegate（由 Application 层基于 hook_session 创建）。
-    /// Connector 可直接使用，无需自行构造具体 delegate 类型。
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::auth::AuthIdentity>,
     /// 当 session 生命周期层判定为”冷启动仓储恢复”且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// 会话级 baseline capabilities（companion agents + skills），
-    /// 由 prompt pipeline 统一组装。
-    pub session_capabilities: Option<SessionBaselineCapabilities>,
-    /// 从 VFS mount 中发现的项目级指导文件（AGENTS.md / MEMORY.md）。
-    /// 由 prompt pipeline 在 skill 扫描后填充，connector 渲染为
-    /// `## Project Guidelines` section。
-    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    /// Application 层预组装的完整 system prompt。
+    /// 当此字段非空时，connector 应直接使用此值，不再自行组装。
+    pub assembled_system_prompt: Option<String>,
+    /// Application 层预构建的工具列表（runtime + MCP）。
+    /// 当非空时，connector 的 `prompt()` 直接使用，不再自行发现。
+    pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
 }
 
 /// VFS 中发现的项目级指导文件。
@@ -104,13 +90,6 @@ impl std::fmt::Debug for ExecutionContext {
             .field(
                 "runtime_delegate",
                 &self.runtime_delegate.as_ref().map(|_| ".."),
-            )
-            .field(
-                "context_bundle",
-                &self
-                    .context_bundle
-                    .as_ref()
-                    .map(|b| (b.bundle_id, b.fragments.len())),
             )
             .field(
                 "restored_session_state",
@@ -389,6 +368,19 @@ pub trait AgentConnector: Send + Sync {
     /// 这与 session 事件广播或订阅状态不同；仅用于判断是否可以跳过仓储恢复。
     async fn has_live_session(&self, _session_id: &str) -> bool {
         false
+    }
+
+    /// 为即将开始的 session turn 预构建工具列表。
+    ///
+    /// Application 层在 `prompt()` 之前调用此方法，把结果存入
+    /// `ExecutionContext.assembled_tools`，使 `prompt()` 不再需要
+    /// 自行发现 MCP、构建 runtime tools。
+    /// 默认返回空列表（不支持预构建的 connector 走 prompt() 内部逻辑）。
+    async fn build_session_tools(
+        &self,
+        _context: &ExecutionContext,
+    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, ConnectorError> {
+        Ok(Vec::new())
     }
 
     async fn prompt(

@@ -25,6 +25,9 @@ pub struct MountFileDiscoveryRule {
     pub scan_root: bool,
     /// 是否扫描根目录的一级子目录（用于 monorepo 场景）。
     pub scan_children: bool,
+    /// 在这些前缀目录下扫描一级子目录。
+    /// 例如 `[".agents/skills", "skills"]` → 扫描 `.agents/skills/*/` 和 `skills/*/`
+    pub scan_prefixes: &'static [&'static str],
     /// 单文件大小上限（字节），超过则跳过并记录诊断。
     pub max_size_bytes: u64,
 }
@@ -65,6 +68,7 @@ pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[
         file_names: &["AGENTS.md"],
         scan_root: true,
         scan_children: true,
+        scan_prefixes: &[],
         max_size_bytes: 64 * 1024,
     },
     MountFileDiscoveryRule {
@@ -72,6 +76,18 @@ pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[
         file_names: &["MEMORY.md"],
         scan_root: true,
         scan_children: true,
+        scan_prefixes: &[],
+        max_size_bytes: 64 * 1024,
+    },
+];
+
+pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[
+    MountFileDiscoveryRule {
+        key: "skill_md",
+        file_names: &["SKILL.md"],
+        scan_root: false,
+        scan_children: false,
+        scan_prefixes: &[".agents/skills", "skills"],
         max_size_bytes: 64 * 1024,
     },
 ];
@@ -134,6 +150,27 @@ pub async fn discover_mount_files(
                     }
                 }
             }
+
+            // 前缀目录扫描（skill 模式：prefix/*/file_name）
+            if !rule.scan_prefixes.is_empty() && has_list {
+                for prefix in rule.scan_prefixes {
+                    let children = list_children_at(service, vfs, &mount.id, prefix).await;
+                    for child_dir in &children {
+                        for file_name in rule.file_names {
+                            let path = format!("{child_dir}/{file_name}");
+                            try_read_file(
+                                service,
+                                vfs,
+                                &mount.id,
+                                &path,
+                                rule,
+                                &mut result,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -184,6 +221,38 @@ async fn try_read_file(
         path: path.to_string(),
         content: read.content,
     });
+}
+
+/// 列出指定目录下的一级子目录路径。
+async fn list_children_at(
+    service: &RelayVfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+) -> Vec<String> {
+    let list_result = service
+        .list(
+            vfs,
+            mount_id,
+            ListOptions {
+                path: dir_path.to_string(),
+                pattern: None,
+                recursive: false,
+            },
+            None,
+            None,
+        )
+        .await;
+
+    match list_result {
+        Ok(r) => r
+            .entries
+            .into_iter()
+            .filter(|e| e.is_dir)
+            .map(|e| e.path)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// 列出 mount 根目录下的一级子目录名。

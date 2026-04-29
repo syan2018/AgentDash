@@ -231,6 +231,7 @@ impl AppState {
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
+        let mut prompt_config: Option<(String, Vec<String>)> = None;
 
         if let Some(pi_connector) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),
@@ -245,6 +246,10 @@ impl AppState {
         .await
         {
             title_bridge = Some(pi_connector.default_bridge());
+            prompt_config = Some((
+                pi_connector.base_system_prompt().to_string(),
+                pi_connector.user_preferences().to_vec(),
+            ));
             sub_connectors.push(Arc::new(pi_connector));
         }
         // relay connector — 将远程后端上报的执行器纳入统一路由
@@ -282,6 +287,9 @@ impl AppState {
         )
         .with_vfs_service(vfs_service.clone())
         .with_extra_skill_dirs(plugin_registration.extra_skill_dirs);
+        if let Some((base_sp, user_prefs)) = prompt_config {
+            session_hub = session_hub.with_system_prompt_config(base_sp, user_prefs);
+        }
         if let Some(bridge) = title_bridge {
             session_hub = session_hub.with_title_generator(Arc::new(
                 crate::title_generator::LlmTitleGenerator::new(bridge),

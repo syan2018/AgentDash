@@ -24,7 +24,7 @@ use executors::{
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload, RUNTIME_AGENT_CONTEXT_SLOTS,
+    ExecutionContext, ExecutionStream, PromptPayload,
     workspace_path_from_context,
 };
 
@@ -171,21 +171,10 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let user_text = prompt.to_fallback_text();
-        // 从 SessionContextBundle 渲染 runtime-agent 可见段落，拼接到用户消息前。
-        let system_context: String = context
-            .context_bundle
-            .as_ref()
-            .map(|bundle| {
-                bundle.render_section(
-                    agentdash_spi::FragmentScope::RuntimeAgent,
-                    RUNTIME_AGENT_CONTEXT_SLOTS,
-                )
-            })
-            .unwrap_or_default();
-        let prompt_text = if system_context.trim().is_empty() {
-            user_text
+        let prompt_text = if let Some(ref sys_prompt) = context.assembled_system_prompt {
+            format!("{sys_prompt}\n\n{user_text}")
         } else {
-            format!("{system_context}\n\n{user_text}")
+            user_text
         };
         let prompt_text = prompt_text.trim().to_string();
         if prompt_text.is_empty() {

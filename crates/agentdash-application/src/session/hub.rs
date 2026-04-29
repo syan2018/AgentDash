@@ -46,6 +46,10 @@ pub struct SessionHub {
     /// Context Inspector 使用的审计总线。Hub 内部创建 runtime delegate 时需要把它
     /// 传给 hook 链路，记录每轮 HookInjection → ContextFragment 的动态片段。
     pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
+    /// Layer 0 base system prompt（由 factory 从 settings / 常量注入）。
+    pub(super) base_system_prompt: String,
+    /// Layer 2 用户偏好提示列表（由 factory 从 settings 注入）。
+    pub(super) user_preferences: Vec<String>,
 }
 
 impl SessionHub {
@@ -68,7 +72,19 @@ impl SessionHub {
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             prompt_augmenter: Arc::new(tokio::sync::RwLock::new(None)),
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
+            base_system_prompt: String::new(),
+            user_preferences: Vec::new(),
         }
+    }
+
+    pub fn with_system_prompt_config(
+        mut self,
+        base_system_prompt: String,
+        user_preferences: Vec<String>,
+    ) -> Self {
+        self.base_system_prompt = base_system_prompt;
+        self.user_preferences = user_preferences;
+        self
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）

@@ -169,6 +169,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.platform_config.clone(),
                 self.session_hub_handle.clone(),
                 context,
+                None, // context_bundle 不再穿透 ExecutionContext
             )));
             tools.push(Arc::new(CompanionRespondTool::new(
                 self.session_hub_handle.clone(),

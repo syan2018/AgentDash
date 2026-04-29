@@ -99,6 +99,7 @@ impl CompanionRequestTool {
         platform_config: crate::platform_config::SharedPlatformConfig,
         session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
+        context_bundle: Option<agentdash_spi::SessionContextBundle>,
     ) -> Self {
         Self {
             session_binding_repo,
@@ -117,7 +118,7 @@ impl CompanionRequestTool {
             vfs: context.vfs.clone(),
             mcp_servers: context.mcp_servers.clone(),
             hook_session: context.hook_session.clone(),
-            context_bundle: context.context_bundle.clone(),
+            context_bundle,
         }
     }
 }

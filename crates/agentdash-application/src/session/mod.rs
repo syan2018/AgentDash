@@ -19,6 +19,7 @@ pub mod post_turn_handler;
 mod prompt_pipeline;
 mod prompt_vfs;
 pub mod stall_detector;
+pub mod system_prompt_assembler;
 pub mod title_generator;
 pub mod turn_processor;
 pub mod types;

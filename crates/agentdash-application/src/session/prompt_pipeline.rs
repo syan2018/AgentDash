@@ -260,23 +260,52 @@ impl SessionHub {
             Vec::new()
         };
 
-        let context = ExecutionContext {
+        let mut context = ExecutionContext {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
             mcp_servers: req.mcp_servers,
             relay_mcp_server_names: req.relay_mcp_server_names,
-            vfs: Some(effective_vfs),
+            vfs: Some(effective_vfs.clone()),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
-            context_bundle: req.context_bundle.clone(),
             runtime_delegate,
             identity: req.identity,
             restored_session_state,
-            session_capabilities: Some(session_capabilities),
-            discovered_guidelines,
+            assembled_system_prompt: None,
+            assembled_tools: Vec::new(),
         };
+
+        // pipeline 层预构建工具列表
+        let assembled_tools = match self.connector.build_session_tools(&context).await {
+            Ok(tools) => tools,
+            Err(e) => {
+                tracing::warn!("pipeline 预构建工具失败，connector 将回退自行构建: {e}");
+                Vec::new()
+            }
+        };
+        context.assembled_tools = assembled_tools;
+
+        // pipeline 层预组装 system prompt
+        if !self.base_system_prompt.is_empty() {
+            let prompt_input = super::system_prompt_assembler::SystemPromptInput {
+                base_system_prompt: &self.base_system_prompt,
+                agent_system_prompt: context.executor_config.system_prompt.as_deref(),
+                agent_system_prompt_mode: context.executor_config.system_prompt_mode,
+                user_preferences: &self.user_preferences,
+                discovered_guidelines: &discovered_guidelines,
+                context_bundle: req.context_bundle.as_ref(),
+                session_capabilities: Some(&session_capabilities),
+                vfs: Some(&effective_vfs),
+                working_directory: &context.working_directory,
+                runtime_tools: &context.assembled_tools,
+                mcp_servers: &context.mcp_servers,
+                hook_session: hook_session.as_deref(),
+            };
+            context.assembled_system_prompt =
+                Some(super::system_prompt_assembler::assemble_system_prompt(&prompt_input));
+        }
 
         session_meta.updated_at = now;
         session_meta.last_execution_status = "running".to_string();
@@ -326,7 +355,8 @@ impl SessionHub {
         let is_first_prompt = session_meta.last_event_seq == 0;
         let mut user_blocks_with_capabilities = resolved_payload.user_blocks.clone();
         if is_first_prompt || is_owner_bootstrap {
-            if let Some(ref caps) = context.session_capabilities {
+            {
+                let caps = &session_capabilities;
                 if !caps.is_empty() {
                     if let Ok(block) = serde_json::from_value::<agent_client_protocol::ContentBlock>(
                         serde_json::json!({

@@ -277,15 +277,49 @@ impl SessionHub {
             assembled_tools: Vec::new(),
         };
 
-        // pipeline 层预构建工具列表
-        let assembled_tools = match self.connector.build_session_tools(&context).await {
-            Ok(tools) => tools,
-            Err(e) => {
-                tracing::warn!("pipeline 预构建工具失败，connector 将回退自行构建: {e}");
-                Vec::new()
+        // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
+        {
+            let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
+
+            // 1. Runtime tools（VFS 工具等）
+            if let Some(provider) = &self.runtime_tool_provider {
+                match provider.build_tools(&context).await {
+                    Ok(tools) => all_tools.extend(tools),
+                    Err(e) => tracing::warn!("runtime tool 构建失败: {e}"),
+                }
             }
-        };
-        context.assembled_tools = assembled_tools;
+
+            // 2. Direct MCP tools
+            {
+                let (_, direct_servers) =
+                    partition_mcp_servers(&context.mcp_servers, &context.relay_mcp_server_names);
+                match agentdash_executor::connectors::pi_agent::pi_agent_mcp::discover_mcp_tools(
+                    &direct_servers,
+                )
+                .await
+                {
+                    Ok(tools) => all_tools.extend(tools),
+                    Err(e) => tracing::warn!("直连 MCP 工具发现失败: {e}"),
+                }
+            }
+
+            // 3. Relay MCP tools
+            if let Some(relay) = &self.mcp_relay_provider {
+                let relay_names = extract_relay_server_names(
+                    &context.mcp_servers,
+                    &context.relay_mcp_server_names,
+                );
+                let tools =
+                    agentdash_executor::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
+                        relay.clone(),
+                        &relay_names,
+                    )
+                    .await;
+                all_tools.extend(tools);
+            }
+
+            context.assembled_tools = all_tools;
+        }
 
         // pipeline 层预组装 system prompt
         if !self.base_system_prompt.is_empty() {
@@ -604,6 +638,44 @@ fn resolve_working_dir(default_mount_root: &Path, working_dir: Option<&str>) -> 
         Some(rel) if !rel.trim().is_empty() => default_mount_root.join(rel),
         _ => default_mount_root.to_path_buf(),
     }
+}
+
+/// 从 McpServer 提取 server name（与 system_prompt_assembler 同逻辑）。
+pub(super) fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
+    serde_json::to_value(server)
+        .ok()
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// 将 MCP servers 按 relay 标记分为两组，返回 (relay_names, direct_servers)。
+pub(super) fn partition_mcp_servers(
+    servers: &[agent_client_protocol::McpServer],
+    relay_names_set: &std::collections::HashSet<String>,
+) -> (Vec<String>, Vec<agent_client_protocol::McpServer>) {
+    let mut relay_names = Vec::new();
+    let mut direct = Vec::new();
+    for server in servers {
+        let name = extract_mcp_server_name(server);
+        if relay_names_set.contains(&name) {
+            relay_names.push(name);
+        } else {
+            direct.push(server.clone());
+        }
+    }
+    (relay_names, direct)
+}
+
+/// 提取需要走 relay 路径的 server name 列表。
+fn extract_relay_server_names(
+    servers: &[agent_client_protocol::McpServer],
+    relay_names_set: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    servers
+        .iter()
+        .map(extract_mcp_server_name)
+        .filter(|name| relay_names_set.contains(name))
+        .collect()
 }
 
 #[cfg(test)]

@@ -18,35 +18,14 @@ use agentdash_agent::{Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge}
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::settings::SettingsRepository;
 
-use crate::connectors::pi_agent::pi_agent_mcp::discover_mcp_tools;
 use crate::connectors::pi_agent::pi_agent_provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
 };
 use crate::hook_events::build_hook_trace_notification;
-use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::mcp_relay::McpRelayProvider;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, Mount, MountCapability, PromptPayload,
-    SystemPromptMode, workspace_path_from_context,
+    ExecutionContext, ExecutionStream, PromptPayload,
 };
-
-/// 从 McpServer（外部类型）提取 server name
-fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
-    serde_json::to_value(server)
-        .ok()
-        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// 判断 MCP server 是否为平台注入的 MCP（relay/story/task/workflow scope）。
-///
-/// 平台 MCP 的 server name 由 `McpInjectionConfig::server_name()` 产出，统一以 `agentdash-` 前缀
-/// 开头（如 `agentdash-relay-tools`、`agentdash-workflow-tools-<short_id>`）；
-/// 用户自定义 MCP 不会使用该前缀，由此可在 system prompt 中把两者分组展示。
-fn is_platform_mcp_server(server: &agent_client_protocol::McpServer) -> bool {
-    extract_mcp_server_name(server).starts_with("agentdash-")
-}
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -55,8 +34,6 @@ pub struct PiAgentConnector {
     bridge: Arc<dyn LlmBridge>,
     /// 已注册的 provider 列表（按注册顺序，首个命中的 provider 优先）
     providers: Vec<ProviderEntry>,
-    runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
-    mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
     /// Layer 0: 系统全局 base system prompt。
@@ -68,10 +45,8 @@ pub struct PiAgentConnector {
 
 struct PiAgentSessionRuntime {
     agent: Agent,
-    /// runtime tool provider 产出的基础工具（不含 MCP）。
-    runtime_base_tools: Vec<DynAgentTool>,
-    /// 当前生效的 MCP 工具集合（直连 + relay）。
-    mcp_tools: Vec<DynAgentTool>,
+    /// 当前生效的完整工具列表（由 application 层预构建）。
+    tools: Vec<DynAgentTool>,
 }
 
 struct ProviderRuntimeState {
@@ -91,8 +66,6 @@ impl PiAgentConnector {
         Self {
             bridge,
             providers: Vec::new(),
-            runtime_tool_provider: None,
-            mcp_relay_provider: None,
             settings_repo: None,
             llm_provider_repo: None,
             system_prompt: system_prompt.into(),
@@ -117,14 +90,6 @@ impl PiAgentConnector {
         self.bridge.clone()
     }
 
-    pub fn set_runtime_tool_provider(&mut self, provider: Arc<dyn RuntimeToolProvider>) {
-        self.runtime_tool_provider = Some(provider);
-    }
-
-    pub fn set_mcp_relay_provider(&mut self, provider: Arc<dyn McpRelayProvider>) {
-        self.mcp_relay_provider = Some(provider);
-    }
-
     pub fn set_settings_repository(&mut self, settings_repo: Arc<dyn SettingsRepository>) {
         self.settings_repo = Some(settings_repo);
     }
@@ -139,29 +104,6 @@ impl PiAgentConnector {
 
     pub(crate) fn provider_count(&self) -> usize {
         self.providers.len()
-    }
-
-    /// 将 Agent 配置的 MCP servers 按 relay 标记分为两组。
-    /// relay 标记来自配置层（`relay_mcp_server_names`），不做运行时探测。
-    fn partition_mcp_servers(
-        &self,
-        servers: &[agent_client_protocol::McpServer],
-        relay_names_set: &std::collections::HashSet<String>,
-    ) -> (Vec<String>, Vec<agent_client_protocol::McpServer>) {
-        let mut relay_names = Vec::new();
-        let mut direct = Vec::new();
-
-        for server in servers {
-            let name = extract_mcp_server_name(server);
-            if relay_names_set.contains(&name) {
-                tracing::info!(server = %name, "MCP server 走 relay 路径（配置标记）");
-                relay_names.push(name);
-            } else {
-                direct.push(server.clone());
-            }
-        }
-
-        (relay_names, direct)
     }
 
     async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
@@ -254,184 +196,9 @@ impl PiAgentConnector {
         Ok(default_bridge)
     }
 
-    /// Application 层已预组装 prompt（不含 tools section），
-    /// 在 connector 侧补充 Available Tools 段落。
-    fn augment_assembled_prompt(
-        &self,
-        pre_assembled: &str,
-        context: &ExecutionContext,
-        runtime_tools: &[DynAgentTool],
-    ) -> String {
-        let tool_section = self.build_tools_section(context, runtime_tools);
-        if tool_section.is_empty() {
-            pre_assembled.to_string()
-        } else {
-            format!("{pre_assembled}\n\n{tool_section}")
-        }
-    }
-
-    /// 渲染 Available Tools section（S2 完成后此函数将移至 assembler）。
-    fn build_tools_section(
-        &self,
-        context: &ExecutionContext,
-        runtime_tools: &[DynAgentTool],
-    ) -> String {
-        let has_builtin = !runtime_tools.is_empty();
-        let (platform_mcp_servers, user_mcp_servers): (Vec<_>, Vec<_>) = context
-            .mcp_servers
-            .iter()
-            .partition(|server| is_platform_mcp_server(server));
-        let has_platform_mcp = !platform_mcp_servers.is_empty();
-        let has_user_mcp = !user_mcp_servers.is_empty();
-
-        if !has_builtin && !has_platform_mcp && !has_user_mcp {
-            return String::new();
-        }
-
-        let mut tool_section =
-            String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
-
-        if has_builtin || has_platform_mcp {
-            tool_section.push_str("### Platform Tools\n\n");
-            if has_builtin {
-                let builtin_lines = runtime_tools
-                    .iter()
-                    .map(|t| super::stream_mapper::describe_builtin_tool(t))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                tool_section.push_str(&builtin_lines);
-                tool_section.push_str("\n\n");
-            }
-            if has_platform_mcp {
-                let lines = platform_mcp_servers
-                    .iter()
-                    .map(|s| super::stream_mapper::describe_mcp_server(s))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                tool_section.push_str(
-                    "以下平台 MCP Server 提供 Project/Story/Task/Workflow 级管理工具：\n\n",
-                );
-                tool_section.push_str(&lines);
-                tool_section.push_str("\n\n");
-            }
-        }
-
-        if has_user_mcp {
-            let lines = user_mcp_servers
-                .iter()
-                .map(|s| super::stream_mapper::describe_mcp_server(s))
-                .collect::<Vec<_>>()
-                .join("\n");
-            tool_section.push_str("### MCP Tools\n\n");
-            tool_section.push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
-            tool_section.push_str(&lines);
-            tool_section.push_str("\n\n");
-        }
-
-        if has_builtin {
-            if context.vfs.is_some() {
-                tool_section.push_str(
-                    "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
-                    The mount prefix may be omitted when the session has exactly one mount. \
-                    Never put backend_id or absolute paths into tool arguments. \
-                    For shell_exec, `cwd` must also be relative to the mount root; use `main://.` for the current directory.\n\n",
-                );
-                tool_section.push_str(
-                    "**fs_apply_patch format**: uses Codex apply_patch syntax (**not** unified diff). \
-                    Starts with `*** Begin Patch`, ends with `*** End Patch`. \
-                    Each file operation MUST begin with `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`. \
-                    For renaming, follow `Update File` with `*** Move to: new/path`. \
-                    Each hunk starts with `@@` (optionally followed by a context-anchor line); \
-                    lines within a hunk are prefixed with space (context) / `-` (remove) / `+` (add). \
-                    Paths may use `mount_id://path` to target a specific mount; paths without a prefix use the default mount.",
-                );
-            } else {
-                let abs_hint = workspace_path_from_context(context)
-                    .map(|root| root.display().to_string())
-                    .unwrap_or_else(|_| "（未配置工作区路径）".to_string());
-                tool_section.push_str(&format!(
-                    "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{abs_hint}/...` 这类绝对路径直接写进工具参数。",
-                ));
-            }
-        }
-
-        tool_section
-    }
-
-    /// 回退模式的 system prompt 组装（仅在 assembled_system_prompt 为 None 时使用）。
-    ///
-    /// 生产环境由 application 层 SystemPromptAssembler 完成完整组装；
-    /// 此方法仅渲染 Identity + Workspace + Tools section 供测试 / 直接调用使用。
-    fn build_runtime_system_prompt(
-        &self,
-        context: &ExecutionContext,
-        runtime_tools: &[DynAgentTool],
-    ) -> String {
-        let mut sections: Vec<String> = Vec::new();
-
-        // Identity（Layer 0-2）
-        {
-            let agent_sp = context
-                .executor_config
-                .system_prompt
-                .as_deref()
-                .filter(|s| !s.trim().is_empty());
-            let identity = match (context.executor_config.system_prompt_mode, agent_sp) {
-                (Some(SystemPromptMode::Override), Some(sp)) => sp.to_string(),
-                (_, Some(sp)) => format!("{}\n\n{sp}", self.system_prompt),
-                _ => self.system_prompt.clone(),
-            };
-            sections.push(format!("## Identity\n\n{identity}"));
-        }
-
-        // Workspace
-        if let Some(vfs) = &context.vfs {
-            let mount_lines = vfs
-                .mounts
-                .iter()
-                .map(describe_mount)
-                .collect::<Vec<_>>()
-                .join("\n");
-            let default_mount = vfs
-                .default_mount()
-                .map(|m| m.id.as_str())
-                .unwrap_or("main");
-            sections.push(format!(
-                "## Workspace\n\n当前会话可访问的 VFS 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
-            ));
-        }
-
-        // Available Tools
-        let tool_section = self.build_tools_section(context, runtime_tools);
-        if !tool_section.is_empty() {
-            sections.push(tool_section);
-        }
-
-        sections.join("\n\n")
-    }
 }
 
 use super::slash_commands::discover_skill_slash_commands;
-
-fn describe_mount(mount: &Mount) -> String {
-    let capabilities = mount
-        .capabilities
-        .iter()
-        .map(|capability| match capability {
-            MountCapability::Read => "read",
-            MountCapability::Write => "write",
-            MountCapability::List => "list",
-            MountCapability::Search => "search",
-            MountCapability::Exec => "exec",
-            MountCapability::Watch => "watch",
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "- {}: {}（provider={}, root_ref={}, capabilities=[{}]）",
-        mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
-    )
-}
 
 #[async_trait::async_trait]
 impl AgentConnector for PiAgentConnector {
@@ -539,44 +306,6 @@ impl AgentConnector for PiAgentConnector {
         self.agents.lock().await.contains_key(session_id)
     }
 
-    async fn build_session_tools(
-        &self,
-        context: &ExecutionContext,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        let (relay_server_names, direct_servers) =
-            self.partition_mcp_servers(&context.mcp_servers, &context.relay_mcp_server_names);
-
-        let mcp_tools = match discover_mcp_tools(&direct_servers).await {
-            Ok(tools) => tools,
-            Err(error) => {
-                tracing::warn!("发现直连 MCP 工具失败，继续使用本地工具: {error}");
-                Vec::new()
-            }
-        };
-        let relay_mcp_tools = if let Some(relay) = &self.mcp_relay_provider {
-            crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
-                relay.clone(),
-                &relay_server_names,
-            )
-            .await
-        } else {
-            Vec::new()
-        };
-
-        let provider = self.runtime_tool_provider.as_ref().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "PiAgentConnector 未配置 runtime tool provider".to_string(),
-            )
-        })?;
-        let runtime_base_tools = provider.build_tools(context).await?;
-
-        let mut all_tools: Vec<DynAgentTool> = Vec::new();
-        all_tools.extend(runtime_base_tools);
-        all_tools.extend(mcp_tools);
-        all_tools.extend(relay_mcp_tools);
-        Ok(all_tools)
-    }
-
     async fn prompt(
         &self,
         session_id: &str,
@@ -600,11 +329,9 @@ impl AgentConnector for PiAgentConnector {
         };
 
         let is_new_agent = existing_runtime.is_none();
-        let mut runtime_base_tools: Vec<DynAgentTool> = Vec::new();
-        let mut mcp_tools_runtime: Vec<DynAgentTool> = Vec::new();
+        let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
-            runtime_base_tools = runtime.runtime_base_tools;
-            mcp_tools_runtime = runtime.mcp_tools;
+            current_tools = runtime.tools;
             runtime.agent
         } else {
             let provider_state = self.load_provider_runtime_state().await;
@@ -628,24 +355,12 @@ impl AgentConnector for PiAgentConnector {
         // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
         // 只更新 runtime delegate（hook session 每轮刷新）。
         if is_new_agent {
-            let runtime_tools = if !context.assembled_tools.is_empty() {
-                // Application 层已预构建——直接使用
-                runtime_base_tools = context.assembled_tools.clone();
-                context.assembled_tools.clone()
-            } else {
-                // 回退：connector 自行构建（向后兼容未经 pipeline 的直接调用）
-                let tools = self.build_session_tools(&context).await?;
-                runtime_base_tools = tools.clone();
-                tools
-            };
+            current_tools = context.assembled_tools.clone();
 
-            let final_prompt = if let Some(pre_assembled) = &context.assembled_system_prompt {
-                self.augment_assembled_prompt(pre_assembled, &context, &runtime_tools)
-            } else {
-                self.build_runtime_system_prompt(&context, &runtime_tools)
-            };
-            agent.set_system_prompt(final_prompt);
-            agent.set_tools(runtime_tools);
+            if let Some(system_prompt) = &context.assembled_system_prompt {
+                agent.set_system_prompt(system_prompt.clone());
+            }
+            agent.set_tools(current_tools.clone());
             if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
                 agent.replace_messages(messages).await;
             }
@@ -669,8 +384,7 @@ impl AgentConnector for PiAgentConnector {
             session_id_owned.clone(),
             PiAgentSessionRuntime {
                 agent,
-                runtime_base_tools,
-                mcp_tools: mcp_tools_runtime,
+                tools: current_tools,
             },
         );
 
@@ -821,60 +535,31 @@ impl AgentConnector for PiAgentConnector {
             .map_err(|error| ConnectorError::Runtime(error.to_string()))
     }
 
-    async fn update_session_mcp_servers(
+    async fn update_session_tools(
         &self,
         session_id: &str,
-        mcp_servers: Vec<agent_client_protocol::McpServer>,
+        tools: Vec<DynAgentTool>,
     ) -> Result<(), ConnectorError> {
-        let (relay_server_names, direct_servers) =
-            self.partition_mcp_servers(&mcp_servers, &Default::default());
-
-        let mcp_tools = match discover_mcp_tools(&direct_servers).await {
-            Ok(tools) => tools,
-            Err(error) => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    "MCP 热更新：发现直连 MCP 工具失败: {error}"
-                );
-                Vec::new()
-            }
-        };
-        let relay_mcp_tools = if let Some(relay) = &self.mcp_relay_provider {
-            crate::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
-                relay.clone(),
-                &relay_server_names,
-            )
-            .await
-        } else {
-            Vec::new()
-        };
-
-        let mut new_mcp_tools: Vec<agentdash_agent::DynAgentTool> = Vec::new();
-        new_mcp_tools.extend(mcp_tools);
-        new_mcp_tools.extend(relay_mcp_tools);
-
         let mut agents = self.agents.lock().await;
         let runtime = agents.get_mut(session_id).ok_or_else(|| {
             ConnectorError::Runtime(format!(
-                "session `{session_id}` 当前没有活跃的 Pi Agent，无法热更新 MCP"
+                "session `{session_id}` 当前没有活跃的 Pi Agent，无法热更新工具"
             ))
         })?;
 
         let old_names: BTreeSet<String> = runtime
-            .mcp_tools
+            .tools
             .iter()
             .map(|tool| tool.name().to_string())
             .collect();
-        let new_names: BTreeSet<String> = new_mcp_tools
+        let new_names: BTreeSet<String> = tools
             .iter()
             .map(|tool| tool.name().to_string())
             .collect();
 
-        runtime.mcp_tools = new_mcp_tools;
-        let mut merged_tools = runtime.runtime_base_tools.clone();
-        merged_tools.extend(runtime.mcp_tools.iter().cloned());
-        let tool_count = runtime.mcp_tools.len();
-        runtime.agent.set_tools(merged_tools);
+        let tool_count = tools.len();
+        runtime.tools = tools.clone();
+        runtime.agent.set_tools(tools);
 
         let added: Vec<String> = new_names.difference(&old_names).cloned().collect();
         let removed: Vec<String> = old_names.difference(&new_names).cloned().collect();
@@ -883,8 +568,8 @@ impl AgentConnector for PiAgentConnector {
             session_id = %session_id,
             added = ?added,
             removed = ?removed,
-            new_mcp_tool_count = tool_count,
-            "MCP 热更新完成（replace-set）"
+            tool_count = tool_count,
+            "工具热更新完成（replace-set）"
         );
 
         Ok(())

@@ -370,19 +370,6 @@ pub trait AgentConnector: Send + Sync {
         false
     }
 
-    /// 为即将开始的 session turn 预构建工具列表。
-    ///
-    /// Application 层在 `prompt()` 之前调用此方法，把结果存入
-    /// `ExecutionContext.assembled_tools`，使 `prompt()` 不再需要
-    /// 自行发现 MCP、构建 runtime tools。
-    /// 默认返回空列表（不支持预构建的 connector 走 prompt() 内部逻辑）。
-    async fn build_session_tools(
-        &self,
-        _context: &ExecutionContext,
-    ) -> Result<Vec<agentdash_agent_types::DynAgentTool>, ConnectorError> {
-        Ok(Vec::new())
-    }
-
     async fn prompt(
         &self,
         session_id: &str,
@@ -406,13 +393,14 @@ pub trait AgentConnector: Send + Sync {
         reason: Option<String>,
     ) -> Result<(), ConnectorError>;
 
-    /// Phase Node 切换时热更新 session 的 MCP server 列表。
-    /// 语义为"目标集合替换"（replace-set），而非增量追加。
+    /// Phase Node 切换时热更新 session 的工具集。
+    /// `tools` 为 application 层预构建好的完整工具列表（runtime + MCP），
+    /// connector 直接 replace-set 到运行中 agent。
     /// 默认 no-op — 仅 PiAgentConnector 等 in-process connector 需要实现。
-    async fn update_session_mcp_servers(
+    async fn update_session_tools(
         &self,
         _session_id: &str,
-        _mcp_servers: Vec<McpServer>,
+        _tools: Vec<agentdash_agent_types::DynAgentTool>,
     ) -> Result<(), ConnectorError> {
         Ok(())
     }

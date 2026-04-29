@@ -50,6 +50,10 @@ pub struct SessionHub {
     pub(super) base_system_prompt: String,
     /// Layer 2 用户偏好提示列表（由 factory 从 settings 注入）。
     pub(super) user_preferences: Vec<String>,
+    /// 运行时工具构建 provider（由 factory 注入，pipeline 在 prompt 前调用）。
+    pub(super) runtime_tool_provider: Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
+    /// MCP Relay 工具发现 provider（由 factory 注入，pipeline 在 prompt 前调用）。
+    pub(super) mcp_relay_provider: Option<Arc<dyn agentdash_spi::McpRelayProvider>>,
 }
 
 impl SessionHub {
@@ -74,6 +78,8 @@ impl SessionHub {
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
             base_system_prompt: String::new(),
             user_preferences: Vec::new(),
+            runtime_tool_provider: None,
+            mcp_relay_provider: None,
         }
     }
 
@@ -84,6 +90,22 @@ impl SessionHub {
     ) -> Self {
         self.base_system_prompt = base_system_prompt;
         self.user_preferences = user_preferences;
+        self
+    }
+
+    pub fn with_runtime_tool_provider(
+        mut self,
+        provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
+    ) -> Self {
+        self.runtime_tool_provider = Some(provider);
+        self
+    }
+
+    pub fn with_mcp_relay_provider(
+        mut self,
+        provider: Arc<dyn agentdash_spi::McpRelayProvider>,
+    ) -> Self {
+        self.mcp_relay_provider = Some(provider);
         self
     }
 
@@ -412,13 +434,48 @@ impl SessionHub {
     }
 
     /// 替换运行中 session 的 MCP server 列表并同步 connector。
+    ///
+    /// Hub 层自行完成 MCP 工具发现，将预构建好的工具集传给 connector。
     pub async fn replace_runtime_mcp_servers(
         &self,
         session_id: &str,
         mcp_servers: Vec<McpServer>,
     ) -> Result<(), ConnectorError> {
+        use agentdash_executor::connectors::pi_agent::{
+            pi_agent_mcp, relay_mcp,
+        };
+
+        let relay_names_set: std::collections::HashSet<String> = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .map(|_| std::collections::HashSet::new())
+                .unwrap_or_default()
+        };
+
+        let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
+
+        // Direct MCP tools
+        let (_, direct_servers) =
+            super::prompt_pipeline::partition_mcp_servers(&mcp_servers, &relay_names_set);
+        match pi_agent_mcp::discover_mcp_tools(&direct_servers).await {
+            Ok(tools) => all_tools.extend(tools),
+            Err(e) => tracing::warn!(session_id = %session_id, "MCP 热更新：直连 MCP 发现失败: {e}"),
+        }
+
+        // Relay MCP tools
+        if let Some(relay) = &self.mcp_relay_provider {
+            let relay_names: Vec<String> = mcp_servers
+                .iter()
+                .map(|s| super::prompt_pipeline::extract_mcp_server_name(s))
+                .filter(|name| relay_names_set.contains(name))
+                .collect();
+            let tools = relay_mcp::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            all_tools.extend(tools);
+        }
+
         self.connector
-            .update_session_mcp_servers(session_id, mcp_servers.clone())
+            .update_session_tools(session_id, all_tools)
             .await?;
 
         let mut sessions = self.sessions.lock().await;
@@ -2012,7 +2069,6 @@ mod tests {
         assert_eq!(restored.messages.len(), 2);
         assert_eq!(restored.messages[0].first_text(), Some("历史用户消息"));
         assert_eq!(restored.messages[1].first_text(), Some("历史助手消息"));
-        assert!(context.context_bundle.is_none());
     }
 
     #[tokio::test]

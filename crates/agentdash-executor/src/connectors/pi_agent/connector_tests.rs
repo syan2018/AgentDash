@@ -6,6 +6,7 @@ use agentdash_agent::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
+use agentdash_spi::{Mount, MountCapability};
 use chrono::Utc;
 use std::sync::{Mutex as StdMutex, RwLock};
 
@@ -36,59 +37,6 @@ fn test_vfs(root_ref: &str) -> agentdash_spi::Vfs {
     }
 }
 
-struct MockTool {
-    name: String,
-    description: String,
-    schema: serde_json::Value,
-}
-
-#[async_trait::async_trait]
-impl agentdash_agent::AgentTool for MockTool {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn description(&self) -> &str {
-        &self.description
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        self.schema.clone()
-    }
-    async fn execute(
-        &self,
-        _tool_call_id: &str,
-        _args: serde_json::Value,
-        _cancel: tokio_util::sync::CancellationToken,
-        _on_update: Option<agentdash_agent::ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, agentdash_agent::AgentToolError> {
-        unreachable!("MockTool::execute should not be called in prompt tests")
-    }
-}
-
-fn mock_tools(specs: &[(&str, &str)]) -> Vec<DynAgentTool> {
-    specs
-        .iter()
-        .map(|(name, description)| {
-            Arc::new(MockTool {
-                name: (*name).to_string(),
-                description: (*description).to_string(),
-                schema: serde_json::json!({}),
-            }) as DynAgentTool
-        })
-        .collect()
-}
-
-fn mock_tool_with_schema(
-    name: &str,
-    description: &str,
-    schema: serde_json::Value,
-) -> DynAgentTool {
-    Arc::new(MockTool {
-        name: name.to_string(),
-        description: description.to_string(),
-        schema,
-    }) as DynAgentTool
-}
-
 #[derive(Default)]
 struct RecordingBridge {
     requests: StdMutex<Vec<agentdash_agent::BridgeRequest>>,
@@ -115,17 +63,6 @@ impl LlmBridge for RecordingBridge {
     }
 }
 
-struct EmptyRuntimeToolProvider;
-
-#[async_trait::async_trait]
-impl RuntimeToolProvider for EmptyRuntimeToolProvider {
-    async fn build_tools(
-        &self,
-        _context: &ExecutionContext,
-    ) -> Result<Vec<agentdash_spi::DynAgentTool>, ConnectorError> {
-        Ok(Vec::new())
-    }
-}
 
 struct StaticTool {
     name: String,
@@ -1171,91 +1108,8 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
     assert_eq!(entry_index, 1);
 }
 
-#[test]
-fn runtime_system_prompt_prefers_relative_workspace_paths() {
-    let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
-    let context = ExecutionContext {
-        turn_id: "turn-1".to_string(),
-        working_directory: PathBuf::from("/tmp/test-workspace/crates/agentdash-agent"),
-        environment_variables: HashMap::new(),
-        executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-        mcp_servers: vec![],
-        relay_mcp_server_names: Default::default(),
-        vfs: Some(test_vfs("/tmp/test-workspace")),
-        hook_session: None,
-        flow_capabilities: Default::default(),
-        runtime_delegate: None,
-        identity: None,
-        restored_session_state: None,
-        assembled_system_prompt: None,
-        assembled_tools: vec![],
-    };
-
-    let tools = mock_tools(&[("shell", "Run a shell command")]);
-    let prompt = connector.build_runtime_system_prompt(&context, &tools);
-    assert!(prompt.contains("## Identity"));
-    assert!(prompt.contains("## Workspace"));
-    assert!(prompt.contains("## Available Tools"));
-    assert!(prompt.contains("### Platform Tools"));
-    assert!(prompt.contains("/tmp/test-workspace"));
-    assert!(prompt.contains("- **shell**: Run a shell command"));
-}
-
-#[test]
-fn runtime_system_prompt_renders_tool_parameters() {
-    let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
-    let context = ExecutionContext {
-        turn_id: "turn-params".to_string(),
-        working_directory: PathBuf::from("/tmp/ws"),
-        environment_variables: HashMap::new(),
-        executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-        mcp_servers: vec![],
-        relay_mcp_server_names: Default::default(),
-        vfs: Some(test_vfs("/tmp/ws")),
-        hook_session: None,
-        flow_capabilities: Default::default(),
-        runtime_delegate: None,
-        identity: None,
-        restored_session_state: None,
-        assembled_system_prompt: None,
-        assembled_tools: vec![],
-    };
-
-    let tools = vec![mock_tool_with_schema(
-        "fs_read",
-        "Read a file",
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Target path"},
-                "start_line": {"type": "integer"},
-                "tags": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["path"],
-        }),
-    )];
-    let prompt = connector.build_runtime_system_prompt(&context, &tools);
-
-    assert!(
-        prompt.contains("- **fs_read**: Read a file"),
-        "should render tool header"
-    );
-    assert!(
-        prompt.contains("`path` (string, required): Target path"),
-        "should mark required param with description"
-    );
-    assert!(
-        prompt.contains("`start_line` (integer)"),
-        "should render optional param without required marker"
-    );
-    assert!(
-        prompt.contains("`tags` (array<string>)"),
-        "should render array element type"
-    );
-}
-
-// NOTE: session_capabilities / companion agents / skills 渲染测试
-// 已迁移至 application 层 system_prompt_assembler 模块。
+// NOTE: prompt 渲染测试（system prompt + tool parameters）已迁移至
+// application 层 system_prompt_assembler 模块。
 
 #[tokio::test]
 async fn discovery_reflects_provider_added_to_db_without_restart() {
@@ -1382,8 +1236,7 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
 #[tokio::test]
 async fn prompt_restores_repository_messages_before_new_user_prompt() {
     let bridge = Arc::new(RecordingBridge::default());
-    let mut connector = PiAgentConnector::new(bridge.clone(), "系统提示");
-    connector.set_runtime_tool_provider(Arc::new(EmptyRuntimeToolProvider));
+    let connector = PiAgentConnector::new(bridge.clone(), "系统提示");
 
     let mut stream = connector
         .prompt(
@@ -1431,48 +1284,49 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
 }
 
 #[tokio::test]
-async fn update_session_mcp_servers_replaces_previous_mcp_tools() {
+async fn update_session_tools_replaces_all_tools() {
     let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
 
-    let base_tool = StaticTool::named("fs_read");
-    let old_mcp_tool = StaticTool::named("mcp_tool_old");
+    let old_tool = StaticTool::named("old_tool");
+    let new_tool = StaticTool::named("new_tool");
 
     let mut agent = Agent::new(
         Arc::new(NoopBridge),
         agentdash_agent::AgentConfig::default(),
     );
-    agent.set_tools(vec![base_tool.clone(), old_mcp_tool.clone()]);
+    agent.set_tools(vec![old_tool.clone()]);
 
     connector.agents.lock().await.insert(
-        "session-replace-mcp".to_string(),
+        "session-replace-tools".to_string(),
         PiAgentSessionRuntime {
             agent,
-            runtime_base_tools: vec![base_tool.clone()],
-            mcp_tools: vec![old_mcp_tool],
+            tools: vec![old_tool],
         },
     );
 
     connector
-        .update_session_mcp_servers("session-replace-mcp", vec![])
+        .update_session_tools("session-replace-tools", vec![new_tool.clone()])
         .await
-        .expect("replace-set should succeed");
+        .expect("update_session_tools should succeed");
 
     let agents = connector.agents.lock().await;
     let runtime = agents
-        .get("session-replace-mcp")
+        .get("session-replace-tools")
         .expect("runtime should exist");
-    assert!(
-        runtime.mcp_tools.is_empty(),
-        "MCP tool set should be fully replaced by empty target set"
-    );
-    let state = runtime
-        .agent
-        .try_state()
-        .expect("agent state should be readable");
-    let names: Vec<String> = state
+    let names: Vec<String> = runtime
         .tools
         .iter()
         .map(|tool| tool.name().to_string())
         .collect();
-    assert_eq!(names, vec!["fs_read".to_string()]);
+    assert_eq!(names, vec!["new_tool".to_string()]);
+    let state = runtime
+        .agent
+        .try_state()
+        .expect("agent state should be readable");
+    let agent_names: Vec<String> = state
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect();
+    assert_eq!(agent_names, vec!["new_tool".to_string()]);
 }

@@ -86,7 +86,6 @@ pub struct CompanionRequestTool {
     working_dir: String,
     vfs: Option<Vfs>,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
-    context_bundle: Option<agentdash_spi::SessionContextBundle>,
 }
 
 impl CompanionRequestTool {
@@ -98,7 +97,6 @@ impl CompanionRequestTool {
         platform_config: crate::platform_config::SharedPlatformConfig,
         session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
-        context_bundle: Option<agentdash_spi::SessionContextBundle>,
     ) -> Self {
         Self {
             session_binding_repo,
@@ -116,7 +114,6 @@ impl CompanionRequestTool {
             working_dir: relative_working_dir(context),
             vfs: context.vfs.clone(),
             hook_session: context.hook_session.clone(),
-            context_bundle,
         }
     }
 
@@ -358,10 +355,19 @@ impl CompanionRequestTool {
             companion_label: companion_label.clone(),
             slice_mode: companion_slice_mode_key(slice_mode).to_string(),
             adoption_mode: companion_adoption_mode_key(adoption_mode).to_string(),
+            request_type: payload
+                .get("type")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
             inherited_fragment_labels: dispatch_plan.slice.inherited_fragment_labels.clone(),
             inherited_constraint_keys: dispatch_plan.slice.inherited_constraint_keys.clone(),
             agent_name: agent_key.map(|s| s.to_string()),
         };
+        let previous_companion_context = session_hub
+            .get_session_meta(&target_binding.session_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .and_then(|meta| meta.companion_context);
         let _ = session_hub
             .update_session_meta(&target_binding.session_id, |meta| {
                 meta.companion_context = Some(companion_context.clone());
@@ -385,7 +391,7 @@ impl CompanionRequestTool {
             vfs: None,
             flow_capabilities: None,
             effective_capability_keys: None,
-            context_bundle: self.context_bundle.clone(),
+            context_bundle: None,
             bootstrap_action: crate::session::SessionBootstrapAction::None,
             identity: None,
             post_turn_handler: None,
@@ -394,7 +400,7 @@ impl CompanionRequestTool {
         let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
             parent_mcp_servers: &active_mcp,
-            parent_context_bundle: self.context_bundle.as_ref(),
+            parent_context_bundle: None,
             slice_mode,
             companion_executor_config,
             dispatch_prompt: final_prompt,
@@ -412,14 +418,24 @@ impl CompanionRequestTool {
             crate::session::compose_companion(companion_spec)
         };
 
-        let turn_id = session_hub
+        let turn_id = match session_hub
             .start_prompt_with_follow_up(
                 &target_binding.session_id,
                 None,
                 crate::session::finalize_request(base_req, prepared),
             )
             .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        {
+            Ok(turn_id) => turn_id,
+            Err(error) => {
+                let _ = session_hub
+                    .update_session_meta(&target_binding.session_id, |meta| {
+                        meta.companion_context = previous_companion_context.clone();
+                    })
+                    .await;
+                return Err(AgentToolError::ExecutionFailed(error.to_string()));
+            }
+        };
 
         let child_notification = build_companion_event_notification(
             &target_binding.session_id,
@@ -432,6 +448,7 @@ impl CompanionRequestTool {
                 "parent_turn_id": self.current_turn_id,
                 "companion_label": companion_label,
                 "agent_name": agent_key,
+                "request_type": companion_context.request_type,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
@@ -439,7 +456,6 @@ impl CompanionRequestTool {
                 "inherited_mount_ids": execution_slice.vfs.as_ref().map(|space| {
                     space.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()
                 }).unwrap_or_default(),
-                "mcp_server_count": execution_slice.mcp_servers.len(),
             }),
         );
         let _ = session_hub
@@ -457,6 +473,7 @@ impl CompanionRequestTool {
                 "turn_id": turn_id,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
+                "request_type": companion_context.request_type,
                 "fragment_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot != "constraint").count(),
                 "constraint_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot == "constraint").count(),
             })),
@@ -555,6 +572,7 @@ impl CompanionRequestTool {
                 "companion_session_id": target_binding.session_id,
                 "turn_id": turn_id,
                 "dispatch_id": dispatch_plan.dispatch_id,
+                "request_type": companion_context.request_type,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "inherited_fragment_labels": dispatch_plan.slice.inherited_fragment_labels,
@@ -562,7 +580,6 @@ impl CompanionRequestTool {
                 "inherited_mount_ids": execution_slice.vfs.as_ref().map(|space| {
                     space.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()
                 }).unwrap_or_default(),
-                "mcp_server_count": execution_slice.mcp_servers.len(),
                 "matched_rule_keys": after_resolution.matched_rule_keys,
             })),
         })
@@ -901,12 +918,12 @@ impl CompanionRequestTool {
             project_id,
             node_label,
         );
-        self.session_binding_repo
-            .create(&lifecycle_binding)
-            .await
-            .map_err(|e| {
-                AgentToolError::ExecutionFailed(format!("创建 lifecycle session binding 失败: {e}"))
-            })?;
+        if let Err(error) = self.session_binding_repo.create(&lifecycle_binding).await {
+            let _ = self.repos.lifecycle_run_repo.delete(run.id).await;
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "创建 lifecycle session binding 失败: {error}"
+            )));
+        }
 
         let output = crate::session::compose_companion_with_workflow(
             &self.repos,
@@ -926,10 +943,18 @@ impl CompanionRequestTool {
                 workflow: Some(&workflow),
             },
         )
-        .await
-        .map_err(|e| {
-            AgentToolError::ExecutionFailed(format!("compose companion+workflow 失败: {e}"))
-        })?;
+        .await;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = self.session_binding_repo.delete(lifecycle_binding.id).await;
+                let _ = self.repos.lifecycle_run_repo.delete(run.id).await;
+                return Err(AgentToolError::ExecutionFailed(format!(
+                    "compose companion+workflow 失败: {error}"
+                )));
+            }
+        };
 
         Ok(output.prepared)
     }
@@ -1103,7 +1128,6 @@ pub struct CompanionRespondTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
-    vfs: Option<Vfs>,
 }
 
 impl CompanionRespondTool {
@@ -1116,7 +1140,6 @@ impl CompanionRespondTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
-            vfs: context.vfs.clone(),
         }
     }
 }
@@ -1153,7 +1176,7 @@ impl AgentTool for CompanionRespondTool {
         let payload: serde_json::Value = serde_json::from_str(&raw.payload)
             .map_err(|e| AgentToolError::InvalidArguments(format!("payload 不是合法 JSON: {e}")))?;
 
-        // payload type 校验（request_type 暂时无法获取，传 None 跳过匹配校验）
+        // 先做 response 基础结构校验；与 request_type 的匹配在具体回流路径中校验。
         let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
         if let Some(error) = registry.validate_response(&payload, None) {
             return Err(AgentToolError::InvalidArguments(error));
@@ -1195,6 +1218,14 @@ impl AgentTool for CompanionRespondTool {
         }
 
         if modes.is_empty() {
+            if let Some(expected_dispatch_id) = self
+                .current_companion_dispatch_id(&current_session_id)
+                .await?
+            {
+                return Err(AgentToolError::ExecutionFailed(format!(
+                    "request_id=`{request_id}` 不匹配当前 companion dispatch_id=`{expected_dispatch_id}`"
+                )));
+            }
             return Err(AgentToolError::ExecutionFailed(format!(
                 "request_id=`{request_id}` 不匹配任何 pending action 或 companion session"
             )));
@@ -1222,6 +1253,20 @@ impl AgentTool for CompanionRespondTool {
 }
 
 impl CompanionRespondTool {
+    async fn current_companion_dispatch_id(
+        &self,
+        current_session_id: &str,
+    ) -> Result<Option<String>, AgentToolError> {
+        let Some(session_hub) = self.session_hub_handle.get().await else {
+            return Ok(None);
+        };
+        let session_meta = session_hub
+            .get_session_meta(current_session_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        Ok(session_meta.and_then(|meta| meta.companion_context.map(|ctx| ctx.dispatch_id)))
+    }
+
     /// 路径 1：resolve 当前 session 的 hook pending action（替代 resolve_hook_action）
     async fn try_resolve_pending_action(
         &self,
@@ -1310,7 +1355,7 @@ impl CompanionRespondTool {
     /// 如果当前 session 不是 companion session 则返回 None
     async fn try_complete_to_parent(
         &self,
-        _request_id: &str,
+        request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
@@ -1330,6 +1375,15 @@ impl CompanionRespondTool {
             Some(ctx) => ctx,
             None => return Ok(None),
         };
+        if request_id != companion_context.dispatch_id {
+            return Ok(None);
+        }
+        let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
+        if let Some(error) =
+            registry.validate_response(payload, companion_context.request_type.as_deref())
+        {
+            return Err(AgentToolError::InvalidArguments(error));
+        }
 
         let summary = payload
             .get("summary")
@@ -1377,6 +1431,7 @@ impl CompanionRespondTool {
             "parent_turn_id": companion_context.parent_turn_id,
             "slice_mode": companion_context.slice_mode,
             "adoption_mode": companion_context.adoption_mode,
+            "request_type": companion_context.request_type,
             "status": status,
             "summary": summary,
             "findings": findings,
@@ -1483,7 +1538,6 @@ impl CompanionRespondTool {
 
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
-                let resume_vfs = self.vfs.clone();
                 let resume_mcp =
                     hub_clone.get_runtime_mcp_servers(&parent_sid).await;
                 tokio::spawn(async move {
@@ -1502,7 +1556,7 @@ impl CompanionRespondTool {
                                 },
                                 mcp_servers: resume_mcp,
                                 relay_mcp_server_names: Default::default(),
-                                vfs: resume_vfs,
+                                vfs: None,
                                 flow_capabilities: None,
                                 effective_capability_keys: None,
                                 context_bundle: None,

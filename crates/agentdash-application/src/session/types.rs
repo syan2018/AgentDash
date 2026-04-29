@@ -205,6 +205,9 @@ pub struct CompanionSessionContext {
     pub companion_label: String,
     pub slice_mode: String,
     pub adoption_mode: String,
+    /// dispatch 请求的 payload.type（用于 companion_respond 结果类型校验）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_type: Option<String>,
     #[serde(default)]
     pub inherited_fragment_labels: Vec<String>,
     #[serde(default)]

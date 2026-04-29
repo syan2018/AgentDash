@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Companion hook trigger contract"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Story/task ownership and companion semantics"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer boundary consistency"}

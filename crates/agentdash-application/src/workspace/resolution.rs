@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use agentdash_domain::workspace::{Workspace, WorkspaceBinding, WorkspaceResolutionPolicy};
+use agentdash_domain::workspace::{
+    Workspace, WorkspaceBinding, WorkspaceResolutionPolicy,
+    identity_payload_matches_detected_facts,
+};
 
 use crate::backend_transport::BackendTransport;
 
@@ -61,6 +64,18 @@ pub async fn resolve_workspace_binding(
             warnings.push(format!("binding `{}` 缺少 backend_id", binding.id));
             continue;
         }
+        if !identity_payload_matches_detected_facts(
+            workspace.identity_kind.clone(),
+            &workspace.identity_payload,
+            &binding.detected_facts,
+            &binding.root_ref,
+        ) {
+            warnings.push(format!(
+                "binding `{}` 的 detected_facts 与 workspace identity contract 不匹配",
+                binding.id
+            ));
+            continue;
+        }
         let is_online = availability.is_online(backend_id).await;
         if !is_online {
             warnings.push(format!("backend `{backend_id}` 当前离线"));
@@ -78,9 +93,14 @@ pub async fn resolve_workspace_binding(
     };
 
     let Some(binding) = selected else {
+        let detail = if warnings.is_empty() {
+            String::new()
+        } else {
+            format!("：{}", warnings.join("；"))
+        };
         return Err(WorkspaceResolutionError::NoAvailable(format!(
-            "Workspace `{}` 没有可用 binding",
-            workspace.name
+            "Workspace `{}` 没有可用 binding{}",
+            workspace.name, detail
         )));
     };
 
@@ -151,7 +171,10 @@ mod tests {
             Uuid::new_v4(),
             "test-ws".to_string(),
             WorkspaceIdentityKind::LocalDir,
-            serde_json::json!({}),
+            serde_json::json!({
+                "match_mode": "path_key",
+                "path_key": "/workspace"
+            }),
             WorkspaceResolutionPolicy::PreferOnline,
         );
         ws.status = WorkspaceStatus::Ready;
@@ -165,10 +188,45 @@ mod tests {
             Uuid::new_v4(),
             backend_id.to_string(),
             "/workspace".to_string(),
-            serde_json::json!({}),
+            serde_json::json!({
+                "binding_labels": {}
+            }),
         );
         b.status = WorkspaceBindingStatus::Ready;
         b
+    }
+
+    fn p4_workspace_with_stream(stream: &str) -> Workspace {
+        let mut ws = Workspace::new(
+            Uuid::new_v4(),
+            "p4-ws".to_string(),
+            WorkspaceIdentityKind::P4Workspace,
+            serde_json::json!({
+                "match_mode": "server_stream",
+                "server_address": "p4.example.com:1666",
+                "stream": stream
+            }),
+            WorkspaceResolutionPolicy::PreferOnline,
+        );
+        let mut binding = WorkspaceBinding::new(
+            Uuid::new_v4(),
+            "backend-a".to_string(),
+            "D:/ExampleWorkspace".to_string(),
+            serde_json::json!({
+                "p4": {
+                    "is_workspace": true,
+                    "workspace_root": "D:/ExampleWorkspace",
+                    "client_name": "example-client",
+                    "server_address": "p4.example.com:1666",
+                    "user_name": "example-user",
+                    "stream": "//ExampleProject/main"
+                }
+            }),
+        );
+        binding.status = WorkspaceBindingStatus::Ready;
+        ws.set_bindings(vec![binding]);
+        ws.refresh_default_binding();
+        ws
     }
 
     #[tokio::test]
@@ -207,5 +265,34 @@ mod tests {
             .await
             .expect_err("should fail");
         assert!(matches!(err, WorkspaceResolutionError::NoBindings(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_binding_when_p4_stream_contract_mismatches() {
+        let avail = MockAvailability {
+            online_backends: vec!["backend-a".to_string()],
+        };
+        let ws = p4_workspace_with_stream("//ExampleProject/release");
+
+        let err = resolve_workspace_binding(&avail, &ws)
+            .await
+            .expect_err("mismatched stream should not resolve");
+
+        assert!(matches!(err, WorkspaceResolutionError::NoAvailable(_)));
+        assert!(err.to_string().contains("identity contract"));
+    }
+
+    #[tokio::test]
+    async fn resolves_binding_when_p4_stream_contract_matches() {
+        let avail = MockAvailability {
+            online_backends: vec!["backend-a".to_string()],
+        };
+        let ws = p4_workspace_with_stream("//ExampleProject/main");
+
+        let result = resolve_workspace_binding(&avail, &ws)
+            .await
+            .expect("matching stream should resolve");
+
+        assert_eq!(result.backend_id, "backend-a");
     }
 }

@@ -387,6 +387,11 @@ git commit -m "type(scope): 中文动作结果"
 **Scope**: 领域/模块名，例如 `hook`、`workflow`、`frontend`、`executor`
 **Description**: 必须使用中文，直接描述“本次提交完成了什么”
 
+**Required**:
+- 提交信息必须完整使用 `type(scope): 中文动作结果`，不能只写裸中文描述。
+- `scope` 应尽量对齐实际变更边界；跨上下文/注入管线优先用 `context`，会话生命周期用 `session`，执行器适配用 `executor`。
+
+
 示例：
 
 ```bash

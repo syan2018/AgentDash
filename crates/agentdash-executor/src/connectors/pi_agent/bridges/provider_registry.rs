@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::anthropic_bridge::AnthropicBridge;
-use super::openai_completions_bridge::OpenAiCompletionsBridge;
-use super::openai_responses_bridge::OpenAiResponsesBridge;
+use super::AnthropicBridge;
+use super::OpenAiCompletionsBridge;
+use super::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
 use futures::future::BoxFuture;

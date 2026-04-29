@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod connectors;
 pub(crate) mod hook_events;
+pub mod mcp;
 
 pub use adapters::vibe_kanban_config::{is_native_agent, to_vibe_kanban_config};
 pub use agentdash_spi::DynAgentTool;

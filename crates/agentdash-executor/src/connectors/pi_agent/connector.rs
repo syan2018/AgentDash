@@ -18,7 +18,7 @@ use agentdash_agent::{Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge}
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::settings::SettingsRepository;
 
-use crate::connectors::pi_agent::pi_agent_provider_registry::{
+use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
 };
 use crate::hook_events::build_hook_trace_notification;

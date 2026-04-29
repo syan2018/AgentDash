@@ -293,7 +293,7 @@ impl SessionHub {
             {
                 let (_, direct_servers) =
                     partition_mcp_servers(&context.mcp_servers, &context.relay_mcp_server_names);
-                match agentdash_executor::connectors::pi_agent::pi_agent_mcp::discover_mcp_tools(
+                match agentdash_executor::mcp::discover_mcp_tools(
                     &direct_servers,
                 )
                 .await
@@ -310,7 +310,7 @@ impl SessionHub {
                     &context.relay_mcp_server_names,
                 );
                 let tools =
-                    agentdash_executor::connectors::pi_agent::relay_mcp::discover_relay_mcp_tools(
+                    agentdash_executor::mcp::discover_relay_mcp_tools(
                         relay.clone(),
                         &relay_names,
                     )

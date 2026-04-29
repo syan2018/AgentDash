@@ -4,7 +4,7 @@ use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::LlmProviderRepository;
 
 use super::connector::PiAgentConnector;
-use super::pi_agent_provider_registry::build_provider_entries_from_db;
+use super::bridges::provider_registry::build_provider_entries_from_db;
 
 pub struct NoopBridge;
 

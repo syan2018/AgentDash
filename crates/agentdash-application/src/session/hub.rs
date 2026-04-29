@@ -441,9 +441,7 @@ impl SessionHub {
         session_id: &str,
         mcp_servers: Vec<McpServer>,
     ) -> Result<(), ConnectorError> {
-        use agentdash_executor::connectors::pi_agent::{
-            pi_agent_mcp, relay_mcp,
-        };
+        use agentdash_executor::mcp::{self as mcp_discovery};
 
         let relay_names_set: std::collections::HashSet<String> = {
             let sessions = self.sessions.lock().await;
@@ -458,7 +456,7 @@ impl SessionHub {
         // Direct MCP tools
         let (_, direct_servers) =
             super::prompt_pipeline::partition_mcp_servers(&mcp_servers, &relay_names_set);
-        match pi_agent_mcp::discover_mcp_tools(&direct_servers).await {
+        match mcp_discovery::discover_mcp_tools(&direct_servers).await {
             Ok(tools) => all_tools.extend(tools),
             Err(e) => tracing::warn!(session_id = %session_id, "MCP 热更新：直连 MCP 发现失败: {e}"),
         }
@@ -470,7 +468,7 @@ impl SessionHub {
                 .map(|s| super::prompt_pipeline::extract_mcp_server_name(s))
                 .filter(|name| relay_names_set.contains(name))
                 .collect();
-            let tools = relay_mcp::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
             all_tools.extend(tools);
         }
 

@@ -23,11 +23,29 @@ use crate::backend_transport::{
 
 pub struct RelayAgentConnector {
     transport: Arc<dyn RelayPromptTransport>,
+    session_mcp: tokio::sync::Mutex<
+        std::collections::HashMap<String, Vec<agent_client_protocol::McpServer>>,
+    >,
 }
 
 impl RelayAgentConnector {
     pub fn new(transport: Arc<dyn RelayPromptTransport>) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            session_mcp: Default::default(),
+        }
+    }
+
+    /// 缓存指定 session 的 MCP server 声明，供 `prompt()` 转发给远端。
+    pub async fn set_session_mcp_servers(
+        &self,
+        session_id: &str,
+        servers: Vec<agent_client_protocol::McpServer>,
+    ) {
+        self.session_mcp
+            .lock()
+            .await
+            .insert(session_id.to_string(), servers);
     }
 }
 
@@ -133,6 +151,14 @@ impl AgentConnector for RelayAgentConnector {
             permission_policy: executor_config.permission_policy.clone(),
         };
 
+        let cached_mcp = self
+            .session_mcp
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default();
+
         let payload = RelayPromptRequest {
             session_id: session_id.to_string(),
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
@@ -141,8 +167,7 @@ impl AgentConnector for RelayAgentConnector {
             working_dir: relative_working_dir_string(&context.working_directory, mount_root_ref),
             env: context.environment_variables,
             executor_config: Some(relay_config),
-            mcp_servers: context
-                .mcp_servers
+            mcp_servers: cached_mcp
                 .iter()
                 .filter_map(|s| serde_json::to_value(s).ok())
                 .collect(),

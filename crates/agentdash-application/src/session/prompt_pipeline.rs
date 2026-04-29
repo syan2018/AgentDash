@@ -260,13 +260,14 @@ impl SessionHub {
             Vec::new()
         };
 
+        let mcp_servers = req.mcp_servers;
+        let relay_mcp_server_names = req.relay_mcp_server_names;
+
         let mut context = ExecutionContext {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
-            mcp_servers: req.mcp_servers,
-            relay_mcp_server_names: req.relay_mcp_server_names,
             vfs: Some(effective_vfs.clone()),
             hook_session: hook_session.clone(),
             flow_capabilities: req.flow_capabilities.unwrap_or_default(),
@@ -281,7 +282,6 @@ impl SessionHub {
         {
             let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
 
-            // 1. Runtime tools（VFS 工具等）
             if let Some(provider) = &self.runtime_tool_provider {
                 match provider.build_tools(&context).await {
                     Ok(tools) => all_tools.extend(tools),
@@ -289,32 +289,21 @@ impl SessionHub {
                 }
             }
 
-            // 2. Direct MCP tools
             {
                 let (_, direct_servers) =
-                    partition_mcp_servers(&context.mcp_servers, &context.relay_mcp_server_names);
-                match agentdash_executor::mcp::discover_mcp_tools(
-                    &direct_servers,
-                )
-                .await
-                {
+                    partition_mcp_servers(&mcp_servers, &relay_mcp_server_names);
+                match agentdash_executor::mcp::discover_mcp_tools(&direct_servers).await {
                     Ok(tools) => all_tools.extend(tools),
                     Err(e) => tracing::warn!("直连 MCP 工具发现失败: {e}"),
                 }
             }
 
-            // 3. Relay MCP tools
             if let Some(relay) = &self.mcp_relay_provider {
-                let relay_names = extract_relay_server_names(
-                    &context.mcp_servers,
-                    &context.relay_mcp_server_names,
-                );
+                let relay_names =
+                    extract_relay_server_names(&mcp_servers, &relay_mcp_server_names);
                 let tools =
-                    agentdash_executor::mcp::discover_relay_mcp_tools(
-                        relay.clone(),
-                        &relay_names,
-                    )
-                    .await;
+                    agentdash_executor::mcp::discover_relay_mcp_tools(relay.clone(), &relay_names)
+                        .await;
                 all_tools.extend(tools);
             }
 
@@ -334,7 +323,7 @@ impl SessionHub {
                 vfs: Some(&effective_vfs),
                 working_directory: &context.working_directory,
                 runtime_tools: &context.assembled_tools,
-                mcp_servers: &context.mcp_servers,
+                mcp_servers: &mcp_servers,
                 hook_session: hook_session.as_deref(),
             };
             context.assembled_system_prompt =

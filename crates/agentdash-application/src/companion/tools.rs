@@ -85,7 +85,6 @@ pub struct CompanionRequestTool {
     current_executor_config: AgentConfig,
     working_dir: String,
     vfs: Option<Vfs>,
-    mcp_servers: Vec<agent_client_protocol::McpServer>,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
 }
@@ -116,10 +115,22 @@ impl CompanionRequestTool {
             current_executor_config: context.executor_config.clone(),
             working_dir: relative_working_dir(context),
             vfs: context.vfs.clone(),
-            mcp_servers: context.mcp_servers.clone(),
             hook_session: context.hook_session.clone(),
             context_bundle,
         }
+    }
+
+    /// 从 session runtime 获取当前 session 的活跃 MCP server 列表。
+    async fn active_mcp_servers(&self) -> Vec<agent_client_protocol::McpServer> {
+        let sid = match &self.current_session_id {
+            Some(sid) => sid.clone(),
+            None => return Vec::new(),
+        };
+        let hub = match self.session_hub_handle.get().await {
+            Some(hub) => hub,
+            None => return Vec::new(),
+        };
+        hub.get_runtime_mcp_servers(&sid).await
     }
 }
 
@@ -359,8 +370,9 @@ impl CompanionRequestTool {
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
         let final_prompt = build_companion_dispatch_prompt(&dispatch_plan, prompt);
+        let active_mcp = self.active_mcp_servers().await;
         let execution_slice =
-            build_companion_execution_slice(self.vfs.as_ref(), &self.mcp_servers, slice_mode);
+            build_companion_execution_slice(self.vfs.as_ref(), &active_mcp, slice_mode);
         let base_req = PromptSessionRequest {
             user_input: UserPromptInput {
                 prompt_blocks: None,
@@ -381,7 +393,7 @@ impl CompanionRequestTool {
 
         let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
-            parent_mcp_servers: &self.mcp_servers,
+            parent_mcp_servers: &active_mcp,
             parent_context_bundle: self.context_bundle.as_ref(),
             slice_mode,
             companion_executor_config,
@@ -1092,7 +1104,6 @@ pub struct CompanionRespondTool {
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     vfs: Option<Vfs>,
-    mcp_servers: Vec<McpServer>,
 }
 
 impl CompanionRespondTool {
@@ -1106,7 +1117,6 @@ impl CompanionRespondTool {
             current_turn_id: context.turn_id.clone(),
             hook_session: context.hook_session.clone(),
             vfs: context.vfs.clone(),
-            mcp_servers: context.mcp_servers.clone(),
         }
     }
 }
@@ -1474,7 +1484,8 @@ impl CompanionRespondTool {
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
                 let resume_vfs = self.vfs.clone();
-                let resume_mcp_servers = self.mcp_servers.clone();
+                let resume_mcp =
+                    hub_clone.get_runtime_mcp_servers(&parent_sid).await;
                 tokio::spawn(async move {
                     let _ = hub_clone
                         .start_prompt(
@@ -1489,7 +1500,7 @@ impl CompanionRespondTool {
                                     env: std::collections::HashMap::new(),
                                     executor_config: Some(resume_config),
                                 },
-                                mcp_servers: resume_mcp_servers,
+                                mcp_servers: resume_mcp,
                                 relay_mcp_server_names: Default::default(),
                                 vfs: resume_vfs,
                                 flow_capabilities: None,

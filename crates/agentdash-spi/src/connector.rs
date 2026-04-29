@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
-    ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
+    ContentBlock, EmbeddedResourceResource, SessionNotification,
 };
 use agentdash_agent_types::AgentMessage;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -49,8 +49,6 @@ pub struct ExecutionContext {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<McpServer>,
-    pub relay_mcp_server_names: std::collections::HashSet<String>,
     pub vfs: Option<Vfs>,
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     pub flow_capabilities: FlowCapabilities,

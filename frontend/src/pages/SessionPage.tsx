@@ -5,7 +5,7 @@ import { SessionChatView } from "../features/acp-session";
 import { extractAgentDashMetaFromUpdate, isRecord } from "../features/acp-session/model/agentdashMeta";
 import { CanvasSessionPanel } from "../features/canvas-panel";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
-import { hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
+import { ContextInspectorPanel, hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
 import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
@@ -67,6 +67,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story: Story | null;
   } | null>(null);
   const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
+  const [isContextInspectorOpen, setIsContextInspectorOpen] = useState(false);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
   const [isCanvasPanelOpen, setIsCanvasPanelOpen] = useState(false);
   const [sessionViewMode, setSessionViewMode] = useState<"chat" | "lifecycle">("chat");
@@ -565,6 +566,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
+          {currentSessionId && (
+            <button
+              type="button"
+              onClick={() => setIsContextInspectorOpen((value) => !value)}
+              className={`rounded-[10px] border px-2.5 py-1.5 text-xs transition-colors ${
+                isContextInspectorOpen
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+              title="查看 Session 上下文审计时间线"
+            >
+              Context Inspector
+            </button>
+          )}
           {activeCanvasId && !isCanvasPanelOpen && (
             <button
               type="button"
@@ -608,7 +623,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         />
       )}
 
-      {/* 复用的聊天视图 + Canvas 侧栏 */}
+      {/* 复用的聊天视图 + Canvas 侧栏 + Context Inspector 抽屉 */}
       <div className="flex flex-1 overflow-hidden">
         <div className="min-w-0 flex-1 overflow-hidden">
           {showLifecycleView && currentSessionId ? (
@@ -628,6 +643,23 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             />
           )}
         </div>
+        {isContextInspectorOpen && currentSessionId && (
+          <div className="w-[480px] shrink-0 border-l border-border bg-background/60">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-xs font-semibold text-foreground">
+                Context Inspector
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsContextInspectorOpen(false)}
+                className="rounded-md px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                关闭
+              </button>
+            </div>
+            <ContextInspectorPanel sessionId={currentSessionId} />
+          </div>
+        )}
         {!showLifecycleView && isCanvasPanelOpen && activeCanvasId && (
           <div className="w-[55vw] max-w-[1100px] min-w-[680px] shrink-0 border-l border-border">
             <CanvasSessionPanel

@@ -285,6 +285,83 @@ mod bundle_tests {
         assert!(f.scope.contains(FragmentScope::TitleGen));
     }
 
+    /// 回归固化：`bce0825` 场景 —— title generator 不应看到 RuntimeAgent scope 的 agent context
+    /// fragment。换言之，所有 `legacy:session_plan` / `legacy:contributor:*` / `contribute_*`
+    /// 产出 fragment 的 scope 必须是 `RuntimeAgent | Audit`（**不含** `TitleGen`），
+    /// 从协议层防止 agent 指令泄漏到 title 生成路径。
+    #[test]
+    fn title_gen_scope_excludes_agent_context() {
+        let config = SessionContextConfig {
+            session_id: Uuid::new_v4(),
+            phase: ContextBuildPhase::StoryOwner,
+            default_scope: ContextFragment::default_scope(),
+        };
+        // 模拟典型 contribute_* 产出 —— 未标记 TitleGen
+        let fragments = vec![
+            frag("task", 10, "task body", MergeStrategy::Append),
+            frag("story", 20, "story body", MergeStrategy::Append),
+            frag("instruction", 30, "agent instruction", MergeStrategy::Append),
+            frag("workflow", 40, "workflow binding", MergeStrategy::Append),
+        ];
+        let bundle =
+            build_session_context_bundle(config, vec![Contribution::fragments_only(fragments)]);
+
+        // 验证：默认 scope 不含 TitleGen
+        for f in &bundle.fragments {
+            assert!(
+                !f.scope.contains(FragmentScope::TitleGen),
+                "fragment {}({}) 不应带 TitleGen scope —— 会导致 agent 指令泄漏到 title gen 路径",
+                f.label,
+                f.slot
+            );
+        }
+
+        // 验证：filter_for(TitleGen) 应为空
+        let title_visible: Vec<_> = bundle.filter_for(FragmentScope::TitleGen).collect();
+        assert!(
+            title_visible.is_empty(),
+            "title_gen scope 过滤结果应为空，实际找到 {} 条",
+            title_visible.len()
+        );
+
+        // 验证：RuntimeAgent scope 的 fragment 都在（用于系统 prompt）
+        let runtime_visible: Vec<_> = bundle.filter_for(FragmentScope::RuntimeAgent).collect();
+        assert_eq!(runtime_visible.len(), bundle.fragments.len());
+    }
+
+    /// 回归固化：显式声明 TitleGen scope 的 fragment 才能进入 title gen 视图。
+    ///
+    /// 这是 `title_gen_scope_excludes_agent_context` 的对偶测试 —— 保证 scope 机制不是一刀切
+    /// 关掉 TitleGen 入口，而是按协议精确控制。
+    #[test]
+    fn title_gen_scope_allows_explicit_opt_in() {
+        let config = SessionContextConfig {
+            session_id: Uuid::new_v4(),
+            phase: ContextBuildPhase::StoryOwner,
+            default_scope: ContextFragment::default_scope(),
+        };
+
+        // 默认 fragment
+        let mut runtime_frag = frag("task", 10, "task body", MergeStrategy::Append);
+        assert_eq!(runtime_frag.scope, ContextFragment::default_scope());
+
+        // 显式标记 TitleGen 的 fragment
+        let mut title_frag = frag("title_hint", 20, "会话标题提示", MergeStrategy::Append);
+        title_frag.scope =
+            FragmentScope::RuntimeAgent | FragmentScope::TitleGen | FragmentScope::Audit;
+        // 同时修改 runtime_frag 的 scope，避免 slot 冲突（slot 名不同已经隔离）
+        runtime_frag.label = "runtime_task".to_string();
+
+        let bundle = build_session_context_bundle(
+            config,
+            vec![Contribution::fragments_only(vec![runtime_frag, title_frag])],
+        );
+
+        let title_visible: Vec<_> = bundle.filter_for(FragmentScope::TitleGen).collect();
+        assert_eq!(title_visible.len(), 1);
+        assert_eq!(title_visible[0].slot, "title_hint");
+    }
+
     #[test]
     fn fragments_sorted_by_order() {
         let config = SessionContextConfig {

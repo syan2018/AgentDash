@@ -11,6 +11,7 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
 
+use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::SessionHub;
 use crate::session::types::{
@@ -42,6 +43,7 @@ pub struct RoutineExecutor {
     connector: Arc<dyn AgentConnector>,
     platform_config: crate::platform_config::SharedPlatformConfig,
     availability: Arc<dyn BackendAvailability>,
+    audit_bus: Option<SharedContextAuditBus>,
 }
 
 struct RoutineAgentContext {
@@ -70,7 +72,14 @@ impl RoutineExecutor {
             connector,
             platform_config,
             availability,
+            audit_bus: None,
         }
+    }
+
+    /// 配置上下文审计总线（可选）。
+    pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
+        self.audit_bus = Some(bus);
+        self
     }
 
     /// 定时触发入口 — 由 CronScheduler 调用
@@ -463,13 +472,16 @@ impl RoutineExecutor {
             SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
         };
 
-        let assembler = SessionRequestAssembler::new(
+        let mut assembler = SessionRequestAssembler::new(
             self.vfs_service.as_ref(),
             self.repos.canvas_repo.as_ref(),
             self.availability.as_ref(),
             &self.repos,
             &self.platform_config,
         );
+        if let Some(bus) = self.audit_bus.as_ref() {
+            assembler = assembler.with_audit_bus(bus.clone());
+        }
 
         let agent_declared_capabilities = agent_context
             .executor_config
@@ -498,6 +510,7 @@ impl RoutineExecutor {
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
                 agent_declared_capabilities,
                 lifecycle,
+                audit_session_key: Some(session_id.to_string()),
             })
             .await?;
 

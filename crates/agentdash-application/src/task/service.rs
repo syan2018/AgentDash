@@ -12,6 +12,7 @@ use agentdash_domain::{
 };
 
 use crate::canvas::append_visible_canvas_mounts;
+use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::{
     PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
@@ -56,6 +57,8 @@ pub struct StoryStepActivationService {
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub lock_map: Arc<TaskLockMap>,
+    /// 上下文审计总线（可选）。
+    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl StoryStepActivationService {
@@ -218,13 +221,16 @@ impl StoryStepActivationService {
         .await
         .map_err(TaskExecutionError::Internal)?;
 
-        let assembler = SessionRequestAssembler::new(
+        let mut assembler = SessionRequestAssembler::new(
             self.vfs_service.as_ref(),
             self.repos.canvas_repo.as_ref(),
             self.backend_availability.as_ref(),
             &self.repos,
             &self.platform_config,
         );
+        if let Some(bus) = self.audit_bus.as_ref() {
+            assembler = assembler.with_audit_bus(bus.clone());
+        }
         let mut prepared = assembler
             .compose_story_step(StoryStepSpec {
                 run: &active_run,
@@ -243,6 +249,7 @@ impl StoryStepActivationService {
                 explicit_executor_config: executor_config.cloned(),
                 strict_config_resolution: true,
                 active_workflow,
+                audit_session_key: Some(session_id.clone()),
             })
             .await?;
 

@@ -1193,6 +1193,7 @@ async fn build_story_owner_prompt_request(
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities: None,
             lifecycle,
+            audit_session_key: Some(session_id.to_string()),
         })
         .await
         .map_err(ApiError::BadRequest)?;
@@ -1274,6 +1275,7 @@ async fn build_project_owner_prompt_request(
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities,
             lifecycle,
+            audit_session_key: Some(session_id.to_string()),
         })
         .await
         .map_err(ApiError::BadRequest)?;
@@ -1290,6 +1292,7 @@ fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_>
         &state.repos,
         &state.config.platform_config,
     )
+    .with_audit_bus(state.services.audit_bus.clone())
 }
 
 /// `SessionPromptLifecycle` → `OwnerPromptLifecycle`，预留 continuation bundle 槽位。
@@ -1419,6 +1422,7 @@ async fn build_task_owner_prompt_request(
             explicit_executor_config: effective_executor_config.clone(),
             strict_config_resolution: true,
             active_workflow: Some(active_workflow.clone()),
+            audit_session_key: Some(session_id.to_string()),
         })
         .await
         .map_err(task_execution::map_task_execution_error)?;
@@ -1965,4 +1969,141 @@ async fn ensure_bindings_permission(
         }
     }
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Context Audit —— Bundle / Fragment 产出与消费的可观测轨迹（Step 10d）
+// ═══════════════════════════════════════════════════════════════════
+
+/// Content preview 的最大字节数（超过时截断）。
+const CONTEXT_AUDIT_CONTENT_PREVIEW_MAX: usize = 2048;
+
+/// `GET /sessions/{id}/context/audit` 的查询参数。
+#[derive(Debug, Deserialize)]
+pub struct ContextAuditQuery {
+    pub since_ms: Option<u64>,
+    /// scope 标签：`runtime_agent` / `title_gen` / `summarizer` / `bridge_replay` / `audit`
+    pub scope: Option<String>,
+    pub slot: Option<String>,
+    pub source_prefix: Option<String>,
+}
+
+/// 审计事件的 HTTP DTO。
+#[derive(Debug, Serialize)]
+pub struct ContextAuditEventDto {
+    pub event_id: uuid::Uuid,
+    pub bundle_id: uuid::Uuid,
+    /// session 外部 ID（SessionHub 分配的 `sess-<ms>-<short>`）。
+    pub session_id: String,
+    /// Bundle 内部追踪 UUID（可能是占位值，与 `session_id` 不同）。
+    pub bundle_session_uuid: uuid::Uuid,
+    pub at_ms: u64,
+    /// 触发标签（snake_case）：`session_bootstrap` / `composer_rebuild` /
+    /// `hook:UserPromptSubmit` / `session_plan` / `capability` / `filter:runtime_agent`
+    pub trigger: String,
+    pub slot: String,
+    pub label: String,
+    pub source: String,
+    pub order: i32,
+    pub scope: Vec<String>,
+    pub content_preview: String,
+    pub content_hash: u64,
+    pub full_content_available: bool,
+}
+
+fn parse_scope_tag(tag: &str) -> Option<agentdash_spi::FragmentScope> {
+    match tag {
+        "runtime_agent" => Some(agentdash_spi::FragmentScope::RuntimeAgent),
+        "title_gen" => Some(agentdash_spi::FragmentScope::TitleGen),
+        "summarizer" => Some(agentdash_spi::FragmentScope::Summarizer),
+        "bridge_replay" => Some(agentdash_spi::FragmentScope::BridgeReplay),
+        "audit" => Some(agentdash_spi::FragmentScope::Audit),
+        _ => None,
+    }
+}
+
+fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
+    let mut tags = Vec::new();
+    for (label, s) in [
+        ("runtime_agent", agentdash_spi::FragmentScope::RuntimeAgent),
+        ("title_gen", agentdash_spi::FragmentScope::TitleGen),
+        ("summarizer", agentdash_spi::FragmentScope::Summarizer),
+        ("bridge_replay", agentdash_spi::FragmentScope::BridgeReplay),
+        ("audit", agentdash_spi::FragmentScope::Audit),
+    ] {
+        if scope.contains(s) {
+            tags.push(label.to_string());
+        }
+    }
+    tags
+}
+
+/// `GET /sessions/{id}/context/audit` —— 返回 session 的 Fragment 审计时间线。
+///
+/// 返回按 `at_ms` 升序的事件列表（审计总线内部已保持插入顺序）。
+pub async fn get_session_context_audit(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+    Query(query): Query<ContextAuditQuery>,
+) -> Result<Json<Vec<ContextAuditEventDto>>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let scope = match query.scope.as_deref() {
+        Some(raw) => match parse_scope_tag(raw) {
+            Some(s) => Some(s),
+            None => return Err(ApiError::BadRequest(format!("无效的 scope: {raw}"))),
+        },
+        None => None,
+    };
+
+    let filter = agentdash_application::context::AuditFilter {
+        since_ms: query.since_ms,
+        scope,
+        slot: query.slot.clone(),
+        source_prefix: query.source_prefix.clone(),
+    };
+
+    let events = state.services.audit_bus.query(&session_id, &filter);
+    let dtos: Vec<ContextAuditEventDto> = events
+        .into_iter()
+        .map(|event| {
+            let full_len = event.fragment.content.len();
+            let truncated = full_len > CONTEXT_AUDIT_CONTENT_PREVIEW_MAX;
+            let preview = if truncated {
+                // 按字符边界截断，避免切断 UTF-8 多字节
+                let mut end = CONTEXT_AUDIT_CONTENT_PREVIEW_MAX;
+                while end > 0 && !event.fragment.content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                event.fragment.content[..end].to_string()
+            } else {
+                event.fragment.content.clone()
+            };
+            ContextAuditEventDto {
+                event_id: event.event_id,
+                bundle_id: event.bundle_id,
+                session_id: event.session_id,
+                bundle_session_uuid: event.bundle_session_uuid,
+                at_ms: event.at_ms,
+                trigger: event.trigger.as_tag(),
+                slot: event.fragment.slot,
+                label: event.fragment.label,
+                source: event.fragment.source,
+                order: event.fragment.order,
+                scope: scope_set_to_tags(event.fragment.scope),
+                content_preview: preview,
+                content_hash: event.content_hash,
+                full_content_available: truncated,
+            }
+        })
+        .collect();
+
+    Ok(Json(dtos))
 }

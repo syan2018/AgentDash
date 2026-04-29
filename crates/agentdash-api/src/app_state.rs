@@ -9,7 +9,9 @@ use crate::plugins::{
 };
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
+use agentdash_application::context::{
+    InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry, builtin_vfs_registry,
+};
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
@@ -66,6 +68,8 @@ pub struct ServiceSet {
     pub cron_scheduler: CronSchedulerHandle,
     /// Routine 执行器 — 统一处理定时/Webhook/插件触发
     pub routine_executor: Option<Arc<RoutineExecutor>>,
+    /// Session 上下文审计总线 — Bundle / Fragment 产出与消费的可观测轨迹
+    pub audit_bus: SharedContextAuditBus,
 }
 
 /// 应用级配置
@@ -348,6 +352,8 @@ impl AppState {
         let dispatcher =
             crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
 
+        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
+
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
             hub: session_hub.clone(),
@@ -356,6 +362,7 @@ impl AppState {
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
+            audit_bus: Some(audit_bus.clone()),
         });
 
         let state = Self {
@@ -373,6 +380,7 @@ impl AppState {
                 terminal_cancel_coordinator,
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: None,
+                audit_bus,
             },
             config: AppConfig {
                 platform_config,
@@ -405,14 +413,17 @@ impl AppState {
 
         // 后台 cron 调度器：从 Routine 表加载 scheduled 类型条目，按 cron 表达式触发
         {
-            let routine_executor = Arc::new(RoutineExecutor::new(
-                state.repos.clone(),
-                state.services.session_hub.clone(),
-                state.services.vfs_service.clone(),
-                state.services.connector.clone(),
-                state.config.platform_config.clone(),
-                state.services.backend_registry.clone(),
-            ));
+            let routine_executor = Arc::new(
+                RoutineExecutor::new(
+                    state.repos.clone(),
+                    state.services.session_hub.clone(),
+                    state.services.vfs_service.clone(),
+                    state.services.connector.clone(),
+                    state.config.platform_config.clone(),
+                    state.services.backend_registry.clone(),
+                )
+                .with_audit_bus(state.services.audit_bus.clone()),
+            );
             // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）
             // SAFETY: 此时 state 的 Arc 引用计数为 1，get_mut 保证成功
             if let Some(s) = Arc::get_mut(&mut state) {

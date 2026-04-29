@@ -1,5 +1,7 @@
 export { SurfaceCard } from "./surface-card";
 
+export { ContextInspectorPanel } from "./context-inspector-panel";
+
 export {
   HookRuntimeSurfaceCard,
   HookRuntimeDiagnosticsCard,

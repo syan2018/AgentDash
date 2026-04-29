@@ -45,11 +45,11 @@ use crate::capability::{
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
-    ContextBuildPhase, Contribution, SessionContextConfig, TaskExecutionPhase,
-    build_declared_source_warning_fragment, build_session_context_bundle,
+    AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
+    TaskExecutionPhase, build_declared_source_warning_fragment, build_session_context_bundle,
     contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
     contribute_instruction, contribute_mcp, contribute_workflow_binding,
-    contribute_workspace_static_sources, resolve_workspace_declared_sources,
+    contribute_workspace_static_sources, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
@@ -480,6 +480,11 @@ pub struct SessionRequestAssembler<'a> {
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
+    /// 可选审计总线 —— 每次 compose 产出 Bundle 后批量 emit。
+    ///
+    /// 为 `None` 时（例如单元测试 / routine 内部降级路径）跳过 emit；
+    /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
+    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -623,6 +628,10 @@ pub struct OwnerBootstrapSpec<'a> {
     pub agent_declared_capabilities: Option<Vec<String>>,
     /// Session lifecycle 三态判定结果,决定 context bundle / prompt_blocks 组装方式。
     pub lifecycle: OwnerPromptLifecycle,
+    /// 审计总线用于索引的 session key（SessionHub 分配的 `sess-<ms>-<short>`）。
+    ///
+    /// 为 `None` 时跳过审计 emit（例如 session 尚未创建的 bootstrap 路径）。
+    pub audit_session_key: Option<String>,
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
@@ -713,7 +722,31 @@ impl<'a> SessionRequestAssembler<'a> {
             availability,
             repos,
             platform_config,
+            audit_bus: None,
         }
+    }
+
+    /// 配置审计总线（生产路径由 `AppState` 注入）。
+    pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
+        self.audit_bus = Some(bus);
+        self
+    }
+
+    /// 若存在审计总线且 session_key 可用，则把 bundle 的所有 fragment 批量 emit。
+    ///
+    /// `session_key` 应由调用方（spec.audit_session_key）提供，对应 SessionHub 分配的
+    /// `sess-<ms>-<short>` 字符串 ID。若为 `None`（例如 owner bootstrap 创建新 session 时
+    /// 尚未分配 ID 的场景），跳过 emit。
+    fn audit_bundle(
+        &self,
+        bundle: &agentdash_spi::SessionContextBundle,
+        session_key: Option<&str>,
+        trigger: AuditTrigger,
+    ) {
+        let (Some(bus), Some(session_key)) = (self.audit_bus.as_deref(), session_key) else {
+            return;
+        };
+        emit_bundle_fragments(bus, bundle, session_key, trigger);
     }
 
     /// Owner 级 session bootstrap(Story / Project / Routine)。
@@ -841,6 +874,7 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             vec![owner_contribution],
         );
+        self.audit_bundle(&context_bundle, spec.audit_session_key.as_deref(), AuditTrigger::SessionBootstrap);
 
         // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / bootstrap_action ──
         //
@@ -1144,6 +1178,7 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             contributions,
         );
+        self.audit_bundle(&context_bundle, spec.audit_session_key.as_deref(), AuditTrigger::ComposerRebuild);
 
         // Prompt resource block —— 由 bundle 渲染后塞入。
         let bundle_markdown =
@@ -1323,6 +1358,8 @@ pub struct StoryStepSpec<'a> {
     pub strict_config_resolution: bool,
     /// 对应活跃 lifecycle run 的投影（由 facade 通过 SessionBinding 两跳定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
+    /// 审计总线用于索引的 session key。
+    pub audit_session_key: Option<String>,
 }
 
 /// Lifecycle AgentNode compose 输入。

@@ -13,7 +13,7 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::event_bridge::HookTriggerInput;
+use super::hub::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
@@ -36,7 +36,7 @@ impl SessionHub {
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.connector.has_live_session(session_id).await;
 
-        let tx = {
+        {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = tokio::sync::broadcast::channel(1024);
@@ -50,8 +50,7 @@ impl SessionHub {
             runtime.running = true;
             runtime.current_turn_id = Some(turn_id.clone());
             runtime.cancel_requested = false;
-            runtime.tx.clone()
-        };
+        }
 
         let effective_vfs = req
             .vfs
@@ -445,7 +444,6 @@ impl SessionHub {
                             refresh_reason: "trigger:session_start",
                             source: source.clone(),
                         },
-                        &tx,
                     )
                     .await;
             }

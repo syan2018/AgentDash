@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
 
-use super::event_bridge::HookTriggerInput;
+use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
@@ -139,12 +139,7 @@ impl SessionTurnProcessor {
             .await;
 
         // Hook 评估（SessionTerminal trigger）
-        let broadcast_tx = {
-            let sessions_guard = sessions.lock().await;
-            sessions_guard.get(&session_id).map(|rt| rt.tx.clone())
-        };
-        let terminal_effects = if let (Some(hs), Some(tx)) = (hook_session.as_ref(), &broadcast_tx)
-        {
+        let terminal_effects = if let Some(hs) = hook_session.as_ref() {
             hub.emit_session_hook_trigger(
                 hs.as_ref(),
                 &HookTriggerInput {
@@ -158,7 +153,6 @@ impl SessionTurnProcessor {
                     refresh_reason: "trigger:session_terminal",
                     source: source.clone(),
                 },
-                tx,
             )
             .await
         } else {

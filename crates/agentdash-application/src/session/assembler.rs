@@ -24,7 +24,7 @@
 //! compose 函数内部共享 building blocks(`load_available_presets` /
 //! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
@@ -35,6 +35,7 @@ use agentdash_domain::task::Task;
 use agentdash_domain::workflow::CapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::auth::AuthIdentity;
 use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
@@ -56,7 +57,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
+use crate::session::types::{PromptSessionRequest, SessionBootstrapAction, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -74,9 +75,19 @@ use crate::workspace::BackendAvailability;
 
 /// compose 函数对 `PromptSessionRequest` 的全部后端注入字段的平坦表示。
 ///
-/// 用户输入(prompt_blocks / working_dir / env)不放这里——它沿着
-/// 原始 `PromptSessionRequest` 透传,compose 仅改写 `prompt_blocks` 与 `executor_config`。
-#[derive(Debug, Clone, Default)]
+/// ## 字段分组
+///
+/// - **用户输入侧字段**（`env` / `working_dir` / `prompt_blocks` / `executor_config`）：
+///   可由 entry 通过 `SessionAssemblyBuilder::with_user_input` 一次性注入，
+///   也可由 compose 逐项覆盖。最终 `finalize_request` 按"prepared 非空则覆盖 base"语义合并。
+/// - **运行时注入字段**（`mcp_servers` / `vfs` / `flow_capabilities` 等）：compose 产出。
+/// - **身份与回调字段**（`identity` / `post_turn_handler`）：entry 通过 builder first-class
+///   方法注入；`finalize_request` 合入 req。2026-04-30 PR 1 Phase 1c 起由 builder 承载，
+///   不再由调用方在 `finalize_request` 之后手工 `req.xxx = ...` 赋值。
+///
+/// 不派生 `Debug` 因为 `DynPostTurnHandler = Arc<dyn PostTurnHandler>`
+/// 而 trait 不要求 Debug。
+#[derive(Clone, Default)]
 pub struct PreparedSessionInputs {
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     pub executor_config: Option<AgentConfig>,
@@ -93,6 +104,12 @@ pub struct PreparedSessionInputs {
     /// Story step(task 启动)场景下 compose 产出的 working_dir 覆盖值；
     /// 仅在需要绕过 workspace_defaults 的 task 启动路径使用。
     pub working_dir: Option<String>,
+    /// 用户输入的环境变量（由 entry 通过 `with_user_input` 或 `with_env` 注入）。
+    pub env: HashMap<String, String>,
+    /// 发起本次 prompt 的用户身份（由 entry 通过 `with_identity` 注入）。
+    pub identity: Option<AuthIdentity>,
+    /// Turn 事件回调（由 task / routine 等 entry 通过 `with_post_turn_handler` 注入）。
+    pub post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
     /// Context contributor pipeline 的诊断摘要（供启动响应展示）。
     pub source_summary: Vec<String>,
 }
@@ -110,11 +127,19 @@ pub struct PreparedSessionInputs {
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `relay_mcp_server_names` | **整体替换** 为 prepared 值（与 `mcp_servers` 对称） |
+/// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
+/// | `identity` | prepared 非空时覆盖；否则保留 base |
+/// | `post_turn_handler` | prepared 非空时覆盖；否则保留 base |
 ///
 /// **对称化背景**：`mcp_servers` 与 `relay_mcp_server_names` 在 compose 内部都已经把
 /// base 侧透传值合并进去（见 `compose_owner_bootstrap` 中 `effective_mcp_servers` /
 /// `relay_mcp_server_names` 的汇总逻辑）。finalize 阶段 base 里这两个字段实际都是
 /// `PromptSessionRequest::from_user_input` 的 default，统一整体替换既正确又对称。
+///
+/// **identity / post_turn_handler 下沉**（2026-04-30 PR 1 Phase 1c）：过去这两个字段
+/// 由调用方在 `finalize_request` 之后手工 `req.identity = ...` 赋值，容易漏填
+/// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
+/// `with_post_turn_handler` 注入，`finalize_request` 统一合入，单一装配节拍保证不漏。
 pub fn finalize_request(
     base: PromptSessionRequest,
     prepared: PreparedSessionInputs,
@@ -147,6 +172,15 @@ pub fn finalize_request(
     req.relay_mcp_server_names = prepared.relay_mcp_server_names;
     req.flow_capabilities = prepared.flow_capabilities;
     req.effective_capability_keys = prepared.effective_capability_keys;
+    if !prepared.env.is_empty() {
+        req.user_input.env = prepared.env;
+    }
+    if prepared.identity.is_some() {
+        req.identity = prepared.identity;
+    }
+    if prepared.post_turn_handler.is_some() {
+        req.post_turn_handler = prepared.post_turn_handler;
+    }
     req
 }
 
@@ -165,7 +199,9 @@ pub fn finalize_request(
 /// - **追加友好**：MCP / relay 等集合字段支持多次 `append`
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
-#[derive(Debug, Clone, Default)]
+///
+/// 不派生 `Debug`（post_turn_handler trait 不要求 Debug）；Clone 保留。
+#[derive(Clone, Default)]
 pub struct SessionAssemblyBuilder {
     // ── VFS 层 ──
     vfs: Option<Vfs>,
@@ -188,6 +224,13 @@ pub struct SessionAssemblyBuilder {
 
     // ── 元信息层 ──
     workspace_defaults: Option<Workspace>,
+
+    // ── 用户输入侧 ──
+    env: HashMap<String, String>,
+
+    // ── 身份 & 回调（2026-04-30 PR 1 Phase 1c 新增） ──
+    identity: Option<AuthIdentity>,
+    post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
 
     // ── 其它平坦字段 ──
     working_dir: Option<String>,
@@ -357,9 +400,73 @@ impl SessionAssemblyBuilder {
         self
     }
 
+    // ── 用户输入层方法（2026-04-30 PR 1 Phase 1c 新增） ─────────────
+
+    /// 设置环境变量 map（entry 注入用户侧 env）。
+    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// 发起本次 prompt 的用户身份（含 `AuthIdentity::system_routine(id)` 等）。
+    pub fn with_identity(mut self, identity: AuthIdentity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// 可选设置身份（None 时不覆盖已有值）。
+    pub fn with_optional_identity(mut self, identity: Option<AuthIdentity>) -> Self {
+        if identity.is_some() {
+            self.identity = identity;
+        }
+        self
+    }
+
+    /// Turn 事件回调（task / routine 等 entry 注入）。
+    pub fn with_post_turn_handler(
+        mut self,
+        handler: crate::session::post_turn_handler::DynPostTurnHandler,
+    ) -> Self {
+        self.post_turn_handler = Some(handler);
+        self
+    }
+
+    /// 可选 Turn 事件回调（None 时不覆盖）。
+    pub fn with_optional_post_turn_handler(
+        mut self,
+        handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
+    ) -> Self {
+        if handler.is_some() {
+            self.post_turn_handler = handler;
+        }
+        self
+    }
+
+    /// 一次性吸收 `UserPromptInput` 的所有字段。
+    ///
+    /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_working_dir` /
+    /// `with_env`；便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
+    /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
+    pub fn with_user_input(mut self, input: UserPromptInput) -> Self {
+        if let Some(blocks) = input.prompt_blocks {
+            self.prompt_blocks = Some(blocks);
+        }
+        if let Some(cfg) = input.executor_config {
+            self.executor_config = Some(cfg);
+        }
+        if input.working_dir.is_some() {
+            self.working_dir = input.working_dir;
+        }
+        self.env = input.env;
+        self
+    }
+
     // ── 复合便利方法 ──────────────────────────────────────────────
 
     /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
+    ///
+    /// 保留 `self` 上预先设置的 `identity` / `post_turn_handler` / `env` 等字段
+    /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
     pub fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
@@ -393,6 +500,10 @@ impl SessionAssemblyBuilder {
             workspace_defaults: None,
             working_dir: None,
             source_summary: Vec::new(),
+            // 保留调用方已注入的身份 / 回调 / env 不被 companion slice 清空
+            env: self.env,
+            identity: self.identity,
+            post_turn_handler: self.post_turn_handler,
         }
     }
 
@@ -430,6 +541,9 @@ impl SessionAssemblyBuilder {
             bootstrap_action: self.bootstrap_action,
             workspace_defaults: self.workspace_defaults,
             working_dir: self.working_dir,
+            env: self.env,
+            identity: self.identity,
+            post_turn_handler: self.post_turn_handler,
             source_summary: self.source_summary,
         }
     }
@@ -2149,6 +2263,161 @@ mod tests {
             assert!(
                 result.context_bundle.is_none(),
                 "context_bundle 为整体替换字段，prepared=None 会清除 base"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // PR 1 Phase 1c 新字段测试：identity / post_turn_handler / env
+        // ═══════════════════════════════════════════════════════════
+
+        #[test]
+        fn identity_prepared_overrides_base() {
+            // prepared.identity = Some → 覆盖 base.identity。
+            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+
+            let mut base = base_req();
+            base.identity = Some(AuthIdentity {
+                auth_mode: AuthMode::Personal,
+                user_id: "base-user".to_string(),
+                subject: "base-user".to_string(),
+                display_name: None,
+                email: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: None,
+                extra: serde_json::Value::Null,
+            });
+            let prepared = PreparedSessionInputs {
+                identity: Some(AuthIdentity::system_routine("r-1234")),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let id = result.identity.expect("identity exists");
+            assert_eq!(id.user_id, "system:routine:r-1234");
+            assert_eq!(id.provider.as_deref(), Some("system.routine"));
+            assert!(!id.is_admin);
+        }
+
+        #[test]
+        fn identity_prepared_none_preserves_base() {
+            // prepared.identity = None → 保留 base.identity（不会清空）。
+            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+
+            let mut base = base_req();
+            let base_id = AuthIdentity {
+                auth_mode: AuthMode::Enterprise,
+                user_id: "alice".to_string(),
+                subject: "alice".to_string(),
+                display_name: Some("Alice".to_string()),
+                email: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: None,
+                extra: serde_json::Value::Null,
+            };
+            base.identity = Some(base_id);
+
+            let prepared = PreparedSessionInputs::default();
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.identity.as_ref().map(|i| i.user_id.as_str()),
+                Some("alice"),
+                "prepared.identity=None 时 base.identity 应被保留"
+            );
+        }
+
+        #[test]
+        fn env_prepared_overrides_base_when_nonempty() {
+            // prepared.env 非空 → 整体替换。
+            let mut base = base_req();
+            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+
+            let mut prepared_env = HashMap::new();
+            prepared_env.insert("BAR".to_string(), "prepared".to_string());
+            let prepared = PreparedSessionInputs {
+                env: prepared_env,
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert!(!result.user_input.env.contains_key("FOO"));
+            assert_eq!(
+                result.user_input.env.get("BAR").map(String::as_str),
+                Some("prepared")
+            );
+        }
+
+        #[test]
+        fn env_prepared_empty_preserves_base() {
+            // prepared.env 为空 → 保留 base.env。
+            let mut base = base_req();
+            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+
+            let prepared = PreparedSessionInputs::default();
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.user_input.env.get("FOO").map(String::as_str),
+                Some("base"),
+                "prepared.env 为空时 base.env 应被保留"
+            );
+        }
+
+        #[test]
+        fn system_routine_identity_shape() {
+            // 固化 AuthIdentity::system_routine 产出形状（E1 契约）。
+            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-abc");
+            assert_eq!(id.user_id, "system:routine:r-abc");
+            assert_eq!(id.subject, "system:routine:r-abc");
+            assert_eq!(id.provider.as_deref(), Some("system.routine"));
+            assert!(!id.is_admin);
+            assert!(id.groups.is_empty());
+            assert_eq!(id.display_name.as_deref(), Some("System Routine"));
+            // auth_mode = Personal 避免匹配企业级 admin 策略
+            assert!(matches!(
+                id.auth_mode,
+                agentdash_spi::auth::AuthMode::Personal
+            ));
+        }
+
+        #[test]
+        fn builder_with_identity_method_propagates_to_prepared() {
+            // 验证 SessionAssemblyBuilder.with_identity() 的值能顺利进入 PreparedSessionInputs.identity。
+            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-zzz");
+            let prepared = SessionAssemblyBuilder::new().with_identity(id.clone()).build();
+            assert_eq!(
+                prepared.identity.as_ref().map(|i| i.user_id.as_str()),
+                Some("system:routine:r-zzz"),
+            );
+        }
+
+        #[test]
+        fn builder_with_user_input_unpacks_fields() {
+            // 验证 with_user_input 一次性吸收 UserPromptInput 的四字段。
+            use crate::session::UserPromptInput;
+            let mut env = HashMap::new();
+            env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+            let input = UserPromptInput {
+                prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
+                working_dir: Some("subdir".to_string()),
+                env,
+                executor_config: None,
+            };
+            let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
+            assert_eq!(
+                prepared.working_dir.as_deref(),
+                Some("subdir"),
+                "with_user_input 应把 UserPromptInput.working_dir 写入 builder.working_dir"
+            );
+            assert!(
+                prepared.prompt_blocks.is_some(),
+                "with_user_input 应把 prompt_blocks 写入 builder"
+            );
+            assert_eq!(
+                prepared.env.get("PATH").map(String::as_str),
+                Some("/usr/bin"),
+                "with_user_input 应把 env 写入 builder"
             );
         }
     }

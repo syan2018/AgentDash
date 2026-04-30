@@ -29,35 +29,35 @@
 
 ```mermaid
 flowchart TB
-    %% ─────────── 入口层 ───────────
-    subgraph Entries["① 入口层 · 所有路径汇聚到 SessionAssemblyBuilder"]
+    %% 入口层
+    subgraph Entries["入口层 · 所有路径汇聚到 SessionAssemblyBuilder"]
         direction LR
-        HTTP[HTTP Route<br/>/sessions/:id/prompt]
-        Task[Task Service<br/>start_task/continue_task]
-        WF[Workflow<br/>Orchestrator]
-        Comp[Companion Tools<br/>dispatch]
-        Routine[Routine Executor<br/>cron/webhook/plugin]
-        AR[Hub Auto-resume]
+        HTTP["HTTP Route<br/>/sessions/:id/prompt"]
+        Task["Task Service<br/>start_task / continue_task"]
+        WF["Workflow Orchestrator"]
+        Comp["Companion Tools · dispatch"]
+        Routine["Routine Executor<br/>cron / webhook / plugin"]
+        AR["Hub Auto-resume"]
     end
 
-    %% ─────────── Application Crate ───────────
-    subgraph App["② Application Crate — 装配 & 运行时编排"]
+    %% Application Crate
+    subgraph App["Application Crate — 装配 & 运行时编排"]
         direction TB
 
         subgraph Startup["session/startup/ · 装配"]
             direction TB
-            Builder["<b>SessionAssemblyBuilder</b><br/>.with_user_input()<br/>.with_identity()<br/>.with_post_turn_handler()<br/>.compose_*()<br/>.build()"]
-            PrepInputs[PreparedSessionInputs]
-            Finalize[finalize_request<br/>→ PromptSessionRequest]
+            Builder["<b>SessionAssemblyBuilder</b><br/>with_user_input / with_identity<br/>with_post_turn_handler<br/>compose_* / build"]
+            PrepInputs["PreparedSessionInputs"]
+            Finalize["finalize_request<br/>→ PromptSessionRequest"]
             Builder --> PrepInputs --> Finalize
         end
 
         subgraph CtxBuild["context/ · Bundle 组装 reducer"]
             direction TB
-            Contribs[contributors/<br/>core · binding · instruction<br/>mcp · workflow · declared<br/>hook_snapshot]
+            Contribs["contributors/<br/>core · binding · instruction<br/>mcp · workflow · declared<br/>hook_snapshot"]
             Reducer["<b>build_session_context_bundle</b><br/>零 domain 依赖的 pure reducer"]
-            Render[rendering/<br/>workflow_injection · workspace_view<br/>declared_sources · kickoff_prompt]
-            Slots[slot_orders.rs<br/>所有 order 单源]
+            Render["rendering/<br/>workflow_injection · workspace_view<br/>declared_sources · kickoff_prompt"]
+            Slots["slot_orders.rs<br/>所有 order 单源"]
             Contribs --> Reducer
             Contribs -.用.-> Render
             Contribs -.用.-> Slots
@@ -67,7 +67,7 @@ flowchart TB
         subgraph Runtime["session/runtime/ · session 级"]
             direction TB
             HubFacade["<b>hub/facade.rs</b><br/>≤ 500 行门面"]
-            HubSub[hub/factory<br/>hub/tool_builder<br/>hub/hook_dispatch<br/>hub/cancel]
+            HubSub["hub/factory<br/>hub/tool_builder<br/>hub/hook_dispatch<br/>hub/cancel"]
             SR["SessionRuntime<br/>tx · hook_session<br/>current_turn: Option&lt;TurnExecution&gt;"]
             TE["TurnExecution<br/>processor_tx · cancel_requested<br/>hook_auto_resume_count<br/>session_frame"]
             HubFacade --- HubSub
@@ -77,9 +77,9 @@ flowchart TB
 
         subgraph TurnMod["session/turn/ · per-turn"]
             direction TB
-            Proc[turn_processor<br/>stream→persist→terminal]
-            PL[persistence_listener<br/>executor_session_id 同步]
-            PTH[PostTurnHandler]
+            Proc["turn_processor<br/>stream → persist → terminal"]
+            PL["persistence_listener<br/>executor_session_id 同步"]
+            PTH["PostTurnHandler"]
             Proc --> PTH
             Proc --> PL
         end
@@ -87,9 +87,9 @@ flowchart TB
         subgraph HooksMod["session/hooks/ · 运行时 Hook"]
             direction TB
             Delegate["HookRuntimeDelegate<br/>impl AgentRuntimeDelegate"]
-            HookRT[HookSessionRuntime]
+            HookRT["HookSessionRuntime"]
             Bridge["fragment_bridge<br/>HookInjection → ContextFragment"]
-            Messages[messages.rs<br/>build_hook_steering_messages]
+            Messages["messages.rs<br/>build_hook_steering_messages"]
             Delegate --> HookRT
             Delegate --> Bridge
             Delegate --> Messages
@@ -97,36 +97,36 @@ flowchart TB
 
         subgraph SysProm["session/system_prompt/ · Bundle → String"]
             direction LR
-            SAssembler[assembler.rs<br/>assemble_system_prompt<br/>Relay/vibe_kanban fallback]
-            SRenderer[renderer.rs<br/>render_runtime_section]
+            SAssembler["assembler.rs<br/>assemble_system_prompt<br/>Relay / vibe_kanban fallback"]
+            SRenderer["renderer.rs<br/>render_runtime_section"]
             SAssembler --> SRenderer
         end
 
         subgraph Model["session/model/"]
-            UI[UserPromptInput<br/>wire DTO]
-            PSR[PromptSessionRequest<br/>wire DTO · immutable after finalize]
-            Meta[SessionMeta<br/>persisted]
+            UI["UserPromptInput · wire DTO"]
+            PSR["PromptSessionRequest<br/>wire DTO · immutable after finalize"]
+            Meta["SessionMeta · persisted"]
         end
     end
 
-    %% ─────────── SPI 契约层 ───────────
-    subgraph SPI["③ agentdash-spi · 零 domain 依赖的契约"]
+    %% SPI 契约层
+    subgraph SPI["agentdash-spi · 零 domain 依赖的契约"]
         direction LR
         Bundle["<b>SessionContextBundle</b><br/>bootstrap_fragments + turn_delta<br/>phase_tag · bundle_id"]
-        EC["<b>ExecutionContext</b><br/>{ session: SessionFrame,<br/>&nbsp;&nbsp;turn: TurnFrame }"]
-        Auth[AuthIdentity<br/>+ system_routine(id)]
-        ConnT[AgentConnector trait<br/>+ update_session_context_bundle]
+        EC["<b>ExecutionContext</b><br/>session: SessionFrame<br/>turn: TurnFrame"]
+        Auth["AuthIdentity<br/>+ system_routine 构造器"]
+        ConnT["AgentConnector trait<br/>+ update_session_context_bundle"]
     end
 
-    %% ─────────── Connector 层 ───────────
-    subgraph Connectors["④ Connector 层 · 只读 ExecutionContext"]
+    %% Connector 层
+    subgraph Connectors["Connector 层 · 只读 ExecutionContext"]
         direction LR
-        PiAgent["<b>PiAgent</b><br/>读 TurnFrame.context_bundle<br/>+ assembled_tools<br/>+ hook_session"]
+        PiAgent["<b>PiAgent</b><br/>读 TurnFrame.context_bundle<br/>+ assembled_tools · hook_session"]
         Relay["Relay<br/>读 SessionFrame<br/>+ assembled_system_prompt（过渡）"]
         VK["vibe_kanban<br/>读 SessionFrame + prompt 前置"]
     end
 
-    %% ─────────── 主要数据流 ───────────
+    %% 主要数据流
     Entries ==装配==> Builder
     PrepInputs --> CtxBuild
     Reducer --> Bundle
@@ -139,12 +139,11 @@ flowchart TB
     ConnT --> Relay
     ConnT --> VK
     PiAgent -.set_runtime_delegate.-> Delegate
-    Delegate --write turn_delta--> Bundle
+    Delegate --write_turn_delta--> Bundle
     HubFacade --spawn--> Proc
-    Proc --TurnEvent::Terminal--> HubFacade
+    Proc --TurnEvent_Terminal--> HubFacade
     SysProm --render--> EC
 
-    %% 样式：标注主数据面与过渡字段
     classDef mainData fill:#d4edda,stroke:#28a745,stroke-width:2px
     classDef deprecated fill:#fff3cd,stroke:#ffc107,stroke-width:1px,stroke-dasharray: 5 5
     class Bundle mainData

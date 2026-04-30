@@ -79,14 +79,8 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     }
 
     // ── 2. Project Context ──
-    if let Some(bundle) = input.context_bundle {
-        let project_context = bundle.render_section(
-            agentdash_spi::FragmentScope::RuntimeAgent,
-            RUNTIME_AGENT_CONTEXT_SLOTS,
-        );
-        if !project_context.trim().is_empty() {
-            sections.push(format!("## Project Context\n\n{project_context}"));
-        }
+    if let Some(section) = input.context_bundle.and_then(render_runtime_section) {
+        sections.push(section);
     }
 
     // ── 2b. Companion Agents ──
@@ -202,6 +196,22 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     }
 
     sections.join("\n\n")
+}
+
+/// 渲染 Bundle 的"Project Context"段落——connector 可在 Bundle 变化时直接调用该 helper
+/// 取得结构化段落文本（保持与 `assemble_system_prompt` 一致的 slot 白名单 / 标题）。
+///
+/// 返回 `None` 表示 Bundle 的 `RuntimeAgent` scope 下未产出任何可见内容。
+pub fn render_runtime_section(bundle: &SessionContextBundle) -> Option<String> {
+    let project_context = bundle.render_section(
+        agentdash_spi::FragmentScope::RuntimeAgent,
+        RUNTIME_AGENT_CONTEXT_SLOTS,
+    );
+    if project_context.trim().is_empty() {
+        None
+    } else {
+        Some(format!("## Project Context\n\n{project_context}"))
+    }
 }
 
 // ─── 渲染辅助函数（全部从 connector.rs / stream_mapper.rs 搬过来） ──────────

@@ -278,11 +278,15 @@ impl SessionHub {
             vfs: Some(effective_vfs.clone()),
             identity: identity.clone(),
         };
+        // 主数据面：Bundle 下发到 TurnFrame，connector 侧优先消费它；
+        // backward-compat：仍保留 `assembled_system_prompt` 兜底给 Relay / vibe_kanban。
+        #[allow(deprecated)]
         let turn_frame = ExecutionTurnFrame {
             hook_session: hook_session.clone(),
             flow_capabilities: flow_capabilities.clone(),
             runtime_delegate,
             restored_session_state,
+            context_bundle: req.context_bundle.clone(),
             assembled_system_prompt: None,
             assembled_tools: Vec::new(),
         };
@@ -317,9 +321,12 @@ impl SessionHub {
                 mcp_servers: &mcp_servers,
                 hook_session: hook_session.as_deref(),
             };
-            context.turn.assembled_system_prompt = Some(
-                super::system_prompt_assembler::assemble_system_prompt(&prompt_input),
-            );
+            #[allow(deprecated)]
+            {
+                context.turn.assembled_system_prompt = Some(
+                    super::system_prompt_assembler::assemble_system_prompt(&prompt_input),
+                );
+            }
         }
 
         {

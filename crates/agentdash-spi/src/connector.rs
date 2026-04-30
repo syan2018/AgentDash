@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
+use crate::session_context_bundle::SessionContextBundle;
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
@@ -76,8 +77,21 @@ pub struct ExecutionTurnFrame {
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// Application 层预组装的完整 system prompt。
-    /// 当此字段非空时，connector 应直接使用此值，不再自行组装。
+    /// 业务上下文 Bundle — connector 侧应优先消费此主数据面。
+    ///
+    /// 当 connector 能结构化消费 Bundle 时（如 PiAgent），
+    /// 应通过 `bundle_id` 跨 turn 差异触发 system prompt 热更新，
+    /// 以取代对下方 `assembled_system_prompt` 的依赖。
+    pub context_bundle: Option<SessionContextBundle>,
+    /// Application 层预组装的完整 system prompt（backward-compat fallback）。
+    ///
+    /// 自 PR 3 起：主数据面为 `context_bundle`；
+    /// 本字段仅作为 Relay / vibe_kanban / 过渡期 PiAgent 的兜底。
+    /// PR 8 计划将此字段彻底下线。
+    #[deprecated(
+        note = "主数据面已迁至 `context_bundle`；connector 应优先消费 Bundle，\
+                仅当 Bundle 缺失或协议尚未支持时才退化到该预渲染文本。"
+    )]
     pub assembled_system_prompt: Option<String>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
@@ -444,6 +458,22 @@ pub trait AgentConnector: Send + Sync {
         &self,
         _session_id: &str,
         _message: String,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    /// 向活跃 session 热更新业务上下文 Bundle（out-of-band，不等下轮 prompt）。
+    ///
+    /// 场景：application 层在非 prompt 边界检测到 context 变化（MCP 热更、
+    /// hook snapshot 刷新等）时调用。内嵌 connector 可据此重新渲染 system prompt
+    /// 并 `set_system_prompt`；Relay / 远程 connector 保持 no-op（由下一次 prompt
+    /// 的 Bundle 透传完成刷新）。
+    ///
+    /// 默认 no-op —— 仅对结构化消费 Bundle 的 connector（如 PiAgent）实现。
+    async fn update_session_context_bundle(
+        &self,
+        _session_id: &str,
+        _bundle: SessionContextBundle,
     ) -> Result<(), ConnectorError> {
         Ok(())
     }

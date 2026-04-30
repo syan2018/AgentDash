@@ -47,6 +47,10 @@ struct PiAgentSessionRuntime {
     agent: Agent,
     /// 当前生效的完整工具列表（由 application 层预构建）。
     tools: Vec<DynAgentTool>,
+    /// 上一次应用到 agent 的 Bundle 标识；用于跨 turn 判断业务上下文是否变化。
+    /// 当本轮 `TurnFrame.context_bundle.bundle_id` 与缓存值不同时触发
+    /// `set_system_prompt` 热更新。`None` 表示尚未拿到过 Bundle（首次创建或纯 fallback）。
+    last_bundle_id: Option<uuid::Uuid>,
 }
 
 struct ProviderRuntimeState {
@@ -329,6 +333,10 @@ impl AgentConnector for PiAgentConnector {
         };
 
         let is_new_agent = existing_runtime.is_none();
+        let incoming_bundle_id = context.turn.context_bundle.as_ref().map(|b| b.bundle_id);
+        let mut cached_bundle_id = existing_runtime
+            .as_ref()
+            .and_then(|rt| rt.last_bundle_id);
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             current_tools = runtime.tools;
@@ -354,15 +362,28 @@ impl AgentConnector for PiAgentConnector {
         // 只有新创建的 agent 才需要 build tools 和 system prompt。
         // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
         // 只更新 runtime delegate（hook session 每轮刷新）。
+        #[allow(deprecated)]
+        let assembled_sp_opt = context.turn.assembled_system_prompt.as_ref();
         if is_new_agent {
             current_tools = context.turn.assembled_tools.clone();
 
-            if let Some(system_prompt) = &context.turn.assembled_system_prompt {
+            if let Some(system_prompt) = assembled_sp_opt {
                 agent.set_system_prompt(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
             if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
                 agent.replace_messages(messages).await;
+            }
+            cached_bundle_id = incoming_bundle_id;
+        } else if let Some(new_bundle_id) = incoming_bundle_id {
+            // 已存在 agent + 新 Bundle：若 bundle_id 发生变化则热更新 system prompt。
+            // 渲染结果仍由 application 层产出（`assembled_system_prompt`），
+            // connector 只负责感知"Bundle 变化"并把新文本推给 agent。
+            if cached_bundle_id != Some(new_bundle_id) {
+                if let Some(system_prompt) = assembled_sp_opt {
+                    agent.set_system_prompt(system_prompt.clone());
+                }
+                cached_bundle_id = Some(new_bundle_id);
             }
         }
         let hook_trace_rx = context
@@ -386,6 +407,7 @@ impl AgentConnector for PiAgentConnector {
             PiAgentSessionRuntime {
                 agent,
                 tools: current_tools,
+                last_bundle_id: cached_bundle_id,
             },
         );
 

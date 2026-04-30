@@ -170,6 +170,10 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let user_text = prompt.to_fallback_text();
+        // vibe_kanban 通过 stdio 把 prompt 前置拼接给外部进程，暂未支持结构化
+        // Bundle。PR 3 期间仍消费 deprecated `assembled_system_prompt` 作为兜底，
+        // 待 PR 8 删除该字段时此 connector 需要自渲染或协议升级。
+        #[allow(deprecated)]
         let prompt_text = if let Some(ref sys_prompt) = context.turn.assembled_system_prompt {
             format!("{sys_prompt}\n\n{user_text}")
         } else {

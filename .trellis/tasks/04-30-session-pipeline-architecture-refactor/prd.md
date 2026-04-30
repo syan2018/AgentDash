@@ -283,9 +283,11 @@
 - cancel 路径 e2e（HTTP / hub / connector 三路）测试通过。
 - auto-resume 限流单测在 hub 侧。
 
-## Decisions（from Part D of refactor plan）
+## Decisions（from Part D of refactor plan + 2026-04-30 execution kickoff）
 
 本次重构在规划阶段锁定以下决策；若实施中发现反例回炉讨论即可。
+
+### 架构决策（D1-D6）
 
 - **D1 — wire DTO 保留**：`PromptSessionRequest` 继续作为序列化 DTO 存在；内部路径走强类型 `SessionStartupPlan`。避免 relay / 插件协议掣肘。
 - **D2 — 立刻 split ExecutionContext**：PR 2 一次到位，不走"先加字段、下轮再拆"的两步过渡。
@@ -293,6 +295,17 @@
 - **D4 — PiAgent 按 bundle_id 热更**：bundle_id 变化时触发 `set_system_prompt`。前提条件：PR 7（runtime 清理）已完成，否则 cache invalidation 点太多。
 - **D5 — hub 分批拆**：不一次性大改；companion_wait / tool_builder 先独立，hub.rs 再瘦身。PR 6 内部按子项顺序执行。
 - **D6 — 写 spec**：在 DoD 阶段写入 `.trellis/spec/backend/session-startup-pipeline.md` / `execution-context-frames.md` / `bundle-main-datasource.md` 三份。
+
+### 实施决策（2026-04-30 kickoff 对齐，锁执行前）
+
+- **E1 — Routine identity 用 system identity**：routine/executor.rs 生成 `AuthIdentity { auth_mode: Personal, user_id: "system:routine:<id>", is_admin: false, groups: [], provider: Some("system.routine") }`。审计可见，无权限脱出，hook/permission 走常规逻辑。
+- **E2 — Builder 形态：扩展现有 `SessionAssemblyBuilder`**：不新建 `SessionStartupBuilder` 包装层、不引入 `SessionStartupPlan` 强类型；在现有 builder 上加 `with_identity` / `with_post_turn_handler` / `with_user_input` first-class 方法；`PreparedSessionInputs` 同步扩字段；`finalize_request` 合入新字段。PR 1 最小改动面。
+- **E3 — Commit 粒度：PR 级**：每个 PR（7 个）内部按逻辑分 2-4 commit；PR 之间不停顿连续推进。
+- **E4 — Open Q 执行前全锁**：实施中如遇新 open question 按推荐方案或最佳判断走（不中断），结束后在 journal 汇总回炉清单。
+- **E5 — `effective_capability_keys` 删除**：ActiveSessionExecutionState 上的 dead_code 字段 PR 2 顺手删；FlowCapabilities.enabled_clusters 已覆盖 cluster 裁剪语义。
+- **E6 — HookRuntimeDelegate 签名直改**：`transform_context` 等 trait 方法 PR 4 签名变更不提供 default impl（消费者全在内部）；外部 plugin 若未来需要，再开兼容层。
+- **E7 — `SessionBootstrapAction` → `HookSnapshotReloadTrigger`**：PR 4 拆 session-capabilities resource block 后 PR 内顺手重命名；同步审视 `SessionMeta.bootstrap_state` 字段是否还需要。
+- **E8 — PR 5 附带清理**：① `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪；② 删除 `build_continuation_bundle_from_markdown` 的 `static_fragment` 包装，task continuation 直接组装 Bundle 不再绕一圈 markdown。
 
 ## Out of Scope
 
@@ -319,22 +332,14 @@
 
 ## Open Questions
 
-- **Routine 身份问题（PR 1 触及但未决，已打 TODO 留现场）**：`routine/executor.rs` 产出的
-  `PromptSessionRequest` 当前 `identity = None`。Routine 是 cron/webhook/plugin 触发，
-  无人类身份。三种备选：
-  - (a) **保持 None**：所有 connector 已吞下 None（PiAgent/Relay 零消费），审计无归属；
-  - (b) **合成 system identity**：`user_id = "system:routine:<id>"`, `is_admin=false`,
-    `groups=[]`, `provider=Some("system.routine")`——便于审计，但引入"非真人身份"类别，
-    hook 政策 / permission policy 需要对齐；
-  - (c) **查 routine owner / project owner**：schema 新增 `created_by` 字段，改动大。
+> 大部分 kickoff 前的 Open Question 已在 `## Decisions` 的 E1-E8 锁定。本段只保留实施时
+> 会自然浮现、需要观察代码现场决定的小项。
 
-  推荐 (b) 作为最小可行解，但需要先 review auth 政策对 system identity 的处理
-  （例如是否绕过某些 admin-only 策略）。
-- `effective_capability_keys` 在 PR 2 决定：删除还是接入 `runtime_tool_provider`？需要先确认是否有隐式读者（另 grep 一遍）。
-- `SessionBootstrapAction` 在 PR 4 的处置：若 `session-capabilities://` resource block 删除，该枚举只剩"hook snapshot reload 触发器"语义；是否重命名。
-- PR 7 里 `executor_session_id` 同步抽到 "persistence listener" 的具体实现位置：新建 `session/persistence_listener.rs` 还是合并到 `session/persistence.rs`？
-- `HookRuntimeDelegate` 的 `TransformContextOutput` 签名变更：是否需要提供向后兼容默认实现，以便外部 plugin 适配？
-- Relay 在 PR 3 是否需要临时 render 字符串防行为回退？（目前假设 `assembled_system_prompt` 继续填即可；需要在 PR 3 内做回归检查。）
+- **PR 7 里 `persistence listener` 位置**：新建 `session/persistence_listener.rs` 还是合并到 `session/persistence.rs`？倾向新建（职责独立）。实施时若发现与 persistence 交织过密再合并。
+- **Relay PR 3 回归**：确认 `assembled_system_prompt` 继续填值时 relay 无行为回退；不是设计决策，是 PR 3 验证动作。
+- **`SessionMeta.bootstrap_state` 的去留（E7 连带）**：如 `SessionBootstrapAction` 重命名后语义变为纯 hook 触发器，是否还需要持久化到 SessionMeta？实施时视迁移成本决定。
+- **`continuation.rs::build_companion_human_response_notification` 的归位目录（PR 7 附带）**：挪到 `companion/notifications.rs` 还是 `companion/runtime.rs`？倾向前者。
+- **实施过程中新发现的 question**：按 E4 走推荐方案，结束后 journal 汇总。
 
 ## References
 

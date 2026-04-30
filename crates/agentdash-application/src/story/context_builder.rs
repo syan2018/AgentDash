@@ -3,12 +3,8 @@ use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 
 use crate::context::{
-    Contribution, resolve_declared_sources, trim_or_dash, workspace_context_fragment,
-};
-use crate::runtime::{RuntimeMcpServer, Vfs};
-use crate::session::plan::{
-    SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
-    resolve_story_session_composition,
+    Contribution, WorkspaceFragmentMode, resolve_declared_sources, trim_or_dash,
+    workspace_context_fragment,
 };
 
 /// Story Owner Session 的上下文构建输入
@@ -16,9 +12,6 @@ pub struct StoryContextBuildInput<'a> {
     pub story: &'a Story,
     pub project: &'a Project,
     pub workspace: Option<&'a Workspace>,
-    pub vfs: Option<&'a Vfs>,
-    pub mcp_servers: &'a [RuntimeMcpServer],
-    pub effective_agent_type: Option<&'a str>,
     /// 由调用方预解析的工作空间来源片段（File/ProjectSnapshot 类型）
     pub workspace_source_fragments: Vec<ContextFragment>,
     pub workspace_source_warnings: Vec<String>,
@@ -26,6 +19,9 @@ pub struct StoryContextBuildInput<'a> {
 
 /// 把 Story owner session 的业务上下文聚合为一个 `Contribution`，供
 /// `build_session_context_bundle` 消费。
+///
+/// 不包含 SessionPlan fragments —— PR 5b 起所有 compose_* 在外层显式 push
+/// SessionPlan，保持 contributor 单一职责且与 lifecycle / task 路径一致。
 pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contribution {
     let mut fragments = Vec::new();
 
@@ -58,26 +54,11 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
         ),
     });
     if let Some(workspace) = input.workspace {
-        fragments.push(workspace_context_fragment(workspace));
+        fragments.push(workspace_context_fragment(
+            workspace,
+            WorkspaceFragmentMode::Owner,
+        ));
     }
-
-    let effective_session_composition = resolve_story_session_composition(Some(input.story));
-    let session_plan = build_session_plan_fragments(SessionPlanInput {
-        owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Story {
-            project_id: input.project.id,
-            story_id: input.story.id,
-        },
-        phase: SessionPlanPhase::StoryOwner,
-        vfs: input.vfs,
-        mcp_servers: input.mcp_servers,
-        session_composition: effective_session_composition.as_ref(),
-        agent_type: input.effective_agent_type,
-        preset_name: None,
-        has_custom_prompt_template: false,
-        has_initial_context: false,
-        workspace_attached: input.workspace.is_some(),
-    });
-    fragments.extend(session_plan.fragments);
 
     let resolvable_sources = input
         .story

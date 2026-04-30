@@ -22,7 +22,7 @@ pub use builtins::{
     contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
     contribute_instruction, contribute_mcp,
 };
-pub(crate) use builtins::{trim_or_dash, workspace_context_fragment};
+pub(crate) use builtins::{WorkspaceFragmentMode, trim_or_dash, workspace_context_fragment};
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,
 };

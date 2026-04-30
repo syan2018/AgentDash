@@ -30,12 +30,24 @@ pub(crate) fn trim_or_dash(text: &str) -> &str {
 
 // ─── Workspace Context Fragment ──────────────────────────────
 
-/// Project / Story owner 路径共享的 workspace context fragment 构建。
+/// Workspace context fragment 渲染模式。
 ///
-/// Task owner 路径的 `contribute_core_context` 自带更详细的 workspace 片段（含 status 字段），
-/// 此函数仅供 project / story context builder 使用以消除重复。
+/// PR 5 前：task 路径（`contribute_core_context`）与 owner 路径
+/// （`workspace_context_fragment`）各维护一份几乎相同的 workspace 渲染逻辑，
+/// 唯一差异是 task 路径额外附带 `status` 字段。PR 5 把两路合并到同一 helper，
+/// 视图差异由 `WorkspaceFragmentMode` 控制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceFragmentMode {
+    /// Owner 视图（order=30，不含 status）。
+    Owner,
+    /// Task 视图（order=50，含 status）。
+    Task,
+}
+
+/// 构建 workspace context fragment —— task / owner 两路共享单源渲染。
 pub(crate) fn workspace_context_fragment(
     workspace: &agentdash_domain::workspace::Workspace,
+    mode: WorkspaceFragmentMode,
 ) -> ContextFragment {
     let binding_summary = selected_workspace_binding(workspace)
         .map(|binding| {
@@ -47,20 +59,40 @@ pub(crate) fn workspace_context_fragment(
         })
         .unwrap_or_else(|| "-".to_string());
 
+    let (order, source, content) = match mode {
+        WorkspaceFragmentMode::Owner => (
+            30,
+            "legacy:contributor:workspace",
+            format!(
+                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
+                workspace.id,
+                workspace.identity_kind,
+                trim_or_dash(&workspace.name),
+                binding_summary,
+            ),
+        ),
+        WorkspaceFragmentMode::Task => (
+            50,
+            "legacy:contributor:core",
+            format!(
+                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
+                workspace.id,
+                workspace.identity_kind,
+                trim_or_dash(&workspace.name),
+                binding_summary,
+                workspace.status,
+            ),
+        ),
+    };
+
     ContextFragment {
         slot: "workspace".to_string(),
         label: "workspace_context".to_string(),
-        order: 30,
+        order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:workspace".to_string(),
-        content: format!(
-            "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
-            workspace.id,
-            workspace.identity_kind,
-            trim_or_dash(&workspace.name),
-            binding_summary,
-        ),
+        source: source.to_string(),
+        content,
     }
 }
 
@@ -211,31 +243,10 @@ pub fn contribute_core_context(
     });
 
     if let Some(workspace) = workspace {
-        let binding_summary = selected_workspace_binding(workspace)
-            .map(|binding| {
-                format!(
-                    "{} @ {}",
-                    trim_or_dash(&binding.backend_id),
-                    trim_or_dash(&binding.root_ref)
-                )
-            })
-            .unwrap_or_else(|| "-".to_string());
-        fragments.push(ContextFragment {
-            slot: "workspace".to_string(),
-            label: "workspace_context".to_string(),
-            order: 50,
-            strategy: MergeStrategy::Append,
-            scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:core".to_string(),
-            content: format!(
-                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
-                workspace.id,
-                workspace.identity_kind,
-                trim_or_dash(&workspace.name),
-                binding_summary,
-                workspace.status,
-            ),
-        });
+        fragments.push(workspace_context_fragment(
+            workspace,
+            WorkspaceFragmentMode::Task,
+        ));
     }
 
     Contribution::fragments_only(fragments)

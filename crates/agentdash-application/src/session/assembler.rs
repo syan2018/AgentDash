@@ -741,11 +741,13 @@ pub enum OwnerPromptLifecycle {
 }
 
 /// Owner 级 session 的上下文 Contribution 组装 —— Story 与 Project 各走自己的 contribute_*。
+///
+/// 不再内联 SessionPlan / VFS / MCP 这些"运行时画像"字段 —— 调用方在外层
+/// （`compose_owner_bootstrap`）显式 push SessionPlan contribution，保证三条
+/// compose 路径（owner / story_step / lifecycle_node）的 SessionPlan 产出
+/// 节拍一致（PR 5b）。
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
-    vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
-    effective_agent_type: &str,
     workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
     workspace_source_warnings: Vec<String>,
 ) -> Contribution {
@@ -758,9 +760,6 @@ fn build_owner_context_contribution(
             story,
             project,
             workspace: *workspace,
-            vfs,
-            mcp_servers,
-            effective_agent_type: Some(effective_agent_type),
             workspace_source_fragments,
             workspace_source_warnings,
         }),
@@ -773,13 +772,71 @@ fn build_owner_context_contribution(
         } => contribute_project_context(ProjectContextBuildInput {
             project,
             workspace: workspace.as_deref(),
-            vfs,
-            mcp_servers,
-            effective_agent_type: Some(effective_agent_type),
             preset_name: preset_name.as_deref(),
             agent_display_name,
         }),
     }
+}
+
+/// Owner 路径的 SessionPlan contribution 构建（外挂到 compose_owner_bootstrap 顶层）。
+///
+/// PR 5b 把 SessionPlan fragments 从 `contribute_story_context` / `contribute_project_context`
+/// 内部迁出到此函数，与 task 路径（`compose_story_step` 内部 push）保持一致的外挂节拍。
+fn build_owner_session_plan_contribution(
+    owner: &OwnerScope<'_>,
+    vfs: Option<&Vfs>,
+    mcp_servers: &[RuntimeMcpServer],
+    effective_agent_type: &str,
+) -> Contribution {
+    use crate::session::plan::{
+        SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
+        resolve_story_session_composition,
+    };
+    let (plan_phase, owner_ctx, session_composition, preset_name, workspace_attached) = match owner
+    {
+        OwnerScope::Story {
+            story,
+            project,
+            workspace,
+        } => (
+            SessionPlanPhase::StoryOwner,
+            agentdash_domain::session_binding::SessionOwnerCtx::Story {
+                project_id: project.id,
+                story_id: story.id,
+            },
+            resolve_story_session_composition(Some(*story)),
+            None,
+            workspace.is_some(),
+        ),
+        OwnerScope::Project {
+            project,
+            workspace,
+            preset_name,
+            ..
+        } => (
+            SessionPlanPhase::ProjectAgent,
+            agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                project_id: project.id,
+            },
+            None,
+            preset_name.as_deref(),
+            workspace.is_some(),
+        ),
+    };
+
+    let plan = build_session_plan_fragments(SessionPlanInput {
+        owner_ctx,
+        phase: plan_phase,
+        vfs,
+        mcp_servers,
+        session_composition: session_composition.as_ref(),
+        agent_type: Some(effective_agent_type),
+        preset_name,
+        has_custom_prompt_template: false,
+        has_initial_context: false,
+        workspace_attached,
+    });
+    Contribution::fragments_only(plan.fragments)
 }
 
 /// Owner bootstrap 场景下把 `ContextBuildPhase` 映射到 Session 级的 phase 标签。
@@ -936,16 +993,21 @@ impl<'a> SessionRequestAssembler<'a> {
             OwnerScope::Project { .. } => (Vec::new(), Vec::new()),
         };
 
-        let owner_contribution = build_owner_context_contribution(
+        let owner_contribution =
+            build_owner_context_contribution(&spec.owner, workspace_fragments, workspace_warnings);
+
+        // ── 5b. SessionPlan fragments（外挂） ──
+        //
+        // PR 5b 起 SessionPlan 统一由 compose_* 外层显式产出，不再内置于
+        // contribute_story_context / contribute_project_context。
+        let session_plan_contribution = build_owner_session_plan_contribution(
             &spec.owner,
             runtime_vfs.as_ref(),
             &runtime_mcp_servers,
             spec.executor_config.executor.as_str(),
-            workspace_fragments,
-            workspace_warnings,
         );
 
-        // ── 5b. 聚合 Contribution → Bundle ──
+        // ── 5c. 聚合 Contribution → Bundle ──
         let bundle_session_id = Uuid::new_v4();
         let bundle_phase = owner_scope_phase(&spec.owner);
         let context_bundle = build_session_context_bundle(
@@ -954,7 +1016,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 phase: bundle_phase,
                 default_scope: agentdash_spi::ContextFragment::default_scope(),
             },
-            vec![owner_contribution],
+            vec![owner_contribution, session_plan_contribution],
         );
         self.audit_bundle(
             &context_bundle,
@@ -1384,17 +1446,42 @@ pub async fn compose_lifecycle_node_with_audit(
         platform_config,
     );
 
+    // SessionPlan 在 PR 5b 前 lifecycle node 路径完全不产出，导致 lifecycle agent
+    // 的 bundle 相比 owner / task 路径最薄。此处补上 SessionPlan contribution，
+    // 让 lifecycle node 与其余两路都有 vfs / tools / persona / workflow /
+    // runtime_policy 的统一画像。
+    let lifecycle_mcp_runtime: Vec<RuntimeMcpServer> = activation
+        .mcp_servers
+        .iter()
+        .map(crate::runtime_bridge::acp_mcp_server_to_runtime)
+        .collect();
+    let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
+        crate::session::plan::SessionPlanInput {
+            owner_ctx: SessionOwnerCtx::Project {
+                project_id: spec.run.project_id,
+            },
+            phase: crate::session::plan::SessionPlanPhase::ProjectAgent,
+            vfs: Some(&activation.lifecycle_vfs),
+            mcp_servers: &lifecycle_mcp_runtime,
+            session_composition: None,
+            agent_type: None,
+            preset_name: None,
+            has_custom_prompt_template: false,
+            has_initial_context: false,
+            workspace_attached: true,
+        },
+    );
+
     let context_bundle = build_session_context_bundle(
         SessionContextConfig {
             session_id: Uuid::new_v4(),
             phase: ContextBuildPhase::LifecycleNode,
             default_scope: agentdash_spi::ContextFragment::default_scope(),
         },
-        vec![contribute_lifecycle_context(
-            &spec,
-            &activation,
-            &ready_port_keys,
-        )],
+        vec![
+            contribute_lifecycle_context(&spec, &activation, &ready_port_keys),
+            Contribution::fragments_only(lifecycle_plan.fragments),
+        ],
     );
     if let (Some(bus), Some(session_key)) = (audit_bus.as_ref(), audit_session_key) {
         emit_bundle_fragments(

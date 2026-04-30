@@ -454,7 +454,8 @@ impl RoutineExecutor {
                     .build_continuation_system_context(session_id, None)
                     .await
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
-                let bundle_session_id = Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
+                let bundle_session_id =
+                    Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
                 let prebuilt_continuation_bundle = markdown.map(|md| {
                     crate::context::build_continuation_bundle_from_markdown(bundle_session_id, md)
                 });

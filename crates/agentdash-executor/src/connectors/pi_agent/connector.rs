@@ -1,4 +1,4 @@
-﻿/// PiAgentConnector — 基于 agentdash-agent 的进程内 Agent 连接器
+/// PiAgentConnector — 基于 agentdash-agent 的进程内 Agent 连接器
 ///
 /// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
@@ -195,7 +195,6 @@ impl PiAgentConnector {
 
         Ok(default_bridge)
     }
-
 }
 
 use super::slash_commands::discover_skill_slash_commands;
@@ -552,10 +551,8 @@ impl AgentConnector for PiAgentConnector {
             .iter()
             .map(|tool| tool.name().to_string())
             .collect();
-        let new_names: BTreeSet<String> = tools
-            .iter()
-            .map(|tool| tool.name().to_string())
-            .collect();
+        let new_names: BTreeSet<String> =
+            tools.iter().map(|tool| tool.name().to_string()).collect();
 
         let tool_count = tools.len();
         runtime.tools = tools.clone();
@@ -615,9 +612,7 @@ async fn emit_pending_hook_trace_notifications(
     }
 }
 
-use super::stream_mapper::{
-    ChunkEmitState, ToolCallEmitState, convert_event_to_notifications,
-};
+use super::stream_mapper::{ChunkEmitState, ToolCallEmitState, convert_event_to_notifications};
 
 #[cfg(test)]
 #[path = "connector_tests.rs"]

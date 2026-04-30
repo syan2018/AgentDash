@@ -241,8 +241,7 @@ impl AppState {
                 Some(inline_persister),
                 platform_config.clone(),
             ));
-        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> =
-            backend_registry.clone();
+        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
 
         if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),

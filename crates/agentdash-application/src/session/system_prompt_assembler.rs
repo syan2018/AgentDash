@@ -46,9 +46,7 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
 
     // ── 1. Identity: 四层提示合并 ──
     {
-        let agent_sp = input
-            .agent_system_prompt
-            .filter(|s| !s.trim().is_empty());
+        let agent_sp = input.agent_system_prompt.filter(|s| !s.trim().is_empty());
 
         let mut identity = match (input.agent_system_prompt_mode, agent_sp) {
             (Some(SystemPromptMode::Override), Some(sp)) => sp.to_string(),
@@ -121,10 +119,7 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
             .map(describe_mount)
             .collect::<Vec<_>>()
             .join("\n");
-        let default_mount = vfs
-            .default_mount()
-            .map(|m| m.id.as_str())
-            .unwrap_or("main");
+        let default_mount = vfs.default_mount().map(|m| m.id.as_str()).unwrap_or("main");
         sections.push(format!(
             "## Workspace\n\n当前会话可访问的 VFS 挂载如下：\n\n{mount_lines}\n\n默认 mount：`{default_mount}`"
         ));
@@ -179,8 +174,7 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
                     .collect::<Vec<_>>()
                     .join("\n");
                 tool_section.push_str("### MCP Tools\n\n");
-                tool_section
-                    .push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
+                tool_section.push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
                 tool_section.push_str(&lines);
                 tool_section.push_str("\n\n");
             }
@@ -368,9 +362,7 @@ fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn build_hook_runtime_sections(
-    hook_session: &dyn HookSessionRuntimeAccess,
-) -> Vec<String> {
+fn build_hook_runtime_sections(hook_session: &dyn HookSessionRuntimeAccess) -> Vec<String> {
     let mut sections = vec![
         "当前会话启用了 Hook Runtime。active workflow、流程约束、stop gate 与 pending action 等动态治理信息，会在每次 LLM 调用边界由 runtime 注入；这里不再重复展开它们的静态副本。".to_string(),
     ];

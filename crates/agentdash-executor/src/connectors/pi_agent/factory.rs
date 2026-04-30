@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::LlmProviderRepository;
 
-use super::connector::PiAgentConnector;
 use super::bridges::provider_registry::build_provider_entries_from_db;
+use super::connector::PiAgentConnector;
 
 pub struct NoopBridge;
 
@@ -34,9 +34,7 @@ pub async fn build_pi_agent_connector(
     let system_prompt = read_setting_str(settings, "agent.pi.base_system_prompt")
         .await
         .or_else(|| std::env::var("PI_AGENT_SYSTEM_PROMPT").ok())
-        .unwrap_or_else(|| {
-            super::system_prompt::DEFAULT_SYSTEM_PROMPT.to_string()
-        });
+        .unwrap_or_else(|| super::system_prompt::DEFAULT_SYSTEM_PROMPT.to_string());
 
     let user_preferences = read_user_preferences(settings).await;
 

@@ -78,4 +78,3 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
 
     Contribution::fragments_only(fragments)
 }
-

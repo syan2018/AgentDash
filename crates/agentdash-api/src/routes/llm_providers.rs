@@ -376,12 +376,16 @@ pub async fn probe_models(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<ProbeModelsRequest>,
-) -> Result<Json<Vec<agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::ProbeModelResult>>, ApiError> {
+) -> Result<
+    Json<
+        Vec<agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::ProbeModelResult>,
+    >,
+    ApiError,
+> {
     require_system_access(&current_user)?;
 
-    let protocol = WireProtocol::from_str(&req.protocol).ok_or_else(|| {
-        ApiError::BadRequest(format!("无效的 protocol: {}", req.protocol))
-    })?;
+    let protocol = WireProtocol::from_str(&req.protocol)
+        .ok_or_else(|| ApiError::BadRequest(format!("无效的 protocol: {}", req.protocol)))?;
 
     let api_key = resolve_probe_api_key(&req, &state).await;
 

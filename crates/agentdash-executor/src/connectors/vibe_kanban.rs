@@ -24,8 +24,7 @@ use executors::{
 use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload,
-    workspace_path_from_context,
+    ExecutionContext, ExecutionStream, PromptPayload, workspace_path_from_context,
 };
 
 pub struct VibeKanbanExecutorsConnector {

@@ -34,9 +34,7 @@ impl SseParser {
             let Some(line_end) = self.find_line_end() else {
                 break;
             };
-            let line = self.buffer[..line_end]
-                .trim_end_matches('\r')
-                .to_string();
+            let line = self.buffer[..line_end].trim_end_matches('\r').to_string();
             let skip = if self.buffer.as_bytes().get(line_end) == Some(&b'\r')
                 && self.buffer.as_bytes().get(line_end + 1) == Some(&b'\n')
             {
@@ -62,8 +60,7 @@ impl SseParser {
             if let Some(val) = line.strip_prefix("event:") {
                 self.current_event = Some(strip_leading_space(val).to_string());
             } else if let Some(val) = line.strip_prefix("data:") {
-                self.data_lines
-                    .push(strip_leading_space(val).to_string());
+                self.data_lines.push(strip_leading_space(val).to_string());
             }
             // id: / retry: 等字段目前无需处理
         }

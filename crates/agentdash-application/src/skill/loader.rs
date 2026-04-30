@@ -148,10 +148,7 @@ pub async fn load_skills_from_vfs(service: &RelayVfsService, vfs: &Vfs) -> LoadS
         if let Some(existing) = name_map.get(&name) {
             result.diagnostics.push(SkillDiagnostic {
                 name: name.clone(),
-                message: format!(
-                    "skill \"{}\" 与 {} 冲突，忽略 {}",
-                    name, existing, key
-                ),
+                message: format!("skill \"{}\" 与 {} 冲突，忽略 {}", name, existing, key),
                 file_path: PathBuf::from(&key),
             });
         } else {

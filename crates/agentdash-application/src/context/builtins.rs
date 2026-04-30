@@ -7,8 +7,8 @@ use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 use super::resolve_declared_sources;
 use serde_json::{Value, json};
 
-use super::builder::TaskExecutionPhase;
 use super::Contribution;
+use super::builder::TaskExecutionPhase;
 
 // ─── 文本工具 ────────────────────────────────────────────────
 
@@ -81,7 +81,6 @@ pub fn build_owner_context_resource_block(uri: &str, markdown: &str) -> Value {
         }
     })
 }
-
 
 // ─── 指令模板 ────────────────────────────────────────────────
 
@@ -207,11 +206,7 @@ pub fn contribute_core_context(
             "## Project\n- id: {}\n- name: {}\n- default_agent_type: {}",
             project.id,
             trim_or_dash(&project.name),
-            project
-                .config
-                .default_agent_type
-                .as_deref()
-                .unwrap_or("-")
+            project.config.default_agent_type.as_deref().unwrap_or("-")
         ),
     });
 
@@ -342,7 +337,12 @@ pub fn contribute_instruction(
     let workspace_path = ".".to_string();
     let rendered = render_template(
         &template,
-        &template_vars(&task.title, &task.description, &story.title, &workspace_path),
+        &template_vars(
+            &task.title,
+            &task.description,
+            &story.title,
+            &workspace_path,
+        ),
     );
 
     let mut fragments = Vec::new();
@@ -398,4 +398,3 @@ pub fn contribute_mcp(config: &agentdash_mcp::injection::McpInjectionConfig) -> 
         mcp_servers: vec![runtime_server],
     }
 }
-

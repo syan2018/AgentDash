@@ -130,4 +130,3 @@ pub fn contribute_story_context(input: StoryContextBuildInput<'_>) -> Contributi
 
     Contribution::fragments_only(fragments)
 }
-

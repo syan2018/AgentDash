@@ -81,16 +81,14 @@ pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[
     },
 ];
 
-pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[
-    MountFileDiscoveryRule {
-        key: "skill_md",
-        file_names: &["SKILL.md"],
-        scan_root: false,
-        scan_children: false,
-        scan_prefixes: &[".agents/skills", "skills"],
-        max_size_bytes: 64 * 1024,
-    },
-];
+pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscoveryRule {
+    key: "skill_md",
+    file_names: &["SKILL.md"],
+    scan_root: false,
+    scan_children: false,
+    scan_prefixes: &[".agents/skills", "skills"],
+    max_size_bytes: 64 * 1024,
+}];
 
 // ─── 公共 API ─────────────────────────────────────────────────
 
@@ -120,15 +118,7 @@ pub async fn discover_mount_files(
             // 根目录扫描
             if rule.scan_root {
                 for file_name in rule.file_names {
-                    try_read_file(
-                        service,
-                        vfs,
-                        &mount.id,
-                        file_name,
-                        rule,
-                        &mut result,
-                    )
-                    .await;
+                    try_read_file(service, vfs, &mount.id, file_name, rule, &mut result).await;
                 }
             }
 
@@ -138,15 +128,7 @@ pub async fn discover_mount_files(
                 for child_dir in &children {
                     for file_name in rule.file_names {
                         let path = format!("{child_dir}/{file_name}");
-                        try_read_file(
-                            service,
-                            vfs,
-                            &mount.id,
-                            &path,
-                            rule,
-                            &mut result,
-                        )
-                        .await;
+                        try_read_file(service, vfs, &mount.id, &path, rule, &mut result).await;
                     }
                 }
             }
@@ -158,15 +140,7 @@ pub async fn discover_mount_files(
                     for child_dir in &children {
                         for file_name in rule.file_names {
                             let path = format!("{child_dir}/{file_name}");
-                            try_read_file(
-                                service,
-                                vfs,
-                                &mount.id,
-                                &path,
-                                rule,
-                                &mut result,
-                            )
-                            .await;
+                            try_read_file(service, vfs, &mount.id, &path, rule, &mut result).await;
                         }
                     }
                 }
@@ -256,11 +230,7 @@ async fn list_children_at(
 }
 
 /// 列出 mount 根目录下的一级子目录名。
-async fn list_root_children(
-    service: &RelayVfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-) -> Vec<String> {
+async fn list_root_children(service: &RelayVfsService, vfs: &Vfs, mount_id: &str) -> Vec<String> {
     let list_result = service
         .list(
             vfs,

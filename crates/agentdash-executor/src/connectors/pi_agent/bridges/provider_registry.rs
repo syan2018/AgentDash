@@ -337,11 +337,8 @@ fn build_bridge_factory_by_protocol(
         WireProtocol::Anthropic => {
             let base = base_url;
             Arc::new(move |model_id: &str| {
-                Arc::new(AnthropicBridge::new(
-                    &api_key,
-                    model_id,
-                    base.as_deref(),
-                )) as Arc<dyn LlmBridge>
+                Arc::new(AnthropicBridge::new(&api_key, model_id, base.as_deref()))
+                    as Arc<dyn LlmBridge>
             })
         }
         WireProtocol::Gemini => {
@@ -631,10 +628,7 @@ fn is_known_non_reasoning(model_id: &str) -> bool {
 }
 
 fn infer_context_window(model_id: &str) -> u64 {
-    if model_id.contains("gemini")
-        || model_id.contains("opus")
-        || model_id.contains("sonnet")
-    {
+    if model_id.contains("gemini") || model_id.contains("opus") || model_id.contains("sonnet") {
         return CONTEXT_WINDOW_1M;
     }
 

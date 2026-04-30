@@ -317,9 +317,8 @@ async fn process_chunk_event(
     state: &mut StreamState,
     tx: &tokio::sync::mpsc::Sender<StreamChunk>,
 ) -> Result<(), BridgeError> {
-    let chunk: serde_json::Value = serde_json::from_str(data).map_err(|e| {
-        BridgeError::CompletionFailed(format!("JSON 解析失败: {e}\nraw: {data}"))
-    })?;
+    let chunk: serde_json::Value = serde_json::from_str(data)
+        .map_err(|e| BridgeError::CompletionFailed(format!("JSON 解析失败: {e}\nraw: {data}")))?;
 
     if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
         if let Some(input) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {

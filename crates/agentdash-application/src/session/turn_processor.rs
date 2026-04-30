@@ -182,8 +182,8 @@ impl SessionTurnProcessor {
             }
         }
 
-        // Hook auto-resume 逻辑
-        const MAX_HOOK_AUTO_RESUMES: u32 = 2;
+        // Hook auto-resume 请求检测：processor 只判断"是否需要 auto-resume"，
+        // 限流（计数 + 上限）由 `hub.request_hook_auto_resume` 统一决定。
         let should_auto_resume = matches!(terminal_kind, TurnTerminalKind::Completed)
             && hook_session.as_ref().is_some_and(|hs| {
                 let trace = hs.trace();
@@ -194,22 +194,14 @@ impl SessionTurnProcessor {
                     .is_some_and(|t| t.decision == "continue")
             });
 
-        let can_auto_resume = should_auto_resume && {
-            let guard = sessions.lock().await;
-            guard
-                .get(&session_id)
-                .is_some_and(|rt| rt.hook_auto_resume_count < MAX_HOOK_AUTO_RESUMES)
-        };
-
-        // 清理 running 状态 — 整个 current_turn 一起退位
+        // 清理 running 状态 — 整个 current_turn 一起退位。
+        // 注意：auto-resume 计数不再在这里递增，交给 `request_hook_auto_resume`
+        // 在"确认可以续跑"的临界区内与 cap check 一起原子处理。
         {
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
                 runtime.running = false;
                 runtime.current_turn = None;
-                if can_auto_resume {
-                    runtime.hook_auto_resume_count += 1;
-                }
             }
         }
 
@@ -222,12 +214,8 @@ impl SessionTurnProcessor {
             }
         }
 
-        if can_auto_resume {
-            tracing::info!(
-                session_id = %session_id,
-                "Hook auto-resume: stop gate unsatisfied, scheduling retry"
-            );
-            hub.schedule_hook_auto_resume(session_id);
+        if should_auto_resume {
+            hub.request_hook_auto_resume(session_id).await;
         }
     }
 

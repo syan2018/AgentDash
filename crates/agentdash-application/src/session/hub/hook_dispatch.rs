@@ -207,6 +207,46 @@ impl SessionHub {
         Ok(runtime.hook_session.clone())
     }
 
+    /// Processor 请求的 auto-resume 入口。
+    ///
+    /// PR 7c：把原先散落在 `turn_processor` 里的"计数检查 + 递增 + schedule"
+    /// 三件事统一在这里处理。processor 只需发出"需要续跑"的信号，限流在 hub
+    /// 侧完成，便于未来加全局限流 / per-executor 配额等策略。
+    ///
+    /// 返回值仅用于单测断言；业务路径 fire-and-forget。
+    pub(in crate::session) async fn request_hook_auto_resume(&self, session_id: String) -> bool {
+        const MAX_HOOK_AUTO_RESUMES: u32 = 2;
+
+        // 原子：读取当前计数 + 若未超限则递增。
+        let decision = {
+            let mut guard = self.sessions.lock().await;
+            let Some(runtime) = guard.get_mut(&session_id) else {
+                return false;
+            };
+            if runtime.hook_auto_resume_count >= MAX_HOOK_AUTO_RESUMES {
+                false
+            } else {
+                runtime.hook_auto_resume_count += 1;
+                true
+            }
+        };
+
+        if decision {
+            tracing::info!(
+                session_id = %session_id,
+                "Hook auto-resume: stop gate unsatisfied, scheduling retry"
+            );
+            self.schedule_hook_auto_resume(session_id);
+        } else {
+            tracing::warn!(
+                session_id = %session_id,
+                max = MAX_HOOK_AUTO_RESUMES,
+                "Hook auto-resume: 达到上限，放弃续跑"
+            );
+        }
+        decision
+    }
+
     /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.
     /// Uses fire-and-forget to avoid awaiting `start_prompt` directly inside
     /// the stream-processing spawn block (whose Future is not Send).

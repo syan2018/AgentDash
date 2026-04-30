@@ -117,10 +117,13 @@ impl SessionHub {
         // - owner 首轮 bootstrap：总是重新 load snapshot，并触发 SessionStart
         // - 同进程续跑：复用已有 hook_session，只 refresh snapshot
         // - 冷启动恢复：若内存里没有 runtime，则重建 snapshot，但不触发 SessionStart
+        //
+        // PR 7c：`SessionRuntime.hook_session` 由 `reload_session_hook_runtime`
+        // 单点写入；prompt_pipeline happy path 只读不回写。
         let hook_session: Option<SharedHookSessionRuntime> =
             if is_owner_bootstrap || existing_hook_session.is_none() {
                 match self
-                    .load_session_hook_runtime(
+                    .reload_session_hook_runtime(
                         session_id,
                         &turn_id,
                         executor_config.executor.as_str(),
@@ -152,13 +155,6 @@ impl SessionHub {
                 }
                 existing_hook_session
             };
-
-        {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.hook_session = hook_session.clone();
-            }
-        }
 
         // 把 hook snapshot 里的 injection 合并到 Bundle 的 bootstrap_fragments —
         // 这是 PR 4（04-30-session-pipeline-architecture-refactor）的核心动作：
@@ -569,7 +565,12 @@ impl SessionHub {
         Ok(turn_id)
     }
 
-    pub async fn load_session_hook_runtime(
+    /// 重载 session hook runtime 并写入 `SessionRuntime.hook_session` 单一权威字段。
+    ///
+    /// PR 7c：只有本函数（owner bootstrap 入口）以及 `ensure_hook_session_runtime`
+    /// （冷启动恢复入口）可以写 `SessionRuntime.hook_session`；其他调用方（包括
+    /// `start_prompt_with_follow_up` 自己的 happy path）只读取不回写。
+    pub async fn reload_session_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
@@ -578,6 +579,11 @@ impl SessionHub {
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
+            // 无 hook provider 场景下清空 runtime 记录，保证"单一权威"不滞留旧值。
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.hook_session = None;
+            }
             return Ok(None);
         };
 
@@ -599,11 +605,21 @@ impl SessionHub {
             working_directory,
         );
 
-        Ok(Some(Arc::new(HookSessionRuntime::new(
+        let runtime = Arc::new(HookSessionRuntime::new(
             session_id.to_string(),
             provider.clone(),
             snapshot,
-        ))))
+        ));
+
+        // 写回 SessionRuntime.hook_session —— 单一权威字段仅在此处写入。
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session_runtime) = sessions.get_mut(session_id) {
+                session_runtime.hook_session = Some(runtime.clone());
+            }
+        }
+
+        Ok(Some(runtime))
     }
 }
 

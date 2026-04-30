@@ -1722,3 +1722,75 @@ async fn auto_resume_prompt_does_not_induce_recap() {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// PR 7c · auto-resume 限流在 hub 侧
+//
+// 锁定契约：turn_processor 只发"请求 auto-resume"信号，
+// 计数 + 上限判定在 `hub.request_hook_auto_resume` 原子区内完成。
+// MAX_HOOK_AUTO_RESUMES = 2 → 前两次允许，第三次起拒绝。
+// ─────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn request_hook_auto_resume_enforces_cap() {
+    use tokio::sync::broadcast;
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub.create_session("auto-resume-cap").await.expect("create");
+
+    // 手工注入 SessionRuntime（create_session 只建 meta），模拟 turn 已经起过后
+    // processor 发起 auto-resume 的场景。
+    {
+        let mut sessions = hub.sessions.lock().await;
+        let (tx, _rx) = broadcast::channel(16);
+        sessions.insert(
+            session.id.clone(),
+            super::super::hub_support::build_session_runtime(tx),
+        );
+    }
+
+    // 第 1 次：允许，计数 0 → 1
+    assert!(
+        hub.request_hook_auto_resume(session.id.clone()).await,
+        "首次 auto-resume 应被允许"
+    );
+    // 第 2 次：允许，计数 1 → 2
+    assert!(
+        hub.request_hook_auto_resume(session.id.clone()).await,
+        "第二次 auto-resume 应被允许"
+    );
+    // 第 3 次：计数已到上限 2，拒绝
+    assert!(
+        !hub.request_hook_auto_resume(session.id.clone()).await,
+        "达到上限后第三次 auto-resume 应被拒绝"
+    );
+    // 第 4 次：继续拒绝，不应递增
+    assert!(
+        !hub.request_hook_auto_resume(session.id.clone()).await,
+        "超过上限后应持续拒绝"
+    );
+
+    // 验证计数确实停在上限而不是溢出
+    let sessions = hub.sessions.lock().await;
+    let runtime = sessions
+        .get(&session.id)
+        .expect("session runtime should exist");
+    assert_eq!(
+        runtime.hook_auto_resume_count, 2,
+        "hook_auto_resume_count 应停在 MAX_HOOK_AUTO_RESUMES (2)"
+    );
+}
+
+#[tokio::test]
+async fn request_hook_auto_resume_returns_false_for_unknown_session() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+
+    // 完全不存在的 session_id
+    assert!(
+        !hub.request_hook_auto_resume("nonexistent".to_string())
+            .await,
+        "未知 session 应返回 false（防止 schedule 僵尸 auto-resume）"
+    );
+}

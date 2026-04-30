@@ -1572,3 +1572,108 @@ PR 1 其他目标（ExecutionContext split 等）属于 PR 2-7。
 
 用户暂停要求 compact 上下文后，PR 2 起建议开新 conversation 继续，避免 context pollution。
 
+---
+
+## 2026-04-30 (续) · PR 2 完成：ExecutionContext 拆 SessionFrame/TurnFrame
+
+### 分支改名
+
+compact 后开工第一件事：把 `refactor/session-pipeline-pr1` → `refactor/session-pipeline`
+（用户要求所有 PR 都在同一分支内完成，单 PR 名字太窄）。分支是本地未推的，
+`git branch -m` 即可。
+
+### PR 2 改动
+
+**commit `76d67fc`** · 13 文件 / +190 / -152
+
+**SPI 层（agentdash-spi/src/connector.rs）**：
+
+- 新增 `ExecutionSessionFrame` — Who + Where 不可变视图：
+  `turn_id / working_directory / environment_variables / executor_config /
+   mcp_servers / vfs / identity`
+- 新增 `ExecutionTurnFrame` — How + 运行时控制面 per-turn 动态：
+  `hook_session / flow_capabilities / runtime_delegate / restored_session_state /
+   assembled_system_prompt / assembled_tools`（派生 `Default` 以支持
+   `..Default::default()` 语法）
+- `ExecutionContext` 只剩两个字段：`{ session: ExecutionSessionFrame,
+   turn: ExecutionTurnFrame }` → **Invariant I2 达成**
+- `impl Debug for ExecutionContext` 内部访问路径更新
+- `workspace_path_from_context` 读 `context.session.vfs`
+- `lib.rs` re-export `ExecutionSessionFrame` / `ExecutionTurnFrame`
+
+**hub_support.rs（session/ActiveSessionExecutionState 瘦身）**：
+
+- 持 `session_frame: ExecutionSessionFrame` 取代原 6 个扁平字段
+  （mcp_servers / vfs / working_directory / executor_config / identity / turn_id）
+- `relay_mcp_server_names` + `flow_capabilities` 保留为 peer 字段
+  （MCP 热更新路径需要）
+- **删除 `effective_capability_keys` 字段** — E5 决策落地；field 是 `#[allow(dead_code)]`
+  从未被读，req 级字段还在（prompt_pipeline 构造 `initial_caps` 用）
+- 清理未用 import：`BTreeSet / HashMap / McpServer / Meta / PathBuf / AgentConfig /
+  Vfs / AuthIdentity / ContentBlock`
+
+**prompt_pipeline.rs**：
+
+- 把 `ExecutionContext { ...13字段... }` 拆成 `session_frame` + `turn_frame`
+  两次构造再合并
+- `ActiveSessionExecutionState { ... }` 构造改成 `session_frame: context.session.clone()`
+- 所有 `context.x` 读取改为 `context.session.x` / `context.turn.x`
+
+**hub.rs（`replace_runtime_mcp_servers` ghost 清理）**：
+
+- 不再手拼 13 字段 ExecutionContext 字面量
+- 基于 `active.session_frame.clone()`（覆盖 `turn_id` + `mcp_servers`）+
+  `ExecutionTurnFrame { hook_session, flow_capabilities, ..Default::default() }`
+  重建，语义更清晰：**tool 构建只关心 session 环境 + turn.hook_session + flow_caps**，
+  其他运行时字段（runtime_delegate / restored / assembled_*）都不是 tool provider 关心的
+- `get_runtime_mcp_servers` 读 `active.session_frame.mcp_servers`
+- 3 处 hub 测试 assert 更新：`active.session_frame.working_directory /
+  executor_config / mcp_servers`；`context.session.working_directory /
+  executor_config`；`context.turn.restored_session_state`
+- 测试 assertion `active.effective_capability_keys == effective_keys` 删除（字段已删）
+
+**连接器侧**：
+
+- `pi_agent/connector.rs`：5 处 `context.x` 改路径
+  （executor_config → session / assembled_tools/system_prompt/hook_session/
+   runtime_delegate → turn / restored_session_state → turn / turn_id → session）
+- `pi_agent/connector_tests.rs`：2 处 fixture struct-literal 改成嵌套形式
+  `{ session: ExecutionSessionFrame {...}, turn: ExecutionTurnFrame::default() }`
+- `vibe_kanban.rs`：6 处路径适配（assembled_system_prompt / executor_config /
+  environment_variables / working_directory / turn_id）
+- `composite.rs`：1 处 `context.session.executor_config.executor`
+- `relay_connector.rs`：6 处访问路径 + test fixture 改成嵌套结构
+
+**其他 application**：
+
+- `companion/tools.rs`：`CompanionRequestTool::new` + `CompanionRespondTool::new`
+  + `relative_working_dir` 共 3 个点，访问路径分流
+- `workflow/tools/advance_node.rs`：`CompleteLifecycleNodeTool::new` 构造
+- `vfs/tools/provider.rs`：`RelayRuntimeToolProvider::build_tools` + 多处
+  `context.session.vfs / executor_config / identity`，`context.turn.flow_capabilities /
+   hook_session`；`project_id_from_context` 同理
+
+### 测试 / 构建验证
+
+- `cargo build --workspace --lib` 绿（只剩 pre-existing `cleanup_cloned_project` dead_code）
+- `cargo test --workspace --lib`：
+  - application: 279 passed / 0 failed
+  - executor: 53 passed / 0 failed
+  - spi / domain / agent-types / api / companion / executor-composite / 全 crate 全绿
+- 未跑 clippy（改动全是 struct field reshape，无新增 warning 风险；pre-existing
+  warning 不受影响）
+
+### 下一步（PR 3 起）
+
+- **PR 3**: Bundle 进 TurnFrame + PiAgent 读 Bundle + `assembled_system_prompt`
+  标 `#[deprecated]` + `update_session_context_bundle` 可选 trait 方法
+- PR 4: Hook 三类语义分离 + `turn_delta` + 废 `HOOK_USER_MESSAGE_SKIP_SLOTS` +
+  `SessionBootstrapAction` → `HookSnapshotReloadTrigger`
+- PR 5: contribute_* 去重 + companion bundle 裁剪 + continuation markdown 双包清理
+- PR 6: hub.rs 拆子模块（`hub/facade.rs` ≤ 500 行）
+- PR 7: turn_processor 净化 + SessionRuntime per-turn 字段下沉
+- DoD: 3 份 spec + journal 完结
+
+当前分支状态：`refactor/session-pipeline` 领先 main 9 个 commit
+（PR 1 的 8 个 + PR 2 的 `76d67fc`）。
+

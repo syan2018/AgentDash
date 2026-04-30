@@ -99,9 +99,22 @@ pub struct PreparedSessionInputs {
 
 /// 把 `PreparedSessionInputs` 合并进一个 base `PromptSessionRequest`。
 ///
-/// - user_input.prompt_blocks 若 compose 有产出则覆盖,否则保留原值
-/// - vfs 若 compose 有产出则使用,否则用 workspace_defaults 填充
-/// - 其余字段直接覆盖
+/// ## 合并语义（2026-04-30 对称化后）
+///
+/// | 字段 | 策略 |
+/// |---|---|
+/// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
+/// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
+/// | `context_bundle` / `bootstrap_action` / `flow_capabilities` / `effective_capability_keys` | 整体替换为 prepared 值 |
+/// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
+/// | `relay_mcp_server_names` | **整体替换** 为 prepared 值（与 `mcp_servers` 对称） |
+///
+/// **对称化背景**：`mcp_servers` 与 `relay_mcp_server_names` 在 compose 内部都已经把
+/// base 侧透传值合并进去（见 `compose_owner_bootstrap` 中 `effective_mcp_servers` /
+/// `relay_mcp_server_names` 的汇总逻辑）。finalize 阶段 base 里这两个字段实际都是
+/// `PromptSessionRequest::from_user_input` 的 default，统一整体替换既正确又对称。
 pub fn finalize_request(
     base: PromptSessionRequest,
     prepared: PreparedSessionInputs,
@@ -124,16 +137,14 @@ pub fn finalize_request(
     if let Some(wd) = prepared.working_dir {
         req.user_input.working_dir = Some(wd);
     }
-    if req.vfs.is_none() {
-        req.vfs = prepared.vfs;
-    } else if prepared.vfs.is_some() {
-        // base.vfs 已有(前端透传场景)但 compose 也产出了 —— 以 compose 为准
-        // 保证 compose 的 workspace/canvas/lifecycle mount 组合不被覆盖
+    // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
+    // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
+    // mount 组合会覆盖前端透传的 vfs，是刻意为之。
+    if prepared.vfs.is_some() {
         req.vfs = prepared.vfs;
     }
     req.mcp_servers = prepared.mcp_servers;
-    req.relay_mcp_server_names
-        .extend(prepared.relay_mcp_server_names);
+    req.relay_mcp_server_names = prepared.relay_mcp_server_names;
     req.flow_capabilities = prepared.flow_capabilities;
     req.effective_capability_keys = prepared.effective_capability_keys;
     req
@@ -1884,5 +1895,261 @@ mod tests {
         assert!(rendered.contains("交付可验证实现"));
         assert!(rendered.contains("complete_lifecycle_node"));
         assert!(rendered.contains("workflow_management"));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // finalize_request 合并语义回归测试
+    // ═══════════════════════════════════════════════════════════
+    //
+    // 这些测试锁定 `finalize_request` 对称化后的行为（2026-04-30）：
+    // - mcp_servers / relay_mcp_server_names 统一整体替换；
+    // - vfs 语义三分支等价于"prepared 非空则覆盖"；
+    // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
+
+    mod finalize_request_tests {
+        use super::super::*;
+        use crate::session::UserPromptInput;
+        use agent_client_protocol::{McpServer as AcpMcpServer, McpServerHttp};
+        use agentdash_domain::workspace::{
+            Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
+        };
+        use agentdash_spi::Vfs;
+        use std::collections::HashSet;
+
+        fn minimal_workspace() -> Workspace {
+            // 没有 binding 的最小 Workspace —— `build_workspace_vfs` 会失败被 `.ok()`
+            // 吞掉，保证 vfs 保持 None；足够验证 working_dir 默认回填那一支。
+            Workspace::new(
+                uuid::Uuid::nil(),
+                "test-ws".to_string(),
+                WorkspaceIdentityKind::LocalDir,
+                serde_json::json!({}),
+                WorkspaceResolutionPolicy::PreferDefaultBinding,
+            )
+        }
+
+        fn base_req() -> PromptSessionRequest {
+            PromptSessionRequest::from_user_input(UserPromptInput::from_text("ping"))
+        }
+
+        fn http_server(name: &str, url: &str) -> AcpMcpServer {
+            AcpMcpServer::Http(McpServerHttp::new(name.to_string(), url.to_string()))
+        }
+
+        fn server_name(server: &AcpMcpServer) -> Option<&str> {
+            match server {
+                AcpMcpServer::Http(h) => Some(h.name.as_str()),
+                AcpMcpServer::Sse(s) => Some(s.name.as_str()),
+                AcpMcpServer::Stdio(s) => Some(s.name.as_str()),
+                _ => None,
+            }
+        }
+
+        #[test]
+        fn mcp_servers_prepared_overrides_base() {
+            // base 和 prepared 都有值时，prepared 整体替换 base —— compose 内部已汇总。
+            let mut base = base_req();
+            base.mcp_servers = vec![http_server("base_only", "http://base")];
+
+            let prepared = PreparedSessionInputs {
+                mcp_servers: vec![
+                    http_server("compose_a", "http://a"),
+                    http_server("compose_b", "http://b"),
+                ],
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let names: Vec<&str> = result.mcp_servers.iter().filter_map(server_name).collect();
+            assert_eq!(names, vec!["compose_a", "compose_b"]);
+        }
+
+        #[test]
+        fn mcp_servers_prepared_empty_still_replaces() {
+            // 对称化后 prepared 为空时也会整体替换（compose 显式产出空集视为"没有 MCP"）。
+            let mut base = base_req();
+            base.mcp_servers = vec![http_server("base_only", "http://base")];
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(result.mcp_servers.is_empty());
+        }
+
+        #[test]
+        fn relay_mcp_server_names_prepared_overrides_base() {
+            // 对称化关键点：relay_mcp_server_names 不再 extend，而是替换，与 mcp_servers 一致。
+            let mut base = base_req();
+            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
+
+            let prepared = PreparedSessionInputs {
+                relay_mcp_server_names: HashSet::from([
+                    "compose_a".to_string(),
+                    "compose_b".to_string(),
+                ]),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.relay_mcp_server_names,
+                HashSet::from(["compose_a".to_string(), "compose_b".to_string()]),
+                "base 的 relay name 应被 prepared 替换而非叠加"
+            );
+        }
+
+        #[test]
+        fn relay_mcp_server_names_empty_prepared_clears_base() {
+            // 与 mcp_servers 行为对称：空 prepared 也会清空。
+            let mut base = base_req();
+            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(result.relay_mcp_server_names.is_empty());
+        }
+
+        #[test]
+        fn vfs_prepared_some_overrides_base() {
+            // base 已有 vfs、prepared 也有 vfs → 以 prepared 为准（保留 compose 的 mount 组合）。
+            let mut base = base_req();
+            base.vfs = Some(Vfs {
+                mounts: Vec::new(),
+                default_mount_id: Some("base-mount".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            });
+            let prepared = PreparedSessionInputs {
+                vfs: Some(Vfs {
+                    mounts: Vec::new(),
+                    default_mount_id: Some("prepared-mount".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.vfs.and_then(|v| v.default_mount_id),
+                Some("prepared-mount".to_string()),
+            );
+        }
+
+        #[test]
+        fn vfs_prepared_none_preserves_base() {
+            // base 有 vfs、prepared 没有 → 保留 base（不强制清空）。
+            let mut base = base_req();
+            base.vfs = Some(Vfs {
+                mounts: Vec::new(),
+                default_mount_id: Some("base-mount".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            });
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.vfs.and_then(|v| v.default_mount_id),
+                Some("base-mount".to_string()),
+            );
+        }
+
+        #[test]
+        fn workspace_defaults_fills_working_dir_when_absent() {
+            // base 与 prepared 都无 working_dir，workspace_defaults 非空 → 回填 "."。
+            // （vfs 由于 minimal workspace 没 binding 会保持 None，不是本测试关注点。）
+            let base = base_req();
+            let prepared = PreparedSessionInputs {
+                workspace_defaults: Some(minimal_workspace()),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(result.user_input.working_dir.as_deref(), Some("."));
+        }
+
+        #[test]
+        fn prepared_working_dir_overrides_workspace_default() {
+            // prepared.working_dir = Some(X) 覆盖 apply_workspace_defaults 回填的 "."。
+            let base = base_req();
+            let prepared = PreparedSessionInputs {
+                workspace_defaults: Some(minimal_workspace()),
+                working_dir: Some("packages/foo".to_string()),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.user_input.working_dir.as_deref(),
+                Some("packages/foo"),
+                "prepared.working_dir 应覆盖 workspace default 的 \".\""
+            );
+        }
+
+        #[test]
+        fn prompt_blocks_prepared_overrides_base() {
+            let mut base = base_req();
+            base.user_input.prompt_blocks =
+                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            let prepared = PreparedSessionInputs {
+                prompt_blocks: Some(vec![
+                    serde_json::json!({ "type": "text", "text": "compose" }),
+                ]),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let texts: Vec<&str> = result
+                .user_input
+                .prompt_blocks
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .collect();
+            assert_eq!(texts, vec!["compose"]);
+        }
+
+        #[test]
+        fn prompt_blocks_prepared_none_preserves_base() {
+            let mut base = base_req();
+            base.user_input.prompt_blocks =
+                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            let texts: Vec<&str> = result
+                .user_input
+                .prompt_blocks
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .collect();
+            assert_eq!(texts, vec!["base"]);
+        }
+
+        #[test]
+        fn context_bundle_prepared_overrides_base() {
+            // Bundle 为 Option 整体替换语义：prepared = None 也会清掉 base。
+            use agentdash_spi::SessionContextBundle;
+
+            let mut base = base_req();
+            base.context_bundle = Some(SessionContextBundle::new(
+                uuid::Uuid::new_v4(),
+                "test-base",
+            ));
+            // prepared 为 None 时整体替换：base bundle 被清除
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(
+                result.context_bundle.is_none(),
+                "context_bundle 为整体替换字段，prepared=None 会清除 base"
+            );
+        }
     }
 }

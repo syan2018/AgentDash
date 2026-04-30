@@ -1,9 +1,7 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
 use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallStatus, ToolKind};
-use agentdash_agent::{
-    AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason,
-};
+use agentdash_agent::{AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};
@@ -47,8 +45,7 @@ impl LlmBridge for RecordingBridge {
     async fn stream_complete(
         &self,
         request: agentdash_agent::BridgeRequest,
-    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>>
-    {
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>> {
         self.requests
             .lock()
             .expect("recording bridge lock poisoned")
@@ -62,7 +59,6 @@ impl LlmBridge for RecordingBridge {
         )))
     }
 }
-
 
 struct StaticTool {
     name: String,
@@ -144,11 +140,7 @@ impl SettingsRepository for TestSettingsRepository {
         Ok(entries)
     }
 
-    async fn get(
-        &self,
-        scope: &SettingScope,
-        key: &str,
-    ) -> Result<Option<Setting>, DomainError> {
+    async fn get(&self, scope: &SettingScope, key: &str) -> Result<Option<Setting>, DomainError> {
         let value = self
             .entries
             .read()
@@ -527,8 +519,7 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
             tool_call_id: "tool-fs-apply-patch-1".to_string(),
             name: "fs_apply_patch".to_string(),
             delta: "\"hello".to_string(),
-            draft: "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello"
-                .to_string(),
+            draft: "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello".to_string(),
             is_parseable: false,
         },
     };
@@ -1133,8 +1124,7 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
         serde_json::Value::Null
     );
 
-    let mut provider =
-        LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
     provider.api_key = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
@@ -1157,8 +1147,7 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
     let settings_repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = Arc::new(TestLlmProviderRepository::default());
 
-    let mut provider =
-        LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
     provider.api_key = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
@@ -1210,6 +1199,7 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
                 working_directory: PathBuf::from("/tmp/test-workspace"),
                 environment_variables: HashMap::new(),
                 executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
                 hook_session: None,
                 flow_capabilities: Default::default(),
@@ -1246,6 +1236,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                 working_directory: PathBuf::from("/tmp/test-workspace"),
                 environment_variables: HashMap::new(),
                 executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
                 hook_session: None,
                 flow_capabilities: Default::default(),

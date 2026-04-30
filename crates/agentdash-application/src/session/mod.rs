@@ -13,6 +13,7 @@ pub mod hook_runtime;
 pub mod hub;
 mod hub_support;
 mod memory_persistence;
+pub(crate) mod path_policy;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;

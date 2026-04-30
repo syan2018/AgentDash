@@ -1,9 +1,10 @@
-use std::io;
+use std::{collections::BTreeSet, collections::HashSet, io, path::PathBuf};
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
+    ContentBlock, ContentChunk, McpServer, Meta, SessionId, SessionInfoUpdate, SessionNotification,
     SessionUpdate,
 };
+use agentdash_spi::{AgentConfig, FlowCapabilities, Vfs, auth::AuthIdentity};
 use tokio::sync::broadcast;
 
 use agentdash_acp_meta::{
@@ -156,7 +157,7 @@ pub(super) fn build_session_runtime(
         current_turn_id: None,
         cancel_requested: false,
         hook_session: None,
-        active_mcp_servers: Vec::new(),
+        active_execution: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
         processor_tx: None,
@@ -169,8 +170,8 @@ pub(super) struct SessionRuntime {
     pub current_turn_id: Option<String>,
     pub cancel_requested: bool,
     pub hook_session: Option<SharedHookSessionRuntime>,
-    /// 当前 session 生效的 MCP server 列表（用于 phase 动态热更新）。
-    pub active_mcp_servers: Vec<agent_client_protocol::McpServer>,
+    /// 当前 session 生效的执行态快照（用于 phase 动态热更新与 follow-up 投影）。
+    pub active_execution: Option<ActiveSessionExecutionState>,
     /// Counter for hook-driven auto-resumes (prevents infinite loops).
     pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
@@ -178,6 +179,20 @@ pub(super) struct SessionRuntime {
     /// 活跃 turn 的事件处理 channel（由 SessionTurnProcessor 持有接收端）。
     /// relay 和 cloud-native 路径共用此通道发送 turn 事件。
     pub processor_tx: Option<tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>>,
+}
+
+#[derive(Clone)]
+pub(super) struct ActiveSessionExecutionState {
+    pub mcp_servers: Vec<McpServer>,
+    pub relay_mcp_server_names: HashSet<String>,
+    pub vfs: Vfs,
+    pub working_directory: PathBuf,
+    pub executor_config: AgentConfig,
+    pub flow_capabilities: FlowCapabilities,
+    /// 保留本轮生效 capability keys，供后续 runtime/inspector 投影使用。
+    #[allow(dead_code)]
+    pub effective_capability_keys: BTreeSet<String>,
+    pub identity: Option<AuthIdentity>,
 }
 
 pub struct SessionEventSubscription {

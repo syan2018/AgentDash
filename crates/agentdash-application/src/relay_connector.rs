@@ -23,29 +23,11 @@ use crate::backend_transport::{
 
 pub struct RelayAgentConnector {
     transport: Arc<dyn RelayPromptTransport>,
-    session_mcp: tokio::sync::Mutex<
-        std::collections::HashMap<String, Vec<agent_client_protocol::McpServer>>,
-    >,
 }
 
 impl RelayAgentConnector {
     pub fn new(transport: Arc<dyn RelayPromptTransport>) -> Self {
-        Self {
-            transport,
-            session_mcp: Default::default(),
-        }
-    }
-
-    /// 缓存指定 session 的 MCP server 声明，供 `prompt()` 转发给远端。
-    pub async fn set_session_mcp_servers(
-        &self,
-        session_id: &str,
-        servers: Vec<agent_client_protocol::McpServer>,
-    ) {
-        self.session_mcp
-            .lock()
-            .await
-            .insert(session_id.to_string(), servers);
+        Self { transport }
     }
 }
 
@@ -151,25 +133,21 @@ impl AgentConnector for RelayAgentConnector {
             permission_policy: executor_config.permission_policy.clone(),
         };
 
-        let cached_mcp = self
-            .session_mcp
-            .lock()
-            .await
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-
         let payload = RelayPromptRequest {
             session_id: session_id.to_string(),
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
             prompt_blocks,
             mount_root_ref: mount_root_ref.to_string(),
-            working_dir: relative_working_dir_string(&context.working_directory, mount_root_ref),
+            working_dir: crate::session::path_policy::to_relative_working_dir(
+                &context.working_directory,
+                mount_root_ref,
+            ),
             env: context.environment_variables,
             executor_config: Some(relay_config),
-            mcp_servers: cached_mcp
+            mcp_servers: context
+                .mcp_servers
                 .iter()
-                .filter_map(|s| serde_json::to_value(s).ok())
+                .filter_map(|server| serde_json::to_value(server).ok())
                 .collect(),
         };
 
@@ -254,33 +232,6 @@ impl AgentConnector for RelayAgentConnector {
     }
 }
 
-fn relative_working_dir_string(
-    working_directory: &std::path::Path,
-    mount_root_ref: &str,
-) -> Option<String> {
-    let root = mount_root_ref
-        .trim()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_string();
-    if root.is_empty() {
-        return None;
-    }
-    let wd = working_directory
-        .to_string_lossy()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_string();
-
-    if wd == root {
-        return None;
-    }
-    let prefix = format!("{root}/");
-    wd.strip_prefix(&prefix)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-}
-
 /// 对远程执行器列表去重（同一 executor_id 可能被多个后端上报）。
 fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>) -> Vec<AgentInfo> {
     let mut seen = std::collections::HashSet::new();
@@ -330,4 +281,133 @@ fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<Strin
     (unique_backend_ids.len() == 1)
         .then(|| unique_backend_ids.into_iter().next())
         .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use agentdash_spi::{AgentConfig, FlowCapabilities, PromptPayload};
+    use tokio::sync::Mutex;
+
+    #[derive(Default)]
+    struct CaptureTransport {
+        payload: Mutex<Option<RelayPromptRequest>>,
+    }
+
+    #[async_trait]
+    impl crate::backend_transport::BackendTransport for CaptureTransport {
+        async fn is_online(&self, _backend_id: &str) -> bool {
+            true
+        }
+
+        async fn list_online_backend_ids(&self) -> Vec<String> {
+            vec!["backend-1".to_string()]
+        }
+
+        async fn detect_git_repo(
+            &self,
+            _backend_id: &str,
+            _root: &str,
+        ) -> Result<crate::backend_transport::GitRepoInfo, crate::backend_transport::TransportError>
+        {
+            Ok(Default::default())
+        }
+    }
+
+    #[async_trait]
+    impl RelayPromptTransport for CaptureTransport {
+        async fn relay_prompt(
+            &self,
+            _backend_id: &str,
+            payload: RelayPromptRequest,
+        ) -> Result<String, crate::backend_transport::TransportError> {
+            *self.payload.lock().await = Some(payload);
+            Ok("turn-1".to_string())
+        }
+
+        async fn relay_cancel(
+            &self,
+            _backend_id: &str,
+            _session_id: &str,
+        ) -> Result<(), crate::backend_transport::TransportError> {
+            Ok(())
+        }
+
+        async fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
+            Vec::new()
+        }
+
+        async fn resolve_backend(
+            &self,
+            _executor_id: &str,
+            _preferred_backend_id: Option<&str>,
+        ) -> Result<String, crate::backend_transport::TransportError> {
+            Ok("backend-1".to_string())
+        }
+
+        fn register_session_sink(
+            &self,
+            _session_id: &str,
+            _tx: mpsc::UnboundedSender<RelaySessionEvent>,
+        ) {
+        }
+
+        fn unregister_session_sink(&self, _session_id: &str) {}
+
+        fn has_session_sink(&self, _session_id: &str) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_prompt_payload_passes_full_mcp_and_projects_working_dir() {
+        let transport = Arc::new(CaptureTransport::default());
+        let connector = RelayAgentConnector::new(transport.clone());
+        let root = tempfile::tempdir().expect("workspace");
+        let mcp_server = agent_client_protocol::McpServer::Stdio(
+            agent_client_protocol::McpServerStdio::new("third_party_mcp", "cmd"),
+        );
+        let context = ExecutionContext {
+            turn_id: "turn-1".to_string(),
+            working_directory: root.path().join("crates/app"),
+            environment_variables: HashMap::new(),
+            executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
+            mcp_servers: vec![mcp_server],
+            vfs: Some(crate::session::local_workspace_vfs(root.path())),
+            hook_session: None,
+            flow_capabilities: FlowCapabilities::default(),
+            runtime_delegate: None,
+            identity: None,
+            restored_session_state: None,
+            assembled_system_prompt: None,
+            assembled_tools: Vec::new(),
+        };
+
+        let _stream = connector
+            .prompt(
+                "session-1",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                context,
+            )
+            .await
+            .expect("relay prompt should succeed");
+
+        let payload = transport
+            .payload
+            .lock()
+            .await
+            .clone()
+            .expect("payload should be captured");
+        assert_eq!(payload.working_dir.as_deref(), Some("crates/app"));
+        assert_eq!(payload.mcp_servers.len(), 1);
+        assert_eq!(
+            payload.mcp_servers[0]
+                .get("name")
+                .and_then(serde_json::Value::as_str),
+            Some("third_party_mcp")
+        );
+    }
 }

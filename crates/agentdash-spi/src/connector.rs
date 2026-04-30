@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
-    ContentBlock, EmbeddedResourceResource, SessionNotification,
+    ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
 };
 use agentdash_agent_types::AgentMessage;
 use agentdash_domain::common::{AgentConfig, Vfs};
@@ -49,6 +49,12 @@ pub struct ExecutionContext {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
+    /// 本轮完整 MCP 声明。
+    ///
+    /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
+    /// `assembled_tools`。Relay/remote transport connector 可将该结构原样下发给远端
+    /// agent，由远端 agent 自行建联。
+    pub mcp_servers: Vec<McpServer>,
     pub vfs: Option<Vfs>,
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     pub flow_capabilities: FlowCapabilities,
@@ -61,8 +67,10 @@ pub struct ExecutionContext {
     /// Application 层预组装的完整 system prompt。
     /// 当此字段非空时，connector 应直接使用此值，不再自行组装。
     pub assembled_system_prompt: Option<String>,
-    /// Application 层预构建的工具列表（runtime + MCP）。
-    /// 当非空时，connector 的 `prompt()` 直接使用，不再自行发现。
+    /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
+    ///
+    /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
+    /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
 }
 

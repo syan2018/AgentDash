@@ -15,6 +15,7 @@ use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub_support::*;
+use super::path_policy::resolve_working_dir;
 pub use super::types::*;
 
 impl SessionHub {
@@ -154,7 +155,6 @@ impl SessionHub {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.hook_session = hook_session.clone();
-                runtime.active_mcp_servers = req.mcp_servers.clone();
             }
         }
 
@@ -260,55 +260,37 @@ impl SessionHub {
             Vec::new()
         };
 
-        let mcp_servers = req.mcp_servers;
-        let relay_mcp_server_names = req.relay_mcp_server_names;
+        let mcp_servers = req.mcp_servers.clone();
+        let relay_mcp_server_names = req.relay_mcp_server_names.clone();
+        let flow_capabilities = req.flow_capabilities.clone().unwrap_or_default();
+        let effective_capability_keys = req.effective_capability_keys.clone().unwrap_or_default();
+        let identity = req.identity.clone();
 
         let mut context = ExecutionContext {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
+            mcp_servers: mcp_servers.clone(),
             vfs: Some(effective_vfs.clone()),
             hook_session: hook_session.clone(),
-            flow_capabilities: req.flow_capabilities.unwrap_or_default(),
+            flow_capabilities: flow_capabilities.clone(),
             runtime_delegate,
-            identity: req.identity,
+            identity: identity.clone(),
             restored_session_state,
             assembled_system_prompt: None,
             assembled_tools: Vec::new(),
         };
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
-        {
-            let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
-
-            if let Some(provider) = &self.runtime_tool_provider {
-                match provider.build_tools(&context).await {
-                    Ok(tools) => all_tools.extend(tools),
-                    Err(e) => tracing::warn!("runtime tool 构建失败: {e}"),
-                }
-            }
-
-            {
-                let (_, direct_servers) =
-                    partition_mcp_servers(&mcp_servers, &relay_mcp_server_names);
-                match agentdash_executor::mcp::discover_mcp_tools(&direct_servers).await {
-                    Ok(tools) => all_tools.extend(tools),
-                    Err(e) => tracing::warn!("直连 MCP 工具发现失败: {e}"),
-                }
-            }
-
-            if let Some(relay) = &self.mcp_relay_provider {
-                let relay_names =
-                    extract_relay_server_names(&mcp_servers, &relay_mcp_server_names);
-                let tools =
-                    agentdash_executor::mcp::discover_relay_mcp_tools(relay.clone(), &relay_names)
-                        .await;
-                all_tools.extend(tools);
-            }
-
-            context.assembled_tools = all_tools;
-        }
+        context.assembled_tools = self
+            .build_tools_for_execution_context(
+                session_id,
+                &context,
+                &mcp_servers,
+                &relay_mcp_server_names,
+            )
+            .await;
 
         // pipeline 层预组装 system prompt
         if !self.base_system_prompt.is_empty() {
@@ -326,8 +308,25 @@ impl SessionHub {
                 mcp_servers: &mcp_servers,
                 hook_session: hook_session.as_deref(),
             };
-            context.assembled_system_prompt =
-                Some(super::system_prompt_assembler::assemble_system_prompt(&prompt_input));
+            context.assembled_system_prompt = Some(
+                super::system_prompt_assembler::assemble_system_prompt(&prompt_input),
+            );
+        }
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.active_execution = Some(ActiveSessionExecutionState {
+                    mcp_servers: mcp_servers.clone(),
+                    relay_mcp_server_names: relay_mcp_server_names.clone(),
+                    vfs: effective_vfs.clone(),
+                    working_directory: context.working_directory.clone(),
+                    executor_config: context.executor_config.clone(),
+                    flow_capabilities: flow_capabilities.clone(),
+                    effective_capability_keys: effective_capability_keys.clone(),
+                    identity: identity.clone(),
+                });
+            }
         }
 
         session_meta.updated_at = now;
@@ -420,8 +419,7 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
-                let initial_caps: std::collections::BTreeSet<String> =
-                    req.effective_capability_keys.clone().unwrap_or_default();
+                let initial_caps = effective_capability_keys.clone();
                 if !initial_caps.is_empty() {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }
@@ -622,13 +620,6 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
 
-fn resolve_working_dir(default_mount_root: &Path, working_dir: Option<&str>) -> PathBuf {
-    match working_dir {
-        Some(rel) if !rel.trim().is_empty() => default_mount_root.join(rel),
-        _ => default_mount_root.to_path_buf(),
-    }
-}
-
 /// 从 McpServer 提取 server name（与 system_prompt_assembler 同逻辑）。
 pub(super) fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
     serde_json::to_value(server)
@@ -653,18 +644,6 @@ pub(super) fn partition_mcp_servers(
         }
     }
     (relay_names, direct)
-}
-
-/// 提取需要走 relay 路径的 server name 列表。
-fn extract_relay_server_names(
-    servers: &[agent_client_protocol::McpServer],
-    relay_names_set: &std::collections::HashSet<String>,
-) -> Vec<String> {
-    servers
-        .iter()
-        .map(extract_mcp_server_name)
-        .filter(|name| relay_names_set.contains(name))
-        .collect()
 }
 
 #[cfg(test)]

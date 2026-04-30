@@ -23,7 +23,7 @@ use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookTrigger, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AgentConnector, ConnectorError, Vfs};
+use agentdash_spi::{AgentConnector, ConnectorError, ExecutionContext, Vfs};
 
 #[derive(Clone)]
 pub struct SessionHub {
@@ -51,7 +51,8 @@ pub struct SessionHub {
     /// Layer 2 用户偏好提示列表（由 factory 从 settings 注入）。
     pub(super) user_preferences: Vec<String>,
     /// 运行时工具构建 provider（由 factory 注入，pipeline 在 prompt 前调用）。
-    pub(super) runtime_tool_provider: Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
+    pub(super) runtime_tool_provider:
+        Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
     /// MCP Relay 工具发现 provider（由 factory 注入，pipeline 在 prompt 前调用）。
     pub(super) mcp_relay_provider: Option<Arc<dyn agentdash_spi::McpRelayProvider>>,
 }
@@ -429,7 +430,8 @@ impl SessionHub {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)
-            .map(|runtime| runtime.active_mcp_servers.clone())
+            .and_then(|runtime| runtime.active_execution.as_ref())
+            .map(|active| active.mcp_servers.clone())
             .unwrap_or_default()
     }
 
@@ -441,36 +443,48 @@ impl SessionHub {
         session_id: &str,
         mcp_servers: Vec<McpServer>,
     ) -> Result<(), ConnectorError> {
-        use agentdash_executor::mcp::{self as mcp_discovery};
-
-        let relay_names_set: std::collections::HashSet<String> = {
+        let (active, hook_session, turn_id) = {
             let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .map(|_| std::collections::HashSet::new())
-                .unwrap_or_default()
+            let runtime = sessions.get(session_id).ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 当前没有运行态，无法热更新 MCP"
+                ))
+            })?;
+            let active = runtime.active_execution.clone().ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 缺少 active_execution，无法热更新 MCP"
+                ))
+            })?;
+            (
+                active,
+                runtime.hook_session.clone(),
+                runtime.current_turn_id.clone().unwrap_or_default(),
+            )
         };
 
-        let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
-
-        // Direct MCP tools
-        let (_, direct_servers) =
-            super::prompt_pipeline::partition_mcp_servers(&mcp_servers, &relay_names_set);
-        match mcp_discovery::discover_mcp_tools(&direct_servers).await {
-            Ok(tools) => all_tools.extend(tools),
-            Err(e) => tracing::warn!(session_id = %session_id, "MCP 热更新：直连 MCP 发现失败: {e}"),
-        }
-
-        // Relay MCP tools
-        if let Some(relay) = &self.mcp_relay_provider {
-            let relay_names: Vec<String> = mcp_servers
-                .iter()
-                .map(|s| super::prompt_pipeline::extract_mcp_server_name(s))
-                .filter(|name| relay_names_set.contains(name))
-                .collect();
-            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
-            all_tools.extend(tools);
-        }
+        let context = ExecutionContext {
+            turn_id,
+            working_directory: active.working_directory.clone(),
+            environment_variables: Default::default(),
+            executor_config: active.executor_config.clone(),
+            mcp_servers: mcp_servers.clone(),
+            vfs: Some(active.vfs.clone()),
+            hook_session,
+            flow_capabilities: active.flow_capabilities.clone(),
+            runtime_delegate: None,
+            identity: active.identity.clone(),
+            restored_session_state: None,
+            assembled_system_prompt: None,
+            assembled_tools: Vec::new(),
+        };
+        let all_tools = self
+            .build_tools_for_execution_context(
+                session_id,
+                &context,
+                &mcp_servers,
+                &active.relay_mcp_server_names,
+            )
+            .await;
 
         self.connector
             .update_session_tools(session_id, all_tools)
@@ -478,9 +492,55 @@ impl SessionHub {
 
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
-            runtime.active_mcp_servers = mcp_servers;
+            if let Some(active) = runtime.active_execution.as_mut() {
+                active.mcp_servers = mcp_servers;
+            }
         }
         Ok(())
+    }
+
+    pub(super) async fn build_tools_for_execution_context(
+        &self,
+        session_id: &str,
+        context: &ExecutionContext,
+        mcp_servers: &[McpServer],
+        relay_mcp_server_names: &std::collections::HashSet<String>,
+    ) -> Vec<agentdash_agent_types::DynAgentTool> {
+        use agentdash_executor::mcp::{self as mcp_discovery};
+
+        let mut all_tools: Vec<agentdash_agent_types::DynAgentTool> = Vec::new();
+
+        if let Some(provider) = &self.runtime_tool_provider {
+            match provider.build_tools(context).await {
+                Ok(tools) => all_tools.extend(tools),
+                Err(e) => tracing::warn!(
+                    session_id = %session_id,
+                    "runtime tool 构建失败: {e}"
+                ),
+            }
+        }
+
+        let (_, direct_servers) =
+            super::prompt_pipeline::partition_mcp_servers(mcp_servers, relay_mcp_server_names);
+        match mcp_discovery::discover_mcp_tools(&direct_servers).await {
+            Ok(tools) => all_tools.extend(tools),
+            Err(e) => tracing::warn!(
+                session_id = %session_id,
+                "直连 MCP 工具发现失败: {e}"
+            ),
+        }
+
+        if let Some(relay) = &self.mcp_relay_provider {
+            let relay_names: Vec<String> = mcp_servers
+                .iter()
+                .map(super::prompt_pipeline::extract_mcp_server_name)
+                .filter(|name| relay_mcp_server_names.contains(name))
+                .collect();
+            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            all_tools.extend(tools);
+        }
+
+        all_tools
     }
 
     /// 向运行中 session 的 agent 注入一条 out-of-band user message。
@@ -593,6 +653,29 @@ impl SessionHub {
     ) -> Result<String, ConnectorError> {
         self.start_prompt_with_follow_up(session_id, None, req)
             .await
+    }
+
+    /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。
+    ///
+    /// 没有注入 augmenter 的测试/嵌入场景保留旧行为，但正式 AppState
+    /// 应始终注入 augmenter，避免 owner / MCP / flow 上下文漂移。
+    pub async fn augment_prompt_request(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+        reason: &str,
+    ) -> Result<PromptSessionRequest, ConnectorError> {
+        match self.current_prompt_augmenter().await {
+            Some(augmenter) => augmenter.augment(session_id, req).await,
+            None => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    reason = %reason,
+                    "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
+                );
+                Ok(req)
+            }
+        }
     }
 
     pub async fn subscribe_with_history(
@@ -870,24 +953,18 @@ impl SessionHub {
                 msg::AUTO_RESUME_PROMPT,
             ));
 
-            let req = match hub.current_prompt_augmenter().await {
-                Some(augmenter) => match augmenter.augment(&session_id, bare_req).await {
-                    Ok(augmented) => augmented,
-                    Err(e) => {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            error = %e,
-                            "Hook auto-resume: augment 失败，跳过本次续跑以避免发送裸请求"
-                        );
-                        return;
-                    }
-                },
-                None => {
+            let req = match hub
+                .augment_prompt_request(&session_id, bare_req, "hook_auto_resume")
+                .await
+            {
+                Ok(augmented) => augmented,
+                Err(e) => {
                     tracing::warn!(
                         session_id = %session_id,
-                        "Hook auto-resume: prompt_augmenter 未注入，发送的 prompt 将缺少 owner / MCP / flow 上下文，Agent 可能复读"
+                        error = %e,
+                        "Hook auto-resume: augment 失败，跳过本次续跑以避免发送裸请求"
                     );
-                    bare_req
+                    return;
                 }
             };
 
@@ -1068,6 +1145,105 @@ mod tests {
         ));
         req.bootstrap_action = SessionBootstrapAction::OwnerContext;
         req
+    }
+
+    #[derive(Default)]
+    struct EmptyConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for EmptyConnector {
+        fn connector_id(&self) -> &'static str {
+            "empty"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn start_prompt_records_active_execution_state() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+        let session = hub.create_session("active-state").await.expect("create");
+        let mcp_server = McpServer::Http(agent_client_protocol::McpServerHttp::new(
+            "relay_tools",
+            "http://127.0.0.1:19090/mcp",
+        ));
+        let mut relay_names = std::collections::HashSet::new();
+        relay_names.insert("relay_tools".to_string());
+        let mut effective_keys = std::collections::BTreeSet::new();
+        effective_keys.insert("workflow".to_string());
+        let flow_caps =
+            agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Workflow]);
+
+        let mut req = simple_prompt_request("hello");
+        req.vfs = Some(local_workspace_vfs(workspace.path()));
+        req.user_input.working_dir = Some("src".to_string());
+        req.mcp_servers = vec![mcp_server.clone()];
+        req.relay_mcp_server_names = relay_names.clone();
+        req.flow_capabilities = Some(flow_caps.clone());
+        req.effective_capability_keys = Some(effective_keys.clone());
+
+        hub.start_prompt(&session.id, req)
+            .await
+            .expect("prompt should start");
+
+        let sessions = hub.sessions.lock().await;
+        let active = sessions
+            .get(&session.id)
+            .and_then(|runtime| runtime.active_execution.as_ref())
+            .expect("active execution state");
+        assert_eq!(active.mcp_servers, vec![mcp_server]);
+        assert_eq!(active.relay_mcp_server_names, relay_names);
+        assert_eq!(active.working_directory, workspace.path().join("src"));
+        assert_eq!(active.executor_config.executor, "PI_AGENT");
+        assert_eq!(
+            active.flow_capabilities.enabled_clusters,
+            flow_caps.enabled_clusters
+        );
+        assert_eq!(active.effective_capability_keys, effective_keys);
     }
 
     fn test_meta(

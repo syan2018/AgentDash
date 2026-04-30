@@ -9,7 +9,7 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use agentdash_spi::{
-    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, DynAgentTool,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
 
@@ -17,6 +17,127 @@ pub struct CompositeConnector {
     connectors: Vec<Arc<dyn AgentConnector>>,
     /// executor_id → connector 索引（在首次 build 或 list_executors 时填充）
     executor_routing: std::sync::RwLock<HashMap<String, usize>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use futures::stream;
+
+    #[derive(Default)]
+    struct StubConnector {
+        live_session: Option<String>,
+        update_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentConnector for StubConnector {
+        fn connector_id(&self) -> &'static str {
+            "stub"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn has_live_session(&self, session_id: &str) -> bool {
+            self.live_session.as_deref() == Some(session_id)
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn update_session_tools(
+            &self,
+            _session_id: &str,
+            _tools: Vec<DynAgentTool>,
+        ) -> Result<(), ConnectorError> {
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn update_session_tools_routes_to_live_child() {
+        let skipped_calls = Arc::new(AtomicUsize::new(0));
+        let routed_calls = Arc::new(AtomicUsize::new(0));
+        let composite = CompositeConnector::new(vec![
+            Arc::new(StubConnector {
+                live_session: Some("other".to_string()),
+                update_calls: skipped_calls.clone(),
+            }),
+            Arc::new(StubConnector {
+                live_session: Some("session-1".to_string()),
+                update_calls: routed_calls.clone(),
+            }),
+        ]);
+
+        composite
+            .update_session_tools("session-1", Vec::new())
+            .await
+            .expect("live child should receive update");
+
+        assert_eq!(skipped_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(routed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn update_session_tools_errors_without_live_child() {
+        let composite = CompositeConnector::new(vec![Arc::new(StubConnector::default())]);
+
+        let error = composite
+            .update_session_tools("missing-session", Vec::new())
+            .await
+            .expect_err("missing live child should fail");
+
+        assert!(error.to_string().contains("无法热更新工具"));
+    }
 }
 
 impl CompositeConnector {
@@ -199,5 +320,21 @@ impl AgentConnector for CompositeConnector {
         Err(last_error.unwrap_or_else(|| {
             ConnectorError::Runtime("当前没有可处理工具审批的连接器".to_string())
         }))
+    }
+
+    async fn update_session_tools(
+        &self,
+        session_id: &str,
+        tools: Vec<DynAgentTool>,
+    ) -> Result<(), ConnectorError> {
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                return connector.update_session_tools(session_id, tools).await;
+            }
+        }
+
+        Err(ConnectorError::Runtime(format!(
+            "当前没有持有 session `{session_id}` 的连接器，无法热更新工具"
+        )))
     }
 }

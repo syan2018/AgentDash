@@ -144,6 +144,7 @@ Workspace (1) → (*) WorkspaceBinding
 |------|------|------|
 | [流式协议](./session/streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
 | [Pi Agent 流式合并](./session/pi-agent-streaming.md) | Pi Agent streaming chunk 合并协议 | ✅ 已拆分 |
+| [Session 运行态执行状态](./session/runtime-execution-state.md) | SessionRuntime.active_execution、connector projection、relay MCP 投影与 follow-up 收口规则 | ✅ 已创建 |
 
 #### `hooks/` — Hook 运行时
 

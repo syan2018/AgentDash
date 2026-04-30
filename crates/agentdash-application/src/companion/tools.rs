@@ -1538,34 +1538,42 @@ impl CompanionRespondTool {
 
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
-                let resume_mcp =
-                    hub_clone.get_runtime_mcp_servers(&parent_sid).await;
                 tokio::spawn(async move {
-                    let _ = hub_clone
-                        .start_prompt(
-                            &parent_sid,
-                            PromptSessionRequest {
-                                user_input: UserPromptInput {
-                                    prompt_blocks: Some(vec![serde_json::json!({
-                                        "type": "text",
-                                        "text": resume_prompt,
-                                    })]),
-                                    working_dir: None,
-                                    env: std::collections::HashMap::new(),
-                                    executor_config: Some(resume_config),
-                                },
-                                mcp_servers: resume_mcp,
-                                relay_mcp_server_names: Default::default(),
-                                vfs: None,
-                                flow_capabilities: None,
-                                effective_capability_keys: None,
-                                context_bundle: None,
-                                bootstrap_action: crate::session::SessionBootstrapAction::None,
-                                identity: None,
-                                post_turn_handler: None,
-                            },
-                        )
-                        .await;
+                    let bare_req = PromptSessionRequest {
+                        user_input: UserPromptInput {
+                            prompt_blocks: Some(vec![serde_json::json!({
+                                "type": "text",
+                                "text": resume_prompt,
+                            })]),
+                            working_dir: None,
+                            env: std::collections::HashMap::new(),
+                            executor_config: Some(resume_config),
+                        },
+                        mcp_servers: Vec::new(),
+                        relay_mcp_server_names: Default::default(),
+                        vfs: None,
+                        flow_capabilities: None,
+                        effective_capability_keys: None,
+                        context_bundle: None,
+                        bootstrap_action: crate::session::SessionBootstrapAction::None,
+                        identity: None,
+                        post_turn_handler: None,
+                    };
+                    let req = match hub_clone
+                        .augment_prompt_request(&parent_sid, bare_req, "companion_parent_resume")
+                        .await
+                    {
+                        Ok(req) => req,
+                        Err(error) => {
+                            tracing::warn!(
+                                parent_session_id = %parent_sid,
+                                error = %error,
+                                "companion parent resume: augment 失败，跳过自动续跑"
+                            );
+                            return;
+                        }
+                    };
+                    let _ = hub_clone.start_prompt(&parent_sid, req).await;
                 });
             }
         }
@@ -1679,21 +1687,8 @@ pub fn relative_working_dir(context: &ExecutionContext) -> String {
     if root.is_empty() {
         return ".".to_string();
     }
-    let wd = context
-        .working_directory
-        .to_string_lossy()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_string();
-
-    if wd == root {
-        return ".".to_string();
-    }
-    let prefix = format!("{root}/");
-    wd.strip_prefix(&prefix)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(".")
-        .to_string()
+    crate::session::path_policy::to_relative_working_dir(&context.working_directory, &root)
+        .unwrap_or_else(|| ".".to_string())
 }
 
 async fn evaluate_subagent_hook(
@@ -2336,14 +2331,30 @@ fn companion_project_id_for_owner(
 #[cfg(test)]
 mod companion_tests {
     use super::{
-        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
-        build_companion_dispatch_prompt, build_companion_dispatch_slice,
+        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionRespondTool,
+        CompanionSliceMode, build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, companion_owner_candidates,
     };
     use agent_client_protocol::McpServer;
     use agentdash_domain::session_binding::SessionOwnerType;
-    use agentdash_spi::{MountCapability, Vfs};
+    use agentdash_spi::AgentTool;
+    use agentdash_spi::{
+        AgentConfig, AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError,
+        ConnectorType, ExecutionContext, ExecutionStream, MountCapability, PromptPayload, Vfs,
+    };
+    use futures::stream;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Mutex as TokioMutex;
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
+
+    use crate::session::{
+        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter,
+        PromptSessionRequest, SessionHub, local_workspace_vfs,
+    };
+    use crate::vfs::tools::provider::SharedSessionHubHandle;
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
@@ -2551,5 +2562,193 @@ mod companion_tests {
         assert!(prompt.contains("companion_respond"));
         assert!(prompt.contains("dispatch_id: dispatch-1"));
         assert!(prompt.contains("请帮我 review 当前实现"));
+    }
+
+    struct NoopConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            Err(ConnectorError::Runtime(
+                "connector should not be reached when augmenter rejects resume".to_string(),
+            ))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    struct SpyAugmenter {
+        calls: Arc<AtomicUsize>,
+        captured_prompt: Arc<TokioMutex<Option<String>>>,
+        captured_mcp_len: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl PromptRequestAugmenter for SpyAugmenter {
+        async fn augment(
+            &self,
+            _session_id: &str,
+            req: PromptSessionRequest,
+        ) -> Result<PromptSessionRequest, ConnectorError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let prompt_text = req
+                .user_input
+                .prompt_blocks
+                .as_ref()
+                .and_then(|blocks| blocks.first())
+                .and_then(|block| block.get("text"))
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
+            *self.captured_prompt.lock().await = prompt_text;
+            self.captured_mcp_len
+                .store(req.mcp_servers.len(), Ordering::SeqCst);
+            Err(ConnectorError::InvalidConfig(
+                "spy augmenter stops companion resume".to_string(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn companion_parent_resume_routes_through_augmenter() {
+        let root = tempfile::tempdir().expect("workspace");
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            Some(local_workspace_vfs(root.path())),
+            Arc::new(NoopConnector),
+            None,
+            Arc::new(MemorySessionPersistence::default()),
+        );
+        let handle = SharedSessionHubHandle::default();
+        handle.set(hub.clone()).await;
+
+        let parent = hub.create_session("parent").await.expect("parent session");
+        let child = hub.create_session("child").await.expect("child session");
+        hub.update_session_meta(&parent.id, |meta| {
+            meta.executor_config = Some(AgentConfig::new("PI_AGENT"));
+        })
+        .await
+        .expect("update parent meta");
+        hub.update_session_meta(&child.id, |meta| {
+            meta.companion_context = Some(CompanionSessionContext {
+                dispatch_id: "dispatch-1".to_string(),
+                parent_session_id: parent.id.clone(),
+                parent_turn_id: "turn-parent".to_string(),
+                companion_label: "reviewer".to_string(),
+                slice_mode: "compact".to_string(),
+                adoption_mode: "suggestion".to_string(),
+                request_type: Some("task".to_string()),
+                inherited_fragment_labels: Vec::new(),
+                inherited_constraint_keys: Vec::new(),
+                agent_name: Some("reviewer".to_string()),
+            });
+        })
+        .await
+        .expect("update child meta");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_prompt = Arc::new(TokioMutex::new(None));
+        let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
+        hub.set_prompt_augmenter(Arc::new(SpyAugmenter {
+            calls: calls.clone(),
+            captured_prompt: captured_prompt.clone(),
+            captured_mcp_len: captured_mcp_len.clone(),
+        }))
+        .await;
+
+        let tool = CompanionRespondTool {
+            session_hub_handle: handle,
+            current_session_id: Some(child.id.clone()),
+            current_turn_id: "turn-child".to_string(),
+            hook_session: None,
+        };
+        let payload = serde_json::json!({
+            "type": "completion",
+            "status": "completed",
+            "summary": "done"
+        });
+        let args = serde_json::json!({
+            "request_id": "dispatch-1",
+            "payload": payload.to_string()
+        });
+
+        let result = tool
+            .execute(
+                "tool-call-1",
+                args,
+                CancellationToken::new(),
+                None::<agentdash_spi::ToolUpdateCallback>,
+            )
+            .await
+            .expect("companion response should be accepted");
+
+        assert!(!result.is_error);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+        while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "companion parent resume 必须先经 augmenter 补齐主通道上下文"
+        );
+        let prompt_text = captured_prompt.lock().await.clone().unwrap_or_default();
+        assert!(prompt_text.contains("[Companion Result]"));
+        assert!(prompt_text.contains("dispatch_id: dispatch-1"));
+        assert_eq!(
+            captured_mcp_len.load(Ordering::SeqCst),
+            0,
+            "companion resume 传给 augmenter 的输入应是裸请求，由 augmenter 负责补齐 MCP"
+        );
     }
 }

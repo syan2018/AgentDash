@@ -318,6 +318,7 @@ impl AgentConnector for PiAgentConnector {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
         let restored_messages = context
+            .turn
             .restored_session_state
             .as_ref()
             .map(|state| state.messages.clone());
@@ -343,8 +344,8 @@ impl AgentConnector for PiAgentConnector {
             let bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,
-                    context.executor_config.provider_id.as_deref(),
-                    context.executor_config.model_id.as_deref(),
+                    context.session.executor_config.provider_id.as_deref(),
+                    context.session.executor_config.model_id.as_deref(),
                 )
                 .await?;
             self.create_agent_with_bridge(bridge)
@@ -354,9 +355,9 @@ impl AgentConnector for PiAgentConnector {
         // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
         // 只更新 runtime delegate（hook session 每轮刷新）。
         if is_new_agent {
-            current_tools = context.assembled_tools.clone();
+            current_tools = context.turn.assembled_tools.clone();
 
-            if let Some(system_prompt) = &context.assembled_system_prompt {
+            if let Some(system_prompt) = &context.turn.assembled_system_prompt {
                 agent.set_system_prompt(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
@@ -365,12 +366,13 @@ impl AgentConnector for PiAgentConnector {
             }
         }
         let hook_trace_rx = context
+            .turn
             .hook_session
             .as_ref()
             .and_then(|hs| hs.subscribe_traces());
-        agent.set_runtime_delegate(context.runtime_delegate.clone());
+        agent.set_runtime_delegate(context.turn.runtime_delegate.clone());
 
-        if let Some(thinking_level) = context.executor_config.thinking_level {
+        if let Some(thinking_level) = context.session.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);
         }
 
@@ -389,7 +391,7 @@ impl AgentConnector for PiAgentConnector {
 
         let mut source = AgentDashSourceV1::new(self.connector_id(), "local_executor");
         source.executor_id = Some("PI_AGENT".to_string());
-        let turn_id = context.turn_id.clone();
+        let turn_id = context.session.turn_id.clone();
         let acp_session_id = SessionId::new(session_id.to_string());
 
         let (tx, rx) =

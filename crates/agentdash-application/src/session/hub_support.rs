@@ -1,10 +1,10 @@
-use std::{collections::BTreeSet, collections::HashSet, io, path::PathBuf};
+use std::{collections::HashSet, io};
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, McpServer, Meta, SessionId, SessionInfoUpdate, SessionNotification,
+    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
     SessionUpdate,
 };
-use agentdash_spi::{AgentConfig, FlowCapabilities, Vfs, auth::AuthIdentity};
+use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities};
 use tokio::sync::broadcast;
 
 use agentdash_acp_meta::{
@@ -183,16 +183,13 @@ pub(super) struct SessionRuntime {
 
 #[derive(Clone)]
 pub(super) struct ActiveSessionExecutionState {
-    pub mcp_servers: Vec<McpServer>,
+    /// Session 级执行环境快照（turn_id / working_dir / env / executor_config /
+    /// mcp_servers / vfs / identity）。
+    pub session_frame: ExecutionSessionFrame,
     pub relay_mcp_server_names: HashSet<String>,
-    pub vfs: Vfs,
-    pub working_directory: PathBuf,
-    pub executor_config: AgentConfig,
+    /// Turn 级 capability 集合（per-prompt 下发）。
+    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
     pub flow_capabilities: FlowCapabilities,
-    /// 保留本轮生效 capability keys，供后续 runtime/inspector 投影使用。
-    #[allow(dead_code)]
-    pub effective_capability_keys: BTreeSet<String>,
-    pub identity: Option<AuthIdentity>,
 }
 
 pub struct SessionEventSubscription {

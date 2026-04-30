@@ -431,7 +431,7 @@ impl SessionHub {
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.active_execution.as_ref())
-            .map(|active| active.mcp_servers.clone())
+            .map(|active| active.session_frame.mcp_servers.clone())
             .unwrap_or_default()
     }
 
@@ -462,20 +462,19 @@ impl SessionHub {
             )
         };
 
+        // 基于 active session_frame 重建一次性的 ExecutionContext，仅用于 runtime_tool_provider
+        // 扫描 mount。turn_frame 带上热更新后的 mcp_servers 与 hook_session，其余运行时字段
+        // 保持默认（restored_session_state / runtime_delegate / assembled_* 都不是 tool 构建关心的）。
+        let mut session_frame = active.session_frame.clone();
+        session_frame.turn_id = turn_id;
+        session_frame.mcp_servers = mcp_servers.clone();
         let context = ExecutionContext {
-            turn_id,
-            working_directory: active.working_directory.clone(),
-            environment_variables: Default::default(),
-            executor_config: active.executor_config.clone(),
-            mcp_servers: mcp_servers.clone(),
-            vfs: Some(active.vfs.clone()),
-            hook_session,
-            flow_capabilities: active.flow_capabilities.clone(),
-            runtime_delegate: None,
-            identity: active.identity.clone(),
-            restored_session_state: None,
-            assembled_system_prompt: None,
-            assembled_tools: Vec::new(),
+            session: session_frame,
+            turn: agentdash_spi::ExecutionTurnFrame {
+                hook_session,
+                flow_capabilities: active.flow_capabilities.clone(),
+                ..Default::default()
+            },
         };
         let all_tools = self
             .build_tools_for_execution_context(
@@ -493,7 +492,7 @@ impl SessionHub {
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
             if let Some(active) = runtime.active_execution.as_mut() {
-                active.mcp_servers = mcp_servers;
+                active.session_frame.mcp_servers = mcp_servers;
             }
         }
         Ok(())
@@ -1235,15 +1234,17 @@ mod tests {
             .get(&session.id)
             .and_then(|runtime| runtime.active_execution.as_ref())
             .expect("active execution state");
-        assert_eq!(active.mcp_servers, vec![mcp_server]);
+        assert_eq!(active.session_frame.mcp_servers, vec![mcp_server]);
         assert_eq!(active.relay_mcp_server_names, relay_names);
-        assert_eq!(active.working_directory, workspace.path().join("src"));
-        assert_eq!(active.executor_config.executor, "PI_AGENT");
+        assert_eq!(
+            active.session_frame.working_directory,
+            workspace.path().join("src")
+        );
+        assert_eq!(active.session_frame.executor_config.executor, "PI_AGENT");
         assert_eq!(
             active.flow_capabilities.enabled_clusters,
             flow_caps.enabled_clusters
         );
-        assert_eq!(active.effective_capability_keys, effective_keys);
     }
 
     fn test_meta(
@@ -1324,7 +1325,7 @@ mod tests {
             _prompt: &PromptPayload,
             context: agentdash_spi::ExecutionContext,
         ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            let seen = context.hook_session.as_ref().is_some_and(|runtime| {
+            let seen = context.turn.hook_session.as_ref().is_some_and(|runtime| {
                 runtime
                     .trace()
                     .iter()
@@ -2237,6 +2238,7 @@ mod tests {
         let contexts = connector.contexts.lock().await;
         let context = contexts.last().expect("context should be recorded");
         let restored = context
+            .turn
             .restored_session_state
             .as_ref()
             .expect("restored session state should exist");
@@ -2340,7 +2342,10 @@ mod tests {
         let context = contexts.last().expect("context should be recorded");
         let ws_path = agentdash_spi::workspace_path_from_context(context).expect("default mount");
         assert_eq!(ws_path, workspace.path().to_path_buf());
-        assert_eq!(context.working_directory, workspace.path().join("src"));
+        assert_eq!(
+            context.session.working_directory,
+            workspace.path().join("src")
+        );
     }
 
     #[tokio::test]
@@ -2428,7 +2433,7 @@ mod tests {
 
         let contexts = connector.contexts.lock().await;
         let context = contexts.last().expect("context should be recorded");
-        assert_eq!(context.executor_config.executor, "PI_AGENT");
+        assert_eq!(context.session.executor_config.executor, "PI_AGENT");
     }
 
     #[tokio::test]

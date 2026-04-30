@@ -7,7 +7,10 @@ use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
     HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
+use agentdash_spi::{
+    ConnectorError, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
+    RestoredSessionState,
+};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::event_bridge::HookTriggerInput;
@@ -266,24 +269,30 @@ impl SessionHub {
         let effective_capability_keys = req.effective_capability_keys.clone().unwrap_or_default();
         let identity = req.identity.clone();
 
-        let mut context = ExecutionContext {
+        let session_frame = ExecutionSessionFrame {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
             mcp_servers: mcp_servers.clone(),
             vfs: Some(effective_vfs.clone()),
+            identity: identity.clone(),
+        };
+        let turn_frame = ExecutionTurnFrame {
             hook_session: hook_session.clone(),
             flow_capabilities: flow_capabilities.clone(),
             runtime_delegate,
-            identity: identity.clone(),
             restored_session_state,
             assembled_system_prompt: None,
             assembled_tools: Vec::new(),
         };
+        let mut context = ExecutionContext {
+            session: session_frame,
+            turn: turn_frame,
+        };
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
-        context.assembled_tools = self
+        context.turn.assembled_tools = self
             .build_tools_for_execution_context(
                 session_id,
                 &context,
@@ -296,19 +305,19 @@ impl SessionHub {
         if !self.base_system_prompt.is_empty() {
             let prompt_input = super::system_prompt_assembler::SystemPromptInput {
                 base_system_prompt: &self.base_system_prompt,
-                agent_system_prompt: context.executor_config.system_prompt.as_deref(),
-                agent_system_prompt_mode: context.executor_config.system_prompt_mode,
+                agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
+                agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
                 user_preferences: &self.user_preferences,
                 discovered_guidelines: &discovered_guidelines,
                 context_bundle: req.context_bundle.as_ref(),
                 session_capabilities: Some(&session_capabilities),
                 vfs: Some(&effective_vfs),
-                working_directory: &context.working_directory,
-                runtime_tools: &context.assembled_tools,
+                working_directory: &context.session.working_directory,
+                runtime_tools: &context.turn.assembled_tools,
                 mcp_servers: &mcp_servers,
                 hook_session: hook_session.as_deref(),
             };
-            context.assembled_system_prompt = Some(
+            context.turn.assembled_system_prompt = Some(
                 super::system_prompt_assembler::assemble_system_prompt(&prompt_input),
             );
         }
@@ -317,14 +326,9 @@ impl SessionHub {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.active_execution = Some(ActiveSessionExecutionState {
-                    mcp_servers: mcp_servers.clone(),
+                    session_frame: context.session.clone(),
                     relay_mcp_server_names: relay_mcp_server_names.clone(),
-                    vfs: effective_vfs.clone(),
-                    working_directory: context.working_directory.clone(),
-                    executor_config: context.executor_config.clone(),
                     flow_capabilities: flow_capabilities.clone(),
-                    effective_capability_keys: effective_capability_keys.clone(),
-                    identity: identity.clone(),
                 });
             }
         }
@@ -333,7 +337,7 @@ impl SessionHub {
         session_meta.last_execution_status = "running".to_string();
         session_meta.last_turn_id = Some(turn_id.clone());
         session_meta.last_terminal_message = None;
-        session_meta.executor_config = Some(context.executor_config.clone());
+        session_meta.executor_config = Some(context.session.executor_config.clone());
         if is_owner_bootstrap {
             session_meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
         }
@@ -372,7 +376,7 @@ impl SessionHub {
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
-        source.executor_id = Some(context.executor_config.executor.to_string());
+        source.executor_id = Some(context.session.executor_config.executor.to_string());
 
         let is_first_prompt = session_meta.last_event_seq == 0;
         let mut user_blocks_with_capabilities = resolved_payload.user_blocks.clone();

@@ -106,14 +106,15 @@ impl CompanionRequestTool {
             platform_config,
             session_hub_handle,
             current_session_id: context
+                .turn
                 .hook_session
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
-            current_turn_id: context.turn_id.clone(),
-            current_executor_config: context.executor_config.clone(),
+            current_turn_id: context.session.turn_id.clone(),
+            current_executor_config: context.session.executor_config.clone(),
             working_dir: relative_working_dir(context),
-            vfs: context.vfs.clone(),
-            hook_session: context.hook_session.clone(),
+            vfs: context.session.vfs.clone(),
+            hook_session: context.turn.hook_session.clone(),
         }
     }
 
@@ -1127,11 +1128,12 @@ impl CompanionRespondTool {
         Self {
             session_hub_handle,
             current_session_id: context
+                .turn
                 .hook_session
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
-            current_turn_id: context.turn_id.clone(),
-            hook_session: context.hook_session.clone(),
+            current_turn_id: context.session.turn_id.clone(),
+            hook_session: context.turn.hook_session.clone(),
         }
     }
 }
@@ -1652,7 +1654,7 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 // ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
 
 pub fn relative_working_dir(context: &ExecutionContext) -> String {
-    let Some(space) = context.vfs.as_ref() else {
+    let Some(space) = context.session.vfs.as_ref() else {
         return ".".to_string();
     };
     let Some(mount) = space.default_mount() else {
@@ -1670,7 +1672,7 @@ pub fn relative_working_dir(context: &ExecutionContext) -> String {
     if root.is_empty() {
         return ".".to_string();
     }
-    crate::session::path_policy::to_relative_working_dir(&context.working_directory, &root)
+    crate::session::path_policy::to_relative_working_dir(&context.session.working_directory, &root)
         .unwrap_or_else(|| ".".to_string())
 }
 

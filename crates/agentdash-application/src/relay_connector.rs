@@ -93,7 +93,7 @@ impl AgentConnector for RelayAgentConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let executor_id = &context.executor_config.executor;
+        let executor_id = &context.session.executor_config.executor;
         let default_mount = default_mount_from_context(&context)?;
         let mount_root_ref = default_mount.root_ref.trim();
         if mount_root_ref.is_empty() {
@@ -113,7 +113,7 @@ impl AgentConnector for RelayAgentConnector {
             PromptPayload::Blocks(blocks) => serde_json::to_value(blocks).ok(),
         };
 
-        let executor_config = context.executor_config.clone();
+        let executor_config = context.session.executor_config.clone();
         let relay_config = RelayExecutorConfig {
             executor: executor_config.executor.clone(),
             provider_id: executor_config.provider_id.clone(),
@@ -139,12 +139,13 @@ impl AgentConnector for RelayAgentConnector {
             prompt_blocks,
             mount_root_ref: mount_root_ref.to_string(),
             working_dir: crate::session::path_policy::to_relative_working_dir(
-                &context.working_directory,
+                &context.session.working_directory,
                 mount_root_ref,
             ),
-            env: context.environment_variables,
+            env: context.session.environment_variables,
             executor_config: Some(relay_config),
             mcp_servers: context
+                .session
                 .mcp_servers
                 .iter()
                 .filter_map(|server| serde_json::to_value(server).ok())
@@ -253,6 +254,7 @@ fn default_mount_from_context(
     context: &ExecutionContext,
 ) -> Result<&agentdash_spi::Mount, ConnectorError> {
     let vfs = context
+        .session
         .vfs
         .as_ref()
         .ok_or_else(|| ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string()))?;
@@ -261,7 +263,7 @@ fn default_mount_from_context(
 }
 
 fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<String> {
-    let vfs = context.vfs.as_ref()?;
+    let vfs = context.session.vfs.as_ref()?;
     if let Some(default_mount) = vfs.default_mount() {
         let backend_id = default_mount.backend_id.trim();
         if !backend_id.is_empty() {
@@ -370,19 +372,19 @@ mod tests {
             agent_client_protocol::McpServerStdio::new("third_party_mcp", "cmd"),
         );
         let context = ExecutionContext {
-            turn_id: "turn-1".to_string(),
-            working_directory: root.path().join("crates/app"),
-            environment_variables: HashMap::new(),
-            executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
-            mcp_servers: vec![mcp_server],
-            vfs: Some(crate::session::local_workspace_vfs(root.path())),
-            hook_session: None,
-            flow_capabilities: FlowCapabilities::default(),
-            runtime_delegate: None,
-            identity: None,
-            restored_session_state: None,
-            assembled_system_prompt: None,
-            assembled_tools: Vec::new(),
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory: root.path().join("crates/app"),
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
+                mcp_servers: vec![mcp_server],
+                vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame {
+                flow_capabilities: FlowCapabilities::default(),
+                ..Default::default()
+            },
         };
 
         let _stream = connector

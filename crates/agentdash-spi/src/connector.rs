@@ -43,8 +43,12 @@ pub struct AgentInfo {
     pub available: bool,
 }
 
+/// Session 级执行上下文（Who + Where）。
+///
+/// 在当前 turn 内语义上不可变：它是 session 启动时拍下的"身份 + 执行环境"快照。
+/// 下一 turn 若有改动则重新组装，不在 turn 内 mutate 这里的字段。
 #[derive(Clone)]
-pub struct ExecutionContext {
+pub struct ExecutionSessionFrame {
     pub turn_id: String,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
@@ -52,16 +56,24 @@ pub struct ExecutionContext {
     /// 本轮完整 MCP 声明。
     ///
     /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
-    /// `assembled_tools`。Relay/remote transport connector 可将该结构原样下发给远端
-    /// agent，由远端 agent 自行建联。
+    /// `turn.assembled_tools`。Relay/remote transport connector 可将该结构原样下发给
+    /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<McpServer>,
     pub vfs: Option<Vfs>,
+    /// 发起本次执行的用户身份（由 HTTP 层注入）。
+    pub identity: Option<crate::auth::AuthIdentity>,
+}
+
+/// Turn 级执行上下文（How + 运行时控制面）。
+///
+/// per-turn 动态：工具集、hook runtime、runtime delegate、系统 prompt 产出等；
+/// 会随 session hot-update 或 hook 触发而重建。
+#[derive(Clone, Default)]
+pub struct ExecutionTurnFrame {
     pub hook_session: Option<Arc<dyn HookSessionRuntimeAccess>>,
     pub flow_capabilities: FlowCapabilities,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
-    /// 发起本次执行的用户身份（由 HTTP 层注入）。
-    pub identity: Option<crate::auth::AuthIdentity>,
-    /// 当 session 生命周期层判定为”冷启动仓储恢复”且执行器支持原生恢复时，
+    /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
     /// Application 层预组装的完整 system prompt。
@@ -72,6 +84,16 @@ pub struct ExecutionContext {
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
     /// `McpServer` 声明，也不自行区分 direct / relay MCP。
     pub assembled_tools: Vec<agentdash_agent_types::DynAgentTool>,
+}
+
+/// 连接器拿到的一次 `prompt(...)` 调用上下文。
+///
+/// 拆分为 `session`（Who/Where，不可变）与 `turn`（How，可变）两层，让 connector
+/// 能清晰区分"身份 + 执行环境"与"本轮工具 + 运行时控制面"。
+#[derive(Clone)]
+pub struct ExecutionContext {
+    pub session: ExecutionSessionFrame,
+    pub turn: ExecutionTurnFrame,
 }
 
 /// VFS 中发现的项目级指导文件。
@@ -90,16 +112,17 @@ pub struct DiscoveredGuideline {
 impl std::fmt::Debug for ExecutionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExecutionContext")
-            .field("turn_id", &self.turn_id)
-            .field("executor_config", &self.executor_config)
-            .field("hook_session", &self.hook_session)
+            .field("turn_id", &self.session.turn_id)
+            .field("executor_config", &self.session.executor_config)
+            .field("hook_session", &self.turn.hook_session)
             .field(
                 "runtime_delegate",
-                &self.runtime_delegate.as_ref().map(|_| ".."),
+                &self.turn.runtime_delegate.as_ref().map(|_| ".."),
             )
             .field(
                 "restored_session_state",
                 &self
+                    .turn
                     .restored_session_state
                     .as_ref()
                     .map(|state| state.messages.len()),
@@ -108,9 +131,10 @@ impl std::fmt::Debug for ExecutionContext {
     }
 }
 
-/// 从 `ExecutionContext.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
+/// 从 `ExecutionContext.session.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
 pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
     let space = context
+        .session
         .vfs
         .as_ref()
         .ok_or_else(|| ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string()))?;

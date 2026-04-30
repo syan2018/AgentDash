@@ -256,7 +256,7 @@ impl AgentConnector for CompositeConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let executor_id = &context.executor_config.executor;
+        let executor_id = &context.session.executor_config.executor;
         let connector = self.resolve_connector(executor_id).ok_or_else(|| {
             ConnectorError::InvalidConfig(format!(
                 "未知执行器 '{executor_id}'，无法路由到任何连接器"

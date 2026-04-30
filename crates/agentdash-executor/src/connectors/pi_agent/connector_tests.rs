@@ -1195,19 +1195,16 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
             None,
             &PromptPayload::Text("hello".to_string()),
             ExecutionContext {
-                turn_id: "turn-1".to_string(),
-                working_directory: PathBuf::from("/tmp/test-workspace"),
-                environment_variables: HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-                mcp_servers: Vec::new(),
-                vfs: Some(test_vfs("/tmp/test-workspace")),
-                hook_session: None,
-                flow_capabilities: Default::default(),
-                runtime_delegate: None,
-                identity: None,
-                restored_session_state: None,
-                assembled_system_prompt: None,
-                assembled_tools: vec![],
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-1".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame::default(),
             },
         )
         .await;
@@ -1232,24 +1229,24 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
             None,
             &PromptPayload::Text("新的用户消息".to_string()),
             ExecutionContext {
-                turn_id: "turn-1".to_string(),
-                working_directory: PathBuf::from("/tmp/test-workspace"),
-                environment_variables: HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-                mcp_servers: Vec::new(),
-                vfs: Some(test_vfs("/tmp/test-workspace")),
-                hook_session: None,
-                flow_capabilities: Default::default(),
-                runtime_delegate: None,
-                identity: None,
-                restored_session_state: Some(agentdash_spi::RestoredSessionState {
-                    messages: vec![
-                        agentdash_spi::AgentMessage::user("历史用户消息"),
-                        agentdash_spi::AgentMessage::assistant("历史助手消息"),
-                    ],
-                }),
-                assembled_system_prompt: None,
-                assembled_tools: vec![],
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-1".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame {
+                    restored_session_state: Some(agentdash_spi::RestoredSessionState {
+                        messages: vec![
+                            agentdash_spi::AgentMessage::user("历史用户消息"),
+                            agentdash_spi::AgentMessage::assistant("历史助手消息"),
+                        ],
+                    }),
+                    ..Default::default()
+                },
             },
         )
         .await

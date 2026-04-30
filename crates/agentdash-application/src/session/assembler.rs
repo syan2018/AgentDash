@@ -57,7 +57,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{PromptSessionRequest, SessionBootstrapAction, UserPromptInput};
+use crate::session::types::{PromptSessionRequest, HookSnapshotReloadTrigger, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -98,7 +98,7 @@ pub struct PreparedSessionInputs {
     pub effective_capability_keys: Option<BTreeSet<String>>,
     /// 结构化 session 上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
-    pub bootstrap_action: SessionBootstrapAction,
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     /// workspace 默认值注入的数据源(session 中 vfs/working_dir 回填用)。
     pub workspace_defaults: Option<Workspace>,
     /// Story step(task 启动)场景下 compose 产出的 working_dir 覆盖值；
@@ -122,7 +122,7 @@ pub struct PreparedSessionInputs {
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `bootstrap_action` / `flow_capabilities` / `effective_capability_keys` | 整体替换为 prepared 值 |
+/// | `context_bundle` / `hook_snapshot_reload` / `flow_capabilities` / `effective_capability_keys` | 整体替换为 prepared 值 |
 /// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
@@ -152,7 +152,7 @@ pub fn finalize_request(
         req.user_input.executor_config = Some(cfg);
     }
     req.context_bundle = prepared.context_bundle;
-    req.bootstrap_action = prepared.bootstrap_action;
+    req.hook_snapshot_reload = prepared.hook_snapshot_reload;
 
     apply_workspace_defaults(
         &mut req.user_input.working_dir,
@@ -220,7 +220,7 @@ pub struct SessionAssemblyBuilder {
     // ── Prompt 层 ──
     prompt_blocks: Option<Vec<serde_json::Value>>,
     executor_config: Option<AgentConfig>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 
     // ── 元信息层 ──
     workspace_defaults: Option<Workspace>,
@@ -369,8 +369,8 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 bootstrap action。
-    pub fn with_bootstrap_action(mut self, action: SessionBootstrapAction) -> Self {
-        self.bootstrap_action = action;
+    pub fn with_hook_snapshot_reload(mut self, action: HookSnapshotReloadTrigger) -> Self {
+        self.hook_snapshot_reload = action;
         self
     }
 
@@ -496,7 +496,7 @@ impl SessionAssemblyBuilder {
             context_bundle: parent_context_bundle.cloned(),
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
-            bootstrap_action: SessionBootstrapAction::OwnerContext,
+            hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
             workspace_defaults: None,
             working_dir: None,
             source_summary: Vec::new(),
@@ -538,7 +538,7 @@ impl SessionAssemblyBuilder {
             flow_capabilities: self.flow_capabilities,
             effective_capability_keys: self.effective_capability_keys,
             context_bundle: self.context_bundle,
-            bootstrap_action: self.bootstrap_action,
+            hook_snapshot_reload: self.hook_snapshot_reload,
             workspace_defaults: self.workspace_defaults,
             working_dir: self.working_dir,
             env: self.env,
@@ -718,7 +718,7 @@ pub struct OwnerBootstrapSpec<'a> {
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
-/// 如何组装 context bundle + prompt_blocks + bootstrap_action。
+/// 如何组装 context bundle + prompt_blocks + hook_snapshot_reload。
 ///
 /// 与 `SessionPromptLifecycle` 结构等价,但这里只暴露 compose 所需的 3 个分支,
 /// continuation bundle(来自 SessionHub)由调用方在 Spec 里预先算好传入。
@@ -962,15 +962,15 @@ impl<'a> SessionRequestAssembler<'a> {
             AuditTrigger::SessionBootstrap,
         );
 
-        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / bootstrap_action ──
+        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / hook_snapshot_reload ──
         //
         // - OwnerBootstrap：使用新建的 owner context bundle
         // - RepositoryRehydrate：根据 connector 能力，使用 continuation bundle 或 owner bundle
         // - Plain：不附加 bundle
-        let (prompt_blocks, bootstrap_action, effective_bundle) = match spec.lifecycle {
+        let (prompt_blocks, hook_snapshot_reload, effective_bundle) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
                 spec.user_prompt_blocks,
-                SessionBootstrapAction::OwnerContext,
+                HookSnapshotReloadTrigger::Reload,
                 Some(context_bundle),
             ),
             OwnerPromptLifecycle::RepositoryRehydrate {
@@ -986,12 +986,12 @@ impl<'a> SessionRequestAssembler<'a> {
                 });
                 (
                     spec.user_prompt_blocks,
-                    SessionBootstrapAction::None,
+                    HookSnapshotReloadTrigger::None,
                     chosen_bundle,
                 )
             }
             OwnerPromptLifecycle::Plain => {
-                (spec.user_prompt_blocks, SessionBootstrapAction::None, None)
+                (spec.user_prompt_blocks, HookSnapshotReloadTrigger::None, None)
             }
         };
 
@@ -1012,7 +1012,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(effective_mcp_servers)
             .append_relay_mcp_names(relay_mcp_server_names)
             .with_resolved_capabilities(cap_output.flow_capabilities, effective_capability_keys)
-            .with_bootstrap_action(bootstrap_action)
+            .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -1789,7 +1789,7 @@ pub async fn compose_companion_with_workflow(
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())
-        .with_bootstrap_action(SessionBootstrapAction::OwnerContext)
+        .with_hook_snapshot_reload(HookSnapshotReloadTrigger::Reload)
         .build();
 
     Ok(CompanionWorkflowOutput {

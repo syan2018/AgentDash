@@ -105,7 +105,7 @@ impl SessionHub {
                 )
             })?;
 
-        let is_owner_bootstrap = req.bootstrap_action == SessionBootstrapAction::OwnerContext;
+        let is_owner_bootstrap = req.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let existing_hook_session = {
             let sessions = self.sessions.lock().await;
             sessions

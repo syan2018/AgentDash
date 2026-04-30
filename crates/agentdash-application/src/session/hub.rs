@@ -1129,7 +1129,7 @@ mod tests {
             flow_capabilities: None,
             effective_capability_keys: None,
             context_bundle: None,
-            bootstrap_action: SessionBootstrapAction::None,
+            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,
             post_turn_handler: None,
         }
@@ -1142,7 +1142,7 @@ mod tests {
             bundle_session_id,
             system_context.to_string(),
         ));
-        req.bootstrap_action = SessionBootstrapAction::OwnerContext;
+        req.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
         req
     }
 
@@ -2330,7 +2330,7 @@ mod tests {
                 flow_capabilities: None,
                 effective_capability_keys: None,
                 context_bundle: None,
-                bootstrap_action: SessionBootstrapAction::None,
+                hook_snapshot_reload: HookSnapshotReloadTrigger::None,
                 identity: None,
                 post_turn_handler: None,
             },

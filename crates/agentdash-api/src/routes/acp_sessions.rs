@@ -20,7 +20,7 @@ use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PromptSessionRequest,
-    SessionBootstrapAction, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
+    HookSnapshotReloadTrigger, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     UserPromptInput, finalize_request, resolve_session_prompt_lifecycle,
 };
@@ -1084,7 +1084,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
         return Ok(apply_plain_lifecycle_request(
             req,
             continuation_bundle,
-            SessionBootstrapAction::None,
+            HookSnapshotReloadTrigger::None,
         )?);
     }
 
@@ -1100,11 +1100,11 @@ fn finalize_augmented_request(
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
     effective_capability_keys: std::collections::BTreeSet<String>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
     req.context_bundle = context_bundle;
-    req.bootstrap_action = bootstrap_action;
+    req.hook_snapshot_reload = hook_snapshot_reload;
 
     apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.vfs, workspace);
     if req.vfs.is_none() {
@@ -1118,7 +1118,7 @@ fn finalize_augmented_request(
 fn apply_plain_lifecycle_request(
     mut req: PromptSessionRequest,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) -> Result<PromptSessionRequest, ApiError> {
     let user_prompt_blocks = req
         .user_input
@@ -1127,7 +1127,7 @@ fn apply_plain_lifecycle_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     req.user_input.prompt_blocks = Some(user_prompt_blocks);
     req.context_bundle = context_bundle;
-    req.bootstrap_action = bootstrap_action;
+    req.hook_snapshot_reload = hook_snapshot_reload;
     Ok(req)
 }
 
@@ -1452,12 +1452,12 @@ async fn build_task_owner_prompt_request(
     });
     let prompt_blocks = user_prompt_blocks;
     let mut context_bundle = prepared.context_bundle.clone();
-    let mut bootstrap_action = SessionBootstrapAction::None;
+    let mut hook_snapshot_reload = HookSnapshotReloadTrigger::None;
 
     match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => {
             let _ = prepared.prompt_blocks.take();
-            bootstrap_action = SessionBootstrapAction::OwnerContext;
+            hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
@@ -1520,7 +1520,7 @@ async fn build_task_owner_prompt_request(
         prepared.mcp_servers,
         flow_capabilities,
         effective_capability_keys,
-        bootstrap_action,
+        hook_snapshot_reload,
     );
 
     Ok(req)

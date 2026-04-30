@@ -1677,3 +1677,67 @@ compact 后开工第一件事：把 `refactor/session-pipeline-pr1` → `refacto
 当前分支状态：`refactor/session-pipeline` 领先 main 9 个 commit
 （PR 1 的 8 个 + PR 2 的 `76d67fc`）。
 
+---
+
+## 2026-04-30 (续) · PR 3 完成：Bundle 进 TurnFrame + PiAgent 感知 bundle_id
+
+### commit `e07798c` · 6 文件 / +209 / -14
+
+**SPI 层**：
+- `ExecutionTurnFrame.context_bundle: Option<SessionContextBundle>` 新增
+  → Bundle 正式进入 connector 可感知的主数据面
+- `assembled_system_prompt` 加 `#[deprecated]` 注解（note 指向 PR 8 下线计划）
+- `AgentConnector::update_session_context_bundle(session_id, bundle)` trait 方法
+  新增，default no-op —— 预留 application 层在非 prompt 边界（MCP 热更 / hook
+  snapshot 刷新）主动推送 Bundle 的接口
+
+**PiAgent**：
+- `PiAgentSessionRuntime` 加 `last_bundle_id: Option<Uuid>` 字段
+- 三种 bundle_id 变化的决策：
+  - is_new_agent → `set_system_prompt` + cache `incoming_bundle_id`
+  - 既有 agent + bundle_id 与 cache 不同 → `set_system_prompt` + update cache
+  - 既有 agent + bundle_id 相同 → 跳过，保留上轮结果（节省 cache prefix 失效）
+- text 渲染源仍来自 `turn.assembled_system_prompt`（`#[allow(deprecated)]`），
+  因为 PiAgent 内不持有 base_system_prompt / user_prefs / guidelines 等
+  session-level state，"full Bundle-only render" 必须 PR 8 通过
+  `update_session_context_bundle` 协议由 Hub 推送完整 prompt 才能完成
+
+**Application**：
+- `prompt_pipeline.rs`：`turn_frame.context_bundle = req.context_bundle.clone()`
+- `system_prompt_assembler.rs`：抽出 pub `render_runtime_section(bundle)` helper，
+  负责 `## Project Context` 段落（RuntimeAgent scope / RUNTIME_AGENT_CONTEXT_SLOTS
+  白名单）的结构化产出；`assemble_system_prompt` 内部调用它保持一处单源
+
+**vibe_kanban**：保留 `assembled_system_prompt` fallback（协议侧把 SP 前置拼接到
+  user_text 给外部进程），加 `#[allow(deprecated)]` + 解释性注释
+
+### 测试验证
+
+- 新增 `prompt_refreshes_system_prompt_when_bundle_id_changes`（executor lib）：
+  - Turn 1：bundle_id=A + SP_A → set 生效
+  - Turn 2：bundle_id=B + SP_B → 检测到变化，set 再次生效
+  - Turn 3：bundle_id=B（复用）+ SP_STALE → **不 set**，agent 仍用 turn 2 的 SP_B
+  - + 末尾 assert runtime.last_bundle_id == bundle_b_id
+- 旧 fixture `update_session_tools_replaces_all_tools` 补 last_bundle_id: None
+- `cargo test --workspace --lib` 全绿：application 279 / executor 32（+1）
+
+### Invariant 进展
+
+- **I1 · 单一主数据面** 部分达成：
+  - ✅ PiAgent 读 `context_bundle.bundle_id` 作为 refresh 决策变量
+  - ⏳ PiAgent 渲染 text 仍来自 `assembled_system_prompt` — PR 8 将通过
+    `update_session_context_bundle` 推送 application 渲染产物彻底切走
+
+### 下一步（PR 4 起）
+
+- **PR 4**: Hook 三类语义分离 + Bundle `turn_delta` 字段 +
+  `HOOK_USER_MESSAGE_SKIP_SLOTS` 删除 + `session-capabilities://` user_blocks
+  路径废除 + `SessionBootstrapAction::OwnerContext` → `HookSnapshotReloadTrigger::Reload`
+- PR 5: contribute_* 去重 + companion bundle 裁剪 + continuation markdown 双包清理
+- PR 6: hub.rs 拆子模块（hub/facade.rs ≤ 500 行）
+- PR 7: turn_processor 净化 + SessionRuntime per-turn 下沉
+- DoD: 3 份 spec + journal 完结
+
+当前分支状态：`refactor/session-pipeline` 领先 main 10 个 commit
+（PR 1 的 8 个 + PR 2 的 2 个 + PR 3 的 `e07798c`）。
+

@@ -196,29 +196,23 @@ impl CommandHandler {
 
         let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
 
-        let req = PromptSessionRequest {
-            user_input: UserPromptInput {
-                prompt_blocks: payload.prompt_blocks.map(|v| {
-                    if let serde_json::Value::Array(arr) = v {
-                        arr
-                    } else {
-                        vec![v]
-                    }
-                }),
-                working_dir: payload.working_dir.clone(),
-                env: payload.env,
-                executor_config,
-            },
-            mcp_servers: parse_relay_mcp_servers(&payload.mcp_servers),
-            relay_mcp_server_names: Default::default(),
-            vfs: Some(vfs),
-            flow_capabilities: None,
-            effective_capability_keys: None,
-            context_bundle: None,
-            bootstrap_action: agentdash_application::session::SessionBootstrapAction::None,
-            identity: None,
-            post_turn_handler: None,
-        };
+        // PR 1 Phase 1d：local relay 入口收敛 struct-literal → from_user_input 工厂 +
+        // 后端注入字段按 builder 风格逐项赋值。local 路径无 identity（本地命令触发）
+        // 亦无 post_turn_handler（直接对接 agent 进程，没有 task/routine 回调）。
+        let mut req = PromptSessionRequest::from_user_input(UserPromptInput {
+            prompt_blocks: payload.prompt_blocks.map(|v| {
+                if let serde_json::Value::Array(arr) = v {
+                    arr
+                } else {
+                    vec![v]
+                }
+            }),
+            working_dir: payload.working_dir.clone(),
+            env: payload.env,
+            executor_config,
+        });
+        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers);
+        req.vfs = Some(vfs);
 
         tracing::info!(
             session_id = %session_id,

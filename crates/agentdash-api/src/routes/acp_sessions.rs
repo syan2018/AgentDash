@@ -929,13 +929,12 @@ pub async fn prompt_session(
         ProjectPermission::Edit,
     )
     .await?;
-    let mut req = augment_prompt_request_for_owner(
-        &state,
-        &session_id,
-        PromptSessionRequest::from_user_input(user_input),
-    )
-    .await?;
-    req.identity = Some(current_user);
+    // PR 1 Phase 1d：identity 前置注入到 base req —— augment 内部 build_*_owner_prompt_request
+    // 通过 `mut req` 透传，finalize_request 因 `prepared.identity=None` 自然保留 base.identity，
+    // 无需修改 augment trait 签名或跨函数 identity 形参链。
+    let mut base_req = PromptSessionRequest::from_user_input(user_input);
+    base_req.identity = Some(current_user);
+    let req = augment_prompt_request_for_owner(&state, &session_id, base_req).await?;
     let turn_id = state
         .services
         .session_hub

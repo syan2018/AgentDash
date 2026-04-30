@@ -490,16 +490,8 @@ impl RoutineExecutor {
             .as_ref()
             .cloned();
 
-        // TODO(session-pipeline-refactor / PR1): 这里 base.identity 保持 None（from_user_input 的默认值）。
-        // Routine 是 cron/webhook/plugin 触发的无人类身份场景，需要先决策：
-        //   (a) 保持 None —— 当前所有 connector 已能吞下 None（PiAgent/Relay 零读）；
-        //       但审计链路看不到 "routine_id 触发"；
-        //   (b) 合成 system identity（user_id = "system:routine:<id>", is_admin=false, groups=[]）——
-        //       便于审计，但引入"非真人身份"类别，hook 政策/permission 策略要一并对齐；
-        //   (c) 查项目或 routine owner 身份 —— 需 schema 新增 created_by 字段。
-        // 参见：.trellis/tasks/04-30-session-pipeline-architecture-refactor/prd.md Open Questions。
         let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
-        let prepared = assembler
+        let mut prepared = assembler
             .compose_owner_bootstrap(OwnerBootstrapSpec {
                 owner: OwnerScope::Project {
                     project: &agent_context.project,
@@ -522,6 +514,11 @@ impl RoutineExecutor {
                 audit_session_key: Some(session_id.to_string()),
             })
             .await?;
+
+        // PRD Decisions · E1：routine 合成 system identity，保证审计链路可归属。
+        // AuthIdentity::system_routine 前缀 user_id = "system:routine:<id>"、is_admin=false、
+        // provider = Some("system.routine")，避免企业权限策略误匹配。
+        prepared.identity = Some(agentdash_spi::auth::AuthIdentity::system_routine(routine.id));
 
         Ok(finalize_request(base, prepared))
     }

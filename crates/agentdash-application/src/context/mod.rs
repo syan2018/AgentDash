@@ -3,6 +3,7 @@ mod builder;
 mod builtins;
 pub mod mount_file_discovery;
 pub mod rendering;
+pub mod slot_orders;
 pub mod source_resolver;
 pub mod vfs_discovery;
 mod workflow_bindings;

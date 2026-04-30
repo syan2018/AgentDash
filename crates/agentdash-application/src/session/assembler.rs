@@ -1462,59 +1462,10 @@ fn contribute_lifecycle_context(
     });
 
     if let Some(workflow) = spec.workflow {
-        let injection = &workflow.contract.injection;
-        let mut parts = Vec::new();
-        if let Some(goal) = injection
-            .goal
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            parts.push(format!("## Workflow Goal\n{goal}"));
-        }
-        if !injection.instructions.is_empty() {
-            parts.push(format!(
-                "## Workflow Instructions\n{}",
-                injection
-                    .instructions
-                    .iter()
-                    .filter_map(|item| {
-                        let trimmed = item.trim();
-                        (!trimmed.is_empty()).then(|| format!("- {trimmed}"))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        if !injection.context_bindings.is_empty() {
-            parts.push(format!(
-                "## Workflow Context Bindings\n{}",
-                injection
-                    .context_bindings
-                    .iter()
-                    .map(|binding| {
-                        let title = binding
-                            .title
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or(binding.locator.as_str());
-                        let required = if binding.required {
-                            "required"
-                        } else {
-                            "optional"
-                        };
-                        format!(
-                            "- `{}` ({required}) — {}: {}",
-                            binding.locator, title, binding.reason
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        let content = parts.join("\n\n");
-        if !content.trim().is_empty() {
+        if let Some(content) = crate::context::rendering::render_workflow_injection(
+            &workflow.contract.injection,
+            crate::context::rendering::WorkflowInjectionMode::Declarative,
+        ) {
             fragments.push(agentdash_spi::ContextFragment {
                 slot: "workflow_context".to_string(),
                 label: "lifecycle_workflow_injection".to_string(),
@@ -1729,46 +1680,34 @@ pub async fn compose_companion_with_workflow(
 
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
     // fragment 注入 Bundle，替代旧的字符串拼接路径。
+    // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
+    // 不需要 declarative bindings 列表）；companion+workflow 路径若提供 audit_session_key
+    // 会通过调用方在外层 emit 至审计总线。
     let mut merged_bundle = comp.parent_context_bundle.cloned();
-    if let Some(workflow) = spec.workflow {
-        let inj = &workflow.contract.injection;
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(goal) = &inj.goal {
-            if !goal.trim().is_empty() {
-                parts.push(format!("## Workflow Goal\n{goal}"));
-            }
-        }
-        if !inj.instructions.is_empty() {
-            parts.push(format!(
-                "## Workflow Instructions\n{}",
-                inj.instructions
-                    .iter()
-                    .map(|i| format!("- {i}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        let workflow_content = parts.join("\n\n");
-        if !workflow_content.is_empty() {
-            let workflow_fragment = agentdash_spi::ContextFragment {
-                slot: "workflow_context".to_string(),
-                label: "companion_workflow_injection".to_string(),
-                order: 83,
-                strategy: agentdash_spi::MergeStrategy::Append,
-                scope: agentdash_spi::ContextFragment::default_scope(),
-                source: "companion:workflow_injection".to_string(),
-                content: workflow_content,
-            };
-            match merged_bundle.as_mut() {
-                Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
-                None => {
-                    let mut bundle = agentdash_spi::SessionContextBundle::new(
-                        Uuid::new_v4(),
-                        ContextBuildPhase::Companion.as_tag(),
-                    );
-                    bundle.upsert_by_slot(workflow_fragment);
-                    merged_bundle = Some(bundle);
-                }
+    if let Some(workflow) = spec.workflow
+        && let Some(workflow_content) = crate::context::rendering::render_workflow_injection(
+            &workflow.contract.injection,
+            crate::context::rendering::WorkflowInjectionMode::SummaryOnly,
+        )
+    {
+        let workflow_fragment = agentdash_spi::ContextFragment {
+            slot: "workflow_context".to_string(),
+            label: "companion_workflow_injection".to_string(),
+            order: 83,
+            strategy: agentdash_spi::MergeStrategy::Append,
+            scope: agentdash_spi::ContextFragment::default_scope(),
+            source: "companion:workflow_injection".to_string(),
+            content: workflow_content,
+        };
+        match merged_bundle.as_mut() {
+            Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
+            None => {
+                let mut bundle = agentdash_spi::SessionContextBundle::new(
+                    Uuid::new_v4(),
+                    ContextBuildPhase::Companion.as_tag(),
+                );
+                bundle.upsert_by_slot(workflow_fragment);
+                merged_bundle = Some(bundle);
             }
         }
     }

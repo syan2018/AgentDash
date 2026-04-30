@@ -3,6 +3,7 @@ use crate::workflow::ActiveWorkflowProjection;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
 use super::Contribution;
+use super::rendering::{render_resolved_binding_section, render_resolved_binding_warnings};
 
 /// Workflow context_bindings 片段。
 ///
@@ -38,22 +39,9 @@ pub fn contribute_workflow_binding(
     }];
 
     for (index, binding) in resolved_bindings.resolved.iter().enumerate() {
-        let heading = binding
-            .title
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| {
-                let reason = binding.reason.trim();
-                if reason.is_empty() {
-                    binding.locator.as_str()
-                } else {
-                    reason
-                }
-            });
-        let body = binding.content.trim();
-        if body.is_empty() {
+        let Some(section) = render_resolved_binding_section(binding) else {
             continue;
-        }
+        };
         fragments.push(ContextFragment {
             slot: "workflow_context".to_string(),
             label: "workflow_context_binding".to_string(),
@@ -61,14 +49,11 @@ pub fn contribute_workflow_binding(
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
             source: "legacy:contributor:workflow_bindings".to_string(),
-            content: format!(
-                "## {}\n- locator: `{}`\n- reason: {}\n\n{}",
-                heading, binding.locator, binding.reason, body
-            ),
+            content: section,
         });
     }
 
-    if !resolved_bindings.warnings.is_empty() {
+    if let Some(warning_section) = render_resolved_binding_warnings(resolved_bindings) {
         fragments.push(ContextFragment {
             slot: "workflow_context".to_string(),
             label: "workflow_context_warnings".to_string(),
@@ -76,15 +61,7 @@ pub fn contribute_workflow_binding(
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
             source: "legacy:contributor:workflow_bindings".to_string(),
-            content: format!(
-                "## Workflow Binding Warnings\n{}",
-                resolved_bindings
-                    .warnings
-                    .iter()
-                    .map(|item| format!("- {item}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ),
+            content: warning_section,
         });
     }
 

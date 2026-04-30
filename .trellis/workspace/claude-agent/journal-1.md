@@ -1741,3 +1741,152 @@ compact 后开工第一件事：把 `refactor/session-pipeline-pr1` → `refacto
 当前分支状态：`refactor/session-pipeline` 领先 main 10 个 commit
 （PR 1 的 8 个 + PR 2 的 2 个 + PR 3 的 `e07798c`）。
 
+---
+
+## 2026-04-30 (续) · PR 4 完成：Hook 三类语义分离 + Bundle turn_delta + 废除 SKIP_SLOTS
+
+### 总览
+
+PR 4 拆分为 4 个 commit，按"低耦合 → 高耦合"顺序推进。当前分支领先 main
+14 个 commit（PR 1 的 8 + PR 2 的 2 + PR 3 的 1 + PR 4 的 4 + 先前 journal commit）。
+
+| Commit | Hash | 主题 | 文件 / 行数 |
+|---|---|---|---|
+| 4a | `9dd3560` | Bundle 拆 bootstrap_fragments + turn_delta | 5 / +127 -40 |
+| 4e | `e38159c` | SessionBootstrapAction → HookSnapshotReloadTrigger | 7 / +49 -38 |
+| 4b+4c | `0f73b6a` | companion_agents 单路径 + 废 SKIP_SLOTS + session-caps | 5 / +56 -70 |
+| 4d | `36f441f` | TransformContextOutput.messages → steering_messages | 4 / +33 -9 |
+
+### Commit 1 (4a) — Bundle 双字段落地
+
+**核心改动**（`agentdash-spi/src/session_context_bundle.rs`）：
+
+- `fragments` → `bootstrap_fragments`（组装期产出，跨 turn 复用）
+- 新增 `turn_delta: Vec<ContextFragment>`（per-turn 增量，运行期 Hook 回灌）
+- `render_section` 合并两路（按 order 升序）
+- `filter_for` / `iter_fragments` 迭代两路
+- 新 API：`push_turn_delta` / `extend_turn_delta`（不去重，允许同 slot 多条）
+- `upsert_by_slot` / `merge` / `push_raw` 继续作用在 bootstrap_fragments
+
+**波及**：application 层 `context/builder.rs`（sort 改打在 bootstrap_fragments）、
+`context/audit.rs`（emit 遍历 `iter_fragments`）、`session/assembler.rs` 两处
+`source_summary`；executor 层 1 处 fixture struct literal 补 turn_delta。
+
+### Commit 2 (4e) — SessionBootstrapAction 重命名
+
+按 PRD E7 把 session 层概念重命名：
+
+- `SessionBootstrapAction` → `HookSnapshotReloadTrigger`
+- 变体 `OwnerContext` → `Reload`（去掉"owner 上下文注入"的糅合，语义纯化为
+  "本轮重新 load hook snapshot + 触发 SessionStart hook"）
+- `PromptSessionRequest.bootstrap_action` → `hook_snapshot_reload`
+- `SessionAssemblyBuilder::with_bootstrap_action` → `with_hook_snapshot_reload`
+- `SessionMeta.bootstrap_state`（Plain/Pending/Bootstrapped）保持：这是持久化
+  的 session 生命周期阶段，与本轮 hook 触发器语义独立
+
+**波及 7 文件**：application 的 types / assembler / hub / prompt_pipeline /
+mod / augmenter；agentdash-api 的 acp_sessions.rs。无 serde wire 依赖（字段
+只在 internal `PromptSessionRequest` 上，无 Serialize derive），安全 rename。
+
+### Commit 3 (4b + 4c) — companion_agents 单路径
+
+**核心命题**：静态 hook 上下文（companion_agents / workflow / constraint 等）
+只有一条路径：Bundle → SP `## Project Context`。user_message 路径不再承载
+静态 slot 内容。
+
+**改动**：
+
+1. `RUNTIME_AGENT_CONTEXT_SLOTS` 新增两个 slot：
+   - `companion_agents`（原由 SP 独立 section 渲染）
+   - `constraint`（单数）与 `constraints`（复数）并存避免 workflow provider
+     产出的 constraint injection 在 Bundle 路径下丢失
+2. `AppExecutionHookProvider` 的 `HookTrigger::UserPromptSubmit` 分支不再
+   复制 `snapshot.injections` 到 `resolution.injections`，改走
+   `apply_hook_rules` 只保留 per-turn 动态 rule 产出
+3. `prompt_pipeline.start_prompt_with_follow_up` 签名改 `mut req`；在
+   `hook_session` 初始化之后把 `From<&SessionHookSnapshot> for Contribution`
+   接入 —— `snapshot.injections` → `Bundle.bootstrap_fragments`（通过
+   `bundle.merge(contribution.fragments)`）
+4. 删除 `prompt_pipeline.rs:388-408` 的 `session-capabilities://` resource
+   block 注入代码路径；`build_user_message_notifications` 使用原
+   `resolved_payload.user_blocks`
+5. 删除 `HOOK_USER_MESSAGE_SKIP_SLOTS` 常量及其 filter 分支；
+   `build_hook_injection_message` 全量交给 `build_hook_markdown`
+6. 删除 `system_prompt_assembler.rs` 的 `## Companion Agents` 独立 section；
+   `SessionBaselineCapabilities.companion_agents` 结构保留（companion 工具
+   参数校验仍可能依赖），只是不再二次渲染进 SP
+
+**Invariant I4 验证**：
+- `grep -r "HOOK_USER_MESSAGE_SKIP_SLOTS" crates/` 代码路径零命中（仅剩 doc
+  注释的历史引用）
+- `grep -r "session-capabilities://" crates/` 代码路径零命中（同上）
+- companion_agents 在代码库中只有两条产出路径（hook provider `build_*` /
+  Bundle render），且它们是同一数据流的上下游关系
+
+### Commit 4 (4d) — TransformContextOutput 语义命名
+
+**改动**：`TransformContextOutput.messages` → `steering_messages`，类型
+doc 上明确三轴语义独立（与 target-architecture.md §C11 对齐）：
+
+1. **Bundle 改写** — 不通过此结构体承载，走 `Bundle.turn_delta` +
+   `ContextAuditBus` 两条独立数据面
+2. **Per-turn steering** — `steering_messages`（命名本身宣告禁令：不得塞
+   已被 Bundle 承载的静态 slot）
+3. **控制决策** — `blocked: Option<String>`（未来可演化为枚举）
+
+**为什么不加 `bundle_delta: Vec<ContextFragment>` 字段（PRD 原版期望）**：
+`ContextFragment` 位于 `agentdash-spi`，而 `spi` 依赖 `agent-types`。把 SPI
+类型塞入 `agent-types` 会形成循环依赖。处理方式：
+- **字段层面**：仅 rename `messages` → `steering_messages`，以命名声明
+  三轴独立性
+- **数据面层面**：物理分离已达成（Bundle.turn_delta + ContextAuditBus），
+  PR 4a 落地了 Bundle.turn_delta；hook_delegate 在 emit_hook_injection_fragments
+  内已把 HookInjection 通过 audit_bus emit 为 ContextFragment（PR 3 已完成
+  audit 路径）
+
+后续 PR 5+ 可在 ContextFragment 迁入 agent-types（或引入共享 shim 类型）
+后把字段形式补齐；当前实现的"数据面三轴分离 + 命名层声明"已满足 I4
+不变式的语义级约束。
+
+**波及**：`agent-types/decisions.rs` 1 处 + `agent/agent_loop.rs` 1 处 +
+`runtime_alignment.rs` 2 处 fixture + `hook_delegate.rs` 3 处字段构造与
+断言。
+
+### 测试 / 构建验证
+
+- `cargo build --workspace --lib` ✅
+- `cargo test --workspace --lib`：application 279 / executor 32 / SPI 37 /
+  全 crate 全绿
+- `cargo test --workspace`：含 integration 全绿（agent 11 passed）
+- `HOOK_USER_MESSAGE_SKIP_SLOTS` grep 代码路径零命中 ✅
+- `session-capabilities://` grep 代码路径零命中 ✅
+- `SessionBootstrapAction` grep 只剩 types.rs doc 注释的历史引用 ✅
+
+### Invariant 清单（截至 PR 4 完成）
+
+| Inv | 状态 | 来源 |
+|---|---|---|
+| I1 单一主数据面 | 🟡 PiAgent 读 Bundle，渲染 text 仍 fallback `assembled_system_prompt`（PR 8） | PR 3 |
+| I2 ExecutionContext 分层 | ✅ | PR 2 |
+| I3 入口单一节拍 | ✅ | PR 1 |
+| I4 Hook 语义分离 | ✅ （SKIP_SLOTS 零命中 / session-caps 零命中 / 三轴语义独立） | **PR 4** |
+| I5 SessionRuntime 纯 session 级 | ⏳ PR 7 |  |
+| I6 turn_processor 职责单一 | ⏳ PR 7 |  |
+| I7 hub.rs ≤ 500 行 | ⏳ PR 6 |  |
+| I8 contribute_* 单源 | ⏳ PR 5 |  |
+| I9 slot order 集中 | ⏳ PR 5 |  |
+| I10 Routine identity 非 None | ✅ | PR 1 |
+
+### 下一步（PR 5 起）
+
+- **PR 5**: contribute_* 去重 + workflow_injection 共享 helper + workspace
+  单源 + SessionPlan 统一外挂 + source_resolver/workspace_sources 合并 +
+  slot_orders.rs 集中 + companion bundle 裁剪 + continuation markdown 双包
+  清理
+- PR 6: hub.rs 拆 facade/factory/tool_builder/hook_dispatch/cancel 子模块
+- PR 7: turn_processor 净化 + SessionRuntime per-turn 字段下沉到 TurnExecution
+- DoD: `.trellis/spec/backend/` 三份 spec（session-startup-pipeline.md /
+  execution-context-frames.md / bundle-main-datasource.md）+ journal 完结
+
+当前分支状态：`refactor/session-pipeline` 领先 main 14 个 commit（PR 1 的
+8 + PR 2 的 2 + PR 3 的 2 + PR 4 的 4）。

@@ -79,30 +79,13 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     }
 
     // ── 2. Project Context ──
+    //
+    // Companion Agents 已在 PR 4（04-30-session-pipeline-architecture-refactor）
+    // 从 SP 独立 section 移除；由 Bundle 的 `companion_agents` slot 随 Project
+    // Context 一起渲染。`baseline_capabilities.companion_agents` 仍保留为
+    // `companion_request` 工具参数校验的结构化视图，但不再二次渲染进 SP。
     if let Some(section) = input.context_bundle.and_then(render_runtime_section) {
         sections.push(section);
-    }
-
-    // ── 2b. Companion Agents ──
-    if let Some(caps) = input.session_capabilities {
-        if !caps.companion_agents.is_empty() {
-            let lines = caps
-                .companion_agents
-                .iter()
-                .map(|a| {
-                    format!(
-                        "- **{}** (executor: `{}`): {}",
-                        a.name, a.executor, a.display_name
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            sections.push(format!(
-                "## Companion Agents\n\n\
-                 以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n\n\
-                 {lines}"
-            ));
-        }
     }
 
     // ── 3. Workspace ──

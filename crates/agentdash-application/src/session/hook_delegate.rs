@@ -799,28 +799,16 @@ fn build_blocking_action_reminders(
         .collect()
 }
 
-/// 与 Bundle 主数据源协同工作的 user message 层去重。
-///
-/// `session_capabilities.companion_agents` 已由 system prompt 渲染 `## Companion Agents`
-/// 段；同名 slot 的 HookInjection 不应再出现在 user message 中。
-const HOOK_USER_MESSAGE_SKIP_SLOTS: &[&str] = &["companion_agents"];
-
 fn build_hook_injection_message(
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     resolution: &agentdash_spi::hooks::HookResolution,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
-    let filtered: Vec<HookInjection> = resolution
-        .injections
-        .iter()
-        .filter(|injection| {
-            !HOOK_USER_MESSAGE_SKIP_SLOTS
-                .iter()
-                .any(|slot| injection.slot == *slot)
-        })
-        .cloned()
-        .collect();
-    let content = build_hook_markdown(snapshot, &filtered, runtime)?;
+    // PR 4（04-30-session-pipeline-architecture-refactor）删除
+    // `HOOK_USER_MESSAGE_SKIP_SLOTS` 的白名单去重逻辑。companion_agents 等
+    // "静态上下文" slot 已经随 Bundle 进入 SP，user message 路径天然不会再
+    // 承载同内容 —— 去重依靠"数据面单一来源"（Bundle），而非维护一张白名单。
+    let content = build_hook_markdown(snapshot, &resolution.injections, runtime)?;
     Some(AgentMessage::user(content))
 }
 
@@ -1205,9 +1193,9 @@ mod tests {
                     code: "session_binding_found".to_string(),
                     message: "命中会话绑定".to_string(),
                 }],
-                // 注意：`companion_agents` slot 会被 delegate 的 `HOOK_USER_MESSAGE_SKIP_SLOTS`
-                // 去重（因为 system prompt 已由 session_capabilities 渲染该段）。这里改用
-                // 不会被跳过的 `workflow` slot，以验证 trace 去重与注入消息拼接逻辑。
+                // PR 4 之后 companion_agents 统一走 Bundle 一条路径，delegate 不再
+                // 维护 HOOK_USER_MESSAGE_SKIP_SLOTS；这里仍用 workflow slot 以保持
+                // 测试断言与 hook markdown 渲染逻辑的对齐。
                 injections: vec![HookInjection {
                     slot: "workflow".to_string(),
                     content: "## Workflow\n- step: implement".to_string(),

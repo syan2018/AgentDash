@@ -429,10 +429,21 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 resolution.injections = snapshot.injections.clone();
             }
             HookTrigger::UserPromptSubmit => {
-                // 去重改由 SessionContextBundle.upsert_by_slot 承接；这里把所有
-                // snapshot.injections 交给 hook_delegate，在 user message
-                // 构造阶段按 bundle slot 集合过滤掉已经被 Bundle 承载的 slot。
-                resolution.injections = snapshot.injections.clone();
+                // PR 4（04-30-session-pipeline-architecture-refactor）：静态
+                // `snapshot.injections`（companion_agents / workflow / constraint
+                // 等"预装"条目）由 prompt_pipeline 在启动阶段合并进 Bundle 的
+                // `bootstrap_fragments`，不再通过 UserPromptSubmit 重新渲染成
+                // user message —— 否则会与 SP `## Project Context` 重复。
+                // 此分支只应用动态 hook 规则（如 rhai 规则产出的 per-turn
+                // dynamic 注入）。
+                apply_hook_rules(
+                    HookEvaluationContext {
+                        snapshot: &snapshot,
+                        query: &query,
+                    },
+                    &mut resolution,
+                    &self.script_engine,
+                );
             }
             HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
                 apply_hook_rules(

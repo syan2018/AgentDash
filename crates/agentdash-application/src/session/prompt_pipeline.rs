@@ -27,7 +27,7 @@ impl SessionHub {
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: PromptSessionRequest,
+        mut req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
         let resolved_payload = req
             .user_input
@@ -159,6 +159,19 @@ impl SessionHub {
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.hook_session = hook_session.clone();
             }
+        }
+
+        // 把 hook snapshot 里的 injection 合并到 Bundle 的 bootstrap_fragments —
+        // 这是 PR 4（04-30-session-pipeline-architecture-refactor）的核心动作：
+        // companion_agents / workflow / constraint 等 hook 注入不再通过 SP 独立
+        // section 或 user_message 渲染，而是由 Bundle `render_section` 统一产出。
+        // `From<&SessionHookSnapshot> for Contribution` 封装了 slot → order 映射。
+        if let Some(ref hs) = hook_session
+            && let Some(bundle) = req.context_bundle.as_mut()
+        {
+            let snapshot = hs.snapshot();
+            let contribution: crate::context::Contribution = (&snapshot).into();
+            bundle.merge(contribution.fragments);
         }
 
         let context_audit_bus = self.current_context_audit_bus().await;
@@ -385,33 +398,15 @@ impl SessionHub {
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
         source.executor_id = Some(context.session.executor_config.executor.to_string());
 
-        let is_first_prompt = session_meta.last_event_seq == 0;
-        let mut user_blocks_with_capabilities = resolved_payload.user_blocks.clone();
-        if is_first_prompt || is_owner_bootstrap {
-            {
-                let caps = &session_capabilities;
-                if !caps.is_empty() {
-                    if let Ok(block) = serde_json::from_value::<agent_client_protocol::ContentBlock>(
-                        serde_json::json!({
-                            "type": "resource",
-                            "resource": {
-                                "uri": format!("agentdash://session-capabilities/{}", session_id),
-                                "mimeType": "application/json",
-                                "text": serde_json::to_string(caps).unwrap_or_default(),
-                            }
-                        }),
-                    ) {
-                        user_blocks_with_capabilities.insert(0, block);
-                    }
-                }
-            }
-        }
-
+        // PR 4（04-30-session-pipeline-architecture-refactor）删除 `session-capabilities://`
+        // resource block 注入路径：companion_agents 已改由 Bundle 渲染到 SP
+        // `## Project Context`；skills 由 `<available_skills>` XML 块承载；
+        // capabilities 结构本身如有持久化需求应走 SessionMeta，而非 user_blocks。
         let user_notifications = build_user_message_notifications(
             session_id,
             &source,
             &turn_id,
-            &user_blocks_with_capabilities,
+            &resolved_payload.user_blocks,
         );
         for notification in user_notifications {
             let _ = self.persist_notification(&sid, notification).await;

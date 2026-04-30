@@ -1442,14 +1442,6 @@ async fn build_task_owner_prompt_request(
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    // task context 已由 compose_story_step 装配到 prepared.context_bundle 中；
-    // 当前路径把 bundle 渲染成 markdown 作为 continuation 的 owner_context 参考。
-    let task_context_markdown = prepared.context_bundle.as_ref().map(|bundle| {
-        bundle.render_section(
-            agentdash_spi::FragmentScope::RuntimeAgent,
-            agentdash_spi::RUNTIME_AGENT_CONTEXT_SLOTS,
-        )
-    });
     let prompt_blocks = user_prompt_blocks;
     let mut context_bundle = prepared.context_bundle.clone();
     let mut hook_snapshot_reload = HookSnapshotReloadTrigger::None;
@@ -1462,27 +1454,39 @@ async fn build_task_owner_prompt_request(
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
         ) => {
-            // 用当前 task bundle 的 markdown 作为 owner_context 基线再接续历史事件，
-            // 产出 continuation Bundle 替代原 task bundle。
-            let markdown = state
+            // PR 5d（E8②）：task continuation 不再把 bundle 渲染成 markdown 再二次
+            // 包装为 static_fragment bundle。改为保留原 task bundle 的结构化 slot
+            // （task/story/project/workspace/...），把历史 transcript 作为独立的
+            // `static_fragment` fragment 附加到同一 bundle 上。
+            let transcript_markdown = state
                 .services
                 .session_hub
-                .build_continuation_system_context(
-                    session_id,
-                    task_context_markdown
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty()),
-                )
+                .build_continuation_system_context(session_id, None)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
-            let bundle_session_id =
-                uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
-            context_bundle = markdown.map(|md| {
-                agentdash_application::context::build_continuation_bundle_from_markdown(
-                    bundle_session_id,
-                    md,
-                )
-            });
+            if let Some(transcript) = transcript_markdown
+                .as_ref()
+                .map(|md| md.trim())
+                .filter(|md| !md.is_empty())
+            {
+                match context_bundle.as_mut() {
+                    Some(bundle) => bundle.upsert_by_slot(
+                        agentdash_application::context::build_continuation_transcript_fragment(
+                            transcript.to_string(),
+                        ),
+                    ),
+                    None => {
+                        let bundle_session_id = uuid::Uuid::parse_str(session_id)
+                            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+                        context_bundle = Some(
+                            agentdash_application::context::build_continuation_bundle_from_markdown(
+                                bundle_session_id,
+                                transcript.to_string(),
+                            ),
+                        );
+                    }
+                }
+            }
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,

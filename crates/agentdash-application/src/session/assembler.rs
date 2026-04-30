@@ -467,6 +467,11 @@ impl SessionAssemblyBuilder {
     ///
     /// 保留 `self` 上预先设置的 `identity` / `post_turn_handler` / `env` 等字段
     /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
+    ///
+    /// PR 5d（E8①）起，`parent_context_bundle` 会按 `mode` 进行 **fragment 级**
+    /// 裁剪（而不是 Full 直接克隆）：`ConstraintsOnly` 只留 constraint 相关 slot，
+    /// `WorkflowOnly` 只留 workflow 相关 slot，`Compact` 剔除运行时 vfs/tools
+    /// 摘要类 slot 保留业务上下文，`Full` 维持完整继承。
     pub fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
@@ -487,13 +492,16 @@ impl SessionAssemblyBuilder {
             "text": dispatch_prompt,
         })];
 
+        let sliced_bundle = parent_context_bundle
+            .map(|bundle| slice_companion_bundle(bundle, mode));
+
         Self {
             vfs: slice.vfs,
             flow_capabilities: Some(flow_caps),
             effective_capability_keys: None,
             mcp_servers: slice.mcp_servers,
             relay_mcp_server_names: HashSet::new(),
-            context_bundle: parent_context_bundle.cloned(),
+            context_bundle: sliced_bundle,
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
@@ -1631,6 +1639,50 @@ fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSlice
     }
 }
 
+/// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
+///
+/// PR 5 前 companion 子 session 直接继承父 `SessionContextBundle` 的全部 fragment，
+/// `CompanionSliceMode` 仅在 VFS/MCP/能力层面起作用。对 `ConstraintsOnly` /
+/// `WorkflowOnly` 模式来说，这与"只继承约束 / 只继承 workflow 声明"的语义不一致。
+///
+/// 裁剪策略按 slot 白名单：
+/// - `Full`：完整克隆父 bundle。
+/// - `Compact`：剔除 `vfs` / `tools` / `persona` / `required_context` / `runtime_policy`
+///   等运行时画像 slot，保留业务上下文与 workflow/约束。
+/// - `WorkflowOnly`：只保留 `workflow` / `workflow_context` slot。
+/// - `ConstraintsOnly`：只保留 `constraint` / `constraints` slot。
+///
+/// `turn_delta` 维持原样（hook 产出的 per-turn 增量不做裁剪），子 session 自己的
+/// turn_delta 由其 hook delegate 独立管理。
+fn slice_companion_bundle(
+    parent: &SessionContextBundle,
+    mode: CompanionSliceMode,
+) -> SessionContextBundle {
+    let keep_slot: Box<dyn Fn(&str) -> bool> = match mode {
+        CompanionSliceMode::Full => Box::new(|_slot: &str| true),
+        CompanionSliceMode::Compact => Box::new(|slot: &str| {
+            !matches!(
+                slot,
+                "vfs" | "tools" | "persona" | "required_context" | "runtime_policy"
+            )
+        }),
+        CompanionSliceMode::WorkflowOnly => {
+            Box::new(|slot: &str| matches!(slot, "workflow" | "workflow_context"))
+        }
+        CompanionSliceMode::ConstraintsOnly => {
+            Box::new(|slot: &str| matches!(slot, "constraint" | "constraints"))
+        }
+    };
+
+    let mut sliced = parent.clone();
+    sliced
+        .bootstrap_fragments
+        .retain(|fragment| keep_slot(fragment.slot.as_str()));
+    // turn_delta 不做裁剪 —— hook 产出的 per-turn 增量按 hook 语义自洽；
+    // companion 子 session 如果需要，可以用独立的 hook delegate 重置。
+    sliced
+}
+
 fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
     let text = match phase {
         TaskExecutionPhase::Start => "请开始执行当前任务。",
@@ -1903,6 +1955,95 @@ mod tests {
         WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
+
+    // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+
+    fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
+        let mut bundle = agentdash_spi::SessionContextBundle::new(
+            Uuid::new_v4(),
+            ContextBuildPhase::StoryOwner.as_tag(),
+        );
+        for (idx, slot) in slots.iter().enumerate() {
+            bundle.upsert_by_slot(agentdash_spi::ContextFragment {
+                slot: (*slot).to_string(),
+                label: format!("label_{slot}"),
+                order: 10 + idx as i32,
+                strategy: agentdash_spi::MergeStrategy::Append,
+                scope: agentdash_spi::ContextFragment::default_scope(),
+                source: "test".to_string(),
+                content: format!("body_{slot}"),
+            });
+        }
+        bundle
+    }
+
+    fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {
+        bundle
+            .bootstrap_fragments
+            .iter()
+            .map(|f| f.slot.clone())
+            .collect()
+    }
+
+    #[test]
+    fn slice_companion_bundle_full_retains_all_slots() {
+        let parent = bundle_with_slots(&["story", "workflow_context", "vfs", "constraint"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::Full);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("story"));
+        assert!(slots.contains("workflow_context"));
+        assert!(slots.contains("vfs"));
+        assert!(slots.contains("constraint"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_compact_drops_runtime_slots() {
+        let parent = bundle_with_slots(&[
+            "story",
+            "task",
+            "workflow_context",
+            "vfs",
+            "tools",
+            "persona",
+            "required_context",
+            "runtime_policy",
+        ]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::Compact);
+        let slots = slot_set(&sliced);
+        // 保留业务上下文与 workflow 声明
+        assert!(slots.contains("story"));
+        assert!(slots.contains("task"));
+        assert!(slots.contains("workflow_context"));
+        // 剔除运行时画像
+        assert!(!slots.contains("vfs"));
+        assert!(!slots.contains("tools"));
+        assert!(!slots.contains("persona"));
+        assert!(!slots.contains("required_context"));
+        assert!(!slots.contains("runtime_policy"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_workflow_only_keeps_workflow_slots() {
+        let parent = bundle_with_slots(&["story", "workflow", "workflow_context", "constraint"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::WorkflowOnly);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("workflow"));
+        assert!(slots.contains("workflow_context"));
+        assert!(!slots.contains("story"));
+        assert!(!slots.contains("constraint"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_constraints_only_keeps_constraint_slots() {
+        let parent =
+            bundle_with_slots(&["story", "workflow_context", "constraint", "constraints"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::ConstraintsOnly);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("constraint"));
+        assert!(slots.contains("constraints"));
+        assert!(!slots.contains("story"));
+        assert!(!slots.contains("workflow_context"));
+    }
 
     #[test]
     fn story_step_trigger_prompt_does_not_embed_owner_context() {

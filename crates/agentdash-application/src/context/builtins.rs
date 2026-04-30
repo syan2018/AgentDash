@@ -187,7 +187,38 @@ fn render_template(template: &str, vars: &HashMap<&'static str, String>) -> Stri
 // 每个 contribute_* 函数把 domain 对象解包成 Contribution，供 compose_* 调用方
 // 组装 `Vec<Contribution>` 后喂给 `build_session_context_bundle`。
 
+/// Task-only 业务上下文片段 —— 只产出 `task` slot（task_core），其余 story /
+/// project / workspace 由调用方通过 `contribute_story_context`（owner 路径）
+/// 或其他 contributor 独立产出。
+///
+/// PR 5d 前 task 路径走 `contribute_core_context` 一次性产出 task/story/project/
+/// workspace 四条 fragment，导致 story 领域字段在 owner 与 task 两路各自独立
+/// 维护。此函数让 task 路径与 owner 路径共享同一套 story/project/workspace 渲染。
+pub fn contribute_task_binding(
+    task: &agentdash_domain::task::Task,
+) -> Contribution {
+    let fragment = ContextFragment {
+        slot: "task".to_string(),
+        label: "task_core".to_string(),
+        order: 10,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:contributor:task_binding".to_string(),
+        content: format!(
+            "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
+            task.id,
+            trim_or_dash(&task.title),
+            trim_or_dash(&task.description),
+            task.status()
+        ),
+    };
+    Contribution::fragments_only(vec![fragment])
+}
+
 /// Task / Story / Project / Workspace 的核心业务上下文。
+///
+/// **已过时**：PR 5d 起 task 路径应走 `contribute_task_binding` + `contribute_story_context`
+/// 的组合；本函数仅作为尚未迁移路径的过渡实现保留，长期应删除。
 pub fn contribute_core_context(
     task: &agentdash_domain::task::Task,
     story: &agentdash_domain::story::Story,

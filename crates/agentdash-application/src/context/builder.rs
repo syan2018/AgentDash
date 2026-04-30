@@ -137,6 +137,10 @@ pub fn build_session_context_bundle(
 ///
 /// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、
 /// source=`session:continuation`。
+///
+/// **PR 5d 注记**：仅用于"完全没有 owner/task bundle"的场景（owner bootstrap /
+/// routine continuation）。Task continuation 路径改为直接把 transcript fragment
+/// 追加到原 task bundle 上，保留原有的 task/story/project slot 分区。
 pub fn build_continuation_bundle_from_markdown(
     session_id: Uuid,
     markdown: String,
@@ -146,7 +150,17 @@ pub fn build_continuation_bundle_from_markdown(
     if markdown.trim().is_empty() {
         return bundle;
     }
-    bundle.upsert_by_slot(ContextFragment {
+    bundle.upsert_by_slot(build_continuation_transcript_fragment(markdown));
+    bundle
+}
+
+/// 构建历史 transcript 的单条 fragment —— 用于往已有 Bundle 追加 continuation 段。
+///
+/// slot=`static_fragment`、label=`continuation_transcript`、order=0。
+/// 调用方（如 task continuation 路径）可通过 `bundle.upsert_by_slot` 把这条
+/// fragment 注入已有 task bundle，而不丢失原 bundle 的 slot 分区。
+pub fn build_continuation_transcript_fragment(markdown: String) -> ContextFragment {
+    ContextFragment {
         slot: "static_fragment".to_string(),
         label: "continuation_transcript".to_string(),
         order: 0,
@@ -154,8 +168,7 @@ pub fn build_continuation_bundle_from_markdown(
         scope: ContextFragment::default_scope(),
         source: "session:continuation".to_string(),
         content: markdown,
-    });
-    bundle
+    }
 }
 
 pub fn build_declared_source_warning_fragment(

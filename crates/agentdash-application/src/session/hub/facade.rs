@@ -15,9 +15,9 @@ use agentdash_agent_types::AgentMessage;
 use tokio::sync::broadcast;
 
 use super::super::continuation::{
-    build_companion_human_response_notification, build_continuation_system_context_from_events,
-    build_restored_session_messages_from_events,
+    build_continuation_system_context_from_events, build_restored_session_messages_from_events,
 };
+use crate::companion::build_companion_human_response_notification;
 use super::super::hub_support::*;
 use super::super::types::*;
 use super::SessionHub;

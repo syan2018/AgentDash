@@ -112,10 +112,10 @@ impl SessionTurnProcessor {
         if !received_terminal {
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id) {
-                    Some(runtime) => (
-                        runtime.cancel_requested,
-                        runtime.current_turn_id.as_deref() == Some(turn_id.as_str()),
+                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                    Some(turn) => (
+                        turn.cancel_requested,
+                        turn.turn_id.as_str() == turn_id.as_str(),
                     ),
                     None => (false, false),
                 }
@@ -200,14 +200,12 @@ impl SessionTurnProcessor {
                 .is_some_and(|rt| rt.hook_auto_resume_count < MAX_HOOK_AUTO_RESUMES)
         };
 
-        // 清理 running 状态
+        // 清理 running 状态 — 整个 current_turn 一起退位
         {
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
                 runtime.running = false;
-                runtime.current_turn_id = None;
-                runtime.cancel_requested = false;
-                runtime.processor_tx = None;
+                runtime.current_turn = None;
                 if can_auto_resume {
                     runtime.hook_auto_resume_count += 1;
                 }

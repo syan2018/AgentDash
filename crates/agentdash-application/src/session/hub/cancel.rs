@@ -28,15 +28,17 @@ impl SessionHub {
                 let (tx, _rx) = broadcast::channel(1024);
                 build_session_runtime(tx)
             });
-            if runtime.running {
-                runtime.cancel_requested = true;
+            if let Some(turn) = runtime.current_turn.as_mut()
+                && runtime.running
+            {
+                turn.cancel_requested = true;
             }
-            (
-                runtime.running,
-                runtime.current_turn_id.clone(),
-                runtime.tx.clone(),
-                runtime.processor_tx.clone(),
-            )
+            let (turn_id, processor_tx) = runtime
+                .current_turn
+                .as_ref()
+                .map(|turn| (Some(turn.turn_id.clone()), turn.processor_tx.clone()))
+                .unwrap_or((None, None));
+            (runtime.running, turn_id, runtime.tx.clone(), processor_tx)
         };
 
         if running {

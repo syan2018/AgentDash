@@ -48,8 +48,9 @@ impl SessionHub {
                 ));
             }
             runtime.running = true;
-            runtime.current_turn_id = Some(turn_id.clone());
-            runtime.cancel_requested = false;
+            // TurnExecution 的其余字段在 session/mcp 组装完成后再填入；这里先占位
+            // 防止并发 `start_prompt` 竞争。
+            runtime.current_turn = None;
         }
 
         let effective_vfs = req
@@ -133,8 +134,7 @@ impl SessionHub {
                         let mut sessions = self.sessions.lock().await;
                         if let Some(runtime) = sessions.get_mut(session_id) {
                             runtime.running = false;
-                            runtime.current_turn_id = None;
-                            runtime.cancel_requested = false;
+                            runtime.current_turn = None;
                             runtime.hook_session = None;
                         }
                         return Err(error);
@@ -344,11 +344,12 @@ impl SessionHub {
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.active_execution = Some(ActiveSessionExecutionState {
-                    session_frame: context.session.clone(),
-                    relay_mcp_server_names: relay_mcp_server_names.clone(),
-                    flow_capabilities: flow_capabilities.clone(),
-                });
+                runtime.current_turn = Some(TurnExecution::new(
+                    turn_id.clone(),
+                    context.session.clone(),
+                    relay_mcp_server_names.clone(),
+                    flow_capabilities.clone(),
+                ));
             }
         }
 
@@ -465,8 +466,7 @@ impl SessionHub {
                     let mut sessions = self.sessions.lock().await;
                     if let Some(runtime) = sessions.get_mut(session_id) {
                         runtime.running = false;
-                        runtime.current_turn_id = None;
-                        runtime.cancel_requested = false;
+                        runtime.current_turn = None;
                         runtime.hook_session = None;
                     }
                 }
@@ -497,11 +497,13 @@ impl SessionHub {
 
         let processor_tx = processor.tx();
 
-        // 注册 processor_tx 到 SessionRuntime，供 relay 路径使用
+        // 注册 processor_tx 到 SessionRuntime.current_turn，供 relay / cancel 路径使用
         {
             let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(&session_id) {
-                runtime.processor_tx = Some(processor_tx.clone());
+            if let Some(runtime) = sessions.get_mut(&session_id)
+                && let Some(turn) = runtime.current_turn.as_mut()
+            {
+                turn.processor_tx = Some(processor_tx.clone());
             }
         }
 
@@ -519,11 +521,10 @@ impl SessionHub {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
                         let (cancel_requested, live_turn_matches) = {
                             let guard = sessions.lock().await;
-                            match guard.get(&session_id) {
-                                Some(runtime) => (
-                                    runtime.cancel_requested,
-                                    runtime.current_turn_id.as_deref()
-                                        == Some(turn_id_for_adapter.as_str()),
+                            match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                                Some(turn) => (
+                                    turn.cancel_requested,
+                                    turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
                                 ),
                                 None => (false, false),
                             }
@@ -546,10 +547,10 @@ impl SessionHub {
             // stream 正常结束 → 发送显式 Terminal（不能依赖 drop sender，因为还有其他 clone 存活）
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id) {
-                    Some(runtime) => (
-                        runtime.cancel_requested,
-                        runtime.current_turn_id.as_deref() == Some(turn_id_for_adapter.as_str()),
+                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                    Some(turn) => (
+                        turn.cancel_requested,
+                        turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
                     ),
                     None => (false, false),
                 }

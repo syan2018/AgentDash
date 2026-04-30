@@ -190,9 +190,12 @@ impl SessionHub {
     ) -> std::io::Result<SessionExecutionState> {
         let (running, live_turn_id) = {
             let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .map(|runtime| (runtime.running, runtime.current_turn_id.clone()))
+            sessions.get(session_id).map(|runtime| {
+                (
+                    runtime.running,
+                    runtime.current_turn.as_ref().map(|turn| turn.turn_id.clone()),
+                )
+            })
         }
         .unwrap_or((false, None));
 

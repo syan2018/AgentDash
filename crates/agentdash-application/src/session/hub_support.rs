@@ -154,42 +154,73 @@ pub(super) fn build_session_runtime(
     SessionRuntime {
         tx,
         running: false,
-        current_turn_id: None,
-        cancel_requested: false,
         hook_session: None,
-        active_execution: None,
+        current_turn: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
-        processor_tx: None,
     }
 }
 
+/// Session 级运行态（跨 turn 存活直到进程退出或 session 被删除）。
+///
+/// Per-turn 字段（`turn_id` / `cancel_requested` / `processor_tx` / `session_frame`
+/// / `flow_capabilities` / `relay_mcp_server_names`）统一下沉到
+/// [`TurnExecution`]；`SessionRuntime` 只持 session 级信息。
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
+    /// 是否有 turn 在跑。语义上等价 `current_turn.is_some()`，
+    /// 保留作为显式 bool 以便外部只读路径快速判断。
     pub running: bool,
-    pub current_turn_id: Option<String>,
-    pub cancel_requested: bool,
+    /// Session 级 hook runtime（跨 turn 共享）。
     pub hook_session: Option<SharedHookSessionRuntime>,
-    /// 当前 session 生效的执行态快照（用于 phase 动态热更新与 follow-up 投影）。
-    pub active_execution: Option<ActiveSessionExecutionState>,
-    /// Counter for hook-driven auto-resumes (prevents infinite loops).
+    /// 当前活跃 turn 的执行态；无活跃 turn 时为 `None`。
+    pub current_turn: Option<TurnExecution>,
+    /// Hook 驱动的 auto-resume 计数器（session 级：跨 auto-resume 链累积，
+    /// 新 turn 起始不清零），用于限流防止 hook 指令死循环。
     pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
     pub last_activity_at: i64,
+}
+
+/// Per-turn 执行态。生命周期 = 一次 `start_prompt` → terminal。
+#[derive(Clone)]
+pub(super) struct TurnExecution {
+    /// 当前 turn 标识。
+    pub turn_id: String,
+    /// Session 级执行环境快照（turn_id / working_dir / env / executor_config /
+    /// mcp_servers / vfs / identity）。放在这里的动机是 MCP 热更新路径需要
+    /// 拿到 turn 生效的 session frame 重建工具集。
+    pub session_frame: ExecutionSessionFrame,
+    /// 标记走 relay 的 MCP server 名集合（用于工具构建时分流）。
+    pub relay_mcp_server_names: HashSet<String>,
+    /// Turn 级 capability 集合（per-prompt 下发）。
+    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
+    pub flow_capabilities: FlowCapabilities,
+    /// 取消请求标记。hub.cancel 置 true；processor / adapter 读它决定发
+    /// `Interrupted` 还是 `Completed/Failed` 终态。
+    pub cancel_requested: bool,
     /// 活跃 turn 的事件处理 channel（由 SessionTurnProcessor 持有接收端）。
     /// relay 和 cloud-native 路径共用此通道发送 turn 事件。
     pub processor_tx: Option<tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>>,
 }
 
-#[derive(Clone)]
-pub(super) struct ActiveSessionExecutionState {
-    /// Session 级执行环境快照（turn_id / working_dir / env / executor_config /
-    /// mcp_servers / vfs / identity）。
-    pub session_frame: ExecutionSessionFrame,
-    pub relay_mcp_server_names: HashSet<String>,
-    /// Turn 级 capability 集合（per-prompt 下发）。
-    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
-    pub flow_capabilities: FlowCapabilities,
+impl TurnExecution {
+    /// 新建一个 turn 执行态，其余字段由 `prompt_pipeline` 在组装完成后填入。
+    pub fn new(
+        turn_id: String,
+        session_frame: ExecutionSessionFrame,
+        relay_mcp_server_names: HashSet<String>,
+        flow_capabilities: FlowCapabilities,
+    ) -> Self {
+        Self {
+            turn_id,
+            session_frame,
+            relay_mcp_server_names,
+            flow_capabilities,
+            cancel_requested: false,
+            processor_tx: None,
+        }
+    }
 }
 
 pub struct SessionEventSubscription {

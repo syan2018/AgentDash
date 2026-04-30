@@ -128,7 +128,7 @@ impl AgentConnector for EmptyConnector {
 }
 
 #[tokio::test]
-async fn start_prompt_records_active_execution_state() {
+async fn start_prompt_records_current_turn_state() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -157,19 +157,19 @@ async fn start_prompt_records_active_execution_state() {
         .expect("prompt should start");
 
     let sessions = hub.sessions.lock().await;
-    let active = sessions
+    let turn = sessions
         .get(&session.id)
-        .and_then(|runtime| runtime.active_execution.as_ref())
-        .expect("active execution state");
-    assert_eq!(active.session_frame.mcp_servers, vec![mcp_server]);
-    assert_eq!(active.relay_mcp_server_names, relay_names);
+        .and_then(|runtime| runtime.current_turn.as_ref())
+        .expect("current turn execution state");
+    assert_eq!(turn.session_frame.mcp_servers, vec![mcp_server]);
+    assert_eq!(turn.relay_mcp_server_names, relay_names);
     assert_eq!(
-        active.session_frame.working_directory,
+        turn.session_frame.working_directory,
         workspace.path().join("src")
     );
-    assert_eq!(active.session_frame.executor_config.executor, "PI_AGENT");
+    assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
     assert_eq!(
-        active.flow_capabilities.enabled_clusters,
+        turn.flow_capabilities.enabled_clusters,
         flow_caps.enabled_clusters
     );
 }

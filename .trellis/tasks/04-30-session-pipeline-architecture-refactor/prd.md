@@ -319,6 +319,17 @@
 
 ## Open Questions
 
+- **Routine 身份问题（PR 1 触及但未决，已打 TODO 留现场）**：`routine/executor.rs` 产出的
+  `PromptSessionRequest` 当前 `identity = None`。Routine 是 cron/webhook/plugin 触发，
+  无人类身份。三种备选：
+  - (a) **保持 None**：所有 connector 已吞下 None（PiAgent/Relay 零消费），审计无归属；
+  - (b) **合成 system identity**：`user_id = "system:routine:<id>"`, `is_admin=false`,
+    `groups=[]`, `provider=Some("system.routine")`——便于审计，但引入"非真人身份"类别，
+    hook 政策 / permission policy 需要对齐；
+  - (c) **查 routine owner / project owner**：schema 新增 `created_by` 字段，改动大。
+
+  推荐 (b) 作为最小可行解，但需要先 review auth 政策对 system identity 的处理
+  （例如是否绕过某些 admin-only 策略）。
 - `effective_capability_keys` 在 PR 2 决定：删除还是接入 `runtime_tool_provider`？需要先确认是否有隐式读者（另 grep 一遍）。
 - `SessionBootstrapAction` 在 PR 4 的处置：若 `session-capabilities://` resource block 删除，该枚举只剩"hook snapshot reload 触发器"语义；是否重命名。
 - PR 7 里 `executor_session_id` 同步抽到 "persistence listener" 的具体实现位置：新建 `session/persistence_listener.rs` 还是合并到 `session/persistence.rs`？

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agent_client_protocol::SessionNotification;
 use tokio::sync::mpsc;
 
 use agentdash_acp_meta::AgentDashSourceV1;
@@ -16,6 +16,7 @@ use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
+use super::persistence_listener;
 use super::post_turn_handler::DynPostTurnHandler;
 
 /// Processor 消费的事件类型。
@@ -230,7 +231,11 @@ impl SessionTurnProcessor {
         }
     }
 
-    /// 处理单条 notification：executor_session_id 同步 → on_event → persist。
+    /// 处理单条 notification：委托 persistence_listener 同步 meta → on_event → persist。
+    ///
+    /// PR 7：`SessionMeta` 写入不再在 processor 里直接做，而是外包给
+    /// `persistence_listener::sync_executor_session_id`；processor 只持有
+    /// per-turn 去重状态 (`last_executor_session_id`) 并传入。
     async fn handle_notification(
         hub: &SessionHub,
         persistence: &Arc<dyn SessionPersistence>,
@@ -240,23 +245,14 @@ impl SessionTurnProcessor {
         post_turn_handler: &Option<DynPostTurnHandler>,
         last_executor_session_id: &mut Option<String>,
     ) {
-        // executor_session_id 同步（从 executor_session_bound 事件中提取）
-        let meta = match &notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-            _ => None,
-        };
-        if let Some(executor_session_id) = parse_executor_session_bound(meta, turn_id)
-            && last_executor_session_id.as_deref() != Some(executor_session_id.as_str())
-        {
-            *last_executor_session_id = Some(executor_session_id.clone());
-            if let Ok(Some(mut meta)) = persistence.get_session_meta(session_id).await
-                && meta.executor_session_id.as_deref() != Some(executor_session_id.as_str())
-            {
-                meta.executor_session_id = Some(executor_session_id);
-                meta.updated_at = chrono::Utc::now().timestamp_millis();
-                let _ = persistence.save_session_meta(&meta).await;
-            }
-        }
+        persistence_listener::sync_executor_session_id(
+            persistence,
+            session_id,
+            turn_id,
+            notification,
+            last_executor_session_id,
+        )
+        .await;
 
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, notification).await;

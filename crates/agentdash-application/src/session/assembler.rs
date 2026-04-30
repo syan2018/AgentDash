@@ -1278,8 +1278,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
 
         let source_summary: Vec<String> = context_bundle
-            .fragments
-            .iter()
+            .iter_fragments()
             .map(|f| format!("{}({})", f.label, f.slot))
             .collect();
 
@@ -1406,8 +1405,7 @@ pub async fn compose_lifecycle_node_with_audit(
         );
     }
     let source_summary = context_bundle
-        .fragments
-        .iter()
+        .iter_fragments()
         .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
         .collect::<Vec<_>>();
 

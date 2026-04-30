@@ -121,7 +121,9 @@ pub fn build_session_context_bundle(
         }
     }
 
-    bundle.fragments.sort_by_key(|fragment| fragment.order);
+    bundle
+        .bootstrap_fragments
+        .sort_by_key(|fragment| fragment.order);
     bundle
 }
 
@@ -210,7 +212,8 @@ mod bundle_tests {
             default_scope: ContextFragment::default_scope(),
         };
         let bundle = build_session_context_bundle(config, vec![]);
-        assert!(bundle.fragments.is_empty());
+        assert!(bundle.bootstrap_fragments.is_empty());
+        assert!(bundle.turn_delta.is_empty());
         assert_eq!(bundle.phase_tag, "task_start");
     }
 
@@ -225,8 +228,8 @@ mod bundle_tests {
             Contribution::fragments_only(vec![frag("task", 10, "alpha", MergeStrategy::Append)]);
         let b = Contribution::fragments_only(vec![frag("task", 20, "beta", MergeStrategy::Append)]);
         let bundle = build_session_context_bundle(config, vec![a, b]);
-        assert_eq!(bundle.fragments.len(), 1);
-        let merged = &bundle.fragments[0];
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        let merged = &bundle.bootstrap_fragments[0];
         assert!(merged.content.contains("alpha"));
         assert!(merged.content.contains("beta"));
     }
@@ -251,8 +254,8 @@ mod bundle_tests {
             MergeStrategy::Override,
         )]);
         let bundle = build_session_context_bundle(config, vec![first, second]);
-        assert_eq!(bundle.fragments.len(), 1);
-        assert_eq!(bundle.fragments[0].content, "second");
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        assert_eq!(bundle.bootstrap_fragments[0].content, "second");
     }
 
     #[test]
@@ -265,8 +268,8 @@ mod bundle_tests {
         let contribution =
             Contribution::fragments_only(vec![frag_default_scope_empty("task", 10, "alpha")]);
         let bundle = build_session_context_bundle(config, vec![contribution]);
-        assert_eq!(bundle.fragments.len(), 1);
-        let f = &bundle.fragments[0];
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        let f = &bundle.bootstrap_fragments[0];
         assert!(f.scope.contains(FragmentScope::RuntimeAgent));
         assert!(f.scope.contains(FragmentScope::TitleGen));
     }
@@ -298,7 +301,7 @@ mod bundle_tests {
             build_session_context_bundle(config, vec![Contribution::fragments_only(fragments)]);
 
         // 验证：默认 scope 不含 TitleGen
-        for f in &bundle.fragments {
+        for f in &bundle.bootstrap_fragments {
             assert!(
                 !f.scope.contains(FragmentScope::TitleGen),
                 "fragment {}({}) 不应带 TitleGen scope —— 会导致 agent 指令泄漏到 title gen 路径",
@@ -317,7 +320,7 @@ mod bundle_tests {
 
         // 验证：RuntimeAgent scope 的 fragment 都在（用于系统 prompt）
         let runtime_visible: Vec<_> = bundle.filter_for(FragmentScope::RuntimeAgent).collect();
-        assert_eq!(runtime_visible.len(), bundle.fragments.len());
+        assert_eq!(runtime_visible.len(), bundle.bootstrap_fragments.len());
     }
 
     /// 回归固化：显式声明 TitleGen scope 的 fragment 才能进入 title gen 视图。
@@ -366,7 +369,11 @@ mod bundle_tests {
             frag("m", 20, "m_body", MergeStrategy::Append),
         ]);
         let bundle = build_session_context_bundle(config, vec![contribution]);
-        let orders: Vec<i32> = bundle.fragments.iter().map(|f| f.order).collect();
+        let orders: Vec<i32> = bundle
+            .bootstrap_fragments
+            .iter()
+            .map(|f| f.order)
+            .collect();
         assert_eq!(orders, vec![10, 20, 30]);
     }
 }

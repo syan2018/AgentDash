@@ -348,7 +348,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 &evaluated,
             );
             return Ok(TransformContextOutput {
-                messages: vec![],
+                steering_messages: vec![],
                 blocked: Some(reason),
             });
         }
@@ -403,7 +403,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         messages.extend(pending_messages.follow_up);
 
         Ok(TransformContextOutput {
-            messages,
+            steering_messages: messages,
             blocked: None,
         })
     }
@@ -1490,8 +1490,8 @@ mod tests {
             .expect("second transform_context should succeed");
 
         // 注入消息仍会参与每次 LLM 请求，但 trace 不应重复刷屏。
-        assert!(first.messages.len() > 1);
-        assert!(second.messages.len() > 1);
+        assert!(first.steering_messages.len() > 1);
+        assert!(second.steering_messages.len() > 1);
 
         let submit_traces = hook_session
             .runtime_snapshot()

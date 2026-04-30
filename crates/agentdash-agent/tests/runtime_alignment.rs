@@ -773,7 +773,7 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
         _cancel: CancellationToken,
     ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::TransformContextOutput {
-            messages: input.context.messages,
+            steering_messages: input.context.messages,
             blocked: None,
         })
     }
@@ -839,7 +839,7 @@ impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
         _cancel: CancellationToken,
     ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::TransformContextOutput {
-            messages: input.context.messages,
+            steering_messages: input.context.messages,
             blocked: None,
         })
     }

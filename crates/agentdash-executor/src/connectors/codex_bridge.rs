@@ -1,20 +1,49 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    },
+};
 
-use futures::stream::BoxStream;
-use tokio::sync::Mutex;
-
+use agent_client_protocol::{
+    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
+    SessionUpdate, TextContent, UsageUpdate,
+};
+use agentdash_acp_meta::{
+    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
+use codex_app_server_protocol::{
+    AgentMessageDeltaNotification, AskForApproval, ClientInfo, ClientNotification, ClientRequest,
+    ErrorNotification, GetAccountParams, GetAccountResponse, InitializeCapabilities,
+    InitializeParams, InitializeResponse, JSONRPCMessage, JSONRPCNotification, JSONRPCRequest,
+    JSONRPCResponse, ReasoningSummaryTextDeltaNotification, ReasoningTextDeltaNotification,
+    RequestId, SandboxMode, ThreadForkParams, ThreadForkResponse, ThreadStartParams,
+    ThreadStartResponse, ThreadTokenUsageUpdatedNotification, TurnCompletedNotification,
+    TurnStartParams, TurnStartResponse, TurnStatus, UserInput,
+};
 use executors::{
     executors::{BaseCodingAgent, StandardCodingAgentExecutor as _},
+    model_selector::PermissionPolicy,
     profile::{ExecutorConfigs, ExecutorProfileId},
 };
-
-use crate::{
-    adapters::codex_config::to_codex_config, connectors::executor_session::spawn_executor_session,
+use futures::stream::BoxStream;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    sync::{Mutex, mpsc, oneshot},
 };
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
+use workspace_utils::command_ext::GroupSpawnNoWindowExt;
+
+use crate::adapters::codex_config::to_codex_config;
 
 const CODEX_EXECUTOR_ID: &str = "CODEX";
 
@@ -26,19 +55,334 @@ fn is_codex_executor(executor: &str) -> bool {
     normalize_executor_id(executor) == CODEX_EXECUTOR_ID
 }
 
+type PendingResponseMap =
+    Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ConnectorError>>>>>;
+
 pub struct CodexBridgeConnector {
     default_repo_root: PathBuf,
-    cancel_by_session: Arc<Mutex<HashMap<String, executors::executors::CancellationToken>>>,
+    cancel_by_session: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl CodexBridgeConnector {
-    /// 首阶段桥接：对外暴露独立 Codex connector，内部仍复用 executors 的 Codex runtime。
-    /// 后续替换为纯原生 Codex SDK 时，仅需替换本模块实现。
+    /// 首阶段桥接：对外暴露独立 Codex connector，内部走原生 app-server 协议。
+    /// 后续替换底层 SDK/运行时时，仅需继续演进该模块。
     pub fn new(default_repo_root: PathBuf) -> Self {
         Self {
             default_repo_root,
             cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+}
+
+fn connector_type_label(connector_type: ConnectorType) -> &'static str {
+    match connector_type {
+        ConnectorType::LocalExecutor => "local_executor",
+        ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+    }
+}
+
+fn build_base_meta(source: &AgentDashSourceV1, turn_id: &str) -> Option<Meta> {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source.clone()))
+        .trace(Some(trace));
+    merge_agentdash_meta(None, &agentdash)
+}
+
+fn build_executor_session_bound_notification(
+    session_id: &str,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+    executor_session_id: &str,
+) -> SessionNotification {
+    let mut trace = AgentDashTraceV1::new();
+    trace.turn_id = Some(turn_id.to_string());
+
+    let event = AgentDashEventV1::new("executor_session_bound")
+        .message(Some(executor_session_id.to_string()))
+        .data(Some(json!({ "executor_session_id": executor_session_id })));
+
+    let agentdash = AgentDashMetaV1::new()
+        .source(Some(source.clone()))
+        .trace(Some(trace))
+        .event(Some(event));
+
+    SessionNotification::new(
+        SessionId::new(session_id.to_string()),
+        SessionUpdate::SessionInfoUpdate(
+            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
+        ),
+    )
+}
+
+fn build_prompt_text(
+    context: &ExecutionContext,
+    prompt: &PromptPayload,
+) -> Result<String, ConnectorError> {
+    let user_text = prompt.to_fallback_text();
+    // 过渡阶段沿用预渲染 system prompt，后续改为基于 Bundle 的原生渲染。
+    #[allow(deprecated)]
+    let prompt_text = if let Some(ref sys_prompt) = context.turn.assembled_system_prompt {
+        format!("{sys_prompt}\n\n{user_text}")
+    } else {
+        user_text
+    };
+    let prompt_text = prompt_text.trim().to_string();
+    if prompt_text.is_empty() {
+        return Err(ConnectorError::InvalidConfig(
+            "prompt payload 解析后为空".to_string(),
+        ));
+    }
+    Ok(prompt_text)
+}
+
+fn build_thread_start_params(
+    codex_config: &executors::profile::ExecutorConfig,
+    working_directory: &PathBuf,
+) -> ThreadStartParams {
+    let mut config_overrides = HashMap::new();
+    if let Some(reasoning_id) = codex_config.reasoning_id.as_deref() {
+        let normalized = reasoning_id.trim().to_ascii_lowercase();
+        if matches!(normalized.as_str(), "low" | "medium" | "high" | "xhigh") {
+            config_overrides.insert(
+                "model_reasoning_effort".to_string(),
+                Value::String(normalized),
+            );
+        }
+    }
+    let config = if config_overrides.is_empty() {
+        None
+    } else {
+        Some(config_overrides)
+    };
+
+    let approval_policy = match codex_config.permission_policy {
+        Some(PermissionPolicy::Auto) => Some(AskForApproval::Never),
+        Some(PermissionPolicy::Supervised) => Some(AskForApproval::UnlessTrusted),
+        // 当前先保证协议通路可用；plan 专属协作模式后续单独补齐。
+        Some(PermissionPolicy::Plan) => Some(AskForApproval::OnRequest),
+        None => Some(AskForApproval::OnRequest),
+    };
+
+    let model = codex_config.model_id.as_deref().map(|m| {
+        m.strip_suffix("-fast")
+            .map_or_else(|| m.to_string(), str::to_string)
+    });
+
+    ThreadStartParams {
+        model,
+        cwd: Some(working_directory.to_string_lossy().to_string()),
+        approval_policy,
+        sandbox: Some(SandboxMode::WorkspaceWrite),
+        config,
+        ..Default::default()
+    }
+}
+
+fn build_thread_fork_params(
+    thread_id: String,
+    thread_start: &ThreadStartParams,
+) -> ThreadForkParams {
+    ThreadForkParams {
+        thread_id,
+        model: thread_start.model.clone(),
+        model_provider: thread_start.model_provider.clone(),
+        service_tier: thread_start.service_tier.clone(),
+        cwd: thread_start.cwd.clone(),
+        approval_policy: thread_start.approval_policy.clone(),
+        sandbox: thread_start.sandbox.clone(),
+        config: thread_start.config.clone(),
+        base_instructions: thread_start.base_instructions.clone(),
+        developer_instructions: thread_start.developer_instructions.clone(),
+        ..Default::default()
+    }
+}
+
+fn next_request_id(counter: &AtomicI64) -> RequestId {
+    RequestId::Integer(counter.fetch_add(1, Ordering::SeqCst))
+}
+
+async fn send_rpc_notification(
+    out_tx: &mpsc::Sender<Value>,
+    notification: ClientNotification,
+) -> Result<(), ConnectorError> {
+    out_tx
+        .send(serde_json::to_value(notification)?)
+        .await
+        .map_err(|_| ConnectorError::Runtime("Codex app-server 已断开，无法发送通知".to_string()))
+}
+
+async fn send_rpc_request<R>(
+    out_tx: &mpsc::Sender<Value>,
+    pending: &PendingResponseMap,
+    request: ClientRequest,
+) -> Result<R, ConnectorError>
+where
+    R: DeserializeOwned,
+{
+    let request_id = request.id().clone();
+    let (tx, rx) = oneshot::channel::<Result<Value, ConnectorError>>();
+    pending.lock().await.insert(request_id.clone(), tx);
+
+    if out_tx.send(serde_json::to_value(request)?).await.is_err() {
+        pending.lock().await.remove(&request_id);
+        return Err(ConnectorError::Runtime(
+            "Codex app-server 已断开，无法发送请求".to_string(),
+        ));
+    }
+
+    let response = rx.await.map_err(|_| {
+        ConnectorError::Runtime(format!("等待 Codex app-server 响应失败: {request_id}"))
+    })?;
+    let payload = response?;
+    serde_json::from_value(payload)
+        .map_err(|e| ConnectorError::Runtime(format!("解析 Codex app-server 响应失败: {e}")))
+}
+
+async fn send_server_response(
+    out_tx: &mpsc::Sender<Value>,
+    request_id: RequestId,
+    result: Value,
+) -> Result<(), ConnectorError> {
+    let response = JSONRPCResponse {
+        id: request_id,
+        result,
+    };
+    out_tx
+        .send(serde_json::to_value(response)?)
+        .await
+        .map_err(|_| ConnectorError::Runtime("Codex app-server 已断开，无法回传响应".to_string()))
+}
+
+async fn handle_server_request(
+    request: JSONRPCRequest,
+    out_tx: &mpsc::Sender<Value>,
+) -> Result<(), ConnectorError> {
+    let result = match request.method.as_str() {
+        "item/commandExecution/requestApproval" => json!({ "decision": "acceptForSession" }),
+        "item/fileChange/requestApproval" => json!({ "decision": "acceptForSession" }),
+        "item/tool/requestUserInput" => json!({ "answers": {} }),
+        _ => Value::Null,
+    };
+    send_server_response(out_tx, request.id, result).await
+}
+
+fn build_text_chunk_notification(
+    session_id: &SessionId,
+    text: &str,
+    message_id: &str,
+    meta: Option<Meta>,
+    thought: bool,
+) -> Option<SessionNotification> {
+    if text.is_empty() {
+        return None;
+    }
+    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+        .message_id(Some(message_id.to_string()))
+        .meta(meta);
+    let update = if thought {
+        SessionUpdate::AgentThoughtChunk(chunk)
+    } else {
+        SessionUpdate::AgentMessageChunk(chunk)
+    };
+    Some(SessionNotification::new(session_id.clone(), update))
+}
+
+async fn handle_server_notification(
+    notification: JSONRPCNotification,
+    session_id: &SessionId,
+    tx: &mpsc::Sender<Result<SessionNotification, ConnectorError>>,
+    source: &AgentDashSourceV1,
+    turn_id: &str,
+) {
+    let base_meta = build_base_meta(source, turn_id);
+
+    match notification.method.as_str() {
+        "item/agentMessage/delta" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) = serde_json::from_value::<AgentMessageDeltaNotification>(params)
+                && let Some(n) = build_text_chunk_notification(
+                    session_id,
+                    payload.delta.as_str(),
+                    &format!("{turn_id}:agent_message_chunk"),
+                    base_meta,
+                    false,
+                )
+            {
+                let _ = tx.send(Ok(n)).await;
+            }
+        }
+        "item/reasoning/textDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) = serde_json::from_value::<ReasoningTextDeltaNotification>(params)
+                && let Some(n) = build_text_chunk_notification(
+                    session_id,
+                    payload.delta.as_str(),
+                    &format!("{turn_id}:agent_thought_chunk"),
+                    base_meta,
+                    true,
+                )
+            {
+                let _ = tx.send(Ok(n)).await;
+            }
+        }
+        "item/reasoning/summaryTextDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) =
+                    serde_json::from_value::<ReasoningSummaryTextDeltaNotification>(params)
+                && let Some(n) = build_text_chunk_notification(
+                    session_id,
+                    payload.delta.as_str(),
+                    &format!("{turn_id}:agent_thought_chunk"),
+                    base_meta,
+                    true,
+                )
+            {
+                let _ = tx.send(Ok(n)).await;
+            }
+        }
+        "thread/tokenUsage/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) =
+                    serde_json::from_value::<ThreadTokenUsageUpdatedNotification>(params)
+            {
+                let total_tokens = payload.token_usage.total.total_tokens.max(0) as u64;
+                let context_window = payload.token_usage.model_context_window.unwrap_or(0).max(0) as u64;
+                let usage = UsageUpdate::new(total_tokens, context_window).meta(base_meta);
+                let _ = tx
+                    .send(Ok(SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::UsageUpdate(usage),
+                    )))
+                    .await;
+            }
+        }
+        "turn/completed" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) = serde_json::from_value::<TurnCompletedNotification>(params)
+                && payload.turn.status == TurnStatus::Failed
+            {
+                let message = payload
+                    .turn
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "Codex turn failed".to_string());
+                let _ = tx.send(Err(ConnectorError::Runtime(message))).await;
+            }
+        }
+        "error" => {
+            if let Some(params) = notification.params
+                && let Ok(payload) = serde_json::from_value::<ErrorNotification>(params)
+                && !payload.will_retry
+            {
+                let _ = tx
+                    .send(Err(ConnectorError::Runtime(payload.error.message)))
+                    .await;
+            }
+        }
+        _ => {}
     }
 }
 
@@ -105,9 +449,7 @@ impl AgentConnector for CodexBridgeConnector {
         };
         let agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&profile_id)
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string())
-            })?;
+            .ok_or_else(|| ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string()))?;
 
         let wd = working_dir.unwrap_or_else(|| self.default_repo_root.clone());
         agent
@@ -133,28 +475,263 @@ impl AgentConnector for CodexBridgeConnector {
                 context.session.executor_config.executor
             ))
         })?;
+        let prompt_text = build_prompt_text(&context, prompt)?;
 
-        let mut agent = ExecutorConfigs::get_cached()
-            .get_coding_agent(&codex_config.profile_id())
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string())
-            })?;
+        let mut process = tokio::process::Command::new("npx");
+        process
+            .args(["-y", "@openai/codex@0.121.0", "app-server"])
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .current_dir(&context.session.working_directory)
+            .env("NPM_CONFIG_LOGLEVEL", "error")
+            .env("NODE_NO_WARNINGS", "1")
+            .env("NO_COLOR", "1")
+            .env("RUST_LOG", "error")
+            .envs(context.session.environment_variables.clone());
 
-        if codex_config.has_overrides() {
-            agent.apply_overrides(&codex_config);
+        let mut child = process
+            .group_spawn_no_window()
+            .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
+        let stdout = child
+            .inner()
+            .stdout
+            .take()
+            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string()))?;
+        let stderr = child
+            .inner()
+            .stderr
+            .take()
+            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stderr".to_string()))?;
+        let stdin = child
+            .inner()
+            .stdin
+            .take()
+            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stdin".to_string()))?;
+
+        let cancel_token = CancellationToken::new();
+        self.cancel_by_session
+            .lock()
+            .await
+            .insert(session_id.to_string(), cancel_token.clone());
+
+        let (tx, rx) = mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
+        let (out_tx, mut out_rx) = mpsc::channel::<Value>(256);
+        let pending: PendingResponseMap = Arc::new(Mutex::new(HashMap::new()));
+        let request_counter = Arc::new(AtomicI64::new(1));
+
+        let writer_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut stdin = stdin;
+            while let Some(payload) = out_rx.recv().await {
+                let encoded = match serde_json::to_string(&payload) {
+                    Ok(encoded) => encoded,
+                    Err(e) => {
+                        let _ = writer_tx
+                            .send(Err(ConnectorError::Runtime(format!(
+                                "序列化 Codex RPC 消息失败: {e}"
+                            ))))
+                            .await;
+                        break;
+                    }
+                };
+                if stdin.write_all(encoded.as_bytes()).await.is_err()
+                    || stdin.write_all(b"\n").await.is_err()
+                    || stdin.flush().await.is_err()
+                {
+                    let _ = writer_tx
+                        .send(Err(ConnectorError::Runtime(
+                            "写入 Codex app-server stdin 失败".to_string(),
+                        )))
+                        .await;
+                    break;
+                }
+            }
+        });
+
+        let mut source =
+            AgentDashSourceV1::new(self.connector_id(), connector_type_label(self.connector_type()));
+        source.executor_id = Some(context.session.executor_config.executor.to_string());
+        let turn_id = context.session.turn_id.clone();
+        let stream_session_id = SessionId::new(session_id.to_string());
+
+        let read_pending = pending.clone();
+        let read_out_tx = out_tx.clone();
+        let read_tx = tx.clone();
+        let read_source = source.clone();
+        let read_turn_id = turn_id.clone();
+        tokio::spawn(async move {
+            let mut stdout_lines = BufReader::new(stdout).lines();
+            loop {
+                let line = match stdout_lines.next_line().await {
+                    Ok(Some(line)) => line,
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = read_tx
+                            .send(Err(ConnectorError::Runtime(format!(
+                                "读取 Codex app-server stdout 失败: {e}"
+                            ))))
+                            .await;
+                        break;
+                    }
+                };
+
+                if line.trim().is_empty() {
+                    continue;
+                }
+
+                let message = match serde_json::from_str::<JSONRPCMessage>(&line) {
+                    Ok(message) => message,
+                    Err(_) => continue,
+                };
+
+                match message {
+                    JSONRPCMessage::Response(response) => {
+                        if let Some(waiter) = read_pending.lock().await.remove(&response.id) {
+                            let _ = waiter.send(Ok(response.result));
+                        }
+                    }
+                    JSONRPCMessage::Error(error) => {
+                        if let Some(waiter) = read_pending.lock().await.remove(&error.id) {
+                            let _ = waiter.send(Err(ConnectorError::Runtime(error.error.message)));
+                        }
+                    }
+                    JSONRPCMessage::Request(request) => {
+                        if let Err(e) = handle_server_request(request, &read_out_tx).await {
+                            let _ = read_tx.send(Err(e)).await;
+                        }
+                    }
+                    JSONRPCMessage::Notification(notification) => {
+                        handle_server_notification(
+                            notification,
+                            &stream_session_id,
+                            &read_tx,
+                            &read_source,
+                            &read_turn_id,
+                        )
+                        .await;
+                    }
+                }
+            }
+
+            let mut pending = read_pending.lock().await;
+            for (_, waiter) in pending.drain() {
+                let _ = waiter.send(Err(ConnectorError::Runtime(
+                    "Codex app-server 连接已关闭".to_string(),
+                )));
+            }
+        });
+
+        tokio::spawn(async move {
+            let mut stderr_lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = stderr_lines.next_line().await {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                tracing::debug!("codex app-server stderr: {}", line.trim());
+            }
+        });
+
+        let cancel_map = self.cancel_by_session.clone();
+        let session_id_owned = session_id.to_string();
+        let wait_cancel = cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = wait_cancel.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+                _ = child.wait() => {}
+            }
+            cancel_map.lock().await.remove(&session_id_owned);
+        });
+
+        let handshake_result = async {
+            let initialize_request = ClientRequest::Initialize {
+                request_id: next_request_id(&request_counter),
+                params: InitializeParams {
+                    client_info: ClientInfo {
+                        name: "agentdash-codex-bridge".to_string(),
+                        title: None,
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                    },
+                    capabilities: Some(InitializeCapabilities {
+                        experimental_api: true,
+                        ..Default::default()
+                    }),
+                },
+            };
+            let _: InitializeResponse =
+                send_rpc_request(&out_tx, &pending, initialize_request).await?;
+            send_rpc_notification(&out_tx, ClientNotification::Initialized).await?;
+
+            let get_account_request = ClientRequest::GetAccount {
+                request_id: next_request_id(&request_counter),
+                params: GetAccountParams {
+                    refresh_token: false,
+                },
+            };
+            let account: GetAccountResponse =
+                send_rpc_request(&out_tx, &pending, get_account_request).await?;
+            if account.requires_openai_auth && account.account.is_none() {
+                return Err(ConnectorError::Runtime(
+                    "Codex 未登录，请先完成 Codex 认证".to_string(),
+                ));
+            }
+
+            let thread_start = build_thread_start_params(&codex_config, &context.session.working_directory);
+            let thread_id = if let Some(follow_up_session_id) = follow_up_session_id {
+                let fork_request = ClientRequest::ThreadFork {
+                    request_id: next_request_id(&request_counter),
+                    params: build_thread_fork_params(follow_up_session_id.to_string(), &thread_start),
+                };
+                let response: ThreadForkResponse =
+                    send_rpc_request(&out_tx, &pending, fork_request).await?;
+                response.thread.id
+            } else {
+                let start_request = ClientRequest::ThreadStart {
+                    request_id: next_request_id(&request_counter),
+                    params: thread_start,
+                };
+                let response: ThreadStartResponse =
+                    send_rpc_request(&out_tx, &pending, start_request).await?;
+                response.thread.id
+            };
+
+            let _ = tx
+                .send(Ok(build_executor_session_bound_notification(
+                    session_id,
+                    &source,
+                    &turn_id,
+                    &thread_id,
+                )))
+                .await;
+
+            let turn_start_request = ClientRequest::TurnStart {
+                request_id: next_request_id(&request_counter),
+                params: TurnStartParams {
+                    thread_id,
+                    input: vec![UserInput::Text {
+                        text: prompt_text,
+                        text_elements: vec![],
+                    }],
+                    ..Default::default()
+                },
+            };
+            let _: TurnStartResponse =
+                send_rpc_request(&out_tx, &pending, turn_start_request).await?;
+            Ok::<(), ConnectorError>(())
+        }
+        .await;
+
+        if let Err(err) = handshake_result {
+            cancel_token.cancel();
+            self.cancel_by_session.lock().await.remove(session_id);
+            return Err(err);
         }
 
-        spawn_executor_session(
-            self.connector_id(),
-            self.connector_type(),
-            self.cancel_by_session.clone(),
-            agent,
-            session_id,
-            follow_up_session_id,
-            prompt,
-            context,
-        )
-        .await
+        Ok(Box::pin(ReceiverStream::new(rx)))
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {

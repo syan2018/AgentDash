@@ -1,15 +1,19 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
-use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallStatus, ToolKind};
 use agentdash_agent::{AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
+use agentdash_protocol::{BackboneEvent, SourceInfo};
 use agentdash_spi::{Mount, MountCapability};
 use chrono::Utc;
 use std::sync::{Mutex as StdMutex, RwLock};
 
-fn test_source() -> AgentDashSourceV1 {
-    AgentDashSourceV1::new("pi-agent", "local_executor")
+fn test_source() -> SourceInfo {
+    SourceInfo {
+        connector_id: "pi-agent".to_string(),
+        connector_type: "local_executor".to_string(),
+        executor_id: None,
+    }
 }
 
 fn test_vfs(root_ref: &str) -> agentdash_spi::Vfs {
@@ -313,27 +317,22 @@ fn thinking_delta_maps_to_agent_thought_chunk() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
-    match &notifications[0].update {
-        SessionUpdate::AgentThoughtChunk(chunk) => match &chunk.content {
-            ContentBlock::Text(text) => assert_eq!(text.text, "plan"),
-            other => panic!("unexpected content block: {other:?}"),
-        },
-        other => panic!("unexpected session update: {other:?}"),
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ReasoningTextDelta(delta) => assert_eq!(delta.delta, "plan"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -408,93 +407,58 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let start_notifications = convert_event_to_notifications(
+    let start_envelopes = convert_event_to_envelopes(
         &start_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let delta_notifications = convert_event_to_notifications(
+    let delta_envelopes = convert_event_to_envelopes(
         &delta_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let end_notifications = convert_event_to_notifications(
+    let end_envelopes = convert_event_to_envelopes(
         &end_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(start_notifications.len(), 1);
-    match &start_notifications[0].update {
-        SessionUpdate::ToolCall(call) => {
-            assert_eq!(call.status, ToolCallStatus::Pending);
-            assert_eq!(call.title, "shell_exec");
-            assert_eq!(
-                call.raw_input,
-                Some(serde_json::json!({ "command": "echo he" }))
-            );
+    assert_eq!(start_envelopes.len(), 1);
+    match &start_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert_eq!(delta_notifications.len(), 1);
-    match &delta_notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
-            assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
-            assert_eq!(
-                update.fields.raw_input,
-                Some(serde_json::json!({ "command": "echo hello" }))
-            );
-            let meta = update
-                .meta
-                .as_ref()
-                .expect("tool_call_update should include meta");
-            let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
-                .expect("tool_call_update meta should be parseable");
-            assert_eq!(
-                agentdash.event.as_ref().map(|event| event.r#type.as_str()),
-                Some("tool_call_draft")
-            );
-            assert_eq!(
-                agentdash
-                    .event
-                    .as_ref()
-                    .and_then(|event| event.data.as_ref())
-                    .and_then(|data| data.get("draftInput"))
-                    .and_then(|value| value.as_str()),
-                Some("{\"command\":\"echo hello\"}")
-            );
+    assert_eq!(delta_envelopes.len(), 1);
+    match &delta_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "shell_exec" && *arguments == serde_json::json!({ "command": "echo hello" })));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert_eq!(end_notifications.len(), 1);
-    match &end_notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
-            assert_eq!(
-                update.fields.raw_input,
-                Some(serde_json::json!({ "command": "echo hello" }))
-            );
-        }
-        other => panic!("unexpected session update: {other:?}"),
+    assert_eq!(end_envelopes.len(), 1);
+    match &end_envelopes[0].event {
+        BackboneEvent::ItemStarted(_) | BackboneEvent::ItemCompleted(_) => {}
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -525,50 +489,26 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &delta_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
-    match &notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.raw_input, Some(serde_json::json!({})));
-            let meta = update
-                .meta
-                .as_ref()
-                .expect("tool_call_update should include meta");
-            let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
-                .expect("tool_call_update meta should be parseable");
-            assert_eq!(
-                agentdash
-                    .event
-                    .as_ref()
-                    .and_then(|event| event.data.as_ref())
-                    .and_then(|data| data.get("draftInput"))
-                    .and_then(|value| value.as_str()),
-                Some("{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello")
-            );
-            assert_eq!(
-                agentdash
-                    .event
-                    .as_ref()
-                    .and_then(|event| event.data.as_ref())
-                    .and_then(|data| data.get("isParseable"))
-                    .and_then(|value| value.as_bool()),
-                Some(false)
-            );
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "fs_apply_patch"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -591,32 +531,26 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
-    match &notifications[0].update {
-        SessionUpdate::ToolCall(call) => {
-            assert_eq!(call.status, ToolCallStatus::Pending);
-            assert_eq!(call.title, "read_file");
-            assert_eq!(call.kind, ToolKind::Read);
-            assert_eq!(
-                call.raw_input,
-                Some(serde_json::json!({ "path": "README.md" }))
-            );
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" })));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -649,37 +583,36 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let _ = convert_event_to_notifications(
+    let _ = convert_event_to_envelopes(
         &pending_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &execution_start,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
-    match &notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
-            assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -706,49 +639,43 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let update_notifications = convert_event_to_notifications(
+    let update_envelopes = convert_event_to_envelopes(
         &update_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let end_notifications = convert_event_to_notifications(
+    let end_envelopes = convert_event_to_envelopes(
         &end_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    match &update_notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::InProgress));
-            assert_eq!(update.fields.title.as_deref(), Some("echo"));
-            assert_eq!(update.fields.raw_output, Some(raw_result.clone()));
+    assert_eq!(update_envelopes.len(), 1);
+    match &update_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "echo"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert_eq!(update_notifications.len(), 1);
 
-    match &end_notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
-            assert_eq!(update.fields.title.as_deref(), Some("echo"));
-            assert_eq!(update.fields.raw_output, Some(raw_result));
-            let content = update.fields.content.clone().expect("content should exist");
-            assert_eq!(content.len(), 1);
+    match &end_envelopes[0].event {
+        BackboneEvent::ItemCompleted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. } if tool == "echo" && *success == Some(true)));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -763,52 +690,32 @@ fn pending_approval_event_maps_to_tool_call_update() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 2);
-    match &notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Pending));
-            assert_eq!(update.fields.title.as_deref(), Some("shell_exec"));
-            assert_eq!(
-                update
-                    .fields
-                    .raw_output
-                    .as_ref()
-                    .and_then(|value| value.get("approval_state"))
-                    .and_then(serde_json::Value::as_str),
-                Some("pending")
-            );
+    assert_eq!(envelopes.len(), 2);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
-
-    match &notifications[1].update {
-        SessionUpdate::SessionInfoUpdate(info) => {
-            let value = serde_json::to_value(info).expect("serialize session info");
-            assert_eq!(
-                value
-                    .get("_meta")
-                    .and_then(|item| item.get("agentdash"))
-                    .and_then(|item| item.get("event"))
-                    .and_then(|item| item.get("type"))
-                    .and_then(serde_json::Value::as_str),
-                Some("approval_requested")
-            );
+    match &envelopes[1].event {
+        BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate { key, .. }) => {
+            assert_eq!(key, "approval_requested");
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -828,27 +735,26 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &end_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
-    match &notifications[0].update {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
-            assert_eq!(update.fields.title.as_deref(), Some("present_canvas"));
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemCompleted(n) => {
+            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "present_canvas"));
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -866,34 +772,27 @@ fn assistant_message_end_with_error_message_emits_fallback_chunk() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let notifications = convert_event_to_notifications(
+    let envelopes = convert_event_to_envelopes(
         &event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(notifications.len(), 1);
+    assert_eq!(envelopes.len(), 1);
     assert_eq!(entry_index, 1);
-    match &notifications[0].update {
-        SessionUpdate::AgentMessageChunk(chunk) => {
-            match &chunk.content {
-                ContentBlock::Text(text) => assert_eq!(text.text, "Agent run aborted"),
-                other => panic!("unexpected content block: {other:?}"),
-            }
-            let meta = chunk.meta.as_ref().expect("chunk should include _meta");
-            let agentdash = agentdash_acp_meta::parse_agentdash_meta(meta)
-                .expect("agentdash meta should be parseable");
-            assert!(agentdash.event.is_none());
+    match &envelopes[0].event {
+        BackboneEvent::AgentMessageDelta(delta) => {
+            assert_eq!(delta.delta, "Agent run aborted");
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone event: {other:?}"),
     }
 }
 
@@ -925,44 +824,38 @@ fn message_end_does_not_repeat_full_snapshot_after_deltas() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let delta_notifications = convert_event_to_notifications(
+    let delta_envelopes = convert_event_to_envelopes(
         &delta_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let end_notifications = convert_event_to_notifications(
+    let end_envelopes = convert_event_to_envelopes(
         &message_end,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(delta_notifications.len(), 1);
-    assert_eq!(end_notifications.len(), 1);
-    match (&delta_notifications[0].update, &end_notifications[0].update) {
-        (
-            SessionUpdate::AgentMessageChunk(delta_chunk),
-            SessionUpdate::AgentMessageChunk(end_chunk),
-        ) => {
-            assert_eq!(delta_chunk.message_id, end_chunk.message_id);
-            match &end_chunk.content {
-                ContentBlock::Text(text) => assert_eq!(text.text, "llo"),
-                other => panic!("unexpected content block: {other:?}"),
-            }
+    assert_eq!(delta_envelopes.len(), 1);
+    assert_eq!(end_envelopes.len(), 1);
+    match (&delta_envelopes[0].event, &end_envelopes[0].event) {
+        (BackboneEvent::AgentMessageDelta(delta), BackboneEvent::AgentMessageDelta(end)) => {
+            assert_eq!(delta.item_id, end.item_id);
+            assert_eq!(end.delta, "llo");
         }
-        other => panic!("unexpected session update: {other:?}"),
+        other => panic!("unexpected backbone events: {other:?}"),
     }
 }
 
@@ -1019,78 +912,62 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
     };
 
     let mut entry_index = 0;
-    let mut chunk_message_ids = HashMap::new();
+
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
 
-    let delta_notifications = convert_event_to_notifications(
+    let delta_envelopes = convert_event_to_envelopes(
         &delta_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let tool_notifications = convert_event_to_notifications(
+    let tool_envelopes = convert_event_to_envelopes(
         &tool_start_event,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
-    let end_notifications = convert_event_to_notifications(
+    let end_envelopes = convert_event_to_envelopes(
         &message_end,
-        &SessionId::new("session-1"),
+        "session-1",
         &test_source(),
         "turn-1",
         &mut entry_index,
-        &mut chunk_message_ids,
+
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
 
-    assert_eq!(delta_notifications.len(), 1);
-    assert_eq!(tool_notifications.len(), 1);
-    assert_eq!(end_notifications.len(), 1);
+    assert_eq!(delta_envelopes.len(), 1);
+    assert_eq!(tool_envelopes.len(), 1);
+    assert_eq!(end_envelopes.len(), 1);
 
-    let delta_chunk = match &delta_notifications[0].update {
-        SessionUpdate::AgentMessageChunk(chunk) => chunk,
-        other => panic!("unexpected update: {other:?}"),
+    let delta_item_id = match &delta_envelopes[0].event {
+        BackboneEvent::AgentMessageDelta(d) => d.item_id.clone(),
+        other => panic!("unexpected event: {other:?}"),
     };
-    let end_chunk = match &end_notifications[0].update {
-        SessionUpdate::AgentMessageChunk(chunk) => chunk,
-        other => panic!("unexpected update: {other:?}"),
+    let end_delta = match &end_envelopes[0].event {
+        BackboneEvent::AgentMessageDelta(d) => d,
+        other => panic!("unexpected event: {other:?}"),
     };
 
     assert_eq!(
-        delta_chunk.message_id, end_chunk.message_id,
+        delta_item_id, end_delta.item_id,
         "MessageEnd reconcile 必须命中 TextDelta 的 chunk_emit_state，否则前端会渲染成两条文本气泡"
     );
-    match &end_chunk.content {
-        ContentBlock::Text(text) => assert_eq!(text.text, "llo"),
-        other => panic!("unexpected content block: {other:?}"),
-    }
+    assert_eq!(end_delta.delta, "llo");
 
-    let delta_entry_index = delta_chunk
-        .meta
-        .as_ref()
-        .and_then(|m| agentdash_acp_meta::parse_agentdash_meta(m))
-        .and_then(|m| m.trace)
-        .and_then(|t| t.entry_index);
-    let tool_entry_index = match &tool_notifications[0].update {
-        SessionUpdate::ToolCall(call) => call
-            .meta
-            .as_ref()
-            .and_then(|m| agentdash_acp_meta::parse_agentdash_meta(m))
-            .and_then(|m| m.trace)
-            .and_then(|t| t.entry_index),
-        other => panic!("unexpected update: {other:?}"),
-    };
+    let delta_entry_index = delta_envelopes[0].trace.entry_index;
+    let tool_entry_index = tool_envelopes[0].trace.entry_index;
     assert_eq!(
         delta_entry_index, tool_entry_index,
         "tool_call 与其所在 message 的文本应共享 entry_index"

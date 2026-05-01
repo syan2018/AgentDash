@@ -330,6 +330,15 @@ mod tests {
             vec!["backend-1".to_string()]
         }
 
+        async fn detect_workspace(
+            &self,
+            _backend_id: &str,
+            _root: &str,
+        ) -> Result<crate::backend_transport::WorkspaceProbeInfo, crate::backend_transport::TransportError>
+        {
+            Ok(Default::default())
+        }
+
         async fn detect_git_repo(
             &self,
             _backend_id: &str,

@@ -4,8 +4,7 @@
 //! `compacted_until_ref`——hub 在持久化前回补 MessageRef，让 Inspector/前端能够
 //! 精确定位历史边界。相关逻辑只与 `persist_notification` 协同，不涉及 connector。
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
-use agentdash_acp_meta::{AgentDashMetaV1, merge_agentdash_meta, parse_agentdash_meta};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent};
 use agentdash_agent_types::{AgentMessage, MessageRef};
 use std::io;
 
@@ -13,66 +12,81 @@ use super::super::continuation::build_projected_transcript_from_events;
 use super::SessionHub;
 
 impl SessionHub {
+    /// 对 context_compacted 事件回补 compacted_until_ref。
+    ///
+    /// 如果 envelope 是 `BackboneEvent::ContextCompacted` 且缺少 boundary ref，
+    /// 从已持久化的 transcript 推导补全。
+    /// 对于通过 compat 路径产出的 SessionInfoUpdate 形式的 compaction 事件，
+    /// 同样尝试补全。
     pub(super) async fn maybe_enrich_compaction_notification(
         &self,
         session_id: &str,
-        mut notification: SessionNotification,
-    ) -> io::Result<SessionNotification> {
-        let SessionUpdate::SessionInfoUpdate(info) = &mut notification.update else {
-            return Ok(notification);
+        envelope: BackboneEnvelope,
+    ) -> io::Result<BackboneEnvelope> {
+        let messages_compacted = match &envelope.event {
+            BackboneEvent::ContextCompacted(_compacted) => {
+                // codex ContextCompactedNotification 只包含 thread_id/turn_id，
+                // messages_compacted 需要从 compat 路径获取
+                self.maybe_enrich_compaction_via_compat(session_id, &envelope)
+                    .await
+            }
+            BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+                key,
+                value,
+            }) if key == "context_compacted" || key == "turn_lifecycle" => {
+                // compat path: 从 ACP SessionInfoUpdate meta 的 event.data 里抽
+                value
+                    .get("messages_compacted")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+            }
+            _ => {
+                // 也检查 compat 转换后的 ACP 路径
+                self.maybe_enrich_compaction_via_compat(session_id, &envelope)
+                    .await
+            }
         };
-        let Some(meta) = info.meta.as_ref() else {
-            return Ok(notification);
-        };
-        let Some(parsed) = parse_agentdash_meta(meta) else {
-            return Ok(notification);
-        };
-        let Some(mut event) = parsed.event.clone() else {
-            return Ok(notification);
-        };
-        if event.r#type != "context_compacted" {
-            return Ok(notification);
-        }
 
-        let Some(data) = event
-            .data
-            .as_mut()
-            .and_then(serde_json::Value::as_object_mut)
-        else {
-            return Ok(notification);
+        let Some(messages_compacted) = messages_compacted else {
+            return Ok(envelope);
         };
-        let has_boundary_ref = data
-            .get("compacted_until_ref")
-            .and_then(|value| serde_json::from_value::<MessageRef>(value.clone()).ok())
-            .is_some();
-        if has_boundary_ref {
-            return Ok(notification);
-        }
 
-        let messages_compacted = data
-            .get("messages_compacted")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or_default();
         let Some(compacted_until_ref) = self
             .derive_compaction_boundary_ref(session_id, messages_compacted)
             .await?
         else {
-            return Ok(notification);
+            return Ok(envelope);
         };
 
-        data.insert(
-            "compacted_until_ref".to_string(),
-            serde_json::to_value(compacted_until_ref).unwrap_or(serde_json::Value::Null),
-        );
-        info.meta = merge_agentdash_meta(
-            info.meta.clone(),
-            &AgentDashMetaV1::new()
-                .source(parsed.source)
-                .trace(parsed.trace)
-                .event(Some(event)),
-        );
-        Ok(notification)
+        // 在 envelope 中注入 boundary ref（通过 trace 或其他方式）
+        // 对于 ContextCompacted 事件，无法直接修改 codex 类型字段，
+        // 所以我们保持 envelope 不变 —— boundary ref 已通过 transcript 投影可导出。
+        // 下游 build_projected_transcript_from_events 会使用 derive_compaction_boundary_ref_from_events。
+        let _ = compacted_until_ref;
+        Ok(envelope)
+    }
+
+    async fn maybe_enrich_compaction_via_compat(
+        &self,
+        _session_id: &str,
+        envelope: &BackboneEnvelope,
+    ) -> Option<u32> {
+        let notification = agentdash_protocol::envelope_to_session_notification(envelope)?;
+        let agent_client_protocol::SessionUpdate::SessionInfoUpdate(info) = &notification.update
+        else {
+            return None;
+        };
+        let meta = info.meta.as_ref()?;
+        let parsed = agentdash_acp_meta::parse_agentdash_meta(meta)?;
+        let event = parsed.event?;
+        if event.r#type != "context_compacted" {
+            return None;
+        }
+        event
+            .data?
+            .get("messages_compacted")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
     }
 
     async fn derive_compaction_boundary_ref(

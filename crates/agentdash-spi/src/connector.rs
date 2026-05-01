@@ -1,8 +1,6 @@
 use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
-use agent_client_protocol::{
-    ContentBlock, EmbeddedResourceResource, McpServer, SessionNotification,
-};
+use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, McpServer};
 use agentdash_agent_types::AgentMessage;
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
@@ -355,7 +353,7 @@ mod tests {
 }
 
 pub type ExecutionStream =
-    Pin<Box<dyn Stream<Item = Result<SessionNotification, ConnectorError>> + Send + 'static>>;
+    Pin<Box<dyn Stream<Item = Result<agentdash_protocol::BackboneEnvelope, ConnectorError>> + Send + 'static>>;
 
 /// 运行时工具构建 SPI。
 /// 由 application 层持有，executor 层提供具体实现。

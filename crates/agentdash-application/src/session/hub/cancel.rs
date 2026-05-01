@@ -9,14 +9,13 @@
 
 use std::collections::HashMap;
 
-use agent_client_protocol::SessionUpdate;
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use tokio::sync::broadcast;
 
 use super::super::hub_support::{
-    build_session_runtime, build_turn_terminal_notification, parse_turn_id,
-    parse_turn_terminal_event, TurnTerminalKind,
+    build_session_runtime, build_turn_terminal_envelope,
+    parse_turn_terminal_event_from_envelope, TurnTerminalKind,
 };
 use super::SessionHub;
 
@@ -83,20 +82,16 @@ impl SessionHub {
         let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
             HashMap::new();
         for event in history {
-            match &event.notification.update {
-                SessionUpdate::UserMessageChunk(chunk) => {
-                    if let Some(turn_id) = parse_turn_id(chunk.meta.as_ref()) {
-                        latest_turn_id = Some(turn_id);
-                    }
+            if let Some(turn_id) = event.notification.trace.turn_id.as_deref() {
+                let turn_id = turn_id.trim();
+                if !turn_id.is_empty() {
+                    latest_turn_id = Some(turn_id.to_string());
                 }
-                SessionUpdate::SessionInfoUpdate(info) => {
-                    if let Some((turn_id, terminal_kind, message)) =
-                        parse_turn_terminal_event(info.meta.as_ref())
-                    {
-                        terminal_by_turn.insert(turn_id, (terminal_kind, message));
-                    }
-                }
-                _ => {}
+            }
+            if let Some((turn_id, terminal_kind, message)) =
+                parse_turn_terminal_event_from_envelope(&event.notification)
+            {
+                terminal_by_turn.insert(turn_id, (terminal_kind, message));
             }
         }
 
@@ -107,8 +102,12 @@ impl SessionHub {
             return Ok(());
         }
 
-        let source = AgentDashSourceV1::new(self.connector.connector_id(), "local_executor");
-        let interrupted = build_turn_terminal_notification(
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: None,
+        };
+        let interrupted = build_turn_terminal_envelope(
             session_id,
             &source,
             &turn_id,

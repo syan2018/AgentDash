@@ -1,29 +1,47 @@
 //! Task 生命周期事件 → Session notification / overview 桥接。
 //!
-//! 职责：把 Task 侧的状态事件封装成 ACP `SessionNotification`（`session_info_update`），
+//! 职责：把 Task 侧的状态事件封装成 `BackboneEnvelope`（`PlatformEvent::SessionMetaUpdate`），
 //! 以及从 `SessionHub` 拉取最小 SessionOverview 供 Task service 使用。
 
 use serde_json::Value;
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 
 use crate::task::execution::TaskExecutionError;
-use crate::task::meta::build_task_lifecycle_meta;
 
 use super::errors::map_internal_error;
 
-pub fn bridge_task_status_event_to_session_notification(
+pub fn bridge_task_status_event_to_envelope(
     session_id: &str,
     turn_id: &str,
     event_type: &str,
     message: &str,
     data: Value,
-) -> SessionNotification {
-    let meta = build_task_lifecycle_meta(turn_id, event_type, message, data);
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
+) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "agentdash-task".to_string(),
+        connector_type: "lifecycle".to_string(),
+        executor_id: None,
+    };
+
+    let value = serde_json::json!({
+        "event_type": event_type,
+        "message": message,
+        "data": data,
+    });
+
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "task_lifecycle".to_string(),
+            value,
+        }),
+        session_id,
+        source,
     )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 pub async fn get_session_overview(

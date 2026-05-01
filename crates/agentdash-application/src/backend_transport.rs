@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use agentdash_domain::workspace::WorkspaceIdentityKind;
@@ -122,7 +122,7 @@ pub struct RemoteExecutorInfo {
 /// relay session 事件 — 由 WebSocket handler 投递到 connector stream。
 #[derive(Debug)]
 pub enum RelaySessionEvent {
-    Notification(SessionNotification),
+    Notification(BackboneEnvelope),
     Terminal {
         kind: RelayTerminalKind,
         message: Option<String>,

@@ -1,8 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+use agentdash_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_spi::{
     ConnectorError, ConnectorType, ExecutionContext, ExecutionStream, PromptPayload,
@@ -15,45 +14,18 @@ use executors::{
     logs::utils::patch::extract_normalized_entry_from_patch,
 };
 use futures::StreamExt;
-use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
-use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
+use crate::adapters::normalized_to_backbone::NormalizedToBackboneConverter;
 
 fn connector_type_label(connector_type: ConnectorType) -> &'static str {
     match connector_type {
         ConnectorType::LocalExecutor => "local_executor",
         ConnectorType::RemoteAcpBackend => "remote_acp_backend",
     }
-}
-
-fn build_executor_session_bound_notification(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    executor_session_id: &str,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let event = AgentDashEventV1::new("executor_session_bound")
-        .message(Some(executor_session_id.to_string()))
-        .data(Some(json!({ "executor_session_id": executor_session_id })));
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-        ),
-    )
 }
 
 /// 复用 executors crate 子进程桥接链路（spawn / normalize / ACP 转换）。
@@ -167,12 +139,15 @@ pub(crate) async fn spawn_executor_session(
         cancel_map.lock().await.remove(&session_id_for_wait);
     });
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
-    let mut source = AgentDashSourceV1::new(connector_id, connector_type_label(connector_type));
-    source.executor_id = Some(context.session.executor_config.executor.to_string());
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(256);
+    let source = SourceInfo {
+        connector_id: connector_id.to_string(),
+        connector_type: connector_type_label(connector_type).to_string(),
+        executor_id: Some(context.session.executor_config.executor.to_string()),
+    };
     let turn_id = context.session.turn_id.clone();
-    let mut converter = NormalizedToAcpConverter::new(
-        SessionId::new(session_id.to_string()),
+    let mut converter = NormalizedToBackboneConverter::new(
+        session_id.to_string(),
         source.clone(),
         turn_id.clone(),
     );
@@ -184,8 +159,8 @@ pub(crate) async fn spawn_executor_session(
             match next {
                 Ok(LogMsg::JsonPatch(patch)) => {
                     if let Some((idx, entry)) = extract_normalized_entry_from_patch(&patch) {
-                        for n in converter.apply(idx, entry) {
-                            if tx.send(Ok(n)).await.is_err() {
+                        for envelope in converter.apply(idx, entry) {
+                            if tx.send(Ok(envelope)).await.is_err() {
                                 return;
                             }
                         }
@@ -196,13 +171,18 @@ pub(crate) async fn spawn_executor_session(
                         continue;
                     }
                     last_executor_session_id = Some(executor_session_id.clone());
-                    let notification = build_executor_session_bound_notification(
+                    let envelope = BackboneEnvelope::new(
+                        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+                            executor_session_id,
+                        }),
                         &session_id_owned,
-                        &source,
-                        &turn_id,
-                        &executor_session_id,
-                    );
-                    if tx.send(Ok(notification)).await.is_err() {
+                        source.clone(),
+                    )
+                    .with_trace(TraceInfo {
+                        turn_id: Some(turn_id.clone()),
+                        entry_index: None,
+                    });
+                    if tx.send(Ok(envelope)).await.is_err() {
                         return;
                     }
                 }

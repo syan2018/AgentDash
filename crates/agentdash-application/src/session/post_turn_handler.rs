@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 
 /// Session 事件回调 —— 替代 TurnMonitor 的核心抽象。
@@ -18,9 +18,9 @@ use agentdash_spi::hooks::HookEffect;
 /// - pipeline 只负责事件传递，不参与领域决策
 #[async_trait::async_trait]
 pub trait PostTurnHandler: Send + Sync + 'static {
-    /// 每个 session notification 持久化后调用。
+    /// 每个 session envelope 持久化后调用。
     /// 用于 artifact 跟踪、session binding 同步等平台级簿记。
-    async fn on_event(&self, session_id: &str, notification: &SessionNotification);
+    async fn on_event(&self, session_id: &str, envelope: &BackboneEnvelope);
 
     /// 执行 Hook 评估产出的通用副作用。
     ///

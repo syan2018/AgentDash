@@ -1,94 +1,146 @@
 use std::{collections::HashSet, io};
 
-use agent_client_protocol::{
-    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
-    SessionUpdate,
-};
+use agent_client_protocol::{ContentBlock, Meta};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities};
 use tokio::sync::broadcast;
 
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-    parse_agentdash_meta,
-};
+use agentdash_acp_meta::{parse_agentdash_meta, AgentDashSourceV1};
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
 use super::persistence::PersistedSessionEvent;
 use super::types::{SessionExecutionState, SessionMeta};
 
+pub(super) fn build_user_message_envelopes(
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    user_blocks: &[ContentBlock],
+) -> Vec<BackboneEnvelope> {
+    user_blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            let value = serde_json::to_value(block).unwrap_or(serde_json::Value::Null);
+            BackboneEnvelope::new(
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                    key: "user_message_chunk".to_string(),
+                    value,
+                }),
+                session_id,
+                source.clone(),
+            )
+            .with_trace(TraceInfo {
+                turn_id: Some(turn_id.to_string()),
+                entry_index: Some(index as u32),
+            })
+        })
+        .collect()
+}
+
+/// 兼容入口：接受旧 `AgentDashSourceV1` 并转换为 `SourceInfo`。
 pub(super) fn build_user_message_notifications(
     session_id: &str,
     source: &AgentDashSourceV1,
     turn_id: &str,
     user_blocks: &[ContentBlock],
-) -> Vec<SessionNotification> {
-    user_blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = Some(turn_id.to_string());
-            trace.entry_index = Some(index as u32);
-
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source.clone()))
-                .trace(Some(trace));
-            let meta =
-                merge_agentdash_meta(None, &agentdash).expect("构造用户消息 ACP Meta 不应失败");
-
-            let chunk = ContentChunk::new(block.clone()).meta(meta);
-            SessionNotification::new(
-                SessionId::new(session_id),
-                SessionUpdate::UserMessageChunk(chunk),
-            )
-        })
-        .collect()
+) -> Vec<BackboneEnvelope> {
+    let source_info = SourceInfo {
+        connector_id: source.connector_id.clone(),
+        connector_type: source.connector_type.clone(),
+        executor_id: source.executor_id.clone(),
+    };
+    build_user_message_envelopes(session_id, &source_info, turn_id, user_blocks)
 }
 
-pub(super) fn build_turn_lifecycle_notification(
+pub(super) fn build_turn_started_envelope(
     session_id: &str,
-    source: &AgentDashSourceV1,
+    source: &SourceInfo,
+    turn_id: &str,
+) -> BackboneEnvelope {
+    use agentdash_protocol::codex_app_server_protocol as codex;
+    BackboneEnvelope::new(
+        BackboneEvent::TurnStarted(codex::TurnStartedNotification {
+            thread_id: session_id.to_string(),
+            turn: codex::Turn {
+                id: turn_id.to_string(),
+                items: Vec::new(),
+                status: codex::TurnStatus::InProgress,
+                error: None,
+                started_at: Some(chrono::Utc::now().timestamp()),
+                completed_at: None,
+                duration_ms: None,
+            },
+        }),
+        session_id,
+        source.clone(),
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
+}
+
+pub(super) fn build_turn_lifecycle_envelope(
+    session_id: &str,
+    source: &SourceInfo,
     turn_id: &str,
     event_type: &str,
     severity: &str,
     message: Option<String>,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some(severity.to_string());
-    event.message = message;
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace))
-        .event(Some(event));
-    let meta =
-        merge_agentdash_meta(None, &agentdash).expect("构造 turn 生命周期 ACP Meta 不应失败");
-
-    let info = SessionInfoUpdate::new().meta(meta);
-    SessionNotification::new(
-        SessionId::new(session_id),
-        SessionUpdate::SessionInfoUpdate(info),
+) -> BackboneEnvelope {
+    let value = serde_json::json!({
+        "event_type": event_type,
+        "severity": severity,
+        "message": message,
+    });
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "turn_lifecycle".to_string(),
+            value,
+        }),
+        session_id,
+        source.clone(),
     )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 pub(super) fn build_turn_terminal_notification(
     session_id: &str,
-    source: &AgentDashSourceV1,
+    source: &SourceInfo,
     turn_id: &str,
     terminal_kind: TurnTerminalKind,
     message: Option<String>,
-) -> SessionNotification {
-    build_turn_lifecycle_notification(
+) -> BackboneEnvelope {
+    build_turn_terminal_envelope(session_id, source, turn_id, terminal_kind, message)
+}
+
+pub(super) fn build_turn_terminal_envelope(
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    terminal_kind: TurnTerminalKind,
+    message: Option<String>,
+) -> BackboneEnvelope {
+    let value = serde_json::json!({
+        "terminal_type": terminal_kind.event_type(),
+        "message": message,
+    });
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "turn_terminal".to_string(),
+            value,
+        }),
         session_id,
-        source,
-        turn_id,
-        terminal_kind.event_type(),
-        terminal_kind.severity(),
-        message,
+        source.clone(),
     )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 pub(super) fn parse_executor_session_bound(
@@ -125,6 +177,25 @@ pub(super) fn parse_executor_session_bound(
         .map(ToString::to_string)
 }
 
+/// 从 BackboneEnvelope 直接提取 executor_session_id（新路径）。
+pub(super) fn parse_executor_session_bound_from_envelope(
+    envelope: &BackboneEnvelope,
+) -> Option<String> {
+    match &envelope.event {
+        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+            executor_session_id,
+        }) => {
+            let trimmed = executor_session_id.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn parse_turn_id(meta: Option<&Meta>) -> Option<String> {
     parse_agentdash_meta(meta?)
         .and_then(|parsed| parsed.trace.and_then(|trace| trace.turn_id))
@@ -144,6 +215,41 @@ pub(super) fn parse_turn_terminal_event(
         "turn_completed" => Some((turn_id, TurnTerminalKind::Completed, event.message)),
         "turn_failed" => Some((turn_id, TurnTerminalKind::Failed, event.message)),
         "turn_interrupted" => Some((turn_id, TurnTerminalKind::Interrupted, event.message)),
+        _ => None,
+    }
+}
+
+/// 从 BackboneEnvelope 直接解析 turn terminal 事件（新路径）。
+pub(super) fn parse_turn_terminal_event_from_envelope(
+    envelope: &BackboneEnvelope,
+) -> Option<(String, TurnTerminalKind, Option<String>)> {
+    let turn_id = envelope.trace.turn_id.as_deref()?.trim();
+    if turn_id.is_empty() {
+        return None;
+    }
+
+    match &envelope.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "turn_terminal" =>
+        {
+            let terminal_type = value
+                .get("terminal_type")
+                .and_then(serde_json::Value::as_str)?;
+            let kind = match terminal_type {
+                "turn_completed" => TurnTerminalKind::Completed,
+                "turn_failed" => TurnTerminalKind::Failed,
+                "turn_interrupted" => TurnTerminalKind::Interrupted,
+                _ => return None,
+            };
+            let message = value
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string);
+            Some((turn_id.to_string(), kind, message))
+        }
+        BackboneEvent::TurnCompleted(_) => {
+            Some((turn_id.to_string(), TurnTerminalKind::Completed, None))
+        }
         _ => None,
     }
 }

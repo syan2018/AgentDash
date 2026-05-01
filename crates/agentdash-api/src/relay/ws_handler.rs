@@ -241,9 +241,11 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 payload.notification.clone(),
             ) {
                 Ok(notification) => {
+                    let envelope =
+                        agentdash_protocol::session_notification_to_envelope(&notification);
                     if !state.services.backend_registry.feed_session_event(
                         &payload.session_id,
-                        RelaySessionEvent::Notification(notification),
+                        RelaySessionEvent::Notification(envelope),
                     ) {
                         tracing::debug!(
                             backend_id = %backend_id,

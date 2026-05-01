@@ -13,30 +13,24 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 
-use super::hub_support::parse_executor_session_bound;
 use super::persistence::SessionPersistence;
 
-/// 针对一条 notification 进行持久化副作用检查：
-/// 若发现 `executor_session_bound` 事件，同步写回 `SessionMeta.executor_session_id`。
-///
-/// `last_executor_session_id` 参数用于调用方维持"本 turn 内最后同步过的 id"
-/// 以跳过重复事件；PR 7 前该状态耦合在 turn_processor 内，现在迁到
-/// 调用方的 task local，本函数不持有任何可变状态。
+/// 针对一条 BackboneEnvelope 进行持久化副作用检查：
+/// 若发现 `ExecutorSessionBound` 事件，同步写回 `SessionMeta.executor_session_id`。
 pub(super) async fn sync_executor_session_id(
     persistence: &Arc<dyn SessionPersistence>,
     session_id: &str,
     turn_id: &str,
-    notification: &SessionNotification,
+    envelope: &BackboneEnvelope,
     last_executor_session_id: &mut Option<String>,
 ) {
-    let meta = match &notification.update {
-        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-        _ => None,
-    };
-    let Some(executor_session_id) = parse_executor_session_bound(meta, turn_id) else {
-        return;
+    let executor_session_id = match &envelope.event {
+        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+            executor_session_id,
+        }) => executor_session_id.clone(),
+        _ => return,
     };
     if last_executor_session_id.as_deref() == Some(executor_session_id.as_str()) {
         return;

@@ -5,6 +5,8 @@
 
 use async_trait::async_trait;
 
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
+
 use super::hub::SessionHub;
 use super::types::TitleSource;
 
@@ -97,32 +99,25 @@ impl SessionHub {
         session_id: &str,
         meta: &super::types::SessionMeta,
     ) {
-        use agent_client_protocol::{
-            SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-        };
-        use agentdash_acp_meta::{
-            AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, merge_agentdash_meta,
+        let source = SourceInfo {
+            connector_id: "agentdash-server".to_string(),
+            connector_type: "system".to_string(),
+            executor_id: None,
         };
 
-        let source = AgentDashSourceV1::new("agentdash-server", "system");
-        let mut event = AgentDashEventV1::new("session_meta_updated");
-        event.severity = Some("info".to_string());
-        event.data = Some(serde_json::json!({
+        let value = serde_json::json!({
             "title": meta.title,
             "title_source": meta.title_source,
-        }));
+        });
 
-        let agentdash = AgentDashMetaV1::new()
-            .source(Some(source))
-            .event(Some(event));
-        let acp_meta = merge_agentdash_meta(None, &agentdash)
-            .expect("构造 session_meta_updated ACP Meta 不应失败");
-
-        let info = SessionInfoUpdate::new().meta(acp_meta);
-        let notification = SessionNotification::new(
-            SessionId::new(session_id),
-            SessionUpdate::SessionInfoUpdate(info),
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "session_meta_updated".to_string(),
+                value,
+            }),
+            session_id,
+            source,
         );
-        let _ = self.persist_notification(session_id, notification).await;
+        let _ = self.persist_notification(session_id, envelope).await;
     }
 }

@@ -15,6 +15,7 @@ members = [
     "crates/agentdash-agent",
     "crates/agentdash-relay",
     "crates/agentdash-local",
+    "crates/agentdash-protocol",
 ]
 
 
@@ -73,6 +74,12 @@ agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local" }
 agentdash-plugin-api = { path = "crates/agentdash-plugin-api" }
+
+# Codex App Server Protocol
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.121.0", package = "codex-app-server-protocol" }
+
+# 平台内部协议
+agentdash-protocol = { path = "crates/agentdash-protocol" }
 
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }

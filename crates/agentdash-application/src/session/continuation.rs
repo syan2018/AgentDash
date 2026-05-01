@@ -210,7 +210,12 @@ pub(super) fn build_projected_transcript_from_events(
     let mut tool_results: HashMap<String, RestoredToolResultState> = HashMap::new();
 
     for event in events {
-        match &event.notification.update {
+        let Some(compat_notification) =
+            agentdash_protocol::envelope_to_session_notification(&event.notification)
+        else {
+            continue;
+        };
+        match &compat_notification.update {
             SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(part) = content_block_to_message_part(&chunk.content) {
                     let key = restored_user_key(event);
@@ -577,7 +582,8 @@ fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<Comp
 }
 
 fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
-    let SessionUpdate::SessionInfoUpdate(info) = &event.notification.update else {
+    let compat = agentdash_protocol::envelope_to_session_notification(&event.notification)?;
+    let SessionUpdate::SessionInfoUpdate(info) = &compat.update else {
         return None;
     };
     let parsed = parse_agentdash_meta(info.meta.as_ref()?)?;

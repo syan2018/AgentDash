@@ -1,7 +1,7 @@
 use std::io;
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
-use agentdash_acp_meta::parse_agentdash_meta;
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+use agentdash_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_application::session::{
     PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
     SessionMeta, SessionPersistence, TitleSource,
@@ -119,7 +119,7 @@ impl PostgresSessionRepository {
 
     fn persisted_event_from_row(row: &sqlx::postgres::PgRow) -> io::Result<PersistedSessionEvent> {
         let notification_json = row.get::<String, _>("notification_json");
-        let notification = serde_json::from_str::<SessionNotification>(&notification_json)
+        let notification = serde_json::from_str::<BackboneEnvelope>(&notification_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
         let event_seq_i64 = row.get::<i64, _>("event_seq");
         let event_seq = parse_non_negative_u64(event_seq_i64, "session_events.event_seq")?;
@@ -319,7 +319,7 @@ impl SessionPersistence for PostgresSessionRepository {
     async fn append_event(
         &self,
         session_id: &str,
-        notification: &SessionNotification,
+        envelope: &BackboneEnvelope,
     ) -> io::Result<PersistedSessionEvent> {
         let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
@@ -343,17 +343,17 @@ impl SessionPersistence for PostgresSessionRepository {
         })?;
         let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
         let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
-        let projection = projection_from_notification(notification);
+        let projection = projection_from_envelope(envelope);
         let persisted = PersistedSessionEvent {
             session_id: session_id.to_string(),
             event_seq,
             occurred_at_ms: committed_at_ms,
             committed_at_ms,
-            session_update_type: session_update_type_name(&notification.update).to_string(),
+            session_update_type: backbone_event_type_name(&envelope.event).to_string(),
             turn_id: projection.turn_id.clone(),
             entry_index: projection.entry_index,
             tool_call_id: projection.tool_call_id.clone(),
-            notification: notification.clone(),
+            notification: envelope.clone(),
         };
         let notification_json = json_string(&persisted.notification, "notification_json")?;
         let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
@@ -624,10 +624,10 @@ struct SessionProjection {
     tool_call_id: Option<String>,
 }
 
-fn projection_from_notification(notification: &SessionNotification) -> SessionProjection {
-    let turn_id = turn_id_from_update(&notification.update);
-    let entry_index = entry_index_from_update(&notification.update);
-    let tool_call_id = tool_call_id_from_update(&notification.update);
+fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
+    let turn_id = envelope.trace.turn_id.clone();
+    let entry_index = envelope.trace.entry_index;
+    let tool_call_id = envelope_tool_call_id(envelope);
 
     let mut projection = SessionProjection {
         last_execution_status: None,
@@ -639,135 +639,147 @@ fn projection_from_notification(notification: &SessionNotification) -> SessionPr
         tool_call_id,
     };
 
-    if let SessionUpdate::SessionInfoUpdate(info) = &notification.update {
-        if let Some((kind, message)) = turn_terminal_from_meta(info.meta.as_ref()) {
-            projection.last_execution_status = Some(kind.to_string());
-            projection.last_terminal_message = message;
-            return projection;
-        }
-
-        if event_type_from_meta(info.meta.as_ref()).as_deref() == Some("turn_started") {
+    match &envelope.event {
+        BackboneEvent::TurnStarted(_) => {
             projection.last_execution_status = Some("running".to_string());
             projection.clear_terminal_message = true;
         }
-
-        if let Some(executor_session_id) = executor_session_from_info(info) {
-            projection.executor_session_id = Some(executor_session_id);
+        BackboneEvent::TurnCompleted(n) => {
+            let status = match n.turn.status {
+                agentdash_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
+                agentdash_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
+                agentdash_protocol::codex_app_server_protocol::TurnStatus::Interrupted => "interrupted",
+                _ => "completed",
+            };
+            projection.last_execution_status = Some(status.to_string());
+            projection.last_terminal_message =
+                n.turn.error.as_ref().map(|e| e.message.clone());
         }
+        BackboneEvent::Error(e) => {
+            projection.last_execution_status = Some("failed".to_string());
+            projection.last_terminal_message = Some(e.error.message.clone());
+        }
+        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound { executor_session_id }) => {
+            projection.executor_session_id = Some(executor_session_id.clone());
+        }
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "turn_terminal" =>
+        {
+            if let Some(kind) = value.get("terminal_type").and_then(|v| v.as_str()) {
+                let status = match kind {
+                    "turn_completed" => "completed",
+                    "turn_failed" => "failed",
+                    "turn_interrupted" => "interrupted",
+                    _ => "completed",
+                };
+                projection.last_execution_status = Some(status.to_string());
+            }
+            projection.last_terminal_message = value
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+        _ => {}
     }
 
     projection
 }
 
-fn turn_id_from_update(update: &SessionUpdate) -> Option<String> {
-    let meta = update_meta(update);
-    parse_agentdash_meta(meta?).and_then(|parsed| parsed.trace.and_then(|trace| trace.turn_id))
+fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
+    match event {
+        BackboneEvent::AgentMessageDelta(_) => "agent_message_delta",
+        BackboneEvent::ReasoningTextDelta(_) => "reasoning_text_delta",
+        BackboneEvent::ReasoningSummaryDelta(_) => "reasoning_summary_delta",
+        BackboneEvent::ItemStarted(_) => "item_started",
+        BackboneEvent::ItemCompleted(_) => "item_completed",
+        BackboneEvent::CommandOutputDelta(_) => "command_output_delta",
+        BackboneEvent::FileChangeDelta(_) => "file_change_delta",
+        BackboneEvent::McpToolCallProgress(_) => "mcp_tool_call_progress",
+        BackboneEvent::TurnStarted(_) => "turn_started",
+        BackboneEvent::TurnCompleted(_) => "turn_completed",
+        BackboneEvent::TurnDiffUpdated(_) => "turn_diff_updated",
+        BackboneEvent::TurnPlanUpdated(_) => "turn_plan_updated",
+        BackboneEvent::PlanDelta(_) => "plan_delta",
+        BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
+        BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
+        BackboneEvent::ContextCompacted(_) => "context_compacted",
+        BackboneEvent::ApprovalRequest(_) => "approval_request",
+        BackboneEvent::Error(_) => "error",
+        BackboneEvent::Platform(_) => "platform",
+    }
 }
 
-fn entry_index_from_update(update: &SessionUpdate) -> Option<u32> {
-    let meta = update_meta(update);
-    parse_agentdash_meta(meta?).and_then(|parsed| parsed.trace.and_then(|trace| trace.entry_index))
-}
-
-fn tool_call_id_from_update(update: &SessionUpdate) -> Option<String> {
-    match update {
-        SessionUpdate::ToolCall(call) => Some(call.tool_call_id.to_string()),
-        SessionUpdate::ToolCallUpdate(update) => Some(update.tool_call_id.to_string()),
+fn thread_item_tool_call_id(item: &ThreadItem) -> Option<String> {
+    match item {
+        ThreadItem::DynamicToolCall { id, .. }
+        | ThreadItem::CommandExecution { id, .. }
+        | ThreadItem::McpToolCall { id, .. } => Some(id.clone()),
         _ => None,
     }
 }
 
-fn session_update_type_name(update: &SessionUpdate) -> &'static str {
-    match update {
-        SessionUpdate::UserMessageChunk(_) => "user_message_chunk",
-        SessionUpdate::AgentMessageChunk(_) => "agent_message_chunk",
-        SessionUpdate::AgentThoughtChunk(_) => "agent_thought_chunk",
-        SessionUpdate::ToolCall(_) => "tool_call",
-        SessionUpdate::ToolCallUpdate(_) => "tool_call_update",
-        SessionUpdate::Plan(_) => "plan",
-        SessionUpdate::SessionInfoUpdate(_) => "session_info_update",
-        SessionUpdate::UsageUpdate(_) => "usage_update",
-        SessionUpdate::AvailableCommandsUpdate(_) => "available_commands_update",
-        SessionUpdate::CurrentModeUpdate(_) => "current_mode_update",
-        SessionUpdate::ConfigOptionUpdate(_) => "config_option_update",
-        _ => "unknown",
-    }
-}
-
-fn update_meta(update: &SessionUpdate) -> Option<&agent_client_protocol::Meta> {
-    match update {
-        SessionUpdate::UserMessageChunk(chunk)
-        | SessionUpdate::AgentMessageChunk(chunk)
-        | SessionUpdate::AgentThoughtChunk(chunk) => chunk.meta.as_ref(),
-        SessionUpdate::ToolCall(call) => call.meta.as_ref(),
-        SessionUpdate::ToolCallUpdate(update) => update.meta.as_ref(),
-        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
+fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
+    match &envelope.event {
+        BackboneEvent::ItemStarted(n) => thread_item_tool_call_id(&n.item),
+        BackboneEvent::ItemCompleted(n) => thread_item_tool_call_id(&n.item),
         _ => None,
     }
-}
-
-fn event_type_from_meta(meta: Option<&agent_client_protocol::Meta>) -> Option<String> {
-    parse_agentdash_meta(meta?).and_then(|parsed| parsed.event.map(|event| event.r#type))
-}
-
-fn turn_terminal_from_meta(
-    meta: Option<&agent_client_protocol::Meta>,
-) -> Option<(&'static str, Option<String>)> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let event = parsed.event?;
-    match event.r#type.as_str() {
-        "turn_completed" => Some(("completed", event.message)),
-        "turn_failed" => Some(("failed", event.message)),
-        "turn_interrupted" => Some(("interrupted", event.message)),
-        _ => None,
-    }
-}
-
-fn executor_session_from_info(info: &agent_client_protocol::SessionInfoUpdate) -> Option<String> {
-    let parsed = parse_agentdash_meta(info.meta.as_ref()?)?;
-    let event = parsed.event?;
-    if event.r#type != "executor_session_bound" {
-        return None;
-    }
-    event
-        .data
-        .and_then(|data| {
-            data.get("executor_session_id")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string)
-        })
-        .or(event.message)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
-    use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-    use agentdash_acp_meta::{
-        AgentDashEventV1, AgentDashMetaV1, AgentDashTraceV1, merge_agentdash_meta,
-    };
-    fn turn_terminal_notification(
+    use agentdash_protocol::{SourceInfo, TraceInfo};
+    use agentdash_protocol::codex_app_server_protocol as codex;
+    use chrono::Utc;
+
+    fn turn_terminal_envelope(
         session_id: &str,
         turn_id: &str,
         terminal_type: &str,
         message: &str,
-    ) -> SessionNotification {
-        let meta = merge_agentdash_meta(
-            None,
-            &AgentDashMetaV1::new()
-                .event(AgentDashEventV1::new(terminal_type).message(Some(message.to_string())))
-                .trace(AgentDashTraceV1 {
-                    turn_id: Some(turn_id.to_string()),
-                    ..AgentDashTraceV1::new()
-                }),
-        );
-        SessionNotification::new(
-            SessionId::new(session_id),
-            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
-        )
+    ) -> BackboneEnvelope {
+        let status = match terminal_type {
+            "turn_completed" => codex::TurnStatus::Completed,
+            "turn_failed" => codex::TurnStatus::Failed,
+            "turn_interrupted" => codex::TurnStatus::Interrupted,
+            _ => codex::TurnStatus::Completed,
+        };
+        let error = if terminal_type == "turn_failed" {
+            Some(codex::TurnError {
+                message: message.to_string(),
+                codex_error_info: None,
+                additional_details: None,
+            })
+        } else {
+            None
+        };
+        BackboneEnvelope {
+            event: BackboneEvent::TurnCompleted(codex::TurnCompletedNotification {
+                thread_id: session_id.to_string(),
+                turn: codex::Turn {
+                    id: turn_id.to_string(),
+                    items: Vec::new(),
+                    status,
+                    error,
+                    started_at: None,
+                    completed_at: Some(Utc::now().timestamp()),
+                    duration_ms: None,
+                },
+            }),
+            session_id: session_id.to_string(),
+            source: SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "test".to_string(),
+                executor_id: None,
+            },
+            trace: TraceInfo {
+                turn_id: Some(turn_id.to_string()),
+                entry_index: None,
+            },
+            observed_at: Utc::now(),
+        }
     }
 
     #[tokio::test]
@@ -796,16 +808,24 @@ mod tests {
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
-        let notification = SessionNotification::new(
-            SessionId::new("sess-1"),
-            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "test".to_string(),
+                value: serde_json::Value::Null,
+            }),
+            "sess-1",
+            SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "test".to_string(),
+                executor_id: None,
+            },
         );
         let first = repo
-            .append_event("sess-1", &notification)
+            .append_event("sess-1", &envelope)
             .await
             .expect("应能写入第一条事件");
         let second = repo
-            .append_event("sess-1", &notification)
+            .append_event("sess-1", &envelope)
             .await
             .expect("应能写入第二条事件");
 
@@ -864,7 +884,7 @@ mod tests {
         stale.executor_session_id = Some("exec-1".to_string());
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
-        let terminal = turn_terminal_notification(&session_id, "t-new", "turn_completed", "done");
+        let terminal = turn_terminal_envelope(&session_id, "t-new", "turn_completed", "done");
         repo.append_event(&session_id, &terminal)
             .await
             .expect("应能写入终态事件");

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_protocol::SourceInfo;
 use agentdash_spi::hooks::{
     HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
@@ -391,30 +391,30 @@ impl SessionHub {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
-        let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
-        source.executor_id = Some(context.session.executor_config.executor.to_string());
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: connector_type.to_string(),
+            executor_id: Some(context.session.executor_config.executor.to_string()),
+        };
 
         // PR 4（04-30-session-pipeline-architecture-refactor）删除 `session-capabilities://`
         // resource block 注入路径：companion_agents 已改由 Bundle 渲染到 SP
         // `## Project Context`；skills 由 `<available_skills>` XML 块承载；
         // capabilities 结构本身如有持久化需求应走 SessionMeta，而非 user_blocks。
-        let user_notifications = build_user_message_notifications(
+        let user_envelopes = build_user_message_envelopes(
             session_id,
             &source,
             &turn_id,
             &resolved_payload.user_blocks,
         );
-        for notification in user_notifications {
-            let _ = self.persist_notification(&sid, notification).await;
+        for envelope in user_envelopes {
+            let _ = self.persist_notification(&sid, envelope).await;
         }
 
-        let started = build_turn_lifecycle_notification(
+        let started = build_turn_started_envelope(
             session_id,
             &source,
             &turn_id,
-            "turn_started",
-            "info",
-            Some("开始执行".to_string()),
         );
         let _ = self.persist_notification(&sid, started).await;
 
@@ -466,7 +466,7 @@ impl SessionHub {
                         runtime.hook_session = None;
                     }
                 }
-                let failed = build_turn_terminal_notification(
+                let failed = build_turn_terminal_envelope(
                     &sid,
                     &source,
                     &turn_id,

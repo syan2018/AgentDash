@@ -1,4 +1,4 @@
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 use uuid::Uuid;
 
@@ -28,8 +28,8 @@ pub struct TaskHookEffectExecutor {
 
 #[async_trait::async_trait]
 impl PostTurnHandler for TaskHookEffectExecutor {
-    async fn on_event(&self, session_id: &str, notification: &SessionNotification) {
-        self.handle_event(session_id, notification).await;
+    async fn on_event(&self, session_id: &str, envelope: &BackboneEnvelope) {
+        self.handle_event(session_id, envelope).await;
     }
 
     async fn execute_effects(&self, session_id: &str, turn_id: &str, effects: &[HookEffect]) {
@@ -55,10 +55,17 @@ impl TaskHookEffectExecutor {
     /// 任何不在此列表中的 kind 会产生运行时 warning。
     pub const SUPPORTED_KINDS: &[&str] = &["task:set_status", "task:clear_binding"];
 
-    async fn handle_event(&self, _session_id: &str, notification: &SessionNotification) {
+    async fn handle_event(&self, _session_id: &str, envelope: &BackboneEnvelope) {
+        // 通过 compat 桥获取 ACP notification，提取 ToolCall/ToolCallUpdate
+        let Some(notification) =
+            agentdash_protocol::envelope_to_session_notification(envelope)
+        else {
+            return;
+        };
+
+        use agent_client_protocol::SessionUpdate;
         use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
         use crate::task::meta::extract_turn_id_from_meta;
-        use agent_client_protocol::SessionUpdate;
 
         match &notification.update {
             SessionUpdate::ToolCall(tc) => {

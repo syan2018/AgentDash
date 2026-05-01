@@ -9,8 +9,7 @@
 
 use std::io;
 
-use agent_client_protocol::SessionNotification;
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_protocol::{BackboneEnvelope, SourceInfo};
 use agentdash_agent_types::AgentMessage;
 use tokio::sync::broadcast;
 
@@ -35,8 +34,12 @@ impl SessionHub {
                     "启动恢复：session 上次未正常结束，标记为 interrupted"
                 );
                 if let Some(turn_id) = meta.last_turn_id.clone() {
-                    let source = AgentDashSourceV1::new("agentdash-server", "system");
-                    let notification = build_turn_terminal_notification(
+                    let source = SourceInfo {
+                        connector_id: "agentdash-server".to_string(),
+                        connector_type: "system".to_string(),
+                        executor_id: None,
+                    };
+                    let notification = build_turn_terminal_envelope(
                         &meta.id,
                         &source,
                         &turn_id,
@@ -362,23 +365,23 @@ impl SessionHub {
     pub async fn inject_notification(
         &self,
         session_id: &str,
-        notification: SessionNotification,
+        envelope: BackboneEnvelope,
     ) -> std::io::Result<()> {
-        let _ = self.persist_notification(session_id, notification).await?;
+        let _ = self.persist_notification(session_id, envelope).await?;
         Ok(())
     }
 
     pub(crate) async fn persist_notification(
         &self,
         session_id: &str,
-        notification: SessionNotification,
+        envelope: BackboneEnvelope,
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        let notification = self
-            .maybe_enrich_compaction_notification(session_id, notification)
+        let envelope = self
+            .maybe_enrich_compaction_notification(session_id, envelope)
             .await?;
         let persisted = self
             .persistence
-            .append_event(session_id, &notification)
+            .append_event(session_id, &envelope)
             .await?;
         let tx = {
             let mut sessions = self.sessions.lock().await;

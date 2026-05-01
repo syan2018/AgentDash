@@ -8,16 +8,13 @@
 //! 能看到人类回应）。归位到 `companion/`，让调用链"companion 工具请求 →
 //! companion 工具回应"全部落在一个子域。
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 
 /// 构造 companion "人类回应" 事件通知。
 ///
 /// 调用方：`SessionHub::respond_companion_request`（hub/facade.rs）。
 /// 被 registered 的 companion tool 在 pending 状态等待时，HTTP 层触发此
-/// 函数产出 `SessionInfoUpdate` notification，进事件流供 Inspector 可视化。
+/// 函数产出 `BackboneEnvelope`，进事件流供 Inspector 可视化。
 pub fn build_companion_human_response_notification(
     session_id: &str,
     turn_id: Option<&str>,
@@ -25,7 +22,7 @@ pub fn build_companion_human_response_notification(
     payload: &serde_json::Value,
     request_type: Option<&str>,
     resumed_waiting_tool: bool,
-) -> SessionNotification {
+) -> BackboneEnvelope {
     let summary = payload
         .get("summary")
         .or_else(|| payload.get("note"))
@@ -38,13 +35,10 @@ pub fn build_companion_human_response_notification(
         .unwrap_or("responded");
     let response_type = payload.get("type").and_then(|v| v.as_str());
 
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = turn_id.map(ToString::to_string);
-
-    let mut event = AgentDashEventV1::new("companion_human_response");
-    event.severity = Some("info".to_string());
-    event.message = Some(format!("[用户回应] status={status} {summary}"));
-    event.data = Some(serde_json::json!({
+    let value = serde_json::json!({
+        "event_type": "companion_human_response",
+        "severity": "info",
+        "message": format!("[用户回应] status={status} {summary}"),
         "request_id": request_id,
         "status": status,
         "summary": summary,
@@ -52,18 +46,24 @@ pub fn build_companion_human_response_notification(
         "request_type": request_type,
         "response_type": response_type,
         "resumed_waiting_tool": resumed_waiting_tool,
-    }));
+    });
 
-    let source = AgentDashSourceV1::new("agentdash-companion", "human_respond");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
+    let source = SourceInfo {
+        connector_id: "agentdash-companion".to_string(),
+        connector_type: "human_respond".to_string(),
+        executor_id: None,
+    };
 
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
-            merge_agentdash_meta(None, &agentdash).expect("构造 companion response meta 不应失败"),
-        )),
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "companion_human_response".to_string(),
+            value,
+        }),
+        session_id,
+        source,
     )
+    .with_trace(TraceInfo {
+        turn_id: turn_id.map(ToString::to_string),
+        entry_index: None,
+    })
 }

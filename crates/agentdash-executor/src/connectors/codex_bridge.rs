@@ -7,25 +7,19 @@ use std::{
     },
 };
 
-use agent_client_protocol::{
-    ContentBlock, ContentChunk, Meta, SessionId, SessionInfoUpdate, SessionNotification,
-    SessionUpdate, TextContent, UsageUpdate,
-};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+use agentdash_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
 use codex_app_server_protocol::{
-    AgentMessageDeltaNotification, AskForApproval, ClientInfo, ClientNotification, ClientRequest,
-    ErrorNotification, GetAccountParams, GetAccountResponse, InitializeCapabilities,
-    InitializeParams, InitializeResponse, JSONRPCMessage, JSONRPCNotification, JSONRPCRequest,
-    JSONRPCResponse, ReasoningSummaryTextDeltaNotification, ReasoningTextDeltaNotification,
-    RequestId, SandboxMode, ThreadForkParams, ThreadForkResponse, ThreadStartParams,
-    ThreadStartResponse, ThreadTokenUsageUpdatedNotification, TurnCompletedNotification,
-    TurnStartParams, TurnStartResponse, TurnStatus, UserInput,
+    AskForApproval, ClientInfo, ClientNotification, ClientRequest, GetAccountParams,
+    GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
+    JSONRPCMessage, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, RequestId, SandboxMode,
+    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams,
+    TurnStartResponse, UserInput,
 };
 use executors::{
     executors::{BaseCodingAgent, StandardCodingAgentExecutor as _},
@@ -81,40 +75,16 @@ fn connector_type_label(connector_type: ConnectorType) -> &'static str {
     }
 }
 
-fn build_base_meta(source: &AgentDashSourceV1, turn_id: &str) -> Option<Meta> {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace));
-    merge_agentdash_meta(None, &agentdash)
-}
-
-fn build_executor_session_bound_notification(
+fn make_envelope(
+    event: BackboneEvent,
     session_id: &str,
-    source: &AgentDashSourceV1,
+    source: &SourceInfo,
     turn_id: &str,
-    executor_session_id: &str,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let event = AgentDashEventV1::new("executor_session_bound")
-        .message(Some(executor_session_id.to_string()))
-        .data(Some(json!({ "executor_session_id": executor_session_id })));
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-        ),
-    )
+) -> BackboneEnvelope {
+    BackboneEnvelope::new(event, session_id, source.clone()).with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 fn build_prompt_text(
@@ -256,6 +226,156 @@ async fn send_server_response(
         .map_err(|_| ConnectorError::Runtime("Codex app-server 已断开，无法回传响应".to_string()))
 }
 
+/// 1:1 映射 Codex 原生 JSON-RPC notification → BackboneEvent。
+async fn handle_server_notification(
+    notification: JSONRPCNotification,
+    session_id: &str,
+    tx: &mpsc::Sender<Result<BackboneEnvelope, ConnectorError>>,
+    source: &SourceInfo,
+    turn_id: &str,
+) {
+    let wrap = |event: BackboneEvent| make_envelope(event, session_id, source, turn_id);
+
+    match notification.method.as_str() {
+        "item/agentMessage/delta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::AgentMessageDelta(p)))).await;
+            }
+        }
+        "item/reasoning/textDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::ReasoningTextDelta(p)))).await;
+            }
+        }
+        "item/reasoning/summaryTextDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ReasoningSummaryDelta(p))))
+                    .await;
+            }
+        }
+        "item/started" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::ItemStarted(p)))).await;
+            }
+        }
+        "item/completed" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::ItemCompleted(p)))).await;
+            }
+        }
+        "item/commandExecution/outputDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::CommandOutputDelta(p))))
+                    .await;
+            }
+        }
+        "item/fileChange/outputDelta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::FileChangeDelta(p)))).await;
+            }
+        }
+        "item/mcpToolCall/progress" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::McpToolCallProgress(p))))
+                    .await;
+            }
+        }
+        "turn/started" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::TurnStarted(p)))).await;
+            }
+        }
+        "turn/completed" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::TurnCompleted(p)))).await;
+            }
+        }
+        "turn/diff/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::TurnDiffUpdated(p)))).await;
+            }
+        }
+        "turn/plan/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::TurnPlanUpdated(p)))).await;
+            }
+        }
+        "turn/plan/delta" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::PlanDelta(p)))).await;
+            }
+        }
+        "thread/tokenUsage/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p))))
+                    .await;
+            }
+        }
+        "thread/status/changed" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ThreadStatusChanged(p))))
+                    .await;
+            }
+        }
+        "context/compacted" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ContextCompacted(p))))
+                    .await;
+            }
+        }
+        "error" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value(params)
+            {
+                let _ = tx.send(Ok(wrap(BackboneEvent::Error(p)))).await;
+            }
+        }
+        _ => {
+            tracing::debug!("codex bridge: unhandled notification method={}", notification.method);
+        }
+    }
+}
+
+/// 处理 server → client 请求。当前仍自动审批，后续接入正式审批链路后
+/// 改为产出 `BackboneEvent::ApprovalRequest` 并等待 application 层决策。
 async fn handle_server_request(
     request: JSONRPCRequest,
     out_tx: &mpsc::Sender<Value>,
@@ -267,123 +387,6 @@ async fn handle_server_request(
         _ => Value::Null,
     };
     send_server_response(out_tx, request.id, result).await
-}
-
-fn build_text_chunk_notification(
-    session_id: &SessionId,
-    text: &str,
-    message_id: &str,
-    meta: Option<Meta>,
-    thought: bool,
-) -> Option<SessionNotification> {
-    if text.is_empty() {
-        return None;
-    }
-    let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-        .message_id(Some(message_id.to_string()))
-        .meta(meta);
-    let update = if thought {
-        SessionUpdate::AgentThoughtChunk(chunk)
-    } else {
-        SessionUpdate::AgentMessageChunk(chunk)
-    };
-    Some(SessionNotification::new(session_id.clone(), update))
-}
-
-async fn handle_server_notification(
-    notification: JSONRPCNotification,
-    session_id: &SessionId,
-    tx: &mpsc::Sender<Result<SessionNotification, ConnectorError>>,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-) {
-    let base_meta = build_base_meta(source, turn_id);
-
-    match notification.method.as_str() {
-        "item/agentMessage/delta" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) = serde_json::from_value::<AgentMessageDeltaNotification>(params)
-                && let Some(n) = build_text_chunk_notification(
-                    session_id,
-                    payload.delta.as_str(),
-                    &format!("{turn_id}:agent_message_chunk"),
-                    base_meta,
-                    false,
-                )
-            {
-                let _ = tx.send(Ok(n)).await;
-            }
-        }
-        "item/reasoning/textDelta" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) = serde_json::from_value::<ReasoningTextDeltaNotification>(params)
-                && let Some(n) = build_text_chunk_notification(
-                    session_id,
-                    payload.delta.as_str(),
-                    &format!("{turn_id}:agent_thought_chunk"),
-                    base_meta,
-                    true,
-                )
-            {
-                let _ = tx.send(Ok(n)).await;
-            }
-        }
-        "item/reasoning/summaryTextDelta" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) =
-                    serde_json::from_value::<ReasoningSummaryTextDeltaNotification>(params)
-                && let Some(n) = build_text_chunk_notification(
-                    session_id,
-                    payload.delta.as_str(),
-                    &format!("{turn_id}:agent_thought_chunk"),
-                    base_meta,
-                    true,
-                )
-            {
-                let _ = tx.send(Ok(n)).await;
-            }
-        }
-        "thread/tokenUsage/updated" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) =
-                    serde_json::from_value::<ThreadTokenUsageUpdatedNotification>(params)
-            {
-                let total_tokens = payload.token_usage.total.total_tokens.max(0) as u64;
-                let context_window = payload.token_usage.model_context_window.unwrap_or(0).max(0) as u64;
-                let usage = UsageUpdate::new(total_tokens, context_window).meta(base_meta);
-                let _ = tx
-                    .send(Ok(SessionNotification::new(
-                        session_id.clone(),
-                        SessionUpdate::UsageUpdate(usage),
-                    )))
-                    .await;
-            }
-        }
-        "turn/completed" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) = serde_json::from_value::<TurnCompletedNotification>(params)
-                && payload.turn.status == TurnStatus::Failed
-            {
-                let message = payload
-                    .turn
-                    .error
-                    .map(|e| e.message)
-                    .unwrap_or_else(|| "Codex turn failed".to_string());
-                let _ = tx.send(Err(ConnectorError::Runtime(message))).await;
-            }
-        }
-        "error" => {
-            if let Some(params) = notification.params
-                && let Ok(payload) = serde_json::from_value::<ErrorNotification>(params)
-                && !payload.will_retry
-            {
-                let _ = tx
-                    .send(Err(ConnectorError::Runtime(payload.error.message)))
-                    .await;
-            }
-        }
-        _ => {}
-    }
 }
 
 #[async_trait::async_trait]
@@ -516,7 +519,7 @@ impl AgentConnector for CodexBridgeConnector {
             .await
             .insert(session_id.to_string(), cancel_token.clone());
 
-        let (tx, rx) = mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
+        let (tx, rx) = mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(256);
         let (out_tx, mut out_rx) = mpsc::channel::<Value>(256);
         let pending: PendingResponseMap = Arc::new(Mutex::new(HashMap::new()));
         let request_counter = Arc::new(AtomicI64::new(1));
@@ -550,17 +553,20 @@ impl AgentConnector for CodexBridgeConnector {
             }
         });
 
-        let mut source =
-            AgentDashSourceV1::new(self.connector_id(), connector_type_label(self.connector_type()));
-        source.executor_id = Some(context.session.executor_config.executor.to_string());
+        let source = SourceInfo {
+            connector_id: self.connector_id().to_string(),
+            connector_type: connector_type_label(self.connector_type()).to_string(),
+            executor_id: Some(context.session.executor_config.executor.to_string()),
+        };
         let turn_id = context.session.turn_id.clone();
-        let stream_session_id = SessionId::new(session_id.to_string());
+        let stream_session_id = session_id.to_string();
 
         let read_pending = pending.clone();
         let read_out_tx = out_tx.clone();
         let read_tx = tx.clone();
         let read_source = source.clone();
         let read_turn_id = turn_id.clone();
+        let read_session_id = stream_session_id.clone();
         tokio::spawn(async move {
             let mut stdout_lines = BufReader::new(stdout).lines();
             loop {
@@ -605,7 +611,7 @@ impl AgentConnector for CodexBridgeConnector {
                     JSONRPCMessage::Notification(notification) => {
                         handle_server_notification(
                             notification,
-                            &stream_session_id,
+                            &read_session_id,
                             &read_tx,
                             &read_source,
                             &read_turn_id,
@@ -700,11 +706,13 @@ impl AgentConnector for CodexBridgeConnector {
             };
 
             let _ = tx
-                .send(Ok(build_executor_session_bound_notification(
+                .send(Ok(make_envelope(
+                    BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+                        executor_session_id: thread_id.clone(),
+                    }),
                     session_id,
                     &source,
                     &turn_id,
-                    &thread_id,
                 )))
                 .await;
 

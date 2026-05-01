@@ -1,6 +1,6 @@
 use std::io;
 
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ pub struct PersistedSessionEvent {
     pub entry_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    pub notification: SessionNotification,
+    pub notification: BackboneEnvelope,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub trait SessionPersistence: Send + Sync {
     async fn append_event(
         &self,
         session_id: &str,
-        notification: &SessionNotification,
+        envelope: &BackboneEnvelope,
     ) -> io::Result<PersistedSessionEvent>;
 
     async fn read_backlog(

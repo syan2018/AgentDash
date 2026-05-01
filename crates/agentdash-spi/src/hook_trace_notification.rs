@@ -1,28 +1,16 @@
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+use agentdash_protocol::{
+    BackboneEnvelope, BackboneEvent, HookTracePayload, PlatformEvent, SourceInfo, TraceInfo,
 };
 use serde_json::json;
 
 use crate::{HookTraceEntry, HookTrigger};
 
-pub fn build_hook_trace_notification(
+pub fn build_hook_trace_envelope(
     session_id: &str,
     turn_id: Option<&str>,
-    source: AgentDashSourceV1,
+    source: SourceInfo,
     entry: &HookTraceEntry,
-) -> Option<SessionNotification> {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = turn_id.map(ToString::to_string);
-
-    let mut event = AgentDashEventV1::new("hook_event");
-    event.severity = Some(hook_event_severity(entry).to_string());
-    event.code = Some(format!(
-        "hook:{}:{}",
-        hook_trigger_key(&entry.trigger),
-        normalize_event_decision(&entry.decision)
-    ));
-    event.message = Some(describe_hook_trace(entry));
+) -> BackboneEnvelope {
     let injections_data: Vec<serde_json::Value> = entry
         .injections
         .iter()
@@ -34,34 +22,42 @@ pub fn build_hook_trace_notification(
             })
         })
         .collect();
-    event.data = Some(json!({
-        "trigger": hook_trigger_key(&entry.trigger),
-        "decision": entry.decision,
-        "sequence": entry.sequence,
-        "revision": entry.revision,
-        "tool_name": entry.tool_name,
-        "tool_call_id": entry.tool_call_id,
-        "subagent_type": entry.subagent_type,
-        "matched_rule_keys": entry.matched_rule_keys,
-        "refresh_snapshot": entry.refresh_snapshot,
-        "block_reason": entry.block_reason,
-        "completion": entry.completion,
-        "diagnostic_codes": entry.diagnostics.iter().map(|item| item.code.clone()).collect::<Vec<_>>(),
-        "diagnostics": entry.diagnostics,
-        "injections": injections_data,
-    }));
 
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    Some(SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
-            merge_agentdash_meta(None, &agentdash).expect("构造 hook trace ACP Meta 不应失败"),
+    let payload = HookTracePayload {
+        event_type: Some(format!(
+            "hook:{}:{}",
+            hook_trigger_key(&entry.trigger),
+            normalize_event_decision(&entry.decision)
         )),
-    ))
+        message: Some(describe_hook_trace(entry)),
+        data: Some(json!({
+            "trigger": hook_trigger_key(&entry.trigger),
+            "decision": entry.decision,
+            "sequence": entry.sequence,
+            "revision": entry.revision,
+            "severity": hook_event_severity(entry),
+            "tool_name": entry.tool_name,
+            "tool_call_id": entry.tool_call_id,
+            "subagent_type": entry.subagent_type,
+            "matched_rule_keys": entry.matched_rule_keys,
+            "refresh_snapshot": entry.refresh_snapshot,
+            "block_reason": entry.block_reason,
+            "completion": entry.completion,
+            "diagnostic_codes": entry.diagnostics.iter().map(|item| item.code.clone()).collect::<Vec<_>>(),
+            "diagnostics": entry.diagnostics,
+            "injections": injections_data,
+        })),
+    };
+
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::HookTrace(payload)),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: turn_id.map(ToString::to_string),
+        entry_index: None,
+    })
 }
 
 fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
@@ -176,10 +172,12 @@ mod tests {
     use super::*;
     use crate::{HookCompletionStatus, HookDiagnosticEntry, HookInjection};
 
-    fn sample_source() -> AgentDashSourceV1 {
-        let mut source = AgentDashSourceV1::new("pi-agent", "local_executor");
-        source.executor_id = Some("PI_AGENT".to_string());
-        source
+    fn sample_source() -> SourceInfo {
+        SourceInfo {
+            connector_id: "pi-agent".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("PI_AGENT".to_string()),
+        }
     }
 
     fn silent_entry(decision: &str) -> HookTraceEntry {
@@ -210,15 +208,15 @@ mod tests {
             "terminal_observed",
             "refresh_requested",
         ] {
-            let notification = build_hook_trace_notification(
+            let envelope = build_hook_trace_envelope(
                 "sess-1",
                 Some("t-1"),
                 sample_source(),
                 &silent_entry(decision),
             );
             assert!(
-                notification.is_some(),
-                "should emit even silent decision: {decision}"
+                matches!(envelope.event, BackboneEvent::Platform(PlatformEvent::HookTrace(_))),
+                "should produce HookTrace event for decision: {decision}"
             );
         }
     }
@@ -235,9 +233,11 @@ mod tests {
             }),
             ..silent_entry("stop")
         };
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry);
-        assert!(notification.is_some());
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        assert!(matches!(
+            envelope.event,
+            BackboneEvent::Platform(PlatformEvent::HookTrace(_))
+        ));
     }
 
     #[test]
@@ -267,30 +267,16 @@ mod tests {
             injections: Vec::new(),
         };
 
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry)
-                .expect("should emit notification");
-        let value = serde_json::to_value(notification).expect("serialize notification");
-        assert_eq!(
-            value
-                .get("update")
-                .and_then(|item| item.get("_meta"))
-                .and_then(|item| item.get("agentdash"))
-                .and_then(|item| item.get("event"))
-                .and_then(|item| item.get("type"))
-                .and_then(serde_json::Value::as_str),
-            Some("hook_event")
-        );
-        assert_eq!(
-            value
-                .get("update")
-                .and_then(|item| item.get("_meta"))
-                .and_then(|item| item.get("agentdash"))
-                .and_then(|item| item.get("event"))
-                .and_then(|item| item.get("severity"))
-                .and_then(serde_json::Value::as_str),
-            Some("warning")
-        );
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        match &envelope.event {
+            BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
+                assert!(payload.event_type.as_deref().unwrap().starts_with("hook:"));
+                let data = payload.data.as_ref().unwrap();
+                assert_eq!(data.get("decision").and_then(|v| v.as_str()), Some("continue"));
+                assert_eq!(data.get("severity").and_then(|v| v.as_str()), Some("warning"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 
     #[test]
@@ -305,13 +291,15 @@ mod tests {
             }],
             ..silent_entry("context_injected")
         };
-        let notification =
-            build_hook_trace_notification("sess-1", Some("t-1"), sample_source(), &entry)
-                .expect("should emit");
-        let value = serde_json::to_value(notification).unwrap();
-        let data = value.pointer("/update/_meta/agentdash/event/data").unwrap();
-        let injections = data.get("injections").and_then(|v| v.as_array()).unwrap();
-        assert_eq!(injections.len(), 1);
-        assert_eq!(injections[0]["slot"], "companion_agents");
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        match &envelope.event {
+            BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
+                let data = payload.data.as_ref().unwrap();
+                let injections = data.get("injections").and_then(|v| v.as_array()).unwrap();
+                assert_eq!(injections.len(), 1);
+                assert_eq!(injections[0]["slot"], "companion_agents");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

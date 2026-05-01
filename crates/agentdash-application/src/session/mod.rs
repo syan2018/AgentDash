@@ -36,7 +36,7 @@ pub use assembler::{
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
-pub use hook_events::build_hook_trace_notification;
+pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;

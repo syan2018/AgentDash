@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use crate::session::{
     CompanionSessionContext, PromptSessionRequest, SessionHub, UserPromptInput,
-    build_hook_trace_notification,
+    build_hook_trace_envelope,
 };
-use agent_client_protocol::{
-    McpServer, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+use agent_client_protocol::McpServer;
+use agentdash_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
@@ -1604,37 +1602,35 @@ pub fn build_hook_action_resolved_notification(
     session_id: &str,
     turn_id: &str,
     action: &HookPendingAction,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
+) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "agentdash-hook-runtime".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: None,
+    };
 
-    let mut event = AgentDashEventV1::new("hook_action_resolved");
-    event.severity = Some("info".to_string());
-    event.message = Some(format!("Hook action `{}` 已显式结案", action.title));
-    event.data = Some(serde_json::json!({
-        "action_id": action.id,
-        "action_type": action.action_type,
-        "status": hook_action_status_key(action.status),
-        "resolution_kind": action.resolution_kind.map(hook_action_resolution_key),
-        "resolution_note": action.resolution_note,
-        "resolution_turn_id": action.resolution_turn_id,
-        "resolved_at_ms": action.resolved_at_ms,
-        "summary": action.summary,
-        "title": action.title,
-    }));
-
-    let source = AgentDashSourceV1::new("agentdash-hook-runtime", "runtime_tool");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
-            merge_agentdash_meta(None, &agentdash).expect("构造 hook action ACP Meta 不应失败"),
-        )),
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "hook_action_resolved".to_string(),
+            value: serde_json::json!({
+                "action_id": action.id,
+                "action_type": action.action_type,
+                "status": hook_action_status_key(action.status),
+                "resolution_kind": action.resolution_kind.map(hook_action_resolution_key),
+                "resolution_note": action.resolution_note,
+                "resolution_turn_id": action.resolution_turn_id,
+                "resolved_at_ms": action.resolved_at_ms,
+                "summary": action.summary,
+                "title": action.title,
+            }),
+        }),
+        session_id,
+        source,
     )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 fn hook_action_status_key(status: HookPendingActionStatus) -> &'static str {
@@ -1746,16 +1742,15 @@ async fn record_subagent_trace(
         let session_id = hook_session.session_id();
         let has_live = session_hub.has_live_runtime(session_id).await;
         if !has_live {
-            if let Some(notification) = build_hook_trace_notification(
+            let notification = build_hook_trace_envelope(
                 session_id,
                 Some(turn_id),
                 hook_trace_source(),
                 &trace,
-            ) {
-                let _ = session_hub
-                    .inject_notification(session_id, notification)
-                    .await;
-            }
+            );
+            let _ = session_hub
+                .inject_notification(session_id, notification)
+                .await;
         }
     }
 }
@@ -1819,10 +1814,12 @@ fn build_subagent_pending_action(
     })
 }
 
-fn hook_trace_source() -> AgentDashSourceV1 {
-    let mut source = AgentDashSourceV1::new("pi-agent", "runtime_tool");
-    source.executor_id = Some("PI_AGENT".to_string());
-    source
+fn hook_trace_source() -> SourceInfo {
+    SourceInfo {
+        connector_id: "pi-agent".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: Some("PI_AGENT".to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2194,27 +2191,28 @@ fn build_companion_event_notification(
     event_type: &str,
     message: String,
     data: serde_json::Value,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
+) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "agentdash-companion".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: None,
+    };
 
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some("info".to_string());
-    event.message = Some(message);
-    event.data = Some(data);
-
-    let source = AgentDashSourceV1::new("agentdash-companion", "runtime_tool");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
-            merge_agentdash_meta(None, &agentdash).expect("构造 companion ACP Meta 不应失败"),
-        )),
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: event_type.to_string(),
+            value: serde_json::json!({
+                "message": message,
+                "data": data,
+            }),
+        }),
+        session_id,
+        source,
     )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 fn normalize_companion_result_status(status: Option<&str>) -> Result<&str, AgentToolError> {

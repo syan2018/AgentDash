@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+use agentdash_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasRepository};
 use agentdash_spi::schema::schema_value;
@@ -554,31 +553,29 @@ fn build_canvas_presented_notification(
     session_id: &str,
     turn_id: &str,
     canvas: &agentdash_domain::canvas::Canvas,
-) -> Result<SessionNotification, AgentToolError> {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
+) -> Result<BackboneEnvelope, AgentToolError> {
+    let source = SourceInfo {
+        connector_id: "agentdash-canvas".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: None,
+    };
 
-    let mut event = AgentDashEventV1::new("canvas_presented");
-    event.severity = Some("info".to_string());
-    event.message = Some(format!("已请求打开 Canvas `{}`", canvas.title));
-    event.data = Some(serde_json::json!({
-        "canvas_id": canvas.mount_id,
-        "title": canvas.title,
-        "entry_file": canvas.entry_file,
-    }));
-
-    let source = AgentDashSourceV1::new("agentdash-canvas", "runtime_tool");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    let meta = merge_agentdash_meta(None, &agentdash)
-        .ok_or_else(|| AgentToolError::ExecutionFailed("无法构造 AgentDash meta".to_string()))?;
-    Ok(SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(meta)),
-    ))
+    Ok(BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "canvas_presented".to_string(),
+            value: serde_json::json!({
+                "canvas_id": canvas.mount_id,
+                "title": canvas.title,
+                "entry_file": canvas.entry_file,
+            }),
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    }))
 }
 
 #[cfg(test)]

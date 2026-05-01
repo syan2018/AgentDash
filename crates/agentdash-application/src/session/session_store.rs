@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 
 use super::types::SessionMeta;
 
@@ -83,7 +83,7 @@ impl SessionStore {
         Ok(())
     }
 
-    pub async fn append(&self, session_id: &str, n: &SessionNotification) -> std::io::Result<()> {
+    pub async fn append(&self, session_id: &str, envelope: &BackboneEnvelope) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.base_dir).await?;
         let path = self.jsonl_path(session_id);
         let mut file = tokio::fs::OpenOptions::new()
@@ -91,10 +91,10 @@ impl SessionStore {
             .append(true)
             .open(path)
             .await?;
-        let line = serde_json::to_string(n).map_err(|error| {
+        let line = serde_json::to_string(envelope).map_err(|error| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("序列化 session notification 失败: {error}"),
+                format!("序列化 BackboneEnvelope 失败: {error}"),
             )
         })?;
         use tokio::io::AsyncWriteExt as _;
@@ -103,7 +103,7 @@ impl SessionStore {
         Ok(())
     }
 
-    pub async fn read_all(&self, session_id: &str) -> std::io::Result<Vec<SessionNotification>> {
+    pub async fn read_all(&self, session_id: &str) -> std::io::Result<Vec<BackboneEnvelope>> {
         let path = self.jsonl_path(session_id);
         let content = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
@@ -117,13 +117,13 @@ impl SessionStore {
             if t.is_empty() {
                 continue;
             }
-            let notification = serde_json::from_str::<SessionNotification>(t).map_err(|error| {
+            let envelope = serde_json::from_str::<BackboneEnvelope>(t).map_err(|error| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("解析 session notification 第 {} 行失败: {error}", index + 1),
+                    format!("解析 BackboneEnvelope 第 {} 行失败: {error}", index + 1),
                 )
             })?;
-            out.push(notification);
+            out.push(envelope);
         }
         Ok(out)
     }

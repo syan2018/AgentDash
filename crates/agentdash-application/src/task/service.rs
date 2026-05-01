@@ -28,7 +28,7 @@ use crate::workspace::BackendAvailability;
 
 use super::execution::*;
 use super::gateway::{
-    append_task_change as gw_append_task_change, bridge_task_status_event_to_session_notification,
+    append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
     clear_task_session_binding, create_task_session as gw_create_task_session,
     get_session_overview as gw_get_session_overview, get_task as gw_get_task, load_related_context,
     map_connector_error, map_domain_error, resolve_project_scope_for_owner,
@@ -779,10 +779,10 @@ impl StoryStepActivationService {
         message: &str,
         data: Value,
     ) {
-        let notification = bridge_task_status_event_to_session_notification(
+        let envelope = bridge_task_status_event_to_envelope(
             session_id, turn_id, event_type, message, data,
         );
-        if let Err(err) = self.hub.inject_notification(session_id, notification).await {
+        if let Err(err) = self.hub.inject_notification(session_id, envelope).await {
             tracing::warn!(
                 session_id, turn_id, event_type, error = %err,
                 "桥接 Task 生命周期事件到 session 流失败"

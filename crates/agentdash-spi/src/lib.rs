@@ -40,7 +40,7 @@ pub use context_injection::{
     RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
     SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
 };
-pub use hook_trace_notification::build_hook_trace_notification;
+pub use hook_trace_notification::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
     HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError,

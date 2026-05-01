@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::SessionNotification;
+use agentdash_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_protocol::SourceInfo;
 use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
 
 use super::hub::HookTriggerInput;
@@ -21,8 +21,8 @@ use super::post_turn_handler::DynPostTurnHandler;
 
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
-    /// 一条 session notification（来自 connector stream 或 relay 注入）。
-    Notification(SessionNotification),
+    /// 一条 BackboneEnvelope（来自 connector stream 或 relay 注入）。
+    Notification(BackboneEnvelope),
     /// Turn 已结束（来自 connector stream 关闭或 relay event.session_state_changed）。
     Terminal {
         kind: TurnTerminalKind,
@@ -34,7 +34,7 @@ pub enum TurnEvent {
 pub struct SessionTurnProcessorConfig {
     pub session_id: String,
     pub turn_id: String,
-    pub source: AgentDashSourceV1,
+    pub source: SourceInfo,
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
@@ -229,7 +229,7 @@ impl SessionTurnProcessor {
         persistence: &Arc<dyn SessionPersistence>,
         session_id: &str,
         turn_id: &str,
-        notification: &SessionNotification,
+        envelope: &BackboneEnvelope,
         post_turn_handler: &Option<DynPostTurnHandler>,
         last_executor_session_id: &mut Option<String>,
     ) {
@@ -237,16 +237,16 @@ impl SessionTurnProcessor {
             persistence,
             session_id,
             turn_id,
-            notification,
+            envelope,
             last_executor_session_id,
         )
         .await;
 
         if let Some(handler) = post_turn_handler.as_ref() {
-            handler.on_event(session_id, notification).await;
+            handler.on_event(session_id, envelope).await;
         }
         let _ = hub
-            .persist_notification(session_id, notification.clone())
+            .persist_notification(session_id, envelope.clone())
             .await;
     }
 }

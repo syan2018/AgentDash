@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use agentdash_acp_meta::AgentDashSourceV1;
+use agentdash_protocol::SourceInfo;
 use agentdash_spi::hooks::{
     HookEffect, HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
@@ -16,7 +16,7 @@ use agentdash_spi::hooks::{
 use agentdash_spi::ConnectorError;
 use tokio::sync::broadcast;
 
-use super::super::hook_events::build_hook_trace_notification;
+use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
 use super::super::hook_runtime::HookSessionRuntime;
 use super::super::hub_support::{build_session_runtime, session_hook_trace_decision};
@@ -30,7 +30,7 @@ pub(in crate::session) struct HookTriggerInput<'a> {
     pub trigger: HookTrigger,
     pub payload: Option<serde_json::Value>,
     pub refresh_reason: &'static str,
-    pub source: AgentDashSourceV1,
+    pub source: SourceInfo,
 }
 
 impl SessionHub {
@@ -94,11 +94,9 @@ impl SessionHub {
                     injections: resolution.injections,
                 };
                 hook_session.append_trace(trace.clone());
-                if let Some(notification) =
-                    build_hook_trace_notification(session_id, turn_id, source.clone(), &trace)
-                {
-                    let _ = self.persist_notification(session_id, notification).await;
-                }
+                let envelope =
+                    build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
+                let _ = self.persist_notification(session_id, envelope).await;
                 effects
             }
             Err(error) => {
@@ -135,7 +133,11 @@ impl SessionHub {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
-        let source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: connector_type.to_string(),
+            executor_id: None,
+        };
 
         let _ = self
             .emit_session_hook_trigger(

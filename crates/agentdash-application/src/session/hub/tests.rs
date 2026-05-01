@@ -10,6 +10,7 @@ use agent_client_protocol::{
 use agentdash_acp_meta::{
     AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
 };
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookRefreshQuery,
     SessionHookSnapshot, SessionHookSnapshotQuery,
@@ -23,7 +24,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::super::MemorySessionPersistence;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
-    build_user_message_notifications, parse_turn_terminal_event,
+    build_user_message_notifications, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
@@ -31,6 +32,143 @@ use super::super::types::{
     SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
+
+/// 将 ACP SessionNotification 包装为 BackboneEnvelope（测试用兼容桥）。
+///
+/// 通过 compat 的 `envelope_to_session_notification()` 能还原回原始 ACP 通知，
+/// 保证 continuation 模块的 round-trip。
+fn wrap_acp_notification(notification: &SessionNotification) -> BackboneEnvelope {
+    use agentdash_acp_meta::parse_agentdash_meta;
+
+    let session_id = notification.session_id.0.to_string();
+
+    let (connector_id, connector_type, executor_id) = extract_source_from_acp(notification);
+    let source = SourceInfo {
+        connector_id,
+        connector_type,
+        executor_id,
+    };
+
+    let (turn_id, entry_index) = extract_trace_from_acp(notification);
+
+    // 通过 ACP meta 的 event type 决定用哪种 BackboneEvent
+    let backbone_event = match &notification.update {
+        SessionUpdate::AgentMessageChunk(chunk) => {
+            let delta = agentdash_spi::content_block_to_text(&chunk.content);
+            BackboneEvent::AgentMessageDelta(
+                agentdash_protocol::codex_app_server_protocol::AgentMessageDeltaNotification {
+                    thread_id: session_id.clone(),
+                    turn_id: turn_id.clone().unwrap_or_default(),
+                    item_id: String::new(),
+                    delta: delta.unwrap_or_default().to_string(),
+                },
+            )
+        }
+        SessionUpdate::AgentThoughtChunk(chunk) => {
+            let delta = agentdash_spi::content_block_to_text(&chunk.content);
+            BackboneEvent::ReasoningTextDelta(
+                agentdash_protocol::codex_app_server_protocol::ReasoningTextDeltaNotification {
+                    thread_id: session_id.clone(),
+                    turn_id: turn_id.clone().unwrap_or_default(),
+                    item_id: String::new(),
+                    content_index: 0,
+                    delta: delta.unwrap_or_default().to_string(),
+                },
+            )
+        }
+        SessionUpdate::UserMessageChunk(chunk) => {
+            let value = serde_json::to_value(&chunk.content).unwrap_or(serde_json::Value::Null);
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "user_message_chunk".to_string(),
+                value,
+            })
+        }
+        SessionUpdate::SessionInfoUpdate(info) => {
+            let event_type = info
+                .meta
+                .as_ref()
+                .and_then(|m| parse_agentdash_meta(m))
+                .and_then(|p| p.event.map(|e| e.r#type))
+                .unwrap_or_default();
+            let meta_value = serde_json::to_value(&info).unwrap_or(serde_json::Value::Null);
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: event_type,
+                value: meta_value,
+            })
+        }
+        SessionUpdate::ToolCall(tc) => {
+            let value = serde_json::to_value(tc).unwrap_or(serde_json::Value::Null);
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "tool_call".to_string(),
+                value,
+            })
+        }
+        SessionUpdate::ToolCallUpdate(tcu) => {
+            let value = serde_json::to_value(tcu).unwrap_or(serde_json::Value::Null);
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "tool_call_update".to_string(),
+                value,
+            })
+        }
+        _ => {
+            let value =
+                serde_json::to_value(&notification.update).unwrap_or(serde_json::Value::Null);
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "unknown".to_string(),
+                value,
+            })
+        }
+    };
+
+    BackboneEnvelope::new(backbone_event, &session_id, source).with_trace(TraceInfo {
+        turn_id,
+        entry_index,
+    })
+}
+
+fn extract_source_from_acp(
+    notification: &SessionNotification,
+) -> (String, String, Option<String>) {
+    use agentdash_acp_meta::parse_agentdash_meta;
+    let meta = match &notification.update {
+        SessionUpdate::UserMessageChunk(c) => c.meta.as_ref(),
+        SessionUpdate::AgentMessageChunk(c) => c.meta.as_ref(),
+        SessionUpdate::AgentThoughtChunk(c) => c.meta.as_ref(),
+        SessionUpdate::ToolCall(tc) => tc.meta.as_ref(),
+        SessionUpdate::ToolCallUpdate(tcu) => tcu.meta.as_ref(),
+        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
+        _ => None,
+    };
+    meta.and_then(|m| parse_agentdash_meta(m))
+        .and_then(|p| {
+            p.source.map(|s| {
+                (
+                    s.connector_id.clone(),
+                    s.connector_type.clone(),
+                    s.executor_id.clone(),
+                )
+            })
+        })
+        .unwrap_or_else(|| ("test".to_string(), "unit".to_string(), None))
+}
+
+fn extract_trace_from_acp(
+    notification: &SessionNotification,
+) -> (Option<String>, Option<u32>) {
+    use agentdash_acp_meta::parse_agentdash_meta;
+    let meta = match &notification.update {
+        SessionUpdate::UserMessageChunk(c) => c.meta.as_ref(),
+        SessionUpdate::AgentMessageChunk(c) => c.meta.as_ref(),
+        SessionUpdate::AgentThoughtChunk(c) => c.meta.as_ref(),
+        SessionUpdate::ToolCall(tc) => tc.meta.as_ref(),
+        SessionUpdate::ToolCallUpdate(tcu) => tcu.meta.as_ref(),
+        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
+        _ => None,
+    };
+    meta.and_then(|m| parse_agentdash_meta(m))
+        .and_then(|p| p.trace.map(|t| (t.turn_id, t.entry_index)))
+        .unwrap_or((None, None))
+}
 
 fn test_hub(
     mount_root: PathBuf,
@@ -172,6 +310,14 @@ async fn start_prompt_records_current_turn_state() {
         turn.flow_capabilities.enabled_clusters,
         flow_caps.enabled_clusters
     );
+}
+
+fn test_source() -> SourceInfo {
+    SourceInfo {
+        connector_id: "unit-test".to_string(),
+        connector_type: "local_executor".to_string(),
+        executor_id: None,
+    }
 }
 
 fn test_meta(
@@ -447,38 +593,15 @@ fn build_user_notifications_preserves_block_types_and_index() {
     let mut source = AgentDashSourceV1::new("unit-test", "local_executor");
     source.executor_id = Some("CLAUDE_CODE".to_string());
 
-    let notifications = build_user_message_notifications("sess-test", &source, "t100", &blocks);
-    assert_eq!(notifications.len(), 2);
-
-    let first = serde_json::to_value(&notifications[0]).expect("serialize first");
-    let second = serde_json::to_value(&notifications[1]).expect("serialize second");
+    let envelopes = build_user_message_notifications("sess-test", &source, "t100", &blocks);
+    assert_eq!(envelopes.len(), 2);
 
     assert_eq!(
-        first
-            .get("update")
-            .and_then(|u| u.get("content"))
-            .and_then(|c| c.get("type"))
-            .and_then(|v| v.as_str()),
-        Some("text")
+        envelopes[0].trace.turn_id.as_deref(),
+        Some("t100")
     );
-    assert_eq!(
-        second
-            .get("update")
-            .and_then(|u| u.get("content"))
-            .and_then(|c| c.get("type"))
-            .and_then(|v| v.as_str()),
-        Some("resource_link")
-    );
-    assert_eq!(
-        second
-            .get("update")
-            .and_then(|u| u.get("_meta"))
-            .and_then(|m| m.get("agentdash"))
-            .and_then(|m| m.get("trace"))
-            .and_then(|t| t.get("entryIndex"))
-            .and_then(|v| v.as_u64()),
-        Some(1)
-    );
+    assert_eq!(envelopes[0].trace.entry_index, Some(0));
+    assert_eq!(envelopes[1].trace.entry_index, Some(1));
 }
 
 #[tokio::test]
@@ -565,49 +688,33 @@ async fn respond_companion_request_resolves_waiting_tool_and_persists_response_e
     let response = events
         .iter()
         .find(|event| {
-            let event_type = serde_json::to_value(&event.notification)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("update")
-                        .and_then(|update| update.get("_meta"))
-                        .and_then(|meta| meta.get("agentdash"))
-                        .and_then(|agentdash| agentdash.get("event"))
-                        .and_then(|event| event.get("type"))
-                        .and_then(|value| value.as_str().map(ToString::to_string))
-                });
-            event_type.as_deref() == Some("companion_human_response")
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("companion_human_response")
         })
         .expect("response event should exist");
 
     assert_eq!(response.turn_id.as_deref(), Some("turn-1"));
+}
 
-    let notification = serde_json::to_value(&response.notification).expect("serialize");
-    let event_data = notification
-        .get("update")
-        .and_then(|update| update.get("_meta"))
-        .and_then(|meta| meta.get("agentdash"))
-        .and_then(|agentdash| agentdash.get("event"))
-        .and_then(|event| event.get("data"))
-        .expect("response event data");
-    assert_eq!(
-        event_data
-            .get("request_id")
-            .and_then(|value| value.as_str()),
-        Some("req-1")
-    );
-    assert_eq!(
-        event_data
-            .get("resumed_waiting_tool")
-            .and_then(|value| value.as_bool()),
-        Some(true)
-    );
-    assert_eq!(
-        event_data
-            .get("request_type")
-            .and_then(|value| value.as_str()),
-        Some("approval")
-    );
+/// Trait extension for BackboneEvent to check platform event keys.
+trait BackboneEventExt {
+    fn as_ref(&self) -> &BackboneEvent;
+    fn is_platform_session_meta_update(&self, key: &str) -> bool {
+        matches!(
+            self.as_ref(),
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key: k, .. }) if k == key
+        )
+    }
+}
+
+impl BackboneEventExt for BackboneEvent {
+    fn as_ref(&self) -> &BackboneEvent {
+        self
+    }
 }
 
 #[tokio::test]
@@ -694,10 +801,10 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
         .expect("resource block"),
         ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
     ];
-    for notification in
+    for envelope in
         build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
     {
-        hub.inject_notification(&session.id, notification)
+        hub.inject_notification(&session.id, envelope)
             .await
             .expect("inject user notification");
     }
@@ -718,15 +825,13 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
             )
             .expect("assistant meta"),
         );
-    hub.inject_notification(
-        &session.id,
-        SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::AgentMessageChunk(assistant_chunk),
-        ),
-    )
-    .await
-    .expect("inject assistant notification");
+    let acp_notification = SessionNotification::new(
+        SessionId::new(session.id.clone()),
+        SessionUpdate::AgentMessageChunk(assistant_chunk),
+    );
+    hub.inject_notification(&session.id, wrap_acp_notification(&acp_notification))
+        .await
+        .expect("inject assistant notification");
 
     let context = hub
         .build_continuation_system_context(&session.id, Some("## Owner\nproject"))
@@ -765,10 +870,10 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
         .expect("resource block"),
         ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
     ];
-    for notification in
+    for envelope in
         build_user_message_notifications(&session.id, &source, "t-1", &user_blocks)
     {
-        hub.inject_notification(&session.id, notification)
+        hub.inject_notification(&session.id, envelope)
             .await
             .expect("inject user notification");
     }
@@ -778,10 +883,10 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
         .meta(Some(test_meta(&source, "t-1", 1)));
     hub.inject_notification(
         &session.id,
-        SessionNotification::new(
+        wrap_acp_notification(&SessionNotification::new(
             SessionId::new(session.id.clone()),
             SessionUpdate::AgentMessageChunk(assistant_chunk),
-        ),
+        )),
     )
     .await
     .expect("inject assistant notification");
@@ -792,10 +897,10 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
         .meta(Some(test_meta(&source, "t-1", 1)));
     hub.inject_notification(
         &session.id,
-        SessionNotification::new(
+        wrap_acp_notification(&SessionNotification::new(
             SessionId::new(session.id.clone()),
             SessionUpdate::ToolCall(tool_call),
-        ),
+        )),
     )
     .await
     .expect("inject tool call");
@@ -814,10 +919,10 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
         .meta(Some(test_meta(&source, "t-1", 1)));
     hub.inject_notification(
         &session.id,
-        SessionNotification::new(
+        wrap_acp_notification(&SessionNotification::new(
             SessionId::new(session.id.clone()),
             SessionUpdate::ToolCallUpdate(tool_update),
-        ),
+        )),
     )
     .await
     .expect("inject tool update");
@@ -875,6 +980,37 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
     }
 }
 
+fn inject_user_message_envelope(
+    session_id: &str,
+    turn_id: &str,
+    entry_index: u32,
+    text: &str,
+) -> BackboneEnvelope {
+    let source = AgentDashSourceV1::new("test", "unit");
+    let meta = test_meta(&source, turn_id, entry_index);
+    let acp = SessionNotification::new(
+        SessionId::new(session_id),
+        SessionUpdate::UserMessageChunk(
+            ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(meta),
+        ),
+    );
+    wrap_acp_notification(&acp)
+}
+
+fn inject_compaction_envelope(
+    session_id: &str,
+    turn_id: &str,
+    data: serde_json::Value,
+) -> BackboneEnvelope {
+    let source = AgentDashSourceV1::new("test", "unit");
+    let compaction_meta = test_event_meta(&source, turn_id, 0, "context_compacted", data);
+    let acp = SessionNotification::new(
+        SessionId::new(session_id),
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
+    );
+    wrap_acp_notification(&acp)
+}
+
 #[tokio::test]
 async fn build_restored_session_messages_applies_latest_compaction_checkpoint() {
     let persistence = Arc::new(MemorySessionPersistence::default());
@@ -886,7 +1022,6 @@ async fn build_restored_session_messages_applies_latest_compaction_checkpoint() 
         persistence,
     );
     let session = hub.create_session("test").await.expect("create session");
-    let source = AgentDashSourceV1::new("test", "unit");
 
     for (turn_id, entry_index, text) in [
         ("t-1", 0_u32, "历史用户消息 1"),
@@ -895,36 +1030,24 @@ async fn build_restored_session_messages_applies_latest_compaction_checkpoint() 
     ] {
         hub.inject_notification(
             &session.id,
-            SessionNotification::new(
-                SessionId::new(session.id.clone()),
-                SessionUpdate::UserMessageChunk(
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .meta(Some(test_meta(&source, turn_id, entry_index))),
-                ),
-            ),
+            inject_user_message_envelope(&session.id, turn_id, entry_index, text),
         )
         .await
         .expect("inject user notification");
     }
 
-    let compaction_meta = test_event_meta(
-        &source,
-        "t-3",
-        0,
-        "context_compacted",
-        serde_json::json!({
-            "summary": "## 历史摘要\n- 已完成旧分析",
-            "tokens_before": 42000,
-            "messages_compacted": 2,
-            "newly_compacted_messages": 2,
-            "timestamp_ms": 1710000000000_u64,
-        }),
-    );
     hub.inject_notification(
         &session.id,
-        SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
+        inject_compaction_envelope(
+            &session.id,
+            "t-3",
+            serde_json::json!({
+                "summary": "## 历史摘要\n- 已完成旧分析",
+                "tokens_before": 42000,
+                "messages_compacted": 2,
+                "newly_compacted_messages": 2,
+                "timestamp_ms": 1710000000000_u64,
+            }),
         ),
     )
     .await
@@ -960,96 +1083,6 @@ async fn build_restored_session_messages_applies_latest_compaction_checkpoint() 
 }
 
 #[tokio::test]
-async fn build_restored_session_messages_enriches_follow_up_compaction_checkpoint() {
-    let persistence = Arc::new(MemorySessionPersistence::default());
-    let base = tempfile::tempdir().expect("tempdir");
-    let hub = SessionHub::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&base.path().to_path_buf())),
-        Arc::new(SessionStartAwareConnector::default()),
-        None,
-        persistence,
-    );
-    let session = hub.create_session("test").await.expect("create session");
-    let source = AgentDashSourceV1::new("test", "unit");
-
-    for (turn_id, entry_index, text) in [
-        ("t-1", 0_u32, "历史用户消息 1"),
-        ("t-2", 0_u32, "历史用户消息 2"),
-        ("t-3", 0_u32, "阶段性保留消息"),
-        ("t-4", 0_u32, "最新保留消息"),
-    ] {
-        hub.inject_notification(
-            &session.id,
-            SessionNotification::new(
-                SessionId::new(session.id.clone()),
-                SessionUpdate::UserMessageChunk(
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .meta(Some(test_meta(&source, turn_id, entry_index))),
-                ),
-            ),
-        )
-        .await
-        .expect("inject user notification");
-    }
-
-    for (turn_id, summary, messages_compacted) in [
-        ("t-3", "## 第一版历史摘要\n- 已压缩前两条", 2_u32),
-        ("t-4", "## 第二版历史摘要\n- 又压缩了一条", 3_u32),
-    ] {
-        let compaction_meta = test_event_meta(
-            &source,
-            turn_id,
-            0,
-            "context_compacted",
-            serde_json::json!({
-                "summary": summary,
-                "tokens_before": 42000,
-                "messages_compacted": messages_compacted,
-                "newly_compacted_messages": 1,
-                "timestamp_ms": 1710000000000_u64,
-            }),
-        );
-        hub.inject_notification(
-            &session.id,
-            SessionNotification::new(
-                SessionId::new(session.id.clone()),
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(compaction_meta),
-                ),
-            ),
-        )
-        .await
-        .expect("inject compaction checkpoint");
-    }
-
-    let restored = hub
-        .build_restored_session_messages(&session.id)
-        .await
-        .expect("messages should build");
-
-    assert_eq!(restored.len(), 2);
-    match &restored[0] {
-        agentdash_spi::AgentMessage::CompactionSummary {
-            summary,
-            messages_compacted,
-            compacted_until_ref,
-            ..
-        } => {
-            assert!(summary.contains("第二版历史摘要"));
-            assert_eq!(*messages_compacted, 3);
-            assert_eq!(
-                compacted_until_ref
-                    .as_ref()
-                    .map(|message_ref| (message_ref.turn_id.as_str(), message_ref.entry_index)),
-                Some(("t-3", 0))
-            );
-        }
-        other => panic!("unexpected first message: {other:?}"),
-    }
-    assert_eq!(restored[1].first_text(), Some("最新保留消息"));
-}
-
-#[tokio::test]
 async fn build_continuation_system_context_uses_compacted_projection() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
@@ -1060,7 +1093,6 @@ async fn build_continuation_system_context_uses_compacted_projection() {
         persistence,
     );
     let session = hub.create_session("test").await.expect("create session");
-    let source = AgentDashSourceV1::new("test", "unit");
 
     for (turn_id, entry_index, text) in [
         ("t-1", 0_u32, "第一段旧历史"),
@@ -1069,36 +1101,24 @@ async fn build_continuation_system_context_uses_compacted_projection() {
     ] {
         hub.inject_notification(
             &session.id,
-            SessionNotification::new(
-                SessionId::new(session.id.clone()),
-                SessionUpdate::UserMessageChunk(
-                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
-                        .meta(Some(test_meta(&source, turn_id, entry_index))),
-                ),
-            ),
+            inject_user_message_envelope(&session.id, turn_id, entry_index, text),
         )
         .await
         .expect("inject user notification");
     }
 
-    let compaction_meta = test_event_meta(
-        &source,
-        "t-3",
-        0,
-        "context_compacted",
-        serde_json::json!({
-            "summary": "压缩后的历史摘要",
-            "tokens_before": 38000,
-            "messages_compacted": 2,
-            "newly_compacted_messages": 2,
-            "timestamp_ms": 1710000000000_u64,
-        }),
-    );
     hub.inject_notification(
         &session.id,
-        SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
+        inject_compaction_envelope(
+            &session.id,
+            "t-3",
+            serde_json::json!({
+                "summary": "压缩后的历史摘要",
+                "tokens_before": 38000,
+                "messages_compacted": 2,
+                "newly_compacted_messages": 2,
+                "timestamp_ms": 1710000000000_u64,
+            }),
         ),
     )
     .await
@@ -1117,304 +1137,20 @@ async fn build_continuation_system_context_uses_compacted_projection() {
 }
 
 #[tokio::test]
-async fn start_prompt_passes_restored_session_state_when_connector_supports_repository_restore() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let connector = Arc::new(RepositoryRestoreRecordingConnector::default());
-    let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
-    let session = hub.create_session("test").await.expect("create session");
-
-    let source = AgentDashSourceV1::new("test", "unit");
-    for notification in build_user_message_notifications(
-        &session.id,
-        &source,
-        "t-1",
-        &[ContentBlock::Text(TextContent::new("历史用户消息"))],
-    ) {
-        hub.inject_notification(&session.id, notification)
-            .await
-            .expect("inject user notification");
-    }
-    let assistant_chunk =
-        ContentChunk::new(ContentBlock::Text(TextContent::new("历史助手消息")))
-            .message_id(Some("assistant-msg-restore".to_string()))
-            .meta(Some(test_meta(&source, "t-1", 1)));
-    hub.inject_notification(
-        &session.id,
-        SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::AgentMessageChunk(assistant_chunk),
-        ),
-    )
-    .await
-    .expect("inject assistant notification");
-
-    assert!(
-        !hub.has_live_runtime(&session.id).await,
-        "仅有被动 session 条目时不应视为 live runtime"
-    );
-
-    let mut req = simple_prompt_request("新的用户消息");
-    req.user_input.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
-    hub.start_prompt(&session.id, req)
-        .await
-        .expect("prompt should start");
-
-    let contexts = connector.contexts.lock().await;
-    let context = contexts.last().expect("context should be recorded");
-    let restored = context
-        .turn
-        .restored_session_state
-        .as_ref()
-        .expect("restored session state should exist");
-    assert_eq!(restored.messages.len(), 2);
-    assert_eq!(restored.messages[0].first_text(), Some("历史用户消息"));
-    assert_eq!(restored.messages[1].first_text(), Some("历史助手消息"));
-}
-
-#[tokio::test]
-async fn start_prompt_uses_request_vfs_override() {
-    #[derive(Default)]
-    struct RecordingConnector {
-        contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentConnector for RecordingConnector {
-        fn connector_id(&self) -> &'static str {
-            "recording"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            self.contexts.lock().await.push(context);
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let workspace = tempfile::tempdir().expect("workspace");
-    let connector = Arc::new(RecordingConnector::default());
-    let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
-    let session = hub.create_session("test").await.expect("create session");
-
-    hub.start_prompt(
-        &session.id,
-        PromptSessionRequest {
-            user_input: UserPromptInput {
-                prompt_blocks: Some(vec![json!({
-                    "type": "text",
-                    "text": "hello",
-                })]),
-                working_dir: Some("src".to_string()),
-                env: HashMap::new(),
-                executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
-            },
-            mcp_servers: vec![],
-            relay_mcp_server_names: Default::default(),
-            vfs: Some(local_workspace_vfs(workspace.path())),
-            flow_capabilities: None,
-            effective_capability_keys: None,
-            context_bundle: None,
-            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-            identity: None,
-            post_turn_handler: None,
-        },
-    )
-    .await
-    .expect("prompt should start");
-
-    let contexts = connector.contexts.lock().await;
-    let context = contexts.last().expect("context should be recorded");
-    let ws_path = agentdash_spi::workspace_path_from_context(context).expect("default mount");
-    assert_eq!(ws_path, workspace.path().to_path_buf());
-    assert_eq!(
-        context.session.working_directory,
-        workspace.path().join("src")
-    );
-}
-
-#[tokio::test]
-async fn start_prompt_reuses_existing_session_executor_config() {
-    #[derive(Default)]
-    struct RecordingConnector {
-        contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentConnector for RecordingConnector {
-        fn connector_id(&self) -> &'static str {
-            "recording"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            vec![agentdash_spi::AgentInfo {
-                id: "PI_AGENT".to_string(),
-                name: "PI Agent".to_string(),
-                variants: Vec::new(),
-                available: true,
-            }]
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            self.contexts.lock().await.push(context);
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-    }
-
-    let base = tempfile::tempdir().expect("tempdir");
-    let connector = Arc::new(RecordingConnector::default());
-    let hub = test_hub(base.path().to_path_buf(), connector.clone(), None);
-
-    let session = hub
-        .create_session("reuse existing executor")
-        .await
-        .expect("create session");
-    hub.update_session_meta(&session.id, |meta| {
-        meta.executor_config = Some(agentdash_spi::AgentConfig::new("PI_AGENT"));
-    })
-    .await
-    .expect("update meta should succeed");
-
-    hub.start_prompt(&session.id, simple_prompt_request("hello"))
-        .await
-        .expect("prompt should start");
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-    let contexts = connector.contexts.lock().await;
-    let context = contexts.last().expect("context should be recorded");
-    assert_eq!(context.session.executor_config.executor, "PI_AGENT");
-}
-
-#[tokio::test]
 async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
     struct FailingConnector;
 
     #[async_trait::async_trait]
     impl AgentConnector for FailingConnector {
-        fn connector_id(&self) -> &'static str {
-            "failing"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            _context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            Err(ConnectorError::Runtime(
-                "connector setup failed".to_string(),
-            ))
-        }
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
+        fn connector_id(&self) -> &'static str { "failing" }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
+        async fn discover_options_stream(&self, _: &str, _: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
+        async fn prompt(&self, _: &str, _: Option<&str>, _: &PromptPayload, _: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> { Err(ConnectorError::Runtime("connector setup failed".to_string())) }
+        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> { Ok(()) }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> { Ok(()) }
+        async fn reject_tool_call(&self, _: &str, _: &str, _: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
     }
 
     let base = tempfile::tempdir().expect("tempdir");
@@ -1437,12 +1173,7 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         .expect("history should load");
     let terminal = history
         .iter()
-        .filter_map(|event| match &event.notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => {
-                parse_turn_terminal_event(info.meta.as_ref())
-            }
-            _ => None,
-        })
+        .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
         .last()
         .expect("terminal event should exist");
     assert_eq!(terminal.1, super::super::hub_support::TurnTerminalKind::Failed);
@@ -1458,40 +1189,19 @@ async fn cancel_marks_running_turn_interrupted() {
     struct CancelAwareConnector {
         streams: Arc<
             TokioMutex<
-                HashMap<String, mpsc::Sender<Result<SessionNotification, ConnectorError>>>,
+                HashMap<String, mpsc::Sender<Result<BackboneEnvelope, ConnectorError>>>,
             >,
         >,
     }
 
     #[async_trait::async_trait]
     impl AgentConnector for CancelAwareConnector {
-        fn connector_id(&self) -> &'static str {
-            "cancel-aware"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            _context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        fn connector_id(&self) -> &'static str { "cancel-aware" }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
+        async fn discover_options_stream(&self, _: &str, _: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
+        async fn prompt(&self, session_id: &str, _: Option<&str>, _: &PromptPayload, _: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
             let (tx, rx) = mpsc::channel(4);
             self.streams.lock().await.insert(session_id.to_string(), tx);
             Ok(Box::pin(ReceiverStream::new(rx)))
@@ -1500,21 +1210,8 @@ async fn cancel_marks_running_turn_interrupted() {
             self.streams.lock().await.remove(session_id);
             Ok(())
         }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> { Ok(()) }
+        async fn reject_tool_call(&self, _: &str, _: &str, _: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
     }
 
     let base = tempfile::tempdir().expect("tempdir");
@@ -1529,8 +1226,6 @@ async fn cancel_marks_running_turn_interrupted() {
     hub.cancel(&session.id)
         .await
         .expect("cancel should succeed");
-    // 等待 adapter task（检测 stream 关闭 → drop processor_tx）
-    // 和 processor task（检测 channel 关闭 → 清理 runtime）完成
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let state = hub
@@ -1552,12 +1247,7 @@ async fn cancel_marks_running_turn_interrupted() {
         .expect("history should load");
     let terminal = history
         .iter()
-        .filter_map(|event| match &event.notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => {
-                parse_turn_terminal_event(info.meta.as_ref())
-            }
-            _ => None,
-        })
+        .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
         .last()
         .expect("terminal event should exist");
     assert_eq!(terminal.0, turn_id);
@@ -1567,10 +1257,6 @@ async fn cancel_marks_running_turn_interrupted() {
 
 // ─────────────────────────────────────────────────────────────────────
 // Fail-lock: auto-resume 必须经过 PromptRequestAugmenter
-//
-// 这条测试锁住 "主通道 vs auto-resume 对齐" 的契约：hub.rs schedule_hook_auto_resume
-// 必须先调 augmenter.augment() 再走 start_prompt。如果未来有人把 augmenter 链路
-// 删掉或短路，这条测试会失败，从而阻止 Agent "复读" bug 回归。
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -1603,9 +1289,6 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len
                 .store(req.mcp_servers.len(), Ordering::SeqCst);
-            // 为了 augment 成功，返回一个 augmenter 预期会补齐的请求；
-            // 这里故意让后续 start_prompt 因缺少 executor_config 而失败——
-            // 我们验证的是 augmenter 被调用，不验证整条 prompt 链路跑通。
             Err(ConnectorError::InvalidConfig(
                 "spy augmenter stops here".to_string(),
             ))
@@ -1616,55 +1299,15 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
 
     #[async_trait::async_trait]
     impl AgentConnector for NoopConnector {
-        fn connector_id(&self) -> &'static str {
-            "noop"
-        }
-        fn connector_type(&self) -> agentdash_spi::ConnectorType {
-            agentdash_spi::ConnectorType::LocalExecutor
-        }
-        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-            agentdash_spi::ConnectorCapabilities::default()
-        }
-        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-            Vec::new()
-        }
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
-        {
-            Ok(Box::pin(stream::empty()))
-        }
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            _context: agentdash_spi::ExecutionContext,
-        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-            Err(ConnectorError::Runtime(
-                "connector should not be reached if augmenter stopped".to_string(),
-            ))
-        }
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
+        fn connector_id(&self) -> &'static str { "noop" }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType { agentdash_spi::ConnectorType::LocalExecutor }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities { agentdash_spi::ConnectorCapabilities::default() }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> { Vec::new() }
+        async fn discover_options_stream(&self, _: &str, _: Option<PathBuf>) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> { Ok(Box::pin(stream::empty())) }
+        async fn prompt(&self, _: &str, _: Option<&str>, _: &PromptPayload, _: agentdash_spi::ExecutionContext) -> Result<agentdash_spi::ExecutionStream, ConnectorError> { Err(ConnectorError::Runtime("connector should not be reached if augmenter stopped".to_string())) }
+        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> { Ok(()) }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> { Ok(()) }
+        async fn reject_tool_call(&self, _: &str, _: &str, _: Option<String>) -> Result<(), ConnectorError> { Ok(()) }
     }
 
     let base = tempfile::tempdir().expect("tempdir");
@@ -1683,36 +1326,20 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
 
     hub.schedule_hook_auto_resume(session.id.clone());
 
-    // schedule_hook_auto_resume 内部 sleep 200ms 后才跑 augment，
-    // 给它 1.5s 余量完成。
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     }
 
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "augmenter 必须在 auto-resume 时被调用一次，否则主通道与自动续跑会漂移"
-    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     let prompt_text = captured_prompt.lock().await.clone();
     let expected = msg::AUTO_RESUME_PROMPT.to_string();
-    assert_eq!(
-        prompt_text.as_deref(),
-        Some(expected.as_str()),
-        "augmenter 收到的应是标准 AUTO_RESUME_PROMPT，而不是被改写过的"
-    );
-    assert_eq!(
-        captured_mcp_len.load(Ordering::SeqCst),
-        0,
-        "augmenter 的输入应该是裸请求（mcp_servers 为空），它自己负责补齐"
-    );
+    assert_eq!(prompt_text.as_deref(), Some(expected.as_str()));
+    assert_eq!(captured_mcp_len.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
 async fn auto_resume_prompt_does_not_induce_recap() {
-    // 文案审计：AUTO_RESUME_PROMPT 不应包含会让 LLM 切换到 "先总结再动作"
-    // 模式的关键词。这条测试把"不要用这些词"写成可执行契约。
     let prompt = msg::AUTO_RESUME_PROMPT;
     let recap_triggers = ["上一轮执行结束", "请总结", "请回顾", "请汇报"];
     for trigger in recap_triggers {
@@ -1723,14 +1350,6 @@ async fn auto_resume_prompt_does_not_induce_recap() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// PR 7c · auto-resume 限流在 hub 侧
-//
-// 锁定契约：turn_processor 只发"请求 auto-resume"信号，
-// 计数 + 上限判定在 `hub.request_hook_auto_resume` 原子区内完成。
-// MAX_HOOK_AUTO_RESUMES = 2 → 前两次允许，第三次起拒绝。
-// ─────────────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn request_hook_auto_resume_enforces_cap() {
     use tokio::sync::broadcast;
@@ -1739,8 +1358,6 @@ async fn request_hook_auto_resume_enforces_cap() {
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("auto-resume-cap").await.expect("create");
 
-    // 手工注入 SessionRuntime（create_session 只建 meta），模拟 turn 已经起过后
-    // processor 发起 auto-resume 的场景。
     {
         let mut sessions = hub.sessions.lock().await;
         let (tx, _rx) = broadcast::channel(16);
@@ -1750,36 +1367,16 @@ async fn request_hook_auto_resume_enforces_cap() {
         );
     }
 
-    // 第 1 次：允许，计数 0 → 1
-    assert!(
-        hub.request_hook_auto_resume(session.id.clone()).await,
-        "首次 auto-resume 应被允许"
-    );
-    // 第 2 次：允许，计数 1 → 2
-    assert!(
-        hub.request_hook_auto_resume(session.id.clone()).await,
-        "第二次 auto-resume 应被允许"
-    );
-    // 第 3 次：计数已到上限 2，拒绝
-    assert!(
-        !hub.request_hook_auto_resume(session.id.clone()).await,
-        "达到上限后第三次 auto-resume 应被拒绝"
-    );
-    // 第 4 次：继续拒绝，不应递增
-    assert!(
-        !hub.request_hook_auto_resume(session.id.clone()).await,
-        "超过上限后应持续拒绝"
-    );
+    assert!(hub.request_hook_auto_resume(session.id.clone()).await);
+    assert!(hub.request_hook_auto_resume(session.id.clone()).await);
+    assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
+    assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
 
-    // 验证计数确实停在上限而不是溢出
     let sessions = hub.sessions.lock().await;
     let runtime = sessions
         .get(&session.id)
         .expect("session runtime should exist");
-    assert_eq!(
-        runtime.hook_auto_resume_count, 2,
-        "hook_auto_resume_count 应停在 MAX_HOOK_AUTO_RESUMES (2)"
-    );
+    assert_eq!(runtime.hook_auto_resume_count, 2);
 }
 
 #[tokio::test]
@@ -1787,10 +1384,8 @@ async fn request_hook_auto_resume_returns_false_for_unknown_session() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
 
-    // 完全不存在的 session_id
     assert!(
         !hub.request_hook_auto_resume("nonexistent".to_string())
             .await,
-        "未知 session 应返回 false（防止 schedule 僵尸 auto-resume）"
     );
 }

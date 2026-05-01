@@ -6,13 +6,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionId, SessionNotification};
+use agentdash_protocol::{BackboneEnvelope, SourceInfo};
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
-
-use agentdash_acp_meta::AgentDashSourceV1;
 
 use agentdash_agent::{Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge};
 use agentdash_domain::llm_provider::LlmProviderRepository;
@@ -21,7 +19,7 @@ use agentdash_domain::settings::SettingsRepository;
 use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
 };
-use crate::hook_events::build_hook_trace_notification;
+use crate::hook_events::build_hook_trace_envelope;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
@@ -411,17 +409,19 @@ impl AgentConnector for PiAgentConnector {
             },
         );
 
-        let mut source = AgentDashSourceV1::new(self.connector_id(), "local_executor");
-        source.executor_id = Some("PI_AGENT".to_string());
+        let source = SourceInfo {
+            connector_id: self.connector_id().to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("PI_AGENT".to_string()),
+        };
         let turn_id = context.session.turn_id.clone();
-        let acp_session_id = SessionId::new(session_id.to_string());
+        let session_id_owned = session_id.to_string();
 
         let (tx, rx) =
-            tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(8192);
+            tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
 
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;
-            let mut chunk_message_ids: HashMap<String, String> = HashMap::new();
             let mut chunk_emit_states: HashMap<String, ChunkEmitState> = HashMap::new();
             let mut tool_call_states: HashMap<String, ToolCallEmitState> = HashMap::new();
             let mut event_rx = event_rx;
@@ -435,34 +435,33 @@ impl AgentConnector for PiAgentConnector {
                             let Some(event) = maybe_event else {
                                 break;
                             };
-                            let notifications = convert_event_to_notifications(
+                            let envelopes = convert_event_to_envelopes(
                                 &event,
-                                &acp_session_id,
+                                &session_id_owned,
                                 &source,
                                 &turn_id,
                                 &mut entry_index,
-                                &mut chunk_message_ids,
                                 &mut chunk_emit_states,
                                 &mut tool_call_states,
                             );
 
-                            for n in notifications {
-                                if tx.send(Ok(n)).await.is_err() {
+                            for e in envelopes {
+                                if tx.send(Ok(e)).await.is_err() {
                                     return;
                                 }
                             }
                         }
                         trace_result = receiver.recv() => {
-                            if let Ok(entry) = trace_result
-                                && let Some(notification) = build_hook_trace_notification(
-                                    acp_session_id.0.as_ref(),
+                            if let Ok(entry) = trace_result {
+                                let envelope = build_hook_trace_envelope(
+                                    &session_id_owned,
                                     Some(&turn_id),
                                     source.clone(),
                                     &entry,
-                                )
-                                && tx.send(Ok(notification)).await.is_err()
-                            {
-                                return;
+                                );
+                                if tx.send(Ok(envelope)).await.is_err() {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -473,19 +472,18 @@ impl AgentConnector for PiAgentConnector {
                     break;
                 };
 
-                let notifications = convert_event_to_notifications(
+                let envelopes = convert_event_to_envelopes(
                     &event,
-                    &acp_session_id,
+                    &session_id_owned,
                     &source,
                     &turn_id,
                     &mut entry_index,
-                    &mut chunk_message_ids,
                     &mut chunk_emit_states,
                     &mut tool_call_states,
                 );
 
-                for n in notifications {
-                    if tx.send(Ok(n)).await.is_err() {
+                for e in envelopes {
+                    if tx.send(Ok(e)).await.is_err() {
                         return;
                     }
                 }
@@ -505,10 +503,10 @@ impl AgentConnector for PiAgentConnector {
                 }
             }
 
-            emit_pending_hook_trace_notifications(
+            emit_pending_hook_trace_envelopes(
                 &mut hook_trace_rx,
                 &tx,
-                &acp_session_id,
+                &session_id_owned,
                 &source,
                 &turn_id,
             )
@@ -612,11 +610,11 @@ impl AgentConnector for PiAgentConnector {
     }
 }
 
-async fn emit_pending_hook_trace_notifications(
+async fn emit_pending_hook_trace_envelopes(
     hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_spi::HookTraceEntry>>,
-    tx: &tokio::sync::mpsc::Sender<Result<SessionNotification, ConnectorError>>,
-    session_id: &SessionId,
-    source: &AgentDashSourceV1,
+    tx: &tokio::sync::mpsc::Sender<Result<BackboneEnvelope, ConnectorError>>,
+    session_id: &str,
+    source: &SourceInfo,
     turn_id: &str,
 ) {
     let Some(receiver) = hook_trace_rx.as_mut() else {
@@ -624,19 +622,14 @@ async fn emit_pending_hook_trace_notifications(
     };
 
     while let Ok(entry) = receiver.try_recv() {
-        if let Some(notification) = build_hook_trace_notification(
-            session_id.0.as_ref(),
-            Some(turn_id),
-            source.clone(),
-            &entry,
-        ) && tx.send(Ok(notification)).await.is_err()
-        {
+        let envelope = build_hook_trace_envelope(session_id, Some(turn_id), source.clone(), &entry);
+        if tx.send(Ok(envelope)).await.is_err() {
             return;
         }
     }
 }
 
-use super::stream_mapper::{ChunkEmitState, ToolCallEmitState, convert_event_to_notifications};
+use super::stream_mapper::{ChunkEmitState, ToolCallEmitState, convert_event_to_envelopes};
 
 #[cfg(test)]
 #[path = "connector_tests.rs"]

@@ -1,24 +1,74 @@
-# facade: acp 最小嵌入面契约
+# ACP API 层 Facade 契约
 
 ## Goal
 
-定义 ACP 作为外部嵌入面的最小方法与事件投影契约，确保接入成本低、内部语义不漂移。
+定义 ACP 作为 HTTP API 层唯一的外部协议转换 facade，明确 backbone 事件 → ACP 的转换规则和边界，使 ACP 完全退出内部链路。
 
-## Requirements
+## 背景
 
-* 固化最小方法面：`session/new`、`session/prompt`、`session/update`、`session/cancel`、history/read。
-* 定义 Backbone 到 ACP 的投影规则与字段约束。
-* 定义 `_meta` 扩展位的使用边界与保留空间。
-* 给出嵌入场景的最小集成示例。
+当前 ACP `SessionNotification` / `SessionUpdate` 贯穿全链路：
+
+```
+connector → [ACP 类型] → session hub → persistence → WebSocket → 前端
+```
+
+目标架构：
+
+```
+connector → [BackboneEvent] → session hub → persistence → WebSocket → 前端
+                                                               ↓
+                                               HTTP API (/api/acp/*) → [ACP 类型] → 外部客户端
+```
+
+ACP 只在最外层 API 路由做协议转换，内部链路全部使用 backbone 事件类型。
+
+## 工作内容
+
+### 1. 确定 ACP facade 方法面
+
+保留最小方法集：
+- `session/new` — 创建会话
+- `session/prompt` — 发送提示
+- `session/update` (SSE) — 事件流（backbone → ACP 实时转换）
+- `session/cancel` — 取消执行
+- `history/read` — 读取历史
+
+### 2. 定义 BackboneEvent → ACP 转换规则
+
+| BackboneEvent 类型 | ACP SessionUpdate 映射 |
+|---|---|
+| CodexNotification(AgentMessageDelta) | AgentMessageChunk |
+| CodexNotification(ReasoningTextDelta) | AgentThoughtChunk |
+| CodexNotification(TokenUsageUpdated) | UsageUpdate |
+| CodexNotification(TurnCompleted) | SessionEnded / Error |
+| CodexNotification(ItemStarted/Completed) | AgentMessageChunk (文本描述) |
+| CodexNotification(CommandExecutionOutputDelta) | AgentMessageChunk (文本) |
+| CodexNotification(FileChangeOutputDelta) | AgentMessageChunk (文本) |
+| PlatformEvent(*) | SessionInfoUpdate |
+
+### 3. 内部链路 ACP 退出路径
+
+逐步替换，以 crate 为单位：
+
+1. `agentdash-spi` — `ExecutionStream` 类型签名替换
+2. `agentdash-executor` — connector 层直接产出 BackboneEvent
+3. `agentdash-application` — session hub / persistence 消费 BackboneEvent
+4. `agentdash-api` — WebSocket handler 推送 BackboneEvent；ACP 路由做转换
+5. 前端 — 消费 backbone TS 类型
 
 ## Acceptance Criteria
 
-* [ ] 形成最小方法面契约文档。
-* [ ] 形成 Backbone→ACP 事件映射规则与样例。
-* [ ] 形成 `_meta` 扩展约束（哪些可透传，哪些需规范化）。
-* [ ] 形成外部嵌入接入说明（v0）。
+* [ ] ACP facade 转换逻辑集中在 `acp_sessions` 路由模块
+* [ ] 内部链路不再引用 `agent_client_protocol` 的 Session 类型
+* [ ] 外部 ACP 客户端可通过 facade 正常工作
+* [ ] 转换规则文档化
+
+## Dependencies
+
+* 依赖 `backbone-event-model` 完成
+* 依赖 `rust-ts-protocol-binding` 完成（前端类型可用后才能替换 WebSocket 推送）
 
 ## Out of Scope
 
-* 不让 ACP 承担内部运行时事实语义。
-* 不扩展到完整控制面（thread/turn 管理全暴露）。
+* 不扩展 ACP 方法面
+* 不做跨执行器的 ACP 兼容层

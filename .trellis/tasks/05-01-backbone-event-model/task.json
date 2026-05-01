@@ -1,0 +1,29 @@
+{
+  "id": "backbone-event-model",
+  "name": "backbone-event-model",
+  "title": "backbone 事件模型定义 + Codex 映射规则",
+  "description": "定义平台内部事件类型体系，完成 Codex 协议事件到内部类型的映射规则，替换当前 ACP SessionNotification 作为内部事件流转的基础",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "agentdash-executor",
+  "priority": "P0",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-05-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-01-protocol-core-codex-appserver-roadmap",
+  "relatedFiles": [
+    "crates/agentdash-executor/src/connectors/codex_bridge.rs",
+    "crates/agentdash-spi/src/connector.rs"
+  ],
+  "notes": "合并原 charter + mapping 两个任务",
+  "meta": {}
+}

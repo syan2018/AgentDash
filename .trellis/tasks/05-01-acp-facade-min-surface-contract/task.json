@@ -1,13 +1,13 @@
 {
   "id": "acp-facade-min-surface-contract",
   "name": "acp-facade-min-surface-contract",
-  "title": "facade: acp 最小嵌入面契约",
-  "description": "",
+  "title": "ACP API 层 Facade 契约",
+  "description": "ACP 退出内部链路，仅保留为 HTTP API 层的协议转换 facade",
   "status": "planning",
   "dev_type": null,
   "scope": null,
   "package": null,
-  "priority": "P2",
+  "priority": "P3",
   "creator": "cursor-agent",
   "assignee": "cursor-agent",
   "createdAt": "2026-05-01",
@@ -20,7 +20,9 @@
   "subtasks": [],
   "children": [],
   "parent": "05-01-protocol-core-codex-appserver-roadmap",
-  "relatedFiles": [],
-  "notes": "",
+  "relatedFiles": [
+    "crates/agentdash-api/src/routes/acp_sessions.rs"
+  ],
+  "notes": "依赖 backbone-event-model 和 rust-ts-protocol-binding 完成",
   "meta": {}
 }

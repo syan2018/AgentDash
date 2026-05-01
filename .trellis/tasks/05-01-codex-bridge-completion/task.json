@@ -1,0 +1,29 @@
+{
+  "id": "codex-bridge-completion",
+  "name": "codex-bridge-completion",
+  "title": "CodexBridgeConnector 实现补齐",
+  "description": "补齐 codex_bridge 的长驻进程模型、完整事件映射、审批链路正式化和标识域修复",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "agentdash-executor",
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-05-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-01-protocol-core-codex-appserver-roadmap",
+  "relatedFiles": [
+    "crates/agentdash-executor/src/connectors/codex_bridge.rs",
+    "crates/agentdash-executor/Cargo.toml"
+  ],
+  "notes": "",
+  "meta": {}
+}

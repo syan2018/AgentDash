@@ -1,24 +1,48 @@
-# binding: rust-ts 协议类型直出
+# Rust→TS 协议类型直出
 
 ## Goal
 
-建立 Rust→TS 的协议类型单一来源机制，使前端直接消费主干原始事件类型，避免手写镜像漂移。
+通过 rs-ts 将 backbone 事件类型从 Rust 单一来源直出到前端 TypeScript，前端直接消费原始事件类型。
 
-## Requirements
+## 背景
 
-* 明确 Rust 侧协议类型组织和导出清单。
-* 配置 rs-ts 生成流程与目标产物目录。
-* 约束前端消费方式：优先原始事件直出，不新增 DTO 层。
-* 定义类型变更时的生成与校验流程。
+当前前端通过手写的 ACP TypeScript 类型消费会话事件。切换到 backbone 事件模型后，前端需要消费的类型来源变为 Rust 侧定义的 `BackboneEvent` 及其子类型。
+
+Codex 协议自身已经带有 `ts_rs::TS` derive（可通过 `codex-app-server-protocol` 的 `generate_ts` 生成 TS 类型），这是一个可以直接利用的优势。
+
+## 方案
+
+### 类型导出清单
+
+1. `BackboneEvent` 枚举 → 前端消费的顶层事件类型
+2. `BackboneEnvelope<T>` → envelope 包裹类型
+3. `PlatformEvent` → 平台自有事件
+4. Codex `ServerNotification` 子类型 → 通过 re-export 或 ts-rs 直接导出
+
+### 生成流程
+
+1. Rust 侧在 `BackboneEvent` 及子类型上 derive `ts_rs::TS`
+2. 构建时通过 `cargo test` 或专用 binary 生成 `.ts` 文件到指定目录
+3. 前端通过路径引用消费，禁止手写镜像结构
+
+### 前端消费规范
+
+- 直接消费原始事件类型进行渲染，不引入 Render DTO 中间层
+- 事件类型变更时重新生成并检查 diff
+- 如果 Codex 上游类型变更，重新生成即可检测到影响面
 
 ## Acceptance Criteria
 
-* [ ] 形成 Rust 类型清单与导出规则。
-* [ ] 形成 rs-ts 生成入口与产物约定。
-* [ ] 形成前端消费规范（原始事件直出）。
-* [ ] 形成类型变更检查清单（防止 drift）。
+* [ ] BackboneEvent 相关类型可通过 rs-ts 生成 TS 定义
+* [ ] 前端可 import 生成的类型并类型检查通过
+* [ ] 存在生成脚本和产物目录约定
+* [ ] 类型变更检查流程文档化
+
+## Dependencies
+
+* 依赖 `backbone-event-model` 任务的类型定义
 
 ## Out of Scope
 
-* 不引入 Render DTO 新层。
-* 不处理业务组件展示细节。
+* 不引入 Render DTO 层
+* 不处理 UI 组件渲染逻辑

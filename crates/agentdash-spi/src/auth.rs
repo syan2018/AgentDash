@@ -84,3 +84,32 @@ pub struct AuthIdentity {
     #[serde(default)]
     pub extra: serde_json::Value,
 }
+
+impl AuthIdentity {
+    /// 构造系统级 routine 触发身份（非人类）。
+    ///
+    /// 用于 cron / webhook / plugin 触发的 routine 执行场景：
+    /// 没有真人登录行为，但审计链路需要可归属的 identity。
+    ///
+    /// - `auth_mode = Personal` —— 避免企业权限策略误匹配
+    /// - `user_id = "system:routine:{routine_id}"` —— 前缀 `system:` 便于审计侧过滤
+    /// - `is_admin = false`, `groups = []` —— 无权限脱出
+    /// - `provider = Some("system.routine")`
+    ///
+    /// 关联任务 PRD Decisions · E1（2026-04-30 锁定）。
+    pub fn system_routine(routine_id: impl std::fmt::Display) -> Self {
+        let id_str = routine_id.to_string();
+        let user_id = format!("system:routine:{id_str}");
+        Self {
+            auth_mode: AuthMode::Personal,
+            user_id: user_id.clone(),
+            subject: user_id,
+            display_name: Some("System Routine".to_string()),
+            email: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: Some("system.routine".to_string()),
+            extra: serde_json::Value::Null,
+        }
+    }
+}

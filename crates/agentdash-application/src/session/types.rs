@@ -35,10 +35,13 @@ pub struct PromptSessionRequest {
     pub effective_capability_keys: Option<std::collections::BTreeSet<String>>,
     /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
-    /// Session 模型判定出的 bootstrap 动作。
+    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
+    ///
     /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
-    /// route / frontend 只传原始用户输入。
-    pub bootstrap_action: SessionBootstrapAction,
+    /// route / frontend 只传原始用户输入。与 `SessionMeta.bootstrap_state` 不同 —
+    /// 后者是**持久化**的 session bootstrap 阶段标记（Plain/Pending/Bootstrapped），
+    /// 本字段仅是本轮 prompt 级别的 hook 触发器。
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
     pub identity: Option<agentdash_spi::auth::AuthIdentity>,
     /// Turn 事件回调（替代 TurnMonitor）。
@@ -58,19 +61,27 @@ impl PromptSessionRequest {
             flow_capabilities: None,
             effective_capability_keys: None,
             context_bundle: None,
-            bootstrap_action: SessionBootstrapAction::None,
+            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,
             post_turn_handler: None,
         }
     }
 }
 
+/// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。
+///
+/// 本类型由 E7（`04-30-session-pipeline-architecture-refactor`）从
+/// `SessionBootstrapAction` 重命名而来，语义收敛为"hook 层感知的本轮重载指令"；
+/// `SessionMeta.bootstrap_state` 仍然独立负责 session 生命周期持久化标记。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionBootstrapAction {
+pub enum HookSnapshotReloadTrigger {
+    /// 本轮不触发 hook snapshot 重载（普通续跑场景）。
     #[default]
     None,
-    OwnerContext,
+    /// 本轮需要重新 load hook snapshot，并触发 `SessionStart` hook。
+    /// 典型场景：owner 首轮初始化、冷启动续跑。
+    Reload,
 }
 
 /// 会话标题来源：区分 LLM 自动生成 vs 用户手动设定。
@@ -205,6 +216,9 @@ pub struct CompanionSessionContext {
     pub companion_label: String,
     pub slice_mode: String,
     pub adoption_mode: String,
+    /// dispatch 请求的 payload.type（用于 companion_respond 结果类型校验）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_type: Option<String>,
     #[serde(default)]
     pub inherited_fragment_labels: Vec<String>,
     #[serde(default)]

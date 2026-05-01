@@ -231,21 +231,30 @@ impl AppState {
 
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
+        let mut prompt_config: Option<(String, Vec<String>)> = None;
 
-        if let Some(pi_connector) = build_pi_agent_connector(PiAgentConnectorDeps {
+        let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> =
+            Arc::new(RelayRuntimeToolProvider::new(
+                vfs_service.clone(),
+                repos.clone(),
+                session_hub_handle.clone(),
+                Some(inline_persister),
+                platform_config.clone(),
+            ));
+        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
+
+        if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
-            vfs_service: vfs_service.clone(),
-            repos: repos.clone(),
-            session_hub_handle: session_hub_handle.clone(),
-            inline_persister: Some(inline_persister),
-            mcp_relay_provider: backend_registry.clone(),
-            platform_config: platform_config.clone(),
         })
         .await
         {
-            title_bridge = Some(pi_connector.default_bridge());
-            sub_connectors.push(Arc::new(pi_connector));
+            title_bridge = Some(result.connector.default_bridge());
+            prompt_config = Some((
+                result.connector.base_system_prompt().to_string(),
+                result.connector.user_preferences().to_vec(),
+            ));
+            sub_connectors.push(Arc::new(result.connector));
         }
         // relay connector — 将远程后端上报的执行器纳入统一路由
         {
@@ -281,7 +290,12 @@ impl AppState {
             session_repo,
         )
         .with_vfs_service(vfs_service.clone())
-        .with_extra_skill_dirs(plugin_registration.extra_skill_dirs);
+        .with_extra_skill_dirs(plugin_registration.extra_skill_dirs)
+        .with_runtime_tool_provider(runtime_tool_provider)
+        .with_mcp_relay_provider(mcp_relay_provider);
+        if let Some((base_sp, user_prefs)) = prompt_config {
+            session_hub = session_hub.with_system_prompt_config(base_sp, user_prefs);
+        }
         if let Some(bridge) = title_bridge {
             session_hub = session_hub.with_title_generator(Arc::new(
                 crate::title_generator::LlmTitleGenerator::new(bridge),
@@ -353,6 +367,7 @@ impl AppState {
             crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
 
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
+        session_hub.set_context_audit_bus(audit_bus.clone()).await;
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
@@ -478,18 +493,16 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
-    vfs_service: Arc<RelayVfsService>,
-    repos: RepositorySet,
-    session_hub_handle: SharedSessionHubHandle,
-    inline_persister:
-        Option<Arc<dyn agentdash_application::vfs::inline_persistence::InlineContentPersister>>,
-    mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,
-    platform_config: SharedPlatformConfig,
+}
+
+/// 构建结果：connector 本体 + 需要注入到 SessionHub 的 provider
+struct PiAgentConnectorBuildResult {
+    connector: agentdash_executor::connectors::pi_agent::PiAgentConnector,
 }
 
 async fn build_pi_agent_connector(
     deps: PiAgentConnectorDeps,
-) -> Option<agentdash_executor::connectors::pi_agent::PiAgentConnector> {
+) -> Option<PiAgentConnectorBuildResult> {
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         deps.settings_repo.as_ref(),
         deps.llm_provider_repo.as_ref(),
@@ -497,13 +510,5 @@ async fn build_pi_agent_connector(
     .await?;
     connector.set_settings_repository(deps.settings_repo);
     connector.set_llm_provider_repository(deps.llm_provider_repo);
-    connector.set_runtime_tool_provider(Arc::new(RelayRuntimeToolProvider::new(
-        deps.vfs_service,
-        deps.repos,
-        deps.session_hub_handle,
-        deps.inline_persister,
-        deps.platform_config,
-    )));
-    connector.set_mcp_relay_provider(deps.mcp_relay_provider);
-    Some(connector)
+    Some(PiAgentConnectorBuildResult { connector })
 }

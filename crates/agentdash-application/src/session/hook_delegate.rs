@@ -9,8 +9,12 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::hook_messages as msg;
+
+use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
+use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
     ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection, HookPendingAction,
@@ -21,6 +25,7 @@ use agentdash_spi::hooks::{
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
     default_mount_root_ref: Option<String>,
+    audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl HookRuntimeDelegate {
@@ -34,9 +39,19 @@ impl HookRuntimeDelegate {
         hook_session: SharedHookSessionRuntime,
         default_mount_root_ref: Option<String>,
     ) -> DynAgentRuntimeDelegate {
+        Self::new_with_mount_root_and_audit(hook_session, default_mount_root_ref, None)
+    }
+
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_mount_root_and_audit(
+        hook_session: SharedHookSessionRuntime,
+        default_mount_root_ref: Option<String>,
+        audit_bus: Option<SharedContextAuditBus>,
+    ) -> DynAgentRuntimeDelegate {
         Arc::new(Self {
             hook_session,
             default_mount_root_ref,
+            audit_bus,
         })
     }
 
@@ -81,6 +96,32 @@ impl HookRuntimeDelegate {
             resolution,
             runtime: self.hook_session.runtime_snapshot(),
         })
+    }
+
+    fn emit_hook_injection_fragments(&self, trigger: HookTrigger, injections: &[HookInjection]) {
+        let Some(bus) = self.audit_bus.as_ref() else {
+            return;
+        };
+        if injections.is_empty() {
+            return;
+        }
+
+        let bundle_id = Uuid::new_v4();
+        let bundle_session_uuid = Uuid::new_v4();
+        let trigger_label = format!("{trigger:?}");
+        for injection in injections.iter().cloned() {
+            let fragment = hook_injection_to_fragment(injection);
+            emit_fragment(
+                bus.as_ref(),
+                bundle_id,
+                self.hook_session.session_id(),
+                bundle_session_uuid,
+                AuditTrigger::HookInjection {
+                    trigger: trigger_label.clone(),
+                },
+                &fragment,
+            );
+        }
     }
 
     /// 从消息中提取最新的 LLM usage 并更新 session runtime 的 token stats
@@ -291,6 +332,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::UserPromptSubmit,
+            &evaluated.resolution.injections,
+        );
 
         // 2a. block_reason — hook 要求阻止当前用户输入
         if let Some(reason) = evaluated.resolution.block_reason.clone() {
@@ -303,7 +348,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 &evaluated,
             );
             return Ok(TransformContextOutput {
-                messages: vec![],
+                steering_messages: vec![],
                 blocked: Some(reason),
             });
         }
@@ -358,7 +403,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         messages.extend(pending_messages.follow_up);
 
         Ok(TransformContextOutput {
-            messages,
+            steering_messages: messages,
             blocked: None,
         })
     }
@@ -497,6 +542,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::AfterTurn,
+            &evaluated.resolution.injections,
+        );
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
             &evaluated.resolution.injections,
@@ -552,6 +601,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
+        self.emit_hook_injection_fragments(
+            HookTrigger::BeforeStop,
+            &evaluated.resolution.injections,
+        );
 
         let mut steering = build_hook_steering_messages(
             &evaluated.snapshot,
@@ -746,28 +799,16 @@ fn build_blocking_action_reminders(
         .collect()
 }
 
-/// 与 Bundle 主数据源协同工作的 user message 层去重。
-///
-/// `session_capabilities.companion_agents` 已由 system prompt 渲染 `## Companion Agents`
-/// 段；同名 slot 的 HookInjection 不应再出现在 user message 中。
-const HOOK_USER_MESSAGE_SKIP_SLOTS: &[&str] = &["companion_agents"];
-
 fn build_hook_injection_message(
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     resolution: &agentdash_spi::hooks::HookResolution,
     runtime: &HookSessionRuntimeSnapshot,
 ) -> Option<AgentMessage> {
-    let filtered: Vec<HookInjection> = resolution
-        .injections
-        .iter()
-        .filter(|injection| {
-            !HOOK_USER_MESSAGE_SKIP_SLOTS
-                .iter()
-                .any(|slot| injection.slot == *slot)
-        })
-        .cloned()
-        .collect();
-    let content = build_hook_markdown(snapshot, &filtered, runtime)?;
+    // PR 4（04-30-session-pipeline-architecture-refactor）删除
+    // `HOOK_USER_MESSAGE_SKIP_SLOTS` 的白名单去重逻辑。companion_agents 等
+    // "静态上下文" slot 已经随 Bundle 进入 SP，user message 路径天然不会再
+    // 承载同内容 —— 去重依靠"数据面单一来源"（Bundle），而非维护一张白名单。
+    let content = build_hook_markdown(snapshot, &resolution.injections, runtime)?;
     Some(AgentMessage::user(content))
 }
 
@@ -942,6 +983,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
+    use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
@@ -1151,9 +1193,9 @@ mod tests {
                     code: "session_binding_found".to_string(),
                     message: "命中会话绑定".to_string(),
                 }],
-                // 注意：`companion_agents` slot 会被 delegate 的 `HOOK_USER_MESSAGE_SKIP_SLOTS`
-                // 去重（因为 system prompt 已由 session_capabilities 渲染该段）。这里改用
-                // 不会被跳过的 `workflow` slot，以验证 trace 去重与注入消息拼接逻辑。
+                // PR 4 之后 companion_agents 统一走 Bundle 一条路径，delegate 不再
+                // 维护 HOOK_USER_MESSAGE_SKIP_SLOTS；这里仍用 workflow slot 以保持
+                // 测试断言与 hook markdown 渲染逻辑的对齐。
                 injections: vec![HookInjection {
                     slot: "workflow".to_string(),
                     content: "## Workflow\n- step: implement".to_string(),
@@ -1448,8 +1490,8 @@ mod tests {
             .expect("second transform_context should succeed");
 
         // 注入消息仍会参与每次 LLM 请求，但 trace 不应重复刷屏。
-        assert!(first.messages.len() > 1);
-        assert!(second.messages.len() > 1);
+        assert!(first.steering_messages.len() > 1);
+        assert!(second.steering_messages.len() > 1);
 
         let submit_traces = hook_session
             .runtime_snapshot()
@@ -1463,6 +1505,44 @@ mod tests {
             "static companion injection should not produce duplicate trace events"
         );
         assert_eq!(submit_traces[0].decision, "context_injected");
+    }
+
+    #[tokio::test]
+    async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(StaticCompanionContextProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(100));
+        let delegate = HookRuntimeDelegate::new_with_mount_root_and_audit(
+            hook_session,
+            None,
+            Some(audit_bus.clone()),
+        );
+
+        delegate
+            .transform_context(
+                agentdash_spi::TransformContextInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![AgentMessage::user("hello")],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("transform_context should succeed");
+
+        let events = audit_bus.query("sess-hook", &AuditFilter::default());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].trigger.as_tag(), "hook:UserPromptSubmit");
+        assert_eq!(events[0].fragment.slot, "workflow");
+        assert!(events[0].fragment.content.contains("implement"));
     }
 
     #[test]

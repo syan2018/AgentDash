@@ -5,9 +5,7 @@
 //! 是纯合并 reducer（参见 PRD D6 决策）。领域自治的 `contribute_*` 纯函数负责
 //! 把 domain 对象解包成 `Contribution`，调用方按 phase 组装后喂给 builder。
 
-use agentdash_spi::{
-    ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle,
-};
+use agentdash_spi::{ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle};
 use uuid::Uuid;
 
 use crate::runtime::RuntimeMcpServer;
@@ -21,7 +19,7 @@ use crate::runtime::RuntimeMcpServer;
 /// Task 执行路径的 phase 标签（`start_task` / `continue_task`）。
 ///
 /// 主要用于 `contribute_instruction` 在首轮/续跑时选择合适的指令模板，
-/// 以及 `build_task_prompt_resource_block` 在 resource URI 上附加 phase 参数。
+/// 以及标记 bundle 的构建来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskExecutionPhase {
     Start,
@@ -123,7 +121,9 @@ pub fn build_session_context_bundle(
         }
     }
 
-    bundle.fragments.sort_by_key(|fragment| fragment.order);
+    bundle
+        .bootstrap_fragments
+        .sort_by_key(|fragment| fragment.order);
     bundle
 }
 
@@ -137,15 +137,30 @@ pub fn build_session_context_bundle(
 ///
 /// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、
 /// source=`session:continuation`。
+///
+/// **PR 5d 注记**：仅用于"完全没有 owner/task bundle"的场景（owner bootstrap /
+/// routine continuation）。Task continuation 路径改为直接把 transcript fragment
+/// 追加到原 task bundle 上，保留原有的 task/story/project slot 分区。
 pub fn build_continuation_bundle_from_markdown(
     session_id: Uuid,
     markdown: String,
 ) -> SessionContextBundle {
-    let mut bundle = SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
+    let mut bundle =
+        SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
     if markdown.trim().is_empty() {
         return bundle;
     }
-    bundle.upsert_by_slot(ContextFragment {
+    bundle.upsert_by_slot(build_continuation_transcript_fragment(markdown));
+    bundle
+}
+
+/// 构建历史 transcript 的单条 fragment —— 用于往已有 Bundle 追加 continuation 段。
+///
+/// slot=`static_fragment`、label=`continuation_transcript`、order=0。
+/// 调用方（如 task continuation 路径）可通过 `bundle.upsert_by_slot` 把这条
+/// fragment 注入已有 task bundle，而不丢失原 bundle 的 slot 分区。
+pub fn build_continuation_transcript_fragment(markdown: String) -> ContextFragment {
+    ContextFragment {
         slot: "static_fragment".to_string(),
         label: "continuation_transcript".to_string(),
         order: 0,
@@ -153,8 +168,7 @@ pub fn build_continuation_bundle_from_markdown(
         scope: ContextFragment::default_scope(),
         source: "session:continuation".to_string(),
         content: markdown,
-    });
-    bundle
+    }
 }
 
 pub fn build_declared_source_warning_fragment(
@@ -197,11 +211,7 @@ mod bundle_tests {
         }
     }
 
-    fn frag_default_scope_empty(
-        slot: &str,
-        order: i32,
-        content: &str,
-    ) -> ContextFragment {
+    fn frag_default_scope_empty(slot: &str, order: i32, content: &str) -> ContextFragment {
         let mut f = frag(slot, order, content, MergeStrategy::Append);
         f.scope = FragmentScopeSet::empty();
         f
@@ -215,7 +225,8 @@ mod bundle_tests {
             default_scope: ContextFragment::default_scope(),
         };
         let bundle = build_session_context_bundle(config, vec![]);
-        assert!(bundle.fragments.is_empty());
+        assert!(bundle.bootstrap_fragments.is_empty());
+        assert!(bundle.turn_delta.is_empty());
         assert_eq!(bundle.phase_tag, "task_start");
     }
 
@@ -226,21 +237,12 @@ mod bundle_tests {
             phase: ContextBuildPhase::StoryOwner,
             default_scope: ContextFragment::default_scope(),
         };
-        let a = Contribution::fragments_only(vec![frag(
-            "task",
-            10,
-            "alpha",
-            MergeStrategy::Append,
-        )]);
-        let b = Contribution::fragments_only(vec![frag(
-            "task",
-            20,
-            "beta",
-            MergeStrategy::Append,
-        )]);
+        let a =
+            Contribution::fragments_only(vec![frag("task", 10, "alpha", MergeStrategy::Append)]);
+        let b = Contribution::fragments_only(vec![frag("task", 20, "beta", MergeStrategy::Append)]);
         let bundle = build_session_context_bundle(config, vec![a, b]);
-        assert_eq!(bundle.fragments.len(), 1);
-        let merged = &bundle.fragments[0];
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        let merged = &bundle.bootstrap_fragments[0];
         assert!(merged.content.contains("alpha"));
         assert!(merged.content.contains("beta"));
     }
@@ -265,8 +267,8 @@ mod bundle_tests {
             MergeStrategy::Override,
         )]);
         let bundle = build_session_context_bundle(config, vec![first, second]);
-        assert_eq!(bundle.fragments.len(), 1);
-        assert_eq!(bundle.fragments[0].content, "second");
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        assert_eq!(bundle.bootstrap_fragments[0].content, "second");
     }
 
     #[test]
@@ -279,8 +281,8 @@ mod bundle_tests {
         let contribution =
             Contribution::fragments_only(vec![frag_default_scope_empty("task", 10, "alpha")]);
         let bundle = build_session_context_bundle(config, vec![contribution]);
-        assert_eq!(bundle.fragments.len(), 1);
-        let f = &bundle.fragments[0];
+        assert_eq!(bundle.bootstrap_fragments.len(), 1);
+        let f = &bundle.bootstrap_fragments[0];
         assert!(f.scope.contains(FragmentScope::RuntimeAgent));
         assert!(f.scope.contains(FragmentScope::TitleGen));
     }
@@ -300,14 +302,19 @@ mod bundle_tests {
         let fragments = vec![
             frag("task", 10, "task body", MergeStrategy::Append),
             frag("story", 20, "story body", MergeStrategy::Append),
-            frag("instruction", 30, "agent instruction", MergeStrategy::Append),
+            frag(
+                "instruction",
+                30,
+                "agent instruction",
+                MergeStrategy::Append,
+            ),
             frag("workflow", 40, "workflow binding", MergeStrategy::Append),
         ];
         let bundle =
             build_session_context_bundle(config, vec![Contribution::fragments_only(fragments)]);
 
         // 验证：默认 scope 不含 TitleGen
-        for f in &bundle.fragments {
+        for f in &bundle.bootstrap_fragments {
             assert!(
                 !f.scope.contains(FragmentScope::TitleGen),
                 "fragment {}({}) 不应带 TitleGen scope —— 会导致 agent 指令泄漏到 title gen 路径",
@@ -326,7 +333,7 @@ mod bundle_tests {
 
         // 验证：RuntimeAgent scope 的 fragment 都在（用于系统 prompt）
         let runtime_visible: Vec<_> = bundle.filter_for(FragmentScope::RuntimeAgent).collect();
-        assert_eq!(runtime_visible.len(), bundle.fragments.len());
+        assert_eq!(runtime_visible.len(), bundle.bootstrap_fragments.len());
     }
 
     /// 回归固化：显式声明 TitleGen scope 的 fragment 才能进入 title gen 视图。
@@ -375,7 +382,11 @@ mod bundle_tests {
             frag("m", 20, "m_body", MergeStrategy::Append),
         ]);
         let bundle = build_session_context_bundle(config, vec![contribution]);
-        let orders: Vec<i32> = bundle.fragments.iter().map(|f| f.order).collect();
+        let orders: Vec<i32> = bundle
+            .bootstrap_fragments
+            .iter()
+            .map(|f| f.order)
+            .collect();
         assert_eq!(orders, vec![10, 20, 30]);
     }
 }

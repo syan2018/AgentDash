@@ -7,14 +7,18 @@ use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{
     HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{ConnectorError, ExecutionContext, RestoredSessionState};
+use agentdash_spi::{
+    ConnectorError, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
+    RestoredSessionState,
+};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::event_bridge::HookTriggerInput;
+use super::hub::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub_support::*;
+use super::path_policy::resolve_working_dir;
 pub use super::types::*;
 
 impl SessionHub {
@@ -23,7 +27,7 @@ impl SessionHub {
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: PromptSessionRequest,
+        mut req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
         let resolved_payload = req
             .user_input
@@ -32,7 +36,7 @@ impl SessionHub {
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.connector.has_live_session(session_id).await;
 
-        let tx = {
+        {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = tokio::sync::broadcast::channel(1024);
@@ -44,10 +48,10 @@ impl SessionHub {
                 ));
             }
             runtime.running = true;
-            runtime.current_turn_id = Some(turn_id.clone());
-            runtime.cancel_requested = false;
-            runtime.tx.clone()
-        };
+            // TurnExecution 的其余字段在 session/mcp 组装完成后再填入；这里先占位
+            // 防止并发 `start_prompt` 竞争。
+            runtime.current_turn = None;
+        }
 
         let effective_vfs = req
             .vfs
@@ -101,7 +105,7 @@ impl SessionHub {
                 )
             })?;
 
-        let is_owner_bootstrap = req.bootstrap_action == SessionBootstrapAction::OwnerContext;
+        let is_owner_bootstrap = req.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let existing_hook_session = {
             let sessions = self.sessions.lock().await;
             sessions
@@ -113,10 +117,13 @@ impl SessionHub {
         // - owner 首轮 bootstrap：总是重新 load snapshot，并触发 SessionStart
         // - 同进程续跑：复用已有 hook_session，只 refresh snapshot
         // - 冷启动恢复：若内存里没有 runtime，则重建 snapshot，但不触发 SessionStart
+        //
+        // PR 7c：`SessionRuntime.hook_session` 由 `reload_session_hook_runtime`
+        // 单点写入；prompt_pipeline happy path 只读不回写。
         let hook_session: Option<SharedHookSessionRuntime> =
             if is_owner_bootstrap || existing_hook_session.is_none() {
                 match self
-                    .load_session_hook_runtime(
+                    .reload_session_hook_runtime(
                         session_id,
                         &turn_id,
                         executor_config.executor.as_str(),
@@ -130,8 +137,7 @@ impl SessionHub {
                         let mut sessions = self.sessions.lock().await;
                         if let Some(runtime) = sessions.get_mut(session_id) {
                             runtime.running = false;
-                            runtime.current_turn_id = None;
-                            runtime.cancel_requested = false;
+                            runtime.current_turn = None;
                             runtime.hook_session = None;
                         }
                         return Err(error);
@@ -150,18 +156,25 @@ impl SessionHub {
                 existing_hook_session
             };
 
+        // 把 hook snapshot 里的 injection 合并到 Bundle 的 bootstrap_fragments —
+        // 这是 PR 4（04-30-session-pipeline-architecture-refactor）的核心动作：
+        // companion_agents / workflow / constraint 等 hook 注入不再通过 SP 独立
+        // section 或 user_message 渲染，而是由 Bundle `render_section` 统一产出。
+        // `From<&SessionHookSnapshot> for Contribution` 封装了 slot → order 映射。
+        if let Some(ref hs) = hook_session
+            && let Some(bundle) = req.context_bundle.as_mut()
         {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.hook_session = hook_session.clone();
-                runtime.active_mcp_servers = req.mcp_servers.clone();
-            }
+            let snapshot = hs.snapshot();
+            let contribution: crate::context::Contribution = (&snapshot).into();
+            bundle.merge(contribution.fragments);
         }
 
+        let context_audit_bus = self.current_context_audit_bus().await;
         let runtime_delegate = hook_session.as_ref().map(|hs| {
-            HookRuntimeDelegate::new_with_mount_root(
+            HookRuntimeDelegate::new_with_mount_root_and_audit(
                 hs.clone(),
                 Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+                context_audit_bus.clone(),
             )
         });
         let supports_repository_restore = self
@@ -227,28 +240,120 @@ impl SessionHub {
         let session_capabilities =
             build_session_baseline_capabilities(hook_session.as_deref(), &discovered_skills);
 
-        let context = ExecutionContext {
+        // 通过 VFS service 扫描项目级约定文件（AGENTS.md / MEMORY.md）
+        let discovered_guidelines = if let Some(service) = &self.vfs_service {
+            let discovery_result = crate::context::mount_file_discovery::discover_mount_files(
+                service,
+                &effective_vfs,
+                crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
+            )
+            .await;
+            for diag in &discovery_result.diagnostics {
+                tracing::warn!(
+                    rule_key = %diag.rule_key,
+                    mount_id = %diag.mount_id,
+                    path = %diag.path,
+                    "guideline 发现诊断: {}",
+                    diag.message
+                );
+            }
+            discovery_result
+                .files
+                .into_iter()
+                .map(|f| agentdash_spi::DiscoveredGuideline {
+                    file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+                    mount_id: f.mount_id,
+                    path: f.path,
+                    content: f.content,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let mcp_servers = req.mcp_servers.clone();
+        let relay_mcp_server_names = req.relay_mcp_server_names.clone();
+        let flow_capabilities = req.flow_capabilities.clone().unwrap_or_default();
+        let effective_capability_keys = req.effective_capability_keys.clone().unwrap_or_default();
+        let identity = req.identity.clone();
+
+        let session_frame = ExecutionSessionFrame {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
-            mcp_servers: req.mcp_servers,
-            relay_mcp_server_names: req.relay_mcp_server_names,
-            vfs: Some(effective_vfs),
-            hook_session: hook_session.clone(),
-            flow_capabilities: req.flow_capabilities.unwrap_or_default(),
-            context_bundle: req.context_bundle.clone(),
-            runtime_delegate,
-            identity: req.identity,
-            restored_session_state,
-            session_capabilities: Some(session_capabilities),
+            mcp_servers: mcp_servers.clone(),
+            vfs: Some(effective_vfs.clone()),
+            identity: identity.clone(),
         };
+        // 主数据面：Bundle 下发到 TurnFrame，connector 侧优先消费它；
+        // backward-compat：仍保留 `assembled_system_prompt` 兜底给 Relay / vibe_kanban。
+        #[allow(deprecated)]
+        let turn_frame = ExecutionTurnFrame {
+            hook_session: hook_session.clone(),
+            flow_capabilities: flow_capabilities.clone(),
+            runtime_delegate,
+            restored_session_state,
+            context_bundle: req.context_bundle.clone(),
+            assembled_system_prompt: None,
+            assembled_tools: Vec::new(),
+        };
+        let mut context = ExecutionContext {
+            session: session_frame,
+            turn: turn_frame,
+        };
+
+        // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
+        context.turn.assembled_tools = self
+            .build_tools_for_execution_context(
+                session_id,
+                &context,
+                &mcp_servers,
+                &relay_mcp_server_names,
+            )
+            .await;
+
+        // pipeline 层预组装 system prompt
+        if !self.base_system_prompt.is_empty() {
+            let prompt_input = super::system_prompt_assembler::SystemPromptInput {
+                base_system_prompt: &self.base_system_prompt,
+                agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
+                agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
+                user_preferences: &self.user_preferences,
+                discovered_guidelines: &discovered_guidelines,
+                context_bundle: req.context_bundle.as_ref(),
+                session_capabilities: Some(&session_capabilities),
+                vfs: Some(&effective_vfs),
+                working_directory: &context.session.working_directory,
+                runtime_tools: &context.turn.assembled_tools,
+                mcp_servers: &mcp_servers,
+                hook_session: hook_session.as_deref(),
+            };
+            #[allow(deprecated)]
+            {
+                context.turn.assembled_system_prompt = Some(
+                    super::system_prompt_assembler::assemble_system_prompt(&prompt_input),
+                );
+            }
+        }
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.current_turn = Some(TurnExecution::new(
+                    turn_id.clone(),
+                    context.session.clone(),
+                    relay_mcp_server_names.clone(),
+                    flow_capabilities.clone(),
+                ));
+            }
+        }
 
         session_meta.updated_at = now;
         session_meta.last_execution_status = "running".to_string();
         session_meta.last_turn_id = Some(turn_id.clone());
         session_meta.last_terminal_message = None;
-        session_meta.executor_config = Some(context.executor_config.clone());
+        session_meta.executor_config = Some(context.session.executor_config.clone());
         if is_owner_bootstrap {
             session_meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
         }
@@ -287,34 +392,17 @@ impl SessionHub {
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let mut source = AgentDashSourceV1::new(self.connector.connector_id(), connector_type);
-        source.executor_id = Some(context.executor_config.executor.to_string());
+        source.executor_id = Some(context.session.executor_config.executor.to_string());
 
-        let is_first_prompt = session_meta.last_event_seq == 0;
-        let mut user_blocks_with_capabilities = resolved_payload.user_blocks.clone();
-        if is_first_prompt || is_owner_bootstrap {
-            if let Some(ref caps) = context.session_capabilities {
-                if !caps.is_empty() {
-                    if let Ok(block) = serde_json::from_value::<agent_client_protocol::ContentBlock>(
-                        serde_json::json!({
-                            "type": "resource",
-                            "resource": {
-                                "uri": format!("agentdash://session-capabilities/{}", session_id),
-                                "mimeType": "application/json",
-                                "text": serde_json::to_string(caps).unwrap_or_default(),
-                            }
-                        }),
-                    ) {
-                        user_blocks_with_capabilities.insert(0, block);
-                    }
-                }
-            }
-        }
-
+        // PR 4（04-30-session-pipeline-architecture-refactor）删除 `session-capabilities://`
+        // resource block 注入路径：companion_agents 已改由 Bundle 渲染到 SP
+        // `## Project Context`；skills 由 `<available_skills>` XML 块承载；
+        // capabilities 结构本身如有持久化需求应走 SessionMeta，而非 user_blocks。
         let user_notifications = build_user_message_notifications(
             session_id,
             &source,
             &turn_id,
-            &user_blocks_with_capabilities,
+            &resolved_payload.user_blocks,
         );
         for notification in user_notifications {
             let _ = self.persist_notification(&sid, notification).await;
@@ -333,8 +421,7 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
-                let initial_caps: std::collections::BTreeSet<String> =
-                    req.effective_capability_keys.clone().unwrap_or_default();
+                let initial_caps = effective_capability_keys.clone();
                 if !initial_caps.is_empty() {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }
@@ -354,7 +441,6 @@ impl SessionHub {
                             refresh_reason: "trigger:session_start",
                             source: source.clone(),
                         },
-                        &tx,
                     )
                     .await;
             }
@@ -376,8 +462,7 @@ impl SessionHub {
                     let mut sessions = self.sessions.lock().await;
                     if let Some(runtime) = sessions.get_mut(session_id) {
                         runtime.running = false;
-                        runtime.current_turn_id = None;
-                        runtime.cancel_requested = false;
+                        runtime.current_turn = None;
                         runtime.hook_session = None;
                     }
                 }
@@ -408,11 +493,13 @@ impl SessionHub {
 
         let processor_tx = processor.tx();
 
-        // 注册 processor_tx 到 SessionRuntime，供 relay 路径使用
+        // 注册 processor_tx 到 SessionRuntime.current_turn，供 relay / cancel 路径使用
         {
             let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(&session_id) {
-                runtime.processor_tx = Some(processor_tx.clone());
+            if let Some(runtime) = sessions.get_mut(&session_id)
+                && let Some(turn) = runtime.current_turn.as_mut()
+            {
+                turn.processor_tx = Some(processor_tx.clone());
             }
         }
 
@@ -430,11 +517,10 @@ impl SessionHub {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
                         let (cancel_requested, live_turn_matches) = {
                             let guard = sessions.lock().await;
-                            match guard.get(&session_id) {
-                                Some(runtime) => (
-                                    runtime.cancel_requested,
-                                    runtime.current_turn_id.as_deref()
-                                        == Some(turn_id_for_adapter.as_str()),
+                            match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                                Some(turn) => (
+                                    turn.cancel_requested,
+                                    turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
                                 ),
                                 None => (false, false),
                             }
@@ -457,10 +543,10 @@ impl SessionHub {
             // stream 正常结束 → 发送显式 Terminal（不能依赖 drop sender，因为还有其他 clone 存活）
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id) {
-                    Some(runtime) => (
-                        runtime.cancel_requested,
-                        runtime.current_turn_id.as_deref() == Some(turn_id_for_adapter.as_str()),
+                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                    Some(turn) => (
+                        turn.cancel_requested,
+                        turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
                     ),
                     None => (false, false),
                 }
@@ -479,7 +565,12 @@ impl SessionHub {
         Ok(turn_id)
     }
 
-    pub async fn load_session_hook_runtime(
+    /// 重载 session hook runtime 并写入 `SessionRuntime.hook_session` 单一权威字段。
+    ///
+    /// PR 7c：只有本函数（owner bootstrap 入口）以及 `ensure_hook_session_runtime`
+    /// （冷启动恢复入口）可以写 `SessionRuntime.hook_session`；其他调用方（包括
+    /// `start_prompt_with_follow_up` 自己的 happy path）只读取不回写。
+    pub async fn reload_session_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
@@ -488,6 +579,11 @@ impl SessionHub {
         working_directory: &Path,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
+            // 无 hook provider 场景下清空 runtime 记录，保证"单一权威"不滞留旧值。
+            let mut sessions = self.sessions.lock().await;
+            if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.hook_session = None;
+            }
             return Ok(None);
         };
 
@@ -509,11 +605,21 @@ impl SessionHub {
             working_directory,
         );
 
-        Ok(Some(Arc::new(HookSessionRuntime::new(
+        let runtime = Arc::new(HookSessionRuntime::new(
             session_id.to_string(),
             provider.clone(),
             snapshot,
-        ))))
+        ));
+
+        // 写回 SessionRuntime.hook_session —— 单一权威字段仅在此处写入。
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session_runtime) = sessions.get_mut(session_id) {
+                session_runtime.hook_session = Some(runtime.clone());
+            }
+        }
+
+        Ok(Some(runtime))
     }
 }
 
@@ -535,11 +641,30 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
 
-fn resolve_working_dir(default_mount_root: &Path, working_dir: Option<&str>) -> PathBuf {
-    match working_dir {
-        Some(rel) if !rel.trim().is_empty() => default_mount_root.join(rel),
-        _ => default_mount_root.to_path_buf(),
+/// 从 McpServer 提取 server name（与 system_prompt_assembler 同逻辑）。
+pub(super) fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
+    serde_json::to_value(server)
+        .ok()
+        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// 将 MCP servers 按 relay 标记分为两组，返回 (relay_names, direct_servers)。
+pub(super) fn partition_mcp_servers(
+    servers: &[agent_client_protocol::McpServer],
+    relay_names_set: &std::collections::HashSet<String>,
+) -> (Vec<String>, Vec<agent_client_protocol::McpServer>) {
+    let mut relay_names = Vec::new();
+    let mut direct = Vec::new();
+    for server in servers {
+        let name = extract_mcp_server_name(server);
+        if relay_names_set.contains(&name) {
+            relay_names.push(name);
+        } else {
+            direct.push(server.clone());
+        }
     }
+    (relay_names, direct)
 }
 
 #[cfg(test)]

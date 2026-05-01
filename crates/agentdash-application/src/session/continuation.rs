@@ -1,13 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use agent_client_protocol::{
-    ContentBlock, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    ToolCallContent, ToolCallStatus,
-};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-    parse_agentdash_meta,
-};
+use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus};
+use agentdash_acp_meta::parse_agentdash_meta;
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
@@ -370,58 +364,6 @@ pub(super) fn build_projected_transcript_from_events(
         .map(restored_envelope_to_projected_entry)
         .collect();
     apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
-}
-
-// ─── Helper: companion notification ─────────────────────────
-
-pub(super) fn build_companion_human_response_notification(
-    session_id: &str,
-    turn_id: Option<&str>,
-    request_id: &str,
-    payload: &serde_json::Value,
-    request_type: Option<&str>,
-    resumed_waiting_tool: bool,
-) -> SessionNotification {
-    let summary = payload
-        .get("summary")
-        .or_else(|| payload.get("note"))
-        .or_else(|| payload.get("choice"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let status = payload
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("responded");
-    let response_type = payload.get("type").and_then(|v| v.as_str());
-
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = turn_id.map(ToString::to_string);
-
-    let mut event = AgentDashEventV1::new("companion_human_response");
-    event.severity = Some("info".to_string());
-    event.message = Some(format!("[用户回应] status={status} {summary}"));
-    event.data = Some(serde_json::json!({
-        "request_id": request_id,
-        "status": status,
-        "summary": summary,
-        "payload": payload,
-        "request_type": request_type,
-        "response_type": response_type,
-        "resumed_waiting_tool": resumed_waiting_tool,
-    }));
-
-    let source = AgentDashSourceV1::new("agentdash-companion", "human_respond");
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(
-            merge_agentdash_meta(None, &agentdash).expect("构造 companion response meta 不应失败"),
-        )),
-    )
 }
 
 // ─── Private helpers ────────────────────────────────────────

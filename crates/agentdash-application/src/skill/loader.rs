@@ -5,10 +5,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_spi::{MountCapability, SkillRef, Vfs};
+use agentdash_spi::{SkillRef, Vfs};
 
-use crate::vfs::types::ResourceRef;
-use crate::vfs::{ListOptions, RelayVfsService};
+use crate::vfs::RelayVfsService;
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
@@ -101,102 +100,28 @@ pub fn load_skills_from_local_dirs(
 
 /// 通过 VFS service 从所有 mount 扫描 skill（主入口）
 ///
-/// 对每个有 Read + List 能力的 mount，扫描 `.agents/skills/` 和 `skills/` 目录。
+/// 使用通用 `discover_mount_files` 底层机制发现 SKILL.md，
+/// 再对每个文件做 frontmatter 解析 + 验证。
 pub async fn load_skills_from_vfs(service: &RelayVfsService, vfs: &Vfs) -> LoadSkillsResult {
+    use crate::context::mount_file_discovery::{BUILTIN_SKILL_RULES, discover_mount_files};
+
+    let discovered = discover_mount_files(service, vfs, BUILTIN_SKILL_RULES).await;
+
     let mut result = LoadSkillsResult::default();
-    let mut name_map: HashMap<String, String> = HashMap::new(); // name → "mount_id://path"
+    let mut name_map: HashMap<String, String> = HashMap::new();
 
-    for mount in &vfs.mounts {
-        let has_read = mount.capabilities.contains(&MountCapability::Read);
-        let has_list = mount.capabilities.contains(&MountCapability::List);
-        if !has_read || !has_list {
-            continue;
-        }
-
-        for skill_dir in [".agents/skills", "skills"] {
-            let skills = scan_mount_skill_dir(service, vfs, &mount.id, skill_dir).await;
-
-            for (skill, diags) in skills {
-                result.diagnostics.extend(diags);
-                if let Some(skill) = skill {
-                    let key = format!("{}://{}", mount.id, skill.file_path.display());
-                    if let Some(existing) = name_map.get(&skill.name) {
-                        result.diagnostics.push(SkillDiagnostic {
-                            name: skill.name.clone(),
-                            message: format!(
-                                "skill \"{}\" 与 {} 冲突，忽略 {}",
-                                skill.name, existing, key
-                            ),
-                            file_path: skill.file_path,
-                        });
-                    } else {
-                        name_map.insert(skill.name.clone(), key);
-                        result.skills.push(skill);
-                    }
-                }
-            }
-        }
-    }
-
-    result
-}
-
-/// 扫描指定 mount 的某个 skill 目录
-///
-/// 列出一级子目录，对每个含 SKILL.md 的子目录解析 frontmatter。
-async fn scan_mount_skill_dir(
-    service: &RelayVfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    skill_dir: &str,
-) -> Vec<(Option<SkillRef>, Vec<SkillDiagnostic>)> {
-    let mut results = Vec::new();
-
-    // 列出 skill 目录下的一级子目录
-    let list_result = service
-        .list(
-            vfs,
-            mount_id,
-            ListOptions {
-                path: skill_dir.to_string(),
-                pattern: None,
-                recursive: false,
-            },
-            None,
-            None,
-        )
-        .await;
-
-    let entries = match list_result {
-        Ok(r) => r.entries,
-        Err(_) => return results, // 目录不存在或不可读，静默跳过
-    };
-
-    for entry in entries {
-        if !entry.is_dir {
-            continue;
-        }
-
-        // 尝试读取 SKILL.md
-        let skill_md_path = format!("{}/SKILL.md", entry.path);
-        let target = ResourceRef {
-            mount_id: mount_id.to_string(),
-            path: skill_md_path.clone(),
-        };
-        let content = match service.read_text(vfs, &target, None, None).await {
-            Ok(r) => r.content,
-            Err(_) => continue, // 无 SKILL.md，跳过
-        };
-
-        // 解析 frontmatter
-        let (fm, _body) = parse_skill_file(&content);
+    for file in discovered.files {
+        let (fm, _body) = parse_skill_file(&file.content);
         let fm = fm.unwrap_or_default();
 
-        let parent_dir_name = entry
+        let parent_dir_name = file
             .path
             .rsplit('/')
+            .nth(1) // SKILL.md 的父目录名
+            .unwrap_or(&file.path)
+            .rsplit('/')
             .next()
-            .unwrap_or(&entry.path)
+            .unwrap_or(&file.path)
             .to_string();
 
         let name = fm
@@ -205,8 +130,8 @@ async fn scan_mount_skill_dir(
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| parent_dir_name.clone());
 
+        let skill_md_path = file.path.clone();
         let mut diags = Vec::new();
-        // 验证
         diags.extend(validate_and_collect(
             &name,
             &parent_dir_name,
@@ -215,22 +140,31 @@ async fn scan_mount_skill_dir(
         ));
 
         if !diags.is_empty() {
-            results.push((None, diags));
+            result.diagnostics.extend(diags);
             continue;
         }
 
-        // 构建 SkillRef——file_path 使用 mount URI 格式
-        let skill_ref = SkillRef {
-            name,
-            description: fm.description.unwrap_or_default(),
-            file_path: PathBuf::from(format!("{mount_id}://{skill_md_path}")),
-            base_dir: PathBuf::from(format!("{mount_id}://{}", entry.path)),
-            disable_model_invocation: fm.disable_model_invocation,
-        };
-        results.push((Some(skill_ref), Vec::new()));
+        let key = format!("{}://{}", file.mount_id, skill_md_path);
+        if let Some(existing) = name_map.get(&name) {
+            result.diagnostics.push(SkillDiagnostic {
+                name: name.clone(),
+                message: format!("skill \"{}\" 与 {} 冲突，忽略 {}", name, existing, key),
+                file_path: PathBuf::from(&key),
+            });
+        } else {
+            let parent_path = file.path.rsplit_once('/').map(|(p, _)| p).unwrap_or(".");
+            name_map.insert(name.clone(), key);
+            result.skills.push(SkillRef {
+                name,
+                description: fm.description.unwrap_or_default(),
+                file_path: PathBuf::from(format!("{}://{}", file.mount_id, skill_md_path)),
+                base_dir: PathBuf::from(format!("{}://{}", file.mount_id, parent_path)),
+                disable_model_invocation: fm.disable_model_invocation,
+            });
+        }
     }
 
-    results
+    result
 }
 
 fn validate_and_collect(

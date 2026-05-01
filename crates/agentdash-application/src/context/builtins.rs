@@ -7,8 +7,8 @@ use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesRequest};
 use super::resolve_declared_sources;
 use serde_json::{Value, json};
 
-use super::builder::TaskExecutionPhase;
 use super::Contribution;
+use super::builder::TaskExecutionPhase;
 
 // ─── 文本工具 ────────────────────────────────────────────────
 
@@ -30,12 +30,24 @@ pub(crate) fn trim_or_dash(text: &str) -> &str {
 
 // ─── Workspace Context Fragment ──────────────────────────────
 
-/// Project / Story owner 路径共享的 workspace context fragment 构建。
+/// Workspace context fragment 渲染模式。
 ///
-/// Task owner 路径的 `contribute_core_context` 自带更详细的 workspace 片段（含 status 字段），
-/// 此函数仅供 project / story context builder 使用以消除重复。
+/// PR 5 前：task 路径（`contribute_core_context`）与 owner 路径
+/// （`workspace_context_fragment`）各维护一份几乎相同的 workspace 渲染逻辑，
+/// 唯一差异是 task 路径额外附带 `status` 字段。PR 5 把两路合并到同一 helper，
+/// 视图差异由 `WorkspaceFragmentMode` 控制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceFragmentMode {
+    /// Owner 视图（order=30，不含 status）。
+    Owner,
+    /// Task 视图（order=50，含 status）。
+    Task,
+}
+
+/// 构建 workspace context fragment —— task / owner 两路共享单源渲染。
 pub(crate) fn workspace_context_fragment(
     workspace: &agentdash_domain::workspace::Workspace,
+    mode: WorkspaceFragmentMode,
 ) -> ContextFragment {
     let binding_summary = selected_workspace_binding(workspace)
         .map(|binding| {
@@ -47,20 +59,40 @@ pub(crate) fn workspace_context_fragment(
         })
         .unwrap_or_else(|| "-".to_string());
 
+    let (order, source, content) = match mode {
+        WorkspaceFragmentMode::Owner => (
+            30,
+            "legacy:contributor:workspace",
+            format!(
+                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
+                workspace.id,
+                workspace.identity_kind,
+                trim_or_dash(&workspace.name),
+                binding_summary,
+            ),
+        ),
+        WorkspaceFragmentMode::Task => (
+            50,
+            "legacy:contributor:core",
+            format!(
+                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
+                workspace.id,
+                workspace.identity_kind,
+                trim_or_dash(&workspace.name),
+                binding_summary,
+                workspace.status,
+            ),
+        ),
+    };
+
     ContextFragment {
         slot: "workspace".to_string(),
         label: "workspace_context".to_string(),
-        order: 30,
+        order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:workspace".to_string(),
-        content: format!(
-            "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- binding: {}\n- working_dir: .",
-            workspace.id,
-            workspace.identity_kind,
-            trim_or_dash(&workspace.name),
-            binding_summary,
-        ),
+        source: source.to_string(),
+        content,
     }
 }
 
@@ -81,7 +113,6 @@ pub fn build_owner_context_resource_block(uri: &str, markdown: &str) -> Value {
         }
     })
 }
-
 
 // ─── 指令模板 ────────────────────────────────────────────────
 
@@ -156,7 +187,38 @@ fn render_template(template: &str, vars: &HashMap<&'static str, String>) -> Stri
 // 每个 contribute_* 函数把 domain 对象解包成 Contribution，供 compose_* 调用方
 // 组装 `Vec<Contribution>` 后喂给 `build_session_context_bundle`。
 
+/// Task-only 业务上下文片段 —— 只产出 `task` slot（task_core），其余 story /
+/// project / workspace 由调用方通过 `contribute_story_context`（owner 路径）
+/// 或其他 contributor 独立产出。
+///
+/// PR 5d 前 task 路径走 `contribute_core_context` 一次性产出 task/story/project/
+/// workspace 四条 fragment，导致 story 领域字段在 owner 与 task 两路各自独立
+/// 维护。此函数让 task 路径与 owner 路径共享同一套 story/project/workspace 渲染。
+pub fn contribute_task_binding(
+    task: &agentdash_domain::task::Task,
+) -> Contribution {
+    let fragment = ContextFragment {
+        slot: "task".to_string(),
+        label: "task_core".to_string(),
+        order: 10,
+        strategy: MergeStrategy::Append,
+        scope: ContextFragment::default_scope(),
+        source: "legacy:contributor:task_binding".to_string(),
+        content: format!(
+            "## Task\n- id: {}\n- title: {}\n- description: {}\n- status: {:?}",
+            task.id,
+            trim_or_dash(&task.title),
+            trim_or_dash(&task.description),
+            task.status()
+        ),
+    };
+    Contribution::fragments_only(vec![fragment])
+}
+
 /// Task / Story / Project / Workspace 的核心业务上下文。
+///
+/// **已过时**：PR 5d 起 task 路径应走 `contribute_task_binding` + `contribute_story_context`
+/// 的组合；本函数仅作为尚未迁移路径的过渡实现保留，长期应删除。
 pub fn contribute_core_context(
     task: &agentdash_domain::task::Task,
     story: &agentdash_domain::story::Story,
@@ -207,40 +269,15 @@ pub fn contribute_core_context(
             "## Project\n- id: {}\n- name: {}\n- default_agent_type: {}",
             project.id,
             trim_or_dash(&project.name),
-            project
-                .config
-                .default_agent_type
-                .as_deref()
-                .unwrap_or("-")
+            project.config.default_agent_type.as_deref().unwrap_or("-")
         ),
     });
 
     if let Some(workspace) = workspace {
-        let binding_summary = selected_workspace_binding(workspace)
-            .map(|binding| {
-                format!(
-                    "{} @ {}",
-                    trim_or_dash(&binding.backend_id),
-                    trim_or_dash(&binding.root_ref)
-                )
-            })
-            .unwrap_or_else(|| "-".to_string());
-        fragments.push(ContextFragment {
-            slot: "workspace".to_string(),
-            label: "workspace_context".to_string(),
-            order: 50,
-            strategy: MergeStrategy::Append,
-            scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:core".to_string(),
-            content: format!(
-                "## Workspace\n- id: {}\n- identity_kind: {:?}\n- name: {}\n- working_dir: .\n- binding: {}\n- status: {:?}",
-                workspace.id,
-                workspace.identity_kind,
-                trim_or_dash(&workspace.name),
-                binding_summary,
-                workspace.status,
-            ),
-        });
+        fragments.push(workspace_context_fragment(
+            workspace,
+            WorkspaceFragmentMode::Task,
+        ));
     }
 
     Contribution::fragments_only(fragments)
@@ -342,7 +379,12 @@ pub fn contribute_instruction(
     let workspace_path = ".".to_string();
     let rendered = render_template(
         &template,
-        &template_vars(&task.title, &task.description, &story.title, &workspace_path),
+        &template_vars(
+            &task.title,
+            &task.description,
+            &story.title,
+            &workspace_path,
+        ),
     );
 
     let mut fragments = Vec::new();
@@ -398,4 +440,3 @@ pub fn contribute_mcp(config: &agentdash_mcp::injection::McpInjectionConfig) -> 
         mcp_servers: vec![runtime_server],
     }
 }
-

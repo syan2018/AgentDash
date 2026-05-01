@@ -91,6 +91,10 @@ pub struct RelayPromptRequest {
     pub working_dir: Option<String>,
     pub env: HashMap<String, String>,
     pub executor_config: Option<RelayExecutorConfig>,
+    /// Cloud → remote 的完整 MCP 声明透传。
+    ///
+    /// Relay/remote agent 的 MCP 建联由远端第三方 agent 自行处理；
+    /// cloud 侧不区分 direct / relay，也不在 relay connector 内私有缓存。
     pub mcp_servers: Vec<serde_json::Value>,
 }
 

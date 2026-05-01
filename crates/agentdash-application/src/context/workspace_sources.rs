@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
-use agentdash_domain::context_source::{ContextSlot, ContextSourceKind, ContextSourceRef};
+use agentdash_domain::context_source::{ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
@@ -10,6 +10,9 @@ use crate::vfs::{ListOptions, RelayVfsService, ResourceRef, selected_workspace_b
 use crate::workspace::BackendAvailability;
 
 use super::builder::Contribution;
+use super::rendering::declared_sources::{
+    display_source_label, fragment_label, fragment_slot, render_source_section, truncate_text,
+};
 
 /// 把已解析完成的 workspace 静态来源片段薄包装为 `Contribution`。
 ///
@@ -342,47 +345,6 @@ fn format_file_like_read_tool(path: &str, content: &str) -> String {
         format!("file: {}\n   1 | ", path.replace('\\', "/"))
     } else {
         format!("file: {}\n{}", path.replace('\\', "/"), numbered)
-    }
-}
-
-fn truncate_text(content: String, max_chars: Option<usize>) -> String {
-    const DEFAULT_TRUNCATE_CHARS: usize = 12_000;
-    let max = max_chars.unwrap_or(DEFAULT_TRUNCATE_CHARS);
-    if content.chars().count() <= max {
-        return content;
-    }
-
-    let truncated = content.chars().take(max).collect::<String>();
-    format!("{truncated}\n\n> 内容已截断")
-}
-
-fn render_source_section(source: &ContextSourceRef, content: String) -> String {
-    let title = display_source_label(source);
-    format!("## 来源: {title}\n{content}")
-}
-
-fn display_source_label(source: &ContextSourceRef) -> &str {
-    source.label.as_deref().unwrap_or(source.locator.as_str())
-}
-
-fn fragment_label(kind: &ContextSourceKind) -> &'static str {
-    match kind {
-        ContextSourceKind::ManualText => "declared_manual_text",
-        ContextSourceKind::File => "declared_file_source",
-        ContextSourceKind::ProjectSnapshot => "declared_project_snapshot",
-        ContextSourceKind::HttpFetch => "declared_http_fetch",
-        ContextSourceKind::McpResource => "declared_mcp_resource",
-        ContextSourceKind::EntityRef => "declared_entity_ref",
-    }
-}
-
-fn fragment_slot(slot: &ContextSlot) -> &'static str {
-    match slot {
-        ContextSlot::Requirements => "requirements",
-        ContextSlot::Constraints => "constraints",
-        ContextSlot::Codebase => "codebase",
-        ContextSlot::References => "references",
-        ContextSlot::InstructionAppend => "instruction_append",
     }
 }
 

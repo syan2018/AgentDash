@@ -1085,14 +1085,19 @@ function AgentSection({
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const seed = {
-    systemPrompt: readVal(settings, "agent.pi.system_prompt"),
-  };
+  const entry = settings.find((s) => s.key === "agent.pi.user_preferences");
+  let initialPrefs: string[] = [];
+  if (entry && Array.isArray(entry.value)) {
+    initialPrefs = entry.value.filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  } else {
+    const legacy = readVal(settings, "agent.pi.system_prompt");
+    if (legacy) initialPrefs = [legacy];
+  }
 
   return (
     <AgentSectionForm
-      key={JSON.stringify(seed)}
-      initialSystemPrompt={seed.systemPrompt}
+      key={JSON.stringify(initialPrefs)}
+      initialPreferences={initialPrefs}
       saving={saving}
       onSave={onSave}
     />
@@ -1100,31 +1105,67 @@ function AgentSection({
 }
 
 function AgentSectionForm({
-  initialSystemPrompt,
+  initialPreferences,
   saving,
   onSave,
 }: {
-  initialSystemPrompt: string;
+  initialPreferences: string[];
   saving: boolean;
   onSave: (updates: SettingUpdate[]) => void;
 }) {
-  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [preferences, setPreferences] = useState<string[]>(
+    initialPreferences.length > 0 ? initialPreferences : [""],
+  );
+
+  const handleChange = (index: number, value: string) => {
+    const next = [...preferences];
+    next[index] = value;
+    setPreferences(next);
+  };
+
+  const handleAdd = () => setPreferences([...preferences, ""]);
+
+  const handleRemove = (index: number) => {
+    const next = preferences.filter((_, i) => i !== index);
+    setPreferences(next.length > 0 ? next : [""]);
+  };
 
   const handleSave = () => {
-    onSave([
-      { key: "agent.pi.system_prompt", value: systemPrompt },
-    ]);
+    const cleaned = preferences.map((p) => p.trim()).filter((p) => p !== "");
+    onSave([{ key: "agent.pi.user_preferences", value: cleaned }]);
   };
 
   return (
     <SectionCard title="Pi Agent">
-      <Field label="System Prompt" desc="Agent 的系统提示词">
-        <textarea
-          className={`${inputCls} min-h-[100px] resize-y`}
-          value={systemPrompt}
-          onChange={(e) => setSystemPrompt(e.target.value)}
-          rows={4}
-        />
+      <Field label="User Preferences" desc="用户偏好提示（每条独立生效，会附加到系统提示末尾）">
+        <div className="flex flex-col gap-2">
+          {preferences.map((pref, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <textarea
+                className={`${inputCls} min-h-[60px] flex-1 resize-y`}
+                value={pref}
+                onChange={(e) => handleChange(i, e.target.value)}
+                rows={2}
+                placeholder={`偏好 ${i + 1}，例如"请用中文回复"或"优先使用函数式风格"`}
+              />
+              <button
+                type="button"
+                className="mt-1 rounded-[6px] border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+                onClick={() => handleRemove(i)}
+                title="删除此条"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="self-start rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+            onClick={handleAdd}
+          >
+            + 添加偏好
+          </button>
+        </div>
       </Field>
 
       <div className="flex justify-end pt-1">

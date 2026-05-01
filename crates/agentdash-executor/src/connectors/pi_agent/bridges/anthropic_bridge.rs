@@ -249,9 +249,7 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                             }
                         }
                         ContentPart::Reasoning {
-                            text,
-                            signature,
-                            ..
+                            text, signature, ..
                         } => {
                             // 使用 signature 作为 opaque thinking token 回传 Anthropic
                             if let Some(sig) = signature {
@@ -421,7 +419,9 @@ async fn process_anthropic_event(
         }
 
         "content_block_start" => {
-            let block = json.get("content_block").unwrap_or(&serde_json::Value::Null);
+            let block = json
+                .get("content_block")
+                .unwrap_or(&serde_json::Value::Null);
             let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
             match block_type {
@@ -501,9 +501,7 @@ async fn process_anthropic_event(
                             let _ = tx
                                 .send(StreamChunk::ToolCallDelta {
                                     id: tool.id.clone(),
-                                    content: ToolCallDeltaContent::Arguments(
-                                        partial.to_string(),
-                                    ),
+                                    content: ToolCallDeltaContent::Arguments(partial.to_string()),
                                 })
                                 .await;
                         }

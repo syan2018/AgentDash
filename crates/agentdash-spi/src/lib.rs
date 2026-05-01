@@ -31,15 +31,15 @@ pub use agentdash_domain::common::{
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload, RestoredSessionState,
-    ToolCluster, content_block_to_text, workspace_path_from_context,
+    DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
+    ExecutionTurnFrame, FlowCapabilities, PromptPayload, RestoredSessionState, ToolCluster,
+    content_block_to_text, workspace_path_from_context,
 };
 pub use context_injection::{
     ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MergeStrategy,
-    ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint, SourceResolver, VfsContext,
-    VfsDescriptor, VfsDiscoveryProvider,
+    RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
+    SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
 };
-pub use session_context_bundle::SessionContextBundle;
 pub use hook_trace_notification::build_hook_trace_notification;
 pub use hooks::{
     ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
@@ -54,6 +54,7 @@ pub use mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
 pub use mount::MountEditCapabilities;
 pub use routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
+pub use session_context_bundle::SessionContextBundle;
 pub use skill::SkillRef;
 pub use tool_capability::{
     CapabilityVisibilityRule, PlatformMcpScope, ToolCapability, ToolDescriptor, ToolSource,

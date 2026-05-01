@@ -10,7 +10,7 @@ use agentdash_spi::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::pi_agent_mcp::namespaced_tool_name;
+use super::direct::namespaced_tool_name;
 
 /// 将 relay MCP 工具适配为 Pi Agent 可调用的 AgentTool。
 ///

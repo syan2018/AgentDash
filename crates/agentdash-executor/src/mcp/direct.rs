@@ -233,7 +233,7 @@ fn parse_http_server(server: &McpServer) -> Option<McpHttpServerSpec> {
     })
 }
 
-pub(crate) fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
+pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
     format!(
         "mcp_{}_{}",
         sanitize_identifier(server_name),

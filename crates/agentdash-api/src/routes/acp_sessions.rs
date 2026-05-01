@@ -20,7 +20,7 @@ use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PromptSessionRequest,
-    SessionBootstrapAction, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
+    HookSnapshotReloadTrigger, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     UserPromptInput, finalize_request, resolve_session_prompt_lifecycle,
 };
@@ -929,13 +929,12 @@ pub async fn prompt_session(
         ProjectPermission::Edit,
     )
     .await?;
-    let mut req = augment_prompt_request_for_owner(
-        &state,
-        &session_id,
-        PromptSessionRequest::from_user_input(user_input),
-    )
-    .await?;
-    req.identity = Some(current_user);
+    // PR 1 Phase 1d：identity 前置注入到 base req —— augment 内部 build_*_owner_prompt_request
+    // 通过 `mut req` 透传，finalize_request 因 `prepared.identity=None` 自然保留 base.identity，
+    // 无需修改 augment trait 签名或跨函数 identity 形参链。
+    let mut base_req = PromptSessionRequest::from_user_input(user_input);
+    base_req.identity = Some(current_user);
+    let req = augment_prompt_request_for_owner(&state, &session_id, base_req).await?;
     let turn_id = state
         .services
         .session_hub
@@ -1085,7 +1084,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
         return Ok(apply_plain_lifecycle_request(
             req,
             continuation_bundle,
-            SessionBootstrapAction::None,
+            HookSnapshotReloadTrigger::None,
         )?);
     }
 
@@ -1101,11 +1100,11 @@ fn finalize_augmented_request(
     effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
     effective_capability_keys: std::collections::BTreeSet<String>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
     req.context_bundle = context_bundle;
-    req.bootstrap_action = bootstrap_action;
+    req.hook_snapshot_reload = hook_snapshot_reload;
 
     apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.vfs, workspace);
     if req.vfs.is_none() {
@@ -1119,7 +1118,7 @@ fn finalize_augmented_request(
 fn apply_plain_lifecycle_request(
     mut req: PromptSessionRequest,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) -> Result<PromptSessionRequest, ApiError> {
     let user_prompt_blocks = req
         .user_input
@@ -1128,7 +1127,7 @@ fn apply_plain_lifecycle_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     req.user_input.prompt_blocks = Some(user_prompt_blocks);
     req.context_bundle = context_bundle;
-    req.bootstrap_action = bootstrap_action;
+    req.hook_snapshot_reload = hook_snapshot_reload;
     Ok(req)
 }
 
@@ -1443,51 +1442,51 @@ async fn build_task_owner_prompt_request(
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    // task context 已由 compose_story_step 装配到 prepared.context_bundle 中；
-    // 当前路径把 bundle 渲染成 markdown 作为 continuation 的 owner_context 参考。
-    let task_context_markdown = prepared.context_bundle.as_ref().map(|bundle| {
-        bundle.render_section(
-            agentdash_spi::FragmentScope::RuntimeAgent,
-            agentdash_application::session::RUNTIME_AGENT_SLOT_WHITELIST,
-        )
-    });
-    let mut prompt_blocks = user_prompt_blocks;
+    let prompt_blocks = user_prompt_blocks;
     let mut context_bundle = prepared.context_bundle.clone();
-    let mut bootstrap_action = SessionBootstrapAction::None;
+    let mut hook_snapshot_reload = HookSnapshotReloadTrigger::None;
 
     match lifecycle_kind {
         SessionPromptLifecycle::OwnerBootstrap => {
-            if let Some(prepared_blocks) = prepared.prompt_blocks.take()
-                && !prepared_blocks.is_empty()
-            {
-                let mut next_blocks = prepared_blocks;
-                next_blocks.extend(prompt_blocks);
-                prompt_blocks = next_blocks;
-            }
-            bootstrap_action = SessionBootstrapAction::OwnerContext;
+            let _ = prepared.prompt_blocks.take();
+            hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
         ) => {
-            // 用当前 task bundle 的 markdown 作为 owner_context 基线再接续历史事件，
-            // 产出 continuation Bundle 替代原 task bundle。
-            let markdown = state
+            // PR 5d（E8②）：task continuation 不再把 bundle 渲染成 markdown 再二次
+            // 包装为 static_fragment bundle。改为保留原 task bundle 的结构化 slot
+            // （task/story/project/workspace/...），把历史 transcript 作为独立的
+            // `static_fragment` fragment 附加到同一 bundle 上。
+            let transcript_markdown = state
                 .services
                 .session_hub
-                .build_continuation_system_context(
-                    session_id,
-                    task_context_markdown.as_deref().filter(|s| !s.trim().is_empty()),
-                )
+                .build_continuation_system_context(session_id, None)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
-            let bundle_session_id =
-                uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
-            context_bundle = markdown.map(|md| {
-                agentdash_application::context::build_continuation_bundle_from_markdown(
-                    bundle_session_id,
-                    md,
-                )
-            });
+            if let Some(transcript) = transcript_markdown
+                .as_ref()
+                .map(|md| md.trim())
+                .filter(|md| !md.is_empty())
+            {
+                match context_bundle.as_mut() {
+                    Some(bundle) => bundle.upsert_by_slot(
+                        agentdash_application::context::build_continuation_transcript_fragment(
+                            transcript.to_string(),
+                        ),
+                    ),
+                    None => {
+                        let bundle_session_id = uuid::Uuid::parse_str(session_id)
+                            .unwrap_or_else(|_| uuid::Uuid::new_v4());
+                        context_bundle = Some(
+                            agentdash_application::context::build_continuation_bundle_from_markdown(
+                                bundle_session_id,
+                                transcript.to_string(),
+                            ),
+                        );
+                    }
+                }
+            }
         }
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::ExecutorState,
@@ -1525,7 +1524,7 @@ async fn build_task_owner_prompt_request(
         prepared.mcp_servers,
         flow_capabilities,
         effective_capability_keys,
-        bootstrap_action,
+        hook_snapshot_reload,
     );
 
     Ok(req)

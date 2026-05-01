@@ -1,5 +1,6 @@
 use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::approval::ApprovalRequest;
 use crate::platform::PlatformEvent;
@@ -9,7 +10,8 @@ use crate::platform::PlatformEvent;
 /// 变体名由平台定义（控制语义），payload 类型严格对齐 Codex App Server Protocol。
 /// 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
 /// 不设"通用退化变体"。Codex 原生协议没有覆盖的语义通过 `Platform` 扩展。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum BackboneEvent {
     // ── 文本 / 推理流 ──

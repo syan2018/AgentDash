@@ -83,6 +83,7 @@ agentdash-protocol = { path = "crates/agentdash-protocol" }
 
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
+ts-rs = { version = "11.1", features = ["serde-json-impl", "no-serde-warnings", "chrono-impl"] }
 
 # vibe-kanban (git dep, tracks default branch)
 executors = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "executors" }

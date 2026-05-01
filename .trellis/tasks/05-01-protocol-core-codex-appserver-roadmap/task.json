@@ -1,0 +1,33 @@
+{
+  "id": "protocol-core-codex-appserver-roadmap",
+  "name": "protocol-core-codex-appserver-roadmap",
+  "title": "brainstorm: 自维护协议基底规划（Codex App Server）",
+  "description": "规划可自维护的通用协议基底，跟踪 Codex App Server 演进并保留内部协议设计空间",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-05-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-01-protocol-charter-backbone-boundary",
+    "05-01-codex-schema-tracking-pipeline",
+    "05-01-codex-backbone-mapping-v0",
+    "05-01-acp-facade-min-surface-contract",
+    "05-01-rust-ts-protocol-type-binding",
+    "05-01-backbone-conformance-harness-plan"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

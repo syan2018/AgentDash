@@ -24,7 +24,7 @@
 //! compose 函数内部共享 building blocks(`load_available_presets` /
 //! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
@@ -35,6 +35,7 @@ use agentdash_domain::task::Task;
 use agentdash_domain::workflow::CapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::auth::AuthIdentity;
 use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
@@ -56,7 +57,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{PromptSessionRequest, SessionBootstrapAction};
+use crate::session::types::{PromptSessionRequest, HookSnapshotReloadTrigger, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -74,9 +75,19 @@ use crate::workspace::BackendAvailability;
 
 /// compose 函数对 `PromptSessionRequest` 的全部后端注入字段的平坦表示。
 ///
-/// 用户输入(prompt_blocks / working_dir / env)不放这里——它沿着
-/// 原始 `PromptSessionRequest` 透传,compose 仅改写 `prompt_blocks` 与 `executor_config`。
-#[derive(Debug, Clone, Default)]
+/// ## 字段分组
+///
+/// - **用户输入侧字段**（`env` / `working_dir` / `prompt_blocks` / `executor_config`）：
+///   可由 entry 通过 `SessionAssemblyBuilder::with_user_input` 一次性注入，
+///   也可由 compose 逐项覆盖。最终 `finalize_request` 按"prepared 非空则覆盖 base"语义合并。
+/// - **运行时注入字段**（`mcp_servers` / `vfs` / `flow_capabilities` 等）：compose 产出。
+/// - **身份与回调字段**（`identity` / `post_turn_handler`）：entry 通过 builder first-class
+///   方法注入；`finalize_request` 合入 req。2026-04-30 PR 1 Phase 1c 起由 builder 承载，
+///   不再由调用方在 `finalize_request` 之后手工 `req.xxx = ...` 赋值。
+///
+/// 不派生 `Debug` 因为 `DynPostTurnHandler = Arc<dyn PostTurnHandler>`
+/// 而 trait 不要求 Debug。
+#[derive(Clone, Default)]
 pub struct PreparedSessionInputs {
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     pub executor_config: Option<AgentConfig>,
@@ -87,21 +98,48 @@ pub struct PreparedSessionInputs {
     pub effective_capability_keys: Option<BTreeSet<String>>,
     /// 结构化 session 上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
-    pub bootstrap_action: SessionBootstrapAction,
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     /// workspace 默认值注入的数据源(session 中 vfs/working_dir 回填用)。
     pub workspace_defaults: Option<Workspace>,
     /// Story step(task 启动)场景下 compose 产出的 working_dir 覆盖值；
     /// 仅在需要绕过 workspace_defaults 的 task 启动路径使用。
     pub working_dir: Option<String>,
+    /// 用户输入的环境变量（由 entry 通过 `with_user_input` 或 `with_env` 注入）。
+    pub env: HashMap<String, String>,
+    /// 发起本次 prompt 的用户身份（由 entry 通过 `with_identity` 注入）。
+    pub identity: Option<AuthIdentity>,
+    /// Turn 事件回调（由 task / routine 等 entry 通过 `with_post_turn_handler` 注入）。
+    pub post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
     /// Context contributor pipeline 的诊断摘要（供启动响应展示）。
     pub source_summary: Vec<String>,
 }
 
 /// 把 `PreparedSessionInputs` 合并进一个 base `PromptSessionRequest`。
 ///
-/// - user_input.prompt_blocks 若 compose 有产出则覆盖,否则保留原值
-/// - vfs 若 compose 有产出则使用,否则用 workspace_defaults 填充
-/// - 其余字段直接覆盖
+/// ## 合并语义（2026-04-30 对称化后）
+///
+/// | 字段 | 策略 |
+/// |---|---|
+/// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
+/// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
+/// | `context_bundle` / `hook_snapshot_reload` / `flow_capabilities` / `effective_capability_keys` | 整体替换为 prepared 值 |
+/// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
+/// | `relay_mcp_server_names` | **整体替换** 为 prepared 值（与 `mcp_servers` 对称） |
+/// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
+/// | `identity` | prepared 非空时覆盖；否则保留 base |
+/// | `post_turn_handler` | prepared 非空时覆盖；否则保留 base |
+///
+/// **对称化背景**：`mcp_servers` 与 `relay_mcp_server_names` 在 compose 内部都已经把
+/// base 侧透传值合并进去（见 `compose_owner_bootstrap` 中 `effective_mcp_servers` /
+/// `relay_mcp_server_names` 的汇总逻辑）。finalize 阶段 base 里这两个字段实际都是
+/// `PromptSessionRequest::from_user_input` 的 default，统一整体替换既正确又对称。
+///
+/// **identity / post_turn_handler 下沉**（2026-04-30 PR 1 Phase 1c）：过去这两个字段
+/// 由调用方在 `finalize_request` 之后手工 `req.identity = ...` 赋值，容易漏填
+/// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
+/// `with_post_turn_handler` 注入，`finalize_request` 统一合入，单一装配节拍保证不漏。
 pub fn finalize_request(
     base: PromptSessionRequest,
     prepared: PreparedSessionInputs,
@@ -114,7 +152,7 @@ pub fn finalize_request(
         req.user_input.executor_config = Some(cfg);
     }
     req.context_bundle = prepared.context_bundle;
-    req.bootstrap_action = prepared.bootstrap_action;
+    req.hook_snapshot_reload = prepared.hook_snapshot_reload;
 
     apply_workspace_defaults(
         &mut req.user_input.working_dir,
@@ -124,18 +162,25 @@ pub fn finalize_request(
     if let Some(wd) = prepared.working_dir {
         req.user_input.working_dir = Some(wd);
     }
-    if req.vfs.is_none() {
-        req.vfs = prepared.vfs;
-    } else if prepared.vfs.is_some() {
-        // base.vfs 已有(前端透传场景)但 compose 也产出了 —— 以 compose 为准
-        // 保证 compose 的 workspace/canvas/lifecycle mount 组合不被覆盖
+    // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
+    // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
+    // mount 组合会覆盖前端透传的 vfs，是刻意为之。
+    if prepared.vfs.is_some() {
         req.vfs = prepared.vfs;
     }
     req.mcp_servers = prepared.mcp_servers;
-    req.relay_mcp_server_names
-        .extend(prepared.relay_mcp_server_names);
+    req.relay_mcp_server_names = prepared.relay_mcp_server_names;
     req.flow_capabilities = prepared.flow_capabilities;
     req.effective_capability_keys = prepared.effective_capability_keys;
+    if !prepared.env.is_empty() {
+        req.user_input.env = prepared.env;
+    }
+    if prepared.identity.is_some() {
+        req.identity = prepared.identity;
+    }
+    if prepared.post_turn_handler.is_some() {
+        req.post_turn_handler = prepared.post_turn_handler;
+    }
     req
 }
 
@@ -154,7 +199,9 @@ pub fn finalize_request(
 /// - **追加友好**：MCP / relay 等集合字段支持多次 `append`
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
-#[derive(Debug, Clone, Default)]
+///
+/// 不派生 `Debug`（post_turn_handler trait 不要求 Debug）；Clone 保留。
+#[derive(Clone, Default)]
 pub struct SessionAssemblyBuilder {
     // ── VFS 层 ──
     vfs: Option<Vfs>,
@@ -173,10 +220,17 @@ pub struct SessionAssemblyBuilder {
     // ── Prompt 层 ──
     prompt_blocks: Option<Vec<serde_json::Value>>,
     executor_config: Option<AgentConfig>,
-    bootstrap_action: SessionBootstrapAction,
+    hook_snapshot_reload: HookSnapshotReloadTrigger,
 
     // ── 元信息层 ──
     workspace_defaults: Option<Workspace>,
+
+    // ── 用户输入侧 ──
+    env: HashMap<String, String>,
+
+    // ── 身份 & 回调（2026-04-30 PR 1 Phase 1c 新增） ──
+    identity: Option<AuthIdentity>,
+    post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
 
     // ── 其它平坦字段 ──
     working_dir: Option<String>,
@@ -315,8 +369,8 @@ impl SessionAssemblyBuilder {
     }
 
     /// 设置 bootstrap action。
-    pub fn with_bootstrap_action(mut self, action: SessionBootstrapAction) -> Self {
-        self.bootstrap_action = action;
+    pub fn with_hook_snapshot_reload(mut self, action: HookSnapshotReloadTrigger) -> Self {
+        self.hook_snapshot_reload = action;
         self
     }
 
@@ -346,9 +400,78 @@ impl SessionAssemblyBuilder {
         self
     }
 
+    // ── 用户输入层方法（2026-04-30 PR 1 Phase 1c 新增） ─────────────
+
+    /// 设置环境变量 map（entry 注入用户侧 env）。
+    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// 发起本次 prompt 的用户身份（含 `AuthIdentity::system_routine(id)` 等）。
+    pub fn with_identity(mut self, identity: AuthIdentity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// 可选设置身份（None 时不覆盖已有值）。
+    pub fn with_optional_identity(mut self, identity: Option<AuthIdentity>) -> Self {
+        if identity.is_some() {
+            self.identity = identity;
+        }
+        self
+    }
+
+    /// Turn 事件回调（task / routine 等 entry 注入）。
+    pub fn with_post_turn_handler(
+        mut self,
+        handler: crate::session::post_turn_handler::DynPostTurnHandler,
+    ) -> Self {
+        self.post_turn_handler = Some(handler);
+        self
+    }
+
+    /// 可选 Turn 事件回调（None 时不覆盖）。
+    pub fn with_optional_post_turn_handler(
+        mut self,
+        handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
+    ) -> Self {
+        if handler.is_some() {
+            self.post_turn_handler = handler;
+        }
+        self
+    }
+
+    /// 一次性吸收 `UserPromptInput` 的所有字段。
+    ///
+    /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_working_dir` /
+    /// `with_env`；便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
+    /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
+    pub fn with_user_input(mut self, input: UserPromptInput) -> Self {
+        if let Some(blocks) = input.prompt_blocks {
+            self.prompt_blocks = Some(blocks);
+        }
+        if let Some(cfg) = input.executor_config {
+            self.executor_config = Some(cfg);
+        }
+        if input.working_dir.is_some() {
+            self.working_dir = input.working_dir;
+        }
+        self.env = input.env;
+        self
+    }
+
     // ── 复合便利方法 ──────────────────────────────────────────────
 
     /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
+    ///
+    /// 保留 `self` 上预先设置的 `identity` / `post_turn_handler` / `env` 等字段
+    /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
+    ///
+    /// PR 5d（E8①）起，`parent_context_bundle` 会按 `mode` 进行 **fragment 级**
+    /// 裁剪（而不是 Full 直接克隆）：`ConstraintsOnly` 只留 constraint 相关 slot，
+    /// `WorkflowOnly` 只留 workflow 相关 slot，`Compact` 剔除运行时 vfs/tools
+    /// 摘要类 slot 保留业务上下文，`Full` 维持完整继承。
     pub fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
@@ -369,19 +492,26 @@ impl SessionAssemblyBuilder {
             "text": dispatch_prompt,
         })];
 
+        let sliced_bundle = parent_context_bundle
+            .map(|bundle| slice_companion_bundle(bundle, mode));
+
         Self {
             vfs: slice.vfs,
             flow_capabilities: Some(flow_caps),
             effective_capability_keys: None,
             mcp_servers: slice.mcp_servers,
             relay_mcp_server_names: HashSet::new(),
-            context_bundle: parent_context_bundle.cloned(),
+            context_bundle: sliced_bundle,
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
-            bootstrap_action: SessionBootstrapAction::OwnerContext,
+            hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
             workspace_defaults: None,
             working_dir: None,
             source_summary: Vec::new(),
+            // 保留调用方已注入的身份 / 回调 / env 不被 companion slice 清空
+            env: self.env,
+            identity: self.identity,
+            post_turn_handler: self.post_turn_handler,
         }
     }
 
@@ -416,9 +546,12 @@ impl SessionAssemblyBuilder {
             flow_capabilities: self.flow_capabilities,
             effective_capability_keys: self.effective_capability_keys,
             context_bundle: self.context_bundle,
-            bootstrap_action: self.bootstrap_action,
+            hook_snapshot_reload: self.hook_snapshot_reload,
             workspace_defaults: self.workspace_defaults,
             working_dir: self.working_dir,
+            env: self.env,
+            identity: self.identity,
+            post_turn_handler: self.post_turn_handler,
             source_summary: self.source_summary,
         }
     }
@@ -593,7 +726,7 @@ pub struct OwnerBootstrapSpec<'a> {
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
-/// 如何组装 context bundle + prompt_blocks + bootstrap_action。
+/// 如何组装 context bundle + prompt_blocks + hook_snapshot_reload。
 ///
 /// 与 `SessionPromptLifecycle` 结构等价,但这里只暴露 compose 所需的 3 个分支,
 /// continuation bundle(来自 SessionHub)由调用方在 Spec 里预先算好传入。
@@ -616,11 +749,13 @@ pub enum OwnerPromptLifecycle {
 }
 
 /// Owner 级 session 的上下文 Contribution 组装 —— Story 与 Project 各走自己的 contribute_*。
+///
+/// 不再内联 SessionPlan / VFS / MCP 这些"运行时画像"字段 —— 调用方在外层
+/// （`compose_owner_bootstrap`）显式 push SessionPlan contribution，保证三条
+/// compose 路径（owner / story_step / lifecycle_node）的 SessionPlan 产出
+/// 节拍一致（PR 5b）。
 fn build_owner_context_contribution(
     owner: &OwnerScope<'_>,
-    vfs: Option<&Vfs>,
-    mcp_servers: &[RuntimeMcpServer],
-    effective_agent_type: &str,
     workspace_source_fragments: Vec<agentdash_spi::ContextFragment>,
     workspace_source_warnings: Vec<String>,
 ) -> Contribution {
@@ -633,9 +768,6 @@ fn build_owner_context_contribution(
             story,
             project,
             workspace: *workspace,
-            vfs,
-            mcp_servers,
-            effective_agent_type: Some(effective_agent_type),
             workspace_source_fragments,
             workspace_source_warnings,
         }),
@@ -648,13 +780,71 @@ fn build_owner_context_contribution(
         } => contribute_project_context(ProjectContextBuildInput {
             project,
             workspace: workspace.as_deref(),
-            vfs,
-            mcp_servers,
-            effective_agent_type: Some(effective_agent_type),
             preset_name: preset_name.as_deref(),
             agent_display_name,
         }),
     }
+}
+
+/// Owner 路径的 SessionPlan contribution 构建（外挂到 compose_owner_bootstrap 顶层）。
+///
+/// PR 5b 把 SessionPlan fragments 从 `contribute_story_context` / `contribute_project_context`
+/// 内部迁出到此函数，与 task 路径（`compose_story_step` 内部 push）保持一致的外挂节拍。
+fn build_owner_session_plan_contribution(
+    owner: &OwnerScope<'_>,
+    vfs: Option<&Vfs>,
+    mcp_servers: &[RuntimeMcpServer],
+    effective_agent_type: &str,
+) -> Contribution {
+    use crate::session::plan::{
+        SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
+        resolve_story_session_composition,
+    };
+    let (plan_phase, owner_ctx, session_composition, preset_name, workspace_attached) = match owner
+    {
+        OwnerScope::Story {
+            story,
+            project,
+            workspace,
+        } => (
+            SessionPlanPhase::StoryOwner,
+            agentdash_domain::session_binding::SessionOwnerCtx::Story {
+                project_id: project.id,
+                story_id: story.id,
+            },
+            resolve_story_session_composition(Some(*story)),
+            None,
+            workspace.is_some(),
+        ),
+        OwnerScope::Project {
+            project,
+            workspace,
+            preset_name,
+            ..
+        } => (
+            SessionPlanPhase::ProjectAgent,
+            agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                project_id: project.id,
+            },
+            None,
+            preset_name.as_deref(),
+            workspace.is_some(),
+        ),
+    };
+
+    let plan = build_session_plan_fragments(SessionPlanInput {
+        owner_ctx,
+        phase: plan_phase,
+        vfs,
+        mcp_servers,
+        session_composition: session_composition.as_ref(),
+        agent_type: Some(effective_agent_type),
+        preset_name,
+        has_custom_prompt_template: false,
+        has_initial_context: false,
+        workspace_attached,
+    });
+    Contribution::fragments_only(plan.fragments)
 }
 
 /// Owner bootstrap 场景下把 `ContextBuildPhase` 映射到 Session 级的 phase 标签。
@@ -811,16 +1001,21 @@ impl<'a> SessionRequestAssembler<'a> {
             OwnerScope::Project { .. } => (Vec::new(), Vec::new()),
         };
 
-        let owner_contribution = build_owner_context_contribution(
+        let owner_contribution =
+            build_owner_context_contribution(&spec.owner, workspace_fragments, workspace_warnings);
+
+        // ── 5b. SessionPlan fragments（外挂） ──
+        //
+        // PR 5b 起 SessionPlan 统一由 compose_* 外层显式产出，不再内置于
+        // contribute_story_context / contribute_project_context。
+        let session_plan_contribution = build_owner_session_plan_contribution(
             &spec.owner,
             runtime_vfs.as_ref(),
             &runtime_mcp_servers,
             spec.executor_config.executor.as_str(),
-            workspace_fragments,
-            workspace_warnings,
         );
 
-        // ── 5b. 聚合 Contribution → Bundle ──
+        // ── 5c. 聚合 Contribution → Bundle ──
         let bundle_session_id = Uuid::new_v4();
         let bundle_phase = owner_scope_phase(&spec.owner);
         let context_bundle = build_session_context_bundle(
@@ -829,7 +1024,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 phase: bundle_phase,
                 default_scope: agentdash_spi::ContextFragment::default_scope(),
             },
-            vec![owner_contribution],
+            vec![owner_contribution, session_plan_contribution],
         );
         self.audit_bundle(
             &context_bundle,
@@ -837,15 +1032,15 @@ impl<'a> SessionRequestAssembler<'a> {
             AuditTrigger::SessionBootstrap,
         );
 
-        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / bootstrap_action ──
+        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / hook_snapshot_reload ──
         //
         // - OwnerBootstrap：使用新建的 owner context bundle
         // - RepositoryRehydrate：根据 connector 能力，使用 continuation bundle 或 owner bundle
         // - Plain：不附加 bundle
-        let (prompt_blocks, bootstrap_action, effective_bundle) = match spec.lifecycle {
+        let (prompt_blocks, hook_snapshot_reload, effective_bundle) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
                 spec.user_prompt_blocks,
-                SessionBootstrapAction::OwnerContext,
+                HookSnapshotReloadTrigger::Reload,
                 Some(context_bundle),
             ),
             OwnerPromptLifecycle::RepositoryRehydrate {
@@ -861,12 +1056,12 @@ impl<'a> SessionRequestAssembler<'a> {
                 });
                 (
                     spec.user_prompt_blocks,
-                    SessionBootstrapAction::None,
+                    HookSnapshotReloadTrigger::None,
                     chosen_bundle,
                 )
             }
             OwnerPromptLifecycle::Plain => {
-                (spec.user_prompt_blocks, SessionBootstrapAction::None, None)
+                (spec.user_prompt_blocks, HookSnapshotReloadTrigger::None, None)
             }
         };
 
@@ -887,7 +1082,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(effective_mcp_servers)
             .append_relay_mcp_names(relay_mcp_server_names)
             .with_resolved_capabilities(cap_output.flow_capabilities, effective_capability_keys)
-            .with_bootstrap_action(bootstrap_action)
+            .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -1153,8 +1348,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
 
         let source_summary: Vec<String> = context_bundle
-            .fragments
-            .iter()
+            .iter_fragments()
             .map(|f| format!("{}({})", f.label, f.slot))
             .collect();
 
@@ -1260,17 +1454,42 @@ pub async fn compose_lifecycle_node_with_audit(
         platform_config,
     );
 
+    // SessionPlan 在 PR 5b 前 lifecycle node 路径完全不产出，导致 lifecycle agent
+    // 的 bundle 相比 owner / task 路径最薄。此处补上 SessionPlan contribution，
+    // 让 lifecycle node 与其余两路都有 vfs / tools / persona / workflow /
+    // runtime_policy 的统一画像。
+    let lifecycle_mcp_runtime: Vec<RuntimeMcpServer> = activation
+        .mcp_servers
+        .iter()
+        .map(crate::runtime_bridge::acp_mcp_server_to_runtime)
+        .collect();
+    let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
+        crate::session::plan::SessionPlanInput {
+            owner_ctx: SessionOwnerCtx::Project {
+                project_id: spec.run.project_id,
+            },
+            phase: crate::session::plan::SessionPlanPhase::ProjectAgent,
+            vfs: Some(&activation.lifecycle_vfs),
+            mcp_servers: &lifecycle_mcp_runtime,
+            session_composition: None,
+            agent_type: None,
+            preset_name: None,
+            has_custom_prompt_template: false,
+            has_initial_context: false,
+            workspace_attached: true,
+        },
+    );
+
     let context_bundle = build_session_context_bundle(
         SessionContextConfig {
             session_id: Uuid::new_v4(),
             phase: ContextBuildPhase::LifecycleNode,
             default_scope: agentdash_spi::ContextFragment::default_scope(),
         },
-        vec![contribute_lifecycle_context(
-            &spec,
-            &activation,
-            &ready_port_keys,
-        )],
+        vec![
+            contribute_lifecycle_context(&spec, &activation, &ready_port_keys),
+            Contribution::fragments_only(lifecycle_plan.fragments),
+        ],
     );
     if let (Some(bus), Some(session_key)) = (audit_bus.as_ref(), audit_session_key) {
         emit_bundle_fragments(
@@ -1281,8 +1500,7 @@ pub async fn compose_lifecycle_node_with_audit(
         );
     }
     let source_summary = context_bundle
-        .fragments
-        .iter()
+        .iter_fragments()
         .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
         .collect::<Vec<_>>();
 
@@ -1339,59 +1557,10 @@ fn contribute_lifecycle_context(
     });
 
     if let Some(workflow) = spec.workflow {
-        let injection = &workflow.contract.injection;
-        let mut parts = Vec::new();
-        if let Some(goal) = injection
-            .goal
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            parts.push(format!("## Workflow Goal\n{goal}"));
-        }
-        if !injection.instructions.is_empty() {
-            parts.push(format!(
-                "## Workflow Instructions\n{}",
-                injection
-                    .instructions
-                    .iter()
-                    .filter_map(|item| {
-                        let trimmed = item.trim();
-                        (!trimmed.is_empty()).then(|| format!("- {trimmed}"))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        if !injection.context_bindings.is_empty() {
-            parts.push(format!(
-                "## Workflow Context Bindings\n{}",
-                injection
-                    .context_bindings
-                    .iter()
-                    .map(|binding| {
-                        let title = binding
-                            .title
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or(binding.locator.as_str());
-                        let required = if binding.required {
-                            "required"
-                        } else {
-                            "optional"
-                        };
-                        format!(
-                            "- `{}` ({required}) — {}: {}",
-                            binding.locator, title, binding.reason
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        let content = parts.join("\n\n");
-        if !content.trim().is_empty() {
+        if let Some(content) = crate::context::rendering::render_workflow_injection(
+            &workflow.contract.injection,
+            crate::context::rendering::WorkflowInjectionMode::Declarative,
+        ) {
             fragments.push(agentdash_spi::ContextFragment {
                 slot: "workflow_context".to_string(),
                 label: "lifecycle_workflow_injection".to_string(),
@@ -1468,6 +1637,50 @@ fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSlice
             crate::capability::CompanionSliceMode::ConstraintsOnly
         }
     }
+}
+
+/// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
+///
+/// PR 5 前 companion 子 session 直接继承父 `SessionContextBundle` 的全部 fragment，
+/// `CompanionSliceMode` 仅在 VFS/MCP/能力层面起作用。对 `ConstraintsOnly` /
+/// `WorkflowOnly` 模式来说，这与"只继承约束 / 只继承 workflow 声明"的语义不一致。
+///
+/// 裁剪策略按 slot 白名单：
+/// - `Full`：完整克隆父 bundle。
+/// - `Compact`：剔除 `vfs` / `tools` / `persona` / `required_context` / `runtime_policy`
+///   等运行时画像 slot，保留业务上下文与 workflow/约束。
+/// - `WorkflowOnly`：只保留 `workflow` / `workflow_context` slot。
+/// - `ConstraintsOnly`：只保留 `constraint` / `constraints` slot。
+///
+/// `turn_delta` 维持原样（hook 产出的 per-turn 增量不做裁剪），子 session 自己的
+/// turn_delta 由其 hook delegate 独立管理。
+fn slice_companion_bundle(
+    parent: &SessionContextBundle,
+    mode: CompanionSliceMode,
+) -> SessionContextBundle {
+    let keep_slot: Box<dyn Fn(&str) -> bool> = match mode {
+        CompanionSliceMode::Full => Box::new(|_slot: &str| true),
+        CompanionSliceMode::Compact => Box::new(|slot: &str| {
+            !matches!(
+                slot,
+                "vfs" | "tools" | "persona" | "required_context" | "runtime_policy"
+            )
+        }),
+        CompanionSliceMode::WorkflowOnly => {
+            Box::new(|slot: &str| matches!(slot, "workflow" | "workflow_context"))
+        }
+        CompanionSliceMode::ConstraintsOnly => {
+            Box::new(|slot: &str| matches!(slot, "constraint" | "constraints"))
+        }
+    };
+
+    let mut sliced = parent.clone();
+    sliced
+        .bootstrap_fragments
+        .retain(|fragment| keep_slot(fragment.slot.as_str()));
+    // turn_delta 不做裁剪 —— hook 产出的 per-turn 增量按 hook 语义自洽；
+    // companion 子 session 如果需要，可以用独立的 hook delegate 重置。
+    sliced
 }
 
 fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
@@ -1606,46 +1819,34 @@ pub async fn compose_companion_with_workflow(
 
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
     // fragment 注入 Bundle，替代旧的字符串拼接路径。
+    // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
+    // 不需要 declarative bindings 列表）；companion+workflow 路径若提供 audit_session_key
+    // 会通过调用方在外层 emit 至审计总线。
     let mut merged_bundle = comp.parent_context_bundle.cloned();
-    if let Some(workflow) = spec.workflow {
-        let inj = &workflow.contract.injection;
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(goal) = &inj.goal {
-            if !goal.trim().is_empty() {
-                parts.push(format!("## Workflow Goal\n{goal}"));
-            }
-        }
-        if !inj.instructions.is_empty() {
-            parts.push(format!(
-                "## Workflow Instructions\n{}",
-                inj.instructions
-                    .iter()
-                    .map(|i| format!("- {i}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            ));
-        }
-        let workflow_content = parts.join("\n\n");
-        if !workflow_content.is_empty() {
-            let workflow_fragment = agentdash_spi::ContextFragment {
-                slot: "workflow_context".to_string(),
-                label: "companion_workflow_injection".to_string(),
-                order: 83,
-                strategy: agentdash_spi::MergeStrategy::Append,
-                scope: agentdash_spi::ContextFragment::default_scope(),
-                source: "companion:workflow_injection".to_string(),
-                content: workflow_content,
-            };
-            match merged_bundle.as_mut() {
-                Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
-                None => {
-                    let mut bundle = agentdash_spi::SessionContextBundle::new(
-                        Uuid::new_v4(),
-                        ContextBuildPhase::Companion.as_tag(),
-                    );
-                    bundle.upsert_by_slot(workflow_fragment);
-                    merged_bundle = Some(bundle);
-                }
+    if let Some(workflow) = spec.workflow
+        && let Some(workflow_content) = crate::context::rendering::render_workflow_injection(
+            &workflow.contract.injection,
+            crate::context::rendering::WorkflowInjectionMode::SummaryOnly,
+        )
+    {
+        let workflow_fragment = agentdash_spi::ContextFragment {
+            slot: "workflow_context".to_string(),
+            label: "companion_workflow_injection".to_string(),
+            order: 83,
+            strategy: agentdash_spi::MergeStrategy::Append,
+            scope: agentdash_spi::ContextFragment::default_scope(),
+            source: "companion:workflow_injection".to_string(),
+            content: workflow_content,
+        };
+        match merged_bundle.as_mut() {
+            Some(bundle) => bundle.upsert_by_slot(workflow_fragment),
+            None => {
+                let mut bundle = agentdash_spi::SessionContextBundle::new(
+                    Uuid::new_v4(),
+                    ContextBuildPhase::Companion.as_tag(),
+                );
+                bundle.upsert_by_slot(workflow_fragment);
+                merged_bundle = Some(bundle);
             }
         }
     }
@@ -1666,7 +1867,7 @@ pub async fn compose_companion_with_workflow(
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())
-        .with_bootstrap_action(SessionBootstrapAction::OwnerContext)
+        .with_hook_snapshot_reload(HookSnapshotReloadTrigger::Reload)
         .build();
 
     Ok(CompanionWorkflowOutput {
@@ -1754,6 +1955,95 @@ mod tests {
         WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
+
+    // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+
+    fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
+        let mut bundle = agentdash_spi::SessionContextBundle::new(
+            Uuid::new_v4(),
+            ContextBuildPhase::StoryOwner.as_tag(),
+        );
+        for (idx, slot) in slots.iter().enumerate() {
+            bundle.upsert_by_slot(agentdash_spi::ContextFragment {
+                slot: (*slot).to_string(),
+                label: format!("label_{slot}"),
+                order: 10 + idx as i32,
+                strategy: agentdash_spi::MergeStrategy::Append,
+                scope: agentdash_spi::ContextFragment::default_scope(),
+                source: "test".to_string(),
+                content: format!("body_{slot}"),
+            });
+        }
+        bundle
+    }
+
+    fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {
+        bundle
+            .bootstrap_fragments
+            .iter()
+            .map(|f| f.slot.clone())
+            .collect()
+    }
+
+    #[test]
+    fn slice_companion_bundle_full_retains_all_slots() {
+        let parent = bundle_with_slots(&["story", "workflow_context", "vfs", "constraint"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::Full);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("story"));
+        assert!(slots.contains("workflow_context"));
+        assert!(slots.contains("vfs"));
+        assert!(slots.contains("constraint"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_compact_drops_runtime_slots() {
+        let parent = bundle_with_slots(&[
+            "story",
+            "task",
+            "workflow_context",
+            "vfs",
+            "tools",
+            "persona",
+            "required_context",
+            "runtime_policy",
+        ]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::Compact);
+        let slots = slot_set(&sliced);
+        // 保留业务上下文与 workflow 声明
+        assert!(slots.contains("story"));
+        assert!(slots.contains("task"));
+        assert!(slots.contains("workflow_context"));
+        // 剔除运行时画像
+        assert!(!slots.contains("vfs"));
+        assert!(!slots.contains("tools"));
+        assert!(!slots.contains("persona"));
+        assert!(!slots.contains("required_context"));
+        assert!(!slots.contains("runtime_policy"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_workflow_only_keeps_workflow_slots() {
+        let parent = bundle_with_slots(&["story", "workflow", "workflow_context", "constraint"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::WorkflowOnly);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("workflow"));
+        assert!(slots.contains("workflow_context"));
+        assert!(!slots.contains("story"));
+        assert!(!slots.contains("constraint"));
+    }
+
+    #[test]
+    fn slice_companion_bundle_constraints_only_keeps_constraint_slots() {
+        let parent =
+            bundle_with_slots(&["story", "workflow_context", "constraint", "constraints"]);
+        let sliced = slice_companion_bundle(&parent, CompanionSliceMode::ConstraintsOnly);
+        let slots = slot_set(&sliced);
+        assert!(slots.contains("constraint"));
+        assert!(slots.contains("constraints"));
+        assert!(!slots.contains("story"));
+        assert!(!slots.contains("workflow_context"));
+    }
 
     #[test]
     fn story_step_trigger_prompt_does_not_embed_owner_context() {
@@ -1884,5 +2174,416 @@ mod tests {
         assert!(rendered.contains("交付可验证实现"));
         assert!(rendered.contains("complete_lifecycle_node"));
         assert!(rendered.contains("workflow_management"));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // finalize_request 合并语义回归测试
+    // ═══════════════════════════════════════════════════════════
+    //
+    // 这些测试锁定 `finalize_request` 对称化后的行为（2026-04-30）：
+    // - mcp_servers / relay_mcp_server_names 统一整体替换；
+    // - vfs 语义三分支等价于"prepared 非空则覆盖"；
+    // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
+
+    mod finalize_request_tests {
+        use super::super::*;
+        use crate::session::UserPromptInput;
+        use agent_client_protocol::{McpServer as AcpMcpServer, McpServerHttp};
+        use agentdash_domain::workspace::{
+            Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
+        };
+        use agentdash_spi::Vfs;
+        use std::collections::HashSet;
+
+        fn minimal_workspace() -> Workspace {
+            // 没有 binding 的最小 Workspace —— `build_workspace_vfs` 会失败被 `.ok()`
+            // 吞掉，保证 vfs 保持 None；足够验证 working_dir 默认回填那一支。
+            Workspace::new(
+                uuid::Uuid::nil(),
+                "test-ws".to_string(),
+                WorkspaceIdentityKind::LocalDir,
+                serde_json::json!({}),
+                WorkspaceResolutionPolicy::PreferDefaultBinding,
+            )
+        }
+
+        fn base_req() -> PromptSessionRequest {
+            PromptSessionRequest::from_user_input(UserPromptInput::from_text("ping"))
+        }
+
+        fn http_server(name: &str, url: &str) -> AcpMcpServer {
+            AcpMcpServer::Http(McpServerHttp::new(name.to_string(), url.to_string()))
+        }
+
+        fn server_name(server: &AcpMcpServer) -> Option<&str> {
+            match server {
+                AcpMcpServer::Http(h) => Some(h.name.as_str()),
+                AcpMcpServer::Sse(s) => Some(s.name.as_str()),
+                AcpMcpServer::Stdio(s) => Some(s.name.as_str()),
+                _ => None,
+            }
+        }
+
+        #[test]
+        fn mcp_servers_prepared_overrides_base() {
+            // base 和 prepared 都有值时，prepared 整体替换 base —— compose 内部已汇总。
+            let mut base = base_req();
+            base.mcp_servers = vec![http_server("base_only", "http://base")];
+
+            let prepared = PreparedSessionInputs {
+                mcp_servers: vec![
+                    http_server("compose_a", "http://a"),
+                    http_server("compose_b", "http://b"),
+                ],
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let names: Vec<&str> = result.mcp_servers.iter().filter_map(server_name).collect();
+            assert_eq!(names, vec!["compose_a", "compose_b"]);
+        }
+
+        #[test]
+        fn mcp_servers_prepared_empty_still_replaces() {
+            // 对称化后 prepared 为空时也会整体替换（compose 显式产出空集视为"没有 MCP"）。
+            let mut base = base_req();
+            base.mcp_servers = vec![http_server("base_only", "http://base")];
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(result.mcp_servers.is_empty());
+        }
+
+        #[test]
+        fn relay_mcp_server_names_prepared_overrides_base() {
+            // 对称化关键点：relay_mcp_server_names 不再 extend，而是替换，与 mcp_servers 一致。
+            let mut base = base_req();
+            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
+
+            let prepared = PreparedSessionInputs {
+                relay_mcp_server_names: HashSet::from([
+                    "compose_a".to_string(),
+                    "compose_b".to_string(),
+                ]),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.relay_mcp_server_names,
+                HashSet::from(["compose_a".to_string(), "compose_b".to_string()]),
+                "base 的 relay name 应被 prepared 替换而非叠加"
+            );
+        }
+
+        #[test]
+        fn relay_mcp_server_names_empty_prepared_clears_base() {
+            // 与 mcp_servers 行为对称：空 prepared 也会清空。
+            let mut base = base_req();
+            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(result.relay_mcp_server_names.is_empty());
+        }
+
+        #[test]
+        fn vfs_prepared_some_overrides_base() {
+            // base 已有 vfs、prepared 也有 vfs → 以 prepared 为准（保留 compose 的 mount 组合）。
+            let mut base = base_req();
+            base.vfs = Some(Vfs {
+                mounts: Vec::new(),
+                default_mount_id: Some("base-mount".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            });
+            let prepared = PreparedSessionInputs {
+                vfs: Some(Vfs {
+                    mounts: Vec::new(),
+                    default_mount_id: Some("prepared-mount".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.vfs.and_then(|v| v.default_mount_id),
+                Some("prepared-mount".to_string()),
+            );
+        }
+
+        #[test]
+        fn vfs_prepared_none_preserves_base() {
+            // base 有 vfs、prepared 没有 → 保留 base（不强制清空）。
+            let mut base = base_req();
+            base.vfs = Some(Vfs {
+                mounts: Vec::new(),
+                default_mount_id: Some("base-mount".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            });
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.vfs.and_then(|v| v.default_mount_id),
+                Some("base-mount".to_string()),
+            );
+        }
+
+        #[test]
+        fn workspace_defaults_fills_working_dir_when_absent() {
+            // base 与 prepared 都无 working_dir，workspace_defaults 非空 → 回填 "."。
+            // （vfs 由于 minimal workspace 没 binding 会保持 None，不是本测试关注点。）
+            let base = base_req();
+            let prepared = PreparedSessionInputs {
+                workspace_defaults: Some(minimal_workspace()),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(result.user_input.working_dir.as_deref(), Some("."));
+        }
+
+        #[test]
+        fn prepared_working_dir_overrides_workspace_default() {
+            // prepared.working_dir = Some(X) 覆盖 apply_workspace_defaults 回填的 "."。
+            let base = base_req();
+            let prepared = PreparedSessionInputs {
+                workspace_defaults: Some(minimal_workspace()),
+                working_dir: Some("packages/foo".to_string()),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.user_input.working_dir.as_deref(),
+                Some("packages/foo"),
+                "prepared.working_dir 应覆盖 workspace default 的 \".\""
+            );
+        }
+
+        #[test]
+        fn prompt_blocks_prepared_overrides_base() {
+            let mut base = base_req();
+            base.user_input.prompt_blocks =
+                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            let prepared = PreparedSessionInputs {
+                prompt_blocks: Some(vec![
+                    serde_json::json!({ "type": "text", "text": "compose" }),
+                ]),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let texts: Vec<&str> = result
+                .user_input
+                .prompt_blocks
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .collect();
+            assert_eq!(texts, vec!["compose"]);
+        }
+
+        #[test]
+        fn prompt_blocks_prepared_none_preserves_base() {
+            let mut base = base_req();
+            base.user_input.prompt_blocks =
+                Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            let texts: Vec<&str> = result
+                .user_input
+                .prompt_blocks
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+                .collect();
+            assert_eq!(texts, vec!["base"]);
+        }
+
+        #[test]
+        fn context_bundle_prepared_overrides_base() {
+            // Bundle 为 Option 整体替换语义：prepared = None 也会清掉 base。
+            use agentdash_spi::SessionContextBundle;
+
+            let mut base = base_req();
+            base.context_bundle = Some(SessionContextBundle::new(
+                uuid::Uuid::new_v4(),
+                "test-base",
+            ));
+            // prepared 为 None 时整体替换：base bundle 被清除
+            let prepared = PreparedSessionInputs::default();
+
+            let result = finalize_request(base, prepared);
+            assert!(
+                result.context_bundle.is_none(),
+                "context_bundle 为整体替换字段，prepared=None 会清除 base"
+            );
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // PR 1 Phase 1c 新字段测试：identity / post_turn_handler / env
+        // ═══════════════════════════════════════════════════════════
+
+        #[test]
+        fn identity_prepared_overrides_base() {
+            // prepared.identity = Some → 覆盖 base.identity。
+            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+
+            let mut base = base_req();
+            base.identity = Some(AuthIdentity {
+                auth_mode: AuthMode::Personal,
+                user_id: "base-user".to_string(),
+                subject: "base-user".to_string(),
+                display_name: None,
+                email: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: None,
+                extra: serde_json::Value::Null,
+            });
+            let prepared = PreparedSessionInputs {
+                identity: Some(AuthIdentity::system_routine("r-1234")),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let id = result.identity.expect("identity exists");
+            assert_eq!(id.user_id, "system:routine:r-1234");
+            assert_eq!(id.provider.as_deref(), Some("system.routine"));
+            assert!(!id.is_admin);
+        }
+
+        #[test]
+        fn identity_prepared_none_preserves_base() {
+            // prepared.identity = None → 保留 base.identity（不会清空）。
+            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+
+            let mut base = base_req();
+            let base_id = AuthIdentity {
+                auth_mode: AuthMode::Enterprise,
+                user_id: "alice".to_string(),
+                subject: "alice".to_string(),
+                display_name: Some("Alice".to_string()),
+                email: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: None,
+                extra: serde_json::Value::Null,
+            };
+            base.identity = Some(base_id);
+
+            let prepared = PreparedSessionInputs::default();
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.identity.as_ref().map(|i| i.user_id.as_str()),
+                Some("alice"),
+                "prepared.identity=None 时 base.identity 应被保留"
+            );
+        }
+
+        #[test]
+        fn env_prepared_overrides_base_when_nonempty() {
+            // prepared.env 非空 → 整体替换。
+            let mut base = base_req();
+            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+
+            let mut prepared_env = HashMap::new();
+            prepared_env.insert("BAR".to_string(), "prepared".to_string());
+            let prepared = PreparedSessionInputs {
+                env: prepared_env,
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            assert!(!result.user_input.env.contains_key("FOO"));
+            assert_eq!(
+                result.user_input.env.get("BAR").map(String::as_str),
+                Some("prepared")
+            );
+        }
+
+        #[test]
+        fn env_prepared_empty_preserves_base() {
+            // prepared.env 为空 → 保留 base.env。
+            let mut base = base_req();
+            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+
+            let prepared = PreparedSessionInputs::default();
+            let result = finalize_request(base, prepared);
+            assert_eq!(
+                result.user_input.env.get("FOO").map(String::as_str),
+                Some("base"),
+                "prepared.env 为空时 base.env 应被保留"
+            );
+        }
+
+        #[test]
+        fn system_routine_identity_shape() {
+            // 固化 AuthIdentity::system_routine 产出形状（E1 契约）。
+            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-abc");
+            assert_eq!(id.user_id, "system:routine:r-abc");
+            assert_eq!(id.subject, "system:routine:r-abc");
+            assert_eq!(id.provider.as_deref(), Some("system.routine"));
+            assert!(!id.is_admin);
+            assert!(id.groups.is_empty());
+            assert_eq!(id.display_name.as_deref(), Some("System Routine"));
+            // auth_mode = Personal 避免匹配企业级 admin 策略
+            assert!(matches!(
+                id.auth_mode,
+                agentdash_spi::auth::AuthMode::Personal
+            ));
+        }
+
+        #[test]
+        fn builder_with_identity_method_propagates_to_prepared() {
+            // 验证 SessionAssemblyBuilder.with_identity() 的值能顺利进入 PreparedSessionInputs.identity。
+            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-zzz");
+            let prepared = SessionAssemblyBuilder::new().with_identity(id.clone()).build();
+            assert_eq!(
+                prepared.identity.as_ref().map(|i| i.user_id.as_str()),
+                Some("system:routine:r-zzz"),
+            );
+        }
+
+        #[test]
+        fn builder_with_user_input_unpacks_fields() {
+            // 验证 with_user_input 一次性吸收 UserPromptInput 的四字段。
+            use crate::session::UserPromptInput;
+            let mut env = HashMap::new();
+            env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+            let input = UserPromptInput {
+                prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
+                working_dir: Some("subdir".to_string()),
+                env,
+                executor_config: None,
+            };
+            let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
+            assert_eq!(
+                prepared.working_dir.as_deref(),
+                Some("subdir"),
+                "with_user_input 应把 UserPromptInput.working_dir 写入 builder.working_dir"
+            );
+            assert!(
+                prepared.prompt_blocks.is_some(),
+                "with_user_input 应把 prompt_blocks 写入 builder"
+            );
+            assert_eq!(
+                prepared.env.get("PATH").map(String::as_str),
+                Some("/usr/bin"),
+                "with_user_input 应把 env 写入 builder"
+            );
+        }
     }
 }

@@ -69,7 +69,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        let vfs = context.vfs.clone().ok_or_else(|| {
+        let vfs = context.session.vfs.clone().ok_or_else(|| {
             ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
         })?;
         let shared_vfs = SharedRuntimeVfs::new(vfs);
@@ -79,12 +79,12 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             .as_ref()
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
 
-        let identity = context.identity.clone();
+        let identity = context.session.identity.clone();
 
         // 合并 session-type 默认簇 与 agent 级 tool_clusters 限制（交集）
-        let session_clusters = &context.flow_capabilities.enabled_clusters;
+        let session_clusters = &context.turn.flow_capabilities.enabled_clusters;
         let effective_clusters = if let Some(ref agent_clusters) =
-            context.executor_config.tool_clusters
+            context.session.executor_config.tool_clusters
         {
             let agent_set: std::collections::BTreeSet<ToolCluster> = agent_clusters
                 .iter()
@@ -103,7 +103,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
         let session_hub = self.session_hub_handle.get().await;
-        let excluded = &context.flow_capabilities.excluded_tools;
+        let excluded = &context.turn.flow_capabilities.excluded_tools;
 
         // Read 簇：只读文件系统访问
         if clusters.contains(&ToolCluster::Read) {
@@ -189,6 +189,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     shared_vfs.clone(),
                     self.session_hub_handle.clone(),
                     context
+                        .turn
                         .hook_session
                         .as_ref()
                         .map(|session| session.session_id().to_string()),
@@ -199,6 +200,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 )));
 
                 if let Some(session_id) = context
+                    .turn
                     .hook_session
                     .as_ref()
                     .map(|session| session.session_id().to_string())
@@ -207,7 +209,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         self.repos.canvas_repo.clone(),
                         self.session_hub_handle.clone(),
                         session_id,
-                        context.turn_id.clone(),
+                        context.session.turn_id.clone(),
                         project_id,
                     )));
                 }
@@ -226,7 +228,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 }
 
 fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
-    if let Some(hook_session) = context.hook_session.as_ref() {
+    if let Some(hook_session) = context.turn.hook_session.as_ref() {
         let snapshot = hook_session.snapshot();
 
         // project owner 直接使用 owner_id；story/task owner 使用 owner.project_id。
@@ -250,6 +252,7 @@ fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
     }
 
     context
+        .session
         .vfs
         .as_ref()
         .and_then(|space| space.source_project_id.as_deref())

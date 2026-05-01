@@ -106,14 +106,15 @@ impl CompanionRequestTool {
             platform_config,
             session_hub_handle,
             current_session_id: context
+                .turn
                 .hook_session
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
-            current_turn_id: context.turn_id.clone(),
-            current_executor_config: context.executor_config.clone(),
+            current_turn_id: context.session.turn_id.clone(),
+            current_executor_config: context.session.executor_config.clone(),
             working_dir: relative_working_dir(context),
-            vfs: context.vfs.clone(),
-            hook_session: context.hook_session.clone(),
+            vfs: context.session.vfs.clone(),
+            hook_session: context.turn.hook_session.clone(),
         }
     }
 
@@ -379,23 +380,15 @@ impl CompanionRequestTool {
         let active_mcp = self.active_mcp_servers().await;
         let execution_slice =
             build_companion_execution_slice(self.vfs.as_ref(), &active_mcp, slice_mode);
-        let base_req = PromptSessionRequest {
-            user_input: UserPromptInput {
-                prompt_blocks: None,
-                working_dir: Some(self.working_dir.clone()),
-                env: std::collections::HashMap::new(),
-                executor_config: None,
-            },
-            mcp_servers: Vec::new(),
-            relay_mcp_server_names: Default::default(),
-            vfs: None,
-            flow_capabilities: None,
-            effective_capability_keys: None,
-            context_bundle: None,
-            bootstrap_action: crate::session::SessionBootstrapAction::None,
-            identity: None,
-            post_turn_handler: None,
-        };
+        // PR 1 Phase 1d：收敛 struct-literal 构造为 from_user_input 工厂 + builder 风格字段注入。
+        // Companion 继承父 session 的 working_dir，identity/post_turn_handler 保持 None
+        // （子 session 的 identity 从父 session 运行时继承，不在此处注入）。
+        let base_req = PromptSessionRequest::from_user_input(UserPromptInput {
+            prompt_blocks: None,
+            working_dir: Some(self.working_dir.clone()),
+            env: std::collections::HashMap::new(),
+            executor_config: None,
+        });
 
         let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
@@ -1135,11 +1128,12 @@ impl CompanionRespondTool {
         Self {
             session_hub_handle,
             current_session_id: context
+                .turn
                 .hook_session
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
-            current_turn_id: context.turn_id.clone(),
-            hook_session: context.hook_session.clone(),
+            current_turn_id: context.session.turn_id.clone(),
+            hook_session: context.turn.hook_session.clone(),
         }
     }
 }
@@ -1539,26 +1533,17 @@ impl CompanionRespondTool {
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
                 tokio::spawn(async move {
-                    let bare_req = PromptSessionRequest {
-                        user_input: UserPromptInput {
-                            prompt_blocks: Some(vec![serde_json::json!({
-                                "type": "text",
-                                "text": resume_prompt,
-                            })]),
-                            working_dir: None,
-                            env: std::collections::HashMap::new(),
-                            executor_config: Some(resume_config),
-                        },
-                        mcp_servers: Vec::new(),
-                        relay_mcp_server_names: Default::default(),
-                        vfs: None,
-                        flow_capabilities: None,
-                        effective_capability_keys: None,
-                        context_bundle: None,
-                        bootstrap_action: crate::session::SessionBootstrapAction::None,
-                        identity: None,
-                        post_turn_handler: None,
-                    };
+                    // PR 1 Phase 1d：收敛 struct-literal → from_user_input 工厂；
+                    // parent resume 路径通过 augment_prompt_request 补齐所有后端注入字段。
+                    let bare_req = PromptSessionRequest::from_user_input(UserPromptInput {
+                        prompt_blocks: Some(vec![serde_json::json!({
+                            "type": "text",
+                            "text": resume_prompt,
+                        })]),
+                        working_dir: None,
+                        env: std::collections::HashMap::new(),
+                        executor_config: Some(resume_config),
+                    });
                     let req = match hub_clone
                         .augment_prompt_request(&parent_sid, bare_req, "companion_parent_resume")
                         .await
@@ -1669,7 +1654,7 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 // ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
 
 pub fn relative_working_dir(context: &ExecutionContext) -> String {
-    let Some(space) = context.vfs.as_ref() else {
+    let Some(space) = context.session.vfs.as_ref() else {
         return ".".to_string();
     };
     let Some(mount) = space.default_mount() else {
@@ -1687,7 +1672,7 @@ pub fn relative_working_dir(context: &ExecutionContext) -> String {
     if root.is_empty() {
         return ".".to_string();
     }
-    crate::session::path_policy::to_relative_working_dir(&context.working_directory, &root)
+    crate::session::path_policy::to_relative_working_dir(&context.session.working_directory, &root)
         .unwrap_or_else(|| ".".to_string())
 }
 

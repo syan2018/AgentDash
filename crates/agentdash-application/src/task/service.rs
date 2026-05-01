@@ -268,9 +268,11 @@ impl StoryStepActivationService {
 
         let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
         let context_sources = prepared.source_summary.clone();
-        let mut req = finalize_request(base, prepared);
-        req.identity = identity;
-        req.post_turn_handler = Some(Arc::new(
+        // PR 1 Phase 1d：identity / post_turn_handler 从"finalize 后手工赋值"迁移到
+        // "PreparedSessionInputs 前置赋值"，由 finalize_request 统一合入 req，
+        // 与 builder 装配契约（SessionAssemblyBuilder.with_identity / with_post_turn_handler）保持一致节拍。
+        prepared.identity = identity;
+        prepared.post_turn_handler = Some(Arc::new(
             super::gateway::effect_executor::TaskHookEffectExecutor {
                 repos: self.repos.clone(),
                 task_id: task.id,
@@ -279,6 +281,7 @@ impl StoryStepActivationService {
             },
         )
             as crate::session::post_turn_handler::DynPostTurnHandler);
+        let req = finalize_request(base, prepared);
 
         let turn_id = match self.hub.start_prompt(&session_id, req).await {
             Ok(turn_id) => turn_id,

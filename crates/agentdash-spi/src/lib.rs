@@ -31,8 +31,9 @@ pub use agentdash_domain::common::{
 };
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    DiscoveredGuideline, ExecutionContext, ExecutionStream, FlowCapabilities, PromptPayload,
-    RestoredSessionState, ToolCluster, content_block_to_text, workspace_path_from_context,
+    DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
+    ExecutionTurnFrame, FlowCapabilities, PromptPayload, RestoredSessionState, ToolCluster,
+    content_block_to_text, workspace_path_from_context,
 };
 pub use context_injection::{
     ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MergeStrategy,

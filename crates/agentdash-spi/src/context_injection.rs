@@ -27,11 +27,20 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
     "static_fragment",
     "requirements",
     "constraints",
+    // constraint（单数）：hook provider / companion tools 产出的
+    // per-item hook injection 使用该 slot 名；与 "constraints" 复数 slot 并存
+    // 是 pre-existing 约定。两者都纳入 Bundle render 白名单避免 PR 4 后丢失。
+    "constraint",
     "codebase",
     "references",
     "project_guidelines",
     "instruction",
     "instruction_append",
+    // companion_agents: PR 4（04-30-session-pipeline-architecture-refactor）把
+    // companion agents 渲染从 SP 独立 section 统一归入 Bundle 主数据面，白名单
+    // 纳入 companion_agents slot 后由 fragment_bridge 接入的 hook snapshot
+    // 产出的 companion agents 条目自动进入 `## Project Context`。
+    "companion_agents",
 ];
 
 #[derive(Debug, thiserror::Error)]

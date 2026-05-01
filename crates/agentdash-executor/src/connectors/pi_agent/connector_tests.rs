@@ -1195,19 +1195,16 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
             None,
             &PromptPayload::Text("hello".to_string()),
             ExecutionContext {
-                turn_id: "turn-1".to_string(),
-                working_directory: PathBuf::from("/tmp/test-workspace"),
-                environment_variables: HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-                mcp_servers: Vec::new(),
-                vfs: Some(test_vfs("/tmp/test-workspace")),
-                hook_session: None,
-                flow_capabilities: Default::default(),
-                runtime_delegate: None,
-                identity: None,
-                restored_session_state: None,
-                assembled_system_prompt: None,
-                assembled_tools: vec![],
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-1".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame::default(),
             },
         )
         .await;
@@ -1232,24 +1229,24 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
             None,
             &PromptPayload::Text("新的用户消息".to_string()),
             ExecutionContext {
-                turn_id: "turn-1".to_string(),
-                working_directory: PathBuf::from("/tmp/test-workspace"),
-                environment_variables: HashMap::new(),
-                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
-                mcp_servers: Vec::new(),
-                vfs: Some(test_vfs("/tmp/test-workspace")),
-                hook_session: None,
-                flow_capabilities: Default::default(),
-                runtime_delegate: None,
-                identity: None,
-                restored_session_state: Some(agentdash_spi::RestoredSessionState {
-                    messages: vec![
-                        agentdash_spi::AgentMessage::user("历史用户消息"),
-                        agentdash_spi::AgentMessage::assistant("历史助手消息"),
-                    ],
-                }),
-                assembled_system_prompt: None,
-                assembled_tools: vec![],
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-1".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame {
+                    restored_session_state: Some(agentdash_spi::RestoredSessionState {
+                        messages: vec![
+                            agentdash_spi::AgentMessage::user("历史用户消息"),
+                            agentdash_spi::AgentMessage::assistant("历史助手消息"),
+                        ],
+                    }),
+                    ..Default::default()
+                },
             },
         )
         .await
@@ -1271,6 +1268,128 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
 }
 
 #[tokio::test]
+async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
+    use agentdash_spi::session_context_bundle::SessionContextBundle;
+
+    let bridge = Arc::new(RecordingBridge::default());
+    let connector = PiAgentConnector::new(bridge.clone(), "系统提示");
+
+    let session_id = "session-bundle-refresh";
+    let session_uuid = uuid::Uuid::new_v4();
+
+    let make_context = |turn_id: &str,
+                        bundle: Option<SessionContextBundle>,
+                        assembled_sp: Option<&str>|
+     -> ExecutionContext {
+        #[allow(deprecated)]
+        let turn_frame = agentdash_spi::ExecutionTurnFrame {
+            context_bundle: bundle,
+            assembled_system_prompt: assembled_sp.map(str::to_string),
+            ..Default::default()
+        };
+        ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: turn_id.to_string(),
+                working_directory: PathBuf::from("/tmp/test-workspace"),
+                environment_variables: HashMap::new(),
+                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                mcp_servers: Vec::new(),
+                vfs: Some(test_vfs("/tmp/test-workspace")),
+                identity: None,
+            },
+            turn: turn_frame,
+        }
+    };
+
+    let bundle_a = SessionContextBundle::new(session_uuid, "turn-a");
+    let bundle_b = SessionContextBundle::new(session_uuid, "turn-b");
+    assert_ne!(bundle_a.bundle_id, bundle_b.bundle_id);
+    let bundle_b_id = bundle_b.bundle_id;
+
+    // Turn 1: 首轮 — 应走 is_new_agent 分支并把 "SP_A" 写入 agent
+    let mut stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("msg-a".to_string()),
+            make_context("turn-a", Some(bundle_a), Some("SP_A")),
+        )
+        .await
+        .expect("turn 1 should start");
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    // Turn 2: 同 session，bundle_id 变化 — 期望 set_system_prompt 再次被调用，
+    //         第 2 个 BridgeRequest 的 system_prompt = "SP_B"
+    let mut stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("msg-b".to_string()),
+            make_context("turn-b", Some(bundle_b), Some("SP_B")),
+        )
+        .await
+        .expect("turn 2 should start");
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    // Turn 3: bundle_id 不变 — assembled_system_prompt 即便换成 "SP_STALE"，
+    //         也不会生效，agent 仍用 turn 2 时 set 的 "SP_B"
+    let mut stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("msg-c".to_string()),
+            make_context(
+                "turn-c",
+                Some(SessionContextBundle {
+                    bundle_id: bundle_b_id,
+                    session_id: session_uuid,
+                    phase_tag: "turn-c".to_string(),
+                    created_at_ms: 0,
+                    bootstrap_fragments: Vec::new(),
+                    turn_delta: Vec::new(),
+                }),
+                Some("SP_STALE"),
+            ),
+        )
+        .await
+        .expect("turn 3 should start");
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    let requests = bridge
+        .requests
+        .lock()
+        .expect("recording bridge lock poisoned");
+    assert_eq!(requests.len(), 3, "应记录三次 bridge 请求");
+    assert_eq!(
+        requests[0].system_prompt.as_deref(),
+        Some("SP_A"),
+        "turn 1 应落入 SP_A"
+    );
+    assert_eq!(
+        requests[1].system_prompt.as_deref(),
+        Some("SP_B"),
+        "bundle_id 变化后 turn 2 应切到 SP_B"
+    );
+    assert_eq!(
+        requests[2].system_prompt.as_deref(),
+        Some("SP_B"),
+        "bundle_id 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
+    );
+
+    let agents = connector.agents.lock().await;
+    let runtime = agents
+        .get(session_id)
+        .expect("session runtime should be retained");
+    assert_eq!(runtime.last_bundle_id, Some(bundle_b_id));
+}
+
+#[tokio::test]
 async fn update_session_tools_replaces_all_tools() {
     let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
 
@@ -1288,6 +1407,7 @@ async fn update_session_tools_replaces_all_tools() {
         PiAgentSessionRuntime {
             agent,
             tools: vec![old_tool],
+            last_bundle_id: None,
         },
     );
 

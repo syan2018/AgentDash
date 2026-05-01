@@ -491,7 +491,7 @@ impl RoutineExecutor {
             .cloned();
 
         let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
-        let prepared = assembler
+        let mut prepared = assembler
             .compose_owner_bootstrap(OwnerBootstrapSpec {
                 owner: OwnerScope::Project {
                     project: &agent_context.project,
@@ -514,6 +514,11 @@ impl RoutineExecutor {
                 audit_session_key: Some(session_id.to_string()),
             })
             .await?;
+
+        // PRD Decisions · E1：routine 合成 system identity，保证审计链路可归属。
+        // AuthIdentity::system_routine 前缀 user_id = "system:routine:<id>"、is_admin=false、
+        // provider = Some("system.routine")，避免企业权限策略误匹配。
+        prepared.identity = Some(agentdash_spi::auth::AuthIdentity::system_routine(routine.id));
 
         Ok(finalize_request(base, prepared))
     }

@@ -2,6 +2,8 @@ pub mod audit;
 mod builder;
 mod builtins;
 pub mod mount_file_discovery;
+pub mod rendering;
+pub mod slot_orders;
 pub mod source_resolver;
 pub mod vfs_discovery;
 mod workflow_bindings;
@@ -13,15 +15,15 @@ pub use audit::{
 };
 pub use builder::{
     ContextBuildPhase, Contribution, SessionContextConfig, TaskExecutionPhase,
-    build_continuation_bundle_from_markdown, build_declared_source_warning_fragment,
-    build_session_context_bundle,
+    build_continuation_bundle_from_markdown, build_continuation_transcript_fragment,
+    build_declared_source_warning_fragment, build_session_context_bundle,
 };
 pub use builtins::build_owner_context_resource_block;
 pub use builtins::{
     contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
-    contribute_instruction, contribute_mcp,
+    contribute_instruction, contribute_mcp, contribute_task_binding,
 };
-pub(crate) use builtins::{trim_or_dash, workspace_context_fragment};
+pub(crate) use builtins::{WorkspaceFragmentMode, trim_or_dash, workspace_context_fragment};
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,
 };

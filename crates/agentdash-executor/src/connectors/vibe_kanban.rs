@@ -170,7 +170,11 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
         let user_text = prompt.to_fallback_text();
-        let prompt_text = if let Some(ref sys_prompt) = context.assembled_system_prompt {
+        // vibe_kanban 通过 stdio 把 prompt 前置拼接给外部进程，暂未支持结构化
+        // Bundle。PR 3 期间仍消费 deprecated `assembled_system_prompt` 作为兜底，
+        // 待 PR 8 删除该字段时此 connector 需要自渲染或协议升级。
+        #[allow(deprecated)]
+        let prompt_text = if let Some(ref sys_prompt) = context.turn.assembled_system_prompt {
             format!("{sys_prompt}\n\n{user_text}")
         } else {
             user_text
@@ -182,14 +186,15 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ));
         }
 
-        let vk_config =
-            crate::adapters::vibe_kanban_config::to_vibe_kanban_config(&context.executor_config)
-                .ok_or_else(|| {
-                    ConnectorError::InvalidConfig(format!(
-                        "执行器 '{}' 不是有效的 vibe-kanban 执行器",
-                        context.executor_config.executor
-                    ))
-                })?;
+        let vk_config = crate::adapters::vibe_kanban_config::to_vibe_kanban_config(
+            &context.session.executor_config,
+        )
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "执行器 '{}' 不是有效的 vibe-kanban 执行器",
+                context.session.executor_config.executor
+            ))
+        })?;
 
         let mut agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&vk_config.profile_id())
@@ -210,7 +215,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             false,
             "请在提交前完成 pnpm lint/type-check/test 等自检".to_string(),
         );
-        env.merge(&context.environment_variables);
+        env.merge(&context.session.environment_variables);
 
         let follow_up_session_id = follow_up_session_id
             .map(str::trim)
@@ -219,7 +224,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let mut spawned = if let Some(follow_up_session_id) = follow_up_session_id {
             agent
                 .spawn_follow_up(
-                    &context.working_directory,
+                    &context.session.working_directory,
                     &prompt_text,
                     follow_up_session_id,
                     None,
@@ -229,7 +234,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
                 .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
         } else {
             agent
-                .spawn(&context.working_directory, &prompt_text, &env)
+                .spawn(&context.session.working_directory, &prompt_text, &env)
                 .await
                 .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
         };
@@ -243,7 +248,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
 
         let msg_store = Arc::new(MsgStore::new());
 
-        agent.normalize_logs(msg_store.clone(), &context.working_directory);
+        agent.normalize_logs(msg_store.clone(), &context.session.working_directory);
 
         if let Some(stdout) = spawned.child.inner().stdout.take() {
             let ms = msg_store.clone();
@@ -294,8 +299,8 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
-        source.executor_id = Some(context.executor_config.executor.to_string());
-        let turn_id = context.turn_id.clone();
+        source.executor_id = Some(context.session.executor_config.executor.to_string());
+        let turn_id = context.session.turn_id.clone();
         let mut converter = NormalizedToAcpConverter::new(
             SessionId::new(session_id.to_string()),
             source.clone(),

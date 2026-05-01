@@ -6,16 +6,17 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::{SessionNotification, SessionUpdate};
+use agent_client_protocol::SessionNotification;
 use tokio::sync::mpsc;
 
 use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
 
-use super::event_bridge::HookTriggerInput;
+use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::persistence::SessionPersistence;
+use super::persistence_listener;
 use super::post_turn_handler::DynPostTurnHandler;
 
 /// Processor 消费的事件类型。
@@ -112,10 +113,10 @@ impl SessionTurnProcessor {
         if !received_terminal {
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id) {
-                    Some(runtime) => (
-                        runtime.cancel_requested,
-                        runtime.current_turn_id.as_deref() == Some(turn_id.as_str()),
+                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                    Some(turn) => (
+                        turn.cancel_requested,
+                        turn.turn_id.as_str() == turn_id.as_str(),
                     ),
                     None => (false, false),
                 }
@@ -139,12 +140,7 @@ impl SessionTurnProcessor {
             .await;
 
         // Hook 评估（SessionTerminal trigger）
-        let broadcast_tx = {
-            let sessions_guard = sessions.lock().await;
-            sessions_guard.get(&session_id).map(|rt| rt.tx.clone())
-        };
-        let terminal_effects = if let (Some(hs), Some(tx)) = (hook_session.as_ref(), &broadcast_tx)
-        {
+        let terminal_effects = if let Some(hs) = hook_session.as_ref() {
             hub.emit_session_hook_trigger(
                 hs.as_ref(),
                 &HookTriggerInput {
@@ -158,7 +154,6 @@ impl SessionTurnProcessor {
                     refresh_reason: "trigger:session_terminal",
                     source: source.clone(),
                 },
-                tx,
             )
             .await
         } else {
@@ -187,8 +182,8 @@ impl SessionTurnProcessor {
             }
         }
 
-        // Hook auto-resume 逻辑
-        const MAX_HOOK_AUTO_RESUMES: u32 = 2;
+        // Hook auto-resume 请求检测：processor 只判断"是否需要 auto-resume"，
+        // 限流（计数 + 上限）由 `hub.request_hook_auto_resume` 统一决定。
         let should_auto_resume = matches!(terminal_kind, TurnTerminalKind::Completed)
             && hook_session.as_ref().is_some_and(|hs| {
                 let trace = hs.trace();
@@ -199,24 +194,14 @@ impl SessionTurnProcessor {
                     .is_some_and(|t| t.decision == "continue")
             });
 
-        let can_auto_resume = should_auto_resume && {
-            let guard = sessions.lock().await;
-            guard
-                .get(&session_id)
-                .is_some_and(|rt| rt.hook_auto_resume_count < MAX_HOOK_AUTO_RESUMES)
-        };
-
-        // 清理 running 状态
+        // 清理 running 状态 — 整个 current_turn 一起退位。
+        // 注意：auto-resume 计数不再在这里递增，交给 `request_hook_auto_resume`
+        // 在"确认可以续跑"的临界区内与 cap check 一起原子处理。
         {
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
                 runtime.running = false;
-                runtime.current_turn_id = None;
-                runtime.cancel_requested = false;
-                runtime.processor_tx = None;
-                if can_auto_resume {
-                    runtime.hook_auto_resume_count += 1;
-                }
+                runtime.current_turn = None;
             }
         }
 
@@ -229,16 +214,16 @@ impl SessionTurnProcessor {
             }
         }
 
-        if can_auto_resume {
-            tracing::info!(
-                session_id = %session_id,
-                "Hook auto-resume: stop gate unsatisfied, scheduling retry"
-            );
-            hub.schedule_hook_auto_resume(session_id);
+        if should_auto_resume {
+            hub.request_hook_auto_resume(session_id).await;
         }
     }
 
-    /// 处理单条 notification：executor_session_id 同步 → on_event → persist。
+    /// 处理单条 notification：委托 persistence_listener 同步 meta → on_event → persist。
+    ///
+    /// PR 7：`SessionMeta` 写入不再在 processor 里直接做，而是外包给
+    /// `persistence_listener::sync_executor_session_id`；processor 只持有
+    /// per-turn 去重状态 (`last_executor_session_id`) 并传入。
     async fn handle_notification(
         hub: &SessionHub,
         persistence: &Arc<dyn SessionPersistence>,
@@ -248,23 +233,14 @@ impl SessionTurnProcessor {
         post_turn_handler: &Option<DynPostTurnHandler>,
         last_executor_session_id: &mut Option<String>,
     ) {
-        // executor_session_id 同步（从 executor_session_bound 事件中提取）
-        let meta = match &notification.update {
-            SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-            _ => None,
-        };
-        if let Some(executor_session_id) = parse_executor_session_bound(meta, turn_id)
-            && last_executor_session_id.as_deref() != Some(executor_session_id.as_str())
-        {
-            *last_executor_session_id = Some(executor_session_id.clone());
-            if let Ok(Some(mut meta)) = persistence.get_session_meta(session_id).await
-                && meta.executor_session_id.as_deref() != Some(executor_session_id.as_str())
-            {
-                meta.executor_session_id = Some(executor_session_id);
-                meta.updated_at = chrono::Utc::now().timestamp_millis();
-                let _ = persistence.save_session_meta(&meta).await;
-            }
-        }
+        persistence_listener::sync_executor_session_id(
+            persistence,
+            session_id,
+            turn_id,
+            notification,
+            last_executor_session_id,
+        )
+        .await;
 
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, notification).await;

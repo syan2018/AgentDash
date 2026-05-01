@@ -79,36 +79,13 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     }
 
     // ── 2. Project Context ──
-    if let Some(bundle) = input.context_bundle {
-        let project_context = bundle.render_section(
-            agentdash_spi::FragmentScope::RuntimeAgent,
-            RUNTIME_AGENT_CONTEXT_SLOTS,
-        );
-        if !project_context.trim().is_empty() {
-            sections.push(format!("## Project Context\n\n{project_context}"));
-        }
-    }
-
-    // ── 2b. Companion Agents ──
-    if let Some(caps) = input.session_capabilities {
-        if !caps.companion_agents.is_empty() {
-            let lines = caps
-                .companion_agents
-                .iter()
-                .map(|a| {
-                    format!(
-                        "- **{}** (executor: `{}`): {}",
-                        a.name, a.executor, a.display_name
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            sections.push(format!(
-                "## Companion Agents\n\n\
-                 以下 agent 已关联到当前项目，可通过 `companion_request` 工具的 `agent_key` 参数按名称指定：\n\n\
-                 {lines}"
-            ));
-        }
+    //
+    // Companion Agents 已在 PR 4（04-30-session-pipeline-architecture-refactor）
+    // 从 SP 独立 section 移除；由 Bundle 的 `companion_agents` slot 随 Project
+    // Context 一起渲染。`baseline_capabilities.companion_agents` 仍保留为
+    // `companion_request` 工具参数校验的结构化视图，但不再二次渲染进 SP。
+    if let Some(section) = input.context_bundle.and_then(render_runtime_section) {
+        sections.push(section);
     }
 
     // ── 3. Workspace ──
@@ -202,6 +179,22 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     }
 
     sections.join("\n\n")
+}
+
+/// 渲染 Bundle 的"Project Context"段落——connector 可在 Bundle 变化时直接调用该 helper
+/// 取得结构化段落文本（保持与 `assemble_system_prompt` 一致的 slot 白名单 / 标题）。
+///
+/// 返回 `None` 表示 Bundle 的 `RuntimeAgent` scope 下未产出任何可见内容。
+pub fn render_runtime_section(bundle: &SessionContextBundle) -> Option<String> {
+    let project_context = bundle.render_section(
+        agentdash_spi::FragmentScope::RuntimeAgent,
+        RUNTIME_AGENT_CONTEXT_SLOTS,
+    );
+    if project_context.trim().is_empty() {
+        None
+    } else {
+        Some(format!("## Project Context\n\n{project_context}"))
+    }
 }
 
 // ─── 渲染辅助函数（全部从 connector.rs / stream_mapper.rs 搬过来） ──────────

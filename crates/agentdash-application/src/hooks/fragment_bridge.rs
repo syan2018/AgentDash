@@ -7,25 +7,26 @@
 use agentdash_spi::{ContextFragment, HookInjection, MergeStrategy, SessionHookSnapshot};
 
 use crate::context::Contribution;
+use crate::context::slot_orders;
 
 /// 已知 Hook slot → order 的固定映射。
 ///
-/// 未覆盖的 slot 使用 `DEFAULT_HOOK_ORDER`。order 数值参考 SessionPlan /
-/// builtin contributor 的既有分布，保证默认排序下的相对位置符合预期。
+/// 未覆盖的 slot 使用 `slot_orders::HOOK_DEFAULT`。order 数值来自
+/// `context::slot_orders`，与 contributor 产出的 fragment order 单源化，
+/// 保证 hook fragment 在 bundle 排序中位于期望区段（workflow/constraint 与
+/// lifecycle / contribute_workflow_binding 同位）。
 const HOOK_SLOT_ORDERS: &[(&str, i32)] = &[
-    ("companion_agents", 60),
-    ("workflow", 83),
-    ("constraint", 84),
+    ("companion_agents", slot_orders::HOOK_COMPANION_AGENTS),
+    ("workflow", slot_orders::HOOK_WORKFLOW),
+    ("constraint", slot_orders::HOOK_CONSTRAINT),
 ];
-
-const DEFAULT_HOOK_ORDER: i32 = 200;
 
 fn default_hook_order(slot: &str) -> i32 {
     HOOK_SLOT_ORDERS
         .iter()
         .find(|(name, _)| *name == slot)
         .map(|(_, ord)| *ord)
-        .unwrap_or(DEFAULT_HOOK_ORDER)
+        .unwrap_or(slot_orders::HOOK_DEFAULT)
 }
 
 /// 把单个 `HookInjection` 转换为 `ContextFragment`。

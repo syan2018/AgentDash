@@ -47,6 +47,10 @@ struct PiAgentSessionRuntime {
     agent: Agent,
     /// 当前生效的完整工具列表（由 application 层预构建）。
     tools: Vec<DynAgentTool>,
+    /// 上一次应用到 agent 的 Bundle 标识；用于跨 turn 判断业务上下文是否变化。
+    /// 当本轮 `TurnFrame.context_bundle.bundle_id` 与缓存值不同时触发
+    /// `set_system_prompt` 热更新。`None` 表示尚未拿到过 Bundle（首次创建或纯 fallback）。
+    last_bundle_id: Option<uuid::Uuid>,
 }
 
 struct ProviderRuntimeState {
@@ -318,6 +322,7 @@ impl AgentConnector for PiAgentConnector {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
         let restored_messages = context
+            .turn
             .restored_session_state
             .as_ref()
             .map(|state| state.messages.clone());
@@ -328,6 +333,10 @@ impl AgentConnector for PiAgentConnector {
         };
 
         let is_new_agent = existing_runtime.is_none();
+        let incoming_bundle_id = context.turn.context_bundle.as_ref().map(|b| b.bundle_id);
+        let mut cached_bundle_id = existing_runtime
+            .as_ref()
+            .and_then(|rt| rt.last_bundle_id);
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             current_tools = runtime.tools;
@@ -343,8 +352,8 @@ impl AgentConnector for PiAgentConnector {
             let bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,
-                    context.executor_config.provider_id.as_deref(),
-                    context.executor_config.model_id.as_deref(),
+                    context.session.executor_config.provider_id.as_deref(),
+                    context.session.executor_config.model_id.as_deref(),
                 )
                 .await?;
             self.create_agent_with_bridge(bridge)
@@ -353,24 +362,38 @@ impl AgentConnector for PiAgentConnector {
         // 只有新创建的 agent 才需要 build tools 和 system prompt。
         // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
         // 只更新 runtime delegate（hook session 每轮刷新）。
+        #[allow(deprecated)]
+        let assembled_sp_opt = context.turn.assembled_system_prompt.as_ref();
         if is_new_agent {
-            current_tools = context.assembled_tools.clone();
+            current_tools = context.turn.assembled_tools.clone();
 
-            if let Some(system_prompt) = &context.assembled_system_prompt {
+            if let Some(system_prompt) = assembled_sp_opt {
                 agent.set_system_prompt(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
             if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
                 agent.replace_messages(messages).await;
             }
+            cached_bundle_id = incoming_bundle_id;
+        } else if let Some(new_bundle_id) = incoming_bundle_id {
+            // 已存在 agent + 新 Bundle：若 bundle_id 发生变化则热更新 system prompt。
+            // 渲染结果仍由 application 层产出（`assembled_system_prompt`），
+            // connector 只负责感知"Bundle 变化"并把新文本推给 agent。
+            if cached_bundle_id != Some(new_bundle_id) {
+                if let Some(system_prompt) = assembled_sp_opt {
+                    agent.set_system_prompt(system_prompt.clone());
+                }
+                cached_bundle_id = Some(new_bundle_id);
+            }
         }
         let hook_trace_rx = context
+            .turn
             .hook_session
             .as_ref()
             .and_then(|hs| hs.subscribe_traces());
-        agent.set_runtime_delegate(context.runtime_delegate.clone());
+        agent.set_runtime_delegate(context.turn.runtime_delegate.clone());
 
-        if let Some(thinking_level) = context.executor_config.thinking_level {
+        if let Some(thinking_level) = context.session.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);
         }
 
@@ -384,12 +407,13 @@ impl AgentConnector for PiAgentConnector {
             PiAgentSessionRuntime {
                 agent,
                 tools: current_tools,
+                last_bundle_id: cached_bundle_id,
             },
         );
 
         let mut source = AgentDashSourceV1::new(self.connector_id(), "local_executor");
         source.executor_id = Some("PI_AGENT".to_string());
-        let turn_id = context.turn_id.clone();
+        let turn_id = context.session.turn_id.clone();
         let acp_session_id = SessionId::new(session_id.to_string());
 
         let (tx, rx) =

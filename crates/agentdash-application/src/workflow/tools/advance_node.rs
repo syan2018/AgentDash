@@ -60,8 +60,8 @@ impl CompleteLifecycleNodeTool {
         Self {
             repos,
             session_hub,
-            current_turn_id: context.turn_id.clone(),
-            hook_session: context.hook_session.clone(),
+            current_turn_id: context.session.turn_id.clone(),
+            hook_session: context.turn.hook_session.clone(),
             platform_config,
         }
     }

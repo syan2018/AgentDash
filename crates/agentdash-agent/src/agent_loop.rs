@@ -538,7 +538,14 @@ async fn stream_assistant_response(
             .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
     }
 
-    // delegate / transform_context 可在发送前裁剪或注入消息
+    // delegate / transform_context 可在发送前裁剪或注入消息。
+    //
+    // PR 4（04-30-session-pipeline-architecture-refactor）字段重命名：
+    // `output.steering_messages` 作为"本轮最终要发给 LLM 的完整消息列表"，
+    // 其中已合并原 context.messages + 改写后的 user message + hook 注入 +
+    // pending steering/follow-up。字段名从 `messages` 改为 `steering_messages`
+    // 以强调语义：静态上下文（companion_agents / workflow 等）不应由此路径
+    // 承载（它们走 Bundle 主数据面），此字段只承 per-turn 动态 steering。
     let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
         let output = delegate
             .transform_context(
@@ -555,7 +562,7 @@ async fn stream_assistant_response(
                 false,
             ));
         }
-        output.messages
+        output.steering_messages
     } else if let Some(ref transform) = config.transform_context {
         transform(context.messages.clone(), cancel.clone()).await
     } else {

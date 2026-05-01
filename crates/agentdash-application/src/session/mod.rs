@@ -5,7 +5,6 @@ pub mod bootstrap;
 pub mod companion_wait;
 pub mod context;
 mod continuation;
-mod event_bridge;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;
@@ -15,6 +14,7 @@ mod hub_support;
 mod memory_persistence;
 pub(crate) mod path_policy;
 pub mod persistence;
+mod persistence_listener;
 pub mod plan;
 pub mod post_turn_handler;
 mod prompt_pipeline;
@@ -49,7 +49,7 @@ pub use prompt_vfs::local_workspace_vfs;
 pub use title_generator::SessionTitleGenerator;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    CompanionSessionContext, PromptSessionRequest, ResolvedPromptPayload, SessionBootstrapAction,
+    CompanionSessionContext, HookSnapshotReloadTrigger, PromptSessionRequest, ResolvedPromptPayload,
     SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
 };

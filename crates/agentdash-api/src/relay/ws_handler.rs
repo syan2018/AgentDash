@@ -237,12 +237,10 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         RelayMessage::EventSessionNotification { payload, .. } => {
             use agentdash_application::backend_transport::RelaySessionEvent;
 
-            match serde_json::from_value::<agent_client_protocol::SessionNotification>(
+            match serde_json::from_value::<agentdash_protocol::BackboneEnvelope>(
                 payload.notification.clone(),
             ) {
-                Ok(notification) => {
-                    let envelope =
-                        agentdash_protocol::session_notification_to_envelope(&notification);
+                Ok(envelope) => {
                     if !state.services.backend_registry.feed_session_event(
                         &payload.session_id,
                         RelaySessionEvent::Notification(envelope),
@@ -259,7 +257,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                         backend_id = %backend_id,
                         session_id = %payload.session_id,
                         error = %err,
-                        "反序列化远程 SessionNotification 失败"
+                        "反序列化远程 BackboneEnvelope 失败"
                     );
                 }
             }

@@ -730,15 +730,16 @@ async fn forward_session_notifications(
 
     loop {
         match rx.recv().await {
-            Ok(notification) => {
-                let notification_json =
-                    serde_json::to_value(&notification).unwrap_or(serde_json::Value::Null);
+            Ok(persisted_event) => {
+                let envelope_json =
+                    serde_json::to_value(&persisted_event.notification)
+                        .unwrap_or(serde_json::Value::Null);
 
                 let relay_msg = RelayMessage::EventSessionNotification {
                     id: RelayMessage::new_id("evt"),
                     payload: SessionNotificationPayload {
                         session_id: session_id.to_string(),
-                        notification: notification_json,
+                        notification: envelope_json,
                     },
                 };
 

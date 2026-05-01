@@ -847,11 +847,11 @@ pub struct SearchHit {
 
 // ─── 事件 Payload ──────────────────────────────────────────
 
-/// ACP SessionNotification 透传（不解析内部结构）
+/// BackboneEnvelope 透传（JSON 编码的 BackboneEnvelope）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionNotificationPayload {
     pub session_id: String,
-    /// 完整的 ACP SessionNotification JSON，云端透传不解析
+    /// BackboneEnvelope JSON — 本机 serializes BackboneEnvelope, 云端 deserialize 后直接使用
     pub notification: serde_json::Value,
 }
 

@@ -1,93 +1,55 @@
 /**
- * ACP 工具调用卡片
+ * 工具调用卡片 — 基于 ThreadItem 渲染
  *
- * header 行复用与 EventStripCard / EventFullCard 一致的排版语言：
- *   [kind badge]  [title / subtitle]  [status dot · label]  [▲▼]
- *
- * 样式原则：badge 是唯一染色点，卡片外框保持 border-border。
- * 状态色仅影响 header 行右侧的 dot + label，不影响外框。
+ * header 行排版：[kind badge]  [title / subtitle]  [status dot · label]  [▲▼]
+ * badge 是唯一染色点，卡片外框保持 border-border。
  */
 
 import { memo, useEffect, useRef, useState } from "react";
-import type { SessionUpdate, ToolKind, ToolCallContent } from "@agentclientprotocol/sdk";
+import type { ThreadItem } from "../../../generated/backbone-protocol";
+import { getThreadItemTitle, getThreadItemStatus, getThreadItemKind } from "../model/types";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
-import { extractToolCallDraftInfo } from "../model/agentdashMeta";
 
-type ExtendedToolCallStatus =
-  | "pending"
-  | "in_progress"
+type DisplayStatus =
+  | "inProgress"
   | "completed"
   | "failed"
-  | "canceled"
-  | "rejected";
+  | "declined"
+  | "pending";
 
 const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 
 export interface AcpToolCallCardProps {
-  update: SessionUpdate;
+  item: ThreadItem;
   isPendingApproval?: boolean;
   compact?: boolean;
   sessionId?: string;
+  outputText?: string;
 }
 
 export const AcpToolCallCard = memo(function AcpToolCallCard({
-  update,
+  item,
   isPendingApproval,
   compact = false,
   sessionId,
+  outputText,
 }: AcpToolCallCardProps) {
-  const toolCallInfo = (() => {
-    if (update.sessionUpdate === "tool_call") {
-      return {
-        toolCallId: update.toolCallId,
-        title: update.title,
-        kind: update.kind ?? ("other" as ToolKind),
-        status: (update.status ?? "pending") as ExtendedToolCallStatus,
-        content: update.content ?? [],
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-      };
-    }
-    if (update.sessionUpdate === "tool_call_update") {
-      return {
-        toolCallId: update.toolCallId,
-        title: update.title ?? "工具调用",
-        kind: (update.kind ?? "other") as ToolKind,
-        status: (update.status ?? "pending") as ExtendedToolCallStatus,
-        content: update.content ?? [],
-        rawInput: update.rawInput,
-        rawOutput: update.rawOutput,
-      };
-    }
-    return null;
-  })();
+  const title = getThreadItemTitle(item);
+  const status = getThreadItemStatus(item) as DisplayStatus;
+  const kind = getThreadItemKind(item);
+  const itemId = item.id;
 
-  const resolvedToolCallInfo = toolCallInfo ?? {
-    toolCallId: "",
-    title: "工具调用",
-    kind: "other" as ToolKind,
-    status: "pending" as ExtendedToolCallStatus,
-    content: [] as ToolCallContent[],
-    rawInput: undefined,
-    rawOutput: undefined,
-  };
-
-  const { toolCallId, title, kind, status, rawInput, rawOutput, content } = resolvedToolCallInfo;
-  const draftInfo = extractToolCallDraftInfo(update);
-  const showDraftInput = shouldShowDraftInput(rawInput, draftInfo?.draftInput);
-  const showRawInput = rawInput !== undefined && !(showDraftInput && isEmptyJsonObject(rawInput));
-  const displayStatus = resolveDisplayStatus(status, rawOutput);
-  const [expanded, setExpanded] = useState(Boolean(isPendingApproval || showDraftInput));
+  const [expanded, setExpanded] = useState(Boolean(isPendingApproval));
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [renderStatus, setRenderStatus] = useState<ExtendedToolCallStatus>(displayStatus);
+  const [renderStatus, setRenderStatus] = useState<DisplayStatus>(status);
   const inProgressSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const isRunning = displayStatus === "in_progress" || displayStatus === "pending";
+    const isRunning = status === "inProgress" || status === "pending";
     if (isRunning) {
       inProgressSinceRef.current = Date.now();
-      setRenderStatus(displayStatus);
+      setRenderStatus(status);
       return;
     }
 
@@ -98,22 +60,20 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
       if (remain > 0) {
         const timer = setTimeout(() => {
           inProgressSinceRef.current = null;
-          setRenderStatus(displayStatus);
+          setRenderStatus(status);
         }, remain);
         return () => clearTimeout(timer);
       }
       inProgressSinceRef.current = null;
     }
-    setRenderStatus(displayStatus);
-  }, [displayStatus]);
+    setRenderStatus(status);
+  }, [status]);
 
   useEffect(() => {
     if (isPendingApproval) {
       setExpanded(true);
     }
   }, [isPendingApproval]);
-
-  if (!toolCallInfo) return null;
 
   const statusConfig = getStatusConfig(renderStatus, isPendingApproval);
   const kindConfig = getKindConfig(kind);
@@ -123,7 +83,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
     setApprovalError(null);
     setIsSubmittingApproval(true);
     try {
-      await approveToolCall(sessionId, toolCallId);
+      await approveToolCall(sessionId, itemId);
     } catch (error) {
       setApprovalError(error instanceof Error ? error.message : "审批失败");
     } finally {
@@ -136,7 +96,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
     setApprovalError(null);
     setIsSubmittingApproval(true);
     try {
-      await rejectToolCall(sessionId, toolCallId);
+      await rejectToolCall(sessionId, itemId);
     } catch (error) {
       setApprovalError(error instanceof Error ? error.message : "拒绝失败");
     } finally {
@@ -144,7 +104,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
     }
   };
 
-  // ── compact 模式 ───────────────────────────────────────────────────────────
+  // ── compact 模式 ──
   if (compact) {
     return (
       <div className="rounded-[10px] border border-border bg-background px-2.5 py-2 text-xs">
@@ -161,35 +121,31 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
     );
   }
 
-  // ── 完整卡片 ───────────────────────────────────────────────────────────────
+  const detailContent = extractDetailContent(item);
+
+  // ── 完整卡片 ──
   return (
     <div
       className={`rounded-[12px] border border-border bg-background transition-colors ${
-        renderStatus === "failed" ||
-        renderStatus === "canceled" ||
-        renderStatus === "rejected"
+        renderStatus === "failed" || renderStatus === "declined"
           ? "opacity-90"
           : ""
       }`}
     >
-      {/* header 行 */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-secondary/35 transition-colors"
       >
-        {/* kind badge — 中性，不染色 */}
         <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
           {kindConfig.icon}
         </span>
 
-        {/* title + subtitle */}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
           <p className="text-xs text-muted-foreground">{kindConfig.label}</p>
         </div>
 
-        {/* 状态：dot + label，是唯一的状态染色点 */}
         <div className="flex shrink-0 items-center gap-1.5">
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
           <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
@@ -200,10 +156,8 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
         </span>
       </button>
 
-      {/* 展开区 */}
       {expanded && (
         <div className="space-y-3 border-t border-border px-3 py-3">
-          {/* 待审批提示 */}
           {isPendingApproval && (
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-warning">
@@ -213,17 +167,15 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
             </div>
           )}
 
-          {/* 取消/拒绝提示 */}
-          {(displayStatus === "canceled" || displayStatus === "rejected") && (
+          {(renderStatus === "declined") && (
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
-                {displayStatus === "canceled" ? "取消" : "拒绝"}
+                拒绝
               </span>
-              {displayStatus === "canceled" ? "已取消执行" : "已拒绝执行"}
+              已拒绝执行
             </div>
           )}
 
-          {/* 审批按钮 */}
           {isPendingApproval && sessionId && (
             <div className="flex flex-wrap gap-2">
               <button
@@ -245,55 +197,28 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
             </div>
           )}
 
-          {/* 审批错误 */}
           {approvalError && (
             <div className="rounded-[10px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
               {approvalError}
             </div>
           )}
 
-          {/* 内容块 */}
-          {content && content.length > 0 && (
+          {detailContent && (
             <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">内容</p>
-              <div className="space-y-2">
-                {content.map((item: ToolCallContent, index: number) => (
-                  <ContentBlockView key={index} content={item} />
-                ))}
-              </div>
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">{detailContent.label}</p>
+              <pre className="agentdash-chat-code-block max-h-64">{detailContent.text}</pre>
             </div>
           )}
 
-          {/* 输入 */}
-          {showDraftInput && draftInfo && (
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">
-                草稿输入
-                {draftInfo.isParseable === false ? " · 未闭合 JSON" : ""}
-              </p>
-              <pre className="agentdash-chat-code-block">{draftInfo.draftInput}</pre>
-            </div>
-          )}
-
-          {/* 输入 */}
-          {showRawInput && (
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输入</p>
-              <pre className="agentdash-chat-code-block">{safeJson(rawInput)}</pre>
-            </div>
-          )}
-
-          {/* 输出 */}
-          {rawOutput !== undefined && (
+          {outputText && (
             <div>
               <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输出</p>
-              <pre className="agentdash-chat-code-block max-h-64">{safeJson(rawOutput)}</pre>
+              <pre className="agentdash-chat-code-block max-h-64">{outputText}</pre>
             </div>
           )}
 
-          {/* tool call ID */}
           <p className="select-none font-mono text-[10px] text-muted-foreground/25">
-            {toolCallId.slice(0, 8)}
+            {itemId.slice(0, 8)}
           </p>
         </div>
       )}
@@ -301,91 +226,38 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
   );
 });
 
-// ─── 辅助组件 ─────────────────────────────────────────────────────────────────
-
-function ContentBlockView({ content }: { content: ToolCallContent }) {
-  if (content.type === "content") {
-    const block = content.content;
-    if (block.type === "text") {
-      return <div className="whitespace-pre-wrap text-sm leading-7">{block.text}</div>;
+function extractDetailContent(item: ThreadItem): { label: string; text: string } | null {
+  switch (item.type) {
+    case "commandExecution": {
+      if (item.aggregatedOutput) {
+        return { label: "命令输出", text: item.aggregatedOutput };
+      }
+      return { label: "命令", text: `$ ${item.command}\n(cwd: ${item.cwd})` };
     }
-    if (block.type === "image") {
-      return (
-        <img
-          src={`data:${block.mimeType};base64,${block.data}`}
-          alt=""
-          className="max-h-48 rounded-[10px] border border-border"
-        />
-      );
+    case "fileChange": {
+      const diffs = item.changes.map((c) => `--- ${c.path}\n${c.diff}`).join("\n\n");
+      return diffs ? { label: "文件变更", text: diffs } : null;
     }
-    if (block.type === "resource_link") {
-      return (
-        <a
-          href={block.uri}
-          className="text-sm text-primary hover:underline"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {block.name}
-        </a>
-      );
+    case "mcpToolCall": {
+      const parts: string[] = [];
+      if (item.arguments) parts.push(`输入: ${safeJson(item.arguments)}`);
+      if (item.result) parts.push(`输出: ${safeJson(item.result)}`);
+      if (item.error) parts.push(`错误: ${item.error.message}`);
+      return parts.length > 0 ? { label: "MCP 工具", text: parts.join("\n\n") } : null;
     }
-    return <pre className="font-mono text-xs">{safeJson(block)}</pre>;
+    case "dynamicToolCall": {
+      const parts: string[] = [];
+      if (item.arguments) parts.push(`输入: ${safeJson(item.arguments)}`);
+      if (item.contentItems?.length) parts.push(`输出: ${safeJson(item.contentItems)}`);
+      return parts.length > 0 ? { label: "工具调用", text: parts.join("\n\n") } : null;
+    }
+    default:
+      return null;
   }
-
-  if (content.type === "diff") {
-    return (
-      <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5 font-mono text-xs">
-        <p className="mb-1.5 text-muted-foreground">{content.path}</p>
-        {content.oldText && (
-          <div className="whitespace-pre-wrap text-destructive/70 line-through">
-            {content.oldText.slice(0, 200)}
-            {content.oldText.length > 200 ? "..." : ""}
-          </div>
-        )}
-        <div className="whitespace-pre-wrap text-success">
-          {content.newText.slice(0, 200)}
-          {content.newText.length > 200 ? "..." : ""}
-        </div>
-      </div>
-    );
-  }
-
-  if (content.type === "terminal") {
-    return (
-      <div className="rounded-[10px] border border-border bg-secondary/70 p-2.5">
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em]">
-            终端
-          </span>
-          {content.terminalId}
-        </p>
-      </div>
-    );
-  }
-
-  return null;
-}
-
-// ─── 辅助函数 ─────────────────────────────────────────────────────────────────
-
-function resolveDisplayStatus(
-  status: ExtendedToolCallStatus,
-  rawOutput: unknown,
-): ExtendedToolCallStatus {
-  if (
-    rawOutput &&
-    typeof rawOutput === "object" &&
-    "approval_state" in rawOutput &&
-    (rawOutput as { approval_state?: unknown }).approval_state === "rejected"
-  ) {
-    return "rejected";
-  }
-  return status;
 }
 
 function getStatusConfig(
-  status: ExtendedToolCallStatus,
+  status: DisplayStatus,
   isPendingApproval?: boolean,
 ): { label: string; color: string; dot: string } {
   if (isPendingApproval) {
@@ -394,62 +266,34 @@ function getStatusConfig(
   switch (status) {
     case "pending":
       return { label: "等待中", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
-    case "in_progress":
+    case "inProgress":
       return { label: "执行中", color: "text-primary", dot: "bg-primary animate-pulse" };
     case "completed":
       return { label: "已完成", color: "text-success", dot: "bg-success" };
     case "failed":
       return { label: "失败", color: "text-destructive", dot: "bg-destructive" };
-    case "canceled":
-      return { label: "已取消", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
-    case "rejected":
+    case "declined":
       return { label: "已拒绝", color: "text-warning", dot: "bg-warning" };
     default:
       return { label: "未知", color: "text-muted-foreground", dot: "bg-muted-foreground/50" };
   }
 }
 
-function getKindConfig(kind: ToolKind): { label: string; icon: string } {
+function getKindConfig(kind: string): { label: string; icon: string } {
   switch (kind) {
-    case "read":        return { label: "读取", icon: "READ" };
-    case "edit":        return { label: "编辑", icon: "EDIT" };
-    case "delete":      return { label: "删除", icon: "DEL" };
-    case "move":        return { label: "移动", icon: "MOVE" };
-    case "search":      return { label: "搜索", icon: "FIND" };
-    case "execute":     return { label: "执行", icon: "RUN" };
-    case "think":       return { label: "思考", icon: "THNK" };
-    case "fetch":       return { label: "获取", icon: "NET" };
-    case "switch_mode": return { label: "切换模式", icon: "MODE" };
-    case "other":
-    default:            return { label: "工具", icon: "TOOL" };
+    case "execute":    return { label: "执行", icon: "RUN" };
+    case "edit":       return { label: "编辑", icon: "EDIT" };
+    case "mcp":        return { label: "MCP", icon: "MCP" };
+    case "tool":       return { label: "工具", icon: "TOOL" };
+    case "search":     return { label: "搜索", icon: "FIND" };
+    case "image":      return { label: "图片", icon: "IMG" };
+    case "collab":     return { label: "协作", icon: "COLL" };
+    default:           return { label: "工具", icon: "TOOL" };
   }
 }
 
 function safeJson(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-}
-
-function shouldShowDraftInput(rawInput: unknown, draftInput?: string): boolean {
-  if (!draftInput || draftInput.trim().length === 0) {
-    return false;
-  }
-  const rawInputJson = safeCompactJson(rawInput);
-  return rawInputJson == null || rawInputJson !== draftInput;
-}
-
-function safeCompactJson(value: unknown): string | null {
-  if (value === undefined) {
-    return null;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
-}
-
-function isEmptyJsonObject(value: unknown): boolean {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0;
 }
 
 export default AcpToolCallCard;

@@ -1,32 +1,32 @@
 /**
- * ACP 计划卡片
+ * 计划卡片
  *
- * 显示 Agent 的执行计划
+ * 显示 Agent 的执行计划（TurnPlanStep[]）
  */
 
 import { memo, useState } from "react";
-import type { PlanEntry, PlanEntryStatus, PlanEntryPriority } from "@agentclientprotocol/sdk";
+import type { TurnPlanStep, TurnPlanStepStatus } from "../../../generated/backbone-protocol";
 
 export interface AcpPlanCardProps {
-  entries: PlanEntry[];
+  steps: TurnPlanStep[];
   collapsible?: boolean;
   defaultCollapsed?: boolean;
 }
 
 export const AcpPlanCard = memo(function AcpPlanCard({
-  entries,
+  steps,
   collapsible = true,
   defaultCollapsed = false,
 }: AcpPlanCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
-  if (entries.length === 0) {
+  if (steps.length === 0) {
     return null;
   }
 
-  const completedCount = entries.filter((e) => e.status === "completed").length;
-  const inProgressCount = entries.filter((e) => e.status === "in_progress").length;
-  const progress = Math.round((completedCount / entries.length) * 100);
+  const completedCount = steps.filter((s) => s.status === "completed").length;
+  const inProgressCount = steps.filter((s) => s.status === "inProgress").length;
+  const progress = Math.round((completedCount / steps.length) * 100);
 
   const cardContent = (
     <>
@@ -38,13 +38,13 @@ export const AcpPlanCard = memo(function AcpPlanCard({
       </div>
 
       <ul className="space-y-2">
-        {entries.map((entry, index) => (
-          <PlanEntryItem key={index} entry={entry} index={index} />
+        {steps.map((step, index) => (
+          <PlanStepItem key={index} step={step} index={index} />
         ))}
       </ul>
 
       <div className="mt-3 flex items-center gap-4 border-t border-border pt-3 text-xs text-muted-foreground">
-        <span>总计: {entries.length}</span>
+        <span>总计: {steps.length}</span>
         <span className="text-success">已完成: {completedCount}</span>
         {inProgressCount > 0 && (
           <span className="text-primary animate-pulse">进行中: {inProgressCount}</span>
@@ -90,15 +90,14 @@ export const AcpPlanCard = memo(function AcpPlanCard({
   );
 });
 
-function PlanEntryItem({
-  entry,
+function PlanStepItem({
+  step,
   index,
 }: {
-  entry: PlanEntry;
+  step: TurnPlanStep;
   index: number;
 }) {
-  const statusConfig = getStatusConfig(entry.status);
-  const priorityConfig = getPriorityConfig(entry.priority);
+  const statusConfig = getStatusConfig(step.status);
 
   return (
     <li className="flex items-start gap-3 rounded-[10px] border border-border/70 bg-secondary/35 px-3 py-2.5">
@@ -111,18 +110,13 @@ function PlanEntryItem({
       <div className="flex-1 min-w-0">
         <p
           className={`text-sm ${
-            entry.status === "completed"
+            step.status === "completed"
               ? "text-muted-foreground line-through"
               : "text-foreground"
           }`}
         >
-          {entry.content}
+          {step.step}
         </p>
-        <div className="mt-0.5 flex items-center gap-2">
-          <span className={`text-xs ${priorityConfig.color}`}>
-            {priorityConfig.label}
-          </span>
-        </div>
       </div>
 
       <span className="text-xs text-muted-foreground">#{index + 1}</span>
@@ -130,35 +124,19 @@ function PlanEntryItem({
   );
 }
 
-function getStatusConfig(status: PlanEntryStatus): {
+function getStatusConfig(status: TurnPlanStepStatus): {
   icon: string;
   bgClass: string;
 } {
   switch (status) {
     case "pending":
       return { icon: "○", bgClass: "bg-background text-muted-foreground border border-border" };
-    case "in_progress":
+    case "inProgress":
       return { icon: "⋯", bgClass: "bg-primary/10 text-primary border border-primary/20" };
     case "completed":
       return { icon: "✓", bgClass: "bg-success/10 text-success border border-success/20" };
     default:
       return { icon: "?", bgClass: "bg-background text-muted-foreground border border-border" };
-  }
-}
-
-function getPriorityConfig(priority: PlanEntryPriority): {
-  label: string;
-  color: string;
-} {
-  switch (priority) {
-    case "high":
-      return { label: "高优先级", color: "text-destructive font-medium" };
-    case "medium":
-      return { label: "中优先级", color: "text-warning" };
-    case "low":
-      return { label: "低优先级", color: "text-muted-foreground" };
-    default:
-      return { label: "未知", color: "text-muted-foreground" };
   }
 }
 

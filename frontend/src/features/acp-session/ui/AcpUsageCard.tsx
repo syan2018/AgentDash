@@ -1,15 +1,13 @@
 /**
- * ACP 用量卡片
+ * 用量卡片
  *
- * 渲染 usage_update 事件，显示 token 使用量。
- * 支持 ACP 标准字段（size/used）和 AgentDash 扩展字段（inputTokens/outputTokens 等）。
+ * 渲染 token_usage_updated 事件。
  */
 
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 
 export interface AcpUsageCardProps {
-  update: SessionUpdate;
+  event: BackboneEvent;
 }
 
 function formatTokenCount(n: number | undefined): string {
@@ -19,33 +17,16 @@ function formatTokenCount(n: number | undefined): string {
   return String(n);
 }
 
-export function AcpUsageCard({ update }: AcpUsageCardProps) {
-  if (update.sessionUpdate !== "usage_update") return null;
+export function AcpUsageCard({ event }: AcpUsageCardProps) {
+  if (event.type !== "token_usage_updated") return null;
 
-  const u = update as Record<string, unknown>;
+  const usage = event.payload.tokenUsage;
+  const total = usage.total;
+  const maxTokens = usage.modelContextWindow ?? undefined;
+  const used = total.totalTokens;
 
-  // ACP 标准字段
-  const size = typeof u.size === "number" ? u.size : undefined;
-  const used = typeof u.used === "number" ? u.used : undefined;
-
-  // AgentDash 扩展字段（可能在 _meta 或直接在 update 上）
-  const meta = extractAgentDashMetaFromUpdate(update);
-  const metaData = meta?.event?.data as Record<string, unknown> | undefined;
-
-  const inputTokens = (typeof u.inputTokens === "number" ? u.inputTokens : undefined)
-    ?? (typeof metaData?.inputTokens === "number" ? metaData.inputTokens : undefined);
-  const outputTokens = (typeof u.outputTokens === "number" ? u.outputTokens : undefined)
-    ?? (typeof metaData?.outputTokens === "number" ? metaData.outputTokens : undefined);
-  const cacheReadTokens = (typeof u.cacheReadTokens === "number" ? u.cacheReadTokens : undefined)
-    ?? (typeof metaData?.cacheReadTokens === "number" ? metaData.cacheReadTokens : undefined);
-
-  const hasStandard = size != null || used != null;
-  const hasExtended = inputTokens != null || outputTokens != null;
-
-  if (!hasStandard && !hasExtended) return null;
-
-  const usedPercent = (size != null && used != null && size > 0)
-    ? Math.round((used / size) * 100)
+  const usedPercent = (maxTokens != null && used > 0 && maxTokens > 0)
+    ? Math.round((used / maxTokens) * 100)
     : undefined;
 
   return (
@@ -53,33 +34,25 @@ export function AcpUsageCard({ update }: AcpUsageCardProps) {
       <span className="inline-flex rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         TOKENS
       </span>
-      {hasStandard && (
-        <>
-          <span>
-            上下文: <span className="font-medium text-foreground/70">{formatTokenCount(used)}</span>
-            {size != null && <span className="text-muted-foreground/60">/{formatTokenCount(size)}</span>}
-          </span>
-          {usedPercent != null && (
-            <div className="flex items-center gap-1">
-              <div className="h-1 w-12 overflow-hidden rounded-full bg-background">
-                <div
-                  className={`h-full rounded-full transition-all ${usedPercent > 80 ? "bg-warning" : "bg-primary/60"}`}
-                  style={{ width: `${Math.min(usedPercent, 100)}%` }}
-                />
-              </div>
-              <span className="text-muted-foreground/60 tabular-nums">{usedPercent}%</span>
-            </div>
-          )}
-        </>
+      <span>
+        上下文: <span className="font-medium text-foreground/70">{formatTokenCount(used)}</span>
+        {maxTokens != null && <span className="text-muted-foreground/60">/{formatTokenCount(maxTokens)}</span>}
+      </span>
+      {usedPercent != null && (
+        <div className="flex items-center gap-1">
+          <div className="h-1 w-12 overflow-hidden rounded-full bg-background">
+            <div
+              className={`h-full rounded-full transition-all ${usedPercent > 80 ? "bg-warning" : "bg-primary/60"}`}
+              style={{ width: `${Math.min(usedPercent, 100)}%` }}
+            />
+          </div>
+          <span className="text-muted-foreground/60 tabular-nums">{usedPercent}%</span>
+        </div>
       )}
-      {inputTokens != null && (
-        <span>输入: <span className="font-medium text-foreground/70">{formatTokenCount(inputTokens)}</span></span>
-      )}
-      {outputTokens != null && (
-        <span>输出: <span className="font-medium text-foreground/70">{formatTokenCount(outputTokens)}</span></span>
-      )}
-      {cacheReadTokens != null && cacheReadTokens > 0 && (
-        <span>缓存: <span className="font-medium text-foreground/70">{formatTokenCount(cacheReadTokens)}</span></span>
+      <span>输入: <span className="font-medium text-foreground/70">{formatTokenCount(total.inputTokens)}</span></span>
+      <span>输出: <span className="font-medium text-foreground/70">{formatTokenCount(total.outputTokens)}</span></span>
+      {total.cachedInputTokens > 0 && (
+        <span>缓存: <span className="font-medium text-foreground/70">{formatTokenCount(total.cachedInputTokens)}</span></span>
       )}
     </div>
   );

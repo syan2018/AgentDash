@@ -1,67 +1,97 @@
-import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import type { AgentDashMetaV1 } from '../../../generated/agentdash-acp-meta';
+/**
+ * BackboneEvent / PlatformEvent 元信息提取工具
+ *
+ * 在新的 BackboneEnvelope 协议下，元信息不再嵌套在 _meta.agentdash 内，
+ * 而是直接在 envelope 的 trace/source 字段和 PlatformEvent 的结构化 payload 中。
+ */
 
-const EXPECTED_VERSION = 1;
+import type { BackboneEvent, PlatformEvent } from "../../../generated/backbone-protocol";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function parseAgentDashMeta(meta: unknown): AgentDashMetaV1 | null {
-  if (!isRecord(meta)) return null;
-  const agentdash = meta.agentdash;
-  if (!isRecord(agentdash)) return null;
-  const v = agentdash.v;
-  if (typeof v !== 'number' || v !== EXPECTED_VERSION) return null;
-  return agentdash as unknown as AgentDashMetaV1;
-}
+/**
+ * 从 PlatformEvent::SessionMetaUpdate 的 value 中提取 event.type 字段。
+ * 对应旧的 AgentDashMetaV1.event.type。
+ */
+export function extractPlatformEventType(event: BackboneEvent): string | null {
+  if (event.type !== "platform") return null;
+  const platform: PlatformEvent = event.payload;
 
-export function extractAgentDashMetaFromUpdate(update: SessionUpdate): AgentDashMetaV1 | null {
-  const u = update as unknown as Record<string, unknown>;
-  // ACP uses `_meta` (preferred), but some SDKs may expose `meta`.
-  const direct = u._meta ?? u.meta;
-  const fromDirect = parseAgentDashMeta(direct);
-  if (fromDirect) return fromDirect;
+  if (platform.kind === "executor_session_bound") return "executor_session_bound";
+  if (platform.kind === "hook_trace") return "hook_event";
 
-  // Some updates carry meta nested under `content` (chunk wrappers).
-  const content = u.content;
-  if (isRecord(content)) {
-    return parseAgentDashMeta(content._meta ?? content.meta);
+  if (platform.kind === "session_meta_update") {
+    return platform.data.key;
   }
+
   return null;
 }
 
-export function hasAgentDashEvent(update: SessionUpdate): boolean {
-  const meta = extractAgentDashMetaFromUpdate(update);
-  return Boolean(meta?.event?.type);
-}
+/**
+ * 从 PlatformEvent::SessionMetaUpdate 的 value 中提取事件数据。
+ * 对应旧的 AgentDashMetaV1.event.data。
+ */
+export function extractPlatformEventData(event: BackboneEvent): Record<string, unknown> | null {
+  if (event.type !== "platform") return null;
+  const platform: PlatformEvent = event.payload;
 
-export interface ToolCallDraftInfo {
-  toolCallId?: string;
-  toolName?: string;
-  phase?: string;
-  delta?: string;
-  draftInput: string;
-  isParseable?: boolean;
-}
+  if (platform.kind === "executor_session_bound") {
+    return { executor_session_id: platform.data.executor_session_id };
+  }
 
-export function extractToolCallDraftInfo(update: SessionUpdate): ToolCallDraftInfo | null {
-  const event = extractAgentDashMetaFromUpdate(update)?.event;
-  if (!event || event.type !== 'tool_call_draft' || !isRecord(event.data)) {
+  if (platform.kind === "hook_trace") {
+    return platform.data as unknown as Record<string, unknown>;
+  }
+
+  if (platform.kind === "session_meta_update") {
+    const value = platform.data.value;
+    if (isRecord(value)) return value;
+    if (typeof value === "string") return { message: value };
     return null;
   }
 
-  const draftInput = event.data.draftInput;
-  if (typeof draftInput !== 'string' || draftInput.length === 0) {
+  return null;
+}
+
+/**
+ * 从 PlatformEvent::SessionMetaUpdate 中提取 event.message。
+ */
+export function extractPlatformEventMessage(event: BackboneEvent): string | null {
+  if (event.type !== "platform") return null;
+  const platform: PlatformEvent = event.payload;
+
+  if (platform.kind === "hook_trace") {
+    return platform.data.message ?? null;
+  }
+
+  if (platform.kind === "session_meta_update") {
+    const value = platform.data.value;
+    if (isRecord(value) && typeof value.message === "string") {
+      return value.message;
+    }
     return null;
   }
+
+  return null;
+}
+
+/**
+ * 从 PlatformEvent::HookTrace 中提取 hook 事件信息。
+ */
+export function extractHookTraceInfo(event: BackboneEvent): {
+  eventType: string | null;
+  message: string | null;
+  data: unknown;
+} | null {
+  if (event.type !== "platform") return null;
+  const platform: PlatformEvent = event.payload;
+  if (platform.kind !== "hook_trace") return null;
 
   return {
-    toolCallId: typeof event.data.toolCallId === 'string' ? event.data.toolCallId : undefined,
-    toolName: typeof event.data.toolName === 'string' ? event.data.toolName : undefined,
-    phase: typeof event.data.phase === 'string' ? event.data.phase : undefined,
-    delta: typeof event.data.delta === 'string' ? event.data.delta : undefined,
-    draftInput,
-    isParseable: typeof event.data.isParseable === 'boolean' ? event.data.isParseable : undefined,
+    eventType: platform.data.eventType ?? null,
+    message: platform.data.message ?? null,
+    data: platform.data.data ?? null,
   };
 }

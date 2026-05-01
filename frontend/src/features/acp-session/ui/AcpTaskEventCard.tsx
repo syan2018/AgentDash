@@ -1,17 +1,16 @@
 /**
  * Task 专属事件卡片
  *
- * 仅渲染 event.type 以 task_ 开头的 session_info_update。
- * 复用 EventFullCard 模板，badge 是唯一染色点。
+ * 仅渲染 platform event 中以 task_ 开头的事件。
  */
 
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, isRecord } from "../model/agentdashMeta";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 import { EventFullCard } from "./EventCards";
 
 export interface AcpTaskEventCardProps {
-  update: SessionUpdate;
+  event: BackboneEvent;
 }
 
 const TASK_EVENT_LABELS: Record<string, string> = {
@@ -21,17 +20,16 @@ const TASK_EVENT_LABELS: Record<string, string> = {
   task_start_failed:     "任务启动失败",
 };
 
-export function AcpTaskEventCard({ update }: AcpTaskEventCardProps) {
-  if (!isTaskEventUpdate(update)) return null;
+export function AcpTaskEventCard({ event }: AcpTaskEventCardProps) {
+  if (!isTaskEventUpdate(event)) return null;
 
-  const meta = extractAgentDashMetaFromUpdate(update);
-  const eventType = meta?.event?.type ?? "task_event";
+  const eventType = extractPlatformEventType(event) ?? "task_event";
   const label = TASK_EVENT_LABELS[eventType] ?? eventType;
-  const message = meta?.event?.message ?? label;
-  const data = isRecord(meta?.event?.data) ? meta?.event?.data : null;
+  const message = extractPlatformEventMessage(event) ?? label;
+  const data = extractPlatformEventData(event);
 
-  const fromStatus = typeof data?.from === "string" ? data.from : null;
-  const toStatus = typeof data?.to === "string" ? data.to : null;
+  const fromStatus = isRecord(data) && typeof data.from === "string" ? data.from : null;
+  const toStatus = isRecord(data) && typeof data.to === "string" ? data.to : null;
 
   const isFailure =
     eventType === "task_start_failed" || eventType === "task_cancel_requested";

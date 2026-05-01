@@ -1,5 +1,5 @@
 /**
- * ACP 会话管理 Hook
+ * 会话管理 Hook
  *
  * 整合流管理和条目聚合逻辑。
  * 暴露 displayItems（聚合后）、rawEntries、tokenUsage 等供 UI 使用。
@@ -7,7 +7,7 @@
 
 import { useMemo, useRef } from "react";
 import { useAcpStream } from "./useAcpStream";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 import {
   isAggregatedGroup as isAggregatedGroupItem,
   isAggregatedThinkingGroup as isAggregatedThinkingGroupItem,
@@ -26,7 +26,6 @@ export interface UseAcpSessionOptions {
   sessionId: string;
   endpoint?: string;
   enableAggregation?: boolean;
-  /** 透传给 useAcpStream：false 时不发起连接 */
   enabled?: boolean;
 }
 
@@ -41,82 +40,76 @@ export interface UseAcpSessionResult {
   reconnect: () => void;
   close: () => void;
   sendCancel: () => Promise<void>;
-  /** ID of the entry currently being streamed (last agent_message_chunk while receiving data), or null */
   streamingEntryId: string | null;
-  /** 最新的 token 用量（累计） */
   tokenUsage: TokenUsageInfo | null;
 }
 
-function getToolAggregationType(update: SessionUpdate): ToolAggregationType | null {
-  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
-    return null;
-  }
-
-  const kind = "kind" in update ? update.kind : undefined;
-  const title = "title" in update ? (update.title ?? "") : "";
-
-  // 读取类操作统一归为 info_gather
-  if (kind === "read") return "info_gather";
-  if (kind === "search") return "info_gather";
-  if (kind === "fetch") return "info_gather";
-
-  // 编辑类保持独立（按文件路径分组）
-  if (kind === "edit") return "file_edit";
-
-  // 命令执行：按 title 启发式判断子类型
-  if (kind === "execute") {
-    const lowerTitle = (title as string).toLowerCase();
-    // 读取类命令 → info_gather
-    if (lowerTitle.includes("read") || lowerTitle.includes("cat") || lowerTitle.includes("less")) {
-      return "info_gather";
-    }
-    // 搜索类命令 → info_gather
-    if (lowerTitle.includes("search") || lowerTitle.includes("grep") || lowerTitle.includes("find")) {
-      return "info_gather";
-    }
-    // 获取类命令 → info_gather
-    if (lowerTitle.includes("fetch") || lowerTitle.includes("curl") || lowerTitle.includes("wget")) {
-      return "info_gather";
-    }
-    // 编辑类命令保持独立
-    if (lowerTitle.includes("edit") || lowerTitle.includes("sed") || lowerTitle.includes("awk")) {
-      return "command_run_edit";
-    }
+function extractThreadItem(event: BackboneEvent): ThreadItem | null {
+  if (event.type === "item_started" || event.type === "item_completed") {
+    return event.payload.item;
   }
   return null;
 }
 
-function isThinkingUpdate(update: SessionUpdate): boolean {
-  return update.sessionUpdate === "agent_thought_chunk";
+function getToolAggregationType(event: BackboneEvent): ToolAggregationType | null {
+  const item = extractThreadItem(event);
+  if (!item) return null;
+
+  switch (item.type) {
+    case "commandExecution": {
+      const cmd = item.command.toLowerCase();
+      if (cmd.includes("cat") || cmd.includes("less") || cmd.includes("head") || cmd.includes("tail")) {
+        return "info_gather";
+      }
+      if (cmd.includes("grep") || cmd.includes("find") || cmd.includes("rg")) {
+        return "info_gather";
+      }
+      if (cmd.includes("curl") || cmd.includes("wget") || cmd.includes("fetch")) {
+        return "info_gather";
+      }
+      if (cmd.includes("sed") || cmd.includes("awk")) {
+        return "command_run_edit";
+      }
+      return null;
+    }
+    case "fileChange":
+      return "file_edit";
+    case "mcpToolCall":
+    case "dynamicToolCall":
+      return "info_gather";
+    case "webSearch":
+      return "info_gather";
+    default:
+      return null;
+  }
 }
 
-function isFileEditUpdate(update: SessionUpdate): boolean {
-  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
-    return false;
-  }
-  const kind = "kind" in update ? update.kind : undefined;
-  return kind === "edit";
+function isThinkingEvent(event: BackboneEvent): boolean {
+  return event.type === "reasoning_text_delta" || event.type === "reasoning_summary_delta";
 }
 
-function getFilePathFromUpdate(update: SessionUpdate): string | null {
-  if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
-    return null;
-  }
-  const locations = "locations" in update ? update.locations : undefined;
-  if (Array.isArray(locations) && locations.length > 0) {
-    return locations[0].path ?? null;
+function isFileEditEvent(event: BackboneEvent): boolean {
+  const item = extractThreadItem(event);
+  return item?.type === "fileChange";
+}
+
+function getFilePathFromEvent(event: BackboneEvent): string | null {
+  const item = extractThreadItem(event);
+  if (item?.type === "fileChange" && item.changes.length > 0) {
+    return item.changes[0]!.path;
   }
   return null;
 }
 
-/** session_info_update 和 usage_update 不参与聚合，直接 pass-through */
-function isNonAggregatableEvent(update: SessionUpdate): boolean {
+function isNonAggregatableEvent(event: BackboneEvent): boolean {
   return (
-    update.sessionUpdate === "session_info_update" ||
-    update.sessionUpdate === "usage_update" ||
-    update.sessionUpdate === "available_commands_update" ||
-    update.sessionUpdate === "current_mode_update" ||
-    update.sessionUpdate === "config_option_update"
+    event.type === "platform" ||
+    event.type === "token_usage_updated" ||
+    event.type === "thread_status_changed" ||
+    event.type === "turn_started" ||
+    event.type === "turn_completed" ||
+    event.type === "error" ||
+    event.type === "approval_request"
   );
 }
 
@@ -142,17 +135,16 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   };
 
   for (const entry of entries) {
-    const update = entry.update;
+    const event = entry.event;
 
-    // 系统事件不聚合
-    if (isNonAggregatableEvent(update)) {
+    if (isNonAggregatableEvent(event)) {
       flushGroups();
       result.push(entry);
       continue;
     }
 
-    if (isFileEditUpdate(update)) {
-      const filePath = getFilePathFromUpdate(update);
+    if (isFileEditEvent(event)) {
+      const filePath = getFilePathFromEvent(event);
       if (filePath) {
         if (currentDiffGroup && currentDiffGroup.filePath === filePath) {
           currentDiffGroup.entries.push(entry);
@@ -171,7 +163,7 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       }
     }
 
-    const aggType = getToolAggregationType(update);
+    const aggType = getToolAggregationType(event);
     if (aggType && aggType !== "file_edit") {
       if (currentToolGroup && currentToolGroup.aggregationType === aggType) {
         currentToolGroup.entries.push(entry);
@@ -188,7 +180,7 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       continue;
     }
 
-    if (isThinkingUpdate(update)) {
+    if (isThinkingEvent(event)) {
       if (currentThinkingGroup) {
         currentThinkingGroup.entries.push(entry);
       } else {
@@ -209,7 +201,6 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
 
   flushGroups();
 
-  // 单条条目不需要聚合壳，还原为独立条目以保留完整的卡片渲染
   return result.map((item) => {
     if (
       (item as AggregatedEntryGroup).type === "aggregated_group" &&
@@ -231,7 +222,7 @@ function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
   return (
     a.id === b.id &&
     a.eventSeq === b.eventSeq &&
-    a.update === b.update &&
+    a.event === b.event &&
     a.isPendingApproval === b.isPendingApproval
   );
 }
@@ -296,10 +287,6 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
 
   const prevDisplayItemsRef = useRef<AcpDisplayItem[]>([]);
 
-  // 该 useMemo 在渲染期间读写 prevDisplayItemsRef 以复用上一次的 group/entry 引用，
-  // 使下游 React.memo 能命中——这是主动做的引用稳定化，而不是遗漏的副作用。
-  // useMemo 本身在每次 entries/enableAggregation 变化时重新计算，
-  // 不会出现"render 被 ref 写穿"导致跳过更新的 case。
   /* eslint-disable react-hooks/refs */
   const displayItems = useMemo(() => {
     const next: AcpDisplayItem[] = enableAggregation
@@ -334,12 +321,10 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
   const streamingEntryId = useMemo(() => {
     if (!isReceiving || entries.length === 0) return null;
     const last = entries[entries.length - 1]!;
-    if (last.update.sessionUpdate === "agent_message_chunk") return last.id;
+    if (last.event.type === "agent_message_delta") return last.id;
     return null;
   }, [isReceiving, entries]);
 
-  // displayItems 经过上面的引用稳定化 useMemo 产出，lint 规则把它视为 ref 来源；
-  // 这里的 return 只是把值透传给调用方，关闭规则。
   /* eslint-disable react-hooks/refs */
   return {
     displayItems,

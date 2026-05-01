@@ -9,12 +9,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { useAcpSession } from "../model";
 import { AcpSessionEntry } from "./AcpSessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
-import { extractAgentDashMetaFromUpdate } from "../model/agentdashMeta";
+import { extractPlatformEventType } from "../model/agentdashMeta";
 import { promptSession, type ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -109,10 +109,10 @@ export function collectNewSystemEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number,
 ): {
-  items: Array<{ eventSeq: number; eventType: string; update: SessionUpdate }>;
+  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
   lastSeenSeq: number;
 } {
-  const items: Array<{ eventSeq: number; eventType: string; update: SessionUpdate }> = [];
+  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
   let lastSeenSeq = afterSeq;
 
   for (const event of rawEvents) {
@@ -120,17 +120,18 @@ export function collectNewSystemEvents(
       continue;
     }
     lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    if (event.notification.update.sessionUpdate !== "session_info_update") {
+    const bbEvent = event.notification.event;
+    if (bbEvent.type !== "platform") {
       continue;
     }
-    const eventType = extractAgentDashMetaFromUpdate(event.notification.update)?.event?.type;
+    const eventType = extractPlatformEventType(bbEvent);
     if (!eventType) {
       continue;
     }
     items.push({
       eventSeq: event.event_seq,
       eventType,
-      update: event.notification.update,
+      event: bbEvent,
     });
   }
 
@@ -222,7 +223,7 @@ export interface SessionChatViewProps {
   onTurnEnd?: () => void;
 
   /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
-  onSystemEvent?: (eventType: string, update: SessionUpdate) => void;
+  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
 
   // ─── 执行器 ──────────────────────────────────────────
 
@@ -523,8 +524,12 @@ export function SessionChatView({
     if (!hasSession || rawEvents.length === 0) return;
     for (let i = rawEvents.length - 1; i >= 0; i -= 1) {
       const event = rawEvents[i];
-      if (!event || event.notification.update.sessionUpdate !== "session_info_update") continue;
-      const eventType = extractAgentDashMetaFromUpdate(event.notification.update)?.event?.type;
+      if (!event) continue;
+      const bbEvent = event.notification.event;
+      const eventType = bbEvent.type === "turn_started" ? "turn_started"
+        : bbEvent.type === "turn_completed" ? "turn_completed"
+        : bbEvent.type === "platform" ? extractPlatformEventType(bbEvent)
+        : null;
       if (eventType === "turn_started") {
         setOptimisticRunning(false);
         void refreshExecutionState().catch(() => {});
@@ -546,7 +551,7 @@ export function SessionChatView({
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
-      onSystemEventRef.current?.(item.eventType, item.update);
+      onSystemEventRef.current?.(item.eventType, item.event);
     }
   }, [hasSession, rawEvents]);
 

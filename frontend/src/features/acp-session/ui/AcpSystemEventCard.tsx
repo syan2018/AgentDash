@@ -1,29 +1,19 @@
 /**
- * ACP 系统事件卡片
+ * 系统事件卡片
  *
- * 三类渲染路径，均复用 EventStripCard / EventFullCard 模板：
- *
- * 1. 信息型 hook 事件（context_injected / steering_injected / step_advanced 等）
- *    → EventStripCard：单行折叠，展开显示 diagnostics / completion
- *
- * 2. 高优先级干预 hook 事件（deny / ask / rewrite / continue / block_reason）
- *    → EventFullCard：badge + subtitle + message + detail lines + debug
- *
- * 3. 通用系统事件（approval_requested / companion / error / permission 等）
- *    → EventFullCard：badge + message + detail lines + debug
- *
- * 样式原则：badge 是唯一染色点，卡片外框和文字保持中性色。
+ * 渲染 platform 事件中的系统/hook/companion 事件。
+ * badge 是唯一染色点，卡片外框和文字保持中性色。
  */
 
 import type { ReactNode } from "react";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
+import type { BackboneEvent, PlatformEvent } from "../../../generated/backbone-protocol";
+import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, extractHookTraceInfo, isRecord } from "../model/agentdashMeta";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./AcpCompanionRequestCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface AcpSystemEventCardProps {
-  update: SessionUpdate;
+  event: BackboneEvent;
   sessionId?: string;
 }
 
@@ -59,9 +49,11 @@ interface HookEventData {
     source?: string;
     content?: string;
   }>;
+  code?: string;
+  severity?: string;
 }
 
-// ─── badge 样式（唯一颜色分叉点）─────────────────────────────────────────────
+// ─── badge 样式 ──────────────────────────────────────────────────────────────
 
 const SEVERITY_BADGE: Record<string, string> = {
   error:   "border-destructive/25 bg-destructive/10 text-destructive",
@@ -93,6 +85,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
   hook_event:                      "流程事件",
+  hook_trace:                      "流程事件",
 };
 
 const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
@@ -115,6 +108,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
   hook_event:                      "流程产生新事件",
+  hook_trace:                      "流程产生新事件",
 };
 
 // ─── Hook 决策分类 ────────────────────────────────────────────────────────────
@@ -145,7 +139,6 @@ function isSubstantiveDiagnostic(diagnostic: HookDiagnosticData): boolean {
   if (code && NON_SUBSTANTIVE_DIAGNOSTIC_CODES.has(code)) {
     return false;
   }
-
   const summary = resolveDiagnosticSummary(diagnostic);
   const detail = typeof diagnostic.detail === "string" ? diagnostic.detail.trim() : "";
   return summary !== null || detail.length > 0 || code.length > 0;
@@ -180,40 +173,41 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProps) {
-  if (update.sessionUpdate !== "session_info_update") return null;
+export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps) {
+  if (event.type !== "platform") return null;
 
-  const meta = extractAgentDashMetaFromUpdate(update);
-  const event = meta?.event;
-  const eventType = event?.type ?? "system";
+  const eventType = extractPlatformEventType(event) ?? "system";
+  const eventData = extractPlatformEventData(event);
+  const eventMessage = extractPlatformEventMessage(event);
 
-  // ── companion_human_request → 交互卡片 ─────────────────────────────────
+  // ── companion_human_request → 交互卡片 ──
   if (eventType === "companion_human_request") {
-    return <AcpCompanionRequestCard update={update} sessionId={sessionId} />;
+    return <AcpCompanionRequestCard event={event} sessionId={sessionId} />;
   }
 
-  const hookData = eventType === "hook_event" ? extractHookEventData(event?.data) : null;
+  // ── hook_trace / hook_event → hook 卡片逻辑 ──
+  const isHook = eventType === "hook_event" || eventType === "hook_trace";
+  const hookData = isHook ? extractHookEventData(eventData) : null;
 
-  // ── hook_event 路由 ──────────────────────────────────────────────────────
-  if (eventType === "hook_event") {
-    const decision = extractHookDecision(event?.code);
+  if (isHook) {
+    const code = hookData?.code ?? null;
+    const decision = extractHookDecision(code);
     const hasSubstance = isHookEventSubstantive(decision, hookData);
     if (!hasSubstance && !getDebugPrefs().hookVerbose) {
       return null;
     }
 
-    const severity = event?.severity ?? "info";
+    const severity = hookData?.severity ?? "info";
     const badge = hasSubstance ? (SEVERITY_BADGE[severity] ?? DEFAULT_BADGE) : SEVERITY_BADGE.info!;
     const token = resolveDecisionToken(decision);
 
-    // 两条路径共用同一份数据构建
     const { completionLine, diagnostics } = buildHookExpandData(hookData);
     const diagBody = buildDiagnosticsNode(diagnostics);
 
     const verboseWrapper = (node: ReactNode) =>
       hasSubstance ? node : <div className="opacity-50">{node}</div>;
 
-    if (isHighPriorityHookEvent(hookData, event?.code)) {
+    if (isHighPriorityHookEvent(hookData, code)) {
       const detailLines: string[] = [];
       if (hookData?.block_reason) detailLines.push(`阻塞原因：${hookData.block_reason}`);
       if (completionLine) detailLines.push(completionLine);
@@ -223,16 +217,15 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
           badgeToken={token}
           badgeClass={badge}
           subtitle={resolveDecisionLabel(decision, hookData)}
-          message={event?.message ?? EVENT_TYPE_DEFAULT_MESSAGES.hook_event ?? "流程干预"}
+          message={eventMessage ?? EVENT_TYPE_DEFAULT_MESSAGES.hook_event ?? "流程干预"}
           detailLines={detailLines}
-          debugChips={buildHookDebugChips(hookData, meta?.trace?.turnId ?? null)}
+          debugChips={buildHookDebugChips(hookData, null)}
           debugLines={buildHookDebugMeta(hookData)}
           debugBody={diagBody}
         />
       );
     }
 
-    // 信息型 → StripCard
     const expandSections: Array<{ title?: string; lines: string[] }> = [];
     if (completionLine) {
       expandSections.push({ lines: [completionLine] });
@@ -270,22 +263,19 @@ export function AcpSystemEventCard({ update, sessionId }: AcpSystemEventCardProp
     );
   }
 
-  // ── 通用系统事件 ─────────────────────────────────────────────────────────
-  const severity = event?.severity ?? "info";
+  // ── 通用系统事件 ──
+  const severity = "info";
   const badge = SEVERITY_BADGE[severity] ?? DEFAULT_BADGE;
   const typeLabel = EVENT_TYPE_LABELS[eventType] ?? eventType;
-  const message = event?.message ?? EVENT_TYPE_DEFAULT_MESSAGES[eventType] ?? "系统事件";
-  const detailLines = buildGenericDetailLines(eventType, event?.data);
-  const turnId = meta?.trace?.turnId ?? null;
-  const debugChips: string[] = turnId ? [`turn: ${turnId.slice(0, 8)}`] : [];
-  const extraData = formatExtraData(event?.data);
+  const message = eventMessage ?? EVENT_TYPE_DEFAULT_MESSAGES[eventType] ?? "系统事件";
+  const detailLines = buildGenericDetailLines(eventType, eventData);
+  const extraData = formatExtraData(eventData);
   return (
     <EventFullCard
       badgeToken={typeLabel}
       badgeClass={badge}
       message={message}
       detailLines={detailLines}
-      debugChips={debugChips}
       debugRaw={extraData ?? undefined}
     />
   );
@@ -346,7 +336,6 @@ function resolveStripLabel(
   }
 }
 
-/** 两条路径共用：从 hookData 提取 completionLine + 结构化 diagnostics */
 function buildHookExpandData(hookData: HookEventData | null): {
   completionLine: string | null;
   diagnostics: Array<{ code?: string; summary: string; detail?: string | null }>;
@@ -383,7 +372,6 @@ function buildHookExpandData(hookData: HookEventData | null): {
   return { completionLine, diagnostics };
 }
 
-/** 两条路径共用：将结构化 diagnostics 渲染为带样式的 JSX（或 null） */
 function buildDiagnosticsNode(
   diagnostics: Array<{ code?: string; summary: string; detail?: string | null }>,
 ): ReactNode {
@@ -406,7 +394,6 @@ function buildDiagnosticsNode(
   );
 }
 
-/** debug 折叠区的 meta chips（turnId + hookData 字段，不含 diagnostics） */
 function buildHookDebugChips(
   hookData: HookEventData | null,
   turnId: string | null,
@@ -426,7 +413,6 @@ function buildHookDebugChips(
   return chips;
 }
 
-/** debug 折叠区的文本行（matched_rule_keys + tool_call_id，不含 diagnostics） */
 function buildHookDebugMeta(hookData: HookEventData | null): string[] {
   if (!hookData) return [];
   const lines: string[] = [];
@@ -439,14 +425,14 @@ function buildHookDebugMeta(hookData: HookEventData | null): string[] {
   return lines;
 }
 
-function buildGenericDetailLines(eventType: string, value: unknown): string[] {
-  if (!isRecord(value)) return [];
+function buildGenericDetailLines(eventType: string, data: Record<string, unknown> | null): string[] {
+  if (!data) return [];
   const lines: string[] = [];
 
   if (eventType === "approval_requested" || eventType === "approval_resolved") {
-    const toolName = typeof value.tool_name === "string" ? value.tool_name : null;
-    const reason = typeof value.reason === "string" ? value.reason : null;
-    const approved = typeof value.approved === "boolean" ? value.approved : null;
+    const toolName = typeof data.tool_name === "string" ? data.tool_name : null;
+    const reason = typeof data.reason === "string" ? data.reason : null;
+    const approved = typeof data.approved === "boolean" ? data.approved : null;
     if (toolName) lines.push(`工具：${toolName}`);
     if (approved != null) lines.push(`审批结果：${approved ? "已批准" : "已拒绝"}`);
     if (reason) lines.push(`原因：${reason}`);
@@ -454,36 +440,31 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
   }
 
   if (eventType === "hook_action_resolved") {
-    const summary = typeof value.summary === "string" ? value.summary : null;
-    const resolutionNote = typeof value.resolution_note === "string" ? value.resolution_note : null;
+    const summary = typeof data.summary === "string" ? data.summary : null;
+    const resolutionNote = typeof data.resolution_note === "string" ? data.resolution_note : null;
     if (summary) lines.push(`摘要：${summary}`);
     if (resolutionNote) lines.push(`说明：${resolutionNote}`);
     return lines;
   }
 
-  if (
-    eventType === "companion_dispatch_registered" ||
-    eventType === "companion_result_available" ||
-    eventType === "companion_result_returned"
-  ) {
-    const label = typeof value.companion_label === "string" ? value.companion_label : null;
-    const agentName = typeof value.agent_name === "string" ? value.agent_name : null;
-    const summary = typeof value.summary === "string" ? value.summary : null;
-    const status = typeof value.status === "string" ? value.status : null;
-    if (agentName) {
-      lines.push(`协作 Agent：${agentName}`);
-    } else if (label) {
-      lines.push(`协作 Agent：${label}`);
-    }
+  if (eventType === "companion_dispatch_registered" ||
+      eventType === "companion_result_available" ||
+      eventType === "companion_result_returned") {
+    const label = typeof data.companion_label === "string" ? data.companion_label : null;
+    const agentName = typeof data.agent_name === "string" ? data.agent_name : null;
+    const summary = typeof data.summary === "string" ? data.summary : null;
+    const status = typeof data.status === "string" ? data.status : null;
+    if (agentName) lines.push(`协作 Agent：${agentName}`);
+    else if (label) lines.push(`协作 Agent：${label}`);
     if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
     return lines;
   }
 
   if (eventType === "companion_review_request") {
-    const label = typeof value.companion_label === "string" ? value.companion_label : null;
-    const prompt = typeof value.prompt === "string" ? value.prompt : null;
-    const wait = typeof value.wait === "boolean" ? value.wait : null;
+    const label = typeof data.companion_label === "string" ? data.companion_label : null;
+    const prompt = typeof data.prompt === "string" ? data.prompt : null;
+    const wait = typeof data.wait === "boolean" ? data.wait : null;
     if (label) lines.push(`协作 Agent：${label}`);
     if (prompt) lines.push(`提审内容：${prompt}`);
     if (wait != null) lines.push(`等待回应：${wait ? "是" : "否"}`);
@@ -491,24 +472,26 @@ function buildGenericDetailLines(eventType: string, value: unknown): string[] {
   }
 
   if (eventType === "companion_human_response") {
-    const status = typeof value.status === "string" ? value.status : null;
-    const summary = typeof value.summary === "string" ? value.summary : null;
-    const resumed = typeof value.resumed_waiting_tool === "boolean"
-      ? value.resumed_waiting_tool
-      : null;
+    const status = typeof data.status === "string" ? data.status : null;
+    const summary = typeof data.summary === "string" ? data.summary : null;
+    const resumed = typeof data.resumed_waiting_tool === "boolean" ? data.resumed_waiting_tool : null;
     if (status) lines.push(`状态：${status}`);
     if (summary) lines.push(`摘要：${summary}`);
-    if (resumed != null) {
-      lines.push(`挂起工具：${resumed ? "已恢复" : "未挂起 / 已离线"}`);
-    }
+    if (resumed != null) lines.push(`挂起工具：${resumed ? "已恢复" : "未挂起 / 已离线"}`);
+    return lines;
+  }
+
+  if (eventType === "executor_session_bound") {
+    const esId = typeof data.executor_session_id === "string" ? data.executor_session_id : null;
+    if (esId) lines.push(`执行器会话：${esId.slice(0, 12)}...`);
     return lines;
   }
 
   return lines;
 }
 
-function extractHookEventData(value: unknown): HookEventData | null {
-  return isRecord(value) ? (value as HookEventData) : null;
+function extractHookEventData(value: Record<string, unknown> | null): HookEventData | null {
+  return value ? (value as HookEventData) : null;
 }
 
 function formatExtraData(value: unknown): string | null {

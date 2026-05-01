@@ -1,6 +1,7 @@
 import { resolveApiUrl } from "../../../api/origin";
 import { getStoredToken, authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
+import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "./types";
 
 const RETRY_BASE_MS = 800;
@@ -52,10 +53,11 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function isSessionNotification(value: unknown): value is import("@agentclientprotocol/sdk").SessionNotification {
+function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return typeof record.sessionId === "string" && typeof record.update === "object";
+  return typeof record.event === "object" && record.event !== null &&
+    typeof record.sessionId === "string";
 }
 
 function readOptionalNumber(value: unknown): number | null {
@@ -79,7 +81,7 @@ export function parseSessionEventEnvelopePayload(
   }
 
   const record = payload as Record<string, unknown>;
-  const notification = isSessionNotification(record.notification)
+  const notification = isBackboneEnvelope(record.notification)
     ? record.notification
     : null;
 
@@ -90,6 +92,10 @@ export function parseSessionEventEnvelopePayload(
   const eventSeq =
     readOptionalNumber(record.event_seq ?? record.id ?? fallbackEventSeq) ?? 0;
 
+  const eventType = typeof (notification.event as Record<string, unknown>)?.type === "string"
+    ? (notification.event as Record<string, unknown>).type as string
+    : "unknown";
+
   return {
     session_id: readOptionalString(record.session_id ?? record.sessionId) ?? notification.sessionId,
     event_seq: eventSeq,
@@ -98,9 +104,11 @@ export function parseSessionEventEnvelopePayload(
     committed_at_ms: readOptionalNumber(record.committed_at_ms ?? record.committedAtMs),
     session_update_type:
       readOptionalString(record.session_update_type ?? record.sessionUpdateType) ??
-      notification.update.sessionUpdate,
-    turn_id: readOptionalString(record.turn_id ?? record.turnId),
-    entry_index: readOptionalNumber(record.entry_index ?? record.entryIndex),
+      eventType,
+    turn_id: readOptionalString(record.turn_id ?? record.turnId) ??
+      (notification.trace?.turnId ?? null),
+    entry_index: readOptionalNumber(record.entry_index ?? record.entryIndex) ??
+      (notification.trace?.entryIndex ?? null),
     tool_call_id: readOptionalString(record.tool_call_id ?? record.toolCallId),
   };
 }

@@ -8,20 +8,18 @@
  */
 
 import { useState } from "react";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { extractAgentDashMetaFromUpdate, isRecord } from "../model/agentdashMeta";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import { extractPlatformEventData, isRecord } from "../model/agentdashMeta";
 import { EventFullCard } from "./EventCards";
 import { respondCompanionRequest } from "../../../services/executor";
 
 export interface AcpCompanionRequestCardProps {
-  update: SessionUpdate;
+  event: BackboneEvent;
   sessionId?: string;
 }
 
-export function AcpCompanionRequestCard({ update, sessionId }: AcpCompanionRequestCardProps) {
-  const meta = extractAgentDashMetaFromUpdate(update);
-  const event = meta?.event;
-  const data = isRecord(event?.data) ? event!.data as Record<string, unknown> : null;
+export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionRequestCardProps) {
+  const data = extractPlatformEventData(event);
 
   const requestId = typeof data?.request_id === "string" ? data.request_id : null;
   const prompt = typeof data?.prompt === "string" ? data.prompt : "Agent 请求你回应";

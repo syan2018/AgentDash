@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/acp-session";
-import { extractAgentDashMetaFromUpdate, isRecord } from "../features/acp-session/model/agentdashMeta";
+import { extractPlatformEventData, isRecord } from "../features/acp-session/model/agentdashMeta";
 import { CanvasSessionPanel } from "../features/canvas-panel";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import { ContextInspectorPanel, hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
@@ -354,9 +354,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     scheduleHookRuntimeRefresh("turn_end", true);
   }, [scheduleHookRuntimeRefresh]);
 
-  const handleSystemEvent = useCallback((eventType: string, update: SessionUpdate) => {
+  const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
       case "hook_event":
+      case "hook_trace":
       case "hook_action_resolved":
       case "companion_dispatch_registered":
       case "companion_result_available":
@@ -364,10 +365,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         scheduleHookRuntimeRefresh(eventType);
         break;
       case "session_meta_updated": {
-        const event = extractAgentDashMetaFromUpdate(update)?.event;
-        const data = isRecord(event?.data) ? event.data : null;
-        const newTitle = typeof data?.title === "string" ? data.title.trim() : "";
-        const newTitleSource = typeof data?.title_source === "string" ? data.title_source : undefined;
+        const data = extractPlatformEventData(_event);
+        const newTitle = typeof data?.title === "string" ? (data.title as string).trim() : "";
+        const newTitleSource = typeof data?.title_source === "string" ? data.title_source as string : undefined;
         if (newTitle && currentSessionId) {
           setSessionTitle(newTitle);
           patchSessionLocally(currentSessionId, {
@@ -378,11 +378,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         break;
       }
       case "canvas_presented": {
-        const event = extractAgentDashMetaFromUpdate(update)?.event;
-        const data = isRecord(event?.data) ? event.data : null;
+        const data = extractPlatformEventData(_event);
         const nextCanvasIdRaw = data?.canvas_id ?? data?.canvasId ?? data?.id;
         const nextCanvasId = typeof nextCanvasIdRaw === "string"
-          ? nextCanvasIdRaw.trim()
+          ? (nextCanvasIdRaw as string).trim()
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);

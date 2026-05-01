@@ -1,62 +1,65 @@
 /**
- * ACP (Agent Client Protocol) 会话类型定义
+ * 会话事件类型定义
  *
- * 从 @agentclientprotocol/sdk 导入核心类型
- * 扩展前端特定的显示类型
+ * 从 backbone-protocol.ts 导入 Codex 对齐的协议类型，
+ * 扩展前端特定的显示类型。
  */
 
 export type {
-  SessionId,
-  ToolCallId,
-  ToolCall,
-  ToolCallUpdate,
-  ToolCallStatus,
-  ToolCallContent,
-  ToolCallLocation,
-  ToolKind,
-  SessionNotification,
-  SessionUpdate,
-  ContentBlock,
-  ContentChunk,
-  Content,
-  Diff,
-  Terminal,
-  TextContent,
-  ImageContent,
-  AudioContent,
-  ResourceLink,
-  EmbeddedResource,
-  TextResourceContents,
-  BlobResourceContents,
-  Annotations,
-  Plan,
-  PlanEntry,
-  PlanEntryPriority,
-  PlanEntryStatus,
-  AvailableCommandsUpdate,
-  CurrentModeUpdate,
-  ConfigOptionUpdate,
-  SessionInfoUpdate,
-  UsageUpdate,
-  RequestPermissionRequest,
-  ReadTextFileRequest,
-  WriteTextFileRequest,
-} from "@agentclientprotocol/sdk";
+  BackboneEvent,
+  BackboneEnvelope,
+  ThreadItem,
+  PlatformEvent,
+  HookTracePayload,
+  SourceInfo,
+  TraceInfo,
+  AgentMessageDeltaNotification,
+  ReasoningTextDeltaNotification,
+  ReasoningSummaryTextDeltaNotification,
+  ItemStartedNotification,
+  ItemCompletedNotification,
+  CommandExecutionOutputDeltaNotification,
+  FileChangeOutputDeltaNotification,
+  McpToolCallProgressNotification,
+  TurnStartedNotification,
+  TurnCompletedNotification,
+  TurnDiffUpdatedNotification,
+  TurnPlanUpdatedNotification,
+  PlanDeltaNotification,
+  ThreadTokenUsageUpdatedNotification,
+  ThreadStatusChangedNotification,
+  ContextCompactedNotification,
+  ApprovalRequest,
+  ErrorNotification,
+  Turn,
+  TurnStatus,
+  TurnError,
+  TurnPlanStep,
+  TurnPlanStepStatus,
+  ThreadTokenUsage,
+  TokenUsageBreakdown,
+  CommandExecutionStatus,
+  DynamicToolCallStatus,
+  McpToolCallStatus,
+  PatchApplyStatus,
+  UserInput,
+  JsonValue,
+} from "../../../generated/backbone-protocol";
 
 import type {
-  SessionId,
-  SessionNotification,
-  SessionUpdate,
-  ToolCallId,
-  ContentBlock,
-} from "@agentclientprotocol/sdk";
+  BackboneEvent,
+  BackboneEnvelope,
+  ThreadItem,
+  PlatformEvent,
+  ThreadTokenUsage,
+} from "../../../generated/backbone-protocol";
 
 // ==================== 前端扩展类型 ====================
 
 export interface SessionEventEnvelope {
   session_id: string;
   event_seq: number;
-  notification: SessionNotification;
+  notification: BackboneEnvelope;
   occurred_at_ms?: number | null;
   committed_at_ms?: number | null;
   session_update_type?: string | null;
@@ -78,27 +81,28 @@ export type ToolAggregationType =
   | "info_gather";
 
 /**
- * ACP 显示条目 — entries 数组中的基本单元。
- * 每个 ACP SessionNotification 归并后都对应一个 AcpDisplayEntry。
+ * 显示条目 — entries 数组中的基本单元。
+ * 每条 BackboneEvent 归并后对应一个 AcpDisplayEntry。
  */
 export interface AcpDisplayEntry {
   id: string;
-  sessionId: SessionId;
+  sessionId: string;
   timestamp: number;
   eventSeq: number;
-  update: SessionUpdate;
-  /** From `_meta.agentdash.trace.turnId` if present */
+  event: BackboneEvent;
   turnId?: string;
+  entryIndex?: number;
   isStreaming?: boolean;
   isPendingApproval?: boolean;
+  /** delta 累积后的文本（用于 agent_message_delta / reasoning_text_delta 等） */
+  accumulatedText?: string;
 }
 
 /** 工具调用聚合状态 */
 export interface AcpToolCallState {
-  toolCallId: ToolCallId;
-  call: SessionUpdate | null;
-  updates: SessionUpdate[];
-  finalResult?: unknown;
+  itemId: string;
+  startedItem: ThreadItem | null;
+  completedItem: ThreadItem | null;
   status: string;
 }
 
@@ -132,7 +136,7 @@ export type OnEntriesUpdated = (
   loading: boolean,
 ) => void;
 
-/** Token 用量信息（从 usage_update 事件提取） */
+/** Token 用量信息 */
 export interface TokenUsageInfo {
   inputTokens?: number;
   outputTokens?: number;
@@ -170,58 +174,110 @@ export function isDisplayEntry(
 
 // ==================== 工具函数 ====================
 
-function pickNameFromUri(uri: string): string {
-  const normalized = uri.replace(/\\/g, "/");
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] || uri;
-}
-
-/** 从 ContentBlock 中提取文本 */
-export function extractTextFromContentBlock(content: ContentBlock | undefined): string {
-  if (!content) return "";
-
-  switch (content.type) {
-    case "text":
-      return content.text;
-
-    case "resource_link": {
-      const label = content.name?.trim() || pickNameFromUri(content.uri) || content.uri;
-      if (!content.uri || label === content.uri) {
-        return `📎 引用文件: ${label}`;
-      }
-      return `📎 引用文件: ${label}\n${content.uri}`;
-    }
-
-    case "resource": {
-      const resource = content.resource;
-      if ("text" in resource) {
-        const label = pickNameFromUri(resource.uri);
-        const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
-        return `📎 引用文件内容: ${label}${mimeText}\n${resource.uri}\n（已附带 ${resource.text.length} 字符）`;
-      }
-
-      const label = pickNameFromUri(resource.uri);
-      const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
-      return `📎 引用二进制资源: ${label}${mimeText}\n${resource.uri}`;
-    }
-
-    case "image":
-      return content.mimeType ? `🖼️ 图片内容 (${content.mimeType})` : "🖼️ 图片内容";
-
-    case "audio":
-      return content.mimeType ? `🔊 音频内容 (${content.mimeType})` : "🔊 音频内容";
-
+/** 从 BackboneEvent 获取显示文本 */
+export function extractTextFromEvent(event: BackboneEvent): string {
+  switch (event.type) {
+    case "agent_message_delta":
+      return event.payload.delta;
+    case "reasoning_text_delta":
+      return event.payload.delta;
+    case "reasoning_summary_delta":
+      return event.payload.delta;
     default:
       return "";
   }
 }
 
-/** 从 SessionUpdate 判断是否是系统事件（session_info_update）*/
-export function isSystemEvent(update: SessionUpdate): boolean {
-  return update.sessionUpdate === "session_info_update";
+/** 从 ThreadItem 获取显示标题 */
+export function getThreadItemTitle(item: ThreadItem): string {
+  switch (item.type) {
+    case "commandExecution":
+      return item.command;
+    case "fileChange":
+      return item.changes.length > 0 ? item.changes[0]!.path : "文件变更";
+    case "mcpToolCall":
+      return `${item.server}/${item.tool}`;
+    case "dynamicToolCall":
+      return item.tool;
+    case "agentMessage":
+      return "Agent 消息";
+    case "plan":
+      return "计划";
+    case "reasoning":
+      return "推理";
+    case "webSearch":
+      return item.query;
+    case "imageView":
+      return item.path;
+    case "userMessage":
+      return "用户消息";
+    default:
+      return "未知";
+  }
 }
 
-/** 从 SessionUpdate 判断是否是用量事件（usage_update）*/
-export function isUsageEvent(update: SessionUpdate): boolean {
-  return update.sessionUpdate === "usage_update";
+/** 从 ThreadItem 获取状态 */
+export function getThreadItemStatus(item: ThreadItem): string {
+  switch (item.type) {
+    case "commandExecution":
+      return item.status;
+    case "fileChange":
+      return item.status;
+    case "mcpToolCall":
+      return item.status;
+    case "dynamicToolCall":
+      return item.status;
+    default:
+      return "completed";
+  }
+}
+
+/** 从 ThreadItem 获取工具类型标签 */
+export function getThreadItemKind(item: ThreadItem): string {
+  switch (item.type) {
+    case "commandExecution":
+      return "execute";
+    case "fileChange":
+      return "edit";
+    case "mcpToolCall":
+      return "mcp";
+    case "dynamicToolCall":
+      return "tool";
+    case "webSearch":
+      return "search";
+    case "imageView":
+      return "image";
+    case "imageGeneration":
+      return "image";
+    case "collabAgentToolCall":
+      return "collab";
+    default:
+      return "other";
+  }
+}
+
+/** 从 BackboneEvent 判断是否是系统/平台事件 */
+export function isPlatformEvent(event: BackboneEvent): event is { type: "platform"; payload: PlatformEvent } {
+  return event.type === "platform";
+}
+
+/** 从 PlatformEvent 中提取 session_meta_update 的 key */
+export function getPlatformEventKey(event: PlatformEvent): string | null {
+  if (event.kind === "session_meta_update") {
+    return event.data.key;
+  }
+  return event.kind;
+}
+
+/** 提取 token 用量信息 */
+export function extractTokenUsageFromEvent(event: BackboneEvent): TokenUsageInfo | null {
+  if (event.type !== "token_usage_updated") return null;
+  const usage: ThreadTokenUsage = event.payload.tokenUsage;
+  return {
+    inputTokens: usage.total.inputTokens,
+    outputTokens: usage.total.outputTokens,
+    totalTokens: usage.total.totalTokens,
+    maxTokens: usage.modelContextWindow ?? undefined,
+    cacheReadTokens: usage.total.cachedInputTokens,
+  };
 }

@@ -1,21 +1,17 @@
 /**
- * ACP 会话条目渲染组件
+ * 会话条目渲染组件
  *
- * 根据条目类型渲染不同的 UI。
- * 对照 Zed 实现，覆盖所有 ACP SessionUpdate 类型：
- * - user_message_chunk / agent_message_chunk / agent_thought_chunk → AcpMessageCard
- *   - 其中 agentdash://task-context/* 资源块 → AcpTaskContextCard（Task 专属）
- * - tool_call / tool_call_update → AcpToolCallCard
- * - plan → AcpPlanCard
- * - session_info_update
- *   - task_* 事件 → AcpTaskEventCard（Task 专属）
- *   - 关键 system / hook / companion 事件 → AcpSystemEventCard
- *   - 其他噪音事件保持静默
- * - usage_update / available_commands_update / current_mode_update / config_option_update → 静默
- *
- * 说明：
- * - 上下文用量已在 Task 会话面板的进度区做汇总展示，此处不重复渲染 usage card
- * - 系统信息后续计划收敛到 inbox 场景，常规会话流先保持静默
+ * 根据 BackboneEvent 类型渲染不同的 UI：
+ * - agent_message_delta → AcpMessageCard (agent)
+ * - reasoning_text_delta / reasoning_summary_delta → AcpMessageCard (thinking)
+ * - item_started / item_completed → AcpToolCallCard (ThreadItem)
+ * - turn_plan_updated → AcpPlanCard
+ * - platform:
+ *   - user_message_chunk → AcpMessageCard (user)
+ *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
+ * - approval_request → 审批卡片
+ * - error → 错误卡片
+ * - token_usage_updated / turn_started / turn_completed → 静默
  */
 
 import { memo, useState } from "react";
@@ -23,17 +19,12 @@ import {
   isAggregatedGroup,
   isAggregatedThinkingGroup,
   isDisplayEntry,
-  extractTextFromContentBlock,
+  getThreadItemTitle,
 } from "../model/types";
-import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup, ContentBlock } from "../model/types";
+import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup } from "../model/types";
 import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
-import { ContentBlockCard } from "./ContentBlockCard";
-import { AcpTaskContextCard } from "./AcpTaskContextCard";
-import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
-import { AcpOwnerContextCard } from "./AcpOwnerContextCard";
-import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./AcpSessionCapabilityCard";
 import { AcpTaskEventCard } from "./AcpTaskEventCard";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 import { AcpSystemEventCard } from "./AcpSystemEventCard";
@@ -73,87 +64,89 @@ function SingleEntry({
   isStreaming?: boolean;
   sessionId?: string | null;
 }) {
-  const { update, isPendingApproval } = entry;
+  const { event, isPendingApproval, accumulatedText } = entry;
 
-  switch (update.sessionUpdate) {
-    case "user_message_chunk": {
-      const content = update.content as ContentBlock | undefined;
-
-      // 对于 resource/resource_link 类型，使用优雅的卡片展示
-      if (content?.type === "resource" || content?.type === "resource_link") {
-        if (isAgentDashTaskContextBlock(content)) {
-          return <AcpTaskContextCard block={content} />;
-        }
-        const uri = content.type === "resource" ? content.resource?.uri : content.uri;
-        if (typeof uri === "string" && (
-          uri.startsWith("agentdash://project-context/") ||
-          uri.startsWith("agentdash://story-context/")
-        )) {
-          return <AcpOwnerContextCard block={content} />;
-        }
-        if (isSessionCapabilitiesBlock(content)) {
-          return <AcpSessionCapabilityCard block={content} />;
-        }
-        return <ContentBlockCard block={content} variant="compact" />;
-      }
-
-      const text = extractTextFromContentBlock(content);
-      return (
-        <AcpMessageCard
-          type="user"
-          content={text}
-        />
-      );
-    }
-
-    case "agent_message_chunk": {
-      const text = extractTextFromContentBlock(update.content);
+  switch (event.type) {
+    case "agent_message_delta": {
       return (
         <AcpMessageCard
           type="agent"
-          content={text}
+          content={accumulatedText ?? event.payload.delta}
           isStreaming={isStreaming}
         />
       );
     }
 
-    case "agent_thought_chunk": {
-      const text = extractTextFromContentBlock(update.content);
+    case "reasoning_text_delta":
+    case "reasoning_summary_delta": {
       return (
         <AcpMessageCard
           type="thinking"
-          content={text}
+          content={accumulatedText ?? event.payload.delta}
         />
       );
     }
 
-    case "tool_call":
-    case "tool_call_update":
+    case "item_started":
+    case "item_completed": {
       return (
         <AcpToolCallCard
-          update={update}
+          item={event.payload.item}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}
+          outputText={accumulatedText}
         />
       );
+    }
 
-    case "plan":
-      return <AcpPlanCard entries={update.entries} />;
+    case "turn_plan_updated": {
+      return <AcpPlanCard steps={event.payload.plan} />;
+    }
 
-    case "session_info_update":
-      if (isTaskEventUpdate(update)) {
-        return <AcpTaskEventCard update={update} />;
+    case "approval_request": {
+      return (
+        <div className="rounded-[12px] border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-warning">
+          <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em]">
+            审批
+          </span>
+          <span className="ml-2">等待审批</span>
+        </div>
+      );
+    }
+
+    case "error": {
+      return (
+        <div className="rounded-[12px] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
+          <span className="inline-flex rounded-[6px] border border-destructive/25 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-destructive">
+            错误
+          </span>
+          <span className="ml-2 text-destructive">{event.payload.error.message}</span>
+        </div>
+      );
+    }
+
+    case "platform": {
+      const platform = event.payload;
+
+      if (platform.kind === "session_meta_update" && platform.data.key === "user_message_chunk") {
+        return (
+          <AcpMessageCard
+            type="user"
+            content={accumulatedText ?? (typeof platform.data.value === "string" ? platform.data.value : "")}
+          />
+        );
       }
-      if (isRenderableSystemEventUpdate(update)) {
-        return <AcpSystemEventCard update={update} sessionId={sessionId ?? undefined} />;
-      }
-      return null;
 
-    case "usage_update":
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
+      if (isTaskEventUpdate(event)) {
+        return <AcpTaskEventCard event={event} />;
+      }
+
+      if (isRenderableSystemEventUpdate(event)) {
+        return <AcpSystemEventCard event={event} sessionId={sessionId ?? undefined} />;
+      }
+
       return null;
+    }
 
     default:
       return null;
@@ -190,15 +183,19 @@ function AggregatedToolGroupEntry({
       </button>
       {expanded && (
         <div className="space-y-1.5 border-t border-border px-3 py-2.5">
-          {entries.map((entry) => (
-            <AcpToolCallCard
-              key={entry.id}
-              update={entry.update}
-              isPendingApproval={entry.isPendingApproval}
-              compact
-              sessionId={sessionId ?? undefined}
-            />
-          ))}
+          {entries.map((entry) => {
+            const item = extractThreadItem(entry);
+            if (!item) return null;
+            return (
+              <AcpToolCallCard
+                key={entry.id}
+                item={item}
+                isPendingApproval={entry.isPendingApproval}
+                compact
+                sessionId={sessionId ?? undefined}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -210,12 +207,7 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
   const { entries } = group;
 
   const combinedContent = entries
-    .map((entry) => {
-      if (entry.update.sessionUpdate === "agent_thought_chunk") {
-        return extractTextFromContentBlock(entry.update.content);
-      }
-      return "";
-    })
+    .map((entry) => entry.accumulatedText ?? "")
     .join("");
 
   return (
@@ -269,18 +261,30 @@ function AggregatedDiffGroupEntry({
         </span>
       </div>
       <div className="space-y-1.5 px-3 py-2.5">
-        {entries.map((entry) => (
-          <AcpToolCallCard
-            key={entry.id}
-            update={entry.update}
-            isPendingApproval={entry.isPendingApproval}
-            compact
-            sessionId={sessionId ?? undefined}
-          />
-        ))}
+        {entries.map((entry) => {
+          const item = extractThreadItem(entry);
+          if (!item) return null;
+          return (
+            <AcpToolCallCard
+              key={entry.id}
+              item={item}
+              isPendingApproval={entry.isPendingApproval}
+              compact
+              sessionId={sessionId ?? undefined}
+            />
+          );
+        })}
       </div>
     </div>
   );
+}
+
+function extractThreadItem(entry: AcpDisplayEntry): import("../../../generated/backbone-protocol").ThreadItem | null {
+  const evt = entry.event;
+  if (evt.type === "item_started" || evt.type === "item_completed") {
+    return evt.payload.item;
+  }
+  return null;
 }
 
 function getAggregationBadgeConfig(aggregationType: AggregatedEntryGroup["aggregationType"]): {
@@ -311,18 +315,19 @@ function getAggregationBadgeConfig(aggregationType: AggregatedEntryGroup["aggreg
   }
 }
 
-/** 根据条目的 kind 生成分类摘要，如 "12 次读取 · 4 次搜索 · 2 次网页获取" */
 function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   const kindLabels: Record<string, string> = {
-    read: "读取",
-    search: "搜索",
-    fetch: "网页获取",
-    execute: "命令执行",
+    commandExecution: "命令执行",
+    fileChange: "文件编辑",
+    mcpToolCall: "MCP 工具",
+    dynamicToolCall: "工具调用",
+    webSearch: "搜索",
   };
 
   const counts = new Map<string, number>();
   for (const entry of entries) {
-    const kind = "kind" in entry.update ? (entry.update.kind as string) ?? "other" : "other";
+    const item = extractThreadItem(entry);
+    const kind = item?.type ?? "other";
     counts.set(kind, (counts.get(kind) ?? 0) + 1);
   }
 

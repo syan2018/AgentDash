@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { ProjectAgentSummary, SessionNavigationState } from "../../types";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { BackboneEvent } from "../../generated/backbone-protocol";
 import { useProjectStore } from "../../stores/projectStore";
 import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -117,7 +117,7 @@ export function AgentTabView() {
   }, [currentProjectId, loadForProject]);
 
   const handleSystemEvent = useCallback(
-    (eventType: string, _update: SessionUpdate) => {
+    (eventType: string, _event: BackboneEvent) => {
       if (COMPANION_EVENT_TYPES.has(eventType)) {
         scheduleSessionRefresh();
       }

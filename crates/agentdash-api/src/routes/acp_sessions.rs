@@ -234,7 +234,7 @@ pub struct SessionEventResponse {
     pub entry_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    pub notification: agent_client_protocol::SessionNotification,
+    pub notification: agentdash_protocol::BackboneEnvelope,
 }
 
 #[derive(Debug, Serialize)]
@@ -249,17 +249,6 @@ pub struct SessionEventsPageResponse {
 fn map_session_event(
     event: agentdash_application::session::PersistedSessionEvent,
 ) -> SessionEventResponse {
-    let notification = agentdash_protocol::envelope_to_session_notification(&event.notification)
-        .unwrap_or_else(|| {
-            let session_id =
-                agent_client_protocol::SessionId::new(event.session_id.clone());
-            agent_client_protocol::SessionNotification::new(
-                session_id,
-                agent_client_protocol::SessionUpdate::SessionInfoUpdate(
-                    agent_client_protocol::SessionInfoUpdate::new(),
-                ),
-            )
-        });
     SessionEventResponse {
         session_id: event.session_id,
         event_seq: event.event_seq,
@@ -269,7 +258,7 @@ fn map_session_event(
         turn_id: event.turn_id,
         entry_index: event.entry_index,
         tool_call_id: event.tool_call_id,
-        notification,
+        notification: event.notification,
     }
 }
 

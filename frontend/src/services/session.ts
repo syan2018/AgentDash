@@ -1,6 +1,6 @@
 import { api, type ApiHttpError } from "../api/client";
 import { requireStringField, requireNumberField } from "../api/mappers";
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import type { BackboneEnvelope } from "../generated/backbone-protocol";
 import type {
   AgentBinding,
   ContextSourceRef,
@@ -72,7 +72,7 @@ export interface PersistedSessionEvent {
   turn_id: string | null;
   entry_index: number | null;
   tool_call_id: string | null;
-  notification: SessionNotification;
+  notification: BackboneEnvelope;
 }
 
 export interface SessionEventsPage {
@@ -114,7 +114,7 @@ function mapPersistedSessionEvent(raw: Record<string, unknown>): PersistedSessio
     turn_id: raw.turn_id != null ? String(raw.turn_id) : null,
     entry_index: raw.entry_index != null ? Number(raw.entry_index) : null,
     tool_call_id: raw.tool_call_id != null ? String(raw.tool_call_id) : null,
-    notification: raw.notification as SessionNotification,
+    notification: raw.notification as BackboneEnvelope,
   };
 }
 

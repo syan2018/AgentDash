@@ -1,35 +1,25 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
-use agent_client_protocol::{SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate};
-use futures::StreamExt;
+use executors::{executors::StandardCodingAgentExecutor as _, profile::ExecutorConfigs};
 use futures::stream::BoxStream;
-use serde_json::json;
 use tokio::sync::Mutex;
-use tokio_stream::wrappers::ReceiverStream;
-use tokio_util::io::ReaderStream;
-use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-};
-
-use executors::{
-    approvals::NoopExecutorApprovalService,
-    env::{ExecutionEnv, RepoContext},
-    executors::StandardCodingAgentExecutor as _,
-    logs::utils::patch::extract_normalized_entry_from_patch,
-    profile::ExecutorConfigs,
-};
-
-use crate::adapters::normalized_to_acp::NormalizedToAcpConverter;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload, workspace_path_from_context,
+    ExecutionContext, ExecutionStream, PromptPayload,
 };
+use std::str::FromStr as _;
+
+use crate::connectors::executor_session::spawn_executor_session;
 
 pub struct VibeKanbanExecutorsConnector {
     default_repo_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, executors::executors::CancellationToken>>>,
+    excluded_executors: HashSet<String>,
 }
 
 fn humanize_executor_id(id: &str) -> String {
@@ -47,38 +37,33 @@ fn humanize_executor_id(id: &str) -> String {
         .join(" ")
 }
 
-fn build_executor_session_bound_notification(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    executor_session_id: &str,
-) -> SessionNotification {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-
-    let event = AgentDashEventV1::new("executor_session_bound")
-        .message(Some(executor_session_id.to_string()))
-        .data(Some(json!({ "executor_session_id": executor_session_id })));
-
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source.clone()))
-        .trace(Some(trace))
-        .event(Some(event));
-
-    SessionNotification::new(
-        SessionId::new(session_id.to_string()),
-        SessionUpdate::SessionInfoUpdate(
-            SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-        ),
-    )
+fn normalize_executor_id(id: &str) -> String {
+    id.trim().replace('-', "_").to_ascii_uppercase()
 }
 
 impl VibeKanbanExecutorsConnector {
     pub fn new(default_repo_root: PathBuf) -> Self {
+        Self::new_with_exclusions(default_repo_root, std::iter::empty::<&str>())
+    }
+
+    pub fn new_with_exclusions<I, S>(default_repo_root: PathBuf, excluded_executors: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         Self {
             default_repo_root,
             cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
+            excluded_executors: excluded_executors
+                .into_iter()
+                .map(|id| normalize_executor_id(id.as_ref()))
+                .collect(),
         }
+    }
+
+    fn is_excluded(&self, executor_id: &str) -> bool {
+        self.excluded_executors
+            .contains(&normalize_executor_id(executor_id))
     }
 }
 
@@ -107,6 +92,7 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         let mut out: Vec<AgentInfo> = configs
             .executors
             .iter()
+            .filter(|(agent, _)| !self.is_excluded(&agent.to_string()))
             .map(|(&agent, profile)| {
                 let id = agent.to_string();
                 let available = profile
@@ -135,9 +121,14 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         executor: &str,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        use std::str::FromStr as _;
+        if self.is_excluded(executor) {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "执行器 '{executor}' 已从 vibe-kanban 桥接中排除"
+            )));
+        }
 
-        let base = executors::executors::BaseCodingAgent::from_str(executor)
+        let normalized = normalize_executor_id(executor);
+        let base = executors::executors::BaseCodingAgent::from_str(&normalized)
             .map_err(|_| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
 
         let profile_id = executors::profile::ExecutorProfileId {
@@ -169,21 +160,11 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let user_text = prompt.to_fallback_text();
-        // vibe_kanban 通过 stdio 把 prompt 前置拼接给外部进程，暂未支持结构化
-        // Bundle。PR 3 期间仍消费 deprecated `assembled_system_prompt` 作为兜底，
-        // 待 PR 8 删除该字段时此 connector 需要自渲染或协议升级。
-        #[allow(deprecated)]
-        let prompt_text = if let Some(ref sys_prompt) = context.turn.assembled_system_prompt {
-            format!("{sys_prompt}\n\n{user_text}")
-        } else {
-            user_text
-        };
-        let prompt_text = prompt_text.trim().to_string();
-        if prompt_text.is_empty() {
-            return Err(ConnectorError::InvalidConfig(
-                "prompt payload 解析后为空".to_string(),
-            ));
+        if self.is_excluded(&context.session.executor_config.executor) {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "执行器 '{}' 已从 vibe-kanban 桥接中排除",
+                context.session.executor_config.executor
+            )));
         }
 
         let vk_config = crate::adapters::vibe_kanban_config::to_vibe_kanban_config(
@@ -206,150 +187,17 @@ impl AgentConnector for VibeKanbanExecutorsConnector {
             agent.apply_overrides(&vk_config);
         }
 
-        agent.use_approvals(Arc::new(NoopExecutorApprovalService));
-
-        let repo_root = workspace_path_from_context(&context)?;
-        let repo_context = RepoContext::new(repo_root, vec![".".to_string()]);
-        let mut env = ExecutionEnv::new(
-            repo_context,
-            false,
-            "请在提交前完成 pnpm lint/type-check/test 等自检".to_string(),
-        );
-        env.merge(&context.session.environment_variables);
-
-        let follow_up_session_id = follow_up_session_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-
-        let mut spawned = if let Some(follow_up_session_id) = follow_up_session_id {
-            agent
-                .spawn_follow_up(
-                    &context.session.working_directory,
-                    &prompt_text,
-                    follow_up_session_id,
-                    None,
-                    &env,
-                )
-                .await
-                .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
-        } else {
-            agent
-                .spawn(&context.session.working_directory, &prompt_text, &env)
-                .await
-                .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?
-        };
-
-        if let Some(cancel) = spawned.cancel.clone() {
-            self.cancel_by_session
-                .lock()
-                .await
-                .insert(session_id.to_string(), cancel);
-        }
-
-        let msg_store = Arc::new(MsgStore::new());
-
-        agent.normalize_logs(msg_store.clone(), &context.session.working_directory);
-
-        if let Some(stdout) = spawned.child.inner().stdout.take() {
-            let ms = msg_store.clone();
-            tokio::spawn(async move {
-                let mut stream = ReaderStream::new(stdout);
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(bytes) => ms.push_stdout(String::from_utf8_lossy(&bytes).into_owned()),
-                        Err(e) => {
-                            ms.push_stdout(format!("stdout 读取失败: {e}"));
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-
-        if let Some(stderr) = spawned.child.inner().stderr.take() {
-            let ms = msg_store.clone();
-            tokio::spawn(async move {
-                let mut stream = ReaderStream::new(stderr);
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(bytes) => ms.push_stdout(String::from_utf8_lossy(&bytes).into_owned()),
-                        Err(e) => {
-                            ms.push_stdout(format!("stderr 读取失败: {e}"));
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-
-        let ms = msg_store.clone();
-        let cancel_map = self.cancel_by_session.clone();
-        let session_id_owned = session_id.to_string();
-        let session_id_for_wait = session_id_owned.clone();
-        tokio::spawn(async move {
-            let _ = spawned.child.wait().await;
-            ms.push_finished();
-            cancel_map.lock().await.remove(&session_id_for_wait);
-        });
-
-        let (tx, rx) =
-            tokio::sync::mpsc::channel::<Result<SessionNotification, ConnectorError>>(256);
-        let connector_type = match self.connector_type() {
-            ConnectorType::LocalExecutor => "local_executor",
-            ConnectorType::RemoteAcpBackend => "remote_acp_backend",
-        };
-        let mut source = AgentDashSourceV1::new(self.connector_id(), connector_type);
-        source.executor_id = Some(context.session.executor_config.executor.to_string());
-        let turn_id = context.session.turn_id.clone();
-        let mut converter = NormalizedToAcpConverter::new(
-            SessionId::new(session_id.to_string()),
-            source.clone(),
-            turn_id.clone(),
-        );
-
-        tokio::spawn(async move {
-            let mut stream = msg_store.history_plus_stream();
-            let mut last_executor_session_id: Option<String> = None;
-            while let Some(next) = stream.next().await {
-                match next {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        if let Some((idx, entry)) = extract_normalized_entry_from_patch(&patch) {
-                            for n in converter.apply(idx, entry) {
-                                if tx.send(Ok(n)).await.is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    Ok(LogMsg::SessionId(executor_session_id)) => {
-                        if last_executor_session_id.as_deref() == Some(executor_session_id.as_str())
-                        {
-                            continue;
-                        }
-                        last_executor_session_id = Some(executor_session_id.clone());
-                        let notification = build_executor_session_bound_notification(
-                            &session_id_owned,
-                            &source,
-                            &turn_id,
-                            &executor_session_id,
-                        );
-                        if tx.send(Ok(notification)).await.is_err() {
-                            return;
-                        }
-                    }
-                    Ok(LogMsg::Finished) => break,
-                    Ok(_) => {}
-                    Err(e) => {
-                        let _ = tx
-                            .send(Err(ConnectorError::Runtime(format!("日志流错误: {e}"))))
-                            .await;
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(Box::pin(ReceiverStream::new(rx)))
+        spawn_executor_session(
+            self.connector_id(),
+            self.connector_type(),
+            self.cancel_by_session.clone(),
+            agent,
+            session_id,
+            follow_up_session_id,
+            prompt,
+            context,
+        )
+        .await
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {

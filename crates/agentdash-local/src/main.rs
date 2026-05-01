@@ -13,6 +13,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use agentdash_application::session::SessionHub;
+use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_infrastructure::SqliteSessionRepository;
@@ -85,8 +86,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let tool_exec = tool_executor::ToolExecutor::new(accessible_roots.clone());
-    let local_backend_config =
-        local_backend_config::load_local_backend_config(&accessible_roots);
+    let local_backend_config = local_backend_config::load_local_backend_config(&accessible_roots);
 
     let mcp_config = local_backend_config.mcp_servers.clone();
     let mcp_manager = if mcp_config.is_empty() {
@@ -103,9 +103,13 @@ async fn main() -> anyhow::Result<()> {
             .cloned()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let sub_connectors: Vec<Arc<dyn AgentConnector>> = vec![Arc::new(
-            VibeKanbanExecutorsConnector::new(workspace_root.clone()),
-        )];
+        let sub_connectors: Vec<Arc<dyn AgentConnector>> = vec![
+            Arc::new(VibeKanbanExecutorsConnector::new_with_exclusions(
+                workspace_root.clone(),
+                ["CODEX"],
+            )),
+            Arc::new(CodexBridgeConnector::new(workspace_root.clone())),
+        ];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let db_path = workspace_root.join(".agentdash").join("agentdash-local.db");
         if let Some(parent) = db_path.parent() {

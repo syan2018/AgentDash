@@ -20,6 +20,7 @@ use crate::backend_transport::{
     RelayExecutorConfig, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
     RelayTerminalKind,
 };
+use agentdash_domain::workspace::WorkspaceIdentityKind;
 
 pub struct RelayAgentConnector {
     transport: Arc<dyn RelayPromptTransport>,
@@ -138,6 +139,8 @@ impl AgentConnector for RelayAgentConnector {
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
             prompt_blocks,
             mount_root_ref: mount_root_ref.to_string(),
+            workspace_identity_kind: workspace_identity_kind_from_mount(default_mount),
+            workspace_identity_payload: workspace_identity_payload_from_mount(default_mount),
             working_dir: crate::session::path_policy::to_relative_working_dir(
                 &context.session.working_directory,
                 mount_root_ref,
@@ -283,6 +286,25 @@ fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<Strin
     (unique_backend_ids.len() == 1)
         .then(|| unique_backend_ids.into_iter().next())
         .flatten()
+}
+
+fn workspace_identity_kind_from_mount(
+    mount: &agentdash_domain::common::Mount,
+) -> Option<WorkspaceIdentityKind> {
+    serde_json::from_value(
+        mount
+            .metadata
+            .get("workspace_identity_kind")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .ok()
+}
+
+fn workspace_identity_payload_from_mount(
+    mount: &agentdash_domain::common::Mount,
+) -> Option<serde_json::Value> {
+    mount.metadata.get("workspace_identity_payload").cloned()
 }
 
 #[cfg(test)]

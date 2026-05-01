@@ -32,6 +32,7 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 ## 问题说明
 
 - 通过 PowerShell 把包含中文的 inline Node/Playwright 脚本直接管道给 `node -` 时，中文内容可能在进入浏览器前就被降成 `?`，会让会话输入框和 session 历史里都出现 `????`。如果要做中文端到端浏览器调试，优先使用 UTF-8 文件脚本、Unicode escape，或避免经由当前 PowerShell 管道直接注入中文字符串。
+- `gix` 若在 `Cargo.toml` 里使用 `default-features = false`，仅打开 `revision` 之类子特性并不足以支撑常规 Git 仓库探测；`gix-hash` 仍会因为缺少对象哈希算法直接编译失败，报 “Please set either the sha1 or the sha256 feature flag”。当前项目若要用 `gix` 做 Git workspace 识别，至少要显式带上 `sha1`。
 - `PI_AGENT` 在会话页里执行 shell 任务时，模型有时会把工作空间绝对路径直接塞进 `shell.cwd`。当前 Hook Runtime 已会把“位于 workspace root 内的绝对 cwd”自动 rewrite 成相对路径，因此这类 shell 调用通常不会再因绝对路径直接失败；如果仍看到 cwd 相关错误，优先排查是否为非 shell 工具、路径已越出 workspace root，或查看历史 session jsonl 是否来自修复前的旧会话。
 - `crates/agentdash-injection/src/vfs.rs` 里已经有一个名为 `VfsProvider` 的 trait，但它当前只负责 address space descriptor / 能力发现，不是“统一 read/write/list/search/exec 访问层”里的目标 provider。推进统一 Address Space 方案时，不要因为同名就误判为底层访问抽象已经存在；需要明确是扩展、替换还是重命名这一层。
 - `.trellis/scripts/task.py create` 会自动给任务目录补 `MM-DD-` 日期前缀；如果传入的 `--slug` 自己已经带日期前缀，就会生成类似 `03-22-03-22-...` 的双日期目录。创建 task 时，`--slug` 应只写语义名，不要重复带日期。

@@ -10,7 +10,8 @@ use agentdash_application::backend_transport::BackendTransport;
 use agentdash_domain::common::MountCapability;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy, WorkspaceStatus,
+    WorkspaceResolutionPolicy, WorkspaceStatus, identity_payload_matches,
+    normalize_identity_payload,
 };
 
 use crate::app_state::AppState;
@@ -214,7 +215,10 @@ pub async fn update_workspace(
         workspace.identity_kind = identity_kind;
     }
     if let Some(identity_payload) = req.identity_payload {
-        workspace.identity_payload = identity_payload;
+        workspace.identity_payload = normalize_workspace_identity_payload(
+            workspace.identity_kind.clone(),
+            identity_payload,
+        )?;
     }
     if let Some(resolution_policy) = req.resolution_policy {
         workspace.resolution_policy = resolution_policy;
@@ -309,7 +313,12 @@ pub async fn detect_workspace(
         .into_iter()
         .filter(|workspace| {
             workspace.identity_kind == detected.identity_kind
-                && workspace.identity_payload == detected.identity_payload
+                && identity_payload_matches(
+                    workspace.identity_kind.clone(),
+                    &workspace.identity_payload,
+                    &detected.identity_payload,
+                    Some(&detected.binding.detected_facts),
+                )
         })
         .map(|workspace| workspace.id)
         .collect();
@@ -369,7 +378,11 @@ async fn derive_workspace_shape(
         let identity_payload = identity_payload.ok_or_else(|| {
             ApiError::BadRequest("显式提供 identity_kind 时，identity_payload 不能为空".into())
         })?;
-        return Ok((identity_kind, identity_payload, parsed_bindings));
+        return Ok((
+            identity_kind.clone(),
+            normalize_workspace_identity_payload(identity_kind, identity_payload)?,
+            parsed_bindings,
+        ));
     }
 
     let Some(first_binding) = parsed_bindings.first() else {
@@ -395,9 +408,15 @@ async fn derive_workspace_shape(
     };
     parsed_bindings[0] = replacement_binding;
 
+    let detected_identity_kind = detected.identity_kind.clone();
     Ok((
         detected.identity_kind,
-        identity_payload.unwrap_or(detected.identity_payload),
+        identity_payload
+            .map(|payload| {
+                normalize_workspace_identity_payload(detected_identity_kind.clone(), payload)
+            })
+            .transpose()?
+            .unwrap_or(detected.identity_payload),
         parsed_bindings,
     ))
 }
@@ -443,6 +462,13 @@ fn derive_workspace_status(bindings: &[WorkspaceBinding]) -> WorkspaceStatus {
     } else {
         WorkspaceStatus::Pending
     }
+}
+
+fn normalize_workspace_identity_payload(
+    kind: WorkspaceIdentityKind,
+    payload: Value,
+) -> Result<Value, ApiError> {
+    normalize_identity_payload(kind, &payload).map_err(ApiError::BadRequest)
 }
 
 fn normalize_workspace_name(raw: &str) -> Result<String, ApiError> {

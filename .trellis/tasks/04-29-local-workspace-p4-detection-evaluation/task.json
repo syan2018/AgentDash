@@ -1,0 +1,32 @@
+{
+  "id": "local-workspace-p4-detection-evaluation",
+  "name": "local-workspace-p4-detection-evaluation",
+  "title": "brainstorm: 评估 local 模块 workspace 识别与 P4 扩展",
+  "description": "评估 agentdash-local 与 workspace detection 链路的实际识别/标记能力，重点分析 P4Workspace 未落地的缺口、Git identity 退化问题，以及后续扩展开发的分阶段方案。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-04-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-local/src/command_handler.rs",
+    "crates/agentdash-application/src/workspace/detection.rs",
+    "crates/agentdash-api/src/routes/workspaces.rs",
+    "crates/agentdash-api/src/workspace_resolution.rs",
+    "crates/agentdash-domain/src/workspace/value_objects.rs"
+  ],
+  "notes": "2026-04-29 当前结论：已接通通用 workspace_detect 与 Git/P4 facts 采集链路，但服务端匹配仍停留在 identity_payload JSON 全等，后续需升级为“自动探测 facts + 逻辑 identity contract + binding 手动标签 + 启动前 verify/prepare”模型，尤其支持按 P4 stream、Git repo/branch 等不同策略组合识别。",
+  "meta": {}
+}

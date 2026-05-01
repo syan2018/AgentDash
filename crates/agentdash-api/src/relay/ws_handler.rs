@@ -212,6 +212,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         RelayMessage::ResponsePrompt { .. }
         | RelayMessage::ResponseCancel { .. }
         | RelayMessage::ResponseDiscover { .. }
+        | RelayMessage::ResponseWorkspaceDetect { .. }
         | RelayMessage::ResponseWorkspaceDetectGit { .. }
         | RelayMessage::ResponseToolFileRead { .. }
         | RelayMessage::ResponseToolFileWrite { .. }

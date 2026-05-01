@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use agent_client_protocol::SessionNotification;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use agentdash_domain::workspace::WorkspaceIdentityKind;
 
 /// Application 层端口：后端在线探测 + workspace 检测
 ///
@@ -16,12 +17,25 @@ pub trait BackendTransport: Send + Sync {
     /// 列出所有在线后端 ID
     async fn list_online_backend_ids(&self) -> Vec<String>;
 
+    /// 探测远程路径的工作空间事实（Git / P4 / Local）。
+    async fn detect_workspace(
+        &self,
+        backend_id: &str,
+        root: &str,
+    ) -> Result<WorkspaceProbeInfo, TransportError>;
+
     /// 探测远程路径的 Git 仓库信息
     async fn detect_git_repo(
         &self,
         backend_id: &str,
         root: &str,
-    ) -> Result<GitRepoInfo, TransportError>;
+    ) -> Result<GitRepoInfo, TransportError> {
+        Ok(self
+            .detect_workspace(backend_id, root)
+            .await?
+            .git
+            .unwrap_or_default())
+    }
 }
 
 /// relay prompt 传输端口 — `RelayAgentConnector` 通过此 trait 与远程后端交互。
@@ -72,6 +86,8 @@ pub struct RelayPromptRequest {
     pub follow_up_session_id: Option<String>,
     pub prompt_blocks: Option<serde_json::Value>,
     pub mount_root_ref: String,
+    pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
+    pub workspace_identity_payload: Option<serde_json::Value>,
     pub working_dir: Option<String>,
     pub env: HashMap<String, String>,
     pub executor_config: Option<RelayExecutorConfig>,
@@ -124,9 +140,28 @@ pub enum RelayTerminalKind {
 #[derive(Debug, Clone, Default)]
 pub struct GitRepoInfo {
     pub is_git_repo: bool,
+    pub repo_root: Option<String>,
     pub source_repo: Option<String>,
+    pub default_branch: Option<String>,
     pub branch: Option<String>,
     pub commit_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct P4WorkspaceInfo {
+    pub is_p4_workspace: bool,
+    pub workspace_root: Option<String>,
+    pub client_name: Option<String>,
+    pub server_address: Option<String>,
+    pub user_name: Option<String>,
+    pub stream: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceProbeInfo {
+    pub git: Option<GitRepoInfo>,
+    pub p4: Option<P4WorkspaceInfo>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]

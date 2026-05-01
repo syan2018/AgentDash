@@ -1,0 +1,37 @@
+{
+  "mcp_servers": [
+    {
+      "name": "project-mcp",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        ".agents/mcp/project-server.js"
+      ],
+      "env": [
+        {
+          "name": "NODE_ENV",
+          "value": "development"
+        }
+      ]
+    },
+    {
+      "name": "docs-mcp",
+      "transport": "http",
+      "url": "http://127.0.0.1:8123/mcp"
+    }
+  ],
+  "workspace_contract": {
+    "enabled": true,
+    "prepare_on_first_prompt": true,
+    "git": {
+      "enabled": true,
+      "allow_branch_sync": true,
+      "allow_commit_reset": false,
+      "default_remote": "origin"
+    },
+    "p4": {
+      "enabled": true,
+      "force_sync": true
+    }
+  }
+}

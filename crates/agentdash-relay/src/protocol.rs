@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use agentdash_domain::workspace::WorkspaceIdentityKind;
+
 use crate::error::RelayError;
 
 // ─── 消息信封 ───────────────────────────────────────────────
@@ -66,6 +68,13 @@ pub enum RelayMessage {
     CommandDiscoverOptions {
         id: String,
         payload: CommandDiscoverOptionsPayload,
+    },
+
+    /// 通用工作空间探测
+    #[serde(rename = "command.workspace_detect")]
+    CommandWorkspaceDetect {
+        id: String,
+        payload: CommandWorkspaceDetectPayload,
     },
 
     /// 检测 Git 信息
@@ -163,6 +172,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseDiscoverPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.workspace_detect")]
+    ResponseWorkspaceDetect {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseWorkspaceDetectPayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -354,6 +372,7 @@ impl RelayMessage {
             | Self::CommandCancel { id, .. }
             | Self::CommandDiscover { id, .. }
             | Self::CommandDiscoverOptions { id, .. }
+            | Self::CommandWorkspaceDetect { id, .. }
             | Self::CommandWorkspaceDetectGit { id, .. }
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
@@ -367,6 +386,7 @@ impl RelayMessage {
             | Self::ResponsePrompt { id, .. }
             | Self::ResponseCancel { id, .. }
             | Self::ResponseDiscover { id, .. }
+            | Self::ResponseWorkspaceDetect { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
@@ -497,6 +517,10 @@ pub struct CommandPromptPayload {
     pub prompt_blocks: Option<serde_json::Value>,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_identity_payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -535,6 +559,13 @@ pub struct CommandDiscoverOptionsPayload {
     pub executor: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandWorkspaceDetectPayload {
+    /// 待检测的 workspace 根目录。
+    /// 本机必须先校验它位于 accessible_roots 内，不能把它当任意文件系统路径使用。
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -658,6 +689,42 @@ pub struct ResponseCancelPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseDiscoverPayload {
     pub executors: Vec<AgentInfoRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceGitProbePayload {
+    pub repo_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceP4ProbePayload {
+    pub workspace_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseWorkspaceDetectPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<WorkspaceGitProbePayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p4: Option<WorkspaceP4ProbePayload>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -877,6 +944,8 @@ mod tests {
             follow_up_session_id: None,
             prompt_blocks: None,
             mount_root_ref: "/new/workspace".to_string(),
+            workspace_identity_kind: None,
+            workspace_identity_payload: None,
             working_dir: None,
             env: std::collections::HashMap::new(),
             executor_config: None,

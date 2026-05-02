@@ -1,20 +1,23 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
 use agentdash_spi::{
-    HookApprovalRequest, HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger,
-    SessionHookSnapshot,
+    HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
 };
 
 use super::presets::domain_trigger_to_spi;
 use super::script_engine::HookScriptEngine;
-use super::shell_exec_rewritten_args;
 use super::snapshot_helpers::*;
+
+#[path = "rules/global_rules/mod.rs"]
+mod global_rules;
+#[path = "rules/owner_defaults/mod.rs"]
+mod owner_defaults;
 
 pub(crate) struct HookEvaluationContext<'a> {
     pub(crate) snapshot: &'a SessionHookSnapshot,
     pub(crate) query: &'a HookEvaluationQuery,
 }
 
-struct NormalizedHookRule {
+pub(super) struct NormalizedHookRule {
     key: &'static str,
     trigger: HookTrigger,
     matches: fn(&HookEvaluationContext<'_>) -> bool,
@@ -26,7 +29,7 @@ pub(crate) fn apply_hook_rules(
     resolution: &mut HookResolution,
     script_engine: &HookScriptEngine,
 ) {
-    for rule in global_hook_rule_registry() {
+    for rule in global_rules::registry_items() {
         if rule.trigger != ctx.query.trigger {
             continue;
         }
@@ -46,7 +49,7 @@ pub(crate) fn apply_hook_rules(
         apply_contract_hook_rules(&ctx, contract_rules, resolution, script_engine);
     }
 
-    let owner_rules = owner_default_hook_rules(ctx.snapshot);
+    let owner_rules = owner_defaults::owner_default_hook_rules(ctx.snapshot);
     if !owner_rules.is_empty() {
         apply_contract_hook_rules(&ctx, &owner_rules, resolution, script_engine);
     }
@@ -126,83 +129,6 @@ pub(crate) fn merge_script_decision(
     if let Some(compaction) = decision.compaction {
         resolution.compaction = Some(compaction);
     }
-}
-
-fn global_hook_rule_registry() -> &'static [NormalizedHookRule] {
-    &[
-        NormalizedHookRule {
-            key: "tool:shell_exec:rewrite_absolute_cwd",
-            trigger: HookTrigger::BeforeTool,
-            matches: rule_matches_shell_exec_absolute_cwd_rewrite,
-            apply: rule_apply_shell_exec_absolute_cwd_rewrite,
-        },
-        NormalizedHookRule {
-            key: "global_builtin:supervised:ask_tool_approval",
-            trigger: HookTrigger::BeforeTool,
-            matches: rule_matches_supervised_tool_approval,
-            apply: rule_apply_supervised_tool_approval,
-        },
-    ]
-}
-
-pub(crate) fn rule_matches_shell_exec_absolute_cwd_rewrite(
-    ctx: &HookEvaluationContext<'_>,
-) -> bool {
-    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
-        return false;
-    };
-    tool_name.ends_with("shell_exec")
-        && shell_exec_rewritten_args(ctx.query.payload.as_ref()).is_some()
-}
-
-pub(crate) fn rule_apply_shell_exec_absolute_cwd_rewrite(
-    ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    let Some(rewritten_args) = shell_exec_rewritten_args(ctx.query.payload.as_ref()) else {
-        return;
-    };
-    let rewritten_cwd = rewritten_args
-        .get("cwd")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(".")
-        .to_string();
-
-    resolution.rewritten_tool_input = Some(rewritten_args);
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "before_tool_shell_exec_cwd_rewritten".to_string(),
-        message: format!(
-            "Hook 已把 shell_exec 的绝对 cwd 改写为相对 workspace root 的路径 (rewritten_cwd={rewritten_cwd})"
-        ),
-    });
-}
-
-pub(crate) fn rule_matches_supervised_tool_approval(ctx: &HookEvaluationContext<'_>) -> bool {
-    let Some(tool_name) = ctx.query.tool_name.as_deref() else {
-        return false;
-    };
-    session_permission_policy(ctx.snapshot)
-        .is_some_and(|policy| policy.eq_ignore_ascii_case("SUPERVISED"))
-        && requires_supervised_tool_approval(tool_name)
-}
-
-pub(crate) fn rule_apply_supervised_tool_approval(
-    ctx: &HookEvaluationContext<'_>,
-    resolution: &mut HookResolution,
-) {
-    let tool_name = ctx.query.tool_name.as_deref().unwrap_or("unknown_tool");
-    resolution.approval_request = Some(HookApprovalRequest {
-        reason: format!("当前会话使用 SUPERVISED 权限策略，执行 `{tool_name}` 前需要用户审批。"),
-        details: Some(serde_json::json!({
-            "policy": "supervised_tool_approval",
-            "permission_policy": session_permission_policy(ctx.snapshot).unwrap_or("SUPERVISED"),
-            "tool_name": tool_name,
-        })),
-    });
-    resolution.diagnostics.push(HookDiagnosticEntry {
-        code: "before_tool_requires_approval".to_string(),
-        message: format!("Hook 要求在执行 `{tool_name}` 前进入人工审批"),
-    });
 }
 
 #[cfg(test)]

@@ -6,9 +6,6 @@
 
 // ── StopDecision::Continue reason (consumed by tracing / tests) ─────────
 
-pub(super) const REASON_BLOCKING_REVIEW_UNRESOLVED: &str =
-    "unresolved blocking_review actions must be resolved before stop";
-
 pub(super) const REASON_PENDING_COMPANION_CONSUMED: &str =
     "pending companion/hook messages consumed, continue loop";
 
@@ -17,27 +14,9 @@ pub(super) const REASON_EXTRA_CONSTRAINTS_PENDING: &str =
 
 pub(super) const REASON_STOP_GATE_UNSATISFIED: &str = "stop gate not satisfied, continue loop";
 
-// ── Diagnostic messages ─────────────────────────────────────────────────
-
-pub(super) fn diag_blocking_review_unresolved(action_ids: &str) -> String {
-    format!(
-        "Unresolved blocking_review hook actions prevent natural stop. \
-         action_ids={action_ids}"
-    )
-}
-
-// ── Hook injection markdown ─────────────────────────────────────────────
-
-pub(super) fn hook_context_header(session_id: &str, revision: u64) -> String {
-    format!("[系统动态 Hook 上下文]\n当前 session_id={session_id}，revision={revision}")
-}
-
 pub(super) fn owners_section(owners_md: &str) -> String {
     format!("## 归属对象\n{owners_md}")
 }
-
-pub(super) const HOOK_INJECTION_FOOTER: &str =
-    "以上内容由 Hook Runtime 自动注入，不代表用户新增需求，但必须优先遵守。";
 
 // ── Pending action messages ─────────────────────────────────────────────
 
@@ -78,20 +57,12 @@ pub(super) fn context_fragments_label(sources: &str) -> String {
     format!("已挂载上下文片段：{sources}")
 }
 
-pub(super) fn constraints_section(items_md: &str) -> String {
-    format!("必须完成的约束：\n{items_md}")
+pub(super) fn pending_action_injections_section(items_md: &str) -> String {
+    format!("关联注入片段：\n{items_md}")
 }
 
 pub(super) const PENDING_ACTION_FOOTER: &str = "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。\
      处理时尽量避免重复总结，聚焦完成剩余动作。";
-
-// ── Dynamic injection section headings ──────────────────────────────────
-
-pub(super) const DYNAMIC_INJECTION_HEADING: &str = "## 动态注入上下文";
-
-pub(super) fn flow_constraints_section(items_md: &str) -> String {
-    format!("## 必须遵守的流程约束\n{items_md}")
-}
 
 // ── Auto-resume prompt ──────────────────────────────────────────────────
 

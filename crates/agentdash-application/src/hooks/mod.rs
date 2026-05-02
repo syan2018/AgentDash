@@ -10,7 +10,6 @@ mod provider;
 mod rules;
 pub(crate) mod script_engine;
 mod snapshot_helpers;
-mod trigger_keys;
 mod workflow_contribution;
 mod workflow_snapshot;
 

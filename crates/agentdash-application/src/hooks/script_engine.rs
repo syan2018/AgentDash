@@ -243,7 +243,7 @@ impl HookScriptEngine {
 
         let tool_failed = super::helpers::tool_call_failed(ctx.query.payload.as_ref());
 
-        let trigger_str = super::trigger_keys::hook_trigger_key(&ctx.query.trigger);
+        let trigger_str = ctx.query.trigger.as_key();
 
         let wf_source = active_workflow_source_from_snapshot(ctx.snapshot);
 

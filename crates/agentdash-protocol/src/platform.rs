@@ -94,6 +94,40 @@ pub enum HookTraceSeverity {
     Info,
 }
 
+impl HookTraceTrigger {
+    #[must_use]
+    pub const fn as_key(self) -> &'static str {
+        match self {
+            Self::SessionStart => "session_start",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::BeforeTool => "before_tool",
+            Self::AfterTool => "after_tool",
+            Self::AfterTurn => "after_turn",
+            Self::BeforeStop => "before_stop",
+            Self::SessionTerminal => "session_terminal",
+            Self::BeforeSubagentDispatch => "before_subagent_dispatch",
+            Self::AfterSubagentDispatch => "after_subagent_dispatch",
+            Self::SubagentResult => "subagent_result",
+            Self::BeforeCompact => "before_compact",
+            Self::AfterCompact => "after_compact",
+            Self::BeforeProviderRequest => "before_provider_request",
+            Self::CapabilityChanged => "capability_changed",
+        }
+    }
+}
+
+impl HookTraceSeverity {
+    #[must_use]
+    pub const fn as_key(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Success => "success",
+            Self::Info => "info",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "snake_case")]

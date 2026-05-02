@@ -15,16 +15,8 @@
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "current_phase": 1,
+  "current_phase": 3,
   "next_action": [
-    {
-      "phase": 1,
-      "action": "implement"
-    },
-    {
-      "phase": 2,
-      "action": "implement"
-    },
     {
       "phase": 3,
       "action": "check"
@@ -61,6 +53,6 @@
     ".trellis/tasks/05-02-session-launchservice-single-entry/prd.md",
     ".trellis/tasks/05-02-session-launchservice-single-entry/session-module-map.md"
   ],
-  "notes": "统一约束：公开语义仅 Init/Continue；Plain 禁止 owner 初始化 compose；生产内建入口（HTTP/hook auto-resume/companion parent resume）默认 strict launch；新 owner 绑定 session 必须可达 Pending->Bootstrapped；所有来源最终经 LaunchService.launch。",
+  "notes": "统一约束：公开语义仅 Init/Continue；Plain 禁止 owner 初始化 compose；生产内建入口（HTTP/hook auto-resume/companion parent resume）默认 strict launch；Task/Workflow/Routine/Companion/Local 已接入 LaunchIntent（PreAssembled 分支）；新 owner 绑定 session 必须可达 Pending->Bootstrapped；所有来源最终经 LaunchService.launch。",
   "meta": {}
 }

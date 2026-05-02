@@ -9,6 +9,7 @@
 pub enum SessionLaunchSource {
     HttpPrompt,
     HookAutoResume,
+    CompanionDispatch,
     CompanionParentResume,
     TaskService,
     WorkflowOrchestrator,
@@ -23,14 +24,31 @@ pub enum SessionLaunchStrictness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLaunchPreparation {
+    /// 入口传入的是 bare request，需要先经过 augmenter 补齐运行时字段。
+    RequiresAugment,
+    /// 入口已经完成 req 组装（compose + finalize），可直接 start_prompt。
+    PreAssembled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionLaunchIntent {
     source: SessionLaunchSource,
     strictness: SessionLaunchStrictness,
+    preparation: SessionLaunchPreparation,
 }
 
 impl SessionLaunchIntent {
-    pub const fn new(source: SessionLaunchSource, strictness: SessionLaunchStrictness) -> Self {
-        Self { source, strictness }
+    pub const fn new(
+        source: SessionLaunchSource,
+        strictness: SessionLaunchStrictness,
+        preparation: SessionLaunchPreparation,
+    ) -> Self {
+        Self {
+            source,
+            strictness,
+            preparation,
+        }
     }
 
     pub const fn source(self) -> SessionLaunchSource {
@@ -41,11 +59,16 @@ impl SessionLaunchIntent {
         self.strictness
     }
 
+    pub const fn preparation(self) -> SessionLaunchPreparation {
+        self.preparation
+    }
+
     /// 统一用于日志/错误定位的 reason tag。
     pub const fn reason_tag(self) -> &'static str {
         match self.source {
             SessionLaunchSource::HttpPrompt => "http_prompt",
             SessionLaunchSource::HookAutoResume => "hook_auto_resume",
+            SessionLaunchSource::CompanionDispatch => "companion_dispatch",
             SessionLaunchSource::CompanionParentResume => "companion_parent_resume",
             SessionLaunchSource::TaskService => "task_service",
             SessionLaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
@@ -55,13 +78,18 @@ impl SessionLaunchIntent {
     }
 
     pub const fn http_prompt() -> Self {
-        Self::new(SessionLaunchSource::HttpPrompt, SessionLaunchStrictness::Strict)
+        Self::new(
+            SessionLaunchSource::HttpPrompt,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::RequiresAugment,
+        )
     }
 
     pub const fn hook_auto_resume() -> Self {
         Self::new(
             SessionLaunchSource::HookAutoResume,
             SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::RequiresAugment,
         )
     }
 
@@ -69,6 +97,47 @@ impl SessionLaunchIntent {
         Self::new(
             SessionLaunchSource::CompanionParentResume,
             SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::RequiresAugment,
+        )
+    }
+
+    pub const fn companion_dispatch() -> Self {
+        Self::new(
+            SessionLaunchSource::CompanionDispatch,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::PreAssembled,
+        )
+    }
+
+    pub const fn task_service() -> Self {
+        Self::new(
+            SessionLaunchSource::TaskService,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::PreAssembled,
+        )
+    }
+
+    pub const fn workflow_orchestrator() -> Self {
+        Self::new(
+            SessionLaunchSource::WorkflowOrchestrator,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::PreAssembled,
+        )
+    }
+
+    pub const fn routine_executor() -> Self {
+        Self::new(
+            SessionLaunchSource::RoutineExecutor,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::PreAssembled,
+        )
+    }
+
+    pub const fn local_relay_prompt() -> Self {
+        Self::new(
+            SessionLaunchSource::LocalRelayPrompt,
+            SessionLaunchStrictness::Strict,
+            SessionLaunchPreparation::PreAssembled,
         )
     }
 
@@ -76,6 +145,7 @@ impl SessionLaunchIntent {
         Self::new(
             SessionLaunchSource::LocalRelayPrompt,
             SessionLaunchStrictness::Relaxed,
+            SessionLaunchPreparation::PreAssembled,
         )
     }
 }

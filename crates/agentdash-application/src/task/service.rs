@@ -283,7 +283,7 @@ impl StoryStepActivationService {
             as crate::session::post_turn_handler::DynPostTurnHandler);
         let req = finalize_request(base, prepared);
 
-        let turn_id = match self.hub.start_prompt(&session_id, req).await {
+        let turn_id = match self.hub.launch_task_prompt(&session_id, req).await {
             Ok(turn_id) => turn_id,
             Err(err) => {
                 if phase == ExecutionPhase::Start {

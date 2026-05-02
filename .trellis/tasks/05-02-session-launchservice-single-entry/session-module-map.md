@@ -8,14 +8,15 @@
 
 ## 1. 先给结论（避免再迷路）
 
-当前系统已经有一条明确主干，但还不是全源单入口：
+当前系统已经有一条明确主干，并且入口侧已经完成第一轮全源映射：
 
 1. **主干执行内核是统一的**：最终都进入 `SessionHub.start_prompt_with_follow_up()`。
-2. **入口前半段仍分散**：各来源在进入 hub 之前的“请求增强/组装”并未完全统一。
-3. **现阶段最稳约束**：
+2. **入口表达已统一**：所有生产来源都已挂到 `LaunchIntent`（strict / preparation 两维）。
+3. **入口前半段仍分散**：各来源在进入 hub 前的“compose 细节”还未抽成单个 LaunchService。
+4. **现阶段最稳约束**：
    - `Init / Continue` 二层语义（公开）
    - `Plain` 禁止误入 owner init compose
-   - 生产内建入口（HTTP/hook auto-resume）必须 strict launch
+- 生产内建入口全部 strict launch（augment 路径 + preassembled 路径）
 
 ---
 
@@ -28,6 +29,7 @@
 - Task：`task/service.rs`
 - Workflow：`workflow/orchestrator.rs`
 - Routine：`routine/executor.rs`
+- Companion dispatch：`companion/tools.rs`
 - Companion parent resume：`companion/tools.rs`
 - Local relay：`agentdash-local/src/command_handler.rs`
 
@@ -54,11 +56,12 @@
 |---|---|---|---|
 | HTTP prompt | `prompt_session` | base req + owner augment（通过 strict launch） | `launch_http_prompt` |
 | Hook auto-resume | `schedule_hook_auto_resume` | 构造 bare req | `launch_hook_auto_resume_prompt` |
-| Task start/continue | `StoryStepActivationService::execute_task` | `compose_story_step` + `finalize_request` | `start_prompt` |
-| Workflow node kickoff | `LifecycleOrchestrator::start_agent_node_prompt` | `compose_lifecycle_node_with_audit` + `finalize_request` | `start_prompt` |
-| Routine execute | `RoutineExecutor::execute_with_session` | `build_project_agent_prompt_request`（内部 compose owner） | `start_prompt` |
+| Task start/continue | `StoryStepActivationService::execute_task` | `compose_story_step` + `finalize_request` | `launch_task_prompt` |
+| Workflow node kickoff | `LifecycleOrchestrator::start_agent_node_prompt` | `compose_lifecycle_node_with_audit` + `finalize_request` | `launch_workflow_prompt` |
+| Routine execute | `RoutineExecutor::execute_with_session` | `build_project_agent_prompt_request`（内部 compose owner） | `launch_routine_prompt` |
+| Companion dispatch | `dispatch_companion_request` | `compose_companion(_with_workflow)` + `finalize_request` | `launch_companion_dispatch_prompt_with_follow_up` |
 | Companion parent resume | `respond_companion_request` | bare req | `launch_companion_parent_resume_prompt` |
-| Local relay prompt | `CommandHandler::handle_prompt` | 本地构造 req（vfs/mcp） | `start_prompt_with_follow_up` |
+| Local relay prompt | `CommandHandler::handle_prompt` | 本地构造 req（vfs/mcp） | `launch_local_relay_prompt_with_follow_up` |
 
 ---
 
@@ -106,15 +109,23 @@
 
 ### 6.1 strict（生产内建）
 
-- `launch_http_prompt` -> strict
-- `launch_hook_auto_resume_prompt` -> strict
-- `launch_companion_parent_resume_prompt` -> strict
+strict 现在分两类：
 
-行为：
+- **RequiresAugment(strict)**：
+  - `launch_http_prompt`
+  - `launch_hook_auto_resume_prompt`
+  - `launch_companion_parent_resume_prompt`
+- **PreAssembled(strict)**：
+  - `launch_task_prompt`
+  - `launch_workflow_prompt`
+  - `launch_routine_prompt`
+  - `launch_companion_dispatch_prompt_with_follow_up`
+  - `launch_local_relay_prompt_with_follow_up`
 
-- augmenter 缺失 -> fail-fast
-- augment 失败 -> fail-fast
-- 不触发裸请求 `connector.prompt`
+行为差异：
+
+- RequiresAugment(strict)：augmenter 缺失/失败 fail-fast，不触发裸请求。
+- PreAssembled(strict)：不走 augmenter，直接按已组装请求启动。
 
 ### 6.2 宽松（内部保留）
 
@@ -172,10 +183,10 @@
 ## 10. 当前阶段状态（截至本次提交）
 
 - 已完成：
-  - HTTP/hook auto-resume 收敛到 strict launch 入口
+  - HTTP/Task/Workflow/Routine/Companion/Local 全来源接入 LaunchIntent 对应入口
   - strict 下 augment 缺失 fail-fast 与回归测试
   - augment 错误语义保真（API error encode/decode）
 - 未完成：
-  - Task/Workflow/Routine/Companion/Local 全源接入同一 LaunchService
-  - LaunchIntent 统一抽象
+  - 将“入口前半段 compose 细节”进一步收敛到单个 LaunchService 实现
+  - 形成全来源回归矩阵并固化为 CI 守卫
 

@@ -408,7 +408,7 @@ impl CompanionRequestTool {
         };
 
         let turn_id = match session_hub
-            .start_prompt_with_follow_up(
+            .launch_companion_dispatch_prompt_with_follow_up(
                 &target_binding.session_id,
                 None,
                 crate::session::finalize_request(base_req, prepared),

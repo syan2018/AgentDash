@@ -703,7 +703,7 @@ impl LifecycleOrchestrator {
         let req = finalize_request(base, prepared);
 
         self.session_hub
-            .start_prompt(session_id, req)
+            .launch_workflow_prompt(session_id, req)
             .await
             .map_err(|e| format!("自动启动 node session prompt 失败: {e}"))?;
         Ok(())

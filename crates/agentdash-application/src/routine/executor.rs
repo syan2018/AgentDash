@@ -206,7 +206,7 @@ impl RoutineExecutor {
 
         let _turn_id = self
             .session_hub
-            .start_prompt(&session_id, req)
+            .launch_routine_prompt(&session_id, req)
             .await
             .map_err(|e| format!("发送 prompt 失败: {e}"))?;
 

@@ -40,7 +40,9 @@ pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hub::SessionHub;
-pub use launch_intent::{SessionLaunchIntent, SessionLaunchSource, SessionLaunchStrictness};
+pub use launch_intent::{
+    SessionLaunchIntent, SessionLaunchPreparation, SessionLaunchSource, SessionLaunchStrictness,
+};
 pub use hub_support::TurnTerminalKind;
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{

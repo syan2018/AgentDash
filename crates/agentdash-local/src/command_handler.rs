@@ -271,7 +271,7 @@ impl CommandHandler {
         let event_tx = self.event_tx.clone();
 
         match hub
-            .start_prompt_with_follow_up(&session_id, follow_up.as_deref(), req)
+            .launch_local_relay_prompt_with_follow_up(&session_id, follow_up.as_deref(), req)
             .await
         {
             Ok(turn_id) => {

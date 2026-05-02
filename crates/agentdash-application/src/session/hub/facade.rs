@@ -17,7 +17,9 @@ use super::super::continuation::{
     build_continuation_system_context_from_events, build_restored_session_messages_from_events,
 };
 use super::super::hub_support::*;
-use super::super::launch_intent::{SessionLaunchIntent, SessionLaunchStrictness};
+use super::super::launch_intent::{
+    SessionLaunchIntent, SessionLaunchPreparation, SessionLaunchStrictness,
+};
 use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
@@ -351,16 +353,115 @@ impl SessionHub {
         req: PromptSessionRequest,
         intent: SessionLaunchIntent,
     ) -> Result<String, ConnectorError> {
-        match intent.strictness() {
-            SessionLaunchStrictness::Strict => {
-                self.launch_prompt_strict(session_id, req, intent.reason_tag())
-                    .await
-            }
-            SessionLaunchStrictness::Relaxed => {
-                self.launch_prompt_relaxed(session_id, req, intent.reason_tag())
-                    .await
-            }
+        match intent.preparation() {
+            SessionLaunchPreparation::RequiresAugment => match intent.strictness() {
+                SessionLaunchStrictness::Strict => {
+                    self.launch_prompt_strict(session_id, req, intent.reason_tag())
+                        .await
+                }
+                SessionLaunchStrictness::Relaxed => {
+                    self.launch_prompt_relaxed(session_id, req, intent.reason_tag())
+                        .await
+                }
+            },
+            SessionLaunchPreparation::PreAssembled => self.start_prompt(session_id, req).await,
         }
+    }
+
+    /// Task 执行链启动入口：请求已在 Task service 内 compose+finalize，直接启动。
+    pub async fn launch_task_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::task_service())
+            .await
+    }
+
+    /// Workflow node 启动入口：请求已在 orchestrator 内 compose+finalize，直接启动。
+    pub async fn launch_workflow_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_with_intent(
+            session_id,
+            req,
+            SessionLaunchIntent::workflow_orchestrator(),
+        )
+        .await
+    }
+
+    /// Routine 启动入口：请求已在 routine executor 内组装，直接启动。
+    pub async fn launch_routine_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::routine_executor())
+            .await
+    }
+
+    async fn launch_preassembled_prompt_with_follow_up_intent(
+        &self,
+        session_id: &str,
+        follow_up_session_id: Option<&str>,
+        req: PromptSessionRequest,
+        intent: SessionLaunchIntent,
+    ) -> Result<String, ConnectorError> {
+        debug_assert!(matches!(
+            intent.preparation(),
+            SessionLaunchPreparation::PreAssembled
+        ));
+        let _ = intent;
+        self.start_prompt_with_follow_up(session_id, follow_up_session_id, req)
+            .await
+    }
+
+    /// Local relay 启动入口：保留 follow_up 透传语义，不经过 augmenter。
+    pub async fn launch_local_relay_prompt_with_follow_up(
+        &self,
+        session_id: &str,
+        follow_up_session_id: Option<&str>,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_preassembled_prompt_with_follow_up_intent(
+            session_id,
+            follow_up_session_id,
+            req,
+            SessionLaunchIntent::local_relay_prompt(),
+        )
+        .await
+    }
+
+    /// Companion dispatch 启动入口：请求已在 companion compose 流程中组装。
+    pub(crate) async fn launch_companion_dispatch_prompt_with_follow_up(
+        &self,
+        session_id: &str,
+        follow_up_session_id: Option<&str>,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_preassembled_prompt_with_follow_up_intent(
+            session_id,
+            follow_up_session_id,
+            req,
+            SessionLaunchIntent::companion_dispatch(),
+        )
+        .await
+    }
+
+    /// Companion parent resume 启动入口：固定 strict 策略。
+    pub(crate) async fn launch_companion_parent_resume_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_with_intent(
+            session_id,
+            req,
+            SessionLaunchIntent::companion_parent_resume(),
+        )
+        .await
     }
 
     /// HTTP 主通道启动入口：固定 strict 策略。
@@ -381,20 +482,6 @@ impl SessionHub {
     ) -> Result<String, ConnectorError> {
         self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::hook_auto_resume())
             .await
-    }
-
-    /// Companion parent resume 启动入口：固定 strict 策略。
-    pub(crate) async fn launch_companion_parent_resume_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(
-            session_id,
-            req,
-            SessionLaunchIntent::companion_parent_resume(),
-        )
-        .await
     }
 
     /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。

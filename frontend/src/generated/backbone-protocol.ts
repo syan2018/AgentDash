@@ -152,7 +152,7 @@ export type HookTraceCompletion = { mode: string, satisfied: boolean, advanced: 
 /**
  * Hook trace 的结构化数据体。
  */
-export type HookTraceData = { trigger: string, decision: string, sequence: bigint, revision: bigint, severity: string, tool_name: string | null, tool_call_id: string | null, subagent_type: string | null, matched_rule_keys: Array<string>, refresh_snapshot: boolean, block_reason: string | null, completion: HookTraceCompletion | null, diagnostic_codes: Array<string>, diagnostics: Array<HookTraceDiagnostic>, injections: Array<HookTraceInjection>, };
+export type HookTraceData = { trigger: HookTraceTrigger, decision: string, sequence: bigint, revision: bigint, severity: HookTraceSeverity, tool_name: string | null, tool_call_id: string | null, subagent_type: string | null, matched_rule_keys: Array<string>, refresh_snapshot: boolean, block_reason: string | null, completion: HookTraceCompletion | null, diagnostic_codes: Array<string>, diagnostics: Array<HookTraceDiagnostic>, injections: Array<HookTraceInjection>, };
 
 export type HookTraceDiagnostic = { code: string | null, message: string | null, };
 
@@ -162,6 +162,10 @@ export type HookTraceInjection = { slot: string | null, source: string | null, c
  * Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。
  */
 export type HookTracePayload = { eventType: string | null, message: string | null, data: HookTraceData | null, };
+
+export type HookTraceSeverity = "error" | "warning" | "success" | "info";
+
+export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "subagent_result" | "before_compact" | "after_compact" | "before_provider_request" | "capability_changed";
 
 export type ItemCompletedNotification = { item: ThreadItem, threadId: string, turnId: string, };
 

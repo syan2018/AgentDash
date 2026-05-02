@@ -37,7 +37,7 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
 
   if (platform.kind === "hook_trace") {
     const traceData = platform.data.data;
-    if (isRecord(traceData)) {
+    if (traceData) {
       return {
         ...traceData,
         event_type: platform.data.eventType ?? null,

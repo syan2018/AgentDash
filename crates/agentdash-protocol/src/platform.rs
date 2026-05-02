@@ -37,11 +37,11 @@ pub struct HookTracePayload {
 #[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceData {
-    pub trigger: String,
+    pub trigger: HookTraceTrigger,
     pub decision: String,
     pub sequence: u64,
     pub revision: u64,
-    pub severity: String,
+    pub severity: HookTraceSeverity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +62,36 @@ pub struct HookTraceData {
     pub diagnostics: Vec<HookTraceDiagnostic>,
     #[serde(default)]
     pub injections: Vec<HookTraceInjection>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum HookTraceTrigger {
+    SessionStart,
+    UserPromptSubmit,
+    BeforeTool,
+    AfterTool,
+    AfterTurn,
+    BeforeStop,
+    SessionTerminal,
+    BeforeSubagentDispatch,
+    AfterSubagentDispatch,
+    SubagentResult,
+    BeforeCompact,
+    AfterCompact,
+    BeforeProviderRequest,
+    CapabilityChanged,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum HookTraceSeverity {
+    Error,
+    Warning,
+    Success,
+    Info,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

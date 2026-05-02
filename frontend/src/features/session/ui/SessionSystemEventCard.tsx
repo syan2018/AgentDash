@@ -6,7 +6,7 @@
  */
 
 import type { ReactNode } from "react";
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, HookTraceData } from "../../../generated/backbone-protocol";
 import {
   extractPlatformEventType,
   extractPlatformEventData,
@@ -191,7 +191,7 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
 
   // ── hook_trace / hook_event → hook 卡片逻辑 ──
   const isHook = eventType === "hook_event" || eventType === "hook_trace";
-  const hookData = isHook ? extractHookEventData(eventData) : null;
+  const hookData = isHook ? extractHookEventData(event, eventData) : null;
 
   if (isHook) {
     const code = hookData?.code ?? null;
@@ -494,7 +494,78 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
   return lines;
 }
 
-function extractHookEventData(value: Record<string, unknown> | null): HookEventData | null {
+function extractHookEventData(
+  event: BackboneEvent,
+  value: Record<string, unknown> | null,
+): HookEventData | null {
+  if (event.type === "platform" && event.payload.kind === "hook_trace") {
+    const payload = event.payload.data;
+    if (payload.data) {
+      return extractHookEventDataFromTrace(payload.data, payload.eventType);
+    }
+  }
+  return extractHookEventDataFromRecord(value);
+}
+
+function extractHookEventDataFromTrace(
+  trace: HookTraceData,
+  eventTypeCode: string | null,
+): HookEventData {
+  const sequence = readOptionalNumber(trace.sequence);
+  const revision = readOptionalNumber(trace.revision);
+  const matchedRuleKeys = trace.matched_rule_keys.filter((item): item is string => item.trim().length > 0);
+  const diagnosticCodes = trace.diagnostic_codes.filter((item): item is string => item.trim().length > 0);
+  const diagnostics = trace.diagnostics
+    .map((item) => {
+      const code = readOptionalString(item.code) ?? undefined;
+      const message = readOptionalString(item.message) ?? undefined;
+      if (!code && !message) return null;
+      return { code, message };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+  const injections = trace.injections
+    .map((item) => {
+      const slot = readOptionalString(item.slot) ?? undefined;
+      const source = readOptionalString(item.source) ?? undefined;
+      const content = readOptionalString(item.content) ?? undefined;
+      if (!slot && !source && !content) return null;
+      return { slot, source, content };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+
+  const data: HookEventData = {
+    trigger: trace.trigger,
+    decision: trace.decision,
+    severity: trace.severity,
+    refresh_snapshot: trace.refresh_snapshot,
+    tool_name: trace.tool_name,
+    tool_call_id: trace.tool_call_id,
+    subagent_type: trace.subagent_type,
+    block_reason: trace.block_reason,
+    completion: trace.completion
+      ? {
+        mode: trace.completion.mode,
+        satisfied: trace.completion.satisfied,
+        advanced: trace.completion.advanced,
+        reason: trace.completion.reason,
+      }
+      : null,
+    matched_rule_keys: matchedRuleKeys.length > 0 ? matchedRuleKeys : undefined,
+    diagnostic_codes: diagnosticCodes.length > 0 ? diagnosticCodes : undefined,
+    diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
+    injections: injections.length > 0 ? injections : undefined,
+  };
+  if (sequence != null) data.sequence = sequence;
+  if (revision != null) data.revision = revision;
+  if (eventTypeCode) data.code = eventTypeCode;
+  if (!data.decision) {
+    const inferred = extractHookDecision(data.code);
+    if (inferred) data.decision = inferred;
+  }
+  return data;
+}
+
+function extractHookEventDataFromRecord(value: Record<string, unknown> | null): HookEventData | null {
   if (!isRecord(value)) return null;
 
   const data: HookEventData = {};
@@ -571,8 +642,14 @@ function readNullableString(value: unknown): string | null | undefined {
 }
 
 function readOptionalNumber(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function readOptionalBoolean(value: unknown): boolean | null {

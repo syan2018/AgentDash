@@ -10,7 +10,7 @@ pub use compat::{envelope_to_session_notification, session_notification_to_envel
 pub use envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
 pub use platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
-    PlatformEvent,
+    HookTraceSeverity, HookTraceTrigger, PlatformEvent,
 };
 
 pub use codex_app_server_protocol;

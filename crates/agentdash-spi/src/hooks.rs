@@ -326,26 +326,10 @@ pub struct SessionHookRefreshQuery {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum HookTrigger {
-    SessionStart,
-    UserPromptSubmit,
-    BeforeTool,
-    AfterTool,
-    AfterTurn,
-    BeforeStop,
-    SessionTerminal,
-    BeforeSubagentDispatch,
-    AfterSubagentDispatch,
-    SubagentResult,
-    BeforeCompact,
-    AfterCompact,
-    /// LLM API 请求发出前（仅观测，不改写 payload）
-    BeforeProviderRequest,
-    /// 能力集发生变更（step transition / 动态注入后触发）
-    CapabilityChanged,
-}
+/// Hook 触发点枚举。
+///
+/// 直接复用 protocol 层定义，避免 SPI / protocol 双份枚举漂移。
+pub use agentdash_protocol::HookTraceTrigger as HookTrigger;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

@@ -1,6 +1,6 @@
 use agentdash_protocol::{
     BackboneEnvelope, BackboneEvent, HookTraceCompletion, HookTraceData, HookTraceDiagnostic,
-    HookTraceInjection, HookTracePayload, PlatformEvent, SourceInfo, TraceInfo,
+    HookTraceInjection, HookTracePayload, HookTraceSeverity, PlatformEvent, SourceInfo, TraceInfo,
 };
 
 use crate::{HookTraceEntry, HookTrigger};
@@ -35,11 +35,11 @@ pub fn build_hook_trace_envelope(
         reason: status.reason.clone(),
     });
     let data = HookTraceData {
-        trigger: hook_trigger_key(&entry.trigger).to_string(),
+        trigger: entry.trigger.clone(),
         decision: entry.decision.clone(),
         sequence: entry.sequence,
         revision: entry.revision,
-        severity: hook_event_severity(entry).to_string(),
+        severity: hook_event_severity(entry),
         tool_name: entry.tool_name.clone(),
         tool_call_id: entry.tool_call_id.clone(),
         subagent_type: entry.subagent_type.clone(),
@@ -77,20 +77,20 @@ pub fn build_hook_trace_envelope(
     })
 }
 
-fn hook_event_severity(entry: &HookTraceEntry) -> &'static str {
+fn hook_event_severity(entry: &HookTraceEntry) -> HookTraceSeverity {
     if entry.block_reason.is_some() || matches!(entry.decision.as_str(), "deny" | "blocked") {
-        return "error";
+        return HookTraceSeverity::Error;
     }
     if matches!(
         entry.decision.as_str(),
         "ask" | "rewrite" | "steering_injected" | "continue"
     ) {
-        return "warning";
+        return HookTraceSeverity::Warning;
     }
     if matches!(entry.decision.as_str(), "step_advanced") {
-        return "success";
+        return HookTraceSeverity::Success;
     }
-    "info"
+    HookTraceSeverity::Info
 }
 
 fn normalize_event_decision(decision: &str) -> String {
@@ -293,7 +293,7 @@ mod tests {
                 assert!(payload.event_type.as_deref().unwrap().starts_with("hook:"));
                 let data = payload.data.as_ref().unwrap();
                 assert_eq!(data.decision, "continue");
-                assert_eq!(data.severity, "warning");
+                assert_eq!(data.severity, HookTraceSeverity::Warning);
             }
             other => panic!("unexpected event: {other:?}"),
         }

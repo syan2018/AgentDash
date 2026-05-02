@@ -19,24 +19,30 @@ import {
   isAggregatedGroup,
   isAggregatedThinkingGroup,
   isDisplayEntry,
-  getThreadItemTitle,
+  extractTextFromContentBlock,
+  parseContentBlock,
 } from "../model/types";
 import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup } from "../model/types";
 import { AcpToolCallCard } from "./AcpToolCallCard";
 import { AcpMessageCard } from "./AcpMessageCard";
 import { AcpPlanCard } from "./AcpPlanCard";
+import { ContentBlockCard } from "./ContentBlockCard";
+import { AcpTaskContextCard } from "./AcpTaskContextCard";
+import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
+import { AcpOwnerContextCard } from "./AcpOwnerContextCard";
+import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./AcpSessionCapabilityCard";
 import { AcpTaskEventCard } from "./AcpTaskEventCard";
 import { isTaskEventUpdate } from "./AcpTaskEventGuard";
 import { AcpSystemEventCard } from "./AcpSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./AcpSystemEventGuard";
 
-export interface AcpSessionEntryProps {
+export interface SessionEntryProps {
   item: AcpDisplayItem;
   isStreaming?: boolean;
   sessionId?: string | null;
 }
 
-export const AcpSessionEntry = memo(function AcpSessionEntry({ item, isStreaming, sessionId }: AcpSessionEntryProps) {
+export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId }: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
     if (item.aggregationType === "file_edit") {
       return <AggregatedDiffGroupEntry group={item} sessionId={sessionId} />;
@@ -129,10 +135,39 @@ function SingleEntry({
       const platform = event.payload;
 
       if (platform.kind === "session_meta_update" && platform.data.key === "user_message_chunk") {
+        const block = parseContentBlock(platform.data.value);
+
+        if (block) {
+          if (block.type === "resource" || block.type === "resource_link") {
+            if (block.type === "resource") {
+              if (isAgentDashTaskContextBlock(block)) {
+                return <AcpTaskContextCard block={block} />;
+              }
+
+              const uri = block.resource.uri;
+              if (
+                uri.startsWith("agentdash://project-context/") ||
+                uri.startsWith("agentdash://story-context/")
+              ) {
+                return <AcpOwnerContextCard block={block} />;
+              }
+
+              if (isSessionCapabilitiesBlock(block)) {
+                return <AcpSessionCapabilityCard block={block} />;
+              }
+            }
+            return <ContentBlockCard block={block} variant="compact" />;
+          }
+
+          if (block.type === "image" || block.type === "audio") {
+            return <ContentBlockCard block={block} variant="compact" />;
+          }
+        }
+
         return (
           <AcpMessageCard
             type="user"
-            content={accumulatedText ?? (typeof platform.data.value === "string" ? platform.data.value : "")}
+            content={accumulatedText ?? extractTextFromContentBlock(block)}
           />
         );
       }
@@ -340,4 +375,4 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   return parts.join(" · ");
 }
 
-export default AcpSessionEntry;
+export default SessionEntry;

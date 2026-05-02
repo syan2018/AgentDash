@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData, isRecord } from "../model/agentdashMeta";
+import { extractPlatformEventData } from "../model/agentdashMeta";
 import { EventFullCard } from "./EventCards";
 import { respondCompanionRequest } from "../../../services/executor";
 

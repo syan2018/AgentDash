@@ -6,7 +6,7 @@ import type {
   WorkflowStepState,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { AcpSessionList } from "../acp-session";
+import { SessionList } from "../acp-session";
 import { STEP_STATUS_LABEL } from "./shared-labels";
 
 const EMPTY_RUNS: WorkflowRun[] = [];
@@ -94,7 +94,7 @@ function LifecycleNodeCard({ stepState, stepDef, isActive }: LifecycleNodeCardPr
         <div className="border-t border-border">
           {hasSession ? (
             <div className="h-[28rem] overflow-y-auto">
-              <AcpSessionList
+              <SessionList
                 sessionId={stepState.session_id!}
                 autoScroll={isActive}
               />

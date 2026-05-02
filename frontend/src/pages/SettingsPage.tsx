@@ -448,7 +448,7 @@ function LlmProviderForm({
   provider,
   discoveredModels,
   isLoadingModels,
-  onRefreshModels,
+  onRefreshModels: _onRefreshModels,
   saving,
   onSave,
   onDelete,

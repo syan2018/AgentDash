@@ -7,22 +7,22 @@ import type { SessionEventEnvelope } from "./types";
 const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
 
-export type AcpStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
+export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
 
-export interface AcpStreamTransportOptions {
+export interface SessionStreamTransportOptions {
   sessionId: string;
   endpoint?: string;
   sinceId?: number;
   onEvent: (event: SessionEventEnvelope) => void;
-  onLifecycleChange: (lifecycle: AcpStreamLifecycle) => void;
+  onLifecycleChange: (lifecycle: SessionStreamLifecycle) => void;
   onError: (error: Error) => void;
 }
 
-export interface AcpStreamTransport {
+export interface SessionStreamTransport {
   close: () => void;
 }
 
-interface FetchNdjsonTransportOptions extends AcpStreamTransportOptions {
+interface FetchNdjsonTransportOptions extends SessionStreamTransportOptions {
   onInitialFailure: (error: Error) => void;
 }
 
@@ -113,15 +113,15 @@ export function parseSessionEventEnvelopePayload(
   };
 }
 
-class EventSourceTransport implements AcpStreamTransport {
+class EventSourceTransport implements SessionStreamTransport {
   private source: EventSource | null = null;
   private closed = false;
   private hadConnected = false;
   private sinceId: number;
   private unregister: (() => void) | null = null;
-  private readonly options: AcpStreamTransportOptions;
+  private readonly options: SessionStreamTransportOptions;
 
-  constructor(options: AcpStreamTransportOptions) {
+  constructor(options: SessionStreamTransportOptions) {
     this.options = options;
     this.sinceId = options.sinceId ?? 0;
     this.unregister = registerStreamConnection({
@@ -188,7 +188,7 @@ class EventSourceTransport implements AcpStreamTransport {
   }
 }
 
-class FetchNdjsonTransport implements AcpStreamTransport {
+class FetchNdjsonTransport implements SessionStreamTransport {
   private closed = false;
   private controller: AbortController | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -366,7 +366,7 @@ function preferSseOnly(): boolean {
   return mode === "sse";
 }
 
-export function createAcpStreamTransport(options: AcpStreamTransportOptions): AcpStreamTransport {
+export function createSessionStreamTransport(options: SessionStreamTransportOptions): SessionStreamTransport {
   if (preferSseOnly()) {
     return new EventSourceTransport(options);
   }

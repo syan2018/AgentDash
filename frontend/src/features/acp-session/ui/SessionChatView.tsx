@@ -10,8 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { useAcpSession } from "../model";
-import { AcpSessionEntry } from "./AcpSessionEntry";
+import { useSessionFeed } from "../model";
+import { SessionEntry } from "./AcpSessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
 import { extractPlatformEventType } from "../model/agentdashMeta";
@@ -459,7 +459,7 @@ export function SessionChatView({
     sendCancel,
     streamingEntryId,
     tokenUsage,
-  } = useAcpSession({ sessionId: streamSessionId, enabled: hasSession });
+  } = useSessionFeed({ sessionId: streamSessionId, enabled: hasSession });
 
   useEffect(() => {
     if (!hasSession || executionState?.status !== "running") return;
@@ -762,7 +762,7 @@ export function SessionChatView({
               const key = getItemKey(item);
               return (
                 <div key={key}>
-                  <AcpSessionEntry
+                  <SessionEntry
                     item={item}
                     isStreaming={key === streamingEntryId}
                     sessionId={sessionId}

@@ -6,7 +6,7 @@
  */
 
 import { useMemo, useRef } from "react";
-import { useAcpStream } from "./useAcpStream";
+import { useSessionStream } from "./useAcpStream";
 import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 import {
   isAggregatedGroup as isAggregatedGroupItem,
@@ -22,14 +22,14 @@ import type {
   TokenUsageInfo,
 } from "./types";
 
-export interface UseAcpSessionOptions {
+export interface UseSessionFeedOptions {
   sessionId: string;
   endpoint?: string;
   enableAggregation?: boolean;
   enabled?: boolean;
 }
 
-export interface UseAcpSessionResult {
+export interface UseSessionFeedResult {
   displayItems: AcpDisplayItem[];
   rawEntries: AcpDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
@@ -265,7 +265,7 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
   return entryShallowEqual(a as AcpDisplayEntry, b as AcpDisplayEntry);
 }
 
-export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
+export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
 
   const {
@@ -279,7 +279,7 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
     reconnect,
     close,
     sendCancel,
-  } = useAcpStream({
+  } = useSessionStream({
     sessionId,
     endpoint,
     enabled,
@@ -342,4 +342,4 @@ export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResul
   };
 }
 
-export default useAcpSession;
+export default useSessionFeed;

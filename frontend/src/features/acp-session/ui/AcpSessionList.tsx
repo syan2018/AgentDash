@@ -1,17 +1,17 @@
 /**
- * ACP 会话列表容器
+ * 会话列表容器
  *
- * 显示 ACP 会话的所有条目，支持消息聚合和虚拟滚动
+ * 显示会话的所有条目，支持消息聚合和虚拟滚动。
  */
 
 import { useRef, useEffect } from "react";
-import { useAcpSession } from "../model";
-import type { UseAcpSessionOptions } from "../model";
-import { AcpSessionEntry } from "./AcpSessionEntry";
+import { useSessionFeed } from "../model";
+import type { UseSessionFeedOptions } from "../model";
+import { SessionEntry } from "./AcpSessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem } from "../model/types";
 
-export interface AcpSessionListProps extends UseAcpSessionOptions {
+export interface SessionListProps extends UseSessionFeedOptions {
   renderItem?: (item: AcpDisplayItem, index: number) => React.ReactNode;
   itemClassName?: string;
   className?: string;
@@ -21,7 +21,7 @@ export interface AcpSessionListProps extends UseAcpSessionOptions {
   errorState?: (error: Error) => React.ReactNode;
 }
 
-export function AcpSessionList(props: AcpSessionListProps) {
+export function SessionList(props: SessionListProps) {
   const {
     sessionId,
     endpoint,
@@ -41,7 +41,7 @@ export function AcpSessionList(props: AcpSessionListProps) {
     error,
     reconnect,
     streamingEntryId,
-  } = useAcpSession({
+  } = useSessionFeed({
     sessionId,
     endpoint,
     enableAggregation,
@@ -133,7 +133,7 @@ export function AcpSessionList(props: AcpSessionListProps) {
           const key = getItemKey(item);
           return (
             <div key={key} className={itemClassName}>
-              <AcpSessionEntry item={item} isStreaming={key === streamingEntryId} />
+              <SessionEntry item={item} isStreaming={key === streamingEntryId} />
             </div>
           );
         })}
@@ -152,4 +152,4 @@ function getItemKey(item: AcpDisplayItem): string {
   return item.id;
 }
 
-export default AcpSessionList;
+export default SessionList;

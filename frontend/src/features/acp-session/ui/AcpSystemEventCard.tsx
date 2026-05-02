@@ -6,8 +6,8 @@
  */
 
 import type { ReactNode } from "react";
-import type { BackboneEvent, PlatformEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, extractHookTraceInfo, isRecord } from "../model/agentdashMeta";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage } from "../model/agentdashMeta";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./AcpCompanionRequestCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";

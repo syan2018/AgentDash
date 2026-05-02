@@ -1,11 +1,11 @@
 /**
- * ACP 会话模型层
+ * 会话模型层
  *
- * 提供类型定义和状态管理 hooks
+ * 提供类型定义和状态管理 hooks。
  */
 
 export * from "./types";
 export * from "./agentdashMeta";
 
-export { useAcpStream, type UseAcpStreamOptions, type UseAcpStreamResult } from "./useAcpStream";
-export { useAcpSession, type UseAcpSessionOptions, type UseAcpSessionResult } from "./useAcpSession";
+export { useSessionStream, type UseSessionStreamOptions, type UseSessionStreamResult } from "./useAcpStream";
+export { useSessionFeed, type UseSessionFeedOptions, type UseSessionFeedResult } from "./useAcpSession";

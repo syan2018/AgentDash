@@ -17,10 +17,10 @@ import type {
   SessionEventEnvelope,
   TokenUsageInfo,
 } from "./types";
-import { extractTokenUsageFromEvent } from "./types";
-import { createAcpStreamTransport, type AcpStreamTransport } from "./streamTransport";
+import { extractTokenUsageFromEvent, parseContentBlock } from "./types";
+import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
 
-export interface UseAcpStreamOptions {
+export interface UseSessionStreamOptions {
   sessionId: string;
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
@@ -31,7 +31,7 @@ export interface UseAcpStreamOptions {
   onError?: (error: Error) => void;
 }
 
-export interface UseAcpStreamResult {
+export interface UseSessionStreamResult {
   entries: AcpDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
@@ -49,7 +49,7 @@ const RECEIVING_IDLE_TIMEOUT_MS = 600;
 const HISTORY_PAGE_SIZE = 500;
 const EMPTY_INITIAL_ENTRIES: AcpDisplayEntry[] = [];
 
-interface AcpStreamState {
+interface SessionStreamState {
   entries: AcpDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
@@ -68,7 +68,7 @@ type StreamInputEvent = {
   tool_call_id?: string | null;
 };
 
-function createInitialState(initialEntries: AcpDisplayEntry[]): AcpStreamState {
+function createInitialState(initialEntries: AcpDisplayEntry[]): SessionStreamState {
   const lastAppliedSeq = initialEntries.reduce((max, entry) => Math.max(max, entry.eventSeq), 0);
   return {
     entries: initialEntries,
@@ -162,22 +162,6 @@ function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): 
     turnId: event.turn_id ?? undefined,
     entryIndex: event.entry_index ?? undefined,
   };
-}
-
-/** 判断 ThreadItem 是否处于终态 */
-function isTerminalItemStatus(item: ThreadItem): boolean {
-  switch (item.type) {
-    case "commandExecution":
-      return item.status === "completed" || item.status === "failed" || item.status === "declined";
-    case "fileChange":
-      return item.status === "completed" || item.status === "failed" || item.status === "declined";
-    case "mcpToolCall":
-      return item.status === "completed" || item.status === "failed";
-    case "dynamicToolCall":
-      return item.status === "completed" || item.status === "failed";
-    default:
-      return true;
-  }
 }
 
 function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelope): AcpDisplayEntry[] {
@@ -322,17 +306,36 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
       if (key === "user_message_chunk") {
         const entryId = buildEntryId(event, bbEvent);
         const value = platform.data.value;
-        const chunkText = typeof value === "string" ? value : "";
+        const parsedBlock = parseContentBlock(value);
+        const chunkText =
+          typeof value === "string"
+            ? value
+            : parsedBlock?.type === "text"
+              ? parsedBlock.text
+              : null;
+
+        // 仅 text block 走增量拼接；resource/resource_link 等结构化块保持原事件给 UI 专用卡片渲染。
+        if (chunkText != null) {
+          for (let i = prev.length - 1; i >= 0; i -= 1) {
+            if (prev[i]!.id === entryId) {
+              const existing = prev[i]!;
+              const accumulated = (existing.accumulatedText ?? "") + chunkText;
+              const next = [...prev];
+              next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
+              return next;
+            }
+          }
+          return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: chunkText }];
+        }
+
         for (let i = prev.length - 1; i >= 0; i -= 1) {
           if (prev[i]!.id === entryId) {
-            const existing = prev[i]!;
-            const accumulated = (existing.accumulatedText ?? "") + chunkText;
             const next = [...prev];
-            next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
+            next[i] = { ...prev[i]!, eventSeq: event.event_seq, event: bbEvent };
             return next;
           }
         }
-        return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: chunkText }];
+        return [...prev, makeDisplayEntry(event, bbEvent)];
       }
 
       // session_meta_updated — 静默
@@ -358,9 +361,9 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
 }
 
 export function reduceStreamState(
-  prev: AcpStreamState,
+  prev: SessionStreamState,
   incomingEvents: StreamInputEvent[],
-): AcpStreamState {
+): SessionStreamState {
   if (incomingEvents.length === 0) {
     return prev;
   }
@@ -401,7 +404,7 @@ function shouldFlushImmediately(event: SessionEventEnvelope): boolean {
   return t === "item_started" || t === "item_completed" || t === "approval_request";
 }
 
-export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
+export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
     sessionId,
     enabled = true,
@@ -413,7 +416,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   } = options;
   const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
 
-  const [streamState, setStreamState] = useState<AcpStreamState>(() =>
+  const [streamState, setStreamState] = useState<SessionStreamState>(() =>
     createInitialState(normalizedInitialEntries),
   );
   const [isConnected, setIsConnected] = useState(false);
@@ -422,7 +425,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
 
-  const transportRef = useRef<AcpStreamTransport | null>(null);
+  const transportRef = useRef<SessionStreamTransport | null>(null);
   const mountedRef = useRef(true);
   const stateRef = useRef(streamState);
   const pendingEventsRef = useRef<SessionEventEnvelope[]>([]);
@@ -562,7 +565,7 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
 
         if (cancelled || !mountedRef.current) return;
 
-        transportRef.current = createAcpStreamTransport({
+        transportRef.current = createSessionStreamTransport({
           sessionId,
           endpoint,
           sinceId: nextState.lastAppliedSeq,
@@ -668,4 +671,4 @@ export function useAcpStream(options: UseAcpStreamOptions): UseAcpStreamResult {
   };
 }
 
-export default useAcpStream;
+export default useSessionStream;

@@ -54,6 +54,166 @@ import type {
   ThreadTokenUsage,
 } from "../../../generated/backbone-protocol";
 
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readStringField(record: JsonRecord, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readOptionalNumberField(record: JsonRecord, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function pickNameFromUri(uri: string): string {
+  const normalized = uri.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || uri;
+}
+
+export type TextResourceContents = {
+  uri: string;
+  mimeType?: string | null;
+  text: string;
+};
+
+export type BlobResourceContents = {
+  uri: string;
+  mimeType?: string | null;
+  blob: string;
+};
+
+export type EmbeddedResource = TextResourceContents | BlobResourceContents;
+
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "resource_link"; uri: string; name?: string; mimeType?: string | null; size?: number | null }
+  | { type: "resource"; resource: EmbeddedResource }
+  | { type: "image"; data: string; mimeType?: string | null }
+  | { type: "audio"; data: string; mimeType?: string | null };
+
+/**
+ * 把 platform.session_meta_update.value 解析为可渲染的输入块。
+ * 仅按当前 Backbone 链路下发的 block 结构解析。
+ */
+export function parseContentBlock(value: unknown): ContentBlock | null {
+  if (!isRecord(value)) return null;
+
+  const type = readStringField(value, "type");
+  if (!type) return null;
+
+  switch (type) {
+    case "text": {
+      const text = readStringField(value, "text");
+      if (text == null) return null;
+      return { type: "text", text };
+    }
+
+    case "resource_link": {
+      const uri = readStringField(value, "uri");
+      if (!uri) return null;
+      const name = readStringField(value, "name");
+      const mimeType = readStringField(value, "mimeType") ?? undefined;
+      const size = readOptionalNumberField(value, "size");
+      return {
+        type: "resource_link",
+        uri,
+        name: name ?? undefined,
+        mimeType,
+        size,
+      };
+    }
+
+    case "resource": {
+      const resourceValue = value.resource;
+      if (!isRecord(resourceValue)) return null;
+      const uri = readStringField(resourceValue, "uri");
+      if (!uri) return null;
+      const mimeType = readStringField(resourceValue, "mimeType") ?? undefined;
+      const text = readStringField(resourceValue, "text");
+      if (text != null) {
+        return {
+          type: "resource",
+          resource: { uri, mimeType, text },
+        };
+      }
+      const blob = readStringField(resourceValue, "blob");
+      if (blob != null) {
+        return {
+          type: "resource",
+          resource: { uri, mimeType, blob },
+        };
+      }
+      return null;
+    }
+
+    case "image":
+    case "audio": {
+      const data = readStringField(value, "data");
+      if (!data) return null;
+      const mimeType = readStringField(value, "mimeType") ?? undefined;
+      if (type === "image") {
+        return { type: "image", data, mimeType };
+      }
+      return { type: "audio", data, mimeType };
+    }
+
+    default:
+      return null;
+  }
+}
+
+/** 从输入块提取兜底文本（用于无专用卡片时展示）。 */
+export function extractTextFromContentBlock(content: ContentBlock | null | undefined): string {
+  if (!content) return "";
+
+  switch (content.type) {
+    case "text":
+      return content.text;
+
+    case "resource_link": {
+      const label = content.name?.trim() || pickNameFromUri(content.uri) || content.uri;
+      if (!content.uri || label === content.uri) {
+        return `📎 引用文件: ${label}`;
+      }
+      return `📎 引用文件: ${label}\n${content.uri}`;
+    }
+
+    case "resource": {
+      const resource = content.resource;
+      if ("text" in resource) {
+        const label = pickNameFromUri(resource.uri);
+        const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
+        return `📎 引用文件内容: ${label}${mimeText}\n${resource.uri}\n（已附带 ${resource.text.length} 字符）`;
+      }
+      const label = pickNameFromUri(resource.uri);
+      const mimeText = resource.mimeType ? ` (${resource.mimeType})` : "";
+      return `📎 引用二进制资源: ${label}${mimeText}\n${resource.uri}`;
+    }
+
+    case "image":
+      return content.mimeType ? `🖼️ 图片内容 (${content.mimeType})` : "🖼️ 图片内容";
+
+    case "audio":
+      return content.mimeType ? `🔊 音频内容 (${content.mimeType})` : "🔊 音频内容";
+  }
+}
+
 // ==================== 前端扩展类型 ====================
 
 export interface SessionEventEnvelope {

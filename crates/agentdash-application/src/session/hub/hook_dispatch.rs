@@ -266,26 +266,14 @@ impl SessionHub {
                 msg::AUTO_RESUME_PROMPT,
             ));
 
-            let req = match hub
-                .augment_prompt_request(&session_id, bare_req, "hook_auto_resume")
+            if let Err(e) = hub
+                .launch_hook_auto_resume_prompt(&session_id, bare_req)
                 .await
             {
-                Ok(augmented) => augmented,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Hook auto-resume: augment 失败，跳过本次续跑以避免发送裸请求"
-                    );
-                    return;
-                }
-            };
-
-            if let Err(e) = hub.start_prompt(&session_id, req).await {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,
-                    "Hook auto-resume failed"
+                    "Hook auto-resume launch 失败"
                 );
             }
         });

@@ -308,6 +308,60 @@ impl SessionHub {
             .await
     }
 
+    /// Phase 1 单入口（宽松模式）：先做 request augment，再进入 start_prompt。
+    ///
+    /// 约束：
+    /// - 仅用于测试或非正式 embedding（允许 augmenter 缺失时回退裸请求）；
+    /// - 生产内建路径应使用 `launch_prompt_strict`，避免静默上下文漂移。
+    pub async fn launch_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+        reason: &str,
+    ) -> Result<String, ConnectorError> {
+        let req = self.augment_prompt_request(session_id, req, reason).await?;
+        self.start_prompt(session_id, req).await
+    }
+
+    /// 严格单入口：要求 augmenter 已注入，不允许回退到裸请求。
+    ///
+    /// 适用于所有生产内建触发路径（HTTP / hook auto-resume 等），避免因注入
+    /// 顺序问题静默丢失 owner / mcp / flow / context_bundle。
+    pub async fn launch_prompt_strict(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+        reason: &str,
+    ) -> Result<String, ConnectorError> {
+        let Some(augmenter) = self.current_prompt_augmenter().await else {
+            return Err(ConnectorError::Runtime(format!(
+                "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
+            )));
+        };
+        let req = augmenter.augment(session_id, req).await?;
+        self.start_prompt(session_id, req).await
+    }
+
+    /// HTTP 主通道启动入口：固定 strict 策略。
+    pub async fn launch_http_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_strict(session_id, req, "http_prompt")
+            .await
+    }
+
+    /// Hook auto-resume 启动入口：固定 strict 策略。
+    pub async fn launch_hook_auto_resume_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_strict(session_id, req, "hook_auto_resume")
+            .await
+    }
+
     /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。
     ///
     /// 没有注入 augmenter 的测试/嵌入场景保留旧行为，但正式 AppState

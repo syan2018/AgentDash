@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "对齐会话启动主线与生命周期约束"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "确保 bundle 作为主数据源并避免旧注入回流"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "重构涉及 API/Application/Frontend 交界"}

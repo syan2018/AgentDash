@@ -15,6 +15,7 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
+use crate::bootstrap::prompt_augmenter::decode_augmented_runtime_error;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::context::SessionContextSnapshot;
@@ -934,15 +935,17 @@ pub async fn prompt_session(
     // 无需修改 augment trait 签名或跨函数 identity 形参链。
     let mut base_req = PromptSessionRequest::from_user_input(user_input);
     base_req.identity = Some(current_user);
-    let req = augment_prompt_request_for_owner(&state, &session_id, base_req).await?;
     let turn_id = state
         .services
         .session_hub
-        .start_prompt(&session_id, req)
+        .launch_http_prompt(&session_id, base_req)
         .await
-        .map_err(|e| match &e {
-            agentdash_spi::ConnectorError::InvalidConfig(_) => ApiError::BadRequest(e.to_string()),
-            _ => ApiError::Internal(e.to_string()),
+        .map_err(|e| match e {
+            agentdash_spi::ConnectorError::InvalidConfig(msg) => ApiError::BadRequest(msg),
+            agentdash_spi::ConnectorError::Runtime(msg) => {
+                decode_augmented_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
+            }
+            other => ApiError::Internal(other.to_string()),
         })?;
 
     Ok(Json(

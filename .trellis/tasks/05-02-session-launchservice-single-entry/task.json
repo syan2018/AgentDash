@@ -1,0 +1,63 @@
+{
+  "id": "session-launchservice-single-entry",
+  "name": "session-launchservice-single-entry",
+  "title": "会话启动单入口 LaunchService 收敛",
+  "description": "建立 SessionLaunchService 单入口启动主线，统一 HTTP/Hook/Routine/Task/Workflow/Companion/LocalRelay 各来源的会话拉起流程，落实 continuation-first 与 bootstrap 特化约束。",
+  "status": "planning",
+  "dev_type": "backend",
+  "scope": "session-launchservice-unification",
+  "package": null,
+  "priority": "P1",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-05-02",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 1,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "implement"
+    },
+    {
+      "phase": 3,
+      "action": "check"
+    },
+    {
+      "phase": 4,
+      "action": "finish"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    "phase-1-http-prompt-hook-autoresume-unify",
+    "phase-2-routine-companion-unify",
+    "phase-3-task-workflow-local-unify",
+    "phase-4-lifecycle-invariants-regression-matrix"
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-api/src/routes/acp_sessions.rs",
+    "crates/agentdash-api/src/bootstrap/prompt_augmenter.rs",
+    "crates/agentdash-api/src/app_state.rs",
+    "crates/agentdash-application/src/session/types.rs",
+    "crates/agentdash-application/src/session/augmenter.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/session/hub/hook_dispatch.rs",
+    "crates/agentdash-application/src/routine/executor.rs",
+    "crates/agentdash-application/src/task/service.rs",
+    "crates/agentdash-application/src/workflow/orchestrator.rs",
+    "crates/agentdash-application/src/companion/tools.rs",
+    "crates/agentdash-local/src/command_handler.rs"
+  ],
+  "notes": "统一约束：Plain 禁止 owner 初始化 compose；新 owner 绑定 session 必须可达 Pending->Bootstrapped；所有来源最终经 LaunchService.launch。",
+  "meta": {}
+}

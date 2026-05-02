@@ -1319,6 +1319,106 @@ async fn cancel_marks_running_turn_interrupted() {
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
+async fn launch_prompt_strict_requires_prompt_augmenter() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub.create_session("strict-launch").await.expect("create");
+
+    let error = hub
+        .launch_prompt_strict(&session.id, simple_prompt_request("hello"), "http_prompt")
+        .await
+        .expect_err("strict launch 应在 augmenter 缺失时失败");
+
+    match error {
+        ConnectorError::Runtime(message) => {
+            assert!(
+                message.contains("prompt_augmenter 未注入"),
+                "错误信息应提示 augmenter 缺失，实际为: {message}"
+            );
+        }
+        other => panic!("期望 Runtime 错误，实际为: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PromptCountingConnector {
+        prompt_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentConnector for PromptCountingConnector {
+        fn connector_id(&self) -> &'static str {
+            "prompt-counting"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+        async fn discover_options_stream(
+            &self,
+            _: &str,
+            _: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn prompt(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: &PromptPayload,
+            _: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            self.prompt_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let prompt_calls = Arc::new(AtomicUsize::new(0));
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PromptCountingConnector {
+            prompt_calls: prompt_calls.clone(),
+        }),
+        None,
+    );
+    let session = hub.create_session("strict-auto-resume").await.expect("create");
+
+    // 不注入 augmenter，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
+    hub.schedule_hook_auto_resume(session.id.clone());
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    assert_eq!(
+        prompt_calls.load(Ordering::SeqCst),
+        0,
+        "strict auto-resume 在 augmenter 缺失时不应触发 connector.prompt"
+    );
+}
+
+#[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_augmenter() {
     use crate::session::augmenter::PromptRequestAugmenter;
     use std::sync::atomic::{AtomicUsize, Ordering};

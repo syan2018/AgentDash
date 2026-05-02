@@ -24,6 +24,17 @@ pub(super) struct NormalizedHookRule {
     apply: fn(&HookEvaluationContext<'_>, &mut HookResolution),
 }
 
+fn should_short_circuit_after_rule(trigger: &HookTrigger, resolution: &HookResolution) -> bool {
+    resolution.block_reason.is_some() && matches!(trigger, HookTrigger::BeforeTool)
+}
+
+fn render_contract_rule_label(rule: &WorkflowHookRuleSpec) -> String {
+    rule.preset
+        .as_deref()
+        .map(|preset| format!("hook_rule:{}:{preset}", rule.key))
+        .unwrap_or_else(|| format!("hook_rule:{}:script", rule.key))
+}
+
 pub(crate) fn apply_hook_rules(
     ctx: HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
@@ -38,8 +49,7 @@ pub(crate) fn apply_hook_rules(
         }
         resolution.matched_rule_keys.push(rule.key.to_string());
         (rule.apply)(&ctx, resolution);
-        if resolution.block_reason.is_some() && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
-        {
+        if should_short_circuit_after_rule(&ctx.query.trigger, resolution) {
             return;
         }
     }
@@ -79,17 +89,12 @@ fn apply_contract_hook_rules(
 
         match script_result {
             Ok(decision) if !decision.is_empty() => {
-                let rule_label = rule
-                    .preset
-                    .as_deref()
-                    .map(|p| format!("hook_rule:{}:{}", rule.key, p))
-                    .unwrap_or_else(|| format!("hook_rule:{}:script", rule.key));
-                resolution.matched_rule_keys.push(rule_label);
+                resolution
+                    .matched_rule_keys
+                    .push(render_contract_rule_label(rule));
                 merge_script_decision(resolution, decision);
 
-                if resolution.block_reason.is_some()
-                    && matches!(ctx.query.trigger, HookTrigger::BeforeTool)
-                {
+                if should_short_circuit_after_rule(&ctx.query.trigger, resolution) {
                     return;
                 }
             }

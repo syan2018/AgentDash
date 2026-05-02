@@ -6,7 +6,7 @@ use rhai::{AST, Dynamic, Engine, Scope};
 
 use agentdash_spi::{
     HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
-    HookEffect, HookInjection, HookTrigger,
+    HookEffect, HookInjection,
 };
 
 use super::snapshot_helpers::*;
@@ -243,22 +243,7 @@ impl HookScriptEngine {
 
         let tool_failed = super::helpers::tool_call_failed(ctx.query.payload.as_ref());
 
-        let trigger_str = match ctx.query.trigger {
-            HookTrigger::SessionStart => "session_start",
-            HookTrigger::UserPromptSubmit => "user_prompt_submit",
-            HookTrigger::BeforeTool => "before_tool",
-            HookTrigger::AfterTool => "after_tool",
-            HookTrigger::AfterTurn => "after_turn",
-            HookTrigger::BeforeStop => "before_stop",
-            HookTrigger::SessionTerminal => "session_terminal",
-            HookTrigger::BeforeSubagentDispatch => "before_subagent_dispatch",
-            HookTrigger::AfterSubagentDispatch => "after_subagent_dispatch",
-            HookTrigger::SubagentResult => "subagent_result",
-            HookTrigger::BeforeCompact => "before_compact",
-            HookTrigger::AfterCompact => "after_compact",
-            HookTrigger::BeforeProviderRequest => "before_provider_request",
-            HookTrigger::CapabilityChanged => "capability_changed",
-        };
+        let trigger_str = super::trigger_keys::hook_trigger_key(&ctx.query.trigger);
 
         let wf_source = active_workflow_source_from_snapshot(ctx.snapshot);
 

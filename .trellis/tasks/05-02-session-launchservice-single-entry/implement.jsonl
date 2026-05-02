@@ -3,3 +3,4 @@
 {"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "对齐会话启动主线与生命周期约束"}
 {"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "确保 bundle 作为主数据源并避免旧注入回流"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "重构涉及 API/Application/Frontend 交界"}
+{"file": ".trellis/tasks/05-02-session-launchservice-single-entry/session-module-map.md", "reason": "会话模块全景图：入口矩阵、主线、边界与不变量"}

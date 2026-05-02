@@ -10,6 +10,7 @@ pub mod hook_events;
 mod hook_messages;
 pub mod hook_runtime;
 pub mod hub;
+pub mod launch_intent;
 mod hub_support;
 mod memory_persistence;
 pub(crate) mod path_policy;
@@ -39,6 +40,7 @@ pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hub::SessionHub;
+pub use launch_intent::{SessionLaunchIntent, SessionLaunchSource, SessionLaunchStrictness};
 pub use hub_support::TurnTerminalKind;
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{

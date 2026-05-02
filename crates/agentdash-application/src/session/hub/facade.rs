@@ -17,6 +17,7 @@ use super::super::continuation::{
     build_continuation_system_context_from_events, build_restored_session_messages_from_events,
 };
 use super::super::hub_support::*;
+use super::super::launch_intent::{SessionLaunchIntent, SessionLaunchStrictness};
 use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
@@ -313,7 +314,8 @@ impl SessionHub {
     /// 约束：
     /// - 仅用于测试或非正式 embedding（允许 augmenter 缺失时回退裸请求）；
     /// - 生产内建路径应使用 `launch_prompt_strict`，避免静默上下文漂移。
-    pub async fn launch_prompt(
+    #[allow(dead_code)]
+    pub(in crate::session) async fn launch_prompt_relaxed(
         &self,
         session_id: &str,
         req: PromptSessionRequest,
@@ -342,13 +344,32 @@ impl SessionHub {
         self.start_prompt(session_id, req).await
     }
 
+    /// 类型化启动入口：由 LaunchIntent 决定 strict/relaxed 与 reason tag。
+    pub(crate) async fn launch_prompt_with_intent(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+        intent: SessionLaunchIntent,
+    ) -> Result<String, ConnectorError> {
+        match intent.strictness() {
+            SessionLaunchStrictness::Strict => {
+                self.launch_prompt_strict(session_id, req, intent.reason_tag())
+                    .await
+            }
+            SessionLaunchStrictness::Relaxed => {
+                self.launch_prompt_relaxed(session_id, req, intent.reason_tag())
+                    .await
+            }
+        }
+    }
+
     /// HTTP 主通道启动入口：固定 strict 策略。
     pub async fn launch_http_prompt(
         &self,
         session_id: &str,
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
-        self.launch_prompt_strict(session_id, req, "http_prompt")
+        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::http_prompt())
             .await
     }
 
@@ -358,15 +379,29 @@ impl SessionHub {
         session_id: &str,
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
-        self.launch_prompt_strict(session_id, req, "hook_auto_resume")
+        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::hook_auto_resume())
             .await
+    }
+
+    /// Companion parent resume 启动入口：固定 strict 策略。
+    pub(crate) async fn launch_companion_parent_resume_prompt(
+        &self,
+        session_id: &str,
+        req: PromptSessionRequest,
+    ) -> Result<String, ConnectorError> {
+        self.launch_prompt_with_intent(
+            session_id,
+            req,
+            SessionLaunchIntent::companion_parent_resume(),
+        )
+        .await
     }
 
     /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。
     ///
     /// 没有注入 augmenter 的测试/嵌入场景保留旧行为，但正式 AppState
     /// 应始终注入 augmenter，避免 owner / MCP / flow 上下文漂移。
-    pub async fn augment_prompt_request(
+    pub(crate) async fn augment_prompt_request(
         &self,
         session_id: &str,
         req: PromptSessionRequest,

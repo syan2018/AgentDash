@@ -3,7 +3,7 @@
   "name": "session-launchservice-single-entry",
   "title": "会话启动单入口 LaunchService 收敛",
   "description": "建立 SessionLaunchService 单入口启动主线，统一 HTTP/Hook/Routine/Task/Workflow/Companion/LocalRelay 各来源的会话拉起流程，落实 continuation-first 与 bootstrap 特化约束。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "backend",
   "scope": "session-launchservice-unification",
   "package": null,
@@ -52,12 +52,15 @@
     "crates/agentdash-application/src/session/augmenter.rs",
     "crates/agentdash-application/src/session/prompt_pipeline.rs",
     "crates/agentdash-application/src/session/hub/hook_dispatch.rs",
+    "crates/agentdash-application/src/session/launch_intent.rs",
     "crates/agentdash-application/src/routine/executor.rs",
     "crates/agentdash-application/src/task/service.rs",
     "crates/agentdash-application/src/workflow/orchestrator.rs",
     "crates/agentdash-application/src/companion/tools.rs",
-    "crates/agentdash-local/src/command_handler.rs"
+    "crates/agentdash-local/src/command_handler.rs",
+    ".trellis/tasks/05-02-session-launchservice-single-entry/prd.md",
+    ".trellis/tasks/05-02-session-launchservice-single-entry/session-module-map.md"
   ],
-  "notes": "统一约束：Plain 禁止 owner 初始化 compose；新 owner 绑定 session 必须可达 Pending->Bootstrapped；所有来源最终经 LaunchService.launch。",
+  "notes": "统一约束：公开语义仅 Init/Continue；Plain 禁止 owner 初始化 compose；生产内建入口（HTTP/hook auto-resume/companion parent resume）默认 strict launch；新 owner 绑定 session 必须可达 Pending->Bootstrapped；所有来源最终经 LaunchService.launch。",
   "meta": {}
 }

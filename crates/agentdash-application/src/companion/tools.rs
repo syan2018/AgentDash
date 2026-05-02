@@ -1530,7 +1530,7 @@ impl CompanionRespondTool {
                 let hub_clone = session_hub.clone();
                 tokio::spawn(async move {
                     // PR 1 Phase 1d：收敛 struct-literal → from_user_input 工厂；
-                    // parent resume 路径通过 augment_prompt_request 补齐所有后端注入字段。
+                    // parent resume 路径通过 strict launch 复用主通道 augment 逻辑。
                     let bare_req = PromptSessionRequest::from_user_input(UserPromptInput {
                         prompt_blocks: Some(vec![serde_json::json!({
                             "type": "text",
@@ -1540,21 +1540,16 @@ impl CompanionRespondTool {
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
                     });
-                    let req = match hub_clone
-                        .augment_prompt_request(&parent_sid, bare_req, "companion_parent_resume")
+                    if let Err(error) = hub_clone
+                        .launch_companion_parent_resume_prompt(&parent_sid, bare_req)
                         .await
                     {
-                        Ok(req) => req,
-                        Err(error) => {
-                            tracing::warn!(
-                                parent_session_id = %parent_sid,
-                                error = %error,
-                                "companion parent resume: augment 失败，跳过自动续跑"
-                            );
-                            return;
-                        }
-                    };
-                    let _ = hub_clone.start_prompt(&parent_sid, req).await;
+                        tracing::warn!(
+                            parent_session_id = %parent_sid,
+                            error = %error,
+                            "companion parent resume: launch 失败，跳过自动续跑"
+                        );
+                    }
                 });
             }
         }

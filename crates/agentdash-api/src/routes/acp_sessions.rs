@@ -1142,6 +1142,10 @@ async fn build_story_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
+    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
+        return apply_plain_lifecycle_request(req, None, HookSnapshotReloadTrigger::None);
+    }
+
     let effective_executor_config = req
         .user_input
         .executor_config
@@ -1210,6 +1214,10 @@ async fn build_project_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
 ) -> Result<PromptSessionRequest, ApiError> {
+    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
+        return apply_plain_lifecycle_request(req, None, HookSnapshotReloadTrigger::None);
+    }
+
     let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
         ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
     })?;

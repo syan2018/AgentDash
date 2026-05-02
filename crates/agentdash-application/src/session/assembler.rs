@@ -748,6 +748,37 @@ pub enum OwnerPromptLifecycle {
     Plain,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerAuditLifecycle {
+    Bootstrap,
+    Rehydrate,
+    Plain,
+}
+
+fn owner_audit_lifecycle(lifecycle: &OwnerPromptLifecycle) -> OwnerAuditLifecycle {
+    match lifecycle {
+        OwnerPromptLifecycle::OwnerBootstrap => OwnerAuditLifecycle::Bootstrap,
+        OwnerPromptLifecycle::RepositoryRehydrate { .. } => OwnerAuditLifecycle::Rehydrate,
+        OwnerPromptLifecycle::Plain => OwnerAuditLifecycle::Plain,
+    }
+}
+
+fn resolve_owner_audit_trigger(
+    lifecycle: OwnerAuditLifecycle,
+    has_effective_bundle: bool,
+) -> Option<AuditTrigger> {
+    if !has_effective_bundle {
+        return None;
+    }
+
+    match lifecycle {
+        OwnerAuditLifecycle::Bootstrap => Some(AuditTrigger::SessionBootstrap),
+        // RepositoryRehydrate 也是一次 owner 上下文重建，归类为 compose_rebuild。
+        OwnerAuditLifecycle::Rehydrate => Some(AuditTrigger::ComposerRebuild),
+        OwnerAuditLifecycle::Plain => None,
+    }
+}
+
 /// Owner 级 session 的上下文 Contribution 组装 —— Story 与 Project 各走自己的 contribute_*。
 ///
 /// 不再内联 SessionPlan / VFS / MCP 这些"运行时画像"字段 —— 调用方在外层
@@ -1026,17 +1057,13 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             vec![owner_contribution, session_plan_contribution],
         );
-        self.audit_bundle(
-            &context_bundle,
-            spec.audit_session_key.as_deref(),
-            AuditTrigger::SessionBootstrap,
-        );
 
         // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / hook_snapshot_reload ──
         //
         // - OwnerBootstrap：使用新建的 owner context bundle
         // - RepositoryRehydrate：根据 connector 能力，使用 continuation bundle 或 owner bundle
         // - Plain：不附加 bundle
+        let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
         let (prompt_blocks, hook_snapshot_reload, effective_bundle) = match spec.lifecycle {
             OwnerPromptLifecycle::OwnerBootstrap => (
                 spec.user_prompt_blocks,
@@ -1064,6 +1091,12 @@ impl<'a> SessionRequestAssembler<'a> {
                 (spec.user_prompt_blocks, HookSnapshotReloadTrigger::None, None)
             }
         };
+        if let (Some(bundle), Some(trigger)) = (
+            effective_bundle.as_ref(),
+            resolve_owner_audit_trigger(audit_lifecycle, effective_bundle.is_some()),
+        ) {
+            self.audit_bundle(bundle, spec.audit_session_key.as_deref(), trigger);
+        }
 
         let effective_capability_keys: BTreeSet<String> = cap_output
             .effective_capabilities
@@ -2062,6 +2095,42 @@ mod tests {
             assert!(!text.contains("## Instruction"));
             assert!(!text.contains("agentdash://task-context"));
         }
+    }
+
+    #[test]
+    fn owner_bootstrap_audit_trigger_requires_effective_bundle() {
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, true),
+            Some(AuditTrigger::SessionBootstrap),
+        );
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Bootstrap, false),
+            None,
+        );
+    }
+
+    #[test]
+    fn owner_rehydrate_audit_trigger_maps_to_composer_rebuild() {
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, true),
+            Some(AuditTrigger::ComposerRebuild),
+        );
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Rehydrate, false),
+            None,
+        );
+    }
+
+    #[test]
+    fn owner_plain_lifecycle_never_emits_owner_audit() {
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, true),
+            None,
+        );
+        assert_eq!(
+            resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, false),
+            None,
+        );
     }
 
     #[test]

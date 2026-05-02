@@ -322,7 +322,7 @@ fn mcp_server_name(server: &agent_client_protocol::McpServer) -> Option<&str> {
 /// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PromptSessionRequest`。
 ///
 /// 调用方负责提供 base `req`(携带 user input + executor_config 等);本函数只写
-/// `vfs / flow_capabilities / effective_capability_keys / mcp_servers` 字段。
+/// `vfs / flow_capabilities / mcp_servers` 字段。
 /// kickoff_prompt 由调用方按需调 `activation.kickoff_prompt.to_default_prompt()` 拼进 user input。
 pub fn apply_to_prompt_request(
     activation: &StepActivation,
@@ -330,9 +330,11 @@ pub fn apply_to_prompt_request(
 ) {
     req.vfs = Some(activation.lifecycle_vfs.clone());
     req.flow_capabilities = Some(activation.flow_capabilities.clone());
-    req.effective_capability_keys = Some(activation.capability_keys.iter().cloned().collect());
-    // mcp_servers 是 Vec,调用方若已有值则 extend + dedupe;此处全量覆盖作为默认策略。
-    req.mcp_servers = activation.mcp_servers.clone();
+    req.mcp_servers = activation
+        .mcp_servers
+        .iter()
+        .map(agentdash_spi::SessionMcpServer::from_acp)
+        .collect();
 }
 
 /// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
@@ -350,8 +352,13 @@ pub async fn apply_to_running_session(
         return Ok(None);
     };
 
+    let session_mcp = activation
+        .mcp_servers
+        .iter()
+        .map(agentdash_spi::SessionMcpServer::from_acp)
+        .collect();
     session_hub
-        .replace_runtime_mcp_servers(hook_session.session_id(), activation.mcp_servers.clone())
+        .replace_runtime_mcp_servers(hook_session.session_id(), session_mcp)
         .await
         .map_err(|error| format!("Phase node MCP 热更新失败: {error}"))?;
 

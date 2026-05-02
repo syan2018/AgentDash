@@ -91,11 +91,9 @@ use crate::workspace::BackendAvailability;
 pub struct PreparedSessionInputs {
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     pub executor_config: Option<AgentConfig>,
-    pub mcp_servers: Vec<agent_client_protocol::McpServer>,
-    pub relay_mcp_server_names: HashSet<String>,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     pub vfs: Option<Vfs>,
     pub flow_capabilities: Option<FlowCapabilities>,
-    pub effective_capability_keys: Option<BTreeSet<String>>,
     /// 结构化 session 上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
@@ -122,19 +120,16 @@ pub struct PreparedSessionInputs {
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `hook_snapshot_reload` / `flow_capabilities` / `effective_capability_keys` | 整体替换为 prepared 值 |
+/// | `context_bundle` / `hook_snapshot_reload` / `flow_capabilities` | 整体替换为 prepared 值 |
 /// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
-/// | `relay_mcp_server_names` | **整体替换** 为 prepared 值（与 `mcp_servers` 对称） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 /// | `identity` | prepared 非空时覆盖；否则保留 base |
 /// | `post_turn_handler` | prepared 非空时覆盖；否则保留 base |
 ///
-/// **对称化背景**：`mcp_servers` 与 `relay_mcp_server_names` 在 compose 内部都已经把
-/// base 侧透传值合并进去（见 `compose_owner_bootstrap` 中 `effective_mcp_servers` /
-/// `relay_mcp_server_names` 的汇总逻辑）。finalize 阶段 base 里这两个字段实际都是
-/// `PromptSessionRequest::from_user_input` 的 default，统一整体替换既正确又对称。
+/// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
+/// 内嵌于每个 server 实例，不再作为独立字段传递。
 ///
 /// **identity / post_turn_handler 下沉**（2026-04-30 PR 1 Phase 1c）：过去这两个字段
 /// 由调用方在 `finalize_request` 之后手工 `req.identity = ...` 赋值，容易漏填
@@ -169,9 +164,7 @@ pub fn finalize_request(
         req.vfs = prepared.vfs;
     }
     req.mcp_servers = prepared.mcp_servers;
-    req.relay_mcp_server_names = prepared.relay_mcp_server_names;
     req.flow_capabilities = prepared.flow_capabilities;
-    req.effective_capability_keys = prepared.effective_capability_keys;
     if !prepared.env.is_empty() {
         req.user_input.env = prepared.env;
     }
@@ -208,11 +201,9 @@ pub struct SessionAssemblyBuilder {
 
     // ── 能力层 ──
     flow_capabilities: Option<FlowCapabilities>,
-    effective_capability_keys: Option<BTreeSet<String>>,
 
     // ── MCP 层 ──
-    mcp_servers: Vec<agent_client_protocol::McpServer>,
-    relay_mcp_server_names: HashSet<String>,
+    mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
 
     // ── 系统上下文层 ──
     context_bundle: Option<SessionContextBundle>,
@@ -297,13 +288,8 @@ impl SessionAssemblyBuilder {
     // ── 能力层方法 ────────────────────────────────────────────────
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
-    pub fn with_resolved_capabilities(
-        mut self,
-        flow_capabilities: FlowCapabilities,
-        effective_keys: BTreeSet<String>,
-    ) -> Self {
+    pub fn with_resolved_capabilities(mut self, flow_capabilities: FlowCapabilities) -> Self {
         self.flow_capabilities = Some(flow_capabilities);
-        self.effective_capability_keys = Some(effective_keys);
         self
     }
 
@@ -318,7 +304,7 @@ impl SessionAssemblyBuilder {
     // ── MCP 层方法 ────────────────────────────────────────────────
 
     /// 设置 MCP server 列表（覆盖）。
-    pub fn with_mcp_servers(mut self, servers: Vec<agent_client_protocol::McpServer>) -> Self {
+    pub fn with_mcp_servers(mut self, servers: Vec<agentdash_spi::SessionMcpServer>) -> Self {
         self.mcp_servers = servers;
         self
     }
@@ -326,15 +312,9 @@ impl SessionAssemblyBuilder {
     /// 追加 MCP server 到列表。
     pub fn append_mcp_servers(
         mut self,
-        servers: impl IntoIterator<Item = agent_client_protocol::McpServer>,
+        servers: impl IntoIterator<Item = agentdash_spi::SessionMcpServer>,
     ) -> Self {
         self.mcp_servers.extend(servers);
-        self
-    }
-
-    /// 追加 relay MCP server name 集合。
-    pub fn append_relay_mcp_names(mut self, names: impl IntoIterator<Item = String>) -> Self {
-        self.relay_mcp_server_names.extend(names);
         self
     }
 
@@ -475,7 +455,7 @@ impl SessionAssemblyBuilder {
     pub fn apply_companion_slice(
         self,
         parent_vfs: Option<&Vfs>,
-        parent_mcp_servers: &[agent_client_protocol::McpServer],
+        parent_mcp_servers: &[agentdash_spi::SessionMcpServer],
         parent_context_bundle: Option<&SessionContextBundle>,
         mode: CompanionSliceMode,
         executor_config: AgentConfig,
@@ -498,9 +478,7 @@ impl SessionAssemblyBuilder {
         Self {
             vfs: slice.vfs,
             flow_capabilities: Some(flow_caps),
-            effective_capability_keys: None,
             mcp_servers: slice.mcp_servers,
-            relay_mcp_server_names: HashSet::new(),
             context_bundle: sliced_bundle,
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
@@ -523,8 +501,11 @@ impl SessionAssemblyBuilder {
     ) -> Self {
         self.vfs = Some(activation.lifecycle_vfs.clone());
         self.flow_capabilities = Some(activation.flow_capabilities.clone());
-        self.effective_capability_keys = Some(activation.capability_keys.clone());
-        self.mcp_servers = activation.mcp_servers.clone();
+        self.mcp_servers = activation
+            .mcp_servers
+            .iter()
+            .map(agentdash_spi::SessionMcpServer::from_acp)
+            .collect();
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
             "text": "请执行当前 lifecycle 节点。",
@@ -541,10 +522,8 @@ impl SessionAssemblyBuilder {
             prompt_blocks: self.prompt_blocks,
             executor_config: self.executor_config,
             mcp_servers: self.mcp_servers,
-            relay_mcp_server_names: self.relay_mcp_server_names,
             vfs: self.vfs,
             flow_capabilities: self.flow_capabilities,
-            effective_capability_keys: self.effective_capability_keys,
             context_bundle: self.context_bundle,
             hook_snapshot_reload: self.hook_snapshot_reload,
             workspace_defaults: self.workspace_defaults,
@@ -701,7 +680,7 @@ impl<'a> OwnerScope<'a> {
 #[derive(Default, Clone)]
 pub struct AgentLevelMcp {
     pub preset_mcp_servers: Vec<agent_client_protocol::McpServer>,
-    pub relay_mcp_server_names: HashSet<String>,
+    pub relay_mcp_server_names: HashSet<String>, // TODO(phase-b): 上游 preset 解析仍产出 ACP 类型，保留此字段到边界
 }
 
 /// Owner bootstrap compose 的完整输入。
@@ -1008,8 +987,12 @@ impl<'a> SessionRequestAssembler<'a> {
         }
         effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
         effective_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
-        let mut relay_mcp_server_names = spec.agent_mcp.relay_mcp_server_names.clone();
-        relay_mcp_server_names.extend(cap_output.custom_relay_mcp_server_names.iter().cloned());
+        let mut relay_names_set = spec.agent_mcp.relay_mcp_server_names.clone();
+        relay_names_set.extend(cap_output.custom_relay_mcp_server_names.iter().cloned());
+        let session_mcp_servers = agentdash_spi::SessionMcpServer::from_acp_with_relay(
+            &effective_mcp_servers,
+            &relay_names_set,
+        );
 
         // ── 5. Context markdown 生成 ──
         let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
@@ -1100,12 +1083,6 @@ impl<'a> SessionRequestAssembler<'a> {
             self.audit_bundle(bundle, spec.audit_session_key.as_deref(), trigger);
         }
 
-        let effective_capability_keys: BTreeSet<String> = cap_output
-            .effective_capabilities
-            .iter()
-            .map(|c| c.key().to_string())
-            .collect();
-
         let workspace_defaults = match &spec.owner {
             OwnerScope::Story { workspace, .. } => workspace.cloned(),
             OwnerScope::Project { workspace, .. } => workspace.as_deref().cloned(),
@@ -1114,9 +1091,8 @@ impl<'a> SessionRequestAssembler<'a> {
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)
             .with_executor_config(spec.executor_config)
-            .with_mcp_servers(effective_mcp_servers)
-            .append_relay_mcp_names(relay_mcp_server_names)
-            .with_resolved_capabilities(cap_output.flow_capabilities, effective_capability_keys)
+            .with_mcp_servers(session_mcp_servers)
+            .with_resolved_capabilities(cap_output.flow_capabilities)
             .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
@@ -1249,17 +1225,12 @@ impl<'a> SessionRequestAssembler<'a> {
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
         let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
-        let relay_mcp_server_names: HashSet<String> = cap_output
+        let relay_names_set: HashSet<String> = cap_output
             .custom_relay_mcp_server_names
             .iter()
             .cloned()
             .collect();
         let flow_capabilities = cap_output.flow_capabilities.clone();
-        let effective_capability_keys: BTreeSet<String> = cap_output
-            .effective_capabilities
-            .iter()
-            .map(|c| c.key().to_string())
-            .collect();
 
         // ── 6. 构造 task agent context（Bundle 路径） ──
         let (story_ref, project_ref, workspace_ref) = (spec.story, spec.project, spec.workspace);
@@ -1398,12 +1369,15 @@ impl<'a> SessionRequestAssembler<'a> {
         effective_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_acp(
             &task_mcp_servers,
         ));
+        let session_mcp_servers = agentdash_spi::SessionMcpServer::from_acp_with_relay(
+            &effective_mcp_servers,
+            &relay_names_set,
+        );
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)
-            .with_mcp_servers(effective_mcp_servers)
-            .append_relay_mcp_names(relay_mcp_server_names)
-            .with_resolved_capabilities(flow_capabilities, effective_capability_keys)
+            .with_mcp_servers(session_mcp_servers)
+            .with_resolved_capabilities(flow_capabilities)
             .with_context_bundle(context_bundle)
             .with_working_dir(working_dir)
             .with_source_summary(source_summary)
@@ -1782,7 +1756,7 @@ pub struct LifecycleNodeSpec<'a> {
 /// Companion compose 输入。
 pub struct CompanionSpec<'a> {
     pub parent_vfs: Option<&'a Vfs>,
-    pub parent_mcp_servers: &'a [agent_client_protocol::McpServer],
+    pub parent_mcp_servers: &'a [agentdash_spi::SessionMcpServer],
     /// 父 session 的结构化上下文 Bundle，companion 直接继承（按 slice_mode 过滤）。
     pub parent_context_bundle: Option<&'a SessionContextBundle>,
     pub slice_mode: CompanionSliceMode,
@@ -1893,12 +1867,11 @@ pub async fn compose_companion_with_workflow(
 
     let prepared = SessionAssemblyBuilder::new()
         .with_vfs(vfs)
-        .with_resolved_capabilities(
-            activation.flow_capabilities.clone(),
-            activation.capability_keys.clone(),
-        )
+        .with_resolved_capabilities(activation.flow_capabilities.clone())
         .with_mcp_servers(slice.mcp_servers)
-        .append_mcp_servers(activation.mcp_servers.clone())
+        .append_mcp_servers(
+            activation.mcp_servers.iter().map(agentdash_spi::SessionMcpServer::from_acp),
+        )
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())
@@ -2251,23 +2224,19 @@ mod tests {
     // ═══════════════════════════════════════════════════════════
     //
     // 这些测试锁定 `finalize_request` 对称化后的行为（2026-04-30）：
-    // - mcp_servers / relay_mcp_server_names 统一整体替换；
+    // - mcp_servers (Vec<SessionMcpServer>) 统一整体替换；
     // - vfs 语义三分支等价于"prepared 非空则覆盖"；
     // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
 
     mod finalize_request_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
-        use agent_client_protocol::{McpServer as AcpMcpServer, McpServerHttp};
         use agentdash_domain::workspace::{
             Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
         };
         use agentdash_spi::Vfs;
-        use std::collections::HashSet;
 
         fn minimal_workspace() -> Workspace {
-            // 没有 binding 的最小 Workspace —— `build_workspace_vfs` 会失败被 `.ok()`
-            // 吞掉，保证 vfs 保持 None；足够验证 working_dir 默认回填那一支。
             Workspace::new(
                 uuid::Uuid::nil(),
                 "test-ws".to_string(),
@@ -2281,80 +2250,43 @@ mod tests {
             PromptSessionRequest::from_user_input(UserPromptInput::from_text("ping"))
         }
 
-        fn http_server(name: &str, url: &str) -> AcpMcpServer {
-            AcpMcpServer::Http(McpServerHttp::new(name.to_string(), url.to_string()))
-        }
-
-        fn server_name(server: &AcpMcpServer) -> Option<&str> {
-            match server {
-                AcpMcpServer::Http(h) => Some(h.name.as_str()),
-                AcpMcpServer::Sse(s) => Some(s.name.as_str()),
-                AcpMcpServer::Stdio(s) => Some(s.name.as_str()),
-                _ => None,
+        fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
+            agentdash_spi::SessionMcpServer {
+                name: name.to_string(),
+                transport: agentdash_spi::McpTransportConfig::Http {
+                    url: url.to_string(),
+                    headers: vec![],
+                },
+                uses_relay: false,
             }
         }
 
         #[test]
         fn mcp_servers_prepared_overrides_base() {
-            // base 和 prepared 都有值时，prepared 整体替换 base —— compose 内部已汇总。
             let mut base = base_req();
-            base.mcp_servers = vec![http_server("base_only", "http://base")];
+            base.mcp_servers = vec![session_server("base_only", "http://base")];
 
             let prepared = PreparedSessionInputs {
                 mcp_servers: vec![
-                    http_server("compose_a", "http://a"),
-                    http_server("compose_b", "http://b"),
+                    session_server("compose_a", "http://a"),
+                    session_server("compose_b", "http://b"),
                 ],
                 ..Default::default()
             };
 
             let result = finalize_request(base, prepared);
-            let names: Vec<&str> = result.mcp_servers.iter().filter_map(server_name).collect();
+            let names: Vec<&str> = result.mcp_servers.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["compose_a", "compose_b"]);
         }
 
         #[test]
         fn mcp_servers_prepared_empty_still_replaces() {
-            // 对称化后 prepared 为空时也会整体替换（compose 显式产出空集视为"没有 MCP"）。
             let mut base = base_req();
-            base.mcp_servers = vec![http_server("base_only", "http://base")];
+            base.mcp_servers = vec![session_server("base_only", "http://base")];
             let prepared = PreparedSessionInputs::default();
 
             let result = finalize_request(base, prepared);
             assert!(result.mcp_servers.is_empty());
-        }
-
-        #[test]
-        fn relay_mcp_server_names_prepared_overrides_base() {
-            // 对称化关键点：relay_mcp_server_names 不再 extend，而是替换，与 mcp_servers 一致。
-            let mut base = base_req();
-            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
-
-            let prepared = PreparedSessionInputs {
-                relay_mcp_server_names: HashSet::from([
-                    "compose_a".to_string(),
-                    "compose_b".to_string(),
-                ]),
-                ..Default::default()
-            };
-
-            let result = finalize_request(base, prepared);
-            assert_eq!(
-                result.relay_mcp_server_names,
-                HashSet::from(["compose_a".to_string(), "compose_b".to_string()]),
-                "base 的 relay name 应被 prepared 替换而非叠加"
-            );
-        }
-
-        #[test]
-        fn relay_mcp_server_names_empty_prepared_clears_base() {
-            // 与 mcp_servers 行为对称：空 prepared 也会清空。
-            let mut base = base_req();
-            base.relay_mcp_server_names = HashSet::from(["base_only".to_string()]);
-            let prepared = PreparedSessionInputs::default();
-
-            let result = finalize_request(base, prepared);
-            assert!(result.relay_mcp_server_names.is_empty());
         }
 
         #[test]

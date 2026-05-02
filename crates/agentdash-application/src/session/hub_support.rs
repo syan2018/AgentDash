@@ -1,8 +1,8 @@
-use std::{collections::HashSet, io};
+use std::io;
 
 use agent_client_protocol::{ContentBlock, Meta};
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
-use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities};
+use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;
 
 use agentdash_acp_meta::{AgentDashSourceV1, parse_agentdash_meta};
@@ -262,15 +262,27 @@ pub(super) fn build_session_runtime(
         running: false,
         hook_session: None,
         current_turn: None,
+        session_profile: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
     }
 }
 
+/// Session 的内禀运行时配置——Init 时确立，跨 turn 持续生效。
+///
+/// 这些字段是 session 的固有属性（VFS、MCP、能力集），不是每轮 prompt 的
+/// 请求负载。Continue 直接复用，Rehydrate 重建后覆盖。
+#[derive(Clone)]
+pub(super) struct SessionProfile {
+    pub vfs: Vfs,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub flow_capabilities: FlowCapabilities,
+}
+
 /// Session 级运行态（跨 turn 存活直到进程退出或 session 被删除）。
 ///
 /// Per-turn 字段（`turn_id` / `cancel_requested` / `processor_tx` / `session_frame`
-/// / `flow_capabilities` / `relay_mcp_server_names`）统一下沉到
+/// / `flow_capabilities`）统一下沉到
 /// [`TurnExecution`]；`SessionRuntime` 只持 session 级信息。
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
@@ -281,6 +293,8 @@ pub(super) struct SessionRuntime {
     pub hook_session: Option<SharedHookSessionRuntime>,
     /// 当前活跃 turn 的执行态；无活跃 turn 时为 `None`。
     pub current_turn: Option<TurnExecution>,
+    /// Session 的内禀运行时配置；Init 时写入，Continue 时复用。
+    pub session_profile: Option<SessionProfile>,
     /// Hook 驱动的 auto-resume 计数器（session 级：跨 auto-resume 链累积，
     /// 新 turn 起始不清零），用于限流防止 hook 指令死循环。
     pub hook_auto_resume_count: u32,
@@ -297,8 +311,6 @@ pub(super) struct TurnExecution {
     /// mcp_servers / vfs / identity）。放在这里的动机是 MCP 热更新路径需要
     /// 拿到 turn 生效的 session frame 重建工具集。
     pub session_frame: ExecutionSessionFrame,
-    /// 标记走 relay 的 MCP server 名集合（用于工具构建时分流）。
-    pub relay_mcp_server_names: HashSet<String>,
     /// Turn 级 capability 集合（per-prompt 下发）。
     /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
     pub flow_capabilities: FlowCapabilities,
@@ -315,13 +327,11 @@ impl TurnExecution {
     pub fn new(
         turn_id: String,
         session_frame: ExecutionSessionFrame,
-        relay_mcp_server_names: HashSet<String>,
         flow_capabilities: FlowCapabilities,
     ) -> Self {
         Self {
             turn_id,
             session_frame,
-            relay_mcp_server_names,
             flow_capabilities,
             cancel_requested: false,
             processor_tx: None,

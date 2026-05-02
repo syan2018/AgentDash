@@ -1100,9 +1100,8 @@ fn finalize_augmented_request(
     prompt_blocks: Vec<serde_json::Value>,
     workspace: Option<&Workspace>,
     vfs: Option<agentdash_spi::Vfs>,
-    effective_mcp_servers: Vec<agent_client_protocol::McpServer>,
+    effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     flow_capabilities: agentdash_spi::FlowCapabilities,
-    effective_capability_keys: std::collections::BTreeSet<String>,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
@@ -1115,7 +1114,6 @@ fn finalize_augmented_request(
     }
     req.mcp_servers = effective_mcp_servers;
     req.flow_capabilities = Some(flow_capabilities);
-    req.effective_capability_keys = Some(effective_capability_keys);
 }
 
 fn apply_plain_lifecycle_request(
@@ -1194,7 +1192,7 @@ async fn build_story_owner_prompt_request(
             executor_config: effective_executor_config,
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp::default(),
-            request_mcp_servers: req.mcp_servers.clone(),
+            request_mcp_servers: req.mcp_servers.iter().map(|s| s.to_acp()).collect(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities: None,
@@ -1280,7 +1278,7 @@ async fn build_project_owner_prompt_request(
                 preset_mcp_servers,
                 relay_mcp_server_names,
             },
-            request_mcp_servers: req.mcp_servers.clone(),
+            request_mcp_servers: req.mcp_servers.iter().map(|s| s.to_acp()).collect(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities,
@@ -1520,11 +1518,6 @@ async fn build_task_owner_prompt_request(
     let flow_capabilities = prepared.flow_capabilities.take().ok_or_else(|| {
         ApiError::Internal("Task session compose 未产出 flow_capabilities".to_string())
     })?;
-    let effective_capability_keys = prepared.effective_capability_keys.take().ok_or_else(|| {
-        ApiError::Internal("Task session compose 未产出 capability keys".to_string())
-    })?;
-    req.relay_mcp_server_names
-        .extend(prepared.relay_mcp_server_names);
 
     finalize_augmented_request(
         &mut req,
@@ -1534,7 +1527,6 @@ async fn build_task_owner_prompt_request(
         prepared.vfs,
         prepared.mcp_servers,
         flow_capabilities,
-        effective_capability_keys,
         hook_snapshot_reload,
     );
 

@@ -4,7 +4,6 @@ use crate::session::{
     CompanionSessionContext, PromptSessionRequest, SessionHub, UserPromptInput,
     build_hook_trace_envelope,
 };
-use agent_client_protocol::McpServer;
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
@@ -115,7 +114,7 @@ impl CompanionRequestTool {
     }
 
     /// 从 session runtime 获取当前 session 的活跃 MCP server 列表。
-    async fn active_mcp_servers(&self) -> Vec<agent_client_protocol::McpServer> {
+    async fn active_mcp_servers(&self) -> Vec<agentdash_spi::SessionMcpServer> {
         let sid = match &self.current_session_id {
             Some(sid) => sid.clone(),
             None => return Vec::new(),
@@ -1837,7 +1836,7 @@ pub struct CompanionDispatchPlan {
 #[derive(Debug, Clone)]
 pub struct CompanionExecutionSlice {
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<McpServer>,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
 }
 
 pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt: &str) -> String {
@@ -2040,7 +2039,7 @@ pub fn build_companion_dispatch_slice(
 
 pub fn build_companion_execution_slice(
     vfs: Option<&Vfs>,
-    mcp_servers: &[McpServer],
+    mcp_servers: &[agentdash_spi::SessionMcpServer],
     mode: CompanionSliceMode,
 ) -> CompanionExecutionSlice {
     match mode {

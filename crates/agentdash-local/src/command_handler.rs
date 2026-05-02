@@ -259,7 +259,10 @@ impl CommandHandler {
             env: payload.env,
             executor_config,
         });
-        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers);
+        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers)
+            .into_iter()
+            .map(|s| agentdash_spi::SessionMcpServer::from_acp(&s))
+            .collect();
         req.vfs = Some(vfs);
 
         tracing::info!(

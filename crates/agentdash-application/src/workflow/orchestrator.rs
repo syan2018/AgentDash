@@ -480,7 +480,9 @@ impl LifecycleOrchestrator {
             let baseline_override = capability_directives_from_keys(&current_caps);
             let runtime_delta = capability_delta_directives(&current_caps, &target_caps);
             let ready_port_keys = std::collections::BTreeSet::new();
-            let agent_mcp_servers = agent_mcp_entries_from_servers(&runtime_mcp_servers);
+            let acp_servers: Vec<agent_client_protocol::McpServer> =
+                runtime_mcp_servers.iter().map(|s| s.to_acp()).collect();
+            let agent_mcp_servers = agent_mcp_entries_from_servers(&acp_servers);
 
             let activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
@@ -512,7 +514,11 @@ impl LifecycleOrchestrator {
             {
                 Ok(_) => {
                     current_caps = activation.capability_keys.clone();
-                    runtime_mcp_servers = activation.mcp_servers.clone();
+                    runtime_mcp_servers = activation
+                        .mcp_servers
+                        .iter()
+                        .map(agentdash_spi::SessionMcpServer::from_acp)
+                        .collect();
                     tracing::info!(
                         phase_node = %phase.node_key,
                         capabilities = ?current_caps,

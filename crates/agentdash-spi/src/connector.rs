@@ -52,12 +52,12 @@ pub struct ExecutionSessionFrame {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    /// 本轮完整 MCP 声明。
+    /// 本轮完整 MCP 声明（内部类型，带 relay 标记）。
     ///
     /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
     /// `turn.assembled_tools`。Relay/remote transport connector 可将该结构原样下发给
     /// 远端 agent，由远端 agent 自行建联。
-    pub mcp_servers: Vec<McpServer>,
+    pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::auth::AuthIdentity>,
@@ -194,6 +194,9 @@ pub struct FlowCapabilities {
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 工具级排除集：即使所属 cluster 已启用，名在此集合中的工具仍不注入。
     pub excluded_tools: BTreeSet<String>,
+    /// 最终生效的能力全集（well-known + custom MCP），由 CapabilityResolver 填充。
+    /// 用于 hook runtime 初始化 capability tracking 及 delta 计算。
+    pub effective_capabilities: BTreeSet<crate::ToolCapability>,
 }
 
 impl FlowCapabilities {
@@ -208,7 +211,7 @@ impl FlowCapabilities {
                 ToolCluster::Collaboration,
                 ToolCluster::Canvas,
             ]),
-            excluded_tools: BTreeSet::new(),
+            ..Default::default()
         }
     }
 
@@ -226,8 +229,16 @@ impl FlowCapabilities {
     pub fn from_clusters(clusters: impl IntoIterator<Item = ToolCluster>) -> Self {
         Self {
             enabled_clusters: clusters.into_iter().collect(),
-            excluded_tools: BTreeSet::new(),
+            ..Default::default()
         }
+    }
+
+    /// 已解析能力全集的 string key 视图——供 hook runtime 初始化使用。
+    pub fn effective_capability_keys(&self) -> BTreeSet<String> {
+        self.effective_capabilities
+            .iter()
+            .map(|c| c.key().to_string())
+            .collect()
     }
 
     /// 与另一个 FlowCapabilities 做交集（用于 agent 级配置裁剪）。
@@ -243,8 +254,188 @@ impl FlowCapabilities {
                 .union(&other.excluded_tools)
                 .cloned()
                 .collect(),
+            effective_capabilities: self
+                .effective_capabilities
+                .intersection(&other.effective_capabilities)
+                .cloned()
+                .collect(),
         }
     }
+}
+
+// ── Session 级 MCP Server 声明 ─────────────────────────────────
+
+/// Session 级 MCP server — 内部类型，取代 `agent_client_protocol::McpServer` +
+/// `relay_mcp_server_names` 的双轨携带方式。
+///
+/// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMcpServer {
+    pub name: String,
+    pub transport: McpTransportConfig,
+    /// 是否通过 relay backend 代理而非云端直连。
+    pub uses_relay: bool,
+}
+
+/// MCP server 的传输配置（与 `agent_client_protocol::McpServer` 的 variant 一一对应）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransportConfig {
+    Http {
+        url: String,
+        headers: Vec<McpHeader>,
+    },
+    Sse {
+        url: String,
+        headers: Vec<McpHeader>,
+    },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: Vec<McpEnvVar>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpEnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+impl SessionMcpServer {
+    /// 从 `agent_client_protocol::McpServer` 转换，默认 uses_relay = false。
+    pub fn from_acp(server: &McpServer) -> Self {
+        let (name, transport) = match server {
+            McpServer::Http(h) => (
+                h.name.clone(),
+                McpTransportConfig::Http {
+                    url: h.url.clone(),
+                    headers: h.headers.iter().map(|hdr| McpHeader {
+                        name: hdr.name.clone(),
+                        value: hdr.value.clone(),
+                    }).collect(),
+                },
+            ),
+            McpServer::Sse(s) => (
+                s.name.clone(),
+                McpTransportConfig::Sse {
+                    url: s.url.clone(),
+                    headers: s.headers.iter().map(|hdr| McpHeader {
+                        name: hdr.name.clone(),
+                        value: hdr.value.clone(),
+                    }).collect(),
+                },
+            ),
+            McpServer::Stdio(s) => (
+                s.name.clone(),
+                McpTransportConfig::Stdio {
+                    command: s.command.to_string_lossy().to_string(),
+                    args: s.args.clone(),
+                    env: s.env.iter().map(|e| McpEnvVar {
+                        name: e.name.clone(),
+                        value: e.value.clone(),
+                    }).collect(),
+                },
+            ),
+            _ => (
+                "unknown".to_string(),
+                McpTransportConfig::Http {
+                    url: String::new(),
+                    headers: Vec::new(),
+                },
+            ),
+        };
+        Self { name, transport, uses_relay: false }
+    }
+
+    /// 从 `agent_client_protocol::McpServer` 列表 + relay 名称集批量转换。
+    pub fn from_acp_with_relay(
+        servers: &[McpServer],
+        relay_names: &std::collections::HashSet<String>,
+    ) -> Vec<Self> {
+        servers.iter().map(|s| {
+            let mut out = Self::from_acp(s);
+            out.uses_relay = relay_names.contains(&out.name);
+            out
+        }).collect()
+    }
+
+    /// 转回 `agent_client_protocol::McpServer`（用于执行器边界）。
+    pub fn to_acp(&self) -> McpServer {
+        match &self.transport {
+            McpTransportConfig::Http { url, headers } => {
+                let mut h = agent_client_protocol::McpServerHttp::new(
+                    self.name.clone(),
+                    url.clone(),
+                );
+                h.headers = headers
+                    .iter()
+                    .map(|hdr| {
+                        agent_client_protocol::HttpHeader::new(
+                            hdr.name.clone(),
+                            hdr.value.clone(),
+                        )
+                    })
+                    .collect();
+                McpServer::Http(h)
+            }
+            McpTransportConfig::Sse { url, headers } => {
+                let mut s = agent_client_protocol::McpServerSse::new(
+                    self.name.clone(),
+                    url.clone(),
+                );
+                s.headers = headers
+                    .iter()
+                    .map(|hdr| {
+                        agent_client_protocol::HttpHeader::new(
+                            hdr.name.clone(),
+                            hdr.value.clone(),
+                        )
+                    })
+                    .collect();
+                McpServer::Sse(s)
+            }
+            McpTransportConfig::Stdio { command, args, env } => {
+                let mut s = agent_client_protocol::McpServerStdio::new(
+                    self.name.clone(),
+                    std::path::PathBuf::from(command),
+                );
+                s.args = args.clone();
+                s.env = env
+                    .iter()
+                    .map(|e| {
+                        agent_client_protocol::EnvVariable::new(
+                            e.name.clone(),
+                            e.value.clone(),
+                        )
+                    })
+                    .collect();
+                McpServer::Stdio(s)
+            }
+        }
+    }
+}
+
+/// 按 relay 标记分组：返回 (relay servers, direct ACP servers)。
+pub fn partition_session_mcp_servers(
+    servers: &[SessionMcpServer],
+) -> (Vec<String>, Vec<McpServer>) {
+    let mut relay_names = Vec::new();
+    let mut direct = Vec::new();
+    for s in servers {
+        if s.uses_relay {
+            relay_names.push(s.name.clone());
+        } else {
+            direct.push(s.to_acp());
+        }
+    }
+    (relay_names, direct)
 }
 
 #[derive(Debug, Clone)]

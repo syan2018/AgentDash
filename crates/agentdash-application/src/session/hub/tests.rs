@@ -186,10 +186,8 @@ fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
             ..UserPromptInput::from_text(prompt)
         },
         mcp_servers: vec![],
-        relay_mcp_server_names: Default::default(),
         vfs: None,
         flow_capabilities: None,
-        effective_capability_keys: None,
         context_bundle: None,
         hook_snapshot_reload: HookSnapshotReloadTrigger::None,
         identity: None,
@@ -267,24 +265,26 @@ async fn start_prompt_records_current_turn_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("active-state").await.expect("create");
-    let mcp_server = McpServer::Http(agent_client_protocol::McpServerHttp::new(
+    let acp_server = McpServer::Http(agent_client_protocol::McpServerHttp::new(
         "relay_tools",
         "http://127.0.0.1:19090/mcp",
     ));
-    let mut relay_names = std::collections::HashSet::new();
-    relay_names.insert("relay_tools".to_string());
-    let mut effective_keys = std::collections::BTreeSet::new();
-    effective_keys.insert("workflow".to_string());
+    let session_mcp = agentdash_spi::SessionMcpServer {
+        name: "relay_tools".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://127.0.0.1:19090/mcp".to_string(),
+            headers: vec![],
+        },
+        uses_relay: true,
+    };
     let flow_caps =
         agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Workflow]);
 
     let mut req = simple_prompt_request("hello");
     req.vfs = Some(local_workspace_vfs(workspace.path()));
     req.user_input.working_dir = Some("src".to_string());
-    req.mcp_servers = vec![mcp_server.clone()];
-    req.relay_mcp_server_names = relay_names.clone();
+    req.mcp_servers = vec![session_mcp.clone()];
     req.flow_capabilities = Some(flow_caps.clone());
-    req.effective_capability_keys = Some(effective_keys.clone());
 
     hub.start_prompt(&session.id, req)
         .await
@@ -295,8 +295,9 @@ async fn start_prompt_records_current_turn_state() {
         .get(&session.id)
         .and_then(|runtime| runtime.current_turn.as_ref())
         .expect("current turn execution state");
-    assert_eq!(turn.session_frame.mcp_servers, vec![mcp_server]);
-    assert_eq!(turn.relay_mcp_server_names, relay_names);
+    assert_eq!(turn.session_frame.mcp_servers.len(), 1);
+    assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
+    assert!(turn.session_frame.mcp_servers[0].uses_relay);
     assert_eq!(
         turn.session_frame.working_directory,
         workspace.path().join("src")

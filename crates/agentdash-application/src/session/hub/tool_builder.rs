@@ -11,17 +11,14 @@
 //! （application 层直接调用 executor 实现），PRD 允许"通过 tool_builder 间接依赖"，
 //! 不在本 PR 改接口层级。
 
-use std::collections::HashSet;
-
-use agent_client_protocol::McpServer;
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{ConnectorError, ExecutionContext};
+use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 
 use super::SessionHub;
 
 impl SessionHub {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
-    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<McpServer> {
+    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<SessionMcpServer> {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)
@@ -36,7 +33,7 @@ impl SessionHub {
     pub async fn replace_runtime_mcp_servers(
         &self,
         session_id: &str,
-        mcp_servers: Vec<McpServer>,
+        mcp_servers: Vec<SessionMcpServer>,
     ) -> Result<(), ConnectorError> {
         let (turn_snapshot, hook_session) = {
             let sessions = self.sessions.lock().await;
@@ -53,10 +50,6 @@ impl SessionHub {
             (turn, runtime.hook_session.clone())
         };
 
-        // 基于 current_turn.session_frame 重建一次性的 ExecutionContext，仅用于
-        // runtime_tool_provider 扫描 mount。turn_frame 带上热更新后的 mcp_servers 与
-        // hook_session，其余运行时字段保持默认（restored_session_state /
-        // runtime_delegate / assembled_* 都不是 tool 构建关心的）。
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
         session_frame.mcp_servers = mcp_servers.clone();
@@ -69,12 +62,7 @@ impl SessionHub {
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(
-                session_id,
-                &context,
-                &mcp_servers,
-                &turn_snapshot.relay_mcp_server_names,
-            )
+            .build_tools_for_execution_context(session_id, &context, &mcp_servers)
             .await;
 
         self.connector
@@ -94,8 +82,7 @@ impl SessionHub {
         &self,
         session_id: &str,
         context: &ExecutionContext,
-        mcp_servers: &[McpServer],
-        relay_mcp_server_names: &HashSet<String>,
+        mcp_servers: &[agentdash_spi::SessionMcpServer],
     ) -> Vec<DynAgentTool> {
         use agentdash_executor::mcp::{self as mcp_discovery};
 
@@ -111,10 +98,8 @@ impl SessionHub {
             }
         }
 
-        let (_, direct_servers) = super::super::prompt_pipeline::partition_mcp_servers(
-            mcp_servers,
-            relay_mcp_server_names,
-        );
+        let (relay_names, direct_servers) =
+            agentdash_spi::partition_session_mcp_servers(mcp_servers);
         match mcp_discovery::discover_mcp_tools(&direct_servers).await {
             Ok(tools) => all_tools.extend(tools),
             Err(e) => tracing::warn!(
@@ -124,12 +109,8 @@ impl SessionHub {
         }
 
         if let Some(relay) = &self.mcp_relay_provider {
-            let relay_names: Vec<String> = mcp_servers
-                .iter()
-                .map(super::super::prompt_pipeline::extract_mcp_server_name)
-                .filter(|name| relay_mcp_server_names.contains(name))
-                .collect();
-            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            let tools =
+                mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
             all_tools.extend(tools);
         }
 

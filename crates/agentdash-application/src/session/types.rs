@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use agent_client_protocol::{ContentBlock, McpServer};
+use agent_client_protocol::ContentBlock;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
-use agentdash_spi::{PromptPayload, SessionContextBundle, Vfs};
+use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -26,13 +26,9 @@ pub struct UserPromptInput {
 /// 由 session bootstrap 代码组合 `UserPromptInput` + 后端注入字段构造。
 pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
-    pub mcp_servers: Vec<McpServer>,
-    /// 配置中显式标记为 relay 的 MCP server name 集合
-    pub relay_mcp_server_names: std::collections::HashSet<String>,
+    pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
-    /// 已解析的 capability string key 集合（用于 hook runtime 初始化 capability tracking）
-    pub effective_capability_keys: Option<std::collections::BTreeSet<String>>,
     /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
     /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
@@ -56,10 +52,8 @@ impl PromptSessionRequest {
         Self {
             user_input: input,
             mcp_servers: Vec::new(),
-            relay_mcp_server_names: Default::default(),
             vfs: None,
             flow_capabilities: None,
-            effective_capability_keys: None,
             context_bundle: None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,

@@ -36,7 +36,7 @@ impl SessionHub {
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.connector.has_live_session(session_id).await;
 
-        {
+        let cached_continuation = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
                 let (tx, _rx) = tokio::sync::broadcast::channel(1024);
@@ -48,18 +48,19 @@ impl SessionHub {
                 ));
             }
             runtime.running = true;
-            // TurnExecution 的其余字段在 session/mcp 组装完成后再填入；这里先占位
-            // 防止并发 `start_prompt` 竞争。
             runtime.current_turn = None;
-        }
+            runtime.session_profile.clone()
+        };
 
+        // 三级 fallback：① 请求级（Init/Rehydrate 注入） → ② session 缓存（Continue 复用） → ③ hub 默认
         let effective_vfs = req
             .vfs
             .clone()
+            .or_else(|| cached_continuation.as_ref().map(|c| c.vfs.clone()))
             .or_else(|| self.default_vfs.clone())
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(
-                    "prompt 缺少 vfs，且 SessionHub 未配置默认 vfs".to_string(),
+                    "prompt 缺少 vfs，且 session 无缓存、SessionHub 未配置默认 vfs".to_string(),
                 )
             })?;
         let default_mount_root = effective_vfs
@@ -271,10 +272,21 @@ impl SessionHub {
             Vec::new()
         };
 
-        let mcp_servers = req.mcp_servers.clone();
-        let relay_mcp_server_names = req.relay_mcp_server_names.clone();
-        let flow_capabilities = req.flow_capabilities.clone().unwrap_or_default();
-        let effective_capability_keys = req.effective_capability_keys.clone().unwrap_or_default();
+        // session 级配置：请求未提供时回退到 session_profile 缓存
+        let mcp_servers = if req.mcp_servers.is_empty() {
+            cached_continuation
+                .as_ref()
+                .map(|c| c.mcp_servers.clone())
+                .unwrap_or_default()
+        } else {
+            req.mcp_servers.clone()
+        };
+        let flow_capabilities = req
+            .flow_capabilities
+            .clone()
+            .or_else(|| cached_continuation.as_ref().map(|c| c.flow_capabilities.clone()))
+            .unwrap_or_default();
+        let effective_capability_keys = flow_capabilities.effective_capability_keys();
         let identity = req.identity.clone();
 
         let session_frame = ExecutionSessionFrame {
@@ -305,12 +317,7 @@ impl SessionHub {
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
         context.turn.assembled_tools = self
-            .build_tools_for_execution_context(
-                session_id,
-                &context,
-                &mcp_servers,
-                &relay_mcp_server_names,
-            )
+            .build_tools_for_execution_context(session_id, &context, &mcp_servers)
             .await;
 
         // pipeline 层预组装 system prompt
@@ -340,10 +347,15 @@ impl SessionHub {
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
+                runtime.session_profile =
+                    Some(super::hub_support::SessionProfile {
+                        vfs: effective_vfs.clone(),
+                        mcp_servers: mcp_servers.clone(),
+                        flow_capabilities: flow_capabilities.clone(),
+                    });
                 runtime.current_turn = Some(TurnExecution::new(
                     turn_id.clone(),
                     context.session.clone(),
-                    relay_mcp_server_names.clone(),
                     flow_capabilities.clone(),
                 ));
             }
@@ -643,31 +655,6 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
 
-/// 从 McpServer 提取 server name（与 system_prompt_assembler 同逻辑）。
-pub(super) fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
-    serde_json::to_value(server)
-        .ok()
-        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// 将 MCP servers 按 relay 标记分为两组，返回 (relay_names, direct_servers)。
-pub(super) fn partition_mcp_servers(
-    servers: &[agent_client_protocol::McpServer],
-    relay_names_set: &std::collections::HashSet<String>,
-) -> (Vec<String>, Vec<agent_client_protocol::McpServer>) {
-    let mut relay_names = Vec::new();
-    let mut direct = Vec::new();
-    for server in servers {
-        let name = extract_mcp_server_name(server);
-        if relay_names_set.contains(&name) {
-            relay_names.push(name);
-        } else {
-            direct.push(server.clone());
-        }
-    }
-    (relay_names, direct)
-}
 
 #[cfg(test)]
 mod tests {

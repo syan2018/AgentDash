@@ -213,6 +213,7 @@ impl CapabilityResolver {
         let mut flow_capabilities = FlowCapabilities {
             enabled_clusters: tool_clusters,
             excluded_tools,
+            effective_capabilities: effective_caps.clone(),
         };
 
         if let Some(slice_mode) = input.companion_slice_mode {

@@ -31,7 +31,7 @@ pub struct SystemPromptInput<'a> {
     pub vfs: Option<&'a Vfs>,
     pub working_directory: &'a Path,
     pub runtime_tools: &'a [DynAgentTool],
-    pub mcp_servers: &'a [agent_client_protocol::McpServer],
+    pub mcp_servers: &'a [agentdash_spi::SessionMcpServer],
     pub hook_session: Option<&'a dyn HookSessionRuntimeAccess>,
 }
 
@@ -219,32 +219,18 @@ fn describe_mount(mount: &Mount) -> String {
     )
 }
 
-fn extract_mcp_server_name(server: &agent_client_protocol::McpServer) -> String {
-    serde_json::to_value(server)
-        .ok()
-        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-        .unwrap_or_else(|| "unknown".to_string())
+fn is_platform_mcp_server(server: &agentdash_spi::SessionMcpServer) -> bool {
+    server.name.starts_with("agentdash-")
 }
 
-fn is_platform_mcp_server(server: &agent_client_protocol::McpServer) -> bool {
-    extract_mcp_server_name(server).starts_with("agentdash-")
-}
-
-fn describe_mcp_server(server: &agent_client_protocol::McpServer) -> String {
-    let value = serde_json::to_value(server).unwrap_or_default();
-    let name = value
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unnamed-mcp");
-    let url = value
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown-url");
-    let server_type = value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    format!("- {name} ({server_type}): {url}")
+fn describe_mcp_server(server: &agentdash_spi::SessionMcpServer) -> String {
+    use agentdash_spi::McpTransportConfig;
+    let (server_type, url) = match &server.transport {
+        McpTransportConfig::Http { url, .. } => ("http", url.as_str()),
+        McpTransportConfig::Sse { url, .. } => ("sse", url.as_str()),
+        McpTransportConfig::Stdio { command, .. } => ("stdio", command.as_str()),
+    };
+    format!("- {} ({}): {}", server.name, server_type, url)
 }
 
 fn describe_builtin_tool(tool: &DynAgentTool) -> String {

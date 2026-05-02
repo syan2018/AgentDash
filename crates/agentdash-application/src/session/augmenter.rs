@@ -21,7 +21,7 @@ use super::types::PromptSessionRequest;
 pub trait PromptRequestAugmenter: Send + Sync {
     /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
     /// 补齐 `PromptSessionRequest` 的后端注入字段（mcp_servers / vfs / flow_capabilities
-    /// / context_bundle / hook_snapshot_reload / effective_capability_keys 等）。
+    /// / context_bundle / hook_snapshot_reload 等）。
     async fn augment(
         &self,
         session_id: &str,

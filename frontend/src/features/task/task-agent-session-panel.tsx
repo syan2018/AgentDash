@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { SessionChatView } from "../acp-session";
+import { SessionChatView } from "../session";
 import { promptSession, type ExecutorConfig } from "../../services/executor";
 import { buildPromptBlocks } from "../file-reference";
 import type { Artifact, ContextSourceRef, SessionNavigationState, Task } from "../../types";

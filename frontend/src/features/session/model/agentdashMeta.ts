@@ -42,7 +42,17 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
   }
 
   if (platform.kind === "hook_trace") {
-    return platform.data as unknown as Record<string, unknown>;
+    const traceData = platform.data.data;
+    if (isRecord(traceData)) {
+      return {
+        ...traceData,
+        event_type: platform.data.eventType ?? null,
+      };
+    }
+    return {
+      event_type: platform.data.eventType ?? null,
+      message: platform.data.message ?? null,
+    };
   }
 
   if (platform.kind === "session_meta_update") {

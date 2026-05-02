@@ -15,7 +15,7 @@ import type { BackboneEvent } from "../../generated/backbone-protocol";
 import { useProjectStore } from "../../stores/projectStore";
 import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { SessionChatView } from "../acp-session";
+import { SessionChatView } from "../session";
 import { ActiveSessionList } from "./active-session-list";
 import { ProjectAgentView } from "../project/project-agent-view";
 

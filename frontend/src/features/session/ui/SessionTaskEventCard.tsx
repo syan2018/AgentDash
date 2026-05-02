@@ -6,7 +6,7 @@
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, isRecord } from "../model/agentdashMeta";
-import { isTaskEventUpdate } from "./AcpTaskEventGuard";
+import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { EventFullCard } from "./EventCards";
 
 export interface AcpTaskEventCardProps {

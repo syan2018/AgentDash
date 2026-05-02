@@ -6,7 +6,7 @@ import type {
   WorkflowStepState,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { SessionList } from "../acp-session";
+import { SessionList } from "../session";
 import { STEP_STATUS_LABEL } from "./shared-labels";
 
 const EMPTY_RUNS: WorkflowRun[] = [];

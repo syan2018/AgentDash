@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage } from "../model/agentdashMeta";
 import { EventStripCard, EventFullCard } from "./EventCards";
-import { AcpCompanionRequestCard } from "./AcpCompanionRequestCard";
+import { AcpCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface AcpSystemEventCardProps {
@@ -164,11 +164,10 @@ function extractHookDecision(code: string | null | undefined): string | null {
 
 function isHighPriorityHookEvent(
   hookData: HookEventData | null,
-  code: string | null | undefined,
+  decision: string | null | undefined,
 ): boolean {
   if (hookData?.block_reason) return true;
-  const decision = extractHookDecision(code);
-  return decision !== null && HIGH_PRIORITY_HOOK_DECISIONS.has(decision);
+  return typeof decision === "string" && HIGH_PRIORITY_HOOK_DECISIONS.has(decision);
 }
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
@@ -191,7 +190,7 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
 
   if (isHook) {
     const code = hookData?.code ?? null;
-    const decision = extractHookDecision(code);
+    const decision = extractHookDecision(code) ?? hookData?.decision ?? null;
     const hasSubstance = isHookEventSubstantive(decision, hookData);
     if (!hasSubstance && !getDebugPrefs().hookVerbose) {
       return null;
@@ -207,7 +206,7 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
     const verboseWrapper = (node: ReactNode) =>
       hasSubstance ? node : <div className="opacity-50">{node}</div>;
 
-    if (isHighPriorityHookEvent(hookData, code)) {
+    if (isHighPriorityHookEvent(hookData, decision)) {
       const detailLines: string[] = [];
       if (hookData?.block_reason) detailLines.push(`阻塞原因：${hookData.block_reason}`);
       if (completionLine) detailLines.push(completionLine);

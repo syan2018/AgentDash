@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { useSessionFeed } from "../model";
-import { SessionEntry } from "./AcpSessionEntry";
+import { SessionEntry } from "./SessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
 import { extractPlatformEventType } from "../model/agentdashMeta";

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { BackboneEvent } from "../generated/backbone-protocol";
-import { SessionChatView } from "../features/acp-session";
-import { extractPlatformEventData } from "../features/acp-session/model/agentdashMeta";
+import { SessionChatView } from "../features/session";
+import { extractPlatformEventData } from "../features/session/model/agentdashMeta";
 import { CanvasSessionPanel } from "../features/canvas-panel";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import { ContextInspectorPanel, hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";

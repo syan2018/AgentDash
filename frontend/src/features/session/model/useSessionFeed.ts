@@ -6,7 +6,7 @@
  */
 
 import { useMemo, useRef } from "react";
-import { useSessionStream } from "./useAcpStream";
+import { useSessionStream } from "./useSessionStream";
 import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 import {
   isAggregatedGroup as isAggregatedGroupItem,

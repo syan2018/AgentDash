@@ -7,7 +7,7 @@
 import { useRef, useEffect } from "react";
 import { useSessionFeed } from "../model";
 import type { UseSessionFeedOptions } from "../model";
-import { SessionEntry } from "./AcpSessionEntry";
+import { SessionEntry } from "./SessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem } from "../model/types";
 

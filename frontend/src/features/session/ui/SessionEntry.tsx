@@ -23,18 +23,18 @@ import {
   parseContentBlock,
 } from "../model/types";
 import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup } from "../model/types";
-import { AcpToolCallCard } from "./AcpToolCallCard";
-import { AcpMessageCard } from "./AcpMessageCard";
-import { AcpPlanCard } from "./AcpPlanCard";
+import { AcpToolCallCard } from "./SessionToolCallCard";
+import { AcpMessageCard } from "./SessionMessageCard";
+import { AcpPlanCard } from "./SessionPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
-import { AcpTaskContextCard } from "./AcpTaskContextCard";
-import { isAgentDashTaskContextBlock } from "./AcpTaskContextGuard";
-import { AcpOwnerContextCard } from "./AcpOwnerContextCard";
-import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./AcpSessionCapabilityCard";
-import { AcpTaskEventCard } from "./AcpTaskEventCard";
-import { isTaskEventUpdate } from "./AcpTaskEventGuard";
-import { AcpSystemEventCard } from "./AcpSystemEventCard";
-import { isRenderableSystemEventUpdate } from "./AcpSystemEventGuard";
+import { AcpTaskContextCard } from "./SessionTaskContextCard";
+import { isAgentDashTaskContextBlock } from "./SessionTaskContextGuard";
+import { AcpOwnerContextCard } from "./SessionOwnerContextCard";
+import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./SessionCapabilityCard";
+import { AcpTaskEventCard } from "./SessionTaskEventCard";
+import { isTaskEventUpdate } from "./SessionTaskEventGuard";
+import { AcpSystemEventCard } from "./SessionSystemEventCard";
+import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 
 export interface SessionEntryProps {
   item: AcpDisplayItem;

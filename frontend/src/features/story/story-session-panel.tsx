@@ -11,7 +11,7 @@ import type { SessionBinding, SessionNavigationState, Story } from "../../types"
 import { useStoryStore, type CreateStorySessionInput } from "../../stores/storyStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
-import { SessionChatView } from "../acp-session";
+import { SessionChatView } from "../session";
 
 interface StorySessionPanelProps {
   story: Story;

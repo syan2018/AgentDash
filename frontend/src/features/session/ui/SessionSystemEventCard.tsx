@@ -7,7 +7,12 @@
 
 import type { ReactNode } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage } from "../model/agentdashMeta";
+import {
+  extractPlatformEventType,
+  extractPlatformEventData,
+  extractPlatformEventMessage,
+  isRecord,
+} from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
@@ -490,7 +495,166 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
 }
 
 function extractHookEventData(value: Record<string, unknown> | null): HookEventData | null {
-  return value ? (value as HookEventData) : null;
+  if (!isRecord(value)) return null;
+
+  const data: HookEventData = {};
+  const trigger = readOptionalString(value.trigger);
+  if (trigger) data.trigger = trigger;
+
+  const decision = readOptionalString(value.decision);
+  if (decision) data.decision = decision;
+
+  const sequence = readOptionalNumber(value.sequence);
+  if (sequence != null) data.sequence = sequence;
+
+  const revision = readOptionalNumber(value.revision);
+  if (revision != null) data.revision = revision;
+
+  const toolName = readNullableString(value.tool_name);
+  if (toolName !== undefined) data.tool_name = toolName;
+
+  const toolCallId = readNullableString(value.tool_call_id);
+  if (toolCallId !== undefined) data.tool_call_id = toolCallId;
+
+  const subagentType = readNullableString(value.subagent_type);
+  if (subagentType !== undefined) data.subagent_type = subagentType;
+
+  const matchedRuleKeys = readStringArray(value.matched_rule_keys);
+  if (matchedRuleKeys) data.matched_rule_keys = matchedRuleKeys;
+
+  const refreshSnapshot = readOptionalBoolean(value.refresh_snapshot);
+  if (refreshSnapshot != null) data.refresh_snapshot = refreshSnapshot;
+
+  const blockReason = readNullableString(value.block_reason);
+  if (blockReason !== undefined) data.block_reason = blockReason;
+
+  const completion = normalizeHookCompletion(value.completion);
+  if (completion !== undefined) data.completion = completion;
+
+  const diagnosticCodes = readStringArray(value.diagnostic_codes);
+  if (diagnosticCodes) data.diagnostic_codes = diagnosticCodes;
+
+  const diagnostics = normalizeHookDiagnostics(value.diagnostics);
+  if (diagnostics) data.diagnostics = diagnostics;
+
+  const injections = normalizeHookInjections(value.injections);
+  if (injections) data.injections = injections;
+
+  const code = readOptionalString(value.code);
+  if (code) data.code = code;
+
+  const eventTypeCode = readOptionalString(value.event_type ?? value.eventType);
+  if (eventTypeCode && !data.code) data.code = eventTypeCode;
+
+  const severity = readOptionalString(value.severity);
+  if (severity) data.severity = severity;
+
+  if (!data.decision) {
+    const inferred = extractHookDecision(data.code);
+    if (inferred) data.decision = inferred;
+  }
+
+  return Object.keys(data).length > 0 ? data : null;
+}
+
+function readOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readNullableString(value: unknown): string | null | undefined {
+  if (value == null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function readOptionalBoolean(value: unknown): boolean | null {
+  if (typeof value !== "boolean") return null;
+  return value;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const normalized = value
+    .map((item) => readOptionalString(item))
+    .filter((item): item is string => item != null);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeHookCompletion(
+  value: unknown,
+): HookEventData["completion"] | undefined {
+  if (value == null) return null;
+  if (!isRecord(value)) return undefined;
+
+  const mode = readOptionalString(value.mode) ?? undefined;
+  const satisfied = readOptionalBoolean(value.satisfied) ?? undefined;
+  const advanced = readOptionalBoolean(value.advanced) ?? undefined;
+  const reason = readOptionalString(value.reason) ?? undefined;
+
+  if (!mode && satisfied == null && advanced == null && !reason) {
+    return null;
+  }
+
+  return {
+    mode,
+    satisfied,
+    advanced,
+    reason,
+  };
+}
+
+function normalizeHookDiagnostics(
+  value: unknown,
+): HookEventData["diagnostics"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const diagnostics = value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const code = readOptionalString(item.code) ?? undefined;
+      const message = readOptionalString(item.message) ?? undefined;
+      const summary = readOptionalString(item.summary) ?? undefined;
+      const detail = readNullableString(item.detail);
+      const sourceSummary = readStringArray(item.source_summary);
+
+      if (!code && !message && !summary && detail == null && !sourceSummary) {
+        return null;
+      }
+      return {
+        code,
+        message,
+        summary,
+        detail: detail ?? null,
+        source_summary: sourceSummary,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+
+  return diagnostics.length > 0 ? diagnostics : undefined;
+}
+
+function normalizeHookInjections(
+  value: unknown,
+): HookEventData["injections"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const injections = value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const slot = readOptionalString(item.slot) ?? undefined;
+      const source = readOptionalString(item.source) ?? undefined;
+      const content = readOptionalString(item.content) ?? undefined;
+      if (!slot && !source && !content) return null;
+      return { slot, source, content };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+  return injections.length > 0 ? injections : undefined;
 }
 
 function formatExtraData(value: unknown): string | null {

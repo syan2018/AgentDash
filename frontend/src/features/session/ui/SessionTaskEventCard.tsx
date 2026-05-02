@@ -5,7 +5,7 @@
  */
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, isRecord } from "../model/agentdashMeta";
+import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, isRecord } from "../model/platformEvent";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { EventFullCard } from "./EventCards";
 

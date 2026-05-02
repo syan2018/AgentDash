@@ -14,7 +14,7 @@ import { useSessionFeed } from "../model";
 import { SessionEntry } from "./SessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
-import { extractPlatformEventType } from "../model/agentdashMeta";
+import { extractPlatformEventType } from "../model/platformEvent";
 import { promptSession, type ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,

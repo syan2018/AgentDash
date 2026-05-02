@@ -1,5 +1,5 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventType, extractPlatformEventData, isRecord } from "../model/agentdashMeta";
+import { extractPlatformEventType, extractPlatformEventData, isRecord } from "../model/platformEvent";
 
 /**
  * 在会话流中显示的系统事件类型白名单。

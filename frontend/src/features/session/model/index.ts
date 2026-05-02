@@ -5,7 +5,7 @@
  */
 
 export * from "./types";
-export * from "./agentdashMeta";
+export * from "./platformEvent";
 
 export { useSessionStream, type UseSessionStreamOptions, type UseSessionStreamResult } from "./useSessionStream";
 export { useSessionFeed, type UseSessionFeedOptions, type UseSessionFeedResult } from "./useSessionFeed";

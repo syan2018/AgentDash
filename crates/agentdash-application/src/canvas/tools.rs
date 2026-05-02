@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasRepository};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;

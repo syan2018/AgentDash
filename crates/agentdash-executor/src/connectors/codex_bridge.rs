@@ -7,9 +7,7 @@ use std::{
     },
 };
 
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
@@ -248,7 +246,9 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ReasoningTextDelta(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ReasoningTextDelta(p))))
+                    .await;
             }
         }
         "item/reasoning/summaryTextDelta" => {
@@ -338,9 +338,7 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx
-                    .send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p))))
-                    .await;
+                let _ = tx.send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p)))).await;
             }
         }
         "thread/status/changed" => {
@@ -356,9 +354,7 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx
-                    .send(Ok(wrap(BackboneEvent::ContextCompacted(p))))
-                    .await;
+                let _ = tx.send(Ok(wrap(BackboneEvent::ContextCompacted(p)))).await;
             }
         }
         "error" => {
@@ -369,7 +365,10 @@ async fn handle_server_notification(
             }
         }
         _ => {
-            tracing::debug!("codex bridge: unhandled notification method={}", notification.method);
+            tracing::debug!(
+                "codex bridge: unhandled notification method={}",
+                notification.method
+            );
         }
     }
 }
@@ -452,7 +451,9 @@ impl AgentConnector for CodexBridgeConnector {
         };
         let agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&profile_id)
-            .ok_or_else(|| ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string()))?;
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string())
+            })?;
 
         let wd = working_dir.unwrap_or_else(|| self.default_repo_root.clone());
         agent
@@ -497,21 +498,15 @@ impl AgentConnector for CodexBridgeConnector {
         let mut child = process
             .group_spawn_no_window()
             .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
-        let stdout = child
-            .inner()
-            .stdout
-            .take()
-            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string()))?;
-        let stderr = child
-            .inner()
-            .stderr
-            .take()
-            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stderr".to_string()))?;
-        let stdin = child
-            .inner()
-            .stdin
-            .take()
-            .ok_or_else(|| ConnectorError::SpawnFailed("Codex app-server 缺少 stdin".to_string()))?;
+        let stdout = child.inner().stdout.take().ok_or_else(|| {
+            ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string())
+        })?;
+        let stderr = child.inner().stderr.take().ok_or_else(|| {
+            ConnectorError::SpawnFailed("Codex app-server 缺少 stderr".to_string())
+        })?;
+        let stdin = child.inner().stdin.take().ok_or_else(|| {
+            ConnectorError::SpawnFailed("Codex app-server 缺少 stdin".to_string())
+        })?;
 
         let cancel_token = CancellationToken::new();
         self.cancel_by_session
@@ -686,11 +681,15 @@ impl AgentConnector for CodexBridgeConnector {
                 ));
             }
 
-            let thread_start = build_thread_start_params(&codex_config, &context.session.working_directory);
+            let thread_start =
+                build_thread_start_params(&codex_config, &context.session.working_directory);
             let thread_id = if let Some(follow_up_session_id) = follow_up_session_id {
                 let fork_request = ClientRequest::ThreadFork {
                     request_id: next_request_id(&request_counter),
-                    params: build_thread_fork_params(follow_up_session_id.to_string(), &thread_start),
+                    params: build_thread_fork_params(
+                        follow_up_session_id.to_string(),
+                        &thread_start,
+                    ),
                 };
                 let response: ThreadForkResponse =
                     send_rpc_request(&out_tx, &pending, fork_request).await?;

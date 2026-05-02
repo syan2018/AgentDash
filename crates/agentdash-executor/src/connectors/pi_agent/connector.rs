@@ -332,9 +332,7 @@ impl AgentConnector for PiAgentConnector {
 
         let is_new_agent = existing_runtime.is_none();
         let incoming_bundle_id = context.turn.context_bundle.as_ref().map(|b| b.bundle_id);
-        let mut cached_bundle_id = existing_runtime
-            .as_ref()
-            .and_then(|rt| rt.last_bundle_id);
+        let mut cached_bundle_id = existing_runtime.as_ref().and_then(|rt| rt.last_bundle_id);
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             current_tools = runtime.tools;
@@ -417,8 +415,7 @@ impl AgentConnector for PiAgentConnector {
         let turn_id = context.session.turn_id.clone();
         let session_id_owned = session_id.to_string();
 
-        let (tx, rx) =
-            tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
 
         tokio::spawn(async move {
             let mut entry_index: u32 = 0;

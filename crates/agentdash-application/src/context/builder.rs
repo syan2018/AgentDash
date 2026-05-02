@@ -382,11 +382,7 @@ mod bundle_tests {
             frag("m", 20, "m_body", MergeStrategy::Append),
         ]);
         let bundle = build_session_context_bundle(config, vec![contribution]);
-        let orders: Vec<i32> = bundle
-            .bootstrap_fragments
-            .iter()
-            .map(|f| f.order)
-            .collect();
+        let orders: Vec<i32> = bundle.bootstrap_fragments.iter().map(|f| f.order).collect();
         assert_eq!(orders, vec![10, 20, 30]);
     }
 }

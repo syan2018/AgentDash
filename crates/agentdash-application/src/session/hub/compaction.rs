@@ -4,8 +4,8 @@
 //! `compacted_until_ref`——hub 在持久化前回补 MessageRef，让 Inspector/前端能够
 //! 精确定位历史边界。相关逻辑只与 `persist_notification` 协同，不涉及 connector。
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent};
 use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent};
 use std::io;
 
 use super::super::continuation::build_projected_transcript_from_events;

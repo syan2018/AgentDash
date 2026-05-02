@@ -9,17 +9,17 @@
 
 use std::io;
 
-use agentdash_protocol::{BackboneEnvelope, SourceInfo};
 use agentdash_agent_types::AgentMessage;
+use agentdash_protocol::{BackboneEnvelope, SourceInfo};
 use tokio::sync::broadcast;
 
 use super::super::continuation::{
     build_continuation_system_context_from_events, build_restored_session_messages_from_events,
 };
-use crate::companion::build_companion_human_response_notification;
 use super::super::hub_support::*;
 use super::super::types::*;
 use super::SessionHub;
+use crate::companion::build_companion_human_response_notification;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 
@@ -196,7 +196,10 @@ impl SessionHub {
             sessions.get(session_id).map(|runtime| {
                 (
                     runtime.running,
-                    runtime.current_turn.as_ref().map(|turn| turn.turn_id.clone()),
+                    runtime
+                        .current_turn
+                        .as_ref()
+                        .map(|turn| turn.turn_id.clone()),
                 )
             })
         }
@@ -379,10 +382,7 @@ impl SessionHub {
         let envelope = self
             .maybe_enrich_compaction_notification(session_id, envelope)
             .await?;
-        let persisted = self
-            .persistence
-            .append_event(session_id, &envelope)
-            .await?;
+        let persisted = self.persistence.append_event(session_id, &envelope).await?;
         let tx = {
             let mut sessions = self.sessions.lock().await;
             let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
@@ -471,4 +471,3 @@ impl SessionHub {
         Ok(())
     }
 }
-

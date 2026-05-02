@@ -57,7 +57,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{PromptSessionRequest, HookSnapshotReloadTrigger, UserPromptInput};
+use crate::session::types::{HookSnapshotReloadTrigger, PromptSessionRequest, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -492,8 +492,8 @@ impl SessionAssemblyBuilder {
             "text": dispatch_prompt,
         })];
 
-        let sliced_bundle = parent_context_bundle
-            .map(|bundle| slice_companion_bundle(bundle, mode));
+        let sliced_bundle =
+            parent_context_bundle.map(|bundle| slice_companion_bundle(bundle, mode));
 
         Self {
             vfs: slice.vfs,
@@ -1087,9 +1087,11 @@ impl<'a> SessionRequestAssembler<'a> {
                     chosen_bundle,
                 )
             }
-            OwnerPromptLifecycle::Plain => {
-                (spec.user_prompt_blocks, HookSnapshotReloadTrigger::None, None)
-            }
+            OwnerPromptLifecycle::Plain => (
+                spec.user_prompt_blocks,
+                HookSnapshotReloadTrigger::None,
+                None,
+            ),
         };
         if let (Some(bundle), Some(trigger)) = (
             effective_bundle.as_ref(),
@@ -2068,8 +2070,7 @@ mod tests {
 
     #[test]
     fn slice_companion_bundle_constraints_only_keeps_constraint_slots() {
-        let parent =
-            bundle_with_slots(&["story", "workflow_context", "constraint", "constraints"]);
+        let parent = bundle_with_slots(&["story", "workflow_context", "constraint", "constraints"]);
         let sliced = slice_companion_bundle(&parent, CompanionSliceMode::ConstraintsOnly);
         let slots = slot_set(&sliced);
         assert!(slots.contains("constraint"));
@@ -2486,10 +2487,8 @@ mod tests {
             use agentdash_spi::SessionContextBundle;
 
             let mut base = base_req();
-            base.context_bundle = Some(SessionContextBundle::new(
-                uuid::Uuid::new_v4(),
-                "test-base",
-            ));
+            base.context_bundle =
+                Some(SessionContextBundle::new(uuid::Uuid::new_v4(), "test-base"));
             // prepared 为 None 时整体替换：base bundle 被清除
             let prepared = PreparedSessionInputs::default();
 
@@ -2565,7 +2564,9 @@ mod tests {
         fn env_prepared_overrides_base_when_nonempty() {
             // prepared.env 非空 → 整体替换。
             let mut base = base_req();
-            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+            base.user_input
+                .env
+                .insert("FOO".to_string(), "base".to_string());
 
             let mut prepared_env = HashMap::new();
             prepared_env.insert("BAR".to_string(), "prepared".to_string());
@@ -2586,7 +2587,9 @@ mod tests {
         fn env_prepared_empty_preserves_base() {
             // prepared.env 为空 → 保留 base.env。
             let mut base = base_req();
-            base.user_input.env.insert("FOO".to_string(), "base".to_string());
+            base.user_input
+                .env
+                .insert("FOO".to_string(), "base".to_string());
 
             let prepared = PreparedSessionInputs::default();
             let result = finalize_request(base, prepared);
@@ -2618,7 +2621,9 @@ mod tests {
         fn builder_with_identity_method_propagates_to_prepared() {
             // 验证 SessionAssemblyBuilder.with_identity() 的值能顺利进入 PreparedSessionInputs.identity。
             let id = agentdash_spi::auth::AuthIdentity::system_routine("r-zzz");
-            let prepared = SessionAssemblyBuilder::new().with_identity(id.clone()).build();
+            let prepared = SessionAssemblyBuilder::new()
+                .with_identity(id.clone())
+                .build();
             assert_eq!(
                 prepared.identity.as_ref().map(|i| i.user_id.as_str()),
                 Some("system:routine:r-zzz"),

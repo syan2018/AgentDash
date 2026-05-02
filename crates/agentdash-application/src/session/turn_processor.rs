@@ -113,7 +113,10 @@ impl SessionTurnProcessor {
         if !received_terminal {
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                match guard
+                    .get(&session_id)
+                    .and_then(|rt| rt.current_turn.as_ref())
+                {
                     Some(turn) => (
                         turn.cancel_requested,
                         turn.turn_id.as_str() == turn_id.as_str(),
@@ -245,8 +248,6 @@ impl SessionTurnProcessor {
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, envelope).await;
         }
-        let _ = hub
-            .persist_notification(session_id, envelope.clone())
-            .await;
+        let _ = hub.persist_notification(session_id, envelope.clone()).await;
     }
 }

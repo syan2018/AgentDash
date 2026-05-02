@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use agentdash_domain::workspace::WorkspaceIdentityKind;
 use agentdash_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
-use agentdash_domain::workspace::WorkspaceIdentityKind;
 
 /// Application 层端口：后端在线探测 + workspace 检测
 ///

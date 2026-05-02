@@ -145,11 +145,10 @@ impl std::fmt::Debug for ExecutionContext {
 
 /// 从 `ExecutionContext.session.vfs` 的 default mount 解析工作区路径（`root_ref` 按本地路径处理）。
 pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf, ConnectorError> {
-    let space = context
-        .session
-        .vfs
-        .as_ref()
-        .ok_or_else(|| ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string()))?;
+    let space =
+        context.session.vfs.as_ref().ok_or_else(|| {
+            ConnectorError::InvalidConfig("ExecutionContext 缺少 vfs".to_string())
+        })?;
     let mount = space
         .default_mount()
         .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))?;
@@ -352,8 +351,13 @@ mod tests {
     }
 }
 
-pub type ExecutionStream =
-    Pin<Box<dyn Stream<Item = Result<agentdash_protocol::BackboneEnvelope, ConnectorError>> + Send + 'static>>;
+pub type ExecutionStream = Pin<
+    Box<
+        dyn Stream<Item = Result<agentdash_protocol::BackboneEnvelope, ConnectorError>>
+            + Send
+            + 'static,
+    >,
+>;
 
 /// 运行时工具构建 SPI。
 /// 由 application 层持有，executor 层提供具体实现。

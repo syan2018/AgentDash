@@ -1,8 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{
     ConnectorError, ConnectorType, ExecutionContext, ExecutionStream, PromptPayload,
     workspace_path_from_context,
@@ -146,11 +144,8 @@ pub(crate) async fn spawn_executor_session(
         executor_id: Some(context.session.executor_config.executor.to_string()),
     };
     let turn_id = context.session.turn_id.clone();
-    let mut converter = NormalizedToBackboneConverter::new(
-        session_id.to_string(),
-        source.clone(),
-        turn_id.clone(),
-    );
+    let mut converter =
+        NormalizedToBackboneConverter::new(session_id.to_string(), source.clone(), turn_id.clone());
 
     tokio::spawn(async move {
         let mut stream = msg_store.history_plus_stream();

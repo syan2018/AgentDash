@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use codex_app_server_protocol as codex;
 
 fn make_envelope(
@@ -111,7 +109,13 @@ fn upsert_state_from_message(
             Some(tool_call.arguments.clone()),
         );
     }
-    upsert_state_from_tool_name(tool_call_states, entry_index, tool_call_id, fallback_name, None)
+    upsert_state_from_tool_name(
+        tool_call_states,
+        entry_index,
+        tool_call_id,
+        fallback_name,
+        None,
+    )
 }
 
 /// 构造 DynamicToolCall ThreadItem 用于 ItemStarted/ItemCompleted。
@@ -146,24 +150,36 @@ pub(super) fn convert_event_to_envelopes(
     chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
 ) -> Vec<BackboneEnvelope> {
-    let wrap = |event: BackboneEvent, idx: u32| make_envelope(event, session_id, source, turn_id, idx);
+    let wrap =
+        |event: BackboneEvent, idx: u32| make_envelope(event, session_id, source, turn_id, idx);
 
     match event {
-        AgentEvent::MessageUpdate { message, event: stream_event } => match stream_event {
+        AgentEvent::MessageUpdate {
+            message,
+            event: stream_event,
+        } => match stream_event {
             agentdash_agent::types::AssistantStreamEvent::ToolCallStart {
                 tool_call_id,
                 name,
                 ..
             } => {
                 let (state, created) = upsert_state_from_message(
-                    tool_call_states, entry_index, message, tool_call_id, name,
+                    tool_call_states,
+                    entry_index,
+                    message,
+                    tool_call_id,
+                    name,
                 );
                 if !created {
                     return Vec::new();
                 }
                 let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
                 let item = make_dynamic_tool_item(
-                    &item_id, &state, codex::DynamicToolCallStatus::InProgress, None, None,
+                    &item_id,
+                    &state,
+                    codex::DynamicToolCallStatus::InProgress,
+                    None,
+                    None,
                 );
                 vec![wrap(
                     BackboneEvent::ItemStarted(codex::ItemStartedNotification {
@@ -180,7 +196,11 @@ pub(super) fn convert_event_to_envelopes(
                 ..
             } => {
                 let (_state, _) = upsert_state_from_message(
-                    tool_call_states, entry_index, message, tool_call_id, name,
+                    tool_call_states,
+                    entry_index,
+                    message,
+                    tool_call_id,
+                    name,
                 );
                 // 参数增量在 Codex 协议中没有对应的独立通知，仅影响最终 ItemCompleted。
                 Vec::new()
@@ -264,17 +284,25 @@ pub(super) fn convert_event_to_envelopes(
                 if !reasoning_text.is_empty() {
                     let key = chunk_stream_key(turn_id, *entry_index, "reasoning");
                     let state = chunk_emit_states.get(&key).cloned().unwrap_or_default();
-                    let to_emit = reconcile_chunk(&state, &reasoning_text, turn_id, *entry_index, "reasoning");
+                    let to_emit = reconcile_chunk(
+                        &state,
+                        &reasoning_text,
+                        turn_id,
+                        *entry_index,
+                        "reasoning",
+                    );
                     if let Some(delta) = to_emit {
                         let item_id = synth_item_id(turn_id, *entry_index, "reason");
                         envelopes.push(wrap(
-                            BackboneEvent::ReasoningTextDelta(codex::ReasoningTextDeltaNotification {
-                                thread_id: session_id.to_string(),
-                                turn_id: turn_id.to_string(),
-                                item_id,
-                                delta,
-                                content_index: 0,
-                            }),
+                            BackboneEvent::ReasoningTextDelta(
+                                codex::ReasoningTextDeltaNotification {
+                                    thread_id: session_id.to_string(),
+                                    turn_id: turn_id.to_string(),
+                                    item_id,
+                                    delta,
+                                    content_index: 0,
+                                },
+                            ),
                             *entry_index,
                         ));
                     }
@@ -284,16 +312,19 @@ pub(super) fn convert_event_to_envelopes(
                 if !text.is_empty() {
                     let key = chunk_stream_key(turn_id, *entry_index, "agent_message");
                     let state = chunk_emit_states.get(&key).cloned().unwrap_or_default();
-                    let to_emit = reconcile_chunk(&state, &text, turn_id, *entry_index, "agent_message");
+                    let to_emit =
+                        reconcile_chunk(&state, &text, turn_id, *entry_index, "agent_message");
                     if let Some(delta) = to_emit {
                         let item_id = synth_item_id(turn_id, *entry_index, "msg");
                         envelopes.push(wrap(
-                            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
-                                thread_id: session_id.to_string(),
-                                turn_id: turn_id.to_string(),
-                                item_id,
-                                delta,
-                            }),
+                            BackboneEvent::AgentMessageDelta(
+                                codex::AgentMessageDeltaNotification {
+                                    thread_id: session_id.to_string(),
+                                    turn_id: turn_id.to_string(),
+                                    item_id,
+                                    delta,
+                                },
+                            ),
                             *entry_index,
                         ));
                     }
@@ -375,11 +406,19 @@ pub(super) fn convert_event_to_envelopes(
             args,
         } => {
             let (state, _) = upsert_state_from_tool_name(
-                tool_call_states, entry_index, tool_call_id, tool_name, Some(args.clone()),
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                Some(args.clone()),
             );
             let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
             let item = make_dynamic_tool_item(
-                &item_id, &state, codex::DynamicToolCallStatus::InProgress, None, None,
+                &item_id,
+                &state,
+                codex::DynamicToolCallStatus::InProgress,
+                None,
+                None,
             );
             // ItemStarted may have already been emitted by ToolCallStart;
             // here we emit an ItemCompleted with InProgress status as a progress signal.
@@ -403,12 +442,20 @@ pub(super) fn convert_event_to_envelopes(
             ..
         } => {
             let (state, _) = upsert_state_from_tool_name(
-                tool_call_states, entry_index, tool_call_id, tool_name, Some(args.clone()),
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                Some(args.clone()),
             );
             let content_items = decode_tool_result_to_content_items(partial_result);
             let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
             let item = make_dynamic_tool_item(
-                &item_id, &state, codex::DynamicToolCallStatus::InProgress, content_items, None,
+                &item_id,
+                &state,
+                codex::DynamicToolCallStatus::InProgress,
+                content_items,
+                None,
             );
             vec![wrap(
                 BackboneEvent::ItemStarted(codex::ItemStartedNotification {
@@ -429,7 +476,11 @@ pub(super) fn convert_event_to_envelopes(
             ..
         } => {
             let (state, _) = upsert_state_from_tool_name(
-                tool_call_states, entry_index, tool_call_id, tool_name, Some(args.clone()),
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                Some(args.clone()),
             );
             vec![wrap(
                 BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
@@ -456,7 +507,11 @@ pub(super) fn convert_event_to_envelopes(
             ..
         } => {
             let (state, _) = upsert_state_from_tool_name(
-                tool_call_states, entry_index, tool_call_id, tool_name, Some(args.clone()),
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                Some(args.clone()),
             );
             vec![wrap(
                 BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
@@ -481,7 +536,11 @@ pub(super) fn convert_event_to_envelopes(
             is_error,
         } => {
             let (state, _) = upsert_state_from_tool_name(
-                tool_call_states, entry_index, tool_call_id, tool_name, None,
+                tool_call_states,
+                entry_index,
+                tool_call_id,
+                tool_name,
+                None,
             );
             let content_items = decode_tool_result_to_content_items(result);
             let success = Some(!is_error);
@@ -519,7 +578,11 @@ fn reconcile_chunk(
             None
         } else if full_text.starts_with(state.emitted_text.as_str()) {
             let suffix = &full_text[state.emitted_text.len()..];
-            if suffix.is_empty() { None } else { Some(suffix.to_string()) }
+            if suffix.is_empty() {
+                None
+            } else {
+                Some(suffix.to_string())
+            }
         } else {
             tracing::warn!(
                 turn_id = %turn_id,
@@ -543,9 +606,7 @@ fn decode_tool_result_to_content_items(
         .iter()
         .filter_map(|part| match part {
             ContentPart::Text { text } => {
-                Some(codex::DynamicToolCallOutputContentItem::InputText {
-                    text: text.clone(),
-                })
+                Some(codex::DynamicToolCallOutputContentItem::InputText { text: text.clone() })
             }
             ContentPart::Image { data, .. } => {
                 Some(codex::DynamicToolCallOutputContentItem::InputImage {

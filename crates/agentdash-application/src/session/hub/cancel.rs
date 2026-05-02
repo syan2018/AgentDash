@@ -14,8 +14,8 @@ use agentdash_spi::ConnectorError;
 use tokio::sync::broadcast;
 
 use super::super::hub_support::{
-    build_session_runtime, build_turn_terminal_envelope,
-    parse_turn_terminal_event_from_envelope, TurnTerminalKind,
+    TurnTerminalKind, build_session_runtime, build_turn_terminal_envelope,
+    parse_turn_terminal_event_from_envelope,
 };
 use super::SessionHub;
 

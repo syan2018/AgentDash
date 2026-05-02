@@ -1,11 +1,11 @@
 use std::io;
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
-use agentdash_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_application::session::{
     PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
     SessionMeta, SessionPersistence, TitleSource,
 };
+use agentdash_protocol::codex_app_server_protocol::ThreadItem;
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use sqlx::{PgPool, Row};
 
 pub struct PostgresSessionRepository {
@@ -648,18 +648,21 @@ fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
             let status = match n.turn.status {
                 agentdash_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
                 agentdash_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
-                agentdash_protocol::codex_app_server_protocol::TurnStatus::Interrupted => "interrupted",
+                agentdash_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
+                    "interrupted"
+                }
                 _ => "completed",
             };
             projection.last_execution_status = Some(status.to_string());
-            projection.last_terminal_message =
-                n.turn.error.as_ref().map(|e| e.message.clone());
+            projection.last_terminal_message = n.turn.error.as_ref().map(|e| e.message.clone());
         }
         BackboneEvent::Error(e) => {
             projection.last_execution_status = Some("failed".to_string());
             projection.last_terminal_message = Some(e.error.message.clone());
         }
-        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound { executor_session_id }) => {
+        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+            executor_session_id,
+        }) => {
             projection.executor_session_id = Some(executor_session_id.clone());
         }
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
@@ -730,8 +733,8 @@ fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
 mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
-    use agentdash_protocol::{SourceInfo, TraceInfo};
     use agentdash_protocol::codex_app_server_protocol as codex;
+    use agentdash_protocol::{SourceInfo, TraceInfo};
     use chrono::Utc;
 
     fn turn_terminal_envelope(

@@ -1,11 +1,11 @@
 use std::io;
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
-use agentdash_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_application::session::{
     PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
     SessionMeta, SessionPersistence, TitleSource,
 };
+use agentdash_protocol::codex_app_server_protocol::ThreadItem;
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use sqlx::{Row, SqlitePool};
 
 pub struct SqliteSessionRepository {
@@ -655,9 +655,7 @@ fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
         }
         BackboneEvent::TurnCompleted(n) => {
             let status = match n.turn.status {
-                agentdash_protocol::codex_app_server_protocol::TurnStatus::Completed => {
-                    "completed"
-                }
+                agentdash_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
                 agentdash_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
                 agentdash_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
                     "interrupted"
@@ -665,8 +663,7 @@ fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
                 _ => "completed",
             };
             projection.last_execution_status = Some(status.to_string());
-            projection.last_terminal_message =
-                n.turn.error.as_ref().map(|e| e.message.clone());
+            projection.last_terminal_message = n.turn.error.as_ref().map(|e| e.message.clone());
         }
         BackboneEvent::Error(e) => {
             projection.last_execution_status = Some("failed".to_string());
@@ -892,8 +889,7 @@ mod tests {
         stale.executor_session_id = Some("exec-1".to_string());
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
-        let terminal =
-            turn_terminal_envelope("sess-stale", "t-new", "turn_completed", "done");
+        let terminal = turn_terminal_envelope("sess-stale", "t-new", "turn_completed", "done");
         repo.append_event("sess-stale", &terminal)
             .await
             .expect("应能写入终态事件");

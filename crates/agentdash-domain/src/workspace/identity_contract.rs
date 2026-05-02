@@ -281,12 +281,7 @@ pub fn identity_payload_from_detected_facts(
     match kind {
         WorkspaceIdentityKind::GitRepo => {
             let git = detected_facts.get("git")?;
-            if git
-                .get("is_repo")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-                == false
-            {
+            if git.get("is_repo").and_then(Value::as_bool).unwrap_or(false) == false {
                 return None;
             }
 

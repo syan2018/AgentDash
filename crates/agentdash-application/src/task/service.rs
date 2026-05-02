@@ -779,9 +779,8 @@ impl StoryStepActivationService {
         message: &str,
         data: Value,
     ) {
-        let envelope = bridge_task_status_event_to_envelope(
-            session_id, turn_id, event_type, message, data,
-        );
+        let envelope =
+            bridge_task_status_event_to_envelope(session_id, turn_id, event_type, message, data);
         if let Err(err) = self.hub.inject_notification(session_id, envelope).await {
             tracing::warn!(
                 session_id, turn_id, event_type, error = %err,

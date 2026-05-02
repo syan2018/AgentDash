@@ -416,7 +416,6 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -426,7 +425,6 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -436,7 +434,6 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -444,14 +441,18 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
     assert_eq!(start_envelopes.len(), 1);
     match &start_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
     assert_eq!(delta_envelopes.len(), 1);
     match &delta_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "shell_exec" && *arguments == serde_json::json!({ "command": "echo hello" })));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "shell_exec" && *arguments == serde_json::json!({ "command": "echo hello" }))
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -498,7 +499,6 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -506,7 +506,9 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "fs_apply_patch"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "fs_apply_patch")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -540,7 +542,6 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -548,7 +549,9 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" })));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -592,7 +595,6 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -602,7 +604,6 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -610,7 +611,9 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -648,7 +651,6 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -658,7 +660,6 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -666,14 +667,18 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     assert_eq!(update_envelopes.len(), 1);
     match &update_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "echo"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "echo")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
 
     match &end_envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. } if tool == "echo" && *success == Some(true)));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. } if tool == "echo" && *success == Some(true))
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -699,7 +704,6 @@ fn pending_approval_event_maps_to_tool_call_update() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -707,12 +711,17 @@ fn pending_approval_event_maps_to_tool_call_update() {
     assert_eq!(envelopes.len(), 2);
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
     match &envelopes[1].event {
-        BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate { key, .. }) => {
+        BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            ..
+        }) => {
             assert_eq!(key, "approval_requested");
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -744,7 +753,6 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -752,7 +760,9 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
-            assert!(matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "present_canvas"));
+            assert!(
+                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "present_canvas")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -781,7 +791,6 @@ fn assistant_message_end_with_error_message_emits_fallback_chunk() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -833,7 +842,6 @@ fn message_end_does_not_repeat_full_snapshot_after_deltas() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -843,7 +851,6 @@ fn message_end_does_not_repeat_full_snapshot_after_deltas() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -922,7 +929,6 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -932,7 +938,6 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );
@@ -942,7 +947,6 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
         &test_source(),
         "turn-1",
         &mut entry_index,
-
         &mut chunk_emit_states,
         &mut tool_call_states,
     );

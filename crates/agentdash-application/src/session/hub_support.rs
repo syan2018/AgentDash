@@ -5,7 +5,7 @@ use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceI
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities};
 use tokio::sync::broadcast;
 
-use agentdash_acp_meta::{parse_agentdash_meta, AgentDashSourceV1};
+use agentdash_acp_meta::{AgentDashSourceV1, parse_agentdash_meta};
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
 use super::persistence::PersistedSessionEvent;

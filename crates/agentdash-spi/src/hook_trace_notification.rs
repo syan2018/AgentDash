@@ -1,7 +1,7 @@
 use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, HookTracePayload, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, HookTraceCompletion, HookTraceData, HookTraceDiagnostic,
+    HookTraceInjection, HookTracePayload, PlatformEvent, SourceInfo, TraceInfo,
 };
-use serde_json::json;
 
 use crate::{HookTraceEntry, HookTrigger};
 
@@ -11,17 +11,50 @@ pub fn build_hook_trace_envelope(
     source: SourceInfo,
     entry: &HookTraceEntry,
 ) -> BackboneEnvelope {
-    let injections_data: Vec<serde_json::Value> = entry
+    let injections: Vec<HookTraceInjection> = entry
         .injections
         .iter()
-        .map(|inj| {
-            json!({
-                "slot": inj.slot,
-                "source": inj.source,
-                "content": inj.content,
-            })
+        .map(|inj| HookTraceInjection {
+            slot: Some(inj.slot.clone()),
+            source: Some(inj.source.clone()),
+            content: Some(inj.content.clone()),
         })
         .collect();
+    let diagnostics: Vec<HookTraceDiagnostic> = entry
+        .diagnostics
+        .iter()
+        .map(|item| HookTraceDiagnostic {
+            code: Some(item.code.clone()),
+            message: Some(item.message.clone()),
+        })
+        .collect();
+    let completion = entry.completion.as_ref().map(|status| HookTraceCompletion {
+        mode: status.mode.clone(),
+        satisfied: status.satisfied,
+        advanced: status.advanced,
+        reason: status.reason.clone(),
+    });
+    let data = HookTraceData {
+        trigger: hook_trigger_key(&entry.trigger).to_string(),
+        decision: entry.decision.clone(),
+        sequence: entry.sequence,
+        revision: entry.revision,
+        severity: hook_event_severity(entry).to_string(),
+        tool_name: entry.tool_name.clone(),
+        tool_call_id: entry.tool_call_id.clone(),
+        subagent_type: entry.subagent_type.clone(),
+        matched_rule_keys: entry.matched_rule_keys.clone(),
+        refresh_snapshot: entry.refresh_snapshot,
+        block_reason: entry.block_reason.clone(),
+        completion,
+        diagnostic_codes: entry
+            .diagnostics
+            .iter()
+            .map(|item| item.code.clone())
+            .collect::<Vec<_>>(),
+        diagnostics,
+        injections,
+    };
 
     let payload = HookTracePayload {
         event_type: Some(format!(
@@ -30,23 +63,7 @@ pub fn build_hook_trace_envelope(
             normalize_event_decision(&entry.decision)
         )),
         message: Some(describe_hook_trace(entry)),
-        data: Some(json!({
-            "trigger": hook_trigger_key(&entry.trigger),
-            "decision": entry.decision,
-            "sequence": entry.sequence,
-            "revision": entry.revision,
-            "severity": hook_event_severity(entry),
-            "tool_name": entry.tool_name,
-            "tool_call_id": entry.tool_call_id,
-            "subagent_type": entry.subagent_type,
-            "matched_rule_keys": entry.matched_rule_keys,
-            "refresh_snapshot": entry.refresh_snapshot,
-            "block_reason": entry.block_reason,
-            "completion": entry.completion,
-            "diagnostic_codes": entry.diagnostics.iter().map(|item| item.code.clone()).collect::<Vec<_>>(),
-            "diagnostics": entry.diagnostics,
-            "injections": injections_data,
-        })),
+        data: Some(data),
     };
 
     BackboneEnvelope::new(
@@ -215,7 +232,10 @@ mod tests {
                 &silent_entry(decision),
             );
             assert!(
-                matches!(envelope.event, BackboneEvent::Platform(PlatformEvent::HookTrace(_))),
+                matches!(
+                    envelope.event,
+                    BackboneEvent::Platform(PlatformEvent::HookTrace(_))
+                ),
                 "should produce HookTrace event for decision: {decision}"
             );
         }
@@ -272,8 +292,8 @@ mod tests {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 assert!(payload.event_type.as_deref().unwrap().starts_with("hook:"));
                 let data = payload.data.as_ref().unwrap();
-                assert_eq!(data.get("decision").and_then(|v| v.as_str()), Some("continue"));
-                assert_eq!(data.get("severity").and_then(|v| v.as_str()), Some("warning"));
+                assert_eq!(data.decision, "continue");
+                assert_eq!(data.severity, "warning");
             }
             other => panic!("unexpected event: {other:?}"),
         }
@@ -295,9 +315,11 @@ mod tests {
         match &envelope.event {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 let data = payload.data.as_ref().unwrap();
-                let injections = data.get("injections").and_then(|v| v.as_array()).unwrap();
-                assert_eq!(injections.len(), 1);
-                assert_eq!(injections[0]["slot"], "companion_agents");
+                assert_eq!(data.injections.len(), 1);
+                assert_eq!(
+                    data.injections[0].slot.as_deref(),
+                    Some("companion_agents")
+                );
             }
             other => panic!("unexpected event: {other:?}"),
         }

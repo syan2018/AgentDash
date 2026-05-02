@@ -13,9 +13,9 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::hub::HookTriggerInput;
 use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
+use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::path_policy::resolve_working_dir;
@@ -411,11 +411,7 @@ impl SessionHub {
             let _ = self.persist_notification(&sid, envelope).await;
         }
 
-        let started = build_turn_started_envelope(
-            session_id,
-            &source,
-            &turn_id,
-        );
+        let started = build_turn_started_envelope(session_id, &source, &turn_id);
         let _ = self.persist_notification(&sid, started).await;
 
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
@@ -517,7 +513,10 @@ impl SessionHub {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
                         let (cancel_requested, live_turn_matches) = {
                             let guard = sessions.lock().await;
-                            match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                            match guard
+                                .get(&session_id)
+                                .and_then(|rt| rt.current_turn.as_ref())
+                            {
                                 Some(turn) => (
                                     turn.cancel_requested,
                                     turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
@@ -543,7 +542,10 @@ impl SessionHub {
             // stream 正常结束 → 发送显式 Terminal（不能依赖 drop sender，因为还有其他 clone 存活）
             let (cancel_requested, live_turn_matches) = {
                 let guard = sessions.lock().await;
-                match guard.get(&session_id).and_then(|rt| rt.current_turn.as_ref()) {
+                match guard
+                    .get(&session_id)
+                    .and_then(|rt| rt.current_turn.as_ref())
+                {
                     Some(turn) => (
                         turn.cancel_requested,
                         turn.turn_id.as_str() == turn_id_for_adapter.as_str(),

@@ -192,8 +192,11 @@ fn apply_legacy_fallbacks(root: &std::path::Path, config: &mut LocalBackendConfi
     }
 
     if config.workspace_contract.is_disabled() {
-        let legacy_workspace_path = root.join(".agentdash").join(LEGACY_WORKSPACE_CONFIG_FILENAME);
-        if let Some(legacy) = read_json_file::<WorkspaceContractRuntimeConfig>(&legacy_workspace_path)
+        let legacy_workspace_path = root
+            .join(".agentdash")
+            .join(LEGACY_WORKSPACE_CONFIG_FILENAME);
+        if let Some(legacy) =
+            read_json_file::<WorkspaceContractRuntimeConfig>(&legacy_workspace_path)
             && !legacy.is_disabled()
         {
             tracing::warn!(

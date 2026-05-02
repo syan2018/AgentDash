@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use codex_app_server_protocol as codex;
 use executors::{
     approvals::ToolCallMetadata,
@@ -89,15 +87,13 @@ impl NormalizedToBackboneConverter {
                 let delta = compute_delta(&mut self.emitted_thought, &entry.content);
                 match delta {
                     Some(d) => vec![self.wrap(
-                        BackboneEvent::ReasoningTextDelta(
-                            codex::ReasoningTextDeltaNotification {
-                                thread_id: self.session_id.clone(),
-                                turn_id: self.turn_id.clone(),
-                                item_id: self.synth_item_id(entry_index, "reason"),
-                                delta: d,
-                                content_index: 0,
-                            },
-                        ),
+                        BackboneEvent::ReasoningTextDelta(codex::ReasoningTextDeltaNotification {
+                            thread_id: self.session_id.clone(),
+                            turn_id: self.turn_id.clone(),
+                            item_id: self.synth_item_id(entry_index, "reason"),
+                            delta: d,
+                            content_index: 0,
+                        }),
                         entry_index,
                     )],
                     None => Vec::new(),
@@ -140,29 +136,27 @@ impl NormalizedToBackboneConverter {
             NormalizedEntryType::Loading | NormalizedEntryType::NextAction { .. } => Vec::new(),
             NormalizedEntryType::TokenUsageInfo(info) => {
                 vec![self.wrap(
-                    BackboneEvent::TokenUsageUpdated(
-                        codex::ThreadTokenUsageUpdatedNotification {
-                            thread_id: self.session_id.clone(),
-                            turn_id: self.turn_id.clone(),
-                            token_usage: codex::ThreadTokenUsage {
-                                total: codex::TokenUsageBreakdown {
-                                    total_tokens: info.total_tokens as i64,
-                                    input_tokens: 0,
-                                    output_tokens: 0,
-                                    cached_input_tokens: 0,
-                                    reasoning_output_tokens: 0,
-                                },
-                                last: codex::TokenUsageBreakdown {
-                                    total_tokens: 0,
-                                    input_tokens: 0,
-                                    output_tokens: 0,
-                                    cached_input_tokens: 0,
-                                    reasoning_output_tokens: 0,
-                                },
-                                model_context_window: Some(info.model_context_window as i64),
+                    BackboneEvent::TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification {
+                        thread_id: self.session_id.clone(),
+                        turn_id: self.turn_id.clone(),
+                        token_usage: codex::ThreadTokenUsage {
+                            total: codex::TokenUsageBreakdown {
+                                total_tokens: info.total_tokens as i64,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cached_input_tokens: 0,
+                                reasoning_output_tokens: 0,
                             },
+                            last: codex::TokenUsageBreakdown {
+                                total_tokens: 0,
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                cached_input_tokens: 0,
+                                reasoning_output_tokens: 0,
+                            },
+                            model_context_window: Some(info.model_context_window as i64),
                         },
-                    ),
+                    }),
                     entry_index,
                 )]
             }
@@ -248,7 +242,10 @@ impl NormalizedToBackboneConverter {
             )]
         } else if matches!(
             status,
-            ToolStatus::Success | ToolStatus::Failed | ToolStatus::TimedOut | ToolStatus::Denied { .. }
+            ToolStatus::Success
+                | ToolStatus::Failed
+                | ToolStatus::TimedOut
+                | ToolStatus::Denied { .. }
         ) {
             vec![self.wrap(
                 BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
@@ -296,7 +293,11 @@ fn compute_delta(emitted: &mut String, full_content: &str) -> Option<String> {
     None
 }
 
-fn tool_call_id_from_entry(turn_prefix: &str, entry_index: usize, entry: &NormalizedEntry) -> String {
+fn tool_call_id_from_entry(
+    turn_prefix: &str,
+    entry_index: usize,
+    entry: &NormalizedEntry,
+) -> String {
     if let Some(meta) = entry.metadata.as_ref()
         && let Ok(parsed) = serde_json::from_value::<ToolCallMetadata>(meta.clone())
         && !parsed.tool_call_id.trim().is_empty()
@@ -320,5 +321,7 @@ fn extract_content_items(
     if text.is_empty() {
         return None;
     }
-    Some(vec![codex::DynamicToolCallOutputContentItem::InputText { text }])
+    Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+        text,
+    }])
 }

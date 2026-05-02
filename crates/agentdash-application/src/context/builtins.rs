@@ -194,9 +194,7 @@ fn render_template(template: &str, vars: &HashMap<&'static str, String>) -> Stri
 /// PR 5d 前 task 路径走 `contribute_core_context` 一次性产出 task/story/project/
 /// workspace 四条 fragment，导致 story 领域字段在 owner 与 task 两路各自独立
 /// 维护。此函数让 task 路径与 owner 路径共享同一套 story/project/workspace 渲染。
-pub fn contribute_task_binding(
-    task: &agentdash_domain::task::Task,
-) -> Contribution {
+pub fn contribute_task_binding(task: &agentdash_domain::task::Task) -> Contribution {
     let fragment = ContextFragment {
         slot: "task".to_string(),
         label: "task_core".to_string(),

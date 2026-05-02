@@ -56,8 +56,7 @@ pub fn render_workflow_injection(
             parts.push(format!("## Workflow Instructions\n{}", lines.join("\n")));
         }
     }
-    if matches!(mode, WorkflowInjectionMode::Declarative)
-        && !injection.context_bindings.is_empty()
+    if matches!(mode, WorkflowInjectionMode::Declarative) && !injection.context_bindings.is_empty()
     {
         let lines = injection
             .context_bindings
@@ -143,7 +142,11 @@ fn render_declarative_binding_line(binding: &WorkflowContextBinding) -> String {
 fn clean_text(input: Option<&str>) -> Option<&str> {
     input.and_then(|s| {
         let trimmed = s.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     })
 }
 

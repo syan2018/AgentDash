@@ -239,10 +239,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     }
 }
 
-pub(super) fn apply_envelope_projection(
-    meta: &mut SessionMeta,
-    envelope: &BackboneEnvelope,
-) {
+pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
     if let Some(turn_id) = envelope.trace.turn_id.as_deref() {
         let turn_id = turn_id.trim();
         if !turn_id.is_empty() {
@@ -326,7 +323,9 @@ fn apply_compat_info_projection(meta: &mut SessionMeta, envelope: &BackboneEnvel
 mod tests {
     use super::super::types::TitleSource;
     use super::*;
-    use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+    use agentdash_protocol::{
+        BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    };
 
     fn turn_terminal_envelope(
         session_id: &str,

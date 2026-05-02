@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use agentdash_protocol::SourceInfo;
+use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     HookEffect, HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::ConnectorError;
 use tokio::sync::broadcast;
 
 use super::super::hook_events::build_hook_trace_envelope;
@@ -291,4 +291,3 @@ impl SessionHub {
         });
     }
 }
-

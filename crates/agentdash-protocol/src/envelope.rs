@@ -39,11 +39,7 @@ pub struct BackboneEnvelope {
 }
 
 impl BackboneEnvelope {
-    pub fn new(
-        event: BackboneEvent,
-        session_id: impl Into<String>,
-        source: SourceInfo,
-    ) -> Self {
+    pub fn new(event: BackboneEvent, session_id: impl Into<String>, source: SourceInfo) -> Self {
         Self {
             event,
             session_id: session_id.into(),

@@ -5,13 +5,11 @@ use crate::session::{
     build_hook_trace_envelope,
 };
 use agent_client_protocol::McpServer;
-use agentdash_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
 };
+use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::action_type as at;
 use agentdash_spi::schema::schema_value;
 use agentdash_spi::{
@@ -1742,12 +1740,8 @@ async fn record_subagent_trace(
         let session_id = hook_session.session_id();
         let has_live = session_hub.has_live_runtime(session_id).await;
         if !has_live {
-            let notification = build_hook_trace_envelope(
-                session_id,
-                Some(turn_id),
-                hook_trace_source(),
-                &trace,
-            );
+            let notification =
+                build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace);
             let _ = session_hub
                 .inject_notification(session_id, notification)
                 .await;

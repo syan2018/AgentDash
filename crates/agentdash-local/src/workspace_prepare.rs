@@ -14,9 +14,7 @@ pub fn prepare_workspace(
     identity_payload: Option<&serde_json::Value>,
     runtime_config: &WorkspaceContractRuntimeConfig,
 ) -> Result<(), String> {
-    if !runtime_config.enabled
-        || !runtime_config.prepare_on_first_prompt
-    {
+    if !runtime_config.enabled || !runtime_config.prepare_on_first_prompt {
         return Ok(());
     }
 
@@ -113,10 +111,18 @@ fn prepare_p4_workspace(
     let info_fields = run_p4_tagged(path, &["info"])?;
     let server_address = pick_tagged(
         &info_fields,
-        &["serverAddress", "serveraddress", "Server address", "ServerAddress"],
+        &[
+            "serverAddress",
+            "serveraddress",
+            "Server address",
+            "ServerAddress",
+        ],
     )
     .map(|value| value.trim().to_ascii_lowercase());
-    let client_name = pick_tagged(&info_fields, &["clientName", "clientname", "Client", "ClientName"]);
+    let client_name = pick_tagged(
+        &info_fields,
+        &["clientName", "clientname", "Client", "ClientName"],
+    );
     let actual_stream = client_name.as_deref().and_then(|client| {
         run_p4_tagged(path, &["client", "-o", client])
             .ok()
@@ -141,8 +147,10 @@ fn prepare_p4_workspace(
                     actual_stream
                 ));
             }
-            if matches!(contract.match_mode, P4WorkspaceMatchMode::ServerStreamClient)
-                && let Some(expected_client) = contract.client_name.as_deref()
+            if matches!(
+                contract.match_mode,
+                P4WorkspaceMatchMode::ServerStreamClient
+            ) && let Some(expected_client) = contract.client_name.as_deref()
                 && client_name.as_deref() != Some(expected_client)
             {
                 return Err(format!(
@@ -196,7 +204,13 @@ fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
         return Ok(());
     }
 
-    Err(render_process_error("git", args, &output.stdout, &output.stderr, output.status))
+    Err(render_process_error(
+        "git",
+        args,
+        &output.stdout,
+        &output.stderr,
+        output.status,
+    ))
 }
 
 fn git_ref_exists(path: &Path, reference: &str) -> Result<bool, String> {
@@ -219,10 +233,19 @@ fn run_p4(path: &Path, args: &[&str]) -> Result<(), String> {
         return Ok(());
     }
 
-    Err(render_process_error("p4", args, &output.stdout, &output.stderr, output.status))
+    Err(render_process_error(
+        "p4",
+        args,
+        &output.stdout,
+        &output.stderr,
+        output.status,
+    ))
 }
 
-fn run_p4_tagged(path: &Path, args: &[&str]) -> Result<std::collections::HashMap<String, String>, String> {
+fn run_p4_tagged(
+    path: &Path,
+    args: &[&str],
+) -> Result<std::collections::HashMap<String, String>, String> {
     let output = Command::new("p4")
         .current_dir(path)
         .arg("-ztag")
@@ -293,10 +316,10 @@ fn render_process_error(
 #[cfg(test)]
 mod tests {
     use super::prepare_workspace;
-    use agentdash_domain::workspace::WorkspaceIdentityKind;
     use crate::local_backend_config::{
         GitWorkspaceRuntimeConfig, P4WorkspaceRuntimeConfig, WorkspaceContractRuntimeConfig,
     };
+    use agentdash_domain::workspace::WorkspaceIdentityKind;
 
     #[test]
     fn prepare_workspace_skips_when_contract_missing() {

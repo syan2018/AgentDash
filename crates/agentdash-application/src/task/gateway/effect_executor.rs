@@ -57,15 +57,14 @@ impl TaskHookEffectExecutor {
 
     async fn handle_event(&self, _session_id: &str, envelope: &BackboneEnvelope) {
         // 通过 compat 桥获取 ACP notification，提取 ToolCall/ToolCallUpdate
-        let Some(notification) =
-            agentdash_protocol::envelope_to_session_notification(envelope)
+        let Some(notification) = agentdash_protocol::envelope_to_session_notification(envelope)
         else {
             return;
         };
 
-        use agent_client_protocol::SessionUpdate;
         use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
         use crate::task::meta::extract_turn_id_from_meta;
+        use agent_client_protocol::SessionUpdate;
 
         match &notification.update {
             SessionUpdate::ToolCall(tc) => {

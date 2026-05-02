@@ -147,10 +147,21 @@ export type FileUpdateChange = { path: string, kind: PatchChangeKind, diff: stri
 
 export type HookPromptFragment = { text: string, hookRunId: string, };
 
+export type HookTraceCompletion = { mode: string, satisfied: boolean, advanced: boolean, reason: string, };
+
+/**
+ * Hook trace 的结构化数据体。
+ */
+export type HookTraceData = { trigger: string, decision: string, sequence: bigint, revision: bigint, severity: string, tool_name: string | null, tool_call_id: string | null, subagent_type: string | null, matched_rule_keys: Array<string>, refresh_snapshot: boolean, block_reason: string | null, completion: HookTraceCompletion | null, diagnostic_codes: Array<string>, diagnostics: Array<HookTraceDiagnostic>, injections: Array<HookTraceInjection>, };
+
+export type HookTraceDiagnostic = { code: string | null, message: string | null, };
+
+export type HookTraceInjection = { slot: string | null, source: string | null, content: string | null, };
+
 /**
  * Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。
  */
-export type HookTracePayload = { eventType: string | null, message: string | null, data: JsonValue | null, };
+export type HookTracePayload = { eventType: string | null, message: string | null, data: HookTraceData | null, };
 
 export type ItemCompletedNotification = { item: ThreadItem, threadId: string, turnId: string, };
 

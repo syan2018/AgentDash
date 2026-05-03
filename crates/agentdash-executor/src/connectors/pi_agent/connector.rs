@@ -255,6 +255,7 @@ impl AgentConnector for PiAgentConnector {
                     "name": model.name,
                     "provider_id": provider.provider_id,
                     "reasoning": model.reasoning,
+                    "supports_image": model.supports_image,
                     "context_window": model.context_window,
                     "blocked": model.blocked,
                 }));

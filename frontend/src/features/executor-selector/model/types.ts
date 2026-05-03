@@ -61,6 +61,8 @@ export interface ModelInfo {
   provider_id?: string | null;
   /** 是否支持 extended thinking */
   reasoning: boolean;
+  /** 是否支持图像输入 */
+  supports_image: boolean;
   /** 上下文窗口大小（tokens） */
   context_window: number;
   /** 是否被当前 provider 设置为屏蔽 */

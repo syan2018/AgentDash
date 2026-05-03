@@ -12,8 +12,6 @@ use tokio::sync::RwLock;
 type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
 
 pub(crate) const CONTEXT_WINDOW_STANDARD: u64 = 200_000;
-pub(crate) const CONTEXT_WINDOW_LEGACY: u64 = 128_000;
-pub(crate) const CONTEXT_WINDOW_1M: u64 = 1_000_000;
 
 type ModelListFuture = BoxFuture<'static, Result<Vec<ModelMeta>, String>>;
 
@@ -22,6 +20,7 @@ pub(crate) struct ModelMeta {
     pub id: String,
     pub name: String,
     pub reasoning: bool,
+    pub supports_image: bool,
     pub context_window: u64,
     pub blocked: bool,
 }
@@ -29,11 +28,13 @@ pub(crate) struct ModelMeta {
 impl ModelMeta {
     pub(crate) fn from_id(id: impl Into<String>) -> Self {
         let id = id.into();
-        let inferred = infer_model_meta(&id);
         Self {
             name: format_model_name(&id),
+            reasoning: true,
+            supports_image: true,
+            context_window: CONTEXT_WINDOW_STANDARD,
+            blocked: false,
             id,
-            ..inferred
         }
     }
 
@@ -50,21 +51,23 @@ struct StoredModelMeta {
     #[serde(default)]
     reasoning: Option<bool>,
     #[serde(default)]
+    supports_image: Option<bool>,
+    #[serde(default)]
     context_window: Option<u64>,
 }
 
 impl From<StoredModelMeta> for ModelMeta {
     fn from(value: StoredModelMeta) -> Self {
-        let inferred = infer_model_meta(&value.id);
         Self {
-            id: value.id,
             name: value
                 .name
                 .filter(|item| !item.trim().is_empty())
-                .unwrap_or_else(|| inferred.name.clone()),
-            reasoning: value.reasoning.unwrap_or(inferred.reasoning),
-            context_window: value.context_window.unwrap_or(inferred.context_window),
+                .unwrap_or_else(|| format_model_name(&value.id)),
+            reasoning: value.reasoning.unwrap_or(true),
+            supports_image: value.supports_image.unwrap_or(true),
+            context_window: value.context_window.unwrap_or(CONTEXT_WINDOW_STANDARD),
             blocked: false,
+            id: value.id,
         }
     }
 }
@@ -156,12 +159,16 @@ impl ProviderEntry {
             Vec::new()
         };
 
-        // Start with discovered models
+        // Merge configured_models into discovered: override attributes for matching
+        // IDs (keeping the discovered entry as base), append truly new IDs
         let mut models = discovered_models;
-
-        // Merge in configured_models: add any custom IDs not already present
         for custom in &self.configured_models {
-            if !models.iter().any(|m| m.id == custom.id) {
+            if let Some(existing) = models.iter_mut().find(|m| m.id == custom.id) {
+                existing.name = custom.name.clone();
+                existing.reasoning = custom.reasoning;
+                existing.supports_image = custom.supports_image;
+                existing.context_window = custom.context_window;
+            } else {
                 models.push(custom.clone());
             }
         }
@@ -525,7 +532,7 @@ async fn list_openai_compatible_models(
     let mut models = body
         .data
         .into_iter()
-        .map(|model| infer_model_meta(&model.id))
+        .map(|model| ModelMeta::from_id(model.id))
         .collect::<Vec<_>>();
     dedup_models(&mut models);
 
@@ -575,16 +582,18 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
         .filter(|model| model.name.starts_with("models/"))
         .map(|model| {
             let id = model.name.trim_start_matches("models/").to_string();
-            let inferred = infer_model_meta(&id);
+            let display_name = if model.display_name.trim().is_empty() {
+                format_model_name(&id)
+            } else {
+                model.display_name
+            };
             ModelMeta {
+                name: display_name,
+                reasoning: true,
+                supports_image: true,
+                context_window: model.input_token_limit.unwrap_or(CONTEXT_WINDOW_STANDARD),
+                blocked: false,
                 id,
-                name: if model.display_name.trim().is_empty() {
-                    inferred.name.clone()
-                } else {
-                    model.display_name
-                },
-                context_window: model.input_token_limit.unwrap_or(inferred.context_window),
-                ..inferred
             }
         })
         .collect::<Vec<_>>();
@@ -600,42 +609,6 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
 fn dedup_models(models: &mut Vec<ModelMeta>) {
     let mut seen = HashSet::new();
     models.retain(|model| seen.insert(model.id.clone()));
-}
-
-fn infer_model_meta(model_id: &str) -> ModelMeta {
-    let id_lower = model_id.to_ascii_lowercase();
-
-    // 现代模型普遍支持 extended thinking，只有明确已知的旧模型关闭
-    let reasoning = !is_known_non_reasoning(&id_lower);
-
-    let context_window = infer_context_window(&id_lower);
-
-    ModelMeta {
-        id: model_id.to_string(),
-        name: format_model_name(model_id),
-        reasoning,
-        context_window,
-        blocked: false,
-    }
-}
-
-fn is_known_non_reasoning(model_id: &str) -> bool {
-    // GPT-3.5 / GPT-4 base (非 o 系列) 的早期版本
-    if model_id.contains("4o") {
-        return true;
-    }
-    false
-}
-
-fn infer_context_window(model_id: &str) -> u64 {
-    if model_id.contains("gemini") || model_id.contains("opus") || model_id.contains("sonnet") {
-        return CONTEXT_WINDOW_1M;
-    }
-
-    if model_id.contains("deepseek") || model_id.contains("grok") || model_id.contains("4o") {
-        return CONTEXT_WINDOW_LEGACY;
-    }
-    CONTEXT_WINDOW_STANDARD
 }
 
 fn format_model_name(model_id: &str) -> String {

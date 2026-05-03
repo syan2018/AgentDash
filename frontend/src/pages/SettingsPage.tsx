@@ -35,7 +35,8 @@ function parseModelConfigs(value: unknown): ModelConfig[] {
       id,
       name: String(record.name ?? "").trim(),
       context_window: Number(record.context_window ?? 200000) || 200000,
-      reasoning: record.reasoning === true,
+      reasoning: record.reasoning !== false,
+      supports_image: record.supports_image !== false,
     }];
   });
 }
@@ -135,16 +136,15 @@ interface ProviderPreset {
   protocol: "anthropic" | "gemini" | "openai_compatible";
   base_url: string;
   env_api_key: string;
-  default_model: string;
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
-  { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY", default_model: "claude-sonnet-4-6-20250514" },
-  { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY", default_model: "gemini-2.5-flash" },
-  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY", default_model: "" },
-  { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY", default_model: "deepseek-chat" },
-  { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY", default_model: "llama-3.3-70b-versatile" },
-  { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY", default_model: "grok-3" },
+  { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY" },
+  { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY" },
+  { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY" },
+  { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY" },
+  { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY" },
+  { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY" },
 ];
 
 function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
@@ -161,6 +161,7 @@ interface ModelConfig {
   name: string;
   context_window: number;
   reasoning: boolean;
+  supports_image: boolean;
 }
 
 function LlmProvidersSection({
@@ -229,7 +230,6 @@ function LlmProvidersSection({
       ...(createPreset ? {
         base_url: createPreset.base_url,
         env_api_key: createPreset.env_api_key,
-        default_model: createPreset.default_model,
       } : {}),
     });
     if (result) {
@@ -489,7 +489,8 @@ function LlmProviderForm({
         id: m.id,
         name: m.name,
         provider_id: provider.slug,
-        reasoning: false,
+        reasoning: true,
+        supports_image: true,
         context_window: 200_000,
         blocked: false,
       }));
@@ -564,7 +565,7 @@ function LlmProviderForm({
   }, [provider.id, provider.protocol, provider.env_api_key, apiKey, apiKeyTouched, baseUrl]);
 
   const handleAddModel = (initial?: ModelConfig) => {
-    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true };
+    const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
     setModels([...models, newModel]);
     setModelsTouched(true);
   };
@@ -707,12 +708,12 @@ function LlmProviderForm({
 // 统一模型管理
 // ---------------------------------------------------------------------------
 
-/** 构建 discovered model 的 tooltip 文本 */
 function buildModelTooltip(model: ModelInfo): string {
   const lines = [model.id];
   if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
   lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
   if (model.reasoning) lines.push("支持推理 (extended thinking)");
+  if (model.supports_image) lines.push("支持图像");
   return lines.join("\n");
 }
 
@@ -721,6 +722,7 @@ function buildCustomModelTooltip(model: ModelConfig): string {
   if (model.name && model.name !== model.id) lines.push(`名称: ${model.name}`);
   lines.push(`上下文窗口: ${(model.context_window / 1000).toFixed(0)}k tokens`);
   if (model.reasoning) lines.push("支持推理");
+  if (model.supports_image) lines.push("支持图像");
   return lines.join("\n");
 }
 
@@ -749,8 +751,8 @@ function ModelManagementSection({
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingDiscoveredId, setEditingDiscoveredId] = useState<string | null>(null);
 
-  // 按压滑动批量切换：记录拖拽期间的目标操作和已处理的 model id
   const dragRef = useRef<{ action: "block" | "unblock"; touched: Set<string> } | null>(null);
 
   const handleDragStart = (modelId: string) => {
@@ -772,19 +774,54 @@ function ModelManagementSection({
 
   const handleDragEnd = () => { dragRef.current = null; };
 
-  const hasAny = discoveredModels.length > 0 || customModels.length > 0;
-  const totalCount = discoveredModels.length + customModels.length;
-  const enabledCount = discoveredModels.filter((m) => !blockedModels.includes(m.id)).length + customModels.length;
+  // 找到 discovered model 对应的 override config index（如果存在于 customModels 中）
+  const findOverrideIndex = (modelId: string) => customModels.findIndex((m) => m.id === modelId);
+
+  // 对 discovered model 设置/更新 override
+  const handleDiscoveredOverride = (model: ModelInfo, field: keyof ModelConfig, value: string | number | boolean) => {
+    const existingIdx = findOverrideIndex(model.id);
+    if (existingIdx >= 0) {
+      onUpdateModel(existingIdx, field, value);
+    } else {
+      // 首次 override：基于 discovered 属性创建一条配置
+      const newConfig: ModelConfig = {
+        id: model.id,
+        name: model.name,
+        context_window: model.context_window,
+        reasoning: model.reasoning,
+        supports_image: model.supports_image,
+        [field]: value,
+      };
+      onAddModel(newConfig);
+    }
+  };
+
+  const handleRemoveDiscoveredOverride = (modelId: string) => {
+    const idx = findOverrideIndex(modelId);
+    if (idx >= 0) {
+      onRemoveModel(idx);
+    }
+    setEditingDiscoveredId(null);
+  };
+
+  const discoveredIds = new Set(discoveredModels.map((m) => m.id));
+  // pureCustom: entries NOT matching any discovered model, with their original indices
+  const pureCustomEntries = customModels
+    .map((m, i) => ({ model: m, originalIndex: i }))
+    .filter((e) => !discoveredIds.has(e.model.id));
+
+  const hasAny = discoveredModels.length > 0 || pureCustomEntries.length > 0;
+  const totalCount = discoveredModels.length + pureCustomEntries.length;
+  const enabledCount = discoveredModels.filter((m) => !blockedModels.includes(m.id)).length + pureCustomEntries.length;
 
   return (
     <div className="space-y-1.5">
-      {/* 标题行：标签 + 统计 + 刷新按钮 */}
       <div className="flex items-center justify-between gap-2">
         <div className="space-y-0.5">
           <span className="text-sm font-medium text-foreground">模型管理</span>
           <p className="text-xs text-muted-foreground">
             {hasAny
-              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），按压滑动可批量切换`
+              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），按压滑动可批量切换屏蔽，点击编辑图标可调整属性`
               : "暂无模型，点击「探测」用当前配置发现可用模型"}
           </p>
         </div>
@@ -795,18 +832,7 @@ function ModelManagementSection({
           className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
           title="用当前表单配置实时探测可用模型（无需先保存）"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={isLoadingModels ? "animate-spin" : ""}
-          >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isLoadingModels ? "animate-spin" : ""}>
             <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
             <path d="M21 3v5h-5" />
           </svg>
@@ -820,98 +846,113 @@ function ModelManagementSection({
         </p>
       )}
 
-      {/* 统一的模型列表：发现 + 自定义混排 */}
-      {/* onPointerUp / onPointerLeave 终止拖拽 */}
       <div
         className="flex flex-wrap gap-1.5 select-none"
         onPointerUp={handleDragEnd}
         onPointerLeave={handleDragEnd}
       >
-        {/* 自动发现的模型 */}
+        {/* Discovered models */}
         {discoveredModels.map((model) => {
           const enabled = !blockedModels.includes(model.id);
+          const hasOverride = findOverrideIndex(model.id) >= 0;
+          const overrideConfig = hasOverride ? customModels[findOverrideIndex(model.id)] : null;
+          const displayModel = overrideConfig ?? model;
           return (
-            <button
-              key={`d-${model.id}`}
-              type="button"
-              onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
-              onPointerEnter={() => handleDragEnter(model.id)}
-              title={buildModelTooltip(model)}
-              className={`group inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
-                enabled
-                  ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
-                  : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
-              }`}
-            >
-              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
-                enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
-              }`} />
-              <span className={enabled ? "" : "line-through opacity-60"}>
-                {model.name || model.id}
-              </span>
-            </button>
+            <div key={`d-${model.id}`} className="inline-flex flex-col">
+              <div className="inline-flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
+                  onPointerEnter={() => handleDragEnter(model.id)}
+                  title={buildModelTooltip({ ...model, ...overrideConfig ? { reasoning: overrideConfig.reasoning, supports_image: overrideConfig.supports_image, context_window: overrideConfig.context_window } : {} })}
+                  className={`group inline-flex touch-none items-center gap-1.5 rounded-l-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+                    enabled
+                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
+                  }`}
+                >
+                  <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                  <span className={enabled ? "" : "line-through opacity-60"}>{displayModel.name || model.id}</span>
+                  {hasOverride && <span className="ml-0.5 inline-block h-1 w-1 rounded-full bg-amber-500" title="已自定义属性" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingDiscoveredId(editingDiscoveredId === model.id ? null : model.id)}
+                  className={`rounded-r-[8px] border border-l-0 px-1.5 py-1.5 text-xs transition-colors ${
+                    enabled
+                      ? "border-emerald-500/30 text-emerald-600/60 hover:text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400/60 dark:hover:text-emerald-300"
+                      : "border-border text-muted-foreground/50 hover:text-foreground hover:bg-muted/60"
+                  }`}
+                  title="编辑模型属性"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           );
         })}
 
-        {/* 自定义模型（追加在发现模型之后） */}
-        {customModels.map((m, index) => (
-          editingIndex === index ? (
-            <div key={`c-${index}`} className="w-full">
+        {/* Pure custom models (not matching any discovered id) */}
+        {pureCustomEntries.map(({ model: m, originalIndex }) => (
+          editingIndex === originalIndex ? (
+            <div key={`c-${originalIndex}`} className="w-full">
               <CustomModelEditRow
                 model={m}
-                onUpdate={(field, value) => onUpdateModel(index, field, value)}
+                isDiscovered={false}
+                onUpdate={(field, value) => onUpdateModel(originalIndex, field, value)}
                 onDone={() => setEditingIndex(null)}
-                onRemove={() => { onRemoveModel(index); setEditingIndex(null); }}
+                onRemove={() => { onRemoveModel(originalIndex); setEditingIndex(null); }}
               />
             </div>
           ) : (
             <span
-              key={`c-${index}`}
+              key={`c-${originalIndex}`}
               className="group inline-flex items-center gap-1.5 rounded-[8px] border border-blue-500/30 bg-blue-500/8 px-2.5 py-1.5 text-xs text-blue-700 dark:text-blue-300"
               title={buildCustomModelTooltip(m)}
             >
               <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
               {m.name || m.id || "（未命名）"}
-              <button
-                type="button"
-                onClick={() => setEditingIndex(index)}
-                className="ml-0.5 rounded p-0.5 text-blue-600/60 hover:text-blue-700 hover:bg-blue-500/10 dark:text-blue-400/60 dark:hover:text-blue-300 transition-colors"
-                title="编辑此模型"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                </svg>
+              <button type="button" onClick={() => setEditingIndex(originalIndex)} className="ml-0.5 rounded p-0.5 text-blue-600/60 hover:text-blue-700 hover:bg-blue-500/10 dark:text-blue-400/60 dark:hover:text-blue-300 transition-colors" title="编辑此模型">
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
               </button>
-              <button
-                type="button"
-                onClick={() => onRemoveModel(index)}
-                className="rounded p-0.5 text-blue-600/60 hover:text-destructive hover:bg-destructive/10 dark:text-blue-400/60 dark:hover:text-destructive transition-colors"
-                title="删除此模型"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                </svg>
+              <button type="button" onClick={() => onRemoveModel(originalIndex)} className="rounded p-0.5 text-blue-600/60 hover:text-destructive hover:bg-destructive/10 dark:text-blue-400/60 dark:hover:text-destructive transition-colors" title="删除此模型">
+                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
               </button>
             </span>
           )
         ))}
 
-        {/* 添加自定义模型入口（在列表末尾） */}
-        {showAddForm ? null : (
+        {!showAddForm && (
           <button
             type="button"
             onClick={() => setShowAddForm(true)}
             className="inline-flex items-center gap-1 rounded-[8px] border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/20 hover:bg-secondary/50 hover:text-foreground"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14" /><path d="M5 12h14" />
-            </svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
             自定义
           </button>
         )}
       </div>
 
-      {/* 添加自定义模型表单 */}
+      {/* Discovered model override editor */}
+      {editingDiscoveredId && (() => {
+        const model = discoveredModels.find((m) => m.id === editingDiscoveredId);
+        if (!model) return null;
+        const overrideIdx = findOverrideIndex(model.id);
+        const overrideConfig = overrideIdx >= 0 ? customModels[overrideIdx] : null;
+        return (
+          <DiscoveredModelEditRow
+            model={model}
+            override={overrideConfig}
+            onOverride={(field, value) => handleDiscoveredOverride(model, field, value)}
+            onResetOverride={() => handleRemoveDiscoveredOverride(model.id)}
+            onDone={() => setEditingDiscoveredId(null)}
+          />
+        );
+      })()}
+
       {showAddForm && (
         <NewCustomModelForm
           onAdd={(newModel) => {
@@ -928,11 +969,13 @@ function ModelManagementSection({
 /** 内联编辑某个自定义模型的行 */
 function CustomModelEditRow({
   model,
+  isDiscovered,
   onUpdate,
   onDone,
   onRemove,
 }: {
   model: ModelConfig;
+  isDiscovered: boolean;
   onUpdate: (field: keyof ModelConfig, value: string | number | boolean) => void;
   onDone: () => void;
   onRemove: () => void;
@@ -941,18 +984,20 @@ function CustomModelEditRow({
     <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-blue-500/20 bg-blue-500/5 px-3 py-2">
       <input
         type="text"
-        className={`${inputCls} !w-36`}
+        className={`${inputCls} !w-36 ${isDiscovered ? "opacity-60" : ""}`}
         value={model.id}
         placeholder="模型 ID"
         onChange={(e) => onUpdate("id", e.target.value)}
-        autoFocus
+        disabled={isDiscovered}
+        autoFocus={!isDiscovered}
       />
       <input
         type="text"
-        className={`${inputCls} !w-28`}
+        className={`${inputCls} !w-28 ${isDiscovered ? "opacity-60" : ""}`}
         value={model.name}
         placeholder="显示名称"
         onChange={(e) => onUpdate("name", e.target.value)}
+        disabled={isDiscovered}
       />
       <div className="flex items-center gap-1">
         <input
@@ -965,29 +1010,73 @@ function CustomModelEditRow({
         <span className="text-xs text-muted-foreground">k</span>
       </div>
       <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-        <input
-          type="checkbox"
-          checked={model.reasoning}
-          onChange={(e) => onUpdate("reasoning", e.target.checked)}
-          className="accent-primary"
-        />
+        <input type="checkbox" checked={model.reasoning} onChange={(e) => onUpdate("reasoning", e.target.checked)} className="accent-primary" />
         推理
       </label>
+      <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+        <input type="checkbox" checked={model.supports_image} onChange={(e) => onUpdate("supports_image", e.target.checked)} className="accent-primary" />
+        图像
+      </label>
       <div className="flex items-center gap-1.5 ml-auto">
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90"
-        >
-          完成
-        </button>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="rounded-[6px] border border-destructive/30 px-2.5 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10"
-        >
-          删除
-        </button>
+        <button type="button" onClick={onDone} className="rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90">完成</button>
+        <button type="button" onClick={onRemove} className="rounded-[6px] border border-destructive/30 px-2.5 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10">删除</button>
+      </div>
+    </div>
+  );
+}
+
+/** Discovered 模型属性编辑行 — 模型 ID 和显示名称锁定 */
+function DiscoveredModelEditRow({
+  model,
+  override,
+  onOverride,
+  onResetOverride,
+  onDone,
+}: {
+  model: ModelInfo;
+  override: ModelConfig | null;
+  onOverride: (field: keyof ModelConfig, value: string | number | boolean) => void;
+  onResetOverride: () => void;
+  onDone: () => void;
+}) {
+  const effectiveContextK = Math.round((override?.context_window ?? model.context_window) / 1000);
+  const effectiveReasoning = override?.reasoning ?? model.reasoning;
+  const effectiveImage = override?.supports_image ?? model.supports_image;
+
+  return (
+    <div className="rounded-[8px] border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-foreground">
+          编辑已发现模型属性
+          <span className="ml-1.5 text-muted-foreground font-normal">{model.id}</span>
+        </p>
+        {override && (
+          <button type="button" onClick={onResetOverride} className="text-[11px] text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300">
+            重置为默认值
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">上下文</span>
+          <input
+            type="number"
+            className={`${inputCls} !w-20`}
+            value={effectiveContextK}
+            placeholder="200"
+            onChange={(e) => onOverride("context_window", (parseInt(e.target.value) || 0) * 1000)}
+          />
+          <span className="text-xs text-muted-foreground">k</span>
+        </div>
+        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+          <input type="checkbox" checked={effectiveReasoning} onChange={(e) => onOverride("reasoning", e.target.checked)} className="accent-primary" />
+          推理
+        </label>
+        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+          <input type="checkbox" checked={effectiveImage} onChange={(e) => onOverride("supports_image", e.target.checked)} className="accent-primary" />
+          图像
+        </label>
+        <button type="button" onClick={onDone} className="ml-auto rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90">完成</button>
       </div>
     </div>
   );
@@ -1005,6 +1094,7 @@ function NewCustomModelForm({
   const [name, setName] = useState("");
   const [contextWindowK, setContextWindowK] = useState(200);
   const [reasoning, setReasoning] = useState(true);
+  const [supportsImage, setSupportsImage] = useState(true);
 
   const handleSubmit = () => {
     const trimmedId = id.trim();
@@ -1014,63 +1104,31 @@ function NewCustomModelForm({
       name: name.trim(),
       context_window: contextWindowK * 1000,
       reasoning,
+      supports_image: supportsImage,
     });
   };
 
   return (
     <div className="rounded-[8px] border border-primary/20 bg-primary/5 p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="text"
-          className={`${inputCls} !w-40`}
-          value={id}
-          placeholder="模型 ID（必填）"
-          onChange={(e) => setId(e.target.value)}
-          autoFocus
-        />
-        <input
-          type="text"
-          className={`${inputCls} !w-28`}
-          value={name}
-          placeholder="显示名称"
-          onChange={(e) => setName(e.target.value)}
-        />
+        <input type="text" className={`${inputCls} !w-40`} value={id} placeholder="模型 ID（必填）" onChange={(e) => setId(e.target.value)} autoFocus />
+        <input type="text" className={`${inputCls} !w-28`} value={name} placeholder="显示名称" onChange={(e) => setName(e.target.value)} />
         <div className="flex items-center gap-1">
-          <input
-            type="number"
-            className={`${inputCls} !w-20`}
-            value={contextWindowK}
-            placeholder="200"
-            onChange={(e) => setContextWindowK(parseInt(e.target.value) || 200)}
-          />
+          <input type="number" className={`${inputCls} !w-20`} value={contextWindowK} placeholder="200" onChange={(e) => setContextWindowK(parseInt(e.target.value) || 200)} />
           <span className="text-xs text-muted-foreground">k</span>
         </div>
         <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-          <input
-            type="checkbox"
-            checked={reasoning}
-            onChange={(e) => setReasoning(e.target.checked)}
-            className="accent-primary"
-          />
+          <input type="checkbox" checked={reasoning} onChange={(e) => setReasoning(e.target.checked)} className="accent-primary" />
           推理
+        </label>
+        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
+          <input type="checkbox" checked={supportsImage} onChange={(e) => setSupportsImage(e.target.checked)} className="accent-primary" />
+          图像
         </label>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={!id.trim()}
-          className="rounded-[6px] bg-primary px-3 py-1 text-xs text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50"
-        >
-          添加
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
-        >
-          取消
-        </button>
+        <button type="button" onClick={handleSubmit} disabled={!id.trim()} className="rounded-[6px] bg-primary px-3 py-1 text-xs text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50">添加</button>
+        <button type="button" onClick={onCancel} className="rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary">取消</button>
       </div>
     </div>
   );

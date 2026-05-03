@@ -28,7 +28,7 @@ use crate::{
     },
     routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
-    runtime_bridge::acp_mcp_servers_to_runtime,
+    runtime_bridge::session_mcp_servers_to_runtime,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
@@ -221,23 +221,9 @@ pub(crate) async fn build_project_session_context_response(
         None
     };
     let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
-        project_agent
-            .preset_mcp_servers
-            .iter()
-            .filter_map(|server| {
-                let name = match server {
-                    agent_client_protocol::McpServer::Http(http) => http.name.clone(),
-                    agent_client_protocol::McpServer::Sse(sse) => sse.name.clone(),
-                    agent_client_protocol::McpServer::Stdio(stdio) => stdio.name.clone(),
-                    _ => return None,
-                };
-                Some(agentdash_application::capability::AgentMcpServerEntry {
-                    uses_relay: project_agent.relay_mcp_server_names.contains(&name),
-                    name,
-                    server: server.clone(),
-                })
-            })
-            .collect();
+        agentdash_application::session::extract_agent_mcp_entries(
+            &project_agent.preset_mcp_servers,
+        );
 
     // ── 解析 agent_link 绑定的 lifecycle 上下文（与实际 session 创建保持一致） ──
     let workflow_ctx = if let Some(link) = agent_link.as_ref() {
@@ -273,10 +259,10 @@ pub(crate) async fn build_project_session_context_response(
         },
         &state.config.platform_config,
     );
-    let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = cap_output
+    let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output
         .platform_mcp_configs
         .iter()
-        .map(|c| c.to_acp_mcp_server())
+        .map(|c| c.to_session_mcp_server())
         .collect();
     effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
@@ -295,7 +281,7 @@ pub(crate) async fn build_project_session_context_response(
         workspace,
         resolved_config,
         vfs: runtime_vfs,
-        mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
+        mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: project_agent.preset_name,
         executor_resolution: agentdash_application::session::ExecutorResolution::resolved(

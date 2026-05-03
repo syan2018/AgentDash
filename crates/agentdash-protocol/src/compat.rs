@@ -1,7 +1,8 @@
 use agent_client_protocol::{
     ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    TextContent, UsageUpdate,
+    TextContent, ToolCallStatus, UsageUpdate,
 };
+use codex_app_server_protocol as codex;
 use serde_json::{Map, Value, json};
 
 use crate::{BackboneEnvelope, BackboneEvent, PlatformEvent};
@@ -284,6 +285,110 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 }
             }
         }
+        SessionUpdate::ToolCall(tc) => {
+            let status = match tc.status {
+                ToolCallStatus::Completed => codex::DynamicToolCallStatus::Completed,
+                ToolCallStatus::Failed => codex::DynamicToolCallStatus::Failed,
+                _ => codex::DynamicToolCallStatus::InProgress,
+            };
+            let is_terminal = matches!(
+                tc.status,
+                ToolCallStatus::Completed | ToolCallStatus::Failed
+            );
+            let arguments = tc
+                .raw_input
+                .clone()
+                .unwrap_or(Value::Object(Default::default()));
+            let content_items = if tc.content.is_empty() {
+                None
+            } else {
+                Some(acp_tool_content_to_codex_items(&tc.content))
+            };
+            let success = if is_terminal {
+                Some(tc.status == ToolCallStatus::Completed)
+            } else {
+                None
+            };
+            let item = codex::ThreadItem::DynamicToolCall {
+                id: tc.tool_call_id.to_string(),
+                tool: tc.title.clone(),
+                arguments,
+                status,
+                content_items,
+                success,
+                duration_ms: None,
+            };
+            if is_terminal {
+                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                    item,
+                    thread_id: session_id.to_string(),
+                    turn_id: trace.turn_id.clone().unwrap_or_default(),
+                })
+            } else {
+                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                    item,
+                    thread_id: session_id.to_string(),
+                    turn_id: trace.turn_id.clone().unwrap_or_default(),
+                })
+            }
+        }
+        SessionUpdate::ToolCallUpdate(tcu) => {
+            let status = match tcu.fields.status {
+                Some(ToolCallStatus::Completed) => codex::DynamicToolCallStatus::Completed,
+                Some(ToolCallStatus::Failed) => codex::DynamicToolCallStatus::Failed,
+                _ => codex::DynamicToolCallStatus::InProgress,
+            };
+            let is_terminal = matches!(
+                tcu.fields.status,
+                Some(ToolCallStatus::Completed) | Some(ToolCallStatus::Failed)
+            );
+            let arguments = tcu
+                .fields
+                .raw_input
+                .clone()
+                .unwrap_or(Value::Object(Default::default()));
+            let content_items = tcu
+                .fields
+                .content
+                .as_ref()
+                .map(|c| acp_tool_content_to_codex_items(c));
+            let success = if is_terminal {
+                Some(
+                    tcu.fields.status == Some(ToolCallStatus::Completed),
+                )
+            } else {
+                None
+            };
+            let item = codex::ThreadItem::DynamicToolCall {
+                id: tcu.tool_call_id.to_string(),
+                tool: tcu.fields.title.clone().unwrap_or_default(),
+                arguments,
+                status,
+                content_items,
+                success,
+                duration_ms: None,
+            };
+            if is_terminal {
+                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                    item,
+                    thread_id: session_id.to_string(),
+                    turn_id: trace.turn_id.clone().unwrap_or_default(),
+                })
+            } else {
+                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                    item,
+                    thread_id: session_id.to_string(),
+                    turn_id: trace.turn_id.clone().unwrap_or_default(),
+                })
+            }
+        }
+        SessionUpdate::UserMessageChunk(chunk) => {
+            let value = serde_json::to_value(&chunk.content).unwrap_or_default();
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "user_message_chunk".to_string(),
+                value,
+            })
+        }
         _ => {
             let value = serde_json::to_value(&notification.update).unwrap_or_default();
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
@@ -349,6 +454,38 @@ fn wrap_session_info_update(
         session_id,
         SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(Some(meta))),
     )
+}
+
+fn acp_tool_content_to_codex_items(
+    content: &[agent_client_protocol::ToolCallContent],
+) -> Vec<codex::DynamicToolCallOutputContentItem> {
+    content
+        .iter()
+        .filter_map(|item| match item {
+            agent_client_protocol::ToolCallContent::Content(c) => {
+                let text = match &c.content {
+                    ContentBlock::Text(t) => t.text.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
+                Some(codex::DynamicToolCallOutputContentItem::InputText { text })
+            }
+            agent_client_protocol::ToolCallContent::Diff(diff) => {
+                Some(codex::DynamicToolCallOutputContentItem::InputText {
+                    text: format!(
+                        "<diff path=\"{}\">\n{}\n</diff>",
+                        diff.path.display(),
+                        diff.new_text
+                    ),
+                })
+            }
+            agent_client_protocol::ToolCallContent::Terminal(terminal) => {
+                Some(codex::DynamicToolCallOutputContentItem::InputText {
+                    text: format!("[terminal:{}]", terminal.terminal_id.0),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn envelope_event_type_label(event: &BackboneEvent) -> &'static str {

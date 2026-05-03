@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::{
-    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-};
+use agentdash_spi::{McpEnvVar, McpHeader, McpTransportConfig, SessionMcpServer};
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
@@ -259,10 +257,7 @@ impl CommandHandler {
             env: payload.env,
             executor_config,
         });
-        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers)
-            .into_iter()
-            .map(|s| agentdash_spi::SessionMcpServer::from_acp(&s))
-            .collect();
+        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers);
         req.vfs = Some(vfs);
 
         tracing::info!(
@@ -983,13 +978,13 @@ impl CommandHandler {
 
 // ─── MCP Server 解析 ─────────────────────────────────────
 
-/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 ACP `McpServer` 列表。
+/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 `SessionMcpServer` 列表。
 ///
 /// 仅接受三种显式传输类型:
-/// - `"type": "http"` → `McpServer::Http`
-/// - `"type": "sse"`  → `McpServer::Sse`
-/// - `"type": "stdio"` → `McpServer::Stdio`
-pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
+/// - `"type": "http"` → `McpTransportConfig::Http`
+/// - `"type": "sse"`  → `McpTransportConfig::Sse`
+/// - `"type": "stdio"` → `McpTransportConfig::Stdio`
+pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<SessionMcpServer> {
     let mut servers = Vec::new();
 
     for entry in raw {
@@ -1004,7 +999,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
             .unwrap_or("")
             .to_string();
 
-        let transport = match obj.get("type").and_then(|v| v.as_str()) {
+        let transport_type = match obj.get("type").and_then(|v| v.as_str()) {
             Some("http") => "http",
             Some("sse") => "sse",
             Some("stdio") => "stdio",
@@ -1018,7 +1013,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
             }
         };
 
-        match transport {
+        match transport_type {
             "http" | "sse" => {
                 let url = match obj.get("url").and_then(|v| v.as_str()) {
                     Some(u) => u.to_string(),
@@ -1027,7 +1022,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
                         continue;
                     }
                 };
-                let headers: Vec<HttpHeader> = obj
+                let headers: Vec<McpHeader> = obj
                     .get("headers")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
@@ -1036,21 +1031,25 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
                                 let ho = h.as_object()?;
                                 let hname = ho.get("name")?.as_str()?.to_string();
                                 let hvalue = ho.get("value")?.as_str()?.to_string();
-                                Some(HttpHeader::new(hname, hvalue))
+                                Some(McpHeader {
+                                    name: hname,
+                                    value: hvalue,
+                                })
                             })
                             .collect()
                     })
                     .unwrap_or_default();
 
-                if transport == "http" {
-                    servers.push(McpServer::Http(
-                        McpServerHttp::new(name, url).headers(headers),
-                    ));
+                let transport = if transport_type == "http" {
+                    McpTransportConfig::Http { url, headers }
                 } else {
-                    servers.push(McpServer::Sse(
-                        McpServerSse::new(name, url).headers(headers),
-                    ));
-                }
+                    McpTransportConfig::Sse { url, headers }
+                };
+                servers.push(SessionMcpServer {
+                    name,
+                    transport,
+                    uses_relay: false,
+                });
             }
             "stdio" => {
                 let command = match obj.get("command").and_then(|v| v.as_str()) {
@@ -1069,7 +1068,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
                             .collect()
                     })
                     .unwrap_or_default();
-                let env: Vec<EnvVariable> = obj
+                let env: Vec<McpEnvVar> = obj
                     .get("env")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
@@ -1078,14 +1077,20 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<McpServer> {
                                 let eo = e.as_object()?;
                                 let ename = eo.get("name")?.as_str()?.to_string();
                                 let evalue = eo.get("value")?.as_str()?.to_string();
-                                Some(EnvVariable::new(ename, evalue))
+                                Some(McpEnvVar {
+                                    name: ename,
+                                    value: evalue,
+                                })
                             })
                             .collect()
                     })
                     .unwrap_or_default();
 
-                let server = McpServerStdio::new(name, command).args(args).env(env);
-                servers.push(McpServer::Stdio(server));
+                servers.push(SessionMcpServer {
+                    name,
+                    transport: McpTransportConfig::Stdio { command, args, env },
+                    uses_relay: false,
+                });
             }
             _ => {}
         }

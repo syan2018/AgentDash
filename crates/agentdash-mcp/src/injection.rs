@@ -11,7 +11,7 @@
 //! | Story 编排 | StoryMcpServer | 上下文管理、Task 创建、状态推进 |
 //! | 全局代理 | RelayMcpServer | 项目管理、Story CRUD |
 
-use agent_client_protocol::{McpServer, McpServerHttp};
+use agentdash_spi::{McpTransportConfig, SessionMcpServer};
 use uuid::Uuid;
 
 use crate::scope::ToolScope;
@@ -136,9 +136,16 @@ impl McpInjectionConfig {
         )
     }
 
-    /// 产出 ACP 协议标准的 `McpServer` — 用于 `session/new` 的 per-session 工具注入
-    pub fn to_acp_mcp_server(&self) -> McpServer {
-        McpServer::Http(McpServerHttp::new(self.server_name(), self.endpoint_url()))
+    /// 产出内部类型 `SessionMcpServer` — 用于 per-session 工具注入。
+    pub fn to_session_mcp_server(&self) -> SessionMcpServer {
+        SessionMcpServer {
+            name: self.server_name(),
+            transport: McpTransportConfig::Http {
+                url: self.endpoint_url(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        }
     }
 }
 
@@ -200,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn to_acp_mcp_server_produces_http_variant() {
+    fn to_session_mcp_server_produces_http_transport() {
         let task_id = Uuid::new_v4();
         let config = McpInjectionConfig::for_task(
             "http://localhost:3001",
@@ -208,15 +215,14 @@ mod tests {
             Uuid::new_v4(),
             task_id,
         );
-        let server = config.to_acp_mcp_server();
-        let json = serde_json::to_value(&server).unwrap();
-        assert_eq!(json["type"], "http");
-        assert!(json["url"].as_str().unwrap().contains("/mcp/task/"));
-        assert!(
-            json["name"]
-                .as_str()
-                .unwrap()
-                .starts_with("agentdash-task-tools-")
-        );
+        let server = config.to_session_mcp_server();
+        assert!(server.name.starts_with("agentdash-task-tools-"));
+        assert!(!server.uses_relay);
+        match &server.transport {
+            McpTransportConfig::Http { url, .. } => {
+                assert!(url.contains("/mcp/task/"));
+            }
+            _ => panic!("expected Http transport"),
+        }
     }
 }

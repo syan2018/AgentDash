@@ -42,10 +42,19 @@ impl SessionHub {
             return Ok(envelope);
         };
 
-        // boundary ref 已通过 transcript 投影可导出。
-        // 下游 build_projected_transcript_from_events 会使用 derive_compaction_boundary_ref_from_events。
-        let _ = compacted_until_ref;
-        Ok(envelope)
+        let mut enriched = envelope;
+        if let BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+            value,
+            ..
+        }) = &mut enriched.event
+        {
+            if let Some(obj) = value.as_object_mut() {
+                if let Ok(ref_value) = serde_json::to_value(&compacted_until_ref) {
+                    obj.insert("compacted_until_ref".to_string(), ref_value);
+                }
+            }
+        }
+        Ok(enriched)
     }
 
     async fn derive_compaction_boundary_ref(

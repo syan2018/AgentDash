@@ -1,7 +1,5 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use agent_client_protocol::McpServer;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -52,8 +50,7 @@ struct RoutineAgentContext {
     executor_config: AgentConfig,
     display_name: String,
     preset_name: Option<String>,
-    preset_mcp_servers: Vec<McpServer>,
-    relay_mcp_server_names: HashSet<String>,
+    preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
 }
 
 impl RoutineExecutor {
@@ -256,7 +253,7 @@ impl RoutineExecutor {
             .filter(|value| !value.is_empty())
             .unwrap_or(agent.name.as_str())
             .to_string();
-        let (preset_mcp_servers, relay_mcp_server_names) =
+        let preset_mcp_servers =
             crate::mcp_preset::resolve_config_mcp_preset_refs(
                 self.repos.mcp_preset_repo.as_ref(),
                 project.id,
@@ -272,7 +269,6 @@ impl RoutineExecutor {
             display_name,
             preset_name: Some(agent.name.clone()),
             preset_mcp_servers,
-            relay_mcp_server_names,
         })
     }
 
@@ -507,7 +503,6 @@ impl RoutineExecutor {
                 user_prompt_blocks,
                 agent_mcp: AgentLevelMcp {
                     preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
-                    relay_mcp_server_names: agent_context.relay_mcp_server_names.clone(),
                 },
                 request_mcp_servers: Vec::new(),
                 existing_vfs: None,

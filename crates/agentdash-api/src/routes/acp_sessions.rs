@@ -1195,7 +1195,7 @@ async fn build_story_owner_prompt_request(
             executor_config: effective_executor_config,
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp::default(),
-            request_mcp_servers: req.mcp_servers.iter().map(|s| s.to_acp()).collect(),
+            request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities: None,
@@ -1260,7 +1260,6 @@ async fn build_project_owner_prompt_request(
     let agent_display_name = project_agent.display_name.clone();
     let preset_name = project_agent.preset_name.clone();
     let preset_mcp_servers = project_agent.preset_mcp_servers.clone();
-    let relay_mcp_server_names = project_agent.relay_mcp_server_names.clone();
 
     let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
     let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
@@ -1279,9 +1278,8 @@ async fn build_project_owner_prompt_request(
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp {
                 preset_mcp_servers,
-                relay_mcp_server_names,
             },
-            request_mcp_servers: req.mcp_servers.iter().map(|s| s.to_acp()).collect(),
+            request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities,

@@ -10,7 +10,6 @@ agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-mcp = { workspace = true }
 walkdir = "2.5"
-agent-client-protocol = { workspace = true }
 agentdash-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,6 +1,6 @@
-use agent_client_protocol::{ToolCall, ToolCallStatus, ToolCallUpdate};
 use agentdash_domain::DomainError;
 use agentdash_domain::task::{Artifact, ArtifactType};
+use agentdash_protocol::codex_app_server_protocol as codex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -79,84 +79,139 @@ fn is_same_tool_execution_artifact(artifact: &Artifact, turn_id: &str, tool_call
         && artifact.content.get("tool_call_id").and_then(Value::as_str) == Some(tool_call_id)
 }
 
-pub fn build_tool_call_patch(tool_call: &ToolCall) -> Map<String, Value> {
-    let mut patch = Map::new();
-    patch.insert("title".to_string(), json!(tool_call.title));
-    patch.insert("kind".to_string(), json!(enum_to_string(&tool_call.kind)));
-    patch.insert(
-        "status".to_string(),
-        json!(tool_status_to_string(tool_call.status)),
-    );
-
-    if !tool_call.content.is_empty() {
-        let content = serialize_or_fail(&tool_call.content, "tool_call.content");
-        patch.insert("content".to_string(), content.clone());
-        patch.insert("output_preview".to_string(), json!(preview_value(&content)));
+/// 从 BackboneEvent 的 ThreadItem 中提取 tool call 信息，构建 artifact patch。
+///
+/// 返回 `(tool_call_id, patch)` 或 `None`（如果 ThreadItem 不是 tool call 类型）。
+pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<String, Value>)> {
+    match item {
+        codex::ThreadItem::DynamicToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            content_items,
+            success,
+            duration_ms,
+        } => {
+            let mut patch = Map::new();
+            patch.insert("title".to_string(), json!(tool));
+            patch.insert("kind".to_string(), json!("dynamic_tool_call"));
+            patch.insert(
+                "status".to_string(),
+                json!(dynamic_tool_call_status_str(status)),
+            );
+            patch.insert("raw_input".to_string(), arguments.clone());
+            patch.insert(
+                "input_preview".to_string(),
+                json!(preview_value(arguments)),
+            );
+            if let Some(items) = content_items {
+                let content_value = serialize_or_fail(items, "content_items");
+                patch.insert("content".to_string(), content_value.clone());
+                patch.insert("output_preview".to_string(), json!(preview_value(&content_value)));
+            }
+            if let Some(s) = success {
+                patch.insert("success".to_string(), json!(s));
+            }
+            if let Some(ms) = duration_ms {
+                patch.insert("duration_ms".to_string(), json!(ms));
+            }
+            Some((id.clone(), patch))
+        }
+        codex::ThreadItem::McpToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            result,
+            error,
+            duration_ms,
+            ..
+        } => {
+            let mut patch = Map::new();
+            patch.insert("title".to_string(), json!(tool));
+            patch.insert("kind".to_string(), json!("mcp_tool_call"));
+            patch.insert(
+                "status".to_string(),
+                json!(mcp_tool_call_status_str(status)),
+            );
+            patch.insert("raw_input".to_string(), arguments.clone());
+            patch.insert(
+                "input_preview".to_string(),
+                json!(preview_value(arguments)),
+            );
+            if let Some(r) = result {
+                let output = serialize_or_fail(r, "mcp_result");
+                patch.insert("raw_output".to_string(), output.clone());
+                patch.insert("output_preview".to_string(), json!(preview_value(&output)));
+            }
+            if let Some(e) = error {
+                patch.insert("error".to_string(), json!(e.message));
+            }
+            if let Some(ms) = duration_ms {
+                patch.insert("duration_ms".to_string(), json!(ms));
+            }
+            Some((id.clone(), patch))
+        }
+        codex::ThreadItem::CommandExecution {
+            id,
+            command,
+            status,
+            exit_code,
+            aggregated_output,
+            duration_ms,
+            ..
+        } => {
+            let mut patch = Map::new();
+            patch.insert("title".to_string(), json!(command));
+            patch.insert("kind".to_string(), json!("command_execution"));
+            patch.insert(
+                "status".to_string(),
+                json!(command_execution_status_str(status)),
+            );
+            patch.insert("raw_input".to_string(), json!({ "command": command }));
+            if let Some(output) = aggregated_output {
+                patch.insert("raw_output".to_string(), json!(output));
+                patch.insert("output_preview".to_string(), json!(preview_value(&json!(output))));
+            }
+            if let Some(code) = exit_code {
+                patch.insert("exit_code".to_string(), json!(code));
+            }
+            if let Some(ms) = duration_ms {
+                patch.insert("duration_ms".to_string(), json!(ms));
+            }
+            Some((id.clone(), patch))
+        }
+        _ => None,
     }
-    if !tool_call.locations.is_empty() {
-        patch.insert(
-            "locations".to_string(),
-            serialize_or_fail(&tool_call.locations, "tool_call.locations"),
-        );
-    }
-    if let Some(raw_input) = tool_call.raw_input.clone() {
-        patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert(
-            "input_preview".to_string(),
-            json!(preview_value(&raw_input)),
-        );
-    }
-    if let Some(raw_output) = tool_call.raw_output.clone() {
-        patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&raw_output)),
-        );
-    }
-
-    patch
 }
 
-pub fn build_tool_call_update_patch(update: &ToolCallUpdate) -> Map<String, Value> {
-    let mut patch = Map::new();
-    if let Some(title) = update.fields.title.clone() {
-        patch.insert("title".to_string(), json!(title));
+fn dynamic_tool_call_status_str(status: &codex::DynamicToolCallStatus) -> &'static str {
+    match status {
+        codex::DynamicToolCallStatus::InProgress => "in_progress",
+        codex::DynamicToolCallStatus::Completed => "completed",
+        codex::DynamicToolCallStatus::Failed => "failed",
+        _ => "unknown",
     }
-    if let Some(kind) = update.fields.kind {
-        patch.insert("kind".to_string(), json!(enum_to_string(&kind)));
+}
+
+fn mcp_tool_call_status_str(status: &codex::McpToolCallStatus) -> &'static str {
+    match status {
+        codex::McpToolCallStatus::InProgress => "in_progress",
+        codex::McpToolCallStatus::Completed => "completed",
+        codex::McpToolCallStatus::Failed => "failed",
+        _ => "unknown",
     }
-    if let Some(status) = update.fields.status {
-        patch.insert("status".to_string(), json!(tool_status_to_string(status)));
+}
+
+fn command_execution_status_str(status: &codex::CommandExecutionStatus) -> &'static str {
+    match status {
+        codex::CommandExecutionStatus::InProgress => "in_progress",
+        codex::CommandExecutionStatus::Completed => "completed",
+        codex::CommandExecutionStatus::Failed => "failed",
+        codex::CommandExecutionStatus::Declined => "declined",
+        _ => "unknown",
     }
-    if let Some(content) = update.fields.content.clone() {
-        let content_value = serialize_or_fail(&content, "tool_call_update.content");
-        patch.insert("content".to_string(), content_value.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&content_value)),
-        );
-    }
-    if let Some(locations) = update.fields.locations.clone() {
-        patch.insert(
-            "locations".to_string(),
-            serialize_or_fail(&locations, "tool_call_update.locations"),
-        );
-    }
-    if let Some(raw_input) = update.fields.raw_input.clone() {
-        patch.insert("raw_input".to_string(), raw_input.clone());
-        patch.insert(
-            "input_preview".to_string(),
-            json!(preview_value(&raw_input)),
-        );
-    }
-    if let Some(raw_output) = update.fields.raw_output.clone() {
-        patch.insert("raw_output".to_string(), raw_output.clone());
-        patch.insert(
-            "output_preview".to_string(),
-            json!(preview_value(&raw_output)),
-        );
-    }
-    patch
 }
 
 pub fn preview_value(value: &Value) -> String {
@@ -167,16 +222,6 @@ pub fn preview_value(value: &Value) -> String {
     } else {
         let shortened: String = raw.chars().take(MAX_LEN).collect();
         format!("{shortened}...")
-    }
-}
-
-pub fn tool_status_to_string(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Pending => "pending",
-        ToolCallStatus::InProgress => "in_progress",
-        ToolCallStatus::Completed => "completed",
-        ToolCallStatus::Failed => "failed",
-        other => panic!("未知 ToolCallStatus: {:?}", other),
     }
 }
 
@@ -195,7 +240,6 @@ fn serialize_or_fail<T: Serialize>(value: &T, field: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::ToolCallStatus;
     use agentdash_domain::task::{Artifact, ArtifactType, Task};
     use serde::ser::{Error, Serializer};
     use std::panic;
@@ -232,17 +276,19 @@ mod tests {
     }
 
     #[test]
-    fn tool_status_to_string_handles_known_variants() {
-        assert_eq!(tool_status_to_string(ToolCallStatus::Pending), "pending");
+    fn dynamic_tool_call_status_str_handles_known_variants() {
         assert_eq!(
-            tool_status_to_string(ToolCallStatus::InProgress),
+            dynamic_tool_call_status_str(&codex::DynamicToolCallStatus::InProgress),
             "in_progress"
         );
         assert_eq!(
-            tool_status_to_string(ToolCallStatus::Completed),
+            dynamic_tool_call_status_str(&codex::DynamicToolCallStatus::Completed),
             "completed"
         );
-        assert_eq!(tool_status_to_string(ToolCallStatus::Failed), "failed");
+        assert_eq!(
+            dynamic_tool_call_status_str(&codex::DynamicToolCallStatus::Failed),
+            "failed"
+        );
     }
 
     #[test]

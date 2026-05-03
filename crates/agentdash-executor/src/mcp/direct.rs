@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::McpServer;
+use agentdash_spi::{McpTransportConfig, SessionMcpServer};
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
@@ -118,12 +118,12 @@ impl AgentTool for McpToolAdapter {
 }
 
 pub async fn discover_mcp_tools(
-    servers: &[McpServer],
+    servers: &[SessionMcpServer],
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
     let mut tools: Vec<DynAgentTool> = Vec::new();
 
     for server in servers {
-        let Some(server_spec) = parse_http_server(server) else {
+        let Some(server_spec) = parse_http_session_server(server) else {
             tracing::debug!("跳过非 HTTP MCP Server");
             continue;
         };
@@ -218,19 +218,14 @@ fn format_service_error(error: &ServiceError) -> String {
     }
 }
 
-fn parse_http_server(server: &McpServer) -> Option<McpHttpServerSpec> {
-    let value = serde_json::to_value(server).ok()?;
-    if value.get("type")?.as_str()? != "http" {
-        return None;
+fn parse_http_session_server(server: &SessionMcpServer) -> Option<McpHttpServerSpec> {
+    match &server.transport {
+        McpTransportConfig::Http { url, .. } => Some(McpHttpServerSpec {
+            name: server.name.clone(),
+            url: url.clone(),
+        }),
+        _ => None,
     }
-    Some(McpHttpServerSpec {
-        name: value
-            .get("name")
-            .and_then(|item| item.as_str())
-            .unwrap_or("mcp-server")
-            .to_string(),
-        url: value.get("url")?.as_str()?.to_string(),
-    })
 }
 
 pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {

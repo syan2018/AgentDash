@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agent_client_protocol::ContentBlock;
+use agentdash_protocol::ContentBlock;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;

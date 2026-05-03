@@ -14,3 +14,5 @@ pub use platform::{
 };
 
 pub use codex_app_server_protocol;
+
+pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};

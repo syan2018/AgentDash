@@ -1,44 +1,28 @@
 use std::collections::{HashMap, HashSet};
 
-use agent_client_protocol::{
-    EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-};
+use agentdash_spi::{McpEnvVar, McpHeader, McpTransportConfig as SpiTransportConfig, SessionMcpServer};
 use uuid::Uuid;
 
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetRepository, McpTransportConfig};
 
-pub fn preset_to_acp_server(preset: &McpPreset) -> McpServer {
-    match &preset.transport {
-        McpTransportConfig::Http { url, headers } => {
-            let mapped_headers: Vec<HttpHeader> = headers
-                .iter()
-                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
-                .collect();
-            McpServer::Http(
-                McpServerHttp::new(preset.key.clone(), url.clone()).headers(mapped_headers),
-            )
-        }
-        McpTransportConfig::Sse { url, headers } => {
-            let mapped_headers: Vec<HttpHeader> = headers
-                .iter()
-                .map(|h| HttpHeader::new(h.name.clone(), h.value.clone()))
-                .collect();
-            McpServer::Sse(
-                McpServerSse::new(preset.key.clone(), url.clone()).headers(mapped_headers),
-            )
-        }
-        McpTransportConfig::Stdio { command, args, env } => {
-            let mapped_env: Vec<EnvVariable> = env
-                .iter()
-                .map(|e| EnvVariable::new(e.name.clone(), e.value.clone()))
-                .collect();
-            McpServer::Stdio(
-                McpServerStdio::new(preset.key.clone(), command.clone())
-                    .args(args.clone())
-                    .env(mapped_env),
-            )
-        }
-    }
+pub fn preset_to_session_mcp_server(preset: &McpPreset) -> SessionMcpServer {
+    let uses_relay = preset_uses_relay(preset);
+    let transport = match &preset.transport {
+        McpTransportConfig::Http { url, headers } => SpiTransportConfig::Http {
+            url: url.clone(),
+            headers: headers.iter().map(|h| McpHeader { name: h.name.clone(), value: h.value.clone() }).collect(),
+        },
+        McpTransportConfig::Sse { url, headers } => SpiTransportConfig::Sse {
+            url: url.clone(),
+            headers: headers.iter().map(|h| McpHeader { name: h.name.clone(), value: h.value.clone() }).collect(),
+        },
+        McpTransportConfig::Stdio { command, args, env } => SpiTransportConfig::Stdio {
+            command: command.clone(),
+            args: args.clone(),
+            env: env.iter().map(|e| McpEnvVar { name: e.name.clone(), value: e.value.clone() }).collect(),
+        },
+    };
+    SessionMcpServer { name: preset.key.clone(), transport, uses_relay }
 }
 
 pub fn preset_uses_relay(preset: &McpPreset) -> bool {
@@ -49,10 +33,10 @@ pub async fn resolve_config_mcp_preset_refs(
     repo: &dyn McpPresetRepository,
     project_id: Uuid,
     config: &serde_json::Value,
-) -> Result<(Vec<McpServer>, HashSet<String>), String> {
+) -> Result<Vec<SessionMcpServer>, String> {
     let raw_list = match config.get("mcp_preset_keys").and_then(|v| v.as_array()) {
         Some(list) => list,
-        None => return Ok((vec![], HashSet::new())),
+        None => return Ok(vec![]),
     };
 
     let presets = repo
@@ -65,7 +49,6 @@ pub async fn resolve_config_mcp_preset_refs(
         .collect();
 
     let mut mcp_servers = Vec::new();
-    let mut relay_names = HashSet::new();
     let mut seen = HashSet::new();
 
     for (index, entry) in raw_list.iter().enumerate() {
@@ -80,11 +63,8 @@ pub async fn resolve_config_mcp_preset_refs(
         if !seen.insert(preset.key.clone()) {
             continue;
         }
-        if preset_uses_relay(preset) {
-            relay_names.insert(preset.key.clone());
-        }
-        mcp_servers.push(preset_to_acp_server(preset));
+        mcp_servers.push(preset_to_session_mcp_server(preset));
     }
 
-    Ok((mcp_servers, relay_names))
+    Ok(mcp_servers)
 }

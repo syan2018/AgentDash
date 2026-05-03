@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol::McpServer;
+use agentdash_spi::SessionMcpServer;
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
     project::Project,
@@ -30,9 +30,7 @@ pub(crate) struct ProjectAgentBridge {
     pub preset_name: Option<String>,
     pub source: String,
     /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
-    pub preset_mcp_servers: Vec<McpServer>,
-    /// 配置中显式标记为 relay 的 MCP server name 集合
-    pub relay_mcp_server_names: std::collections::HashSet<String>,
+    pub preset_mcp_servers: Vec<SessionMcpServer>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -881,7 +879,7 @@ pub(crate) async fn build_agent_bridge(
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let (preset_mcp_servers, relay_mcp_server_names) =
+    let preset_mcp_servers =
         agentdash_application::mcp_preset::resolve_config_mcp_preset_refs(
             state.repos.mcp_preset_repo.as_ref(),
             link.project_id,
@@ -903,7 +901,6 @@ pub(crate) async fn build_agent_bridge(
         preset_name: Some(agent.name.clone()),
         source: format!("agents[{}]", agent.id),
         preset_mcp_servers,
-        relay_mcp_server_names,
     })
 }
 

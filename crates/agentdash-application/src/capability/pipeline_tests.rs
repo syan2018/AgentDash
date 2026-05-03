@@ -34,10 +34,14 @@ fn platform() -> PlatformConfig {
 fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
     AgentMcpServerEntry {
         name: name.to_string(),
-        server: agent_client_protocol::McpServer::Http(agent_client_protocol::McpServerHttp::new(
-            name, url,
-        )),
-        uses_relay: false,
+        server: agentdash_spi::SessionMcpServer {
+            name: name.to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: url.to_string(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        },
     }
 }
 

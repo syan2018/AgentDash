@@ -422,8 +422,8 @@ pub fn contribute_mcp(config: &agentdash_mcp::injection::McpInjectionConfig) -> 
         agentdash_mcp::scope::ToolScope::Workflow => "mcp_workflow_tools",
     };
 
-    let server = config.to_acp_mcp_server();
-    let runtime_server = crate::runtime_bridge::acp_mcp_server_to_runtime(&server);
+    let session_server = config.to_session_mcp_server();
+    let runtime_server = crate::runtime_bridge::session_mcp_server_to_runtime(&session_server);
 
     Contribution {
         fragments: vec![ContextFragment {

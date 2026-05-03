@@ -400,9 +400,15 @@ mod tests {
         let transport = Arc::new(CaptureTransport::default());
         let connector = RelayAgentConnector::new(transport.clone());
         let root = tempfile::tempdir().expect("workspace");
-        let mcp_server = agent_client_protocol::McpServer::Stdio(
-            agent_client_protocol::McpServerStdio::new("third_party_mcp", "cmd"),
-        );
+        let mcp_server = agentdash_spi::SessionMcpServer {
+            name: "third_party_mcp".to_string(),
+            transport: agentdash_spi::McpTransportConfig::Stdio {
+                command: "cmd".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+            },
+            uses_relay: false,
+        };
         let context = ExecutionContext {
             session: agentdash_spi::ExecutionSessionFrame {
                 turn_id: "turn-1".to_string(),

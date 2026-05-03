@@ -2306,7 +2306,7 @@ mod companion_tests {
         CompanionSliceMode, build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, companion_owner_candidates,
     };
-    use agent_client_protocol::McpServer;
+    use agentdash_spi::{McpTransportConfig, SessionMcpServer};
     use agentdash_domain::session_binding::SessionOwnerType;
     use agentdash_spi::AgentTool;
     use agentdash_spi::{
@@ -2446,9 +2446,15 @@ mod companion_tests {
 
         let slice = build_companion_execution_slice(
             Some(&vfs),
-            &[McpServer::Stdio(
-                agent_client_protocol::McpServerStdio::new("test-mcp", "cmd"),
-            )],
+            &[SessionMcpServer {
+                name: "test-mcp".to_string(),
+                transport: McpTransportConfig::Stdio {
+                    command: "cmd".to_string(),
+                    args: Vec::new(),
+                    env: Vec::new(),
+                },
+                uses_relay: false,
+            }],
             CompanionSliceMode::Compact,
         );
 
@@ -2487,9 +2493,15 @@ mod companion_tests {
 
         let slice = build_companion_execution_slice(
             Some(&vfs),
-            &[McpServer::Stdio(
-                agent_client_protocol::McpServerStdio::new("test-mcp", "cmd"),
-            )],
+            &[SessionMcpServer {
+                name: "test-mcp".to_string(),
+                transport: McpTransportConfig::Stdio {
+                    command: "cmd".to_string(),
+                    args: Vec::new(),
+                    env: Vec::new(),
+                },
+                uses_relay: false,
+            }],
             CompanionSliceMode::WorkflowOnly,
         );
 

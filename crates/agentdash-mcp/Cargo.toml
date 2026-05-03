@@ -16,8 +16,7 @@ rmcp = { version = "1.2", features = [
     "transport-streamable-http-server",
 ] }
 
-# ACP 协议（用于 McpServer 类型产出）
-agent-client-protocol = { workspace = true }
+agentdash-spi = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -30,4 +29,3 @@ thiserror = { workspace = true }
 async-trait = "0.1"
 
 [dev-dependencies]
-agentdash-spi = { workspace = true }

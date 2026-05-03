@@ -18,7 +18,6 @@ use agentdash_spi::tool_capability::{
 use agentdash_spi::{FlowCapabilities, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
-use crate::mcp_preset::{preset_to_acp_server, preset_uses_relay};
 use crate::platform_config::PlatformConfig;
 
 /// 调用方预展开的 project 级 MCP Preset 字典。
@@ -75,8 +74,7 @@ pub enum CompanionSliceMode {
 #[derive(Debug, Clone)]
 pub struct AgentMcpServerEntry {
     pub name: String,
-    pub server: agent_client_protocol::McpServer,
-    pub uses_relay: bool,
+    pub server: agentdash_spi::SessionMcpServer,
 }
 
 /// Resolver 输出 — session 的有效工具集
@@ -86,10 +84,8 @@ pub struct CapabilityResolverOutput {
     pub flow_capabilities: FlowCapabilities,
     /// 需注入的平台 MCP server 列表
     pub platform_mcp_configs: Vec<McpInjectionConfig>,
-    /// 需注入的自定义 MCP server 列表（由 `mcp:*` key 解析得到）
-    pub custom_mcp_servers: Vec<agent_client_protocol::McpServer>,
-    /// 需走 relay 的自定义 MCP server name 集合。
-    pub custom_relay_mcp_server_names: BTreeSet<String>,
+    /// 需注入的自定义 MCP server 列表（由 `mcp:*` key 解析得到，relay 信息内嵌）
+    pub custom_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 已解析通过的 capability key 集合（供调试 / 日志）
     pub effective_capabilities: BTreeSet<ToolCapability>,
 }
@@ -128,9 +124,8 @@ impl CapabilityResolver {
         // baseline：只包含 well-known key 的 agent-level 能力
         let mut effective_caps = default_visible_capabilities(input, agent_declares_set.as_ref());
 
-        let mut custom_mcp_servers = Vec::<agent_client_protocol::McpServer>::new();
+        let mut custom_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
-        let mut custom_relay_mcp_server_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
         let directives: &[CapabilityDirective] = input
@@ -158,10 +153,7 @@ impl CapabilityResolver {
                             if let Some(preset) = input.available_presets.get(&server_name) {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    if preset_uses_relay(preset) {
-                                        custom_relay_mcp_server_names.insert(server_name.clone());
-                                    }
-                                    custom_mcp_servers.push(preset_to_acp_server(preset));
+                                    custom_mcp_servers.push(crate::mcp_preset::preset_to_session_mcp_server(preset));
                                 }
                             } else if let Some(agent_entry) = input
                                 .agent_mcp_servers
@@ -170,9 +162,6 @@ impl CapabilityResolver {
                             {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    if agent_entry.uses_relay {
-                                        custom_relay_mcp_server_names.insert(server_name.clone());
-                                    }
                                     custom_mcp_servers.push(agent_entry.server.clone());
                                 }
                             } else {
@@ -224,7 +213,6 @@ impl CapabilityResolver {
             flow_capabilities,
             platform_mcp_configs,
             custom_mcp_servers,
-            custom_relay_mcp_server_names,
             effective_capabilities: effective_caps,
         }
     }
@@ -341,6 +329,17 @@ fn build_platform_mcp_config(
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    fn test_session_mcp(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
+        agentdash_spi::SessionMcpServer {
+            name: name.to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: url.to_string(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        }
+    }
 
     fn test_platform() -> PlatformConfig {
         PlatformConfig {
@@ -520,13 +519,7 @@ mod tests {
             Some(vec![CapabilityDirective::add_simple("mcp:code_analyzer")]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: agent_client_protocol::McpServer::Http(
-                agent_client_protocol::McpServerHttp::new(
-                    "code_analyzer",
-                    "http://external:8080/mcp",
-                ),
-            ),
-            uses_relay: false,
+            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -586,10 +579,10 @@ mod tests {
             "preset 命中后 effective_capabilities 应包含 mcp:code_analyzer"
         );
         assert_eq!(output.custom_mcp_servers.len(), 1);
-        match &output.custom_mcp_servers[0] {
-            agent_client_protocol::McpServer::Http(http) => {
-                assert_eq!(http.name, "code_analyzer");
-                assert_eq!(http.url, "http://external:8080/mcp");
+        assert_eq!(output.custom_mcp_servers[0].name, "code_analyzer");
+        match &output.custom_mcp_servers[0].transport {
+            agentdash_spi::McpTransportConfig::Http { url, .. } => {
+                assert_eq!(url, "http://external:8080/mcp");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
         }
@@ -619,17 +612,14 @@ mod tests {
         );
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "shared".to_string(),
-            server: agent_client_protocol::McpServer::Http(
-                agent_client_protocol::McpServerHttp::new("shared", "http://inline/mcp"),
-            ),
-            uses_relay: false,
+            server: test_session_mcp("shared", "http://inline/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(output.custom_mcp_servers.len(), 1, "同名去重,只保留一条");
-        match &output.custom_mcp_servers[0] {
-            agent_client_protocol::McpServer::Http(http) => {
-                assert_eq!(http.url, "http://preset/mcp", "应以 preset url 为准");
+        match &output.custom_mcp_servers[0].transport {
+            agentdash_spi::McpTransportConfig::Http { url, .. } => {
+                assert_eq!(url, "http://preset/mcp", "应以 preset url 为准");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
         }
@@ -666,13 +656,7 @@ mod tests {
             Some(vec![CapabilityDirective::add_simple("mcp:code_analyzer")]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: agent_client_protocol::McpServer::Http(
-                agent_client_protocol::McpServerHttp::new(
-                    "code_analyzer",
-                    "http://external:8080/mcp",
-                ),
-            ),
-            uses_relay: false,
+            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -744,13 +728,7 @@ mod tests {
         ]);
         input.agent_mcp_servers = vec![AgentMcpServerEntry {
             name: "code_analyzer".to_string(),
-            server: agent_client_protocol::McpServer::Http(
-                agent_client_protocol::McpServerHttp::new(
-                    "code_analyzer",
-                    "http://external:8080/mcp",
-                ),
-            ),
-            uses_relay: false,
+            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

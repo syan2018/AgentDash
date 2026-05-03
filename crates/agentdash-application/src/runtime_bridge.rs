@@ -1,73 +1,65 @@
 use std::collections::BTreeMap;
 
-use agent_client_protocol::{EnvVariable, McpServer, McpServerHttp, McpServerSse, McpServerStdio};
+use agentdash_spi::{McpTransportConfig, SessionMcpServer};
 
 use crate::runtime::RuntimeMcpServer;
 
-pub fn acp_mcp_server_to_runtime(server: &McpServer) -> RuntimeMcpServer {
-    match server {
-        McpServer::Http(server) => RuntimeMcpServer::Http {
+pub fn session_mcp_server_to_runtime(server: &SessionMcpServer) -> RuntimeMcpServer {
+    match &server.transport {
+        McpTransportConfig::Http { url, .. } => RuntimeMcpServer::Http {
             name: server.name.clone(),
-            url: server.url.clone(),
+            url: url.clone(),
         },
-        McpServer::Sse(server) => RuntimeMcpServer::Sse {
+        McpTransportConfig::Sse { url, .. } => RuntimeMcpServer::Sse {
             name: server.name.clone(),
-            url: server.url.clone(),
+            url: url.clone(),
         },
-        McpServer::Stdio(server) => RuntimeMcpServer::Stdio {
+        McpTransportConfig::Stdio {
+            command, args, env, ..
+        } => RuntimeMcpServer::Stdio {
             name: server.name.clone(),
-            command: server.command.to_string_lossy().to_string(),
-            args: server.args.clone(),
-            env: server
-                .env
+            command: command.clone(),
+            args: args.clone(),
+            env: env
                 .iter()
                 .map(|item| (item.name.clone(), item.value.clone()))
                 .collect::<BTreeMap<_, _>>(),
             cwd: None,
         },
-        _ => RuntimeMcpServer::Unsupported {
-            name: "unsupported".to_string(),
-            transport: "unsupported".to_string(),
-            target: String::new(),
-        },
     }
 }
 
-pub fn runtime_mcp_server_to_acp(server: &RuntimeMcpServer) -> Option<McpServer> {
+pub fn session_mcp_servers_to_runtime(servers: &[SessionMcpServer]) -> Vec<RuntimeMcpServer> {
+    servers.iter().map(session_mcp_server_to_runtime).collect()
+}
+
+pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<SessionMcpServer> {
     match server {
-        RuntimeMcpServer::Http { name, url } => Some(McpServer::Http(McpServerHttp::new(
-            name.clone(),
-            url.clone(),
-        ))),
-        RuntimeMcpServer::Sse { name, url } => {
-            Some(McpServer::Sse(McpServerSse::new(name.clone(), url.clone())))
-        }
-        RuntimeMcpServer::Stdio {
-            name,
-            command,
-            args,
-            env,
-            ..
-        } => Some(McpServer::Stdio(
-            McpServerStdio::new(name.clone(), command.clone())
-                .args(args.clone())
-                .env(
-                    env.iter()
-                        .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
-                        .collect(),
-                ),
-        )),
+        RuntimeMcpServer::Http { name, url } => Some(SessionMcpServer {
+            name: name.clone(),
+            transport: McpTransportConfig::Http { url: url.clone(), headers: vec![] },
+            uses_relay: false,
+        }),
+        RuntimeMcpServer::Sse { name, url } => Some(SessionMcpServer {
+            name: name.clone(),
+            transport: McpTransportConfig::Sse { url: url.clone(), headers: vec![] },
+            uses_relay: false,
+        }),
+        RuntimeMcpServer::Stdio { name, command, args, env, .. } => Some(SessionMcpServer {
+            name: name.clone(),
+            transport: McpTransportConfig::Stdio {
+                command: command.clone(),
+                args: args.clone(),
+                env: env.iter().map(|(k, v)| agentdash_spi::McpEnvVar {
+                    name: k.clone(), value: v.clone(),
+                }).collect(),
+            },
+            uses_relay: false,
+        }),
         RuntimeMcpServer::Unsupported { .. } => None,
     }
 }
 
-pub fn acp_mcp_servers_to_runtime(servers: &[McpServer]) -> Vec<RuntimeMcpServer> {
-    servers.iter().map(acp_mcp_server_to_runtime).collect()
-}
-
-pub fn runtime_mcp_servers_to_acp(servers: &[RuntimeMcpServer]) -> Vec<McpServer> {
-    servers
-        .iter()
-        .filter_map(runtime_mcp_server_to_acp)
-        .collect()
+pub fn runtime_mcp_servers_to_session(servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServer> {
+    servers.iter().filter_map(runtime_mcp_server_to_session).collect()
 }

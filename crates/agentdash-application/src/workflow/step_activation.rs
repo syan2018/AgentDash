@@ -100,7 +100,7 @@ pub struct StepActivation {
     /// 内置工具簇(PiAgent 内部使用)。
     pub flow_capabilities: FlowCapabilities,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
-    pub mcp_servers: Vec<agent_client_protocol::McpServer>,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
     /// kickoff prompt 结构化片段;若 step 没有 port/workflow,字段可能全为空。
@@ -166,13 +166,13 @@ pub fn activate_step_with_platform(
     let cap_output = CapabilityResolver::resolve(&cap_input, platform);
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agent_client_protocol::McpServer> = cap_output
+    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output
         .platform_mcp_configs
         .iter()
-        .map(|c| c.to_acp_mcp_server())
+        .map(|c| c.to_session_mcp_server())
         .collect();
     mcp_servers.extend(cap_output.custom_mcp_servers);
-    dedupe_mcp_servers(&mut mcp_servers);
+    dedupe_session_mcp_servers(&mut mcp_servers);
 
     let capability_keys: BTreeSet<String> = cap_output
         .effective_capabilities
@@ -291,23 +291,9 @@ fn render_input_section(
     )
 }
 
-fn dedupe_mcp_servers(servers: &mut Vec<agent_client_protocol::McpServer>) {
+fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>) {
     let mut seen = BTreeSet::<String>::new();
-    servers.retain(|server| {
-        let Some(name) = mcp_server_name(server) else {
-            return true;
-        };
-        seen.insert(name.to_string())
-    });
-}
-
-fn mcp_server_name(server: &agent_client_protocol::McpServer) -> Option<&str> {
-    match server {
-        agent_client_protocol::McpServer::Http(http) => Some(http.name.as_str()),
-        agent_client_protocol::McpServer::Sse(sse) => Some(sse.name.as_str()),
-        agent_client_protocol::McpServer::Stdio(stdio) => Some(stdio.name.as_str()),
-        _ => None,
-    }
+    servers.retain(|server| seen.insert(server.name.clone()));
 }
 
 // ─── Appliers ─────────────────────────────────────────────
@@ -330,11 +316,7 @@ pub fn apply_to_prompt_request(
 ) {
     req.vfs = Some(activation.lifecycle_vfs.clone());
     req.flow_capabilities = Some(activation.flow_capabilities.clone());
-    req.mcp_servers = activation
-        .mcp_servers
-        .iter()
-        .map(agentdash_spi::SessionMcpServer::from_acp)
-        .collect();
+    req.mcp_servers = activation.mcp_servers.clone();
 }
 
 /// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
@@ -352,13 +334,8 @@ pub async fn apply_to_running_session(
         return Ok(None);
     };
 
-    let session_mcp = activation
-        .mcp_servers
-        .iter()
-        .map(agentdash_spi::SessionMcpServer::from_acp)
-        .collect();
     session_hub
-        .replace_runtime_mcp_servers(hook_session.session_id(), session_mcp)
+        .replace_runtime_mcp_servers(hook_session.session_id(), activation.mcp_servers.clone())
         .await
         .map_err(|error| format!("Phase node MCP 热更新失败: {error}"))?;
 
@@ -425,22 +402,13 @@ pub fn capability_delta_directives(
 /// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 step activation
 /// 在 phase 热更新路径里解析自定义 `mcp:<name>` 能力。
 pub fn agent_mcp_entries_from_servers(
-    servers: &[agent_client_protocol::McpServer],
+    servers: &[agentdash_spi::SessionMcpServer],
 ) -> Vec<AgentMcpServerEntry> {
     servers
         .iter()
-        .filter_map(|server| {
-            let name = match server {
-                agent_client_protocol::McpServer::Http(http) => http.name.clone(),
-                agent_client_protocol::McpServer::Sse(sse) => sse.name.clone(),
-                agent_client_protocol::McpServer::Stdio(stdio) => stdio.name.clone(),
-                _ => return None,
-            };
-            Some(AgentMcpServerEntry {
-                uses_relay: false,
-                name,
-                server: server.clone(),
-            })
+        .map(|server| AgentMcpServerEntry {
+            name: server.name.clone(),
+            server: server.clone(),
         })
         .collect()
 }

@@ -24,7 +24,7 @@
 //! compose 函数内部共享 building blocks(`load_available_presets` /
 //! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
@@ -40,6 +40,7 @@ use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
+use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
     SessionWorkflowContext, capability_directives_from_active_workflow,
@@ -503,9 +504,7 @@ impl SessionAssemblyBuilder {
         self.flow_capabilities = Some(activation.flow_capabilities.clone());
         self.mcp_servers = activation
             .mcp_servers
-            .iter()
-            .map(agentdash_spi::SessionMcpServer::from_acp)
-            .collect();
+            .clone();
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
             "text": "请执行当前 lifecycle 节点。",
@@ -581,43 +580,13 @@ pub async fn load_available_presets(
 
 /// 从 agent-level `preset_mcp_servers` 抽出 `AgentMcpServerEntry`(供 resolver 解析 `mcp:<name>`)。
 pub fn extract_agent_mcp_entries(
-    preset_mcp_servers: &[agent_client_protocol::McpServer],
-    relay_mcp_server_names: &HashSet<String>,
+    preset_mcp_servers: &[agentdash_spi::SessionMcpServer],
 ) -> Vec<AgentMcpServerEntry> {
     preset_mcp_servers
         .iter()
-        .filter_map(|s| {
-            let name = match s {
-                agent_client_protocol::McpServer::Http(h) => h.name.clone(),
-                agent_client_protocol::McpServer::Sse(h) => h.name.clone(),
-                agent_client_protocol::McpServer::Stdio(h) => h.name.clone(),
-                _ => return None,
-            };
-            Some(AgentMcpServerEntry {
-                uses_relay: relay_mcp_server_names.contains(&name),
-                name,
-                server: s.clone(),
-            })
-        })
-        .collect()
-}
-
-/// 把 ACP MCP server 列表转为 RuntimeMcpServer(供 context_builder 消费)。
-pub fn acp_mcp_servers_to_runtime(
-    servers: &[agent_client_protocol::McpServer],
-) -> Vec<RuntimeMcpServer> {
-    servers
-        .iter()
-        .filter_map(|server| match server {
-            agent_client_protocol::McpServer::Http(http) => Some(RuntimeMcpServer::Http {
-                name: http.name.clone(),
-                url: http.url.clone(),
-            }),
-            agent_client_protocol::McpServer::Sse(sse) => Some(RuntimeMcpServer::Http {
-                name: sse.name.clone(),
-                url: sse.url.clone(),
-            }),
-            _ => None,
+        .map(|s| AgentMcpServerEntry {
+            name: s.name.clone(),
+            server: s.clone(),
         })
         .collect()
 }
@@ -679,8 +648,7 @@ impl<'a> OwnerScope<'a> {
 /// agent 级 MCP 配置(来自 project_agent / routine agent context)。
 #[derive(Default, Clone)]
 pub struct AgentLevelMcp {
-    pub preset_mcp_servers: Vec<agent_client_protocol::McpServer>,
-    pub relay_mcp_server_names: HashSet<String>, // TODO(phase-b): 上游 preset 解析仍产出 ACP 类型，保留此字段到边界
+    pub preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
 }
 
 /// Owner bootstrap compose 的完整输入。
@@ -691,7 +659,7 @@ pub struct OwnerBootstrapSpec<'a> {
     pub user_prompt_blocks: Vec<serde_json::Value>,
     pub agent_mcp: AgentLevelMcp,
     /// 前端/request 已携带的 MCP server(透传)。
-    pub request_mcp_servers: Vec<agent_client_protocol::McpServer>,
+    pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
@@ -973,7 +941,6 @@ impl<'a> SessionRequestAssembler<'a> {
             workflow_ctx,
             agent_mcp_servers: extract_agent_mcp_entries(
                 &spec.agent_mcp.preset_mcp_servers,
-                &spec.agent_mcp.relay_mcp_server_names,
             ),
             available_presets: load_available_presets(self.repos, project_id).await,
             companion_slice_mode: None,
@@ -981,21 +948,15 @@ impl<'a> SessionRequestAssembler<'a> {
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
         // ── 4. MCP server 列表汇总(request + platform + custom + preset) ──
-        let mut effective_mcp_servers = spec.request_mcp_servers;
+        let mut session_mcp_servers = spec.request_mcp_servers;
         for config in &cap_output.platform_mcp_configs {
-            effective_mcp_servers.push(config.to_acp_mcp_server());
+            session_mcp_servers.push(config.to_session_mcp_server());
         }
-        effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
-        effective_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
-        let mut relay_names_set = spec.agent_mcp.relay_mcp_server_names.clone();
-        relay_names_set.extend(cap_output.custom_relay_mcp_server_names.iter().cloned());
-        let session_mcp_servers = agentdash_spi::SessionMcpServer::from_acp_with_relay(
-            &effective_mcp_servers,
-            &relay_names_set,
-        );
+        session_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
+        session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
 
         // ── 5. Context markdown 生成 ──
-        let runtime_mcp_servers = acp_mcp_servers_to_runtime(&effective_mcp_servers);
+        let runtime_mcp_servers = session_mcp_servers_to_runtime(&session_mcp_servers);
         let runtime_vfs = vfs.clone();
 
         let (workspace_fragments, workspace_warnings) = match &spec.owner {
@@ -1225,11 +1186,6 @@ impl<'a> SessionRequestAssembler<'a> {
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
         let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
-        let relay_names_set: HashSet<String> = cap_output
-            .custom_relay_mcp_server_names
-            .iter()
-            .cloned()
-            .collect();
         let flow_capabilities = cap_output.flow_capabilities.clone();
 
         // ── 6. 构造 task agent context（Bundle 路径） ──
@@ -1361,18 +1317,14 @@ impl<'a> SessionRequestAssembler<'a> {
         let working_dir = workspace_ref.map(|_| ".".to_string());
 
         // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
-        let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = platform_mcp_configs
+        let mut session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> = platform_mcp_configs
             .iter()
-            .map(|c| c.to_acp_mcp_server())
+            .map(|c| c.to_session_mcp_server())
             .collect();
-        effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
-        effective_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_acp(
+        session_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
+        session_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_session(
             &task_mcp_servers,
         ));
-        let session_mcp_servers = agentdash_spi::SessionMcpServer::from_acp_with_relay(
-            &effective_mcp_servers,
-            &relay_names_set,
-        );
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)
@@ -1470,7 +1422,7 @@ pub async fn compose_lifecycle_node_with_audit(
     let lifecycle_mcp_runtime: Vec<RuntimeMcpServer> = activation
         .mcp_servers
         .iter()
-        .map(crate::runtime_bridge::acp_mcp_server_to_runtime)
+        .map(crate::runtime_bridge::session_mcp_server_to_runtime)
         .collect();
     let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
         crate::session::plan::SessionPlanInput {
@@ -1869,9 +1821,7 @@ pub async fn compose_companion_with_workflow(
         .with_vfs(vfs)
         .with_resolved_capabilities(activation.flow_capabilities.clone())
         .with_mcp_servers(slice.mcp_servers)
-        .append_mcp_servers(
-            activation.mcp_servers.iter().map(agentdash_spi::SessionMcpServer::from_acp),
-        )
+        .append_mcp_servers(activation.mcp_servers.iter().cloned())
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())

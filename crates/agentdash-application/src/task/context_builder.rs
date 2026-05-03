@@ -1,4 +1,3 @@
-use agent_client_protocol::McpServer;
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use uuid::Uuid;
 
@@ -10,7 +9,7 @@ use crate::capability::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::Vfs as RuntimeVfs;
-use crate::runtime_bridge::acp_mcp_servers_to_runtime;
+use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::bootstrap::{
     BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
     derive_session_context_snapshot,
@@ -95,11 +94,11 @@ pub async fn build_task_session_context(
         companion_slice_mode: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
-    let mcp_servers: Vec<McpServer> = {
-        let mut list: Vec<McpServer> = cap_output
+    let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = {
+        let mut list: Vec<agentdash_spi::SessionMcpServer> = cap_output
             .platform_mcp_configs
             .iter()
-            .map(|c| c.to_acp_mcp_server())
+            .map(|c| c.to_session_mcp_server())
             .collect();
         list.extend(cap_output.custom_mcp_servers.iter().cloned());
         list
@@ -165,7 +164,7 @@ pub async fn build_task_session_context(
         workspace,
         resolved_config,
         vfs: runtime_vfs,
-        mcp_servers: acp_mcp_servers_to_runtime(&mcp_servers),
+        mcp_servers: session_mcp_servers_to_runtime(&mcp_servers),
         working_dir: None,
         executor_preset_name: preset_name,
         executor_resolution,

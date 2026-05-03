@@ -1,6 +1,6 @@
 use std::io;
 
-use agent_client_protocol::ContentBlock;
+use agentdash_protocol::ContentBlock;
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;

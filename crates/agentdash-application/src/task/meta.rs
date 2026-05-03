@@ -1,4 +1,4 @@
-use agent_client_protocol::Meta;
+type Meta = serde_json::Map<String, serde_json::Value>;
 
 const AGENTDASH_NS: &str = "agentdash";
 

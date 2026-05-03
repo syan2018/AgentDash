@@ -22,7 +22,7 @@ use crate::{
     routes::project_agents::resolve_project_workspace,
     routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
-    runtime_bridge::acp_mcp_servers_to_runtime,
+    runtime_bridge::session_mcp_servers_to_runtime,
 };
 use agentdash_application::vfs::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -521,10 +521,10 @@ pub(crate) async fn build_story_session_context_response(
         },
         &state.config.platform_config,
     );
-    let mut effective_mcp_servers: Vec<agent_client_protocol::McpServer> = cap_output
+    let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output
         .platform_mcp_configs
         .iter()
-        .map(|c| c.to_acp_mcp_server())
+        .map(|c| c.to_session_mcp_server())
         .collect();
     effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
 
@@ -546,7 +546,7 @@ pub(crate) async fn build_story_session_context_response(
         workspace,
         resolved_config,
         vfs: runtime_vfs,
-        mcp_servers: acp_mcp_servers_to_runtime(&effective_mcp_servers),
+        mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
         working_dir: None,
         executor_preset_name: None,
         executor_resolution: agentdash_application::session::ExecutorResolution::resolved(

@@ -19,8 +19,6 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
-# ACP 协议与执行器复用层
-agent-client-protocol = { workspace = true }
 executors = { workspace = true }
 workspace_utils = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "utils" }
 codex-app-server-protocol = { workspace = true }

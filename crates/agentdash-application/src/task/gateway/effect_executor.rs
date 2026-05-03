@@ -56,53 +56,38 @@ impl TaskHookEffectExecutor {
     pub const SUPPORTED_KINDS: &[&str] = &["task:set_status", "task:clear_binding"];
 
     async fn handle_event(&self, _session_id: &str, envelope: &BackboneEnvelope) {
-        // 通过 compat 桥获取 ACP notification，提取 ToolCall/ToolCallUpdate
-        let Some(notification) = agentdash_protocol::envelope_to_session_notification(envelope)
-        else {
+        use crate::task::artifact::build_thread_item_patch;
+        use agentdash_protocol::BackboneEvent;
+
+        let item = match &envelope.event {
+            BackboneEvent::ItemStarted(n) => &n.item,
+            BackboneEvent::ItemCompleted(n) => &n.item,
+            _ => return,
+        };
+
+        let Some((tool_call_id, patch)) = build_thread_item_patch(item) else {
             return;
         };
 
-        use crate::task::artifact::{build_tool_call_patch, build_tool_call_update_patch};
-        use crate::task::meta::extract_turn_id_from_meta;
-        use agent_client_protocol::SessionUpdate;
+        let turn_id = envelope
+            .trace
+            .turn_id
+            .as_deref()
+            .unwrap_or_default();
 
-        match &notification.update {
-            SessionUpdate::ToolCall(tc) => {
-                let turn_id = extract_turn_id_from_meta(tc.meta.as_ref()).unwrap_or_default();
-                let patch = build_tool_call_patch(tc);
-                let _ = persist_tool_call_artifact(
-                    &self.repos,
-                    ToolCallArtifactInput {
-                        task_id: self.task_id,
-                        session_id: &self.session_id,
-                        turn_id: &turn_id,
-                        tool_call_id: &tc.tool_call_id.to_string(),
-                        patch,
-                        backend_id: &self.backend_id,
-                        reason: "hook_event_tool_call",
-                    },
-                )
-                .await;
-            }
-            SessionUpdate::ToolCallUpdate(tcu) => {
-                let turn_id = extract_turn_id_from_meta(tcu.meta.as_ref()).unwrap_or_default();
-                let patch = build_tool_call_update_patch(tcu);
-                let _ = persist_tool_call_artifact(
-                    &self.repos,
-                    ToolCallArtifactInput {
-                        task_id: self.task_id,
-                        session_id: &self.session_id,
-                        turn_id: &turn_id,
-                        tool_call_id: &tcu.tool_call_id.to_string(),
-                        patch,
-                        backend_id: &self.backend_id,
-                        reason: "hook_event_tool_call_update",
-                    },
-                )
-                .await;
-            }
-            _ => {}
-        }
+        let _ = persist_tool_call_artifact(
+            &self.repos,
+            ToolCallArtifactInput {
+                task_id: self.task_id,
+                session_id: &self.session_id,
+                turn_id,
+                tool_call_id: &tool_call_id,
+                patch,
+                backend_id: &self.backend_id,
+                reason: "hook_event_item",
+            },
+        )
+        .await;
     }
 
     async fn dispatch_effect(

@@ -2,10 +2,8 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use agent_client_protocol::{
-    ContentBlock, ContentChunk, McpServer, SessionId, SessionNotification, SessionUpdate,
-    TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-};
+use agentdash_protocol::{ContentBlock, TextContent};
+use agentdash_protocol::codex_app_server_protocol as codex;
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookResolution, HookTrigger,
@@ -28,15 +26,6 @@ use super::super::types::{
     UserPromptInput,
 };
 use super::SessionHub;
-
-/// 将 ACP SessionNotification 包装为 BackboneEnvelope（测试用兼容桥）。
-///
-/// 通过 compat 的 `envelope_to_session_notification()` 能还原回原始 ACP 通知，
-/// 保证 continuation 模块的 round-trip。
-/// 测试用 ACP notification → BackboneEnvelope 桥接。
-fn wrap_acp_notification(notification: &SessionNotification) -> BackboneEnvelope {
-    agentdash_protocol::session_notification_to_envelope(notification)
-}
 
 fn test_hub(
     mount_root: PathBuf,
@@ -137,10 +126,6 @@ async fn start_prompt_records_current_turn_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("active-state").await.expect("create");
-    let acp_server = McpServer::Http(agent_client_protocol::McpServerHttp::new(
-        "relay_tools",
-        "http://127.0.0.1:19090/mcp",
-    ));
     let session_mcp = agentdash_spi::SessionMcpServer {
         name: "relay_tools".to_string(),
         transport: agentdash_spi::McpTransportConfig::Http {
@@ -187,30 +172,6 @@ fn test_source() -> SourceInfo {
         connector_type: "local_executor".to_string(),
         executor_id: None,
     }
-}
-
-fn test_meta(
-    source: &SourceInfo,
-    turn_id: &str,
-    entry_index: u32,
-) -> agent_client_protocol::Meta {
-    let mut meta = agent_client_protocol::Meta::new();
-    meta.insert(
-        "agentdash".to_string(),
-        json!({
-            "v": 1,
-            "source": {
-                "connectorId": source.connector_id,
-                "connectorType": source.connector_type,
-                "executorId": source.executor_id,
-            },
-            "trace": {
-                "turnId": turn_id,
-                "entryIndex": entry_index,
-            }
-        }),
-    );
-    meta
 }
 
 #[derive(Default)]
@@ -661,16 +622,25 @@ async fn render_system_context_markdown_strips_owner_resource_blocks() {
             .expect("inject user notification");
     }
 
-    let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
-        .message_id(Some("assistant-msg-1".to_string()))
-        .meta(Some(test_meta(&source, "t-1", 99)));
-    let acp_notification = SessionNotification::new(
-        SessionId::new(session.id.clone()),
-        SessionUpdate::AgentMessageChunk(assistant_chunk),
-    );
-    hub.inject_notification(&session.id, wrap_acp_notification(&acp_notification))
-        .await
-        .expect("inject assistant notification");
+    hub.inject_notification(
+        &session.id,
+        BackboneEnvelope::new(
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                delta: "已记录历史".to_string(),
+                thread_id: session.id.clone(),
+                turn_id: "t-1".to_string(),
+                item_id: "assistant-msg-1".to_string(),
+            }),
+            session.id.clone(),
+            source.clone(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("t-1".to_string()),
+            entry_index: Some(99),
+        }),
+    )
+    .await
+    .expect("inject assistant notification");
 
     let transcript = hub
         .build_projected_transcript(&session.id)
@@ -722,51 +692,80 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
             .expect("inject user notification");
     }
 
-    let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
-        .message_id(Some("assistant-msg-1".to_string()))
-        .meta(Some(test_meta(&source, "t-1", 1)));
     hub.inject_notification(
         &session.id,
-        wrap_acp_notification(&SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::AgentMessageChunk(assistant_chunk),
-        )),
+        BackboneEnvelope::new(
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                delta: "已记录历史".to_string(),
+                thread_id: session.id.clone(),
+                turn_id: "t-1".to_string(),
+                item_id: "assistant-msg-1".to_string(),
+            }),
+            session.id.clone(),
+            source.clone(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("t-1".to_string()),
+            entry_index: Some(1),
+        }),
     )
     .await
     .expect("inject assistant notification");
 
-    let tool_call = ToolCall::new(ToolCallId::new("tool-1"), "shell_exec")
-        .status(ToolCallStatus::Pending)
-        .raw_input(serde_json::json!({ "command": "pwd" }))
-        .meta(Some(test_meta(&source, "t-1", 1)));
+    let item_started = codex::ThreadItem::DynamicToolCall {
+        id: "tool-1".to_string(),
+        tool: "shell_exec".to_string(),
+        arguments: serde_json::json!({ "command": "pwd" }),
+        status: codex::DynamicToolCallStatus::InProgress,
+        content_items: None,
+        success: None,
+        duration_ms: None,
+    };
     hub.inject_notification(
         &session.id,
-        wrap_acp_notification(&SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::ToolCall(tool_call),
-        )),
+        BackboneEnvelope::new(
+            BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                item: item_started,
+                thread_id: session.id.clone(),
+                turn_id: "t-1".to_string(),
+            }),
+            session.id.clone(),
+            source.clone(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("t-1".to_string()),
+            entry_index: Some(1),
+        }),
     )
     .await
     .expect("inject tool call");
 
-    let raw_result = serde_json::to_value(agentdash_spi::AgentToolResult {
-        content: vec![agentdash_spi::ContentPart::text("workspace root")],
-        is_error: false,
-        details: Some(serde_json::json!({ "exit_code": 0 })),
-    })
-    .expect("serialize tool result");
-    let mut fields = ToolCallUpdateFields::default();
-    fields.title = Some("shell_exec".to_string());
-    fields.status = Some(ToolCallStatus::Completed);
-    fields.raw_output = Some(raw_result);
-    let tool_update = ToolCallUpdate::new(ToolCallId::new("tool-1"), fields)
-        .meta(Some(test_meta(&source, "t-1", 1)));
+    let item_completed = codex::ThreadItem::DynamicToolCall {
+        id: "tool-1".to_string(),
+        tool: "shell_exec".to_string(),
+        arguments: serde_json::json!({ "command": "pwd" }),
+        status: codex::DynamicToolCallStatus::Completed,
+        content_items: Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+            text: "workspace root".to_string(),
+        }]),
+        success: Some(true),
+        duration_ms: None,
+    };
     hub.inject_notification(
         &session.id,
-        wrap_acp_notification(&SessionNotification::new(
-            SessionId::new(session.id.clone()),
-            SessionUpdate::ToolCallUpdate(tool_update),
-        )),
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                item: item_completed,
+                thread_id: session.id.clone(),
+                turn_id: "t-1".to_string(),
+            }),
+            session.id.clone(),
+            source.clone(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("t-1".to_string()),
+            entry_index: Some(1),
+        }),
     )
     .await
     .expect("inject tool update");
@@ -805,20 +804,12 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
         agentdash_spi::AgentMessage::ToolResult {
             tool_call_id,
             tool_name,
-            details,
             is_error,
             ..
         } => {
             assert_eq!(tool_call_id, "tool-1");
             assert_eq!(tool_name.as_deref(), Some("shell_exec"));
             assert_eq!(messages[2].first_text(), Some("workspace root"));
-            assert_eq!(
-                details
-                    .as_ref()
-                    .and_then(|value| value.get("exit_code"))
-                    .and_then(serde_json::Value::as_i64),
-                Some(0)
-            );
             assert!(!*is_error);
         }
         other => panic!("unexpected tool result: {other:?}"),

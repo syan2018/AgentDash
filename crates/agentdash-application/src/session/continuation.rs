@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
+use agentdash_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
+use agentdash_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::content_block_to_text;
 
 use super::persistence::PersistedSessionEvent;
@@ -210,30 +211,29 @@ pub(super) fn build_projected_transcript_from_events(
     let mut tool_results: HashMap<String, RestoredToolResultState> = HashMap::new();
 
     for event in events {
-        let Some(compat_notification) =
-            agentdash_protocol::envelope_to_session_notification(&event.notification)
-        else {
-            continue;
-        };
-        match &compat_notification.update {
-            SessionUpdate::UserMessageChunk(chunk) => {
-                if let Some(part) = content_block_to_message_part(&chunk.content) {
-                    let key = restored_user_key(event);
-                    let state =
-                        user_messages
-                            .entry(key)
-                            .or_insert_with(|| RestoredUserMessageState {
-                                order: event.event_seq,
-                                turn_id: event.turn_id.clone(),
-                                entry_index: event.entry_index,
-                                content: Vec::new(),
-                            });
-                    state.content.push(part);
+        match &event.notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                if key == "user_message_chunk" =>
+            {
+                if let Ok(block) = serde_json::from_value::<ContentBlock>(value.clone()) {
+                    if let Some(part) = content_block_to_message_part(&block) {
+                        let key = restored_user_key(event);
+                        let state =
+                            user_messages
+                                .entry(key)
+                                .or_insert_with(|| RestoredUserMessageState {
+                                    order: event.event_seq,
+                                    turn_id: event.turn_id.clone(),
+                                    entry_index: event.entry_index,
+                                    content: Vec::new(),
+                                });
+                        state.content.push(part);
+                    }
                 }
             }
-            SessionUpdate::AgentMessageChunk(chunk) => {
-                if let Some(part) = content_block_to_message_part(&chunk.content) {
-                    let key = restored_assistant_key(event, chunk.message_id.as_deref());
+            BackboneEvent::AgentMessageDelta(delta) => {
+                if !delta.delta.is_empty() {
+                    let key = restored_assistant_key(event, Some(&delta.item_id));
                     let state = assistant_messages.entry(key).or_insert_with(|| {
                         RestoredAssistantMessageState {
                             order: event.event_seq,
@@ -244,12 +244,12 @@ pub(super) fn build_projected_transcript_from_events(
                             tool_call_ids: HashSet::new(),
                         }
                     });
-                    state.content.push(part);
+                    state.content.push(ContentPart::text(&delta.delta));
                 }
             }
-            SessionUpdate::AgentThoughtChunk(chunk) => {
-                if let Some(part) = content_block_to_reasoning_part(&chunk.content) {
-                    let key = restored_assistant_key(event, chunk.message_id.as_deref());
+            BackboneEvent::ReasoningTextDelta(delta) => {
+                if !delta.delta.is_empty() {
+                    let key = restored_assistant_key(event, Some(&delta.item_id));
                     let state = assistant_messages.entry(key).or_insert_with(|| {
                         RestoredAssistantMessageState {
                             order: event.event_seq,
@@ -260,66 +260,94 @@ pub(super) fn build_projected_transcript_from_events(
                             tool_call_ids: HashSet::new(),
                         }
                     });
-                    state.content.push(part);
+                    state
+                        .content
+                        .push(ContentPart::reasoning(&delta.delta, None, None));
                 }
             }
-            SessionUpdate::ToolCall(call) => {
-                let key = restored_assistant_key(event, None);
-                let state = assistant_messages.entry(key).or_insert_with(|| {
-                    RestoredAssistantMessageState {
-                        order: event.event_seq,
-                        turn_id: event.turn_id.clone(),
-                        entry_index: event.entry_index,
-                        content: Vec::new(),
-                        tool_calls: Vec::new(),
-                        tool_call_ids: HashSet::new(),
-                    }
-                });
-                state.order = state.order.min(event.event_seq);
-                upsert_restored_tool_call(
-                    state,
-                    call.tool_call_id.0.as_ref(),
-                    Some(call.title.as_str()),
-                    call.raw_input.as_ref(),
-                );
-                update_restored_tool_result(
-                    &mut tool_results,
-                    call.tool_call_id.0.as_ref(),
-                    event,
-                    Some(call.title.as_str()),
-                    call.raw_output.as_ref(),
-                    Some(&call.content),
-                    Some(call.status),
-                );
+            BackboneEvent::ReasoningSummaryDelta(delta) => {
+                if !delta.delta.is_empty() {
+                    let key = restored_assistant_key(event, Some(&delta.item_id));
+                    let state = assistant_messages.entry(key).or_insert_with(|| {
+                        RestoredAssistantMessageState {
+                            order: event.event_seq,
+                            turn_id: event.turn_id.clone(),
+                            entry_index: event.entry_index,
+                            content: Vec::new(),
+                            tool_calls: Vec::new(),
+                            tool_call_ids: HashSet::new(),
+                        }
+                    });
+                    state
+                        .content
+                        .push(ContentPart::reasoning(&delta.delta, None, None));
+                }
             }
-            SessionUpdate::ToolCallUpdate(update) => {
-                let key = restored_assistant_key(event, None);
-                let state = assistant_messages.entry(key).or_insert_with(|| {
-                    RestoredAssistantMessageState {
-                        order: event.event_seq,
-                        turn_id: event.turn_id.clone(),
-                        entry_index: event.entry_index,
-                        content: Vec::new(),
-                        tool_calls: Vec::new(),
-                        tool_call_ids: HashSet::new(),
+            BackboneEvent::ItemStarted(n) => {
+                if let Some(tc) = extract_tool_call_from_thread_item(&n.item) {
+                    let key = restored_assistant_key(event, None);
+                    let state = assistant_messages.entry(key).or_insert_with(|| {
+                        RestoredAssistantMessageState {
+                            order: event.event_seq,
+                            turn_id: event.turn_id.clone(),
+                            entry_index: event.entry_index,
+                            content: Vec::new(),
+                            tool_calls: Vec::new(),
+                            tool_call_ids: HashSet::new(),
+                        }
+                    });
+                    state.order = state.order.min(event.event_seq);
+                    upsert_restored_tool_call(
+                        state,
+                        &tc.id,
+                        Some(&tc.name),
+                        tc.raw_input.as_ref(),
+                    );
+                    if tc.is_terminal {
+                        update_restored_tool_result(
+                            &mut tool_results,
+                            &tc.id,
+                            event,
+                            Some(&tc.name),
+                            tc.raw_output.as_ref(),
+                            &tc.content_parts,
+                            tc.is_error,
+                        );
                     }
-                });
-                state.order = state.order.min(event.event_seq);
-                upsert_restored_tool_call(
-                    state,
-                    update.tool_call_id.0.as_ref(),
-                    update.fields.title.as_deref(),
-                    update.fields.raw_input.as_ref(),
-                );
-                update_restored_tool_result(
-                    &mut tool_results,
-                    update.tool_call_id.0.as_ref(),
-                    event,
-                    update.fields.title.as_deref(),
-                    update.fields.raw_output.as_ref(),
-                    update.fields.content.as_deref(),
-                    update.fields.status,
-                );
+                }
+            }
+            BackboneEvent::ItemCompleted(n) => {
+                if let Some(tc) = extract_tool_call_from_thread_item(&n.item) {
+                    let key = restored_assistant_key(event, None);
+                    let state = assistant_messages.entry(key).or_insert_with(|| {
+                        RestoredAssistantMessageState {
+                            order: event.event_seq,
+                            turn_id: event.turn_id.clone(),
+                            entry_index: event.entry_index,
+                            content: Vec::new(),
+                            tool_calls: Vec::new(),
+                            tool_call_ids: HashSet::new(),
+                        }
+                    });
+                    state.order = state.order.min(event.event_seq);
+                    upsert_restored_tool_call(
+                        state,
+                        &tc.id,
+                        Some(&tc.name),
+                        tc.raw_input.as_ref(),
+                    );
+                    if tc.is_terminal {
+                        update_restored_tool_result(
+                            &mut tool_results,
+                            &tc.id,
+                            event,
+                            Some(&tc.name),
+                            tc.raw_output.as_ref(),
+                            &tc.content_parts,
+                            tc.is_error,
+                        );
+                    }
+                }
             }
             _ => {}
         }
@@ -441,8 +469,8 @@ fn update_restored_tool_result(
     event: &PersistedSessionEvent,
     title: Option<&str>,
     raw_output: Option<&serde_json::Value>,
-    content: Option<&[ToolCallContent]>,
-    status: Option<ToolCallStatus>,
+    content_parts: &[ContentPart],
+    is_error: bool,
 ) {
     let order = event.event_seq;
     let state = tool_results
@@ -460,18 +488,11 @@ fn update_restored_tool_result(
         state.tool_name = Some(title.to_string());
     }
 
-    let Some(status) = status else {
-        return;
-    };
-    if !matches!(status, ToolCallStatus::Completed | ToolCallStatus::Failed) {
-        return;
-    }
-
     state.order = order;
     state.turn_id = event.turn_id.clone();
     state.entry_index = event.entry_index;
     state.terminal = true;
-    state.is_error = matches!(status, ToolCallStatus::Failed);
+    state.is_error = is_error;
 
     if let Some(raw_output) = raw_output {
         if let Ok(decoded) =
@@ -489,11 +510,8 @@ fn update_restored_tool_result(
         }
     }
 
-    if let Some(content) = content {
-        let next_content = tool_call_content_to_content_parts(content);
-        if !next_content.is_empty() {
-            state.content = next_content;
-        }
+    if !content_parts.is_empty() {
+        state.content = content_parts.to_vec();
     }
 }
 
@@ -672,10 +690,6 @@ fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {
     }
 }
 
-fn content_block_to_reasoning_part(block: &ContentBlock) -> Option<ContentPart> {
-    content_block_to_rendered_text(block).map(|text| ContentPart::reasoning(text, None, None))
-}
-
 fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
     if is_owner_context_resource_block(block) {
         return None;
@@ -689,7 +703,7 @@ fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
 fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
     match block {
         ContentBlock::Resource(resource) => match &resource.resource {
-            agent_client_protocol::EmbeddedResourceResource::TextResourceContents(
+            agentdash_protocol::EmbeddedResourceResource::TextResourceContents(
                 text_resource,
             ) => {
                 let uri = text_resource.uri.as_str();
@@ -703,32 +717,149 @@ fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
     }
 }
 
-fn tool_call_content_to_content_parts(content: &[ToolCallContent]) -> Vec<ContentPart> {
-    let mut parts = Vec::new();
-    for item in content {
-        match item {
-            ToolCallContent::Content(content) => {
-                if let Some(part) = content_block_to_message_part(&content.content) {
-                    parts.push(part);
+// ─── ThreadItem → tool call 提取 ──────────────────────────
+
+struct ExtractedToolCall {
+    id: String,
+    name: String,
+    raw_input: Option<serde_json::Value>,
+    raw_output: Option<serde_json::Value>,
+    content_parts: Vec<ContentPart>,
+    is_terminal: bool,
+    is_error: bool,
+}
+
+fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<ExtractedToolCall> {
+    match item {
+        codex::ThreadItem::DynamicToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            content_items,
+            success,
+            ..
+        } => {
+            let is_terminal = matches!(
+                status,
+                codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
+            );
+            let content_parts = content_items
+                .as_ref()
+                .map(|items| codex_content_items_to_parts(items))
+                .unwrap_or_default();
+            Some(ExtractedToolCall {
+                id: id.clone(),
+                name: tool.clone(),
+                raw_input: Some(arguments.clone()),
+                raw_output: None,
+                content_parts,
+                is_terminal,
+                is_error: success == &Some(false)
+                    || matches!(status, codex::DynamicToolCallStatus::Failed),
+            })
+        }
+        codex::ThreadItem::McpToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            result,
+            error,
+            ..
+        } => {
+            let is_terminal = matches!(
+                status,
+                codex::McpToolCallStatus::Completed | codex::McpToolCallStatus::Failed
+            );
+            let raw_output = result
+                .as_ref()
+                .and_then(|r| serde_json::to_value(r).ok())
+                .or_else(|| {
+                    error
+                        .as_ref()
+                        .map(|e| serde_json::Value::String(e.message.clone()))
+                });
+            Some(ExtractedToolCall {
+                id: id.clone(),
+                name: tool.clone(),
+                raw_input: Some(arguments.clone()),
+                raw_output,
+                content_parts: Vec::new(),
+                is_terminal,
+                is_error: error.is_some()
+                    || matches!(status, codex::McpToolCallStatus::Failed),
+            })
+        }
+        codex::ThreadItem::CommandExecution {
+            id,
+            command,
+            status,
+            exit_code,
+            aggregated_output,
+            ..
+        } => {
+            let is_terminal = matches!(
+                status,
+                codex::CommandExecutionStatus::Completed
+                    | codex::CommandExecutionStatus::Failed
+                    | codex::CommandExecutionStatus::Declined
+            );
+            let content_parts = aggregated_output
+                .as_ref()
+                .map(|output| vec![ContentPart::text(output)])
+                .unwrap_or_default();
+            Some(ExtractedToolCall {
+                id: id.clone(),
+                name: "command_execution".to_string(),
+                raw_input: Some(serde_json::json!({ "command": command })),
+                raw_output: None,
+                content_parts,
+                is_terminal,
+                is_error: exit_code.map_or(false, |code| code != 0)
+                    || matches!(status, codex::CommandExecutionStatus::Failed),
+            })
+        }
+        codex::ThreadItem::FileChange { id, status, .. } => {
+            let is_terminal = matches!(
+                status,
+                codex::PatchApplyStatus::Completed
+                    | codex::PatchApplyStatus::Failed
+                    | codex::PatchApplyStatus::Declined
+            );
+            Some(ExtractedToolCall {
+                id: id.clone(),
+                name: "file_change".to_string(),
+                raw_input: None,
+                raw_output: None,
+                content_parts: Vec::new(),
+                is_terminal,
+                is_error: matches!(status, codex::PatchApplyStatus::Failed),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn codex_content_items_to_parts(
+    items: &[codex::DynamicToolCallOutputContentItem],
+) -> Vec<ContentPart> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(ContentPart::text(text))
                 }
             }
-            ToolCallContent::Diff(diff) => {
-                parts.push(ContentPart::text(format!(
-                    "<diff path=\"{}\">\n{}\n</diff>",
-                    diff.path.display(),
-                    diff.new_text
-                )));
+            codex::DynamicToolCallOutputContentItem::InputImage { .. } => {
+                Some(ContentPart::text("[image output]"))
             }
-            ToolCallContent::Terminal(terminal) => {
-                parts.push(ContentPart::text(format!(
-                    "[terminal:{}]",
-                    terminal.terminal_id.0
-                )));
-            }
-            _ => {}
-        }
-    }
-    parts
+            _ => None,
+        })
+        .collect()
 }
 
 fn json_preview(value: &serde_json::Value) -> String {

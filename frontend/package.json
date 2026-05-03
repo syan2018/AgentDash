@@ -27,6 +27,7 @@
     "katex": "^0.16.45",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-resizable-panels": "^4.11.0",
     "react-router-dom": "^7.13.1",
     "streamdown": "^2.5.0",
     "zustand": "^5.0.11"

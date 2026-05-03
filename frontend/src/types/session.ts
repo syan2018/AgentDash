@@ -165,6 +165,8 @@ export interface SessionNavigationState {
   task_context?: SessionTaskContext;
   project_agent?: ProjectSessionAgentContext;
   return_to?: SessionReturnTarget;
+  /** 进入 session 页时自动展开右栏工作空间面板 */
+  open_workspace_panel?: boolean;
 }
 
 export interface StoryNavigationState {

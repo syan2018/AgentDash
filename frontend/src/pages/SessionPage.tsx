@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
 import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
-import { CanvasSessionPanel } from "../features/canvas-panel";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
-import { ContextInspectorPanel, hasStoryContextInfo, ProjectSessionContextPanel, StorySessionContextPanel } from "../features/session-context";
+import { WorkspacePanel, type WorkspacePanelHandle, type WorkspacePanelTab } from "../features/workspace-panel";
 import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
@@ -66,11 +66,27 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story_id: string;
     story: Story | null;
   } | null>(null);
-  const [isContextPanelOpen, setIsContextPanelOpen] = useState(false);
-  const [isContextInspectorOpen, setIsContextInspectorOpen] = useState(false);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-  const [isCanvasPanelOpen, setIsCanvasPanelOpen] = useState(false);
+  const [workspaceActiveTab, setWorkspaceActiveTab] = useState<WorkspacePanelTab>("context");
   const [sessionViewMode, setSessionViewMode] = useState<"chat" | "lifecycle">("chat");
+
+  const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
+  const rightPanelRef = useRef<PanelImperativeHandle>(null);
+
+  const expandWorkspacePanel = useCallback((tab?: WorkspacePanelTab) => {
+    if (tab) setWorkspaceActiveTab(tab);
+    rightPanelRef.current?.expand();
+  }, []);
+
+  const toggleWorkspacePanel = useCallback(() => {
+    const panel = rightPanelRef.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) {
+      panel.expand();
+    } else {
+      panel.collapse();
+    }
+  }, []);
 
   const routeState = useMemo(
     () => (location.state as SessionNavigationState | null) ?? null,
@@ -385,14 +401,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);
-          setIsCanvasPanelOpen(true);
+          expandWorkspacePanel("canvas");
         }
         break;
       }
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally]);
+  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, expandWorkspacePanel]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -488,6 +504,16 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     </div>
   ) : null;
 
+  // ─── 路由 state 驱动自动展开右栏 ───────────────────────
+  // 通过 requestAnimationFrame 延迟到 paint 后调用，避免 effect 内同步 setState
+  useEffect(() => {
+    if (!routeState?.open_workspace_panel) return;
+    const raf = requestAnimationFrame(() => {
+      rightPanelRef.current?.expand();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [routeState]);
+
   // ─── 渲染 ────────────────────────────────────────────
 
   return (
@@ -565,110 +591,77 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
-          {currentSessionId && (
-            <button
-              type="button"
-              onClick={() => setIsContextInspectorOpen((value) => !value)}
-              className={`rounded-[10px] border px-2.5 py-1.5 text-xs transition-colors ${
-                isContextInspectorOpen
-                  ? "border-primary/50 bg-primary/10 text-primary"
-                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-              title="查看 Session 上下文审计时间线"
-            >
-              Context Inspector
-            </button>
-          )}
-          {activeCanvasId && !isCanvasPanelOpen && (
-            <button
-              type="button"
-              onClick={() => setIsCanvasPanelOpen(true)}
-              className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              打开 Canvas
-            </button>
-          )}
+          {/* 工作空间面板展开/收起 */}
+          <button
+            type="button"
+            onClick={toggleWorkspacePanel}
+            className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            title="展开/收起工作空间面板"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M15 3v18" />
+            </svg>
+          </button>
         </div>
       </header>
 
-      {sessionContextSnapshot?.owner_context.owner_level === "project" && (
-        <ProjectSessionContextPanel
-          projectName={ownerProjectName}
-          contextSnapshot={sessionContextSnapshot}
-          runtimeSurface={sessionRuntimeSurface}
-          vfs={sessionVfs}
-          hookRuntime={activeHookRuntime}
-          sessionCapabilities={sessionCapabilities}
-          isOpen={isContextPanelOpen}
-          onToggle={() => setIsContextPanelOpen((value) => !value)}
-        />
-      )}
-
-      {sessionContextSnapshot?.owner_context.owner_level !== "project" && ownerStory && (
-        hasStoryContextInfo(ownerStory)
-        || sessionContextSnapshot != null
-        || (sessionVfs && sessionVfs.mounts.length > 0)
-      ) && (
-        <StorySessionContextPanel
-          story={ownerStory}
-          contextSnapshot={sessionContextSnapshot}
-          executorSummary={taskExecutorSummary}
-          runtimeSurface={sessionRuntimeSurface}
-          vfs={sessionVfs}
-          hookRuntime={activeHookRuntime}
-          sessionCapabilities={sessionCapabilities}
-          isOpen={isContextPanelOpen}
-          onToggle={() => setIsContextPanelOpen((value) => !value)}
-        />
-      )}
-
-      {/* 复用的聊天视图 + Canvas 侧栏 + Context Inspector 抽屉 */}
-      <div className="flex flex-1 overflow-hidden">
-        <div className="min-w-0 flex-1 overflow-hidden">
-          {showLifecycleView && currentSessionId ? (
-            <LifecycleSessionView sessionId={currentSessionId} />
-          ) : (
-            <SessionChatView
-              sessionId={currentSessionId}
-              workspaceId={chatWorkspaceId}
-              onCreateSession={handleCreateSession}
-              onSessionIdChange={handleSessionIdChange}
-              onMessageSent={handleMessageSent}
-              onTurnEnd={handleTurnEnd}
-              onSystemEvent={handleSystemEvent}
-              executorHint={executorHint}
-              agentDefaults={taskExecutorSummary}
-              inputPrefix={ownerBindingBar}
-            />
-          )}
-        </div>
-        {isContextInspectorOpen && currentSessionId && (
-          <div className="w-[480px] shrink-0 border-l border-border bg-background/60">
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-xs font-semibold text-foreground">
-                Context Inspector
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsContextInspectorOpen(false)}
-                className="rounded-md px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              >
-                关闭
-              </button>
-            </div>
-            <ContextInspectorPanel sessionId={currentSessionId} />
+      {/* 中栏 + 右栏：可拖拽双面板 */}
+      <Group orientation="horizontal" className="flex-1 overflow-hidden">
+        {/* 中栏：聊天 / Lifecycle 视图 */}
+        <Panel minSize="30%">
+          <div className="h-full overflow-hidden">
+            {showLifecycleView && currentSessionId ? (
+              <LifecycleSessionView sessionId={currentSessionId} />
+            ) : (
+              <SessionChatView
+                sessionId={currentSessionId}
+                workspaceId={chatWorkspaceId}
+                onCreateSession={handleCreateSession}
+                onSessionIdChange={handleSessionIdChange}
+                onMessageSent={handleMessageSent}
+                onTurnEnd={handleTurnEnd}
+                onSystemEvent={handleSystemEvent}
+                executorHint={executorHint}
+                agentDefaults={taskExecutorSummary}
+                inputPrefix={ownerBindingBar}
+              />
+            )}
           </div>
-        )}
-        {!showLifecycleView && isCanvasPanelOpen && activeCanvasId && (
-          <div className="w-[55vw] max-w-[1100px] min-w-[680px] shrink-0 border-l border-border">
-            <CanvasSessionPanel
-              canvasId={activeCanvasId}
-              sessionId={currentSessionId}
-              onClose={() => setIsCanvasPanelOpen(false)}
-            />
-          </div>
-        )}
-      </div>
+        </Panel>
+
+        {/* 拖拽手柄 */}
+        <Separator className="group relative w-1.5 shrink-0 bg-border/30 transition-colors hover:bg-primary/30 active:bg-primary/50 data-[separator]:cursor-col-resize">
+          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-border transition-colors group-hover:bg-primary/50 group-active:bg-primary" />
+        </Separator>
+
+        {/* 右栏：工作空间面板（默认折叠） */}
+        <Panel
+          panelRef={rightPanelRef}
+          defaultSize="0%"
+          minSize="20%"
+          maxSize="60%"
+          collapsible
+          collapsedSize="0%"
+          className="border-l border-border"
+        >
+          <WorkspacePanel
+            ref={workspacePanelRef}
+            sessionId={currentSessionId}
+            contextSnapshot={sessionContextSnapshot}
+            ownerStory={ownerStory}
+            ownerProjectName={ownerProjectName}
+            executorSummary={taskExecutorSummary}
+            runtimeSurface={sessionRuntimeSurface}
+            vfs={sessionVfs}
+            hookRuntime={activeHookRuntime}
+            sessionCapabilities={sessionCapabilities}
+            activeCanvasId={activeCanvasId}
+            activeTab={workspaceActiveTab}
+            onTabChange={setWorkspaceActiveTab}
+          />
+        </Panel>
+      </Group>
     </div>
   );
 }

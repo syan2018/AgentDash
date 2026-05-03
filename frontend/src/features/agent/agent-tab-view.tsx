@@ -234,19 +234,38 @@ export function AgentTabView() {
                   {activeRun.status === "running" ? " ▶" : activeRun.status === "blocked" ? " ⏸" : ""}
                 </span>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  const state: SessionNavigationState = {
-                    return_to: { owner_type: "project", project_id: currentProjectId },
-                  };
-                  navigate(`/session/${selectedSessionId}`, { state });
-                }}
-                className="ml-auto shrink-0 rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                title="在独立页面全屏打开"
-              >
-                全屏 ↗
-              </button>
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const state: SessionNavigationState = {
+                      return_to: { owner_type: "project", project_id: currentProjectId },
+                      open_workspace_panel: true,
+                    };
+                    navigate(`/session/${selectedSessionId}`, { state });
+                  }}
+                  className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  title="在独立页面打开并展开工作空间面板"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M15 3v18" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const state: SessionNavigationState = {
+                      return_to: { owner_type: "project", project_id: currentProjectId },
+                    };
+                    navigate(`/session/${selectedSessionId}`, { state });
+                  }}
+                  className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  title="在独立页面全屏打开"
+                >
+                  全屏 ↗
+                </button>
+              </div>
             </div>
 
             {/* 聊天视图 */}

@@ -14,7 +14,6 @@ path = "src/generate_ts.rs"
 [dependencies]
 codex-app-server-protocol = { workspace = true }
 agent-client-protocol = { workspace = true }
-agentdash-acp-meta = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

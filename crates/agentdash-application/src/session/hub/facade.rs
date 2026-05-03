@@ -9,13 +9,10 @@
 
 use std::io;
 
-use agentdash_agent_types::AgentMessage;
 use agentdash_protocol::{BackboneEnvelope, SourceInfo};
 use tokio::sync::broadcast;
 
-use super::super::continuation::{
-    build_continuation_system_context_from_events, build_restored_session_messages_from_events,
-};
+use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch_intent::{
     SessionLaunchIntent, SessionLaunchPreparation, SessionLaunchStrictness,
@@ -281,24 +278,17 @@ impl SessionHub {
         Ok(())
     }
 
-    pub async fn build_continuation_system_context(
+    /// 从持久化事件重建投影 transcript。
+    ///
+    /// 消费者自选渲染方式：
+    /// - `.into_messages()` → 执行器原生 session restore
+    /// - `render_system_context_markdown(&transcript, owner)` → system prompt 注入
+    pub async fn build_projected_transcript(
         &self,
         session_id: &str,
-        owner_context: Option<&str>,
-    ) -> std::io::Result<Option<String>> {
+    ) -> std::io::Result<agentdash_agent_types::ProjectedTranscript> {
         let events = self.persistence.list_all_events(session_id).await?;
-        Ok(build_continuation_system_context_from_events(
-            owner_context,
-            &events,
-        ))
-    }
-
-    pub async fn build_restored_session_messages(
-        &self,
-        session_id: &str,
-    ) -> std::io::Result<Vec<AgentMessage>> {
-        let events = self.persistence.list_all_events(session_id).await?;
-        Ok(build_restored_session_messages_from_events(&events))
+        Ok(build_projected_transcript_from_events(&events))
     }
 
     /// 低层启动入口：跳过 augment，直接进入 prompt pipeline。

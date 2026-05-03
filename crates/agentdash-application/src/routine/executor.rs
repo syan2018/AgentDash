@@ -449,11 +449,14 @@ impl RoutineExecutor {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
             ) => {
-                let markdown = self
+                let transcript = self
                     .session_hub
-                    .build_continuation_system_context(session_id, None)
+                    .build_projected_transcript(session_id)
                     .await
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
+                let markdown = crate::session::continuation::render_system_context_markdown(
+                    &transcript, None,
+                );
                 let bundle_session_id =
                     Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
                 let prebuilt_continuation_bundle = markdown.map(|md| {

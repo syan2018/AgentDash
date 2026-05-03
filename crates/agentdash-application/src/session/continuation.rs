@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use agent_client_protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus};
-use agentdash_acp_meta::parse_agentdash_meta;
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
@@ -12,15 +11,11 @@ use super::persistence::PersistedSessionEvent;
 
 // ─── Continuation transcript 构建 ─────────────────────────────
 //
-// 两条活跃路径：
-//
-// 1. **SystemContext** (`build_continuation_system_context_from_events`)
-//    产出 Markdown 字符串，作为 system prompt 的上下文注入。
-//    消费者：acp_sessions route、routine executor。
-//
-// 2. **ExecutorState** (`build_restored_session_messages_from_events`)
-//    产出 `Vec<AgentMessage>`，交由 connector 走执行器原生的 session restore。
-//    消费者：prompt_pipeline（RepositoryRehydrate::ExecutorState 分支）。
+// 唯一公共入口：`build_projected_transcript_from_events`
+//   → 返回 `ProjectedTranscript`，消费者自选渲染方式：
+//     - `.into_messages()` → 执行器原生恢复（prompt_pipeline ExecutorState 分支）
+//     - `render_system_context_markdown(&transcript, owner_context)` → system prompt 注入
+//       （acp_sessions route、routine executor）
 
 #[derive(Debug, Clone)]
 struct CompactionCheckpoint {
@@ -31,12 +26,12 @@ struct CompactionCheckpoint {
     timestamp_ms: Option<u64>,
 }
 
-pub(super) fn build_continuation_system_context_from_events(
+/// 将 `ProjectedTranscript` 渲染为 Markdown，用于 system prompt 注入。
+pub fn render_system_context_markdown(
+    transcript: &ProjectedTranscript,
     owner_context: Option<&str>,
-    events: &[PersistedSessionEvent],
 ) -> Option<String> {
-    let transcript = build_projected_transcript_from_events(events);
-    if events.is_empty() && transcript.is_empty() {
+    if transcript.is_empty() {
         return owner_context
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -57,85 +52,83 @@ pub(super) fn build_continuation_system_context_from_events(
             .to_string(),
     );
 
-    if !transcript.is_empty() {
-        history_lines.push(String::new());
-        history_lines.push("### Transcript".to_string());
-        for entry in &transcript.entries {
-            match &entry.message {
-                AgentMessage::User { content, .. } => {
-                    let text = content
+    history_lines.push(String::new());
+    history_lines.push("### Transcript".to_string());
+    for entry in &transcript.entries {
+        match &entry.message {
+            AgentMessage::User { content, .. } => {
+                let text = content
+                    .iter()
+                    .filter_map(ContentPart::extract_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+                history_lines.push("#### 用户".to_string());
+                history_lines.push(text);
+            }
+            AgentMessage::Assistant {
+                content,
+                tool_calls,
+                ..
+            } => {
+                let mut text = content
+                    .iter()
+                    .filter_map(ContentPart::extract_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !tool_calls.is_empty() {
+                    let tool_lines = tool_calls
                         .iter()
-                        .filter_map(ContentPart::extract_text)
+                        .map(|tool_call| {
+                            format!(
+                                "- {}({})",
+                                tool_call.name,
+                                json_preview(&tool_call.arguments)
+                            )
+                        })
                         .collect::<Vec<_>>()
-                        .join("");
-                    history_lines.push("#### 用户".to_string());
+                        .join("\n");
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str("工具调用：\n");
+                    text.push_str(&tool_lines);
+                }
+                history_lines.push("#### 助手".to_string());
+                history_lines.push(text);
+            }
+            AgentMessage::ToolResult {
+                tool_name,
+                content,
+                details,
+                is_error,
+                ..
+            } => {
+                let mut text = content
+                    .iter()
+                    .filter_map(ContentPart::extract_text)
+                    .collect::<Vec<_>>()
+                    .join("");
+                if text.is_empty()
+                    && let Some(details) = details.as_ref()
+                {
+                    text = json_preview(details);
+                }
+                history_lines.push(format!(
+                    "#### 工具结果 ({})",
+                    tool_name.as_deref().unwrap_or("tool_result")
+                ));
+                if *is_error {
+                    history_lines.push(format!("[error]\n{text}"));
+                } else {
                     history_lines.push(text);
-                }
-                AgentMessage::Assistant {
-                    content,
-                    tool_calls,
-                    ..
-                } => {
-                    let mut text = content
-                        .iter()
-                        .filter_map(ContentPart::extract_text)
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if !tool_calls.is_empty() {
-                        let tool_lines = tool_calls
-                            .iter()
-                            .map(|tool_call| {
-                                format!(
-                                    "- {}({})",
-                                    tool_call.name,
-                                    json_preview(&tool_call.arguments)
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        if !text.is_empty() {
-                            text.push_str("\n\n");
-                        }
-                        text.push_str("工具调用：\n");
-                        text.push_str(&tool_lines);
-                    }
-                    history_lines.push("#### 助手".to_string());
-                    history_lines.push(text);
-                }
-                AgentMessage::ToolResult {
-                    tool_name,
-                    content,
-                    details,
-                    is_error,
-                    ..
-                } => {
-                    let mut text = content
-                        .iter()
-                        .filter_map(ContentPart::extract_text)
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if text.is_empty()
-                        && let Some(details) = details.as_ref()
-                    {
-                        text = json_preview(details);
-                    }
-                    history_lines.push(format!(
-                        "#### 工具结果 ({})",
-                        tool_name.as_deref().unwrap_or("tool_result")
-                    ));
-                    if *is_error {
-                        history_lines.push(format!("[error]\n{text}"));
-                    } else {
-                        history_lines.push(text);
-                    }
-                }
-                AgentMessage::CompactionSummary { summary, .. } => {
-                    history_lines.push("#### 历史摘要".to_string());
-                    history_lines.push(summary.clone());
                 }
             }
-            history_lines.push(String::new());
+            AgentMessage::CompactionSummary { summary, .. } => {
+                history_lines.push("#### 历史摘要".to_string());
+                history_lines.push(summary.clone());
+            }
         }
+        history_lines.push(String::new());
     }
 
     sections.push(format!(
@@ -204,14 +197,11 @@ enum RestoredMessageEnvelope {
     },
 }
 
-/// 公共入口 — 返回 Vec<AgentMessage>，保持 hub.rs 等调用方不变。
-pub(super) fn build_restored_session_messages_from_events(
-    events: &[PersistedSessionEvent],
-) -> Vec<AgentMessage> {
-    build_projected_transcript_from_events(events).into_messages()
-}
-
-/// 内部入口 — 返回带身份的 ProjectedTranscript。
+/// 从持久化事件重建投影 transcript — 唯一公共入口。
+///
+/// 消费者根据需要自选渲染方式：
+/// - `.into_messages()` → 执行器原生 session restore
+/// - `render_system_context_markdown(&transcript, owner_context)` → system prompt 注入
 pub(super) fn build_projected_transcript_from_events(
     events: &[PersistedSessionEvent],
 ) -> ProjectedTranscript {
@@ -592,32 +582,34 @@ fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<Comp
 }
 
 fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
-    let compat = agentdash_protocol::envelope_to_session_notification(&event.notification)?;
-    let SessionUpdate::SessionInfoUpdate(info) = &compat.update else {
-        return None;
-    };
-    let parsed = parse_agentdash_meta(info.meta.as_ref()?)?;
-    let agent_event = parsed.event?;
-    if agent_event.r#type != "context_compacted" {
-        return None;
+    use agentdash_protocol::{BackboneEvent, PlatformEvent};
+    match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "context_compacted" =>
+        {
+            let compacted_until_ref = serde_json::from_value::<MessageRef>(
+                value.get("compacted_until_ref")?.clone(),
+            )
+            .ok()?;
+            Some(CompactionCheckpoint {
+                summary: value.get("summary")?.as_str()?.to_string(),
+                tokens_before: value
+                    .get("tokens_before")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default(),
+                messages_compacted: value
+                    .get("messages_compacted")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or_default(),
+                compacted_until_ref,
+                timestamp_ms: value
+                    .get("timestamp_ms")
+                    .and_then(serde_json::Value::as_u64),
+            })
+        }
+        _ => None,
     }
-    let data = agent_event.data?;
-    let compacted_until_ref =
-        serde_json::from_value::<MessageRef>(data.get("compacted_until_ref")?.clone()).ok()?;
-    Some(CompactionCheckpoint {
-        summary: data.get("summary")?.as_str()?.to_string(),
-        tokens_before: data
-            .get("tokens_before")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or_default(),
-        messages_compacted: data
-            .get("messages_compacted")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or_default(),
-        compacted_until_ref,
-        timestamp_ms: data.get("timestamp_ms").and_then(serde_json::Value::as_u64),
-    })
 }
 
 /// 在 ProjectedEntry 列表上应用 compaction checkpoint。

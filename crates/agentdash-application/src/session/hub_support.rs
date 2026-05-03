@@ -5,7 +5,6 @@ use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceI
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;
 
-use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
 use super::persistence::PersistedSessionEvent;
@@ -36,21 +35,6 @@ pub(super) fn build_user_message_envelopes(
             })
         })
         .collect()
-}
-
-/// 兼容入口：接受旧 `AgentDashSourceV1` 并转换为 `SourceInfo`。
-pub(super) fn build_user_message_notifications(
-    session_id: &str,
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    user_blocks: &[ContentBlock],
-) -> Vec<BackboneEnvelope> {
-    let source_info = SourceInfo {
-        connector_id: source.connector_id.clone(),
-        connector_type: source.connector_type.clone(),
-        executor_id: source.executor_id.clone(),
-    };
-    build_user_message_envelopes(session_id, &source_info, turn_id, user_blocks)
 }
 
 pub(super) fn build_turn_started_envelope(

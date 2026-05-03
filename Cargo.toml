@@ -9,7 +9,7 @@ members = [
     "crates/agentdash-first-party-plugins",
     "crates/agentdash-plugin-api",
     "crates/agentdash-api",
-    "crates/agentdash-acp-meta",
+
     "crates/agentdash-mcp",
     "crates/agentdash-agent-types",
     "crates/agentdash-agent",
@@ -67,7 +67,7 @@ agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }
 agentdash-executor = { path = "crates/agentdash-executor", default-features = false }
 agentdash-first-party-plugins = { path = "crates/agentdash-first-party-plugins" }
-agentdash-acp-meta = { path = "crates/agentdash-acp-meta" }
+
 agentdash-mcp = { path = "crates/agentdash-mcp" }
 agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }

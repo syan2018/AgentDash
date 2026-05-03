@@ -15,7 +15,6 @@ agentdash-spi.workspace = true
 agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
 agentdash-domain.workspace = true
-agentdash-acp-meta.workspace = true
 agentdash-infrastructure.workspace = true
 agent-client-protocol = { workspace = true }
 

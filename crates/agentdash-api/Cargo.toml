@@ -18,7 +18,6 @@ agentdash-spi = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true, features = ["pi-agent"] }
-agentdash-acp-meta = { workspace = true }
 agentdash-mcp = { workspace = true }
 agentdash-relay = { workspace = true }
 agentdash-plugin-api = { workspace = true }

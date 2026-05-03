@@ -2,11 +2,12 @@ use agent_client_protocol::{
     ContentBlock, ContentChunk, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
     TextContent, UsageUpdate,
 };
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
-};
+use serde_json::{Map, Value, json};
 
 use crate::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+
+const AGENTDASH_NS: &str = "agentdash";
+const AGENTDASH_META_VERSION: u32 = 1;
 
 /// 过渡期兼容：将 BackboneEnvelope 转换为 ACP SessionNotification。
 ///
@@ -75,115 +76,50 @@ pub fn envelope_to_session_notification(
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
             executor_session_id,
-        }) => {
-            let event = AgentDashEventV1::new("executor_session_bound")
-                .message(Some(executor_session_id.clone()))
-                .data(Some(
-                    serde_json::json!({ "executor_session_id": executor_session_id }),
-                ));
-            let source = AgentDashSourceV1::new(
-                &envelope.source.connector_id,
-                &envelope.source.connector_type,
-            );
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = envelope.trace.turn_id.clone();
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source))
-                .trace(Some(trace))
-                .event(Some(event));
-            Some(SessionNotification::new(
-                session_id,
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-                ),
-            ))
-        }
+        }) => Some(wrap_session_info_update(
+            session_id,
+            envelope,
+            "executor_session_bound",
+            Some(executor_session_id.clone()),
+            Some(json!({ "executor_session_id": executor_session_id })),
+        )),
         BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
             let hook_data = payload
                 .data
                 .as_ref()
                 .and_then(|data| serde_json::to_value(data).ok());
-            let event = AgentDashEventV1::new("hook_event")
-                .message(payload.message.clone())
-                .data(hook_data);
-            let source = AgentDashSourceV1::new(
-                &envelope.source.connector_id,
-                &envelope.source.connector_type,
-            );
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = envelope.trace.turn_id.clone();
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source))
-                .trace(Some(trace))
-                .event(Some(event));
-            Some(SessionNotification::new(
+            Some(wrap_session_info_update(
                 session_id,
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-                ),
+                envelope,
+                "hook_event",
+                payload.message.clone(),
+                hook_data,
             ))
         }
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-            let event = AgentDashEventV1::new("session_meta_update")
-                .message(Some(key.clone()))
-                .data(Some(value.clone()));
-            let source = AgentDashSourceV1::new(
-                &envelope.source.connector_id,
-                &envelope.source.connector_type,
-            );
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = envelope.trace.turn_id.clone();
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source))
-                .trace(Some(trace))
-                .event(Some(event));
-            Some(SessionNotification::new(
+            Some(wrap_session_info_update(
                 session_id,
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-                ),
+                envelope,
+                "session_meta_update",
+                Some(key.clone()),
+                Some(value.clone()),
             ))
         }
-        BackboneEvent::Error(error) => {
-            let event = AgentDashEventV1::new("error").message(Some(error.error.message.clone()));
-            let source = AgentDashSourceV1::new(
-                &envelope.source.connector_id,
-                &envelope.source.connector_type,
-            );
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = envelope.trace.turn_id.clone();
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source))
-                .trace(Some(trace))
-                .event(Some(event));
-            Some(SessionNotification::new(
-                session_id,
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-                ),
-            ))
-        }
-        // 其余 Codex 原生事件（item lifecycle, turn lifecycle, plan 等）在过渡期暂不产出 ACP；
-        // P0.4 完成后所有消费者直接读 BackboneEnvelope，此桥将被移除。
+        BackboneEvent::Error(error) => Some(wrap_session_info_update(
+            session_id,
+            envelope,
+            "error",
+            Some(error.error.message.clone()),
+            None,
+        )),
         _ => {
             let event_type = envelope_event_type_label(&envelope.event);
-            let event = AgentDashEventV1::new(event_type);
-            let source = AgentDashSourceV1::new(
-                &envelope.source.connector_id,
-                &envelope.source.connector_type,
-            );
-            let mut trace = AgentDashTraceV1::new();
-            trace.turn_id = envelope.trace.turn_id.clone();
-            trace.entry_index = envelope.trace.entry_index;
-            let agentdash = AgentDashMetaV1::new()
-                .source(Some(source))
-                .trace(Some(trace))
-                .event(Some(event));
-            Some(SessionNotification::new(
+            Some(wrap_session_info_update(
                 session_id,
-                SessionUpdate::SessionInfoUpdate(
-                    SessionInfoUpdate::new().meta(merge_agentdash_meta(None, &agentdash)),
-                ),
+                envelope,
+                event_type,
+                None,
+                None,
             ))
         }
     }
@@ -194,18 +130,33 @@ pub fn envelope_to_session_notification(
 /// 用于 relay 路径接收远程后端的 ACP 格式通知，转入内部 BackboneEnvelope 流。
 pub fn session_notification_to_envelope(notification: &SessionNotification) -> BackboneEnvelope {
     let session_id = notification.session_id.to_string();
-    let parsed = notification
+    let agentdash_meta = notification
         .meta
         .as_ref()
-        .and_then(|m| agentdash_acp_meta::parse_agentdash_meta(m));
+        .and_then(|m| m.get(AGENTDASH_NS))
+        .filter(|v| {
+            v.get("v")
+                .and_then(Value::as_u64)
+                .map_or(false, |v| v == u64::from(AGENTDASH_META_VERSION))
+        });
 
-    let source = parsed
-        .as_ref()
-        .and_then(|p| p.source.as_ref())
+    let source = agentdash_meta
+        .and_then(|v| v.get("source"))
         .map(|s| crate::SourceInfo {
-            connector_id: s.connector_id.clone(),
-            connector_type: s.connector_type.clone(),
-            executor_id: s.executor_id.clone(),
+            connector_id: s
+                .get("connectorId")
+                .and_then(Value::as_str)
+                .unwrap_or("relay")
+                .to_string(),
+            connector_type: s
+                .get("connectorType")
+                .and_then(Value::as_str)
+                .unwrap_or("remote")
+                .to_string(),
+            executor_id: s
+                .get("executorId")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
         })
         .unwrap_or_else(|| crate::SourceInfo {
             connector_id: "relay".to_string(),
@@ -213,19 +164,24 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
             executor_id: None,
         });
 
-    let trace = parsed
-        .as_ref()
-        .and_then(|p| p.trace.as_ref())
+    let trace = agentdash_meta
+        .and_then(|v| v.get("trace"))
         .map(|t| crate::TraceInfo {
-            turn_id: t.turn_id.clone(),
-            entry_index: t.entry_index,
+            turn_id: t
+                .get("turnId")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            entry_index: t
+                .get("entryIndex")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok()),
         })
         .unwrap_or_default();
 
-    let event_type = parsed
-        .as_ref()
-        .and_then(|p| p.event.as_ref())
-        .map(|e| e.r#type.as_str());
+    let event_type = agentdash_meta
+        .and_then(|v| v.get("event"))
+        .and_then(|e| e.get("type"))
+        .and_then(Value::as_str);
 
     let event = match &notification.update {
         SessionUpdate::AgentMessageChunk(chunk) => {
@@ -280,45 +236,54 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 },
             },
         ),
-        SessionUpdate::SessionInfoUpdate(_) => match event_type {
-            Some("executor_session_bound") => {
-                let executor_session_id = parsed
-                    .as_ref()
-                    .and_then(|p| p.event.as_ref())
-                    .and_then(|e| e.message.clone())
-                    .unwrap_or_default();
-                BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
-                    executor_session_id,
-                })
-            }
-            Some("hook_event") => {
-                let payload = parsed
-                    .as_ref()
-                    .and_then(|p| p.event.as_ref())
-                    .map(|e| crate::HookTracePayload {
-                        event_type: Some(e.r#type.clone()),
-                        message: e.message.clone(),
-                        data: e
-                            .data
-                            .clone()
-                            .and_then(|raw| serde_json::from_value::<crate::HookTraceData>(raw).ok()),
+        SessionUpdate::SessionInfoUpdate(_) => {
+            let event_obj = agentdash_meta.and_then(|v| v.get("event"));
+            match event_type {
+                Some("executor_session_bound") => {
+                    let executor_session_id = event_obj
+                        .and_then(|e| e.get("message"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
+                        executor_session_id,
                     })
-                    .unwrap_or_else(|| crate::HookTracePayload {
-                        event_type: Some("hook_event".to_string()),
-                        message: None,
-                        data: None,
-                    });
-                BackboneEvent::Platform(PlatformEvent::HookTrace(payload))
+                }
+                Some("hook_event") => {
+                    let payload = event_obj
+                        .map(|e| crate::HookTracePayload {
+                            event_type: e
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string),
+                            message: e
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string),
+                            data: e
+                                .get("data")
+                                .cloned()
+                                .and_then(|raw| {
+                                    serde_json::from_value::<crate::HookTraceData>(raw).ok()
+                                }),
+                        })
+                        .unwrap_or_else(|| crate::HookTracePayload {
+                            event_type: Some("hook_event".to_string()),
+                            message: None,
+                            data: None,
+                        });
+                    BackboneEvent::Platform(PlatformEvent::HookTrace(payload))
+                }
+                _ => {
+                    let key = event_type.unwrap_or("unknown").to_string();
+                    let value = event_obj
+                        .and_then(|e| e.get("data"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                }
             }
-            _ => {
-                let key = event_type.unwrap_or("unknown").to_string();
-                let value = parsed
-                    .and_then(|p| p.event)
-                    .and_then(|e| e.data)
-                    .unwrap_or(serde_json::Value::Null);
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-            }
-        },
+        }
         _ => {
             let value = serde_json::to_value(&notification.update).unwrap_or_default();
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
@@ -332,18 +297,58 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
 }
 
 fn build_acp_meta(envelope: &BackboneEnvelope) -> Option<agent_client_protocol::Meta> {
-    let mut source = AgentDashSourceV1::new(
-        &envelope.source.connector_id,
-        &envelope.source.connector_type,
-    );
-    source.executor_id = envelope.source.executor_id.clone();
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = envelope.trace.turn_id.clone();
-    trace.entry_index = envelope.trace.entry_index;
-    let agentdash = AgentDashMetaV1::new()
-        .source(Some(source))
-        .trace(Some(trace));
-    merge_agentdash_meta(None, &agentdash)
+    let agentdash_value = json!({
+        "v": AGENTDASH_META_VERSION,
+        "source": {
+            "connectorId": envelope.source.connector_id,
+            "connectorType": envelope.source.connector_type,
+            "executorId": envelope.source.executor_id,
+        },
+        "trace": {
+            "turnId": envelope.trace.turn_id,
+            "entryIndex": envelope.trace.entry_index,
+        }
+    });
+    let mut meta = agent_client_protocol::Meta::new();
+    meta.insert(AGENTDASH_NS.to_string(), agentdash_value);
+    Some(meta)
+}
+
+fn wrap_session_info_update(
+    session_id: SessionId,
+    envelope: &BackboneEnvelope,
+    event_type: &str,
+    message: Option<String>,
+    data: Option<Value>,
+) -> SessionNotification {
+    let mut event_map = Map::new();
+    event_map.insert("type".to_string(), Value::String(event_type.to_string()));
+    if let Some(msg) = message {
+        event_map.insert("message".to_string(), Value::String(msg));
+    }
+    if let Some(d) = data {
+        event_map.insert("data".to_string(), d);
+    }
+
+    let agentdash_value = json!({
+        "v": AGENTDASH_META_VERSION,
+        "source": {
+            "connectorId": envelope.source.connector_id,
+            "connectorType": envelope.source.connector_type,
+            "executorId": envelope.source.executor_id,
+        },
+        "trace": {
+            "turnId": envelope.trace.turn_id,
+            "entryIndex": envelope.trace.entry_index,
+        },
+        "event": Value::Object(event_map),
+    });
+    let mut meta = agent_client_protocol::Meta::new();
+    meta.insert(AGENTDASH_NS.to_string(), agentdash_value);
+    SessionNotification::new(
+        session_id,
+        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(Some(meta))),
+    )
 }
 
 fn envelope_event_type_label(event: &BackboneEvent) -> &'static str {

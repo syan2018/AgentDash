@@ -4,7 +4,7 @@ pub mod baseline_capabilities;
 pub mod bootstrap;
 pub mod companion_wait;
 pub mod context;
-mod continuation;
+pub mod continuation;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;

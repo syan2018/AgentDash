@@ -159,15 +159,16 @@ impl SessionHub {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => {
-                let messages = self
-                    .build_restored_session_messages(session_id)
+                let transcript = self
+                    .build_projected_transcript(session_id)
                     .await
                     .map_err(|error| {
                         ConnectorError::Runtime(format!(
                             "重建 session `{session_id}` 历史消息失败: {error}"
                         ))
                     })?;
-                (!messages.is_empty()).then_some(RestoredSessionState { messages })
+                (!transcript.is_empty())
+                    .then(|| RestoredSessionState { messages: transcript.into_messages() })
             }
             _ => None,
         };

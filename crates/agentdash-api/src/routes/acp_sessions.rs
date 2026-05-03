@@ -1070,12 +1070,15 @@ pub(crate) async fn augment_prompt_request_for_owner(
         SessionRepositoryRehydrateMode::SystemContext,
     ) = lifecycle_kind
     {
-        let markdown = state
+        let transcript = state
             .services
             .session_hub
-            .build_continuation_system_context(session_id, None)
+            .build_projected_transcript(session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let markdown = agentdash_application::session::continuation::render_system_context_markdown(
+            &transcript, None,
+        );
         let bundle_session_id =
             uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
         let continuation_bundle = markdown.map(|md| {
@@ -1339,12 +1342,15 @@ async fn resolve_continuation_system_context(
         include_owner_bundle: false,
     } = lifecycle
     {
-        let markdown = state
+        let transcript = state
             .services
             .session_hub
-            .build_continuation_system_context(session_id, None)
+            .build_projected_transcript(session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let markdown = agentdash_application::session::continuation::render_system_context_markdown(
+            &transcript, None,
+        );
         let bundle_session_id =
             uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
         let prebuilt_continuation_bundle = markdown.map(|md| {
@@ -1467,12 +1473,16 @@ async fn build_task_owner_prompt_request(
             // 包装为 static_fragment bundle。改为保留原 task bundle 的结构化 slot
             // （task/story/project/workspace/...），把历史 transcript 作为独立的
             // `static_fragment` fragment 附加到同一 bundle 上。
-            let transcript_markdown = state
+            let projected = state
                 .services
                 .session_hub
-                .build_continuation_system_context(session_id, None)
+                .build_projected_transcript(session_id)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let transcript_markdown =
+                agentdash_application::session::continuation::render_system_context_markdown(
+                    &projected, None,
+                );
             if let Some(transcript) = transcript_markdown
                 .as_ref()
                 .map(|md| md.trim())

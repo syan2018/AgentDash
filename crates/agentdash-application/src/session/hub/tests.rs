@@ -3,12 +3,8 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use agent_client_protocol::{
-    ContentBlock, ContentChunk, McpServer, SessionId, SessionInfoUpdate, SessionNotification,
-    SessionUpdate, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields,
-};
-use agentdash_acp_meta::{
-    AgentDashEventV1, AgentDashMetaV1, AgentDashSourceV1, AgentDashTraceV1, merge_agentdash_meta,
+    ContentBlock, ContentChunk, McpServer, SessionId, SessionNotification, SessionUpdate,
+    TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::hooks::{
@@ -24,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::super::MemorySessionPersistence;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
-    build_user_message_notifications, parse_turn_terminal_event_from_envelope,
+    build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
@@ -37,133 +33,9 @@ use super::SessionHub;
 ///
 /// 通过 compat 的 `envelope_to_session_notification()` 能还原回原始 ACP 通知，
 /// 保证 continuation 模块的 round-trip。
+/// 测试用 ACP notification → BackboneEnvelope 桥接。
 fn wrap_acp_notification(notification: &SessionNotification) -> BackboneEnvelope {
-    use agentdash_acp_meta::parse_agentdash_meta;
-
-    let session_id = notification.session_id.0.to_string();
-
-    let (connector_id, connector_type, executor_id) = extract_source_from_acp(notification);
-    let source = SourceInfo {
-        connector_id,
-        connector_type,
-        executor_id,
-    };
-
-    let (turn_id, entry_index) = extract_trace_from_acp(notification);
-
-    // 通过 ACP meta 的 event type 决定用哪种 BackboneEvent
-    let backbone_event = match &notification.update {
-        SessionUpdate::AgentMessageChunk(chunk) => {
-            let delta = agentdash_spi::content_block_to_text(&chunk.content);
-            BackboneEvent::AgentMessageDelta(
-                agentdash_protocol::codex_app_server_protocol::AgentMessageDeltaNotification {
-                    thread_id: session_id.clone(),
-                    turn_id: turn_id.clone().unwrap_or_default(),
-                    item_id: String::new(),
-                    delta: delta.unwrap_or_default().to_string(),
-                },
-            )
-        }
-        SessionUpdate::AgentThoughtChunk(chunk) => {
-            let delta = agentdash_spi::content_block_to_text(&chunk.content);
-            BackboneEvent::ReasoningTextDelta(
-                agentdash_protocol::codex_app_server_protocol::ReasoningTextDeltaNotification {
-                    thread_id: session_id.clone(),
-                    turn_id: turn_id.clone().unwrap_or_default(),
-                    item_id: String::new(),
-                    content_index: 0,
-                    delta: delta.unwrap_or_default().to_string(),
-                },
-            )
-        }
-        SessionUpdate::UserMessageChunk(chunk) => {
-            let value = serde_json::to_value(&chunk.content).unwrap_or(serde_json::Value::Null);
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "user_message_chunk".to_string(),
-                value,
-            })
-        }
-        SessionUpdate::SessionInfoUpdate(info) => {
-            let event_type = info
-                .meta
-                .as_ref()
-                .and_then(|m| parse_agentdash_meta(m))
-                .and_then(|p| p.event.map(|e| e.r#type))
-                .unwrap_or_default();
-            let meta_value = serde_json::to_value(&info).unwrap_or(serde_json::Value::Null);
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: event_type,
-                value: meta_value,
-            })
-        }
-        SessionUpdate::ToolCall(tc) => {
-            let value = serde_json::to_value(tc).unwrap_or(serde_json::Value::Null);
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "tool_call".to_string(),
-                value,
-            })
-        }
-        SessionUpdate::ToolCallUpdate(tcu) => {
-            let value = serde_json::to_value(tcu).unwrap_or(serde_json::Value::Null);
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "tool_call_update".to_string(),
-                value,
-            })
-        }
-        _ => {
-            let value =
-                serde_json::to_value(&notification.update).unwrap_or(serde_json::Value::Null);
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "unknown".to_string(),
-                value,
-            })
-        }
-    };
-
-    BackboneEnvelope::new(backbone_event, &session_id, source).with_trace(TraceInfo {
-        turn_id,
-        entry_index,
-    })
-}
-
-fn extract_source_from_acp(notification: &SessionNotification) -> (String, String, Option<String>) {
-    use agentdash_acp_meta::parse_agentdash_meta;
-    let meta = match &notification.update {
-        SessionUpdate::UserMessageChunk(c) => c.meta.as_ref(),
-        SessionUpdate::AgentMessageChunk(c) => c.meta.as_ref(),
-        SessionUpdate::AgentThoughtChunk(c) => c.meta.as_ref(),
-        SessionUpdate::ToolCall(tc) => tc.meta.as_ref(),
-        SessionUpdate::ToolCallUpdate(tcu) => tcu.meta.as_ref(),
-        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-        _ => None,
-    };
-    meta.and_then(|m| parse_agentdash_meta(m))
-        .and_then(|p| {
-            p.source.map(|s| {
-                (
-                    s.connector_id.clone(),
-                    s.connector_type.clone(),
-                    s.executor_id.clone(),
-                )
-            })
-        })
-        .unwrap_or_else(|| ("test".to_string(), "unit".to_string(), None))
-}
-
-fn extract_trace_from_acp(notification: &SessionNotification) -> (Option<String>, Option<u32>) {
-    use agentdash_acp_meta::parse_agentdash_meta;
-    let meta = match &notification.update {
-        SessionUpdate::UserMessageChunk(c) => c.meta.as_ref(),
-        SessionUpdate::AgentMessageChunk(c) => c.meta.as_ref(),
-        SessionUpdate::AgentThoughtChunk(c) => c.meta.as_ref(),
-        SessionUpdate::ToolCall(tc) => tc.meta.as_ref(),
-        SessionUpdate::ToolCallUpdate(tcu) => tcu.meta.as_ref(),
-        SessionUpdate::SessionInfoUpdate(info) => info.meta.as_ref(),
-        _ => None,
-    };
-    meta.and_then(|m| parse_agentdash_meta(m))
-        .and_then(|p| p.trace.map(|t| (t.turn_id, t.entry_index)))
-        .unwrap_or((None, None))
+    agentdash_protocol::session_notification_to_envelope(notification)
 }
 
 fn test_hub(
@@ -318,46 +190,27 @@ fn test_source() -> SourceInfo {
 }
 
 fn test_meta(
-    source: &AgentDashSourceV1,
+    source: &SourceInfo,
     turn_id: &str,
     entry_index: u32,
 ) -> agent_client_protocol::Meta {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-    trace.entry_index = Some(entry_index);
-
-    merge_agentdash_meta(
-        None,
-        &AgentDashMetaV1::new()
-            .source(Some(source.clone()))
-            .trace(Some(trace)),
-    )
-    .expect("test meta should build")
-}
-
-fn test_event_meta(
-    source: &AgentDashSourceV1,
-    turn_id: &str,
-    entry_index: u32,
-    event_type: &str,
-    data: serde_json::Value,
-) -> agent_client_protocol::Meta {
-    let mut trace = AgentDashTraceV1::new();
-    trace.turn_id = Some(turn_id.to_string());
-    trace.entry_index = Some(entry_index);
-
-    let mut event = AgentDashEventV1::new(event_type);
-    event.severity = Some("info".to_string());
-    event.data = Some(data);
-
-    merge_agentdash_meta(
-        None,
-        &AgentDashMetaV1::new()
-            .source(Some(source.clone()))
-            .trace(Some(trace))
-            .event(Some(event)),
-    )
-    .expect("test event meta should build")
+    let mut meta = agent_client_protocol::Meta::new();
+    meta.insert(
+        "agentdash".to_string(),
+        json!({
+            "v": 1,
+            "source": {
+                "connectorId": source.connector_id,
+                "connectorType": source.connector_type,
+                "executorId": source.executor_id,
+            },
+            "trace": {
+                "turnId": turn_id,
+                "entryIndex": entry_index,
+            }
+        }),
+    );
+    meta
 }
 
 #[derive(Default)]
@@ -587,10 +440,13 @@ fn build_user_notifications_preserves_block_types_and_index() {
         .expect("resource_link block"),
     ];
 
-    let mut source = AgentDashSourceV1::new("unit-test", "local_executor");
-    source.executor_id = Some("CLAUDE_CODE".to_string());
+    let source = SourceInfo {
+        connector_id: "unit-test".to_string(),
+        connector_type: "local_executor".to_string(),
+        executor_id: Some("CLAUDE_CODE".to_string()),
+    };
 
-    let envelopes = build_user_message_notifications("sess-test", &source, "t100", &blocks);
+    let envelopes = build_user_message_envelopes("sess-test", &source, "t100", &blocks);
     assert_eq!(envelopes.len(), 2);
 
     assert_eq!(envelopes[0].trace.turn_id.as_deref(), Some("t100"));
@@ -771,7 +627,7 @@ async fn owner_bootstrap_marks_session_meta_bootstrapped() {
 }
 
 #[tokio::test]
-async fn build_continuation_system_context_strips_owner_resource_blocks() {
+async fn render_system_context_markdown_strips_owner_resource_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -782,7 +638,11 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
     );
     let session = hub.create_session("test").await.expect("create session");
 
-    let source = AgentDashSourceV1::new("test", "unit");
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
     let user_blocks = vec![
         serde_json::from_value::<ContentBlock>(serde_json::json!({
             "type": "resource",
@@ -795,7 +655,7 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
         .expect("resource block"),
         ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
     ];
-    for envelope in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks) {
+    for envelope in build_user_message_envelopes(&session.id, &source, "t-1", &user_blocks) {
         hub.inject_notification(&session.id, envelope)
             .await
             .expect("inject user notification");
@@ -803,20 +663,7 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
 
     let assistant_chunk = ContentChunk::new(ContentBlock::Text(TextContent::new("已记录历史")))
         .message_id(Some("assistant-msg-1".to_string()))
-        .meta(
-            merge_agentdash_meta(
-                None,
-                &AgentDashMetaV1::new()
-                    .source(Some(source.clone()))
-                    .trace(Some({
-                        let mut trace = AgentDashTraceV1::new();
-                        trace.turn_id = Some("t-1".to_string());
-                        trace.entry_index = Some(99);
-                        trace
-                    })),
-            )
-            .expect("assistant meta"),
-        );
+        .meta(Some(test_meta(&source, "t-1", 99)));
     let acp_notification = SessionNotification::new(
         SessionId::new(session.id.clone()),
         SessionUpdate::AgentMessageChunk(assistant_chunk),
@@ -825,11 +672,14 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
         .await
         .expect("inject assistant notification");
 
-    let context = hub
-        .build_continuation_system_context(&session.id, Some("## Owner\nproject"))
+    let transcript = hub
+        .build_projected_transcript(&session.id)
         .await
-        .expect("context should build")
-        .expect("continuation context should exist");
+        .expect("transcript should build");
+    let context = super::super::continuation::render_system_context_markdown(
+        &transcript, Some("## Owner\nproject"),
+    )
+    .expect("continuation context should exist");
     assert!(context.contains("继续分析 session 生命周期"));
     assert!(context.contains("已记录历史"));
     assert!(context.contains("## Owner"));
@@ -838,7 +688,7 @@ async fn build_continuation_system_context_strips_owner_resource_blocks() {
 }
 
 #[tokio::test]
-async fn build_restored_session_messages_reconstructs_tool_history_without_owner_blocks() {
+async fn build_projected_transcript_reconstructs_tool_history_without_owner_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -849,7 +699,11 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
     );
     let session = hub.create_session("test").await.expect("create session");
 
-    let source = AgentDashSourceV1::new("test", "unit");
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
     let user_blocks = vec![
         serde_json::from_value::<ContentBlock>(serde_json::json!({
             "type": "resource",
@@ -862,7 +716,7 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
         .expect("resource block"),
         ContentBlock::Text(TextContent::new("继续分析 session 生命周期")),
     ];
-    for envelope in build_user_message_notifications(&session.id, &source, "t-1", &user_blocks) {
+    for envelope in build_user_message_envelopes(&session.id, &source, "t-1", &user_blocks) {
         hub.inject_notification(&session.id, envelope)
             .await
             .expect("inject user notification");
@@ -917,10 +771,11 @@ async fn build_restored_session_messages_reconstructs_tool_history_without_owner
     .await
     .expect("inject tool update");
 
-    let messages = hub
-        .build_restored_session_messages(&session.id)
+    let transcript = hub
+        .build_projected_transcript(&session.id)
         .await
-        .expect("messages should build");
+        .expect("transcript should build");
+    let messages = transcript.into_messages();
     assert_eq!(messages.len(), 3);
 
     match &messages[0] {
@@ -976,15 +831,24 @@ fn inject_user_message_envelope(
     entry_index: u32,
     text: &str,
 ) -> BackboneEnvelope {
-    let source = AgentDashSourceV1::new("test", "unit");
-    let meta = test_meta(&source, turn_id, entry_index);
-    let acp = SessionNotification::new(
-        SessionId::new(session_id),
-        SessionUpdate::UserMessageChunk(
-            ContentChunk::new(ContentBlock::Text(TextContent::new(text))).meta(meta),
-        ),
-    );
-    wrap_acp_notification(&acp)
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "user_message_chunk".to_string(),
+            value: serde_json::to_value(ContentBlock::Text(TextContent::new(text)))
+                .unwrap_or_default(),
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: Some(entry_index),
+    })
 }
 
 fn inject_compaction_envelope(
@@ -992,17 +856,24 @@ fn inject_compaction_envelope(
     turn_id: &str,
     data: serde_json::Value,
 ) -> BackboneEnvelope {
-    let source = AgentDashSourceV1::new("test", "unit");
-    let compaction_meta = test_event_meta(&source, turn_id, 0, "context_compacted", data);
-    let acp = SessionNotification::new(
-        SessionId::new(session_id),
-        SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().meta(compaction_meta)),
-    );
-    wrap_acp_notification(&acp)
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "context_compacted".to_string(),
+            value: data,
+        }),
+        session_id,
+        source,
+    )
+    .with_turn_id(turn_id)
 }
 
 #[tokio::test]
-async fn build_restored_session_messages_applies_latest_compaction_checkpoint() {
+async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -1043,10 +914,11 @@ async fn build_restored_session_messages_applies_latest_compaction_checkpoint() 
     .await
     .expect("inject compaction checkpoint");
 
-    let restored = hub
-        .build_restored_session_messages(&session.id)
+    let transcript = hub
+        .build_projected_transcript(&session.id)
         .await
-        .expect("messages should build");
+        .expect("transcript should build");
+    let restored = transcript.into_messages();
 
     assert_eq!(restored.len(), 2);
     match &restored[0] {
@@ -1073,7 +945,7 @@ async fn build_restored_session_messages_applies_latest_compaction_checkpoint() 
 }
 
 #[tokio::test]
-async fn build_continuation_system_context_uses_compacted_projection() {
+async fn render_system_context_markdown_uses_compacted_projection() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -1114,11 +986,14 @@ async fn build_continuation_system_context_uses_compacted_projection() {
     .await
     .expect("inject compaction checkpoint");
 
-    let context = hub
-        .build_continuation_system_context(&session.id, None)
+    let transcript = hub
+        .build_projected_transcript(&session.id)
         .await
-        .expect("context should build")
-        .expect("continuation context should exist");
+        .expect("transcript should build");
+    let context = super::super::continuation::render_system_context_markdown(
+        &transcript, None,
+    )
+    .expect("continuation context should exist");
 
     assert!(context.contains("压缩后的历史摘要"));
     assert!(context.contains("保留的新历史"));

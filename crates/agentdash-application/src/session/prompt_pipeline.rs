@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use futures::StreamExt;
-
 use agentdash_protocol::SourceInfo;
 use agentdash_spi::hooks::{
     HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
@@ -106,54 +104,27 @@ impl SessionHub {
             })?;
 
         let is_owner_bootstrap = req.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
-        let existing_hook_session = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .and_then(|rt| rt.hook_session.clone())
-        };
 
-        // hook runtime 的语义与 owner bootstrap 解耦：
-        // - owner 首轮 bootstrap：总是重新 load snapshot，并触发 SessionStart
-        // - 同进程续跑：复用已有 hook_session，只 refresh snapshot
-        // - 冷启动恢复：若内存里没有 runtime，则重建 snapshot，但不触发 SessionStart
-        //
-        // PR 7c：`SessionRuntime.hook_session` 由 `reload_session_hook_runtime`
-        // 单点写入；prompt_pipeline happy path 只读不回写。
-        let hook_session: Option<SharedHookSessionRuntime> =
-            if is_owner_bootstrap || existing_hook_session.is_none() {
-                match self
-                    .reload_session_hook_runtime(
-                        session_id,
-                        &turn_id,
-                        executor_config.executor.as_str(),
-                        executor_config.permission_policy.as_deref(),
-                        working_directory.as_path(),
-                    )
-                    .await
-                {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        let mut sessions = self.sessions.lock().await;
-                        if let Some(runtime) = sessions.get_mut(session_id) {
-                            runtime.turn_state = TurnState::Idle;
-                            runtime.hook_session = None;
-                        }
-                        return Err(error);
-                    }
+        let hook_session: Option<SharedHookSessionRuntime> = match self
+            .resolve_hook_session(
+                session_id,
+                &turn_id,
+                &executor_config,
+                &working_directory,
+                is_owner_bootstrap,
+            )
+            .await
+        {
+            Ok(hs) => hs,
+            Err(error) => {
+                let mut sessions = self.sessions.lock().await;
+                if let Some(runtime) = sessions.get_mut(session_id) {
+                    runtime.turn_state = TurnState::Idle;
+                    runtime.hook_session = None;
                 }
-            } else {
-                if let Some(ref hs) = existing_hook_session {
-                    let _ = hs
-                        .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
-                            session_id: session_id.to_string(),
-                            turn_id: Some(turn_id.clone()),
-                            reason: Some("subsequent_turn_refresh".to_string()),
-                        })
-                        .await;
-                }
-                existing_hook_session
-            };
+                return Err(error);
+            }
+        };
 
         // 把 hook snapshot 里的 injection 合并到 Bundle 的 bootstrap_fragments —
         // 这是 PR 4（04-30-session-pipeline-architecture-refactor）的核心动作：
@@ -201,74 +172,10 @@ impl SessionHub {
             _ => None,
         };
 
-        // 通过 VFS service 扫描所有 mount 的 skill
-        let mut discovered_skills = if let Some(service) = &self.vfs_service {
-            let skill_result = crate::skill::load_skills_from_vfs(service, &effective_vfs).await;
-            for diag in &skill_result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断: {}",
-                    diag.message
-                );
-            }
-            skill_result.skills
-        } else {
-            Vec::new()
-        };
-
-        // 合并插件提供的额外 skill 目录（优先级低于 mount 内发现的同名 skill）
-        if !self.extra_skill_dirs.is_empty() {
-            let existing_names: std::collections::HashMap<String, String> = discovered_skills
-                .iter()
-                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
-                .collect();
-            let plugin_result =
-                crate::skill::load_skills_from_local_dirs(&self.extra_skill_dirs, &existing_names);
-            for diag in &plugin_result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断 (plugin): {}",
-                    diag.message
-                );
-            }
-            discovered_skills.extend(plugin_result.skills);
-        }
-
+        let discovered_skills = self.discover_skills(&effective_vfs).await;
         let session_capabilities =
             build_session_baseline_capabilities(hook_session.as_deref(), &discovered_skills);
-
-        // 通过 VFS service 扫描项目级约定文件（AGENTS.md / MEMORY.md）
-        let discovered_guidelines = if let Some(service) = &self.vfs_service {
-            let discovery_result = crate::context::mount_file_discovery::discover_mount_files(
-                service,
-                &effective_vfs,
-                crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
-            )
-            .await;
-            for diag in &discovery_result.diagnostics {
-                tracing::warn!(
-                    rule_key = %diag.rule_key,
-                    mount_id = %diag.mount_id,
-                    path = %diag.path,
-                    "guideline 发现诊断: {}",
-                    diag.message
-                );
-            }
-            discovery_result
-                .files
-                .into_iter()
-                .map(|f| agentdash_spi::DiscoveredGuideline {
-                    file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
-                    mount_id: f.mount_id,
-                    path: f.path,
-                    content: f.content,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let discovered_guidelines = self.discover_guidelines(&effective_vfs).await;
 
         // session 级配置：请求未提供时回退到 session_profile 缓存
         let mcp_servers = if req.mcp_servers.is_empty() {
@@ -359,17 +266,14 @@ impl SessionHub {
             }
         }
 
-        session_meta.updated_at = now;
-        session_meta.last_execution_status = ExecutionStatus::Running;
-        session_meta.last_turn_id = Some(turn_id.clone());
-        session_meta.last_terminal_message = None;
-        session_meta.executor_config = Some(context.session.executor_config.clone());
-        if is_owner_bootstrap {
-            session_meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
-        }
-        if session_meta.title.trim().is_empty() {
-            session_meta.title = title_hint.clone();
-        }
+        Self::apply_turn_start_meta(
+            &mut session_meta,
+            now,
+            &turn_id,
+            &context.session.executor_config,
+            is_owner_bootstrap,
+            &title_hint,
+        );
         let _ = persistence.save_session_meta(&session_meta).await;
 
         // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成
@@ -508,9 +412,30 @@ impl SessionHub {
             }
         }
 
-        // connector stream → processor channel 适配器
-        let sessions = self.sessions.clone();
-        let turn_id_for_adapter = turn_id.clone();
+        Self::spawn_stream_adapter(
+            self.sessions.clone(),
+            session_id.to_string(),
+            turn_id.clone(),
+            &mut stream,
+            processor_tx,
+        );
+
+        Ok(turn_id)
+    }
+
+    /// 将 connector stream 桥接到 processor channel 的后台任务。
+    fn spawn_stream_adapter(
+        sessions: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>>,
+        session_id: String,
+        turn_id: String,
+        stream: &mut agentdash_spi::ExecutionStream,
+        processor_tx: tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>,
+    ) {
+        use futures::StreamExt;
+        let mut stream = std::mem::replace(
+            stream,
+            Box::pin(futures::stream::empty()),
+        );
         tokio::spawn(async move {
             while let Some(next) = stream.next().await {
                 match next {
@@ -520,60 +445,115 @@ impl SessionHub {
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
-                        let (cancel_requested, live_turn_matches) = {
-                            let guard = sessions.lock().await;
-                            match guard
-                                .get(&session_id)
-                                .and_then(|rt| rt.turn_state.active_turn())
-                            {
-                                Some(turn) => (
-                                    turn.cancel_requested,
-                                    turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
-                                ),
-                                None => (false, false),
-                            }
-                        };
-                        let (kind, message) = if cancel_requested && live_turn_matches {
-                            (
-                                TurnTerminalKind::Interrupted,
-                                Some("执行已取消".to_string()),
-                            )
-                        } else {
-                            (TurnTerminalKind::Failed, Some(e.to_string()))
-                        };
+                        let (kind, message) = Self::resolve_stream_terminal(
+                            &sessions, &session_id, &turn_id, Some(e),
+                        ).await;
                         let _ = processor_tx
                             .send(super::turn_processor::TurnEvent::Terminal { kind, message });
                         return;
                     }
                 }
             }
-
-            // stream 正常结束 → 发送显式 Terminal（不能依赖 drop sender，因为还有其他 clone 存活）
-            let (cancel_requested, live_turn_matches) = {
-                let guard = sessions.lock().await;
-                match guard
-                    .get(&session_id)
-                    .and_then(|rt| rt.turn_state.active_turn())
-                {
-                    Some(turn) => (
-                        turn.cancel_requested,
-                        turn.turn_id.as_str() == turn_id_for_adapter.as_str(),
-                    ),
-                    None => (false, false),
-                }
-            };
-            let (kind, message) = if cancel_requested && live_turn_matches {
-                (
-                    TurnTerminalKind::Interrupted,
-                    Some("执行已取消".to_string()),
-                )
-            } else {
-                (TurnTerminalKind::Completed, None)
-            };
+            let (kind, message) = Self::resolve_stream_terminal(
+                &sessions, &session_id, &turn_id, None,
+            ).await;
             let _ = processor_tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
         });
+    }
 
-        Ok(turn_id)
+    /// 根据 cancel 状态和错误信息决定 stream 结束时的 terminal kind。
+    async fn resolve_stream_terminal(
+        sessions: &tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>,
+        session_id: &str,
+        turn_id: &str,
+        error: Option<agentdash_spi::ConnectorError>,
+    ) -> (TurnTerminalKind, Option<String>) {
+        let (cancel_requested, live_turn_matches) = {
+            let guard = sessions.lock().await;
+            match guard.get(session_id).and_then(|rt| rt.turn_state.active_turn()) {
+                Some(turn) => (
+                    turn.cancel_requested,
+                    turn.turn_id.as_str() == turn_id,
+                ),
+                None => (false, false),
+            }
+        };
+        if cancel_requested && live_turn_matches {
+            (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
+        } else if let Some(e) = error {
+            (TurnTerminalKind::Failed, Some(e.to_string()))
+        } else {
+            (TurnTerminalKind::Completed, None)
+        }
+    }
+
+    /// Turn 开始时更新 SessionMeta 的快照字段。
+    ///
+    /// 包含 bootstrap state 的 `Pending → Bootstrapped` 转移。
+    fn apply_turn_start_meta(
+        meta: &mut SessionMeta,
+        now: i64,
+        turn_id: &str,
+        executor_config: &agentdash_domain::common::AgentConfig,
+        is_owner_bootstrap: bool,
+        title_hint: &str,
+    ) {
+        meta.updated_at = now;
+        meta.last_execution_status = ExecutionStatus::Running;
+        meta.last_turn_id = Some(turn_id.to_string());
+        meta.last_terminal_message = None;
+        meta.executor_config = Some(executor_config.clone());
+        if is_owner_bootstrap {
+            meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
+        }
+        if meta.title.trim().is_empty() {
+            meta.title = title_hint.to_string();
+        }
+    }
+
+    /// 解析 hook runtime：决定 reload / refresh / skip。
+    ///
+    /// 三条路径：
+    /// - **reload**：owner bootstrap 首轮 或 进程内没有 runtime（冷启动恢复）
+    /// - **refresh**：已有 hook_session 且非 bootstrap → 只 refresh snapshot
+    /// - **skip**：无 hook provider → 返回 None
+    async fn resolve_hook_session(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        executor_config: &agentdash_domain::common::AgentConfig,
+        working_directory: &Path,
+        is_owner_bootstrap: bool,
+    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+        let existing = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .and_then(|rt| rt.hook_session.clone())
+        };
+
+        if is_owner_bootstrap || existing.is_none() {
+            return self
+                .reload_session_hook_runtime(
+                    session_id,
+                    turn_id,
+                    executor_config.executor.as_str(),
+                    executor_config.permission_policy.as_deref(),
+                    working_directory,
+                )
+                .await;
+        }
+
+        if let Some(ref hs) = existing {
+            let _ = hs
+                .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
+                    session_id: session_id.to_string(),
+                    turn_id: Some(turn_id.to_string()),
+                    reason: Some("subsequent_turn_refresh".to_string()),
+                })
+                .await;
+        }
+        Ok(existing)
     }
 
     /// 重载 session hook runtime 并写入 `SessionRuntime.hook_session` 单一权威字段。
@@ -631,6 +611,79 @@ impl SessionHub {
         }
 
         Ok(Some(runtime))
+    }
+
+    async fn discover_skills(
+        &self,
+        vfs: &agentdash_spi::Vfs,
+    ) -> Vec<agentdash_spi::SkillRef> {
+        let mut skills = if let Some(service) = &self.vfs_service {
+            let result = crate::skill::load_skills_from_vfs(service, vfs).await;
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断: {}",
+                    diag.message
+                );
+            }
+            result.skills
+        } else {
+            Vec::new()
+        };
+
+        if !self.extra_skill_dirs.is_empty() {
+            let existing_names: std::collections::HashMap<String, String> = skills
+                .iter()
+                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
+                .collect();
+            let result =
+                crate::skill::load_skills_from_local_dirs(&self.extra_skill_dirs, &existing_names);
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断 (plugin): {}",
+                    diag.message
+                );
+            }
+            skills.extend(result.skills);
+        }
+        skills
+    }
+
+    async fn discover_guidelines(
+        &self,
+        vfs: &agentdash_spi::Vfs,
+    ) -> Vec<agentdash_spi::DiscoveredGuideline> {
+        let Some(service) = &self.vfs_service else {
+            return Vec::new();
+        };
+        let result = crate::context::mount_file_discovery::discover_mount_files(
+            service,
+            vfs,
+            crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
+        )
+        .await;
+        for diag in &result.diagnostics {
+            tracing::warn!(
+                rule_key = %diag.rule_key,
+                mount_id = %diag.mount_id,
+                path = %diag.path,
+                "guideline 发现诊断: {}",
+                diag.message
+            );
+        }
+        result
+            .files
+            .into_iter()
+            .map(|f| agentdash_spi::DiscoveredGuideline {
+                file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+                mount_id: f.mount_id,
+                path: f.path,
+                content: f.content,
+            })
+            .collect()
     }
 }
 

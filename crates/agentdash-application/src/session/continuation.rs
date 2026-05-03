@@ -11,6 +11,16 @@ use agentdash_spi::content_block_to_text;
 use super::persistence::PersistedSessionEvent;
 
 // ─── Continuation transcript 构建 ─────────────────────────────
+//
+// 两条活跃路径：
+//
+// 1. **SystemContext** (`build_continuation_system_context_from_events`)
+//    产出 Markdown 字符串，作为 system prompt 的上下文注入。
+//    消费者：acp_sessions route、routine executor。
+//
+// 2. **ExecutorState** (`build_restored_session_messages_from_events`)
+//    产出 `Vec<AgentMessage>`，交由 connector 走执行器原生的 session restore。
+//    消费者：prompt_pipeline（RepositoryRehydrate::ExecutorState 分支）。
 
 #[derive(Debug, Clone)]
 struct CompactionCheckpoint {

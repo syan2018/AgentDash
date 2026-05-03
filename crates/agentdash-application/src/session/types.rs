@@ -105,24 +105,40 @@ impl Default for SessionBootstrapState {
     }
 }
 
+/// Session 恢复时的上下文重建策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRepositoryRehydrateMode {
+    /// 从持久化事件重建 system context markdown（旧路径，适用于不支持 executor restore 的执行器）。
     SystemContext,
+    /// 从持久化事件重建为 `Vec<AgentMessage>`，交由 connector 走执行器原生的 session restore。
     ExecutorState,
 }
 
+/// Session prompt 的生命周期阶段判定结果。
+///
+/// 决定了 prompt pipeline 在发起 connector.prompt 前需要执行哪些前置准备。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPromptLifecycle {
+    /// 普通对话轮：无需额外上下文准备（首轮 / 已有 live runtime / 有 executor follow-up）。
     Plain,
+    /// Owner 首轮 bootstrap：session 尚未完成 owner 初始化（`bootstrap_state == Pending`）。
     OwnerBootstrap,
+    /// 冷启动恢复：进程重启后需从持久化事件重建上下文。
     RepositoryRehydrate(SessionRepositoryRehydrateMode),
 }
 
+/// 根据 session 元数据判定当前 prompt 应走哪种生命周期路径。
+///
+/// 判定优先级：
+/// 1. `Pending bootstrap` → **OwnerBootstrap**：session 尚未完成 owner 初始化
+/// 2. 冷启动（无 live runtime + 有历史事件 + 无 executor follow-up） → **RepositoryRehydrate**
+/// 3. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
 pub fn resolve_session_prompt_lifecycle(
     meta: &SessionMeta,
     has_live_runtime: bool,
     supports_repository_restore: bool,
 ) -> SessionPromptLifecycle {
+    // P1: 未完成 owner bootstrap 的 session 必须走初始化流程
     if meta.bootstrap_state == SessionBootstrapState::Pending {
         return SessionPromptLifecycle::OwnerBootstrap;
     }
@@ -133,6 +149,10 @@ pub fn resolve_session_prompt_lifecycle(
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
 
+    // P2: 冷启动恢复（三个条件同时满足）：
+    //   - 进程内没有该 session 的 live connector runtime
+    //   - session 有历史事件（last_event_seq > 0 表示曾经执行过）
+    //   - 执行器侧没有可复用的 follow-up session（否则直接 Plain 续跑）
     if !has_live_runtime && meta.last_event_seq > 0 && !has_executor_follow_up {
         return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
             SessionRepositoryRehydrateMode::ExecutorState
@@ -141,6 +161,7 @@ pub fn resolve_session_prompt_lifecycle(
         });
     }
 
+    // P3: 默认 — 普通对话轮
     SessionPromptLifecycle::Plain
 }
 

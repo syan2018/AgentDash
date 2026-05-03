@@ -6,12 +6,12 @@ use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use tokio::sync::Mutex;
 
 use super::hub_support::{
-    TurnTerminalKind, parse_executor_session_bound, parse_turn_terminal_event_from_envelope,
+    parse_executor_session_bound, parse_turn_terminal_event_from_envelope,
 };
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
-use super::types::{SessionBootstrapState, SessionMeta};
+use super::types::{ExecutionStatus, SessionBootstrapState, SessionMeta};
 
 #[derive(Clone, Default)]
 pub struct MemorySessionPersistence {
@@ -249,14 +249,14 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
     match &envelope.event {
         BackboneEvent::TurnStarted(_) => {
-            meta.last_execution_status = "running".to_string();
+            meta.last_execution_status = ExecutionStatus::Running;
             meta.last_terminal_message = None;
         }
         BackboneEvent::TurnCompleted(_) => {
-            meta.last_execution_status = "completed".to_string();
+            meta.last_execution_status = ExecutionStatus::Completed;
         }
         BackboneEvent::Error(_) => {
-            meta.last_execution_status = "failed".to_string();
+            meta.last_execution_status = ExecutionStatus::Failed;
         }
         BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
             executor_session_id,
@@ -269,12 +269,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
             {
                 meta.last_turn_id = Some(turn_id);
                 meta.last_terminal_message = message;
-                meta.last_execution_status = match terminal_kind {
-                    TurnTerminalKind::Completed => "completed",
-                    TurnTerminalKind::Failed => "failed",
-                    TurnTerminalKind::Interrupted => "interrupted",
-                }
-                .to_string();
+                meta.last_execution_status = terminal_kind.into();
             } else if key == "executor_session_bound" {
                 if let Some(esid) = value.as_str() {
                     meta.executor_session_id = Some(esid.to_string());
@@ -300,12 +295,7 @@ fn apply_compat_info_projection(meta: &mut SessionMeta, envelope: &BackboneEnvel
             {
                 meta.last_turn_id = Some(turn_id);
                 meta.last_terminal_message = message;
-                meta.last_execution_status = match terminal_kind {
-                    TurnTerminalKind::Completed => "completed",
-                    TurnTerminalKind::Failed => "failed",
-                    TurnTerminalKind::Interrupted => "interrupted",
-                }
-                .to_string();
+                meta.last_execution_status = terminal_kind.into();
             }
 
             if let Some(expected_turn_id) = meta.last_turn_id.as_deref() {
@@ -366,7 +356,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: "idle".to_string(),
+            last_execution_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -386,7 +376,7 @@ mod tests {
             .expect("应能读取 meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = "running".to_string();
+        stale.last_execution_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];

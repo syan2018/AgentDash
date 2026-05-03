@@ -254,14 +254,19 @@ pub(super) fn parse_turn_terminal_event_from_envelope(
     }
 }
 
+impl SessionRuntime {
+    pub fn is_running(&self) -> bool {
+        self.turn_state.is_running()
+    }
+}
+
 pub(super) fn build_session_runtime(
     tx: broadcast::Sender<PersistedSessionEvent>,
 ) -> SessionRuntime {
     SessionRuntime {
         tx,
-        running: false,
         hook_session: None,
-        current_turn: None,
+        turn_state: TurnState::Idle,
         session_profile: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
@@ -279,6 +284,40 @@ pub(super) struct SessionProfile {
     pub flow_capabilities: FlowCapabilities,
 }
 
+/// Session turn 的状态机。
+///
+/// 替代原先 `running: bool` + `current_turn: Option<TurnExecution>` 的双字段设计：
+/// - `Idle`：无活跃 turn
+/// - `Claimed`：已锁定 session，turn 尚未完全初始化（防止并发 prompt）
+/// - `Active`：turn 正在执行
+#[derive(Default)]
+pub(super) enum TurnState {
+    #[default]
+    Idle,
+    Claimed,
+    Active(TurnExecution),
+}
+
+impl TurnState {
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Claimed | Self::Active(_))
+    }
+
+    pub fn active_turn(&self) -> Option<&TurnExecution> {
+        match self {
+            Self::Active(turn) => Some(turn),
+            _ => None,
+        }
+    }
+
+    pub fn active_turn_mut(&mut self) -> Option<&mut TurnExecution> {
+        match self {
+            Self::Active(turn) => Some(turn),
+            _ => None,
+        }
+    }
+}
+
 /// Session 级运行态（跨 turn 存活直到进程退出或 session 被删除）。
 ///
 /// Per-turn 字段（`turn_id` / `cancel_requested` / `processor_tx` / `session_frame`
@@ -286,13 +325,10 @@ pub(super) struct SessionProfile {
 /// [`TurnExecution`]；`SessionRuntime` 只持 session 级信息。
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
-    /// 是否有 turn 在跑。语义上等价 `current_turn.is_some()`，
-    /// 保留作为显式 bool 以便外部只读路径快速判断。
-    pub running: bool,
     /// Session 级 hook runtime（跨 turn 共享）。
     pub hook_session: Option<SharedHookSessionRuntime>,
-    /// 当前活跃 turn 的执行态；无活跃 turn 时为 `None`。
-    pub current_turn: Option<TurnExecution>,
+    /// Turn 状态机：Idle → Claimed → Active → Idle。
+    pub turn_state: TurnState,
     /// Session 的内禀运行时配置；Init 时写入，Continue 时复用。
     pub session_profile: Option<SessionProfile>,
     /// Hook 驱动的 auto-resume 计数器（session 级：跨 auto-resume 链累积，
@@ -378,14 +414,25 @@ impl TurnTerminalKind {
     }
 }
 
+impl From<TurnTerminalKind> for super::types::ExecutionStatus {
+    fn from(kind: TurnTerminalKind) -> Self {
+        match kind {
+            TurnTerminalKind::Completed => Self::Completed,
+            TurnTerminalKind::Failed => Self::Failed,
+            TurnTerminalKind::Interrupted => Self::Interrupted,
+        }
+    }
+}
+
 /// 从 SessionMeta 的持久化字段派生 SessionExecutionState。
 pub(super) fn meta_to_execution_state(
     meta: &SessionMeta,
     session_id: &str,
 ) -> io::Result<SessionExecutionState> {
-    match meta.last_execution_status.as_str() {
-        "idle" => Ok(SessionExecutionState::Idle),
-        "completed" => Ok(SessionExecutionState::Completed {
+    use super::types::ExecutionStatus;
+    match meta.last_execution_status {
+        ExecutionStatus::Idle => Ok(SessionExecutionState::Idle),
+        ExecutionStatus::Completed => Ok(SessionExecutionState::Completed {
             turn_id: meta.last_turn_id.clone().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -393,7 +440,7 @@ pub(super) fn meta_to_execution_state(
                 )
             })?,
         }),
-        "failed" => Ok(SessionExecutionState::Failed {
+        ExecutionStatus::Failed => Ok(SessionExecutionState::Failed {
             turn_id: meta.last_turn_id.clone().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -402,11 +449,11 @@ pub(super) fn meta_to_execution_state(
             })?,
             message: meta.last_terminal_message.clone(),
         }),
-        "interrupted" => Ok(SessionExecutionState::Interrupted {
+        ExecutionStatus::Interrupted => Ok(SessionExecutionState::Interrupted {
             turn_id: meta.last_turn_id.clone(),
             message: meta.last_terminal_message.clone(),
         }),
-        "running" => {
+        ExecutionStatus::Running => {
             tracing::warn!(
                 session_id,
                 "meta 显示 running 但内存 map 无记录，视为 interrupted"
@@ -416,10 +463,6 @@ pub(super) fn meta_to_execution_state(
                 message: None,
             })
         }
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("session {session_id} 的 last_execution_status 非法: {other}"),
-        )),
     }
 }
 

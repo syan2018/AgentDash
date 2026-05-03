@@ -31,7 +31,7 @@ impl SessionHub {
     pub async fn recover_interrupted_sessions(&self) -> std::io::Result<()> {
         let sessions = self.persistence.list_sessions().await?;
         for mut meta in sessions {
-            if meta.last_execution_status == "running" {
+            if meta.last_execution_status == ExecutionStatus::Running {
                 tracing::warn!(
                     session_id = %meta.id,
                     "启动恢复：session 上次未正常结束，标记为 interrupted"
@@ -52,7 +52,7 @@ impl SessionHub {
                     let _ = self.persist_notification(&meta.id, notification).await?;
                     continue;
                 }
-                meta.last_execution_status = "interrupted".to_string();
+                meta.last_execution_status = ExecutionStatus::Interrupted;
                 meta.updated_at = chrono::Utc::now().timestamp_millis();
                 self.persistence.save_session_meta(&meta).await?;
             }
@@ -85,7 +85,7 @@ impl SessionHub {
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
-            last_execution_status: "idle".to_string(),
+            last_execution_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -148,7 +148,7 @@ impl SessionHub {
             let sessions = self.sessions.lock().await;
             session_ids
                 .iter()
-                .filter(|id| sessions.get(id.as_str()).is_some_and(|r| r.running))
+                .filter(|id| sessions.get(id.as_str()).is_some_and(|r| r.is_running()))
                 .cloned()
                 .collect()
         };
@@ -198,10 +198,10 @@ impl SessionHub {
             let sessions = self.sessions.lock().await;
             sessions.get(session_id).map(|runtime| {
                 (
-                    runtime.running,
+                    runtime.is_running(),
                     runtime
-                        .current_turn
-                        .as_ref()
+                        .turn_state
+                        .active_turn()
                         .map(|turn| turn.turn_id.clone()),
                 )
             })
@@ -301,8 +301,12 @@ impl SessionHub {
         Ok(build_restored_session_messages_from_events(&events))
     }
 
-    /// 多轮对话：同一 session 允许多次调用，但同一时间只允许一次活跃执行。
-    pub async fn start_prompt(
+    /// 低层启动入口：跳过 augment，直接进入 prompt pipeline。
+    ///
+    /// 外部应通过 `launch_prompt_with_intent` 或其具名包装启动，
+    /// 此方法仅供测试或已预组装的路径调用。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) async fn start_prompt(
         &self,
         session_id: &str,
         req: PromptSessionRequest,
@@ -311,61 +315,40 @@ impl SessionHub {
             .await
     }
 
-    /// Phase 1 单入口（宽松模式）：先做 request augment，再进入 start_prompt。
+    /// 类型化启动入口（统一门面）。
     ///
-    /// 约束：
-    /// - 仅用于测试或非正式 embedding（允许 augmenter 缺失时回退裸请求）；
-    /// - 生产内建路径应使用 `launch_prompt_strict`，避免静默上下文漂移。
-    #[allow(dead_code)]
-    pub(in crate::session) async fn launch_prompt_relaxed(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-        reason: &str,
-    ) -> Result<String, ConnectorError> {
-        let req = self.augment_prompt_request(session_id, req, reason).await?;
-        self.start_prompt(session_id, req).await
-    }
-
-    /// 严格单入口：要求 augmenter 已注入，不允许回退到裸请求。
-    ///
-    /// 适用于所有生产内建触发路径（HTTP / hook auto-resume 等），避免因注入
-    /// 顺序问题静默丢失 owner / mcp / flow / context_bundle。
-    pub async fn launch_prompt_strict(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-        reason: &str,
-    ) -> Result<String, ConnectorError> {
-        let Some(augmenter) = self.current_prompt_augmenter().await else {
-            return Err(ConnectorError::Runtime(format!(
-                "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
-            )));
-        };
-        let req = augmenter.augment(session_id, req).await?;
-        self.start_prompt(session_id, req).await
-    }
-
-    /// 类型化启动入口：由 LaunchIntent 决定 strict/relaxed 与 reason tag。
+    /// 由 [`SessionLaunchIntent`] 决定是否需要 augment、是否 strict、
+    /// 以及可选的 follow_up_session_id 透传。
     pub(crate) async fn launch_prompt_with_intent(
         &self,
         session_id: &str,
         req: PromptSessionRequest,
         intent: SessionLaunchIntent,
     ) -> Result<String, ConnectorError> {
-        match intent.preparation() {
+        let req = match intent.preparation() {
             SessionLaunchPreparation::RequiresAugment => match intent.strictness() {
                 SessionLaunchStrictness::Strict => {
-                    self.launch_prompt_strict(session_id, req, intent.reason_tag())
-                        .await
+                    let reason = intent.reason_tag();
+                    let Some(augmenter) = self.current_prompt_augmenter().await else {
+                        return Err(ConnectorError::Runtime(format!(
+                            "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
+                        )));
+                    };
+                    augmenter.augment(session_id, req).await?
                 }
                 SessionLaunchStrictness::Relaxed => {
-                    self.launch_prompt_relaxed(session_id, req, intent.reason_tag())
-                        .await
+                    self.augment_prompt_request(session_id, req, intent.reason_tag())
+                        .await?
                 }
             },
-            SessionLaunchPreparation::PreAssembled => self.start_prompt(session_id, req).await,
-        }
+            SessionLaunchPreparation::PreAssembled => req,
+        };
+        self.start_prompt_with_follow_up(
+            session_id,
+            intent.follow_up_session_id(),
+            req,
+        )
+        .await
     }
 
     /// Task 执行链启动入口：请求已在 Task service 内 compose+finalize，直接启动。
@@ -402,22 +385,6 @@ impl SessionHub {
             .await
     }
 
-    async fn launch_preassembled_prompt_with_follow_up_intent(
-        &self,
-        session_id: &str,
-        follow_up_session_id: Option<&str>,
-        req: PromptSessionRequest,
-        intent: SessionLaunchIntent,
-    ) -> Result<String, ConnectorError> {
-        debug_assert!(matches!(
-            intent.preparation(),
-            SessionLaunchPreparation::PreAssembled
-        ));
-        let _ = intent;
-        self.start_prompt_with_follow_up(session_id, follow_up_session_id, req)
-            .await
-    }
-
     /// Local relay 启动入口：保留 follow_up 透传语义，不经过 augmenter。
     pub async fn launch_local_relay_prompt_with_follow_up(
         &self,
@@ -425,11 +392,11 @@ impl SessionHub {
         follow_up_session_id: Option<&str>,
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
-        self.launch_preassembled_prompt_with_follow_up_intent(
+        self.launch_prompt_with_intent(
             session_id,
-            follow_up_session_id,
             req,
-            SessionLaunchIntent::local_relay_prompt(),
+            SessionLaunchIntent::local_relay_prompt()
+                .with_follow_up(follow_up_session_id.map(String::from)),
         )
         .await
     }
@@ -441,11 +408,11 @@ impl SessionHub {
         follow_up_session_id: Option<&str>,
         req: PromptSessionRequest,
     ) -> Result<String, ConnectorError> {
-        self.launch_preassembled_prompt_with_follow_up_intent(
+        self.launch_prompt_with_intent(
             session_id,
-            follow_up_session_id,
             req,
-            SessionLaunchIntent::companion_dispatch(),
+            SessionLaunchIntent::companion_dispatch()
+                .with_follow_up(follow_up_session_id.map(String::from)),
         )
         .await
     }
@@ -579,7 +546,7 @@ impl SessionHub {
         let sessions = self.sessions.lock().await;
         sessions
             .iter()
-            .filter(|(_, runtime)| runtime.running && (now - runtime.last_activity_at) > threshold)
+            .filter(|(_, runtime)| runtime.is_running() && (now - runtime.last_activity_at) > threshold)
             .map(|(id, _)| id.clone())
             .collect()
     }

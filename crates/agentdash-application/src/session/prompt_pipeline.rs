@@ -42,13 +42,12 @@ impl SessionHub {
                 let (tx, _rx) = tokio::sync::broadcast::channel(1024);
                 build_session_runtime(tx)
             });
-            if runtime.running {
+            if runtime.is_running() {
                 return Err(ConnectorError::Runtime(
                     "该会话有正在执行的 prompt，请等待完成或取消后再试".into(),
                 ));
             }
-            runtime.running = true;
-            runtime.current_turn = None;
+            runtime.turn_state = TurnState::Claimed;
             runtime.session_profile.clone()
         };
 
@@ -137,8 +136,7 @@ impl SessionHub {
                     Err(error) => {
                         let mut sessions = self.sessions.lock().await;
                         if let Some(runtime) = sessions.get_mut(session_id) {
-                            runtime.running = false;
-                            runtime.current_turn = None;
+                            runtime.turn_state = TurnState::Idle;
                             runtime.hook_session = None;
                         }
                         return Err(error);
@@ -353,7 +351,7 @@ impl SessionHub {
                         mcp_servers: mcp_servers.clone(),
                         flow_capabilities: flow_capabilities.clone(),
                     });
-                runtime.current_turn = Some(TurnExecution::new(
+                runtime.turn_state = TurnState::Active(TurnExecution::new(
                     turn_id.clone(),
                     context.session.clone(),
                     flow_capabilities.clone(),
@@ -362,7 +360,7 @@ impl SessionHub {
         }
 
         session_meta.updated_at = now;
-        session_meta.last_execution_status = "running".to_string();
+        session_meta.last_execution_status = ExecutionStatus::Running;
         session_meta.last_turn_id = Some(turn_id.clone());
         session_meta.last_terminal_message = None;
         session_meta.executor_config = Some(context.session.executor_config.clone());
@@ -469,8 +467,7 @@ impl SessionHub {
                 {
                     let mut sessions = self.sessions.lock().await;
                     if let Some(runtime) = sessions.get_mut(session_id) {
-                        runtime.running = false;
-                        runtime.current_turn = None;
+                        runtime.turn_state = TurnState::Idle;
                         runtime.hook_session = None;
                     }
                 }
@@ -505,7 +502,7 @@ impl SessionHub {
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(&session_id)
-                && let Some(turn) = runtime.current_turn.as_mut()
+                && let Some(turn) = runtime.turn_state.active_turn_mut()
             {
                 turn.processor_tx = Some(processor_tx.clone());
             }
@@ -527,7 +524,7 @@ impl SessionHub {
                             let guard = sessions.lock().await;
                             match guard
                                 .get(&session_id)
-                                .and_then(|rt| rt.current_turn.as_ref())
+                                .and_then(|rt| rt.turn_state.active_turn())
                             {
                                 Some(turn) => (
                                     turn.cancel_requested,
@@ -556,7 +553,7 @@ impl SessionHub {
                 let guard = sessions.lock().await;
                 match guard
                     .get(&session_id)
-                    .and_then(|rt| rt.current_turn.as_ref())
+                    .and_then(|rt| rt.turn_state.active_turn())
                 {
                     Some(turn) => (
                         turn.cancel_requested,

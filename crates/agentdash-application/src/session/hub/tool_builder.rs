@@ -22,7 +22,7 @@ impl SessionHub {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)
-            .and_then(|runtime| runtime.current_turn.as_ref())
+            .and_then(|runtime| runtime.turn_state.active_turn())
             .map(|turn| turn.session_frame.mcp_servers.clone())
             .unwrap_or_default()
     }
@@ -42,9 +42,9 @@ impl SessionHub {
                     "session `{session_id}` 当前没有运行态，无法热更新 MCP"
                 ))
             })?;
-            let turn = runtime.current_turn.clone().ok_or_else(|| {
+            let turn = runtime.turn_state.active_turn().cloned().ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 缺少 current_turn，无法热更新 MCP"
+                    "session `{session_id}` 没有活跃 turn，无法热更新 MCP"
                 ))
             })?;
             (turn, runtime.hook_session.clone())
@@ -71,7 +71,7 @@ impl SessionHub {
 
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
-            if let Some(turn) = runtime.current_turn.as_mut() {
+            if let Some(turn) = runtime.turn_state.active_turn_mut() {
                 turn.session_frame.mcp_servers = mcp_servers;
             }
         }

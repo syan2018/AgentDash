@@ -31,15 +31,17 @@ pub enum SessionLaunchPreparation {
     PreAssembled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionLaunchIntent {
     source: SessionLaunchSource,
     strictness: SessionLaunchStrictness,
     preparation: SessionLaunchPreparation,
+    /// 底层执行器的 follow-up 会话 ID（仅 relay / companion dispatch 需要）。
+    follow_up_session_id: Option<String>,
 }
 
 impl SessionLaunchIntent {
-    pub const fn new(
+    pub fn new(
         source: SessionLaunchSource,
         strictness: SessionLaunchStrictness,
         preparation: SessionLaunchPreparation,
@@ -48,23 +50,33 @@ impl SessionLaunchIntent {
             source,
             strictness,
             preparation,
+            follow_up_session_id: None,
         }
     }
 
-    pub const fn source(self) -> SessionLaunchSource {
+    /// 链式设置 follow_up_session_id。
+    pub fn with_follow_up(mut self, session_id: Option<impl Into<String>>) -> Self {
+        self.follow_up_session_id = session_id.map(Into::into);
+        self
+    }
+
+    pub fn source(&self) -> SessionLaunchSource {
         self.source
     }
 
-    pub const fn strictness(self) -> SessionLaunchStrictness {
+    pub fn strictness(&self) -> SessionLaunchStrictness {
         self.strictness
     }
 
-    pub const fn preparation(self) -> SessionLaunchPreparation {
+    pub fn preparation(&self) -> SessionLaunchPreparation {
         self.preparation
     }
 
-    /// 统一用于日志/错误定位的 reason tag。
-    pub const fn reason_tag(self) -> &'static str {
+    pub fn follow_up_session_id(&self) -> Option<&str> {
+        self.follow_up_session_id.as_deref()
+    }
+
+    pub fn reason_tag(&self) -> &'static str {
         match self.source {
             SessionLaunchSource::HttpPrompt => "http_prompt",
             SessionLaunchSource::HookAutoResume => "hook_auto_resume",
@@ -77,7 +89,7 @@ impl SessionLaunchIntent {
         }
     }
 
-    pub const fn http_prompt() -> Self {
+    pub fn http_prompt() -> Self {
         Self::new(
             SessionLaunchSource::HttpPrompt,
             SessionLaunchStrictness::Strict,
@@ -85,7 +97,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn hook_auto_resume() -> Self {
+    pub fn hook_auto_resume() -> Self {
         Self::new(
             SessionLaunchSource::HookAutoResume,
             SessionLaunchStrictness::Strict,
@@ -93,7 +105,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn companion_parent_resume() -> Self {
+    pub fn companion_parent_resume() -> Self {
         Self::new(
             SessionLaunchSource::CompanionParentResume,
             SessionLaunchStrictness::Strict,
@@ -101,7 +113,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn companion_dispatch() -> Self {
+    pub fn companion_dispatch() -> Self {
         Self::new(
             SessionLaunchSource::CompanionDispatch,
             SessionLaunchStrictness::Strict,
@@ -109,7 +121,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn task_service() -> Self {
+    pub fn task_service() -> Self {
         Self::new(
             SessionLaunchSource::TaskService,
             SessionLaunchStrictness::Strict,
@@ -117,7 +129,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn workflow_orchestrator() -> Self {
+    pub fn workflow_orchestrator() -> Self {
         Self::new(
             SessionLaunchSource::WorkflowOrchestrator,
             SessionLaunchStrictness::Strict,
@@ -125,7 +137,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn routine_executor() -> Self {
+    pub fn routine_executor() -> Self {
         Self::new(
             SessionLaunchSource::RoutineExecutor,
             SessionLaunchStrictness::Strict,
@@ -133,7 +145,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn local_relay_prompt() -> Self {
+    pub fn local_relay_prompt() -> Self {
         Self::new(
             SessionLaunchSource::LocalRelayPrompt,
             SessionLaunchStrictness::Strict,
@@ -141,7 +153,7 @@ impl SessionLaunchIntent {
         )
     }
 
-    pub const fn local_relay_prompt_relaxed() -> Self {
+    pub fn local_relay_prompt_relaxed() -> Self {
         Self::new(
             SessionLaunchSource::LocalRelayPrompt,
             SessionLaunchStrictness::Relaxed,

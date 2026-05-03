@@ -115,7 +115,7 @@ impl SessionTurnProcessor {
                 let guard = sessions.lock().await;
                 match guard
                     .get(&session_id)
-                    .and_then(|rt| rt.current_turn.as_ref())
+                    .and_then(|rt| rt.turn_state.active_turn())
                 {
                     Some(turn) => (
                         turn.cancel_requested,
@@ -197,14 +197,13 @@ impl SessionTurnProcessor {
                     .is_some_and(|t| t.decision == "continue")
             });
 
-        // 清理 running 状态 — 整个 current_turn 一起退位。
+        // 清理 turn 状态 — 回到 Idle。
         // 注意：auto-resume 计数不再在这里递增，交给 `request_hook_auto_resume`
         // 在"确认可以续跑"的临界区内与 cap check 一起原子处理。
         {
             let mut guard = sessions.lock().await;
             if let Some(runtime) = guard.get_mut(&session_id) {
-                runtime.running = false;
-                runtime.current_turn = None;
+                runtime.turn_state = TurnState::Idle;
             }
         }
 

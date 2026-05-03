@@ -293,7 +293,7 @@ async fn start_prompt_records_current_turn_state() {
     let sessions = hub.sessions.lock().await;
     let turn = sessions
         .get(&session.id)
-        .and_then(|runtime| runtime.current_turn.as_ref())
+        .and_then(|runtime| runtime.turn_state.active_turn())
         .expect("current turn execution state");
     assert_eq!(turn.session_frame.mcp_servers.len(), 1);
     assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
@@ -1326,7 +1326,11 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
     let session = hub.create_session("strict-launch").await.expect("create");
 
     let error = hub
-        .launch_prompt_strict(&session.id, simple_prompt_request("hello"), "http_prompt")
+        .launch_prompt_with_intent(
+            &session.id,
+            simple_prompt_request("hello"),
+            super::super::launch_intent::SessionLaunchIntent::http_prompt(),
+        )
         .await
         .expect_err("strict launch 应在 augmenter 缺失时失败");
 

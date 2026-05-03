@@ -53,7 +53,7 @@ pub use prompt_vfs::local_workspace_vfs;
 pub use title_generator::SessionTitleGenerator;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    CompanionSessionContext, HookSnapshotReloadTrigger, PromptSessionRequest,
+    CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger, PromptSessionRequest,
     ResolvedPromptPayload, SessionBootstrapState, SessionExecutionState, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, TitleSource, UserPromptInput,
     resolve_session_prompt_lifecycle,

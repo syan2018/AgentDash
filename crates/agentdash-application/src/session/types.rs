@@ -233,8 +233,8 @@ pub struct SessionMeta {
     pub updated_at: i64,
     #[serde(default)]
     pub last_event_seq: u64,
-    #[serde(default = "SessionMeta::default_status")]
-    pub last_execution_status: String,
+    #[serde(default)]
+    pub last_execution_status: ExecutionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,12 +251,43 @@ pub struct SessionMeta {
     pub bootstrap_state: SessionBootstrapState,
 }
 
-impl SessionMeta {
-    pub(crate) fn default_status() -> String {
-        "idle".to_string()
+
+/// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。
+///
+/// 替代原先裸字符串 `"idle"/"running"/"completed"/"failed"/"interrupted"` 的散落字面量。
+/// 序列化为 `snake_case` 字符串，与数据库已有值兼容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionStatus {
+    #[default]
+    Idle,
+    Running,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl ExecutionStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Interrupted)
     }
 }
 
+impl std::fmt::Display for ExecutionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Idle => write!(f, "idle"),
+            Self::Running => write!(f, "running"),
+            Self::Completed => write!(f, "completed"),
+            Self::Failed => write!(f, "failed"),
+            Self::Interrupted => write!(f, "interrupted"),
+        }
+    }
+}
+
+/// 带有运行时上下文的执行状态（含 turn_id / message 等附加信息）。
+///
+/// 不用于持久化，仅用于 API 查询响应。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionExecutionState {
     Idle,

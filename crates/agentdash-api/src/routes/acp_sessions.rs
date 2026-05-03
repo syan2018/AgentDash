@@ -393,7 +393,7 @@ pub struct SessionBindingOwnerResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_application::session::{SessionBootstrapState, TitleSource};
+    use agentdash_application::session::{ExecutionStatus, SessionBootstrapState, TitleSource};
 
     #[test]
     fn session_binding_owner_response_serializes_as_snake_case() {
@@ -428,7 +428,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: "idle".to_string(),
+            last_execution_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -453,7 +453,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 12,
-            last_execution_status: "completed".to_string(),
+            last_execution_status: ExecutionStatus::Completed,
             last_turn_id: Some("t-last".to_string()),
             last_terminal_message: None,
             executor_config: None,
@@ -484,7 +484,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 5,
-            last_execution_status: "completed".to_string(),
+            last_execution_status: ExecutionStatus::Completed,
             last_turn_id: Some("t-last".to_string()),
             last_terminal_message: None,
             executor_config: None,
@@ -509,7 +509,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 7,
-            last_execution_status: "completed".to_string(),
+            last_execution_status: ExecutionStatus::Completed,
             last_turn_id: Some("t-last".to_string()),
             last_terminal_message: None,
             executor_config: None,

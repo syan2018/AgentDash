@@ -1,8 +1,8 @@
 use std::io;
 
 use agentdash_application::session::{
-    PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog, SessionEventPage,
-    SessionMeta, SessionPersistence, TitleSource,
+    ExecutionStatus, PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog,
+    SessionEventPage, SessionMeta, SessionPersistence, TitleSource,
 };
 use agentdash_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
@@ -91,7 +91,10 @@ impl SqliteSessionRepository {
                 row.get::<i64, _>("last_event_seq"),
                 "sessions.last_event_seq",
             )?,
-            last_execution_status: row.get::<String, _>("last_execution_status"),
+            last_execution_status: parse_execution_status(
+                row.get::<String, _>("last_execution_status"),
+                "sessions.last_execution_status",
+            )?,
             last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
             last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
             executor_config: parse_optional_json_column(
@@ -186,7 +189,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(&meta.last_execution_status)
+        .bind(meta.last_execution_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
@@ -291,7 +294,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
-        .bind(&meta.last_execution_status)
+        .bind(meta.last_execution_status.to_string())
         .bind(&meta.last_turn_id)
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
@@ -543,6 +546,20 @@ fn title_source_to_str(source: TitleSource) -> &'static str {
     match source {
         TitleSource::Auto => "auto",
         TitleSource::User => "user",
+    }
+}
+
+fn parse_execution_status(value: String, field: &str) -> io::Result<ExecutionStatus> {
+    match value.as_str() {
+        "idle" => Ok(ExecutionStatus::Idle),
+        "running" => Ok(ExecutionStatus::Running),
+        "completed" => Ok(ExecutionStatus::Completed),
+        "failed" => Ok(ExecutionStatus::Failed),
+        "interrupted" => Ok(ExecutionStatus::Interrupted),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{field} 非法: {other}"),
+        )),
     }
 }
 
@@ -808,7 +825,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: "idle".to_string(),
+            last_execution_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -867,7 +884,7 @@ mod tests {
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
-            last_execution_status: "idle".to_string(),
+            last_execution_status: ExecutionStatus::Idle,
             last_turn_id: None,
             last_terminal_message: None,
             executor_config: None,
@@ -884,7 +901,7 @@ mod tests {
             .expect("应能读取 session meta")
             .expect("session 应存在");
         stale.updated_at = 10;
-        stale.last_execution_status = "running".to_string();
+        stale.last_execution_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
@@ -905,7 +922,7 @@ mod tests {
             .expect("session 应存在");
 
         assert_eq!(merged.last_event_seq, 1);
-        assert_eq!(merged.last_execution_status, "completed");
+        assert_eq!(merged.last_execution_status, ExecutionStatus::Completed);
         assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
         assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);

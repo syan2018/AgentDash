@@ -815,14 +815,15 @@ function ModelManagementSection({
   const enabledCount = discoveredModels.filter((m) => !blockedModels.includes(m.id)).length + pureCustomEntries.length;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
+      {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="space-y-0.5">
           <span className="text-sm font-medium text-foreground">模型管理</span>
           <p className="text-xs text-muted-foreground">
             {hasAny
-              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），按压滑动可批量切换屏蔽，点击编辑图标可调整属性`
-              : "暂无模型，点击「探测」用当前配置发现可用模型"}
+              ? `共 ${totalCount} 个模型（${enabledCount} 个启用），拖拽批量切换 · 点击标签编辑属性`
+              : "暂无模型，点击「探测」发现可用模型"}
           </p>
         </div>
         <button
@@ -846,84 +847,109 @@ function ModelManagementSection({
         </p>
       )}
 
+      {/* Model chips */}
       <div
         className="flex flex-wrap gap-1.5 select-none"
         onPointerUp={handleDragEnd}
         onPointerLeave={handleDragEnd}
       >
-        {/* Discovered models */}
+        {/* Discovered models — 整体是一个统一的 chip */}
         {discoveredModels.map((model) => {
           const enabled = !blockedModels.includes(model.id);
           const hasOverride = findOverrideIndex(model.id) >= 0;
           const overrideConfig = hasOverride ? customModels[findOverrideIndex(model.id)] : null;
-          const displayModel = overrideConfig ?? model;
+          const isEditing = editingDiscoveredId === model.id;
+          const effectiveTooltip = buildModelTooltip({
+            ...model,
+            ...(overrideConfig ? {
+              reasoning: overrideConfig.reasoning,
+              supports_image: overrideConfig.supports_image,
+              context_window: overrideConfig.context_window,
+            } : {}),
+          });
+
           return (
-            <div key={`d-${model.id}`} className="inline-flex flex-col">
-              <div className="inline-flex items-center gap-0.5">
-                <button
-                  type="button"
-                  onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
-                  onPointerEnter={() => handleDragEnter(model.id)}
-                  title={buildModelTooltip({ ...model, ...overrideConfig ? { reasoning: overrideConfig.reasoning, supports_image: overrideConfig.supports_image, context_window: overrideConfig.context_window } : {} })}
-                  className={`group inline-flex touch-none items-center gap-1.5 rounded-l-[8px] border px-2.5 py-1.5 text-xs transition-all ${
-                    enabled
-                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
-                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
-                  }`}
-                >
-                  <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
-                  <span className={enabled ? "" : "line-through opacity-60"}>{displayModel.name || model.id}</span>
-                  {hasOverride && <span className="ml-0.5 inline-block h-1 w-1 rounded-full bg-amber-500" title="已自定义属性" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingDiscoveredId(editingDiscoveredId === model.id ? null : model.id)}
-                  className={`rounded-r-[8px] border border-l-0 px-1.5 py-1.5 text-xs transition-colors ${
-                    enabled
-                      ? "border-emerald-500/30 text-emerald-600/60 hover:text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400/60 dark:hover:text-emerald-300"
-                      : "border-border text-muted-foreground/50 hover:text-foreground hover:bg-muted/60"
-                  }`}
-                  title="编辑模型属性"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <span
+              key={`d-${model.id}`}
+              className={`group relative inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+                isEditing
+                  ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
+                  : enabled
+                    ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                    : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
+              }`}
+              title={effectiveTooltip}
+              onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
+              onPointerEnter={() => handleDragEnter(model.id)}
+            >
+              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                isEditing ? "bg-primary" : enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+              }`} />
+              <span className={enabled ? "" : "line-through opacity-60"}>
+                {(overrideConfig?.name || model.name || model.id)}
+              </span>
+              {hasOverride && (
+                <span className="inline-block h-1 w-1 rounded-full bg-amber-500" title="已自定义属性" />
+              )}
+              {/* Hover 浮现的编辑按钮 — 不会破坏标签轮廓 */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingDiscoveredId(isEditing ? null : model.id);
+                }}
+                className="ml-0.5 hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-black/10 dark:hover:bg-white/10"
+                onPointerDown={(e) => e.stopPropagation()}
+                title="编辑属性"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m12 20 9-11-4-4-9 11 1 5 3-1Z" />
+                </svg>
+              </button>
+            </span>
           );
         })}
 
-        {/* Pure custom models (not matching any discovered id) */}
-        {pureCustomEntries.map(({ model: m, originalIndex }) => (
-          editingIndex === originalIndex ? (
-            <div key={`c-${originalIndex}`} className="w-full">
-              <CustomModelEditRow
-                model={m}
-                isDiscovered={false}
-                onUpdate={(field, value) => onUpdateModel(originalIndex, field, value)}
-                onDone={() => setEditingIndex(null)}
-                onRemove={() => { onRemoveModel(originalIndex); setEditingIndex(null); }}
-              />
-            </div>
-          ) : (
+        {/* Pure custom models */}
+        {pureCustomEntries.map(({ model: m, originalIndex }) => {
+          const isEditing = editingIndex === originalIndex;
+          return (
             <span
               key={`c-${originalIndex}`}
-              className="group inline-flex items-center gap-1.5 rounded-[8px] border border-blue-500/30 bg-blue-500/8 px-2.5 py-1.5 text-xs text-blue-700 dark:text-blue-300"
+              className={`group relative inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+                isEditing
+                  ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
+                  : "border-blue-500/30 bg-blue-500/8 text-blue-700 hover:bg-blue-500/15 dark:text-blue-300"
+              }`}
               title={buildCustomModelTooltip(m)}
             >
-              <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${isEditing ? "bg-primary" : "bg-blue-500"}`} />
               {m.name || m.id || "（未命名）"}
-              <button type="button" onClick={() => setEditingIndex(originalIndex)} className="ml-0.5 rounded p-0.5 text-blue-600/60 hover:text-blue-700 hover:bg-blue-500/10 dark:text-blue-400/60 dark:hover:text-blue-300 transition-colors" title="编辑此模型">
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+              <button
+                type="button"
+                onClick={() => setEditingIndex(isEditing ? null : originalIndex)}
+                className="ml-0.5 hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-black/10 dark:hover:bg-white/10"
+                title="编辑"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m12 20 9-11-4-4-9 11 1 5 3-1Z" />
+                </svg>
               </button>
-              <button type="button" onClick={() => onRemoveModel(originalIndex)} className="rounded p-0.5 text-blue-600/60 hover:text-destructive hover:bg-destructive/10 dark:text-blue-400/60 dark:hover:text-destructive transition-colors" title="删除此模型">
-                <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              <button
+                type="button"
+                onClick={() => onRemoveModel(originalIndex)}
+                className="hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-destructive/15 hover:text-destructive"
+                title="删除"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                </svg>
               </button>
             </span>
-          )
-        ))}
+          );
+        })}
 
+        {/* Add custom */}
         {!showAddForm && (
           <button
             type="button"
@@ -936,7 +962,7 @@ function ModelManagementSection({
         )}
       </div>
 
-      {/* Discovered model override editor */}
+      {/* Inline editor — discovered model override */}
       {editingDiscoveredId && (() => {
         const model = discoveredModels.find((m) => m.id === editingDiscoveredId);
         if (!model) return null;
@@ -953,6 +979,22 @@ function ModelManagementSection({
         );
       })()}
 
+      {/* Inline editor — custom model */}
+      {editingIndex !== null && (() => {
+        const entry = pureCustomEntries.find((e) => e.originalIndex === editingIndex);
+        if (!entry) return null;
+        return (
+          <CustomModelEditRow
+            model={entry.model}
+            isDiscovered={false}
+            onUpdate={(field, value) => onUpdateModel(entry.originalIndex, field, value)}
+            onDone={() => setEditingIndex(null)}
+            onRemove={() => { onRemoveModel(entry.originalIndex); setEditingIndex(null); }}
+          />
+        );
+      })()}
+
+      {/* New custom model form */}
       {showAddForm && (
         <NewCustomModelForm
           onAdd={(newModel) => {
@@ -981,45 +1023,61 @@ function CustomModelEditRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-blue-500/20 bg-blue-500/5 px-3 py-2">
-      <input
-        type="text"
-        className={`${inputCls} !w-36 ${isDiscovered ? "opacity-60" : ""}`}
-        value={model.id}
-        placeholder="模型 ID"
-        onChange={(e) => onUpdate("id", e.target.value)}
-        disabled={isDiscovered}
-        autoFocus={!isDiscovered}
-      />
-      <input
-        type="text"
-        className={`${inputCls} !w-28 ${isDiscovered ? "opacity-60" : ""}`}
-        value={model.name}
-        placeholder="显示名称"
-        onChange={(e) => onUpdate("name", e.target.value)}
-        disabled={isDiscovered}
-      />
-      <div className="flex items-center gap-1">
+    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+      {/* ID + Name 行 */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
         <input
-          type="number"
-          className={`${inputCls} !w-20`}
-          value={Math.round(model.context_window / 1000)}
-          placeholder="200"
-          onChange={(e) => onUpdate("context_window", (parseInt(e.target.value) || 0) * 1000)}
+          type="text"
+          className={`${inputCls} !w-40 !py-1 !px-2 ${isDiscovered ? "opacity-50 cursor-not-allowed" : ""}`}
+          value={model.id}
+          placeholder="模型 ID"
+          onChange={(e) => onUpdate("id", e.target.value)}
+          disabled={isDiscovered}
+          autoFocus={!isDiscovered}
         />
-        <span className="text-xs text-muted-foreground">k</span>
+        <input
+          type="text"
+          className={`${inputCls} !w-32 !py-1 !px-2 ${isDiscovered ? "opacity-50 cursor-not-allowed" : ""}`}
+          value={model.name}
+          placeholder="显示名称"
+          onChange={(e) => onUpdate("name", e.target.value)}
+          disabled={isDiscovered}
+        />
       </div>
-      <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-        <input type="checkbox" checked={model.reasoning} onChange={(e) => onUpdate("reasoning", e.target.checked)} className="accent-primary" />
-        推理
-      </label>
-      <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-        <input type="checkbox" checked={model.supports_image} onChange={(e) => onUpdate("supports_image", e.target.checked)} className="accent-primary" />
-        图像
-      </label>
-      <div className="flex items-center gap-1.5 ml-auto">
-        <button type="button" onClick={onDone} className="rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90">完成</button>
-        <button type="button" onClick={onRemove} className="rounded-[6px] border border-destructive/30 px-2.5 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10">删除</button>
+      {/* 属性行 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          上下文
+          <input
+            type="number"
+            className={`${inputCls} !w-[72px] !py-1 !px-2 text-center`}
+            value={Math.round(model.context_window / 1000)}
+            placeholder="200"
+            onChange={(e) => onUpdate("context_window", (parseInt(e.target.value) || 0) * 1000)}
+          />
+          <span>k</span>
+        </label>
+
+        <TogglePill label="推理" checked={model.reasoning} onChange={(v) => onUpdate("reasoning", v)} />
+        <TogglePill label="图像" checked={model.supports_image} onChange={(v) => onUpdate("supports_image", v)} />
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-[6px] border border-destructive/30 px-2 py-1 text-[11px] text-destructive transition-colors hover:bg-destructive/10"
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            onClick={onDone}
+            className="rounded-[6px] bg-primary px-3 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90"
+          >
+            完成
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1044,41 +1102,69 @@ function DiscoveredModelEditRow({
   const effectiveImage = override?.supports_image ?? model.supports_image;
 
   return (
-    <div className="rounded-[8px] border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-foreground">
-          编辑已发现模型属性
-          <span className="ml-1.5 text-muted-foreground font-normal">{model.id}</span>
-        </p>
-        {override && (
-          <button type="button" onClick={onResetOverride} className="text-[11px] text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300">
-            重置为默认值
-          </button>
-        )}
+    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+      {/* 标题行 */}
+      <div className="flex items-center gap-2 mb-3">
+        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        <span className="text-xs font-medium text-foreground truncate">{model.name || model.id}</span>
+        <code className="ml-auto text-[10px] text-muted-foreground/60 font-mono truncate max-w-[180px]">{model.id}</code>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-muted-foreground">上下文</span>
+      {/* 属性行 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          上下文
           <input
             type="number"
-            className={`${inputCls} !w-20`}
+            className={`${inputCls} !w-[72px] !py-1 !px-2 text-center`}
             value={effectiveContextK}
-            placeholder="200"
             onChange={(e) => onOverride("context_window", (parseInt(e.target.value) || 0) * 1000)}
           />
-          <span className="text-xs text-muted-foreground">k</span>
+          <span>k</span>
+        </label>
+
+        <TogglePill label="推理" checked={effectiveReasoning} onChange={(v) => onOverride("reasoning", v)} />
+        <TogglePill label="图像" checked={effectiveImage} onChange={(v) => onOverride("supports_image", v)} />
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          {override && (
+            <button
+              type="button"
+              onClick={onResetOverride}
+              className="rounded-[6px] border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              重置
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDone}
+            className="rounded-[6px] bg-primary px-3 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90"
+          >
+            完成
+          </button>
         </div>
-        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-          <input type="checkbox" checked={effectiveReasoning} onChange={(e) => onOverride("reasoning", e.target.checked)} className="accent-primary" />
-          推理
-        </label>
-        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-          <input type="checkbox" checked={effectiveImage} onChange={(e) => onOverride("supports_image", e.target.checked)} className="accent-primary" />
-          图像
-        </label>
-        <button type="button" onClick={onDone} className="ml-auto rounded-[6px] bg-primary px-2.5 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90">完成</button>
       </div>
     </div>
+  );
+}
+
+/** 小型开关药丸 — 替代裸 checkbox，视觉更统一 */
+function TogglePill({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all ${
+        checked
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-border bg-muted/40 text-muted-foreground"
+      }`}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full transition-colors ${
+        checked ? "bg-emerald-500" : "bg-muted-foreground/30"
+      }`} />
+      {label}
+    </button>
   );
 }
 
@@ -1109,26 +1195,29 @@ function NewCustomModelForm({
   };
 
   return (
-    <div className="rounded-[8px] border border-primary/20 bg-primary/5 p-3 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <input type="text" className={`${inputCls} !w-40`} value={id} placeholder="模型 ID（必填）" onChange={(e) => setId(e.target.value)} autoFocus />
-        <input type="text" className={`${inputCls} !w-28`} value={name} placeholder="显示名称" onChange={(e) => setName(e.target.value)} />
-        <div className="flex items-center gap-1">
-          <input type="number" className={`${inputCls} !w-20`} value={contextWindowK} placeholder="200" onChange={(e) => setContextWindowK(parseInt(e.target.value) || 200)} />
-          <span className="text-xs text-muted-foreground">k</span>
-        </div>
-        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-          <input type="checkbox" checked={reasoning} onChange={(e) => setReasoning(e.target.checked)} className="accent-primary" />
-          推理
-        </label>
-        <label className="flex items-center gap-1 text-xs text-foreground whitespace-nowrap">
-          <input type="checkbox" checked={supportsImage} onChange={(e) => setSupportsImage(e.target.checked)} className="accent-primary" />
-          图像
-        </label>
+    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+      <p className="text-xs font-medium text-foreground mb-3">添加自定义模型</p>
+      {/* ID + Name */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="inline-block h-2 w-2 rounded-full bg-blue-500/50" />
+        <input type="text" className={`${inputCls} !w-40 !py-1 !px-2`} value={id} placeholder="模型 ID（必填）" onChange={(e) => setId(e.target.value)} autoFocus />
+        <input type="text" className={`${inputCls} !w-32 !py-1 !px-2`} value={name} placeholder="显示名称" onChange={(e) => setName(e.target.value)} />
       </div>
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={handleSubmit} disabled={!id.trim()} className="rounded-[6px] bg-primary px-3 py-1 text-xs text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50">添加</button>
-        <button type="button" onClick={onCancel} className="rounded-[6px] border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary">取消</button>
+      {/* 属性行 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          上下文
+          <input type="number" className={`${inputCls} !w-[72px] !py-1 !px-2 text-center`} value={contextWindowK} placeholder="200" onChange={(e) => setContextWindowK(parseInt(e.target.value) || 200)} />
+          <span>k</span>
+        </label>
+
+        <TogglePill label="推理" checked={reasoning} onChange={setReasoning} />
+        <TogglePill label="图像" checked={supportsImage} onChange={setSupportsImage} />
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <button type="button" onClick={onCancel} className="rounded-[6px] border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary">取消</button>
+          <button type="button" onClick={handleSubmit} disabled={!id.trim()} className="rounded-[6px] bg-primary px-3 py-1 text-[11px] text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50">添加</button>
+        </div>
       </div>
     </div>
   );

@@ -5,9 +5,7 @@ use std::sync::Arc;
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use tokio::sync::Mutex;
 
-use super::hub_support::{
-    parse_executor_session_bound, parse_turn_terminal_event_from_envelope,
-};
+use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
@@ -279,34 +277,6 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
         _ => {}
     }
 
-    // 兼容：旧路径的 compat 转换后的 SessionInfoUpdate 事件仍可能经过此处
-    // 使用 envelope_to_session_notification 转换后进行 ACP meta 投影
-    apply_compat_info_projection(meta, envelope);
-}
-
-/// 兼容路径：对经 `envelope_to_session_notification` 产出的 ACP SessionInfoUpdate，
-/// 仍从 ACP meta 里提取 turn_terminal / executor_session_bound 投影。
-fn apply_compat_info_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
-    if let Some(notification) = agentdash_protocol::envelope_to_session_notification(envelope) {
-        use agent_client_protocol::SessionUpdate;
-        if let SessionUpdate::SessionInfoUpdate(info) = &notification.update {
-            if let Some((turn_id, terminal_kind, message)) =
-                super::hub_support::parse_turn_terminal_event(info.meta.as_ref())
-            {
-                meta.last_turn_id = Some(turn_id);
-                meta.last_terminal_message = message;
-                meta.last_execution_status = terminal_kind.into();
-            }
-
-            if let Some(expected_turn_id) = meta.last_turn_id.as_deref() {
-                if let Some(executor_session_id) =
-                    parse_executor_session_bound(info.meta.as_ref(), expected_turn_id)
-                {
-                    meta.executor_session_id = Some(executor_session_id);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

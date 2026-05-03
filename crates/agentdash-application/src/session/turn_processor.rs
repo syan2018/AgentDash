@@ -4,8 +4,6 @@
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
 //! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
 
-use std::sync::Arc;
-
 use agentdash_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
@@ -15,8 +13,6 @@ use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
 use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
-use super::persistence::SessionPersistence;
-use super::persistence_listener;
 use super::post_turn_handler::DynPostTurnHandler;
 
 /// Processor 消费的事件类型。
@@ -78,25 +74,20 @@ impl SessionTurnProcessor {
             post_turn_handler,
         } = config;
 
-        let persistence = hub.persistence.clone();
         let sessions = hub.sessions.clone();
 
         let mut terminal_kind = TurnTerminalKind::Completed;
         let mut terminal_message: Option<String> = None;
         let mut received_terminal = false;
-        let mut last_executor_session_id: Option<String> = None;
 
         while let Some(event) = rx.recv().await {
             match event {
                 TurnEvent::Notification(notification) => {
                     Self::handle_notification(
                         &hub,
-                        &persistence,
                         &session_id,
-                        &turn_id,
                         &notification,
                         &post_turn_handler,
-                        &mut last_executor_session_id,
                     )
                     .await;
                 }
@@ -221,29 +212,16 @@ impl SessionTurnProcessor {
         }
     }
 
-    /// 处理单条 notification：委托 persistence_listener 同步 meta → on_event → persist。
+    /// 处理单条 notification：on_event → persist。
     ///
-    /// PR 7：`SessionMeta` 写入不再在 processor 里直接做，而是外包给
-    /// `persistence_listener::sync_executor_session_id`；processor 只持有
-    /// per-turn 去重状态 (`last_executor_session_id`) 并传入。
+    /// `executor_session_id` 同步已由 `append_event` 的事件投影统一处理，
+    /// processor 不再需要额外的直接 meta 写入路径。
     async fn handle_notification(
         hub: &SessionHub,
-        persistence: &Arc<dyn SessionPersistence>,
         session_id: &str,
-        turn_id: &str,
         envelope: &BackboneEnvelope,
         post_turn_handler: &Option<DynPostTurnHandler>,
-        last_executor_session_id: &mut Option<String>,
     ) {
-        persistence_listener::sync_executor_session_id(
-            persistence,
-            session_id,
-            turn_id,
-            envelope,
-            last_executor_session_id,
-        )
-        .await;
-
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, envelope).await;
         }

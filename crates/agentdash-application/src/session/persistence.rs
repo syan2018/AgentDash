@@ -45,6 +45,13 @@ pub trait SessionPersistence: Send + Sync {
 
     async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>>;
 
+    /// 整行回写 SessionMeta。
+    ///
+    /// **注意**：投影字段（`last_event_seq`/`last_execution_status`/`last_turn_id`/
+    /// `last_terminal_message`）受 DB 层 `CASE WHEN` 保护，不会被旧快照回滚。
+    /// 但非投影字段（`executor_session_id` / `companion_context` 等）会被直接覆盖。
+    ///
+    /// 优先使用 `SessionHub::update_session_meta()` 做 get-modify-save 原子操作。
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()>;
 
     async fn delete_session(&self, session_id: &str) -> io::Result<()>;

@@ -28,33 +28,33 @@ use agentdash_spi::hooks::SharedHookSessionRuntime;
 
 impl SessionHub {
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
+    ///
+    /// 统一通过事件投影驱动状态变更，不直接修改 SessionMeta。
     pub async fn recover_interrupted_sessions(&self) -> std::io::Result<()> {
         let sessions = self.persistence.list_sessions().await?;
-        for mut meta in sessions {
+        for meta in sessions {
             if meta.last_execution_status == ExecutionStatus::Running {
                 tracing::warn!(
                     session_id = %meta.id,
                     "启动恢复：session 上次未正常结束，标记为 interrupted"
                 );
-                if let Some(turn_id) = meta.last_turn_id.clone() {
-                    let source = SourceInfo {
-                        connector_id: "agentdash-server".to_string(),
-                        connector_type: "system".to_string(),
-                        executor_id: None,
-                    };
-                    let notification = build_turn_terminal_envelope(
-                        &meta.id,
-                        &source,
-                        &turn_id,
-                        TurnTerminalKind::Interrupted,
-                        Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
-                    );
-                    let _ = self.persist_notification(&meta.id, notification).await?;
-                    continue;
-                }
-                meta.last_execution_status = ExecutionStatus::Interrupted;
-                meta.updated_at = chrono::Utc::now().timestamp_millis();
-                self.persistence.save_session_meta(&meta).await?;
+                let turn_id = meta
+                    .last_turn_id
+                    .clone()
+                    .unwrap_or_else(|| format!("t_recovery_{}", chrono::Utc::now().timestamp_millis()));
+                let source = SourceInfo {
+                    connector_id: "agentdash-server".to_string(),
+                    connector_type: "system".to_string(),
+                    executor_id: None,
+                };
+                let notification = build_turn_terminal_envelope(
+                    &meta.id,
+                    &source,
+                    &turn_id,
+                    TurnTerminalKind::Interrupted,
+                    Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
+                );
+                let _ = self.persist_notification(&meta.id, notification).await?;
             }
         }
         Ok(())

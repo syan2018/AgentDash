@@ -15,7 +15,6 @@ mod hub_support;
 mod memory_persistence;
 pub(crate) mod path_policy;
 pub mod persistence;
-mod persistence_listener;
 pub mod plan;
 pub mod post_turn_handler;
 mod prompt_pipeline;

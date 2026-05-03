@@ -1,11 +1,11 @@
 use std::io;
 
-use agent_client_protocol::{ContentBlock, Meta};
+use agent_client_protocol::ContentBlock;
 use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;
 
-use agentdash_acp_meta::{AgentDashSourceV1, parse_agentdash_meta};
+use agentdash_acp_meta::AgentDashSourceV1;
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
 use super::persistence::PersistedSessionEvent;
@@ -143,83 +143,8 @@ pub(super) fn build_turn_terminal_envelope(
     })
 }
 
-pub(super) fn parse_executor_session_bound(
-    meta: Option<&Meta>,
-    expected_turn_id: &str,
-) -> Option<String> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let trace = parsed.trace?;
-    let turn_id = trace.turn_id?;
-    if turn_id != expected_turn_id {
-        return None;
-    }
 
-    let event = parsed.event?;
-    if event.r#type != "executor_session_bound" {
-        return None;
-    }
-
-    if let Some(data) = event.data
-        && let Some(session_id) = data
-            .get("executor_session_id")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    {
-        return Some(session_id.to_string());
-    }
-
-    event
-        .message
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-/// 从 BackboneEnvelope 直接提取 executor_session_id（新路径）。
-pub(super) fn parse_executor_session_bound_from_envelope(
-    envelope: &BackboneEnvelope,
-) -> Option<String> {
-    match &envelope.event {
-        BackboneEvent::Platform(PlatformEvent::ExecutorSessionBound {
-            executor_session_id,
-        }) => {
-            let trimmed = executor_session_id.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn parse_turn_id(meta: Option<&Meta>) -> Option<String> {
-    parse_agentdash_meta(meta?)
-        .and_then(|parsed| parsed.trace.and_then(|trace| trace.turn_id))
-        .map(|turn_id| turn_id.trim().to_string())
-        .filter(|turn_id| !turn_id.is_empty())
-}
-
-pub(super) fn parse_turn_terminal_event(
-    meta: Option<&Meta>,
-) -> Option<(String, TurnTerminalKind, Option<String>)> {
-    let parsed = parse_agentdash_meta(meta?)?;
-    let trace = parsed.trace?;
-    let turn_id = trace.turn_id?;
-    let event = parsed.event?;
-
-    match event.r#type.as_str() {
-        "turn_completed" => Some((turn_id, TurnTerminalKind::Completed, event.message)),
-        "turn_failed" => Some((turn_id, TurnTerminalKind::Failed, event.message)),
-        "turn_interrupted" => Some((turn_id, TurnTerminalKind::Interrupted, event.message)),
-        _ => None,
-    }
-}
-
-/// 从 BackboneEnvelope 直接解析 turn terminal 事件（新路径）。
+/// 从 BackboneEnvelope 直接解析 turn terminal 事件。
 pub(super) fn parse_turn_terminal_event_from_envelope(
     envelope: &BackboneEnvelope,
 ) -> Option<(String, TurnTerminalKind, Option<String>)> {

@@ -23,6 +23,8 @@ pub(crate) struct ModelMeta {
     pub supports_image: bool,
     pub context_window: u64,
     pub blocked: bool,
+    /// true = 来自 API 动态发现；false = 仅来自 models JSON 配置
+    pub discovered: bool,
 }
 
 impl ModelMeta {
@@ -34,6 +36,7 @@ impl ModelMeta {
             supports_image: true,
             context_window: CONTEXT_WINDOW_STANDARD,
             blocked: false,
+            discovered: true,
             id,
         }
     }
@@ -41,6 +44,7 @@ impl ModelMeta {
     fn fallback(id: &str) -> Self {
         Self::from_id(id.to_string())
     }
+
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -67,6 +71,7 @@ impl From<StoredModelMeta> for ModelMeta {
             supports_image: value.supports_image.unwrap_or(true),
             context_window: value.context_window.unwrap_or(CONTEXT_WINDOW_STANDARD),
             blocked: false,
+            discovered: false,
             id: value.id,
         }
     }
@@ -160,7 +165,7 @@ impl ProviderEntry {
         };
 
         // Merge configured_models into discovered: override attributes for matching
-        // IDs (keeping the discovered entry as base), append truly new IDs
+        // IDs (keeping discovered=true), append truly custom IDs (discovered=false)
         let mut models = discovered_models;
         for custom in &self.configured_models {
             if let Some(existing) = models.iter_mut().find(|m| m.id == custom.id) {
@@ -168,8 +173,11 @@ impl ProviderEntry {
                 existing.reasoning = custom.reasoning;
                 existing.supports_image = custom.supports_image;
                 existing.context_window = custom.context_window;
+                // discovered stays true — it was found via API
             } else {
-                models.push(custom.clone());
+                let mut entry = custom.clone();
+                entry.discovered = false;
+                models.push(entry);
             }
         }
 
@@ -593,6 +601,7 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
                 supports_image: true,
                 context_window: model.input_token_limit.unwrap_or(CONTEXT_WINDOW_STANDARD),
                 blocked: false,
+                discovered: true,
                 id,
             }
         })

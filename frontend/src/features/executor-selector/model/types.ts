@@ -67,6 +67,8 @@ export interface ModelInfo {
   context_window: number;
   /** 是否被当前 provider 设置为屏蔽 */
   blocked?: boolean;
+  /** true = 来自 API 动态发现；false = 仅来自 models JSON 配置 */
+  discovered?: boolean;
 }
 
 export interface AgentInfo {

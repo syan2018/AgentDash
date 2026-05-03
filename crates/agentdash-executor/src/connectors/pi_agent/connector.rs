@@ -258,6 +258,7 @@ impl AgentConnector for PiAgentConnector {
                     "supports_image": model.supports_image,
                     "context_window": model.context_window,
                     "blocked": model.blocked,
+                    "discovered": model.discovered,
                 }));
             }
         }

@@ -493,26 +493,38 @@ function LlmProviderForm({
         supports_image: true,
         context_window: 200_000,
         blocked: false,
+        discovered: true,
       }));
     }
     return discoveredModels;
   }, [probedModels, discoveredModels, provider.slug]);
 
+  // 默认模型候选：所有未被屏蔽的模型（discovered + custom 合并去重）
   const defaultModelOptions = useMemo(() => {
-    const fromDiscovered = effectiveDiscoveredModels
-      .filter((c) => c.id.trim().length > 0 && !blockedModels.includes(c.id))
-      .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
-    const fromCustom = models
-      .filter((c) => c.id.trim().length > 0)
-      .map((c) => ({ id: c.id, name: c.name.trim() || c.id }));
+    const allIds = new Set<string>();
+    const options: { id: string; name: string }[] = [];
 
-    const options = [...fromDiscovered, ...fromCustom];
+    // discovered 中未屏蔽的
+    for (const c of effectiveDiscoveredModels) {
+      if (!c.id.trim() || blockedModels.includes(c.id)) continue;
+      if (allIds.has(c.id)) continue;
+      allIds.add(c.id);
+      options.push({ id: c.id, name: c.name.trim() || c.id });
+    }
 
-    if (defaultModel.trim().length > 0 && !options.some((c) => c.id === defaultModel)) {
+    // custom 中未屏蔽的（包含 discovered override 和纯自定义）
+    for (const c of models) {
+      if (!c.id.trim() || blockedModels.includes(c.id)) continue;
+      if (allIds.has(c.id)) continue;
+      allIds.add(c.id);
+      options.push({ id: c.id, name: c.name.trim() || c.id });
+    }
+
+    if (defaultModel.trim().length > 0 && !allIds.has(defaultModel)) {
       options.unshift({ id: defaultModel, name: `${defaultModel}（当前值）` });
     }
 
-    return options.filter((c, i, list) => list.findIndex((x) => x.id === c.id) === i);
+    return options;
   }, [effectiveDiscoveredModels, defaultModel, models, blockedModels]);
 
   const toggleBlockedModel = (modelId: string) => {
@@ -804,15 +816,20 @@ function ModelManagementSection({
     setEditingDiscoveredId(null);
   };
 
-  const discoveredIds = new Set(discoveredModels.map((m) => m.id));
-  // pureCustom: entries NOT matching any discovered model, with their original indices
+  // 用后端返回的 discovered 字段区分真正的 API 发现模型 vs 纯配置模型
+  const trueDiscoveredModels = discoveredModels.filter((m) => m.discovered !== false);
+  const trueDiscoveredIds = new Set(trueDiscoveredModels.map((m) => m.id));
+
+  // pureCustom: customModels 中不属于"真正 discovered"的条目
   const pureCustomEntries = customModels
     .map((m, i) => ({ model: m, originalIndex: i }))
-    .filter((e) => !discoveredIds.has(e.model.id));
+    .filter((e) => !trueDiscoveredIds.has(e.model.id));
 
-  const hasAny = discoveredModels.length > 0 || pureCustomEntries.length > 0;
-  const totalCount = discoveredModels.length + pureCustomEntries.length;
-  const enabledCount = discoveredModels.filter((m) => !blockedModels.includes(m.id)).length + pureCustomEntries.length;
+  const hasAny = trueDiscoveredModels.length > 0 || pureCustomEntries.length > 0;
+  const totalCount = trueDiscoveredModels.length + pureCustomEntries.length;
+  const enabledCount =
+    trueDiscoveredModels.filter((m) => !blockedModels.includes(m.id)).length +
+    pureCustomEntries.filter((e) => !blockedModels.includes(e.model.id)).length;
 
   return (
     <div className="space-y-2">
@@ -854,7 +871,7 @@ function ModelManagementSection({
         onPointerLeave={handleDragEnd}
       >
         {/* Discovered models — 整体是一个统一的 chip */}
-        {discoveredModels.map((model) => {
+        {trueDiscoveredModels.map((model) => {
           const enabled = !blockedModels.includes(model.id);
           const hasOverride = findOverrideIndex(model.id) >= 0;
           const overrideConfig = hasOverride ? customModels[findOverrideIndex(model.id)] : null;
@@ -910,24 +927,34 @@ function ModelManagementSection({
           );
         })}
 
-        {/* Pure custom models */}
+        {/* Pure custom models — 支持屏蔽和拖拽 */}
         {pureCustomEntries.map(({ model: m, originalIndex }) => {
           const isEditing = editingIndex === originalIndex;
+          const enabled = !blockedModels.includes(m.id);
           return (
             <span
               key={`c-${originalIndex}`}
-              className={`group relative inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+              className={`group relative inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
                 isEditing
                   ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
-                  : "border-blue-500/30 bg-blue-500/8 text-blue-700 hover:bg-blue-500/15 dark:text-blue-300"
+                  : enabled
+                    ? "border-blue-500/30 bg-blue-500/8 text-blue-700 hover:bg-blue-500/15 dark:text-blue-300"
+                    : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
               }`}
               title={buildCustomModelTooltip(m)}
+              onPointerDown={(e) => { if (m.id.trim()) { e.preventDefault(); handleDragStart(m.id); } }}
+              onPointerEnter={() => { if (m.id.trim()) handleDragEnter(m.id); }}
             >
-              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${isEditing ? "bg-primary" : "bg-blue-500"}`} />
-              {m.name || m.id || "（未命名）"}
+              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                isEditing ? "bg-primary" : enabled ? "bg-blue-500" : "bg-muted-foreground/30"
+              }`} />
+              <span className={enabled ? "" : "line-through opacity-60"}>
+                {m.name || m.id || "（未命名）"}
+              </span>
               <button
                 type="button"
-                onClick={() => setEditingIndex(isEditing ? null : originalIndex)}
+                onClick={(e) => { e.stopPropagation(); setEditingIndex(isEditing ? null : originalIndex); }}
+                onPointerDown={(e) => e.stopPropagation()}
                 className="ml-0.5 hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-black/10 dark:hover:bg-white/10"
                 title="编辑"
               >
@@ -937,7 +964,8 @@ function ModelManagementSection({
               </button>
               <button
                 type="button"
-                onClick={() => onRemoveModel(originalIndex)}
+                onClick={(e) => { e.stopPropagation(); onRemoveModel(originalIndex); }}
+                onPointerDown={(e) => e.stopPropagation()}
                 className="hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-destructive/15 hover:text-destructive"
                 title="删除"
               >
@@ -964,7 +992,7 @@ function ModelManagementSection({
 
       {/* Inline editor — discovered model override */}
       {editingDiscoveredId && (() => {
-        const model = discoveredModels.find((m) => m.id === editingDiscoveredId);
+        const model = trueDiscoveredModels.find((m) => m.id === editingDiscoveredId);
         if (!model) return null;
         const overrideIdx = findOverrideIndex(model.id);
         const overrideConfig = overrideIdx >= 0 ? customModels[overrideIdx] : null;

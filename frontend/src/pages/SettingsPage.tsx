@@ -1264,9 +1264,6 @@ function AgentSection({
   let initialPrefs: string[] = [];
   if (entry && Array.isArray(entry.value)) {
     initialPrefs = entry.value.filter((v): v is string => typeof v === "string" && v.trim() !== "");
-  } else {
-    const legacy = readVal(settings, "agent.pi.system_prompt");
-    if (legacy) initialPrefs = [legacy];
   }
 
   return (

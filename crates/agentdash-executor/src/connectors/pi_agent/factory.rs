@@ -24,7 +24,6 @@ impl LlmBridge for NoopBridge {
 /// settings_repo 用于读取以下配置：
 /// - `agent.pi.base_system_prompt`：覆盖内置 Layer 0 system prompt
 /// - `agent.pi.user_preferences`：JSON 数组，用户偏好提示（Layer 2）
-/// - `agent.pi.system_prompt`：向后兼容旧键（当 user_preferences 不存在时回退为单条偏好）
 ///
 /// 按 sort_order，首个完成注册的 provider 的首个模型作为默认 bridge。
 pub async fn build_pi_agent_connector(
@@ -73,8 +72,7 @@ pub async fn build_pi_agent_connector(
 
 /// 从 settings 读取用户偏好提示列表。
 ///
-/// 优先读取 `agent.pi.user_preferences`（JSON 数组），
-/// 若不存在则回退到旧 `agent.pi.system_prompt`（当作单条偏好）。
+/// 读取 `agent.pi.user_preferences`（JSON 数组）。
 async fn read_user_preferences(
     settings: &dyn agentdash_domain::settings::SettingsRepository,
 ) -> Vec<String> {
@@ -91,11 +89,6 @@ async fn read_user_preferences(
                 return prefs;
             }
         }
-    }
-
-    // 向后兼容：旧 agent.pi.system_prompt 键当作单条偏好
-    if let Some(legacy) = read_setting_str(settings, "agent.pi.system_prompt").await {
-        return vec![legacy];
     }
 
     Vec::new()

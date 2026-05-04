@@ -38,9 +38,12 @@ pub(crate) async fn spawn_executor_session(
     context: ExecutionContext,
 ) -> Result<ExecutionStream, ConnectorError> {
     let user_text = prompt.to_fallback_text();
-    // 过渡阶段沿用预渲染 system prompt，后续可替换为 Bundle 原生渲染。
-    #[allow(deprecated)]
-    let prompt_text = if let Some(ref sys_prompt) = context.turn.assembled_system_prompt {
+    let prompt_text = if let Some(sys_prompt) = context
+        .turn
+        .context_bundle
+        .as_ref()
+        .and_then(|b| b.rendered_system_prompt.as_ref())
+    {
         format!("{sys_prompt}\n\n{user_text}")
     } else {
         user_text

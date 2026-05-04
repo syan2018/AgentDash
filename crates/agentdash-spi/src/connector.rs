@@ -75,22 +75,12 @@ pub struct ExecutionTurnFrame {
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// 业务上下文 Bundle — connector 侧应优先消费此主数据面。
+    /// 业务上下文 Bundle — connector 侧消费此主数据面。
     ///
-    /// 当 connector 能结构化消费 Bundle 时（如 PiAgent），
-    /// 应通过 `bundle_id` 跨 turn 差异触发 system prompt 热更新，
-    /// 以取代对下方 `assembled_system_prompt` 的依赖。
+    /// Bundle 携带结构化 fragment 以及预渲染的 `rendered_system_prompt`。
+    /// connector 可通过 `bundle.rendered_system_prompt` 获取完整系统指令，
+    /// 或通过 `bundle_id` 跨 turn 差异判断是否需要热更新。
     pub context_bundle: Option<SessionContextBundle>,
-    /// Application 层预组装的完整 system prompt（backward-compat fallback）。
-    ///
-    /// 自 PR 3 起：主数据面为 `context_bundle`；
-    /// 本字段仅作为 Relay / vibe_kanban / 过渡期 PiAgent 的兜底。
-    /// PR 8 计划将此字段彻底下线。
-    #[deprecated(
-        note = "主数据面已迁至 `context_bundle`；connector 应优先消费 Bundle，\
-                仅当 Bundle 缺失或协议尚未支持时才退化到该预渲染文本。"
-    )]
-    pub assembled_system_prompt: Option<String>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有

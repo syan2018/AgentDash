@@ -1159,13 +1159,14 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
     let session_uuid = uuid::Uuid::new_v4();
 
     let make_context = |turn_id: &str,
-                        bundle: Option<SessionContextBundle>,
-                        assembled_sp: Option<&str>|
+                        mut bundle: Option<SessionContextBundle>,
+                        rendered_sp: Option<&str>|
      -> ExecutionContext {
-        #[allow(deprecated)]
+        if let (Some(ref mut b), Some(sp)) = (&mut bundle, rendered_sp) {
+            b.rendered_system_prompt = Some(sp.to_string());
+        }
         let turn_frame = agentdash_spi::ExecutionTurnFrame {
             context_bundle: bundle,
-            assembled_system_prompt: assembled_sp.map(str::to_string),
             ..Default::default()
         };
         ExecutionContext {
@@ -1216,7 +1217,7 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
         next.expect("stream item should succeed");
     }
 
-    // Turn 3: bundle_id 不变 — assembled_system_prompt 即便换成 "SP_STALE"，
+    // Turn 3: bundle_id 不变 — rendered_system_prompt 即便换成 "SP_STALE"，
     //         也不会生效，agent 仍用 turn 2 时 set 的 "SP_B"
     let mut stream = connector
         .prompt(
@@ -1232,6 +1233,7 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
                     created_at_ms: 0,
                     bootstrap_fragments: Vec::new(),
                     turn_delta: Vec::new(),
+                    rendered_system_prompt: None,
                 }),
                 Some("SP_STALE"),
             ),

@@ -34,6 +34,11 @@ pub struct SessionContextBundle {
     pub bootstrap_fragments: Vec<ContextFragment>,
     /// 运行期 per-turn 追加的 fragment（Hook bundle_delta 回灌 / 热更新注入）。
     pub turn_delta: Vec<ContextFragment>,
+    /// Application 层预渲染的完整 system prompt 文本。
+    ///
+    /// 由 `system_prompt_assembler::assemble_system_prompt` 在 prompt pipeline 中产出，
+    /// connector 通过此字段获取最终系统指令，无需自行组装。
+    pub rendered_system_prompt: Option<String>,
 }
 
 impl SessionContextBundle {
@@ -46,6 +51,7 @@ impl SessionContextBundle {
             created_at_ms: now_millis_u64(),
             bootstrap_fragments: Vec::new(),
             turn_delta: Vec::new(),
+            rendered_system_prompt: None,
         }
     }
 

@@ -166,13 +166,6 @@ async fn start_prompt_records_current_turn_state() {
     );
 }
 
-fn test_source() -> SourceInfo {
-    SourceInfo {
-        connector_id: "unit-test".to_string(),
-        connector_type: "local_executor".to_string(),
-        executor_id: None,
-    }
-}
 
 #[derive(Default)]
 struct SessionStartAwareConnector {
@@ -271,69 +264,6 @@ impl ExecutionHookProvider for RecordingHookProvider {
     }
 }
 
-#[derive(Default)]
-struct RepositoryRestoreRecordingConnector {
-    contexts: Arc<TokioMutex<Vec<agentdash_spi::ExecutionContext>>>,
-}
-
-#[async_trait::async_trait]
-impl AgentConnector for RepositoryRestoreRecordingConnector {
-    fn connector_id(&self) -> &'static str {
-        "repository-restore-recording"
-    }
-    fn connector_type(&self) -> agentdash_spi::ConnectorType {
-        agentdash_spi::ConnectorType::LocalExecutor
-    }
-    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
-        agentdash_spi::ConnectorCapabilities::default()
-    }
-    fn supports_repository_restore(&self, executor: &str) -> bool {
-        executor == "PI_AGENT"
-    }
-    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
-        vec![agentdash_spi::AgentInfo {
-            id: "PI_AGENT".to_string(),
-            name: "Pi Agent".to_string(),
-            variants: Vec::new(),
-            available: true,
-        }]
-    }
-    async fn discover_options_stream(
-        &self,
-        _executor: &str,
-        _working_dir: Option<PathBuf>,
-    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        Ok(Box::pin(stream::empty()))
-    }
-    async fn prompt(
-        &self,
-        _session_id: &str,
-        _follow_up_session_id: Option<&str>,
-        _prompt: &PromptPayload,
-        context: agentdash_spi::ExecutionContext,
-    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-        self.contexts.lock().await.push(context);
-        Ok(Box::pin(stream::empty()))
-    }
-    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-    async fn approve_tool_call(
-        &self,
-        _session_id: &str,
-        _tool_call_id: &str,
-    ) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-    async fn reject_tool_call(
-        &self,
-        _session_id: &str,
-        _tool_call_id: &str,
-        _reason: Option<String>,
-    ) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-}
 
 #[test]
 fn resolve_prompt_payload_from_text_block() {

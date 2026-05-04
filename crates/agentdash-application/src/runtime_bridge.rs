@@ -63,3 +63,5 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
 pub fn runtime_mcp_servers_to_session(servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServer> {
     servers.iter().filter_map(runtime_mcp_server_to_session).collect()
 }
+
+

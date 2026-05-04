@@ -1,7 +1,6 @@
 /// VFS 集成测试 — 需要 API 层组件（BackendRegistry、MountProvider 等）
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use agentdash_application::vfs::inline_persistence::{

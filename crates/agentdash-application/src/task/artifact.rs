@@ -191,7 +191,6 @@ fn dynamic_tool_call_status_str(status: &codex::DynamicToolCallStatus) -> &'stat
         codex::DynamicToolCallStatus::InProgress => "in_progress",
         codex::DynamicToolCallStatus::Completed => "completed",
         codex::DynamicToolCallStatus::Failed => "failed",
-        _ => "unknown",
     }
 }
 
@@ -200,7 +199,6 @@ fn mcp_tool_call_status_str(status: &codex::McpToolCallStatus) -> &'static str {
         codex::McpToolCallStatus::InProgress => "in_progress",
         codex::McpToolCallStatus::Completed => "completed",
         codex::McpToolCallStatus::Failed => "failed",
-        _ => "unknown",
     }
 }
 
@@ -210,7 +208,6 @@ fn command_execution_status_str(status: &codex::CommandExecutionStatus) -> &'sta
         codex::CommandExecutionStatus::Completed => "completed",
         codex::CommandExecutionStatus::Failed => "failed",
         codex::CommandExecutionStatus::Declined => "declined",
-        _ => "unknown",
     }
 }
 

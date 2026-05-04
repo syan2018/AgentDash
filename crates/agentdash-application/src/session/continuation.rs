@@ -857,7 +857,6 @@ fn codex_content_items_to_parts(
             codex::DynamicToolCallOutputContentItem::InputImage { .. } => {
                 Some(ContentPart::text("[image output]"))
             }
-            _ => None,
         })
         .collect()
 }

@@ -611,13 +611,3 @@ async fn project_response_for_user(
     let access = resolve_project_access(state, current_user, &project).await?;
     Ok(ProjectResponse::new(project, access))
 }
-
-async fn cleanup_cloned_project(state: &AppState, project_id: Uuid) {
-    if let Err(err) = state.repos.project_repo.delete(project_id).await {
-        tracing::error!(
-            project_id = %project_id,
-            error = %err,
-            "回滚 cloned project 失败"
-        );
-    }
-}

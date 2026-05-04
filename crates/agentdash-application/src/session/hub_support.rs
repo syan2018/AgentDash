@@ -65,32 +65,6 @@ pub(super) fn build_turn_started_envelope(
     })
 }
 
-pub(super) fn build_turn_lifecycle_envelope(
-    session_id: &str,
-    source: &SourceInfo,
-    turn_id: &str,
-    event_type: &str,
-    severity: &str,
-    message: Option<String>,
-) -> BackboneEnvelope {
-    let value = serde_json::json!({
-        "event_type": event_type,
-        "severity": severity,
-        "message": message,
-    });
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: "turn_lifecycle".to_string(),
-            value,
-        }),
-        session_id,
-        source.clone(),
-    )
-    .with_trace(TraceInfo {
-        turn_id: Some(turn_id.to_string()),
-        entry_index: None,
-    })
-}
 
 pub(super) fn build_turn_terminal_notification(
     session_id: &str,

@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
-#[allow(dead_code)] // runtime 只用字符串比较；常量用于测试和未来排错引用
+#[cfg(test)]
 pub const BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY: &str = "builtin_workflow_admin";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

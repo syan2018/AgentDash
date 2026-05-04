@@ -1898,11 +1898,6 @@ async fn resolve_owner_workflow_capability_directives(
     Some(capability_directives_from_active_workflow(&workflow))
 }
 
-// 允许未使用的 re-export,为 PR4-B..F 保留扩展点
-#[allow(unused_imports)]
-use crate::workflow::KickoffPromptFragment as _Kickoff;
-#[allow(unused_imports)]
-use crate::workflow::StepActivation as _StepActivation;
 
 #[cfg(test)]
 mod tests {

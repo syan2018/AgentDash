@@ -49,9 +49,7 @@ impl PostgresWorkflowRepository {
             r#"CREATE TABLE IF NOT EXISTS lifecycle_runs (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL,
             session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-            step_states TEXT NOT NULL,
-            record_artifacts TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
-            port_outputs TEXT NOT NULL DEFAULT '{}',
+            step_states TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
@@ -69,7 +67,7 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kind,recommended_binding_roles,source,version,contract,created_at,updated_at";
 const LC_COLS: &str = "id,project_id,key,name,description,binding_kind,recommended_binding_roles,source,version,entry_step_key,steps,edges,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,port_outputs,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
@@ -298,12 +296,11 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO lifecycle_runs ({RUN_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"))
+        sqlx::query(&format!("INSERT INTO lifecycle_runs ({RUN_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"))
             .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
             .bind(&run.session_id).bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.step_states)?)
-            .bind("[]").bind(serde_json::to_string(&run.execution_log)?)
-            .bind("{}")
+            .bind(serde_json::to_string(&run.execution_log)?)
             .bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
@@ -367,11 +364,11 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,record_artifacts=$6,execution_log=$7,port_outputs=$8,updated_at=$9,last_activity_at=$10 WHERE id=$11")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?)
-            .bind(serde_json::to_string(&run.step_states)?).bind("[]")
-            .bind(serde_json::to_string(&run.execution_log)?).bind("{}")
+            .bind(serde_json::to_string(&run.step_states)?)
+            .bind(serde_json::to_string(&run.execution_log)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -496,11 +493,7 @@ struct LifecycleRunRow {
     session_id: String,
     status: String,
     step_states: String,
-    #[allow(dead_code)]
-    record_artifacts: String,
     execution_log: String,
-    #[allow(dead_code)]
-    port_outputs: String,
     created_at: String,
     updated_at: String,
     last_activity_at: String,

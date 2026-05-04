@@ -112,19 +112,7 @@ pub struct StepActivation {
 }
 
 /// 单 step 激活的计算核心。纯函数,不做 IO。
-///
-/// 当前实现需要 `&PlatformConfig` 才能走 Resolver;对外入口走
-/// [`activate_step_with_platform`]。保留此函数签名作为未来把 platform
-/// 内联进 `StepActivationInput` 时的占位。
-#[deprecated(note = "use activate_step_with_platform instead")]
-pub fn activate_step(_input: &StepActivationInput<'_>) -> StepActivation {
-    unreachable!("activate_step must be called via activate_step_with_platform");
-}
-
 /// 单 step 激活 — 显式接收 `&PlatformConfig`(resolver 需要)。
-///
-/// 这是对外的真实入口;`activate_step(...)` 是未来若能把 platform
-/// 内联进 input 时的无参版本,当前为占位。
 pub fn activate_step_with_platform(
     input: &StepActivationInput<'_>,
     platform: &PlatformConfig,
@@ -424,8 +412,8 @@ pub fn empty_presets() -> AvailableMcpPresets {
 mod tests {
     use super::*;
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+        LifecycleStepDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        WorkflowDefinitionSource,
     };
 
     fn sample_step(
@@ -663,7 +651,4 @@ mod tests {
         assert!(out.kickoff_prompt.input_section.contains("已就绪"));
     }
 
-    // 保留未使用的 import 以免 clippy warning
-    #[allow(dead_code)]
-    fn _ref_unused_for_imports(_d: LifecycleDefinition, _r: LifecycleRun) {}
 }

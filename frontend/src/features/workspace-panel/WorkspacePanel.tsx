@@ -1,20 +1,22 @@
-import { forwardRef, useImperativeHandle } from "react";
-import { CanvasSessionPanel } from "../canvas-panel";
-import { ContextInspectorPanel } from "../session-context";
-import { VfsBrowser } from "../vfs";
-import { ContextOverviewTab } from "./ContextOverviewTab";
-import type {
-  WorkspacePanelHandle,
-  WorkspacePanelProps,
-  WorkspacePanelTab,
-} from "./workspace-panel-types";
+/**
+ * WorkspacePanel v2 — 浏览器化动态 Tab 容器
+ *
+ * 顶部 TabBar 分为钉选区（上下文/审计）和动态区（Canvas/VFS/Terminal 等），
+ * 动态 Tab 支持 dnd-kit 拖拽排序、关闭，以及 "+" 按钮新建。
+ * 下方 AddressBar 展示当前 Tab 的 URI。
+ * 内容区根据 TabTypeDescriptor 渲染对应组件。
+ */
 
-const TAB_ITEMS: { id: WorkspacePanelTab; label: string }[] = [
-  { id: "context", label: "上下文" },
-  { id: "vfs", label: "地址空间" },
-  { id: "canvas", label: "Canvas" },
-  { id: "inspector", label: "审计" },
-];
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo } from "react";
+import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
+import { tabTypeRegistry } from "./tab-type-registry";
+import { registerBuiltinTabTypes } from "./tab-types";
+import { WorkspaceDataProvider, type WorkspaceData } from "./workspace-data-context";
+import { TabBar } from "./TabBar";
+import { AddressBar } from "./AddressBar";
+import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
+
+registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
@@ -29,107 +31,107 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       hookRuntime,
       sessionCapabilities,
       activeCanvasId,
-      activeTab,
-      onTabChange,
     } = props;
 
+    const store = useWorkspaceTabStore();
+
+    // 首次挂载或 session 切换时初始化 Tab 状态
+    useEffect(() => {
+      if (store.sessionId !== sessionId) {
+        store.initialize(sessionId);
+      }
+    }, [sessionId, store]);
+
+    // 外部命令式 API：按类型打开或激活 Tab
     useImperativeHandle(ref, () => ({
-      openTab: (tab: WorkspacePanelTab) => onTabChange(tab),
-    }), [onTabChange]);
+      openTab: (typeId: string, uri?: string) => {
+        if (uri) {
+          store.openOrActivate(typeId, uri);
+        } else {
+          const type = tabTypeRegistry.getType(typeId);
+          if (type) {
+            const defaultUri = type.defaultUri ?? type.buildUri({});
+            store.openOrActivate(typeId, defaultUri);
+          }
+        }
+      },
+    }), [store]);
+
+    // activeCanvasId 变化时，自动打开/激活 Canvas Tab
+    useEffect(() => {
+      if (!activeCanvasId) return;
+      const uri = `canvas://${activeCanvasId}`;
+      store.openOrActivate("canvas", uri);
+    }, [activeCanvasId, store]);
+
+    const handleAddTab = useCallback((typeId: string) => {
+      store.addTab(typeId);
+    }, [store]);
+
+    const handleActivate = useCallback((tabId: string) => {
+      store.activateTab(tabId);
+    }, [store]);
+
+    const handleClose = useCallback((tabId: string) => {
+      store.closeTab(tabId);
+    }, [store]);
+
+    const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
+      store.reorderTabs(fromIndex, toIndex);
+    }, [store]);
+
+    const activeTab = useMemo(
+      () => store.tabs.find((t) => t.id === store.activeTabId) ?? null,
+      [store.tabs, store.activeTabId],
+    );
+
+    const workspaceData: WorkspaceData = useMemo(() => ({
+      sessionId,
+      contextSnapshot,
+      ownerStory,
+      ownerProjectName,
+      executorSummary,
+      runtimeSurface,
+      vfs,
+      hookRuntime,
+      sessionCapabilities,
+      activeCanvasId,
+    }), [
+      sessionId, contextSnapshot, ownerStory, ownerProjectName,
+      executorSummary, runtimeSurface, vfs, hookRuntime,
+      sessionCapabilities, activeCanvasId,
+    ]);
+
+    // 渲染当前激活 Tab 的内容
+    const activeContent = useMemo(() => {
+      if (!activeTab) return null;
+      const type = tabTypeRegistry.getType(activeTab.typeId);
+      if (!type) return null;
+      return type.renderContent({
+        uri: activeTab.uri,
+        tabId: activeTab.id,
+        sessionId,
+        isActive: true,
+      });
+    }, [activeTab, sessionId]);
 
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-background">
-        {/* Tab 栏 */}
-        <div className="flex shrink-0 items-center gap-0.5 border-b border-border bg-secondary/20 px-2 py-1.5">
-          {TAB_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onTabChange(item.id)}
-              className={[
-                "rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors",
-                activeTab === item.id
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
-              ].join(" ")}
-            >
-              {item.label}
-            </button>
-          ))}
+      <WorkspaceDataProvider value={workspaceData}>
+        <div className="flex h-full flex-col bg-background">
+          <TabBar
+            tabs={store.tabs}
+            activeTabId={store.activeTabId}
+            onActivate={handleActivate}
+            onClose={handleClose}
+            onReorder={handleReorder}
+            onAddTab={handleAddTab}
+          />
+          <AddressBar tab={activeTab} />
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            {activeContent}
+          </div>
         </div>
-
-        {/* Tab 内容区 */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {activeTab === "context" && (
-            <ContextOverviewTab
-              contextSnapshot={contextSnapshot}
-              ownerStory={ownerStory}
-              ownerProjectName={ownerProjectName}
-              executorSummary={executorSummary}
-              runtimeSurface={runtimeSurface}
-              vfs={vfs}
-              hookRuntime={hookRuntime}
-              sessionCapabilities={sessionCapabilities}
-            />
-          )}
-
-          {activeTab === "vfs" && (
-            <VfsTab vfs={vfs} runtimeSurface={runtimeSurface} />
-          )}
-
-          {activeTab === "canvas" && (
-            activeCanvasId ? (
-              <CanvasSessionPanel
-                canvasId={activeCanvasId}
-                sessionId={sessionId}
-                onClose={() => onTabChange("context")}
-              />
-            ) : (
-              <EmptyTabPlaceholder message="当前会话还没有关联的 Canvas。" />
-            )
-          )}
-
-          {activeTab === "inspector" && (
-            sessionId ? (
-              <ContextInspectorPanel sessionId={sessionId} />
-            ) : (
-              <EmptyTabPlaceholder message="需要先建立会话才能查看上下文审计。" />
-            )
-          )}
-        </div>
-      </div>
+      </WorkspaceDataProvider>
     );
   },
 );
-
-// ─── VFS Tab ────────────────────────────────────────────
-
-function VfsTab({
-  vfs,
-  runtimeSurface,
-}: {
-  vfs: WorkspacePanelProps["vfs"];
-  runtimeSurface: WorkspacePanelProps["runtimeSurface"];
-}) {
-  const hasMounts = (vfs && vfs.mounts.length > 0) || (runtimeSurface && runtimeSurface.mounts.length > 0);
-
-  if (!hasMounts) {
-    return <EmptyTabPlaceholder message="当前会话没有挂载的地址空间。" />;
-  }
-
-  return (
-    <div className="p-4">
-      <VfsBrowser surface={runtimeSurface} vfs={vfs} />
-    </div>
-  );
-}
-
-// ─── 空占位 ─────────────────────────────────────────────
-
-function EmptyTabPlaceholder({ message }: { message: string }) {
-  return (
-    <div className="flex h-full min-h-[200px] items-center justify-center px-6">
-      <p className="text-center text-sm text-muted-foreground">{message}</p>
-    </div>
-  );
-}

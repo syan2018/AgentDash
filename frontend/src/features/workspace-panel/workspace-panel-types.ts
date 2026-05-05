@@ -8,12 +8,10 @@ import type {
   TaskSessionExecutorSummary,
 } from "../../types";
 
-/** 右栏 Tab 类型 */
-export type WorkspacePanelTab = "context" | "vfs" | "canvas" | "inspector";
-
 /** WorkspacePanel 对外命令式 API */
 export interface WorkspacePanelHandle {
-  openTab: (tab: WorkspacePanelTab) => void;
+  /** 按类型打开或激活 Tab；可选传入 URI 定位到具体目标 */
+  openTab: (typeId: string, uri?: string) => void;
 }
 
 export interface WorkspacePanelProps {
@@ -31,8 +29,4 @@ export interface WorkspacePanelProps {
 
   /** Canvas Tab 所需数据 */
   activeCanvasId: string | null;
-
-  /** 当前激活的 Tab（受控） */
-  activeTab: WorkspacePanelTab;
-  onTabChange: (tab: WorkspacePanelTab) => void;
 }

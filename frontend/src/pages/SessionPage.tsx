@@ -5,7 +5,7 @@ import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
-import { WorkspacePanel, type WorkspacePanelHandle, type WorkspacePanelTab } from "../features/workspace-panel";
+import { WorkspacePanel, type WorkspacePanelHandle } from "../features/workspace-panel";
 import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
@@ -67,14 +67,15 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     story: Story | null;
   } | null>(null);
   const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
-  const [workspaceActiveTab, setWorkspaceActiveTab] = useState<WorkspacePanelTab>("context");
   const [sessionViewMode, setSessionViewMode] = useState<"chat" | "lifecycle">("chat");
 
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
-  const expandWorkspacePanel = useCallback((tab?: WorkspacePanelTab) => {
-    if (tab) setWorkspaceActiveTab(tab);
+  const expandWorkspacePanel = useCallback((typeId?: string, uri?: string) => {
+    if (typeId) {
+      workspacePanelRef.current?.openTab(typeId, uri);
+    }
     rightPanelRef.current?.expand();
   }, []);
 
@@ -401,7 +402,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);
-          expandWorkspacePanel("canvas");
+          expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
         }
         break;
       }
@@ -657,8 +658,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             hookRuntime={activeHookRuntime}
             sessionCapabilities={sessionCapabilities}
             activeCanvasId={activeCanvasId}
-            activeTab={workspaceActiveTab}
-            onTabChange={setWorkspaceActiveTab}
           />
         </Panel>
       </Group>

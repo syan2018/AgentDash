@@ -247,6 +247,49 @@ export async function cancelSession(id: string): Promise<void> {
   await api.post<void>(`/sessions/${encodeURIComponent(id)}/cancel`, {});
 }
 
+// ─── Tab 布局持久化 ──────────────────────────────────
+
+import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+
+/**
+ * 保存 Tab 布局到 session meta。
+ * 后端若尚未支持该字段，会静默失败。
+ */
+export async function saveSessionTabLayout(
+  sessionId: string,
+  layout: SessionTabLayout,
+): Promise<void> {
+  try {
+    await api.patch<unknown>(
+      `/sessions/${encodeURIComponent(sessionId)}/meta`,
+      { tab_layout: layout },
+    );
+  } catch {
+    // 后端可能尚未支持 tab_layout 字段，静默忽略
+  }
+}
+
+/**
+ * 从 session meta 加载 Tab 布局。
+ * 返回 null 表示无已保存布局或后端不支持。
+ */
+export async function loadSessionTabLayout(
+  sessionId: string,
+): Promise<SessionTabLayout | null> {
+  try {
+    const raw = await api.get<Record<string, unknown>>(
+      `/sessions/${encodeURIComponent(sessionId)}/meta`,
+    );
+    const layout = raw.tab_layout;
+    if (layout && typeof layout === "object" && Array.isArray((layout as SessionTabLayout).tabs)) {
+      return layout as SessionTabLayout;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── 项目会话列表 ─────────────────────────────────────
 // 获取指定项目的所有活跃会话（包含 agent / story / task 层级）
 

@@ -1,4 +1,4 @@
-mod command_handler;
+mod handlers;
 mod local_backend_config;
 mod mcp_client_manager;
 mod terminal_manager;

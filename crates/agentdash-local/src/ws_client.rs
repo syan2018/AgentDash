@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use agentdash_relay::*;
 
-use crate::command_handler::CommandHandler;
+use crate::handlers::CommandHandler;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;

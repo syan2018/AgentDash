@@ -8,15 +8,17 @@ import "@xterm/xterm/css/xterm.css";
 import type { TabTypeDescriptor } from "../tab-type-registry";
 import { TerminalIcon } from "./icons";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
+import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 
 const API_BASE = "/api";
 
 interface TerminalViewProps {
   terminalId: string;
   sessionId?: string;
+  tabId?: string;
 }
 
-function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
+function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -109,7 +111,7 @@ function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
     resizeObserver.observe(containerRef.current);
 
     if (terminalId === "new" && sessionId) {
-      void spawnTerminal(sessionId, term, fitAddon, setStatus);
+      void spawnTerminal(sessionId, term, fitAddon, setStatus, tabId);
     } else if (terminalId !== "new") {
       setStatus("running");
     }
@@ -191,6 +193,7 @@ async function spawnTerminal(
   term: Terminal,
   fitAddon: FitAddon,
   setStatus: (s: "connecting" | "running" | "exited" | "error") => void,
+  tabId?: string,
 ) {
   try {
     const dims = fitAddon.proposeDimensions();
@@ -208,6 +211,24 @@ async function spawnTerminal(
       setStatus("error");
       return;
     }
+    const data = (await resp.json()) as { terminalId: string; processId?: number };
+    const realId = data.terminalId;
+
+    // 注册到 store，以便 SSE platform event 能路由输出到这个终端
+    useTerminalStore.getState().registerTerminal({
+      id: realId,
+      sessionId,
+      cwd: ".",
+      state: "running",
+      processId: data.processId,
+      createdAt: Date.now(),
+    });
+
+    // 更新 Tab URI 为真正的 terminalId，使 input/resize/output 全部路由正确
+    if (tabId) {
+      useWorkspaceTabStore.getState().updateTabUri(tabId, `terminal://${realId}`);
+    }
+
     setStatus("running");
   } catch (e) {
     term.write(`\r\n\x1b[31mNetwork error: ${e}\x1b[0m\r\n`);
@@ -229,6 +250,7 @@ export const terminalTabType: TabTypeDescriptor = {
       <TerminalView
         terminalId={terminalId}
         sessionId={props.sessionId ?? undefined}
+        tabId={props.tabId}
       />
     );
   },

@@ -108,10 +108,15 @@ impl TerminalManager {
 
         let reader_handle = tokio::task::spawn_blocking(move || {
             let mut buf = [0u8; 4096];
+            tracing::info!(terminal_id = %reader_terminal_id, "PTY 读取线程启动");
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        tracing::info!(terminal_id = %reader_terminal_id, "PTY 读取结束 (EOF)");
+                        break;
+                    }
                     Ok(n) => {
+                        tracing::debug!(terminal_id = %reader_terminal_id, bytes = n, "PTY 读取到数据");
                         let data = String::from_utf8_lossy(&buf[..n]).to_string();
                         let _ = reader_event_tx.send(RelayMessage::EventTerminalOutput {
                             id: RelayMessage::new_id("term-out"),

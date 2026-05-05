@@ -356,8 +356,13 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         }
         RelayMessage::EventTerminalOutput { payload, .. } => {
             let terminal_id = &payload.terminal_id;
+            tracing::info!(
+                backend_id = %backend_id,
+                terminal_id = %terminal_id,
+                data_len = payload.data.len(),
+                "收到终端输出事件"
+            );
             if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
-                use agentdash_application::backend_transport::RelaySessionEvent;
                 let source = agentdash_protocol::SourceInfo {
                     connector_id: "platform".to_string(),
                     connector_type: "terminal".to_string(),
@@ -373,13 +378,31 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     &term_state.session_id,
                     source,
                 );
-                state.services.backend_registry.feed_session_event(
+                if let Err(e) = state.services.session_hub.inject_notification(
                     &term_state.session_id,
-                    RelaySessionEvent::Notification(envelope),
+                    envelope,
+                ).await {
+                    tracing::warn!(
+                        terminal_id = %terminal_id,
+                        session_id = %term_state.session_id,
+                        error = %e,
+                        "终端输出事件注入 session 失败"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    terminal_id = %terminal_id,
+                    "终端输出事件到达但 terminal_cache 中未找到"
                 );
             }
         }
         RelayMessage::EventTerminalStateChanged { payload, .. } => {
+            tracing::info!(
+                backend_id = %backend_id,
+                terminal_id = %payload.terminal_id,
+                state = ?payload.state,
+                "收到终端状态变更事件"
+            );
             let state_str = match payload.state {
                 agentdash_relay::TerminalProcessState::Running => "running",
                 agentdash_relay::TerminalProcessState::Exited => "exited",
@@ -397,7 +420,6 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .terminal_cache
                 .get_terminal(&payload.terminal_id)
             {
-                use agentdash_application::backend_transport::RelaySessionEvent;
                 let source = agentdash_protocol::SourceInfo {
                     connector_id: "platform".to_string(),
                     connector_type: "terminal".to_string(),
@@ -415,10 +437,16 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     &term_state.session_id,
                     source,
                 );
-                state.services.backend_registry.feed_session_event(
+                if let Err(e) = state.services.session_hub.inject_notification(
                     &term_state.session_id,
-                    RelaySessionEvent::Notification(envelope),
-                );
+                    envelope,
+                ).await {
+                    tracing::warn!(
+                        terminal_id = %payload.terminal_id,
+                        error = %e,
+                        "终端状态变更注入 session 失败"
+                    );
+                }
             }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {

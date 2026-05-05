@@ -88,6 +88,16 @@ impl SessionTerminalCache {
             .unwrap_or_default()
     }
 
+    pub fn update_process_id(&self, terminal_id: &str, process_id: Option<u32>) {
+        let mut cache = self.inner.write().unwrap();
+        for terminals in cache.values_mut() {
+            if let Some(entry) = terminals.get_mut(terminal_id) {
+                entry.process_id = process_id;
+                return;
+            }
+        }
+    }
+
     pub fn get_terminal(&self, terminal_id: &str) -> Option<TerminalState> {
         let cache = self.inner.read().unwrap();
         for terminals in cache.values() {
@@ -96,6 +106,15 @@ impl SessionTerminalCache {
             }
         }
         None
+    }
+
+    pub fn remove_terminal(&self, terminal_id: &str) {
+        let mut cache = self.inner.write().unwrap();
+        for terminals in cache.values_mut() {
+            if terminals.remove(terminal_id).is_some() {
+                return;
+            }
+        }
     }
 
     /// 后端断连时标记其所有终端为 Lost

@@ -69,6 +69,14 @@ pub async fn spawn_terminal(
         rows: body.rows.unwrap_or(24),
     };
 
+    // 预注册到 cache，避免 event_tx 事件到达时 cache 尚未就绪的 race condition
+    state.services.terminal_cache.register_terminal(
+        &session_id,
+        &terminal_id,
+        &backend_id,
+        None,
+    );
+
     match state
         .services
         .backend_registry
@@ -85,12 +93,12 @@ pub async fn spawn_terminal(
             payload: Some(resp),
             ..
         }) => {
-            state.services.terminal_cache.register_terminal(
-                &session_id,
-                &resp.terminal_id,
-                &backend_id,
-                resp.process_id,
-            );
+            if resp.process_id.is_some() {
+                state.services.terminal_cache.update_process_id(
+                    &resp.terminal_id,
+                    resp.process_id,
+                );
+            }
             Json(serde_json::json!({
                 "terminalId": resp.terminal_id,
                 "processId": resp.process_id,
@@ -99,16 +107,22 @@ pub async fn spawn_terminal(
         }
         Ok(RelayMessage::ResponseTerminalSpawn {
             error: Some(err), ..
-        }) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.message })),
-        )
-            .into_response(),
-        _ => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "unexpected response" })),
-        )
-            .into_response(),
+        }) => {
+            state.services.terminal_cache.remove_terminal(&terminal_id);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err.message })),
+            )
+                .into_response()
+        }
+        _ => {
+            state.services.terminal_cache.remove_terminal(&terminal_id);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "unexpected response" })),
+            )
+                .into_response()
+        }
     }
 }
 

@@ -8,10 +8,11 @@
  * - Promote 到终端面板按钮（Phase 5）
  */
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, useCallback } from "react";
 import type { ThreadItem } from "../../../generated/backbone-protocol";
 import { getThreadItemStatus } from "../model/types";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
+import { useTerminalStore } from "../model/useTerminalStore";
 
 type ExecStatus = "inProgress" | "completed" | "failed" | "pending";
 
@@ -25,6 +26,7 @@ export interface CommandExecutionCardProps {
 export const CommandExecutionCard = memo(function CommandExecutionCard({
   item,
   outputText,
+  sessionId,
 }: CommandExecutionCardProps) {
   const status = getThreadItemStatus(item) as ExecStatus;
   const outputRef = useRef<HTMLPreElement>(null);
@@ -38,6 +40,28 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
     item.type === "commandExecution" ? (item as Record<string, unknown>).exitCode as number | undefined : undefined;
 
   const elapsed = useElapsed(status === "inProgress");
+
+  const handlePromote = useCallback(() => {
+    const promoteId = `promote-${item.id}`;
+    const store = useTerminalStore.getState();
+    // 只写一次（避免重复 promote 追加相同内容）
+    if (!store.getOutput(promoteId) && outputText) {
+      store.appendOutput(promoteId, outputText);
+    }
+    if (sessionId) {
+      store.registerTerminal({
+        id: promoteId,
+        sessionId,
+        cwd: cwd ?? ".",
+        state: status === "inProgress" ? "running" : "exited",
+        exitCode,
+        createdAt: Date.now(),
+      });
+    }
+    useWorkspaceTabStore
+      .getState()
+      .openOrActivate("terminal", `terminal://${promoteId}`);
+  }, [item.id, outputText, sessionId, cwd, status, exitCode]);
 
   useEffect(() => {
     if (outputRef.current && status === "inProgress") {
@@ -122,11 +146,7 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
         )}
         <button
           type="button"
-          onClick={() => {
-            useWorkspaceTabStore
-              .getState()
-              .openOrActivate("terminal", `terminal://${item.id}`);
-          }}
+          onClick={handlePromote}
           className="ml-auto rounded px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
         >
           在终端中查看

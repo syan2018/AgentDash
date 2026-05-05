@@ -86,7 +86,7 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
         <div className="relative border-t border-border">
           <pre
             ref={outputRef}
-            className={`overflow-auto bg-zinc-950 px-3 py-2 font-mono text-xs leading-relaxed text-zinc-300 transition-[max-height] ${maxH}`}
+            className={`overflow-auto bg-muted/30 px-3 py-2 font-mono text-xs leading-relaxed text-foreground/80 transition-[max-height] ${maxH}`}
           >
             {outputText || (
               <span className="animate-pulse text-muted-foreground/40">
@@ -94,7 +94,7 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
               </span>
             )}
             {status === "inProgress" && (
-              <span className="inline-block h-3.5 w-1.5 animate-pulse bg-zinc-400/60" />
+              <span className="inline-block h-3.5 w-1.5 animate-pulse bg-muted-foreground/40" />
             )}
           </pre>
 
@@ -102,7 +102,7 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
             <button
               type="button"
               onClick={() => setCollapsed(!collapsed)}
-              className="absolute bottom-1 right-2 rounded bg-zinc-800/80 px-2 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-700/80"
+              className="absolute bottom-1 right-2 rounded bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm hover:bg-muted"
             >
               {collapsed ? "展开" : "折叠"}
             </button>

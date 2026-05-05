@@ -59,10 +59,28 @@ function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
       fontSize: 13,
       fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace",
       theme: {
-        background: "#09090b",
-        foreground: "#d4d4d8",
-        cursor: "#a1a1aa",
-        selectionBackground: "#27272a",
+        background: "#ffffff",
+        foreground: "#1e1e2e",
+        cursor: "#6e6e7e",
+        cursorAccent: "#ffffff",
+        selectionBackground: "#d0d5dd",
+        selectionForeground: "#1e1e2e",
+        black: "#3c3c43",
+        red: "#d1242f",
+        green: "#1a7f37",
+        yellow: "#9a6700",
+        blue: "#0969da",
+        magenta: "#8250df",
+        cyan: "#0598bc",
+        white: "#8b949e",
+        brightBlack: "#57606a",
+        brightRed: "#cf222e",
+        brightGreen: "#116329",
+        brightYellow: "#7d4e00",
+        brightBlue: "#0550ae",
+        brightMagenta: "#6639ba",
+        brightCyan: "#0079b4",
+        brightWhite: "#6e7781",
       },
       allowProposedApi: true,
     });
@@ -136,9 +154,9 @@ function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
   }, [terminalState?.state]);
 
   return (
-    <div className="flex h-full flex-col bg-[#09090b]">
+    <div className="flex h-full flex-col bg-white">
       {/* Status bar */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-1 text-xs text-zinc-500">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
         <span
           className={`inline-block h-1.5 w-1.5 rounded-full ${
             status === "running"
@@ -159,7 +177,7 @@ function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
                 ? `已退出${terminalState?.exitCode !== undefined ? ` (${terminalState.exitCode})` : ""}`
                 : "错误"}
         </span>
-        <span className="ml-auto font-mono text-zinc-700">{terminalId.slice(0, 12)}</span>
+        <span className="ml-auto font-mono text-muted-foreground/50">{terminalId.slice(0, 12)}</span>
       </div>
 
       {/* Terminal container */}

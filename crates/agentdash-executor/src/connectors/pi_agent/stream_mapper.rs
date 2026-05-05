@@ -118,6 +118,75 @@ fn upsert_state_from_message(
     )
 }
 
+/// 判断是否为 shell_exec 工具调用（应映射为 CommandExecution 而非 DynamicToolCall）
+fn is_shell_exec(tool_name: &str) -> bool {
+    tool_name == "shell_exec"
+}
+
+/// 从 shell_exec 的 args JSON 中提取 command / cwd（cwd 总是返回绝对路径）
+fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
+    let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)")
+        .to_string();
+    let raw_cwd = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".");
+    let cwd_path = std::path::Path::new(raw_cwd);
+    let cwd = if cwd_path.is_absolute() {
+        raw_cwd.to_string()
+    } else {
+        std::env::current_dir()
+            .map(|base| base.join(cwd_path).to_string_lossy().to_string())
+            .unwrap_or_else(|_| raw_cwd.to_string())
+    };
+    (command, cwd)
+}
+
+/// 通过 serde 构造 CommandExecution ThreadItem（绕过 AbsolutePathBuf 未 re-export 的限制）
+fn make_command_execution_item(
+    item_id: &str,
+    state: &ToolCallEmitState,
+    status: codex::CommandExecutionStatus,
+    aggregated_output: Option<String>,
+    exit_code: Option<i32>,
+) -> codex::ThreadItem {
+    let args = state
+        .raw_input
+        .clone()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let (command, cwd) = extract_shell_args(&args);
+    let json_val = serde_json::json!({
+        "type": "commandExecution",
+        "id": item_id,
+        "command": command,
+        "cwd": cwd,
+        "processId": null,
+        "source": status_to_source_str(),
+        "status": status,
+        "commandActions": [],
+        "aggregatedOutput": aggregated_output,
+        "exitCode": exit_code,
+        "durationMs": null,
+    });
+    serde_json::from_value(json_val).unwrap_or_else(|e| {
+        tracing::warn!("Failed to construct CommandExecution item via serde: {e}");
+        make_dynamic_tool_item(
+            item_id,
+            state,
+            codex::DynamicToolCallStatus::InProgress,
+            None,
+            None,
+        )
+    })
+}
+
+fn status_to_source_str() -> &'static str {
+    "agent"
+}
+
 /// 构造 DynamicToolCall ThreadItem 用于 ItemStarted/ItemCompleted。
 fn make_dynamic_tool_item(
     item_id: &str,
@@ -174,13 +243,23 @@ pub(super) fn convert_event_to_envelopes(
                     return Vec::new();
                 }
                 let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
-                let item = make_dynamic_tool_item(
-                    &item_id,
-                    &state,
-                    codex::DynamicToolCallStatus::InProgress,
-                    None,
-                    None,
-                );
+                let item = if is_shell_exec(&state.tool_name) {
+                    make_command_execution_item(
+                        &item_id,
+                        &state,
+                        codex::CommandExecutionStatus::InProgress,
+                        None,
+                        None,
+                    )
+                } else {
+                    make_dynamic_tool_item(
+                        &item_id,
+                        &state,
+                        codex::DynamicToolCallStatus::InProgress,
+                        None,
+                        None,
+                    )
+                };
                 vec![wrap(
                     BackboneEvent::ItemStarted(codex::ItemStartedNotification {
                         item,
@@ -413,17 +492,23 @@ pub(super) fn convert_event_to_envelopes(
                 Some(args.clone()),
             );
             let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
-            let item = make_dynamic_tool_item(
-                &item_id,
-                &state,
-                codex::DynamicToolCallStatus::InProgress,
-                None,
-                None,
-            );
-            // ItemStarted may have already been emitted by ToolCallStart;
-            // here we emit an ItemCompleted with InProgress status as a progress signal.
-            // 实际上 Codex 协议没有"tool 开始执行"的独立信号，对齐行为通过
-            // ItemStarted(InProgress) 覆盖。若已有 ItemStarted，这里重复无害。
+            let item = if is_shell_exec(tool_name) {
+                make_command_execution_item(
+                    &item_id,
+                    &state,
+                    codex::CommandExecutionStatus::InProgress,
+                    None,
+                    None,
+                )
+            } else {
+                make_dynamic_tool_item(
+                    &item_id,
+                    &state,
+                    codex::DynamicToolCallStatus::InProgress,
+                    None,
+                    None,
+                )
+            };
             vec![wrap(
                 BackboneEvent::ItemStarted(codex::ItemStartedNotification {
                     item,
@@ -572,15 +657,53 @@ pub(super) fn convert_event_to_envelopes(
                 tool_name,
                 None,
             );
-            let content_items = decode_tool_result_to_content_items(result);
-            let success = Some(!is_error);
-            let status = if *is_error {
-                codex::DynamicToolCallStatus::Failed
-            } else {
-                codex::DynamicToolCallStatus::Completed
-            };
             let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
-            let item = make_dynamic_tool_item(&item_id, &state, status, content_items, success);
+
+            let item = if is_shell_exec(tool_name) {
+                let exit_code = result
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("text"))
+                    .and_then(|t| t.as_str())
+                    .and_then(|text| {
+                        // exit code 通常作为 "Exit code: N" 出现在输出末尾
+                        text.lines().rev().find_map(|line| {
+                            line.trim()
+                                .strip_prefix("Exit code: ")
+                                .and_then(|s| s.parse::<i32>().ok())
+                        })
+                    });
+                let aggregated_output = result
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("text"))
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string());
+                let status = if *is_error {
+                    codex::CommandExecutionStatus::Failed
+                } else {
+                    codex::CommandExecutionStatus::Completed
+                };
+                make_command_execution_item(
+                    &item_id,
+                    &state,
+                    status,
+                    aggregated_output,
+                    exit_code,
+                )
+            } else {
+                let content_items = decode_tool_result_to_content_items(result);
+                let success = Some(!is_error);
+                let status = if *is_error {
+                    codex::DynamicToolCallStatus::Failed
+                } else {
+                    codex::DynamicToolCallStatus::Completed
+                };
+                make_dynamic_tool_item(&item_id, &state, status, content_items, success)
+            };
+
             vec![wrap(
                 BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
                     item,

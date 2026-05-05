@@ -1,35 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   fetchCanvas,
   fetchCanvasRuntimeSnapshot,
   updateCanvas,
 } from "../../services/canvas";
-import type { Canvas, CanvasDataBinding, CanvasFile, CanvasRuntimeSnapshot } from "../../types";
+import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
-import { CanvasFilesEditor } from "./CanvasFilesEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasSessionPanelProps {
   canvasId: string | null;
   sessionId: string | null;
   onClose: () => void;
+  /** 打开该 Canvas 对应 mount 的 VFS 地址空间 Tab */
+  onBrowseFiles?: (mountId: string) => void;
 }
 
-type DetailTab = "bindings" | "files" | "snapshot";
-
-export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessionPanelProps) {
+export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles }: CanvasSessionPanelProps) {
   const [canvas, setCanvas] = useState<Canvas | null>(null);
   const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [isSavingBindings, setIsSavingBindings] = useState(false);
   const [bindingsError, setBindingsError] = useState<string | null>(null);
-  const [isSavingFiles, setIsSavingFiles] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
 
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("snapshot");
 
   const loadCanvasData = useCallback(async () => {
     if (!canvasId) {
@@ -65,26 +60,6 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
     void loadCanvasData();
   }, [loadCanvasData]);
 
-  useEffect(() => {
-    const nextFilePath = snapshot?.entry ?? snapshot?.files[0]?.path ?? null;
-    setSelectedFilePath((current) => {
-      if (!snapshot) {
-        return null;
-      }
-      if (current && snapshot.files.some((file) => file.path === current)) {
-        return current;
-      }
-      return nextFilePath;
-    });
-  }, [snapshot]);
-
-  const selectedFile = useMemo(() => {
-    if (!snapshot || !selectedFilePath) {
-      return null;
-    }
-    return snapshot.files.find((file) => file.path === selectedFilePath) ?? null;
-  }, [selectedFilePath, snapshot]);
-
   const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
     if (!canvasId) {
       return;
@@ -106,31 +81,7 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
     }
   }, [canvasId, sessionId]);
 
-  const handleFilesSave = useCallback(async (input: {
-    entryFile: string;
-    files: CanvasFile[];
-  }) => {
-    if (!canvasId) {
-      return;
-    }
-
-    setIsSavingFiles(true);
-    setFilesError(null);
-    try {
-      const nextCanvas = await updateCanvas(canvasId, {
-        entry_file: input.entryFile,
-        files: input.files,
-      });
-      setCanvas(nextCanvas);
-      const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
-      setSnapshot(nextSnapshot);
-    } catch (err) {
-      setFilesError(err instanceof Error ? err.message : "保存文件失败");
-      throw err;
-    } finally {
-      setIsSavingFiles(false);
-    }
-  }, [canvasId, sessionId]);
+  const canvasMountId = canvas ? `cvs-${canvas.mount_id}` : null;
 
   if (!canvasId) {
     return null;
@@ -202,34 +153,32 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
         )}
       </div>
 
-      {/* ── 底部：可折叠的详情面板 ── */}
+      {/* ── 底部：操作栏 ── */}
       {!isLoading && !error && snapshot && (
         <div className="shrink-0 border-t border-border">
-          {/* 底部 tab 栏 */}
           <div className="flex items-center justify-between bg-secondary/20 px-3 py-1.5">
             <div className="flex items-center gap-1">
-              {(["snapshot", "bindings", "files"] as const).map((tab) => (
+              {onBrowseFiles && canvasMountId && (
                 <button
-                  key={tab}
                   type="button"
-                  onClick={() => {
-                    if (activeDetailTab === tab && isDetailOpen) {
-                      setIsDetailOpen(false);
-                    } else {
-                      setActiveDetailTab(tab);
-                      setIsDetailOpen(true);
-                    }
-                  }}
-                  className={[
-                    "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
-                    activeDetailTab === tab && isDetailOpen
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  ].join(" ")}
+                  onClick={() => onBrowseFiles(canvasMountId)}
+                  className="rounded-[6px] px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
-                  {tab === "snapshot" ? "快照文件" : tab === "bindings" ? "数据绑定" : "资产编辑"}
+                  浏览文件
                 </button>
-              ))}
+              )}
+              <button
+                type="button"
+                onClick={() => setIsDetailOpen((v) => !v)}
+                className={[
+                  "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
+                  isDetailOpen
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                ].join(" ")}
+              >
+                数据绑定
+              </button>
             </div>
             <button
               type="button"
@@ -253,117 +202,36 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose }: CanvasSessi
             </button>
           </div>
 
-          {/* 折叠内容 */}
           {isDetailOpen && (
             <div className="max-h-[45vh] overflow-y-auto px-3 py-3">
-              {activeDetailTab === "snapshot" && (
-                <SnapshotFileViewer
-                  snapshot={snapshot}
-                  selectedFilePath={selectedFilePath}
-                  selectedFile={selectedFile}
-                  onSelectFile={setSelectedFilePath}
+              <div className="space-y-3">
+                <section className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
+                  {snapshot.bindings.length === 0 && (
+                    <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
+                  )}
+                  {snapshot.bindings.map((binding) => (
+                    <div key={`${binding.alias}:${binding.source_uri}`} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
+                      <p className="font-medium text-foreground">{binding.alias}</p>
+                      <p className="break-all text-muted-foreground">source: {binding.source_uri}</p>
+                      <p className="text-muted-foreground">path: {binding.data_path}</p>
+                      <p className="text-muted-foreground">resolved: {binding.resolved ? "yes" : "no"}</p>
+                    </div>
+                  ))}
+                </section>
+
+                <CanvasBindingsEditor
+                  value={canvas?.bindings ?? []}
+                  isSaving={isSavingBindings}
+                  error={bindingsError}
+                  onSave={handleBindingsSave}
                 />
-              )}
-
-              {activeDetailTab === "bindings" && (
-                <div className="space-y-3">
-                  <section className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-                    <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
-                    {snapshot.bindings.length === 0 && (
-                      <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
-                    )}
-                    {snapshot.bindings.map((binding) => (
-                      <div key={`${binding.alias}:${binding.source_uri}`} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
-                        <p className="font-medium text-foreground">{binding.alias}</p>
-                        <p className="break-all text-muted-foreground">source: {binding.source_uri}</p>
-                        <p className="text-muted-foreground">path: {binding.data_path}</p>
-                        <p className="text-muted-foreground">resolved: {binding.resolved ? "yes" : "no"}</p>
-                      </div>
-                    ))}
-                  </section>
-
-                  <CanvasBindingsEditor
-                    value={canvas?.bindings ?? []}
-                    isSaving={isSavingBindings}
-                    error={bindingsError}
-                    onSave={handleBindingsSave}
-                  />
-                </div>
-              )}
-
-              {activeDetailTab === "files" && (
-                <CanvasFilesEditor
-                  value={canvas?.files ?? []}
-                  entryFile={canvas?.entry_file ?? ""}
-                  isSaving={isSavingFiles}
-                  error={filesError}
-                  onSave={handleFilesSave}
-                />
-              )}
+              </div>
             </div>
           )}
         </div>
       )}
     </aside>
-  );
-}
-
-function SnapshotFileViewer({
-  snapshot,
-  selectedFilePath,
-  selectedFile,
-  onSelectFile,
-}: {
-  snapshot: CanvasRuntimeSnapshot;
-  selectedFilePath: string | null;
-  selectedFile: { path: string; file_type: string; content: string } | null;
-  onSelectFile: (path: string) => void;
-}) {
-  if (snapshot.files.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">当前没有可运行文件。</p>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-1.5">
-        {snapshot.files.map((file) => {
-          const isSelected = file.path === selectedFilePath;
-          return (
-            <button
-              key={file.path}
-              type="button"
-              onClick={() => onSelectFile(file.path)}
-              className={[
-                "rounded-[6px] border px-2 py-0.5 text-[11px] transition-colors",
-                isSelected
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground",
-              ].join(" ")}
-            >
-              {file.path}
-            </button>
-          );
-        })}
-      </div>
-
-      {selectedFile && (
-        <div className="space-y-2 rounded-[10px] border border-border bg-background p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="min-w-0 truncate text-xs font-medium text-foreground">
-              {selectedFile.path}
-            </p>
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              {selectedFile.file_type}
-            </span>
-          </div>
-          <pre className="max-h-[200px] overflow-auto rounded-[8px] border border-border bg-slate-950 px-3 py-2 text-[11px] leading-5 text-slate-100">
-            <code>{selectedFile.content}</code>
-          </pre>
-        </div>
-      )}
-    </div>
   );
 }
 

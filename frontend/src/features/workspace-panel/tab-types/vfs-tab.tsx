@@ -61,6 +61,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
       surface={runtimeSurface}
       vfs={vfs}
       initialMountId={parsed?.mountId}
+      initialFilePath={parsed?.path}
       onNavigate={handleNavigate}
     />
   );

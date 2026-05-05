@@ -6,7 +6,7 @@
  * 使用 react-resizable-panels 实现左右分栏。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   readSurfaceFile,
@@ -20,6 +20,7 @@ export interface VfsBrowserPanelProps {
   surface?: ResolvedVfsSurface | null;
   vfs?: ExecutionVfs | null;
   initialMountId?: string;
+  initialFilePath?: string;
   /** 当用户切换 mount 或文件时回调，用于更新 Tab URI */
   onNavigate?: (mountId: string, filePath: string | null) => void;
 }
@@ -35,10 +36,11 @@ export function VfsBrowserPanel({
   surface,
   vfs,
   initialMountId,
+  initialFilePath,
   onNavigate,
 }: VfsBrowserPanelProps) {
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
 
@@ -66,9 +68,23 @@ export function VfsBrowserPanel({
       ? initialMountId
       : mounts[0]?.id ?? null;
     setSelectedMountId(defaultId);
-    setSelectedFilePath(null);
-    setFileContent(null);
-  }, [mounts, selectedMountId, initialMountId]);
+    if (!initialFilePath) {
+      setSelectedFilePath(null);
+      setFileContent(null);
+    }
+  }, [mounts, selectedMountId, initialMountId, initialFilePath]);
+
+  // 有 initialFilePath 时自动加载文件内容
+  const initialLoadDone = useRef(false);
+  useEffect(() => {
+    if (initialLoadDone.current || !initialFilePath || !surfaceRef || !selectedMountId) return;
+    initialLoadDone.current = true;
+    setFileLoading(true);
+    readSurfaceFile({ surfaceRef, mountId: selectedMountId, path: initialFilePath })
+      .then((result) => setFileContent(result.content))
+      .catch((err) => setFileContent(`读取失败: ${err instanceof Error ? err.message : "未知错误"}`))
+      .finally(() => setFileLoading(false));
+  }, [initialFilePath, surfaceRef, selectedMountId]);
 
   const handleSelectFile = useCallback(
     async (path: string) => {

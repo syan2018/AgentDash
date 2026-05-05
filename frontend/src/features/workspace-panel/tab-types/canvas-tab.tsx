@@ -1,6 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
+import { useCallback } from "react";
 import { CanvasSessionPanel } from "../../canvas-panel";
 import { useWorkspaceData } from "../workspace-data-context";
+import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { TabContentRenderProps, TabTypeDescriptor } from "../tab-type-registry";
 import { CanvasIcon } from "./icons";
 
@@ -31,11 +33,17 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
     );
   }
 
+  const handleBrowseFiles = useCallback((mountId: string) => {
+    const uri = `${mountId}://`;
+    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
+  }, []);
+
   return (
     <CanvasSessionPanel
       canvasId={canvasId}
       sessionId={sessionId}
       onClose={() => {}}
+      onBrowseFiles={handleBrowseFiles}
     />
   );
 }

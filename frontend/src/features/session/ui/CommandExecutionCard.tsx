@@ -8,9 +8,10 @@
  * - Promote 到终端面板按钮（Phase 5）
  */
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadItem } from "../../../generated/backbone-protocol";
 import { getThreadItemStatus } from "../model/types";
+import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 
 type ExecStatus = "inProgress" | "completed" | "failed" | "pending";
 
@@ -111,18 +112,27 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
       )}
 
       {/* Footer */}
-      {status !== "inProgress" && status !== "pending" && (
-        <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
-          {exitCode !== undefined && (
-            <span className={exitCode === 0 ? "text-success" : "text-destructive"}>
-              exit: {exitCode}
-            </span>
-          )}
-          {lineCount > 0 && (
-            <span className="text-muted-foreground/50">{lineCount} 行</span>
-          )}
-        </div>
-      )}
+      <div className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
+        {exitCode !== undefined && (
+          <span className={exitCode === 0 ? "text-success" : "text-destructive"}>
+            exit: {exitCode}
+          </span>
+        )}
+        {lineCount > 0 && (
+          <span className="text-muted-foreground/50">{lineCount} 行</span>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            useWorkspaceTabStore
+              .getState()
+              .openOrActivate("terminal", `terminal://${item.id}`);
+          }}
+          className="ml-auto rounded px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          在终端中查看
+        </button>
+      </div>
     </div>
   );
 });

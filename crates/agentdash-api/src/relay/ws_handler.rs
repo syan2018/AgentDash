@@ -201,6 +201,42 @@ async fn handle_backend_connection(
     }
 
     state.services.backend_registry.unregister(&bid).await;
+
+    // 标记该后端名下的所有终端为 Lost 并推送 platform event
+    let lost_terminal_ids = state.services.terminal_cache.handle_backend_disconnect(&bid);
+    for terminal_id in &lost_terminal_ids {
+        if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
+            use agentdash_application::backend_transport::RelaySessionEvent;
+            let source = agentdash_protocol::SourceInfo {
+                connector_id: "platform".to_string(),
+                connector_type: "terminal".to_string(),
+                executor_id: None,
+            };
+            let envelope = agentdash_protocol::BackboneEnvelope::new(
+                agentdash_protocol::BackboneEvent::Platform(
+                    agentdash_protocol::PlatformEvent::TerminalStateChanged {
+                        terminal_id: terminal_id.clone(),
+                        state: "lost".to_string(),
+                        exit_code: None,
+                        message: Some("backend disconnected".to_string()),
+                    },
+                ),
+                &term_state.session_id,
+                source,
+            );
+            state.services.backend_registry.feed_session_event(
+                &term_state.session_id,
+                RelaySessionEvent::Notification(envelope),
+            );
+        }
+    }
+    if !lost_terminal_ids.is_empty() {
+        tracing::info!(
+            backend_id = %bid,
+            count = lost_terminal_ids.len(),
+            "后端断连，已标记终端为 Lost"
+        );
+    }
 }
 
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {

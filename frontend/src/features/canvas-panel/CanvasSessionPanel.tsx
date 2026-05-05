@@ -32,7 +32,6 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
       setSnapshot(null);
       setError(null);
       setBindingsError(null);
-      setSelectedFilePath(null);
       return;
     }
 
@@ -50,7 +49,6 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
       setCanvas(null);
       setSnapshot(null);
       setBindingsError(null);
-      setFilesError(null);
     } finally {
       setIsLoading(false);
     }
@@ -72,7 +70,6 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
       setCanvas(nextCanvas);
       const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
       setSnapshot(nextSnapshot);
-      setFilesError(null);
     } catch (err) {
       setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
       throw err;

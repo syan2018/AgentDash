@@ -21,8 +21,6 @@ function TerminalView({ terminalId, sessionId }: TerminalViewProps) {
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [status, setStatus] = useState<"connecting" | "running" | "exited" | "error">("connecting");
-  const appendOutput = useTerminalStore((s) => s.appendOutput);
-
   const sendInput = useCallback(
     async (data: string) => {
       try {

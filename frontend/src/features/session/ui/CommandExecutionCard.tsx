@@ -8,7 +8,7 @@
  * - Promote 到终端面板按钮（Phase 5）
  */
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ThreadItem } from "../../../generated/backbone-protocol";
 import { getThreadItemStatus } from "../model/types";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
@@ -29,7 +29,6 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
   const status = getThreadItemStatus(item) as ExecStatus;
   const outputRef = useRef<HTMLPreElement>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const [startTime] = useState(Date.now);
 
   const command =
     item.type === "commandExecution" ? item.command : "(unknown)";

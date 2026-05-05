@@ -299,21 +299,30 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
-    // 终端输出 → 转发到 TerminalStore，不进入 chat entries
-    if (platform.kind === "terminal_output") {
-      const { useTerminalStore } = require("./useTerminalStore");
-      useTerminalStore.getState().appendOutput(platform.data.terminal_id, platform.data.data);
+    // 终端事件 → 转发到 TerminalStore，不进入 chat entries
+    // ts-rs 生成类型可能未包含新 kind，用 as unknown 跳过静态检查
+    const platformAny = platform as unknown as { kind: string; data: Record<string, unknown> };
+    if (platformAny.kind === "terminal_output") {
+      import("./useTerminalStore").then(({ useTerminalStore }) => {
+        useTerminalStore
+          .getState()
+          .appendOutput(
+            platformAny.data.terminal_id as string,
+            platformAny.data.data as string,
+          );
+      });
       return prev;
     }
-
-    // 终端状态变更 → 更新 TerminalStore
-    if (platform.kind === "terminal_state_changed") {
-      const { useTerminalStore } = require("./useTerminalStore");
-      useTerminalStore.getState().updateTerminalState(
-        platform.data.terminal_id,
-        platform.data.state,
-        platform.data.exit_code,
-      );
+    if (platformAny.kind === "terminal_state_changed") {
+      import("./useTerminalStore").then(({ useTerminalStore }) => {
+        useTerminalStore
+          .getState()
+          .updateTerminalState(
+            platformAny.data.terminal_id as string,
+            platformAny.data.state as import("../../../types/terminal").TerminalProcessState,
+            platformAny.data.exit_code as number | undefined,
+          );
+      });
       return prev;
     }
 

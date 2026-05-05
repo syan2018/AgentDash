@@ -306,6 +306,13 @@ pub enum RelayMessage {
     },
 
     // ── MCP Relay 命令（云端 → 本机）──
+    /// 一次性 probe：临时连接指定 transport 并探测工具列表（不入池）
+    #[serde(rename = "command.mcp_probe_transport")]
+    CommandMcpProbeTransport {
+        id: String,
+        payload: CommandMcpProbeTransportPayload,
+    },
+
     /// 列举本机 MCP server 提供的工具
     #[serde(rename = "command.mcp_list_tools")]
     CommandMcpListTools {
@@ -328,6 +335,15 @@ pub enum RelayMessage {
     },
 
     // ── MCP Relay 响应（本机 → 云端）──
+    #[serde(rename = "response.mcp_probe_transport")]
+    ResponseMcpProbeTransport {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseMcpProbeTransportPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     #[serde(rename = "response.mcp_list_tools")]
     ResponseMcpListTools {
         id: String,
@@ -480,9 +496,11 @@ impl RelayMessage {
             | Self::ResponseToolShellExec { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
+            | Self::CommandMcpProbeTransport { id, .. }
             | Self::CommandMcpListTools { id, .. }
             | Self::CommandMcpCallTool { id, .. }
             | Self::CommandMcpClose { id, .. }
+            | Self::ResponseMcpProbeTransport { id, .. }
             | Self::ResponseMcpListTools { id, .. }
             | Self::ResponseMcpCallTool { id, .. }
             | Self::ResponseMcpClose { id, .. }
@@ -1086,6 +1104,25 @@ pub struct DiscoverOptionsPatchPayload {
 
 // ─── MCP Relay Payload ────────────────────────────────────
 
+/// 一次性 probe 命令——临时连接任意 transport 并探测工具列表（不入连接池）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandMcpProbeTransportPayload {
+    pub transport: agentdash_domain::mcp_preset::McpTransportConfig,
+}
+
+/// 一次性 probe 响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMcpProbeTransportPayload {
+    /// "ok" | "error" | "unsupported"
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<McpToolInfoRelay>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpListToolsPayload {
     pub server_name: String,
@@ -1127,6 +1164,7 @@ pub struct ResponseMcpClosePayload {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::CommandPromptPayload;
 
     #[test]
@@ -1156,5 +1194,65 @@ mod tests {
 
         let value = serde_json::to_value(payload).expect("payload should serialize");
         assert_eq!(value["mount_root_ref"], "/new/workspace");
+    }
+
+    #[test]
+    fn mcp_probe_transport_command_roundtrip() {
+        let msg = RelayMessage::CommandMcpProbeTransport {
+            id: "probe-1".to_string(),
+            payload: CommandMcpProbeTransportPayload {
+                transport: agentdash_domain::mcp_preset::McpTransportConfig::Stdio {
+                    command: "npx".to_string(),
+                    args: vec!["@mcp/server".to_string()],
+                    env: vec![],
+                },
+            },
+        };
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "command.mcp_probe_transport");
+        assert_eq!(json["payload"]["transport"]["type"], "stdio");
+        assert_eq!(json["payload"]["transport"]["command"], "npx");
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "probe-1");
+    }
+
+    #[test]
+    fn mcp_probe_transport_response_ok_roundtrip() {
+        let msg = RelayMessage::ResponseMcpProbeTransport {
+            id: "probe-1".to_string(),
+            payload: Some(ResponseMcpProbeTransportPayload {
+                status: "ok".to_string(),
+                latency_ms: Some(123),
+                tools: Some(vec![McpToolInfoRelay {
+                    name: "read_file".to_string(),
+                    description: "read a file".to_string(),
+                    parameters_schema: serde_json::json!({}),
+                }]),
+                error: None,
+            }),
+            error: None,
+        };
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "response.mcp_probe_transport");
+        assert_eq!(json["payload"]["status"], "ok");
+        assert_eq!(json["payload"]["tools"][0]["name"], "read_file");
+    }
+
+    #[test]
+    fn mcp_probe_transport_response_error_roundtrip() {
+        let msg = RelayMessage::ResponseMcpProbeTransport {
+            id: "probe-2".to_string(),
+            payload: Some(ResponseMcpProbeTransportPayload {
+                status: "error".to_string(),
+                latency_ms: None,
+                tools: None,
+                error: Some("进程启动失败".to_string()),
+            }),
+            error: None,
+        };
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["payload"]["status"], "error");
+        assert_eq!(json["payload"]["error"], "进程启动失败");
     }
 }

@@ -22,6 +22,22 @@ pub struct RelayMcpCallResult {
     pub is_error: bool,
 }
 
+/// relay probe 结果
+#[derive(Debug, Clone)]
+pub struct RelayProbeResult {
+    pub status: String,
+    pub latency_ms: Option<u64>,
+    pub tools: Option<Vec<RelayProbeTool>>,
+    pub error: Option<String>,
+}
+
+/// relay probe 发现的单个工具
+#[derive(Debug, Clone)]
+pub struct RelayProbeTool {
+    pub name: String,
+    pub description: String,
+}
+
 /// 通过 relay 信道发现和调用本机 MCP 工具的提供者。
 ///
 /// 由 API 层实现（基于 BackendRegistry），由 executor 层消费（RelayMcpToolAdapter）。
@@ -37,4 +53,11 @@ pub trait McpRelayProvider: Send + Sync {
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<RelayMcpCallResult, ConnectorError>;
+
+    /// 一次性 probe：通过 relay 下发 transport 配置，探测连通性和工具列表。
+    /// 失败返回 Err（relay 通道离线等）。
+    async fn probe_transport(
+        &self,
+        transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+    ) -> Result<RelayProbeResult, ConnectorError>;
 }

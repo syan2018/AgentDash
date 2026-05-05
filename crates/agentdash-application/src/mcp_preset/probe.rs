@@ -2,13 +2,14 @@
 //!
 //! 行为：
 //! - Http / Sse transport：使用 `rmcp` StreamableHttp client 建立临时连接 → `list_all_tools()` → 关闭
-//! - Stdio transport：返回 `Unsupported`（需要通过 relay 下发给 local 端，暂不支持）
+//! - Stdio transport：通过 relay 下发给本机后端（`agentdash-local`）执行一次性 probe
 //!
 //! 所有连接操作都在 15 秒超时下执行。
 
 use std::time::{Duration, Instant};
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_spi::mcp_relay::McpRelayProvider;
 use rmcp::{
     ServiceExt,
     transport::streamable_http_client::{
@@ -47,14 +48,49 @@ pub struct ProbeTool {
 ///
 /// 行为：
 /// - Http / Sse：建立临时连接 → `tools/list` → 关闭
-/// - Stdio：返回 `Unsupported`（后续通过 relay 下发给 local 端）
-pub async fn probe_transport(transport: &McpTransportConfig) -> ProbeResult {
+/// - Stdio：通过 relay 下发给本机后端探测；relay 不可用时返回 error
+pub async fn probe_transport(
+    transport: &McpTransportConfig,
+    relay: Option<&dyn McpRelayProvider>,
+) -> ProbeResult {
     match transport {
         McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
             probe_http(url).await
         }
-        McpTransportConfig::Stdio { .. } => ProbeResult::Unsupported {
-            reason: "Stdio transport 需要通过本地 relay 探测，当前暂不支持".to_string(),
+        McpTransportConfig::Stdio { .. } => match relay {
+            Some(relay) => probe_via_relay(relay, transport).await,
+            None => ProbeResult::Error {
+                error: "本机 relay 未连接，无法探测 Stdio transport".to_string(),
+            },
+        },
+    }
+}
+
+/// 通过 relay 信道下发 probe 指令给本机后端
+async fn probe_via_relay(
+    relay: &dyn McpRelayProvider,
+    transport: &McpTransportConfig,
+) -> ProbeResult {
+    match relay.probe_transport(transport).await {
+        Ok(result) => match result.status.as_str() {
+            "ok" => ProbeResult::Ok {
+                latency_ms: result.latency_ms.unwrap_or(0),
+                tools: result
+                    .tools
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| ProbeTool {
+                        name: t.name,
+                        description: t.description,
+                    })
+                    .collect(),
+            },
+            _ => ProbeResult::Error {
+                error: result.error.unwrap_or_else(|| "探测失败".to_string()),
+            },
+        },
+        Err(e) => ProbeResult::Error {
+            error: format!("relay 通信失败: {e}"),
         },
     }
 }
@@ -100,7 +136,7 @@ mod tests {
     use agentdash_domain::mcp_preset::McpEnvVar;
 
     #[tokio::test]
-    async fn stdio_transport_returns_unsupported() {
+    async fn stdio_without_relay_returns_error() {
         let transport = McpTransportConfig::Stdio {
             command: "npx".to_string(),
             args: vec!["@modelcontextprotocol/server-filesystem".to_string()],
@@ -109,22 +145,21 @@ mod tests {
                 value: "bar".to_string(),
             }],
         };
-        match probe_transport(&transport).await {
-            ProbeResult::Unsupported { reason } => {
-                assert!(reason.contains("Stdio"));
+        match probe_transport(&transport, None).await {
+            ProbeResult::Error { error } => {
+                assert!(error.contains("relay"), "应提示 relay 不可用: {error}");
             }
-            other => panic!("expected Unsupported, got: {other:?}"),
+            other => panic!("expected Error, got: {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn http_probe_fails_gracefully_on_unreachable() {
-        // 使用 localhost 上一个不存在的端口，预期快速失败
         let transport = McpTransportConfig::Http {
             url: "http://127.0.0.1:1/mcp".to_string(),
             headers: vec![],
         };
-        match probe_transport(&transport).await {
+        match probe_transport(&transport, None).await {
             ProbeResult::Error { error } => {
                 assert!(!error.is_empty(), "error 信息不应为空");
             }

@@ -4,7 +4,9 @@ use async_trait::async_trait;
 
 use agentdash_relay::RelayMessage;
 use agentdash_spi::ConnectorError;
-use agentdash_spi::mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
+use agentdash_spi::mcp_relay::{
+    McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult, RelayProbeTool,
+};
 
 use super::registry::BackendRegistry;
 
@@ -121,6 +123,59 @@ impl McpRelayProvider for BackendRegistry {
             } => Err(ConnectorError::Runtime(err.message)),
             _ => Err(ConnectorError::Runtime(
                 "MCP relay 返回意外响应类型".to_string(),
+            )),
+        }
+    }
+
+    async fn probe_transport(
+        &self,
+        transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+    ) -> Result<RelayProbeResult, ConnectorError> {
+        let backend_id = self
+            .find_any_online_backend()
+            .await
+            .ok_or_else(|| ConnectorError::ConnectionFailed("无在线本机后端".to_string()))?;
+
+        let cmd = RelayMessage::CommandMcpProbeTransport {
+            id: RelayMessage::new_id("mcp-probe"),
+            payload: agentdash_relay::CommandMcpProbeTransportPayload {
+                transport: transport.clone(),
+            },
+        };
+
+        let resp = self
+            .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(20))
+            .await
+            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+        match resp {
+            RelayMessage::ResponseMcpProbeTransport {
+                payload: Some(p),
+                error: None,
+                ..
+            } => Ok(RelayProbeResult {
+                status: p.status,
+                latency_ms: p.latency_ms,
+                tools: p.tools.map(|ts| {
+                    ts.into_iter()
+                        .map(|t| RelayProbeTool {
+                            name: t.name,
+                            description: t.description,
+                        })
+                        .collect()
+                }),
+                error: p.error,
+            }),
+            RelayMessage::ResponseMcpProbeTransport {
+                error: Some(err), ..
+            } => Ok(RelayProbeResult {
+                status: "error".to_string(),
+                latency_ms: None,
+                tools: None,
+                error: Some(err.message),
+            }),
+            _ => Err(ConnectorError::Runtime(
+                "MCP probe relay 返回意外响应类型".to_string(),
             )),
         }
     }

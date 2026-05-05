@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use agentdash_spi::{McpEnvVar, McpHeader, McpTransportConfig, SessionMcpServer};
 use agentdash_relay::*;
+use rmcp::transport::child_process::TokioChildProcess;
+use rmcp::transport::streamable_http_client::{
+    StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
+};
 use tokio::sync::mpsc;
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
@@ -135,6 +139,9 @@ impl CommandHandler {
             }
 
             // ── MCP Relay 命令 ──
+            RelayMessage::CommandMcpProbeTransport { id, payload } => {
+                vec![self.handle_mcp_probe_transport(id, payload).await]
+            }
             RelayMessage::CommandMcpListTools { id, payload } => {
                 vec![self.handle_mcp_list_tools(id, payload).await]
             }
@@ -913,7 +920,105 @@ fn normalize_display_path(path: &std::path::Path) -> String {
 
 // ─── MCP Relay 命令处理 ──────────────────────────────────
 
+/// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
+const PROBE_TIMEOUT_SECS: u64 = 15;
+
 impl CommandHandler {
+    /// 一次性 probe：临时连接指定 transport → tools/list → 关闭，不入连接池。
+    async fn handle_mcp_probe_transport(
+        &self,
+        id: String,
+        payload: CommandMcpProbeTransportPayload,
+    ) -> RelayMessage {
+        use agentdash_domain::mcp_preset::McpTransportConfig;
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let transport = payload.transport;
+
+        let probe_fut = async {
+            match &transport {
+                McpTransportConfig::Stdio { command, args, env } => {
+                    let mut cmd = tokio::process::Command::new(command);
+                    cmd.args(args);
+                    for var in env {
+                        cmd.env(&var.name, &var.value);
+                    }
+                    let child = TokioChildProcess::new(cmd)
+                        .map_err(|e| format!("spawn stdio 进程失败: {e}"))?;
+                    let client = rmcp::ServiceExt::serve((), child)
+                        .await
+                        .map_err(|e| format!("MCP 握手失败: {e}"))?;
+                    let tools = client
+                        .list_all_tools()
+                        .await
+                        .map_err(|e| format!("list_tools 失败: {e}"))?;
+                    let _ = client.cancel().await;
+                    Ok::<Vec<rmcp::model::Tool>, String>(tools)
+                }
+                McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
+                    let worker = StreamableHttpClientWorker::new(
+                        reqwest::Client::new(),
+                        StreamableHttpClientTransportConfig::with_uri(url.clone()),
+                    );
+                    let client = rmcp::ServiceExt::serve((), worker)
+                        .await
+                        .map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
+                    let tools = client
+                        .list_all_tools()
+                        .await
+                        .map_err(|e| format!("list_tools 失败: {e}"))?;
+                    let _ = client.cancel().await;
+                    Ok(tools)
+                }
+            }
+        };
+
+        match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), probe_fut).await {
+            Ok(Ok(tools)) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                let tool_infos: Vec<McpToolInfoRelay> = tools
+                    .into_iter()
+                    .map(|t| McpToolInfoRelay {
+                        name: t.name.to_string(),
+                        description: t.description.as_deref().unwrap_or("").to_string(),
+                        parameters_schema: serde_json::Value::Object((*t.input_schema).clone()),
+                    })
+                    .collect();
+                RelayMessage::ResponseMcpProbeTransport {
+                    id,
+                    payload: Some(ResponseMcpProbeTransportPayload {
+                        status: "ok".to_string(),
+                        latency_ms: Some(latency_ms),
+                        tools: Some(tool_infos),
+                        error: None,
+                    }),
+                    error: None,
+                }
+            }
+            Ok(Err(err)) => RelayMessage::ResponseMcpProbeTransport {
+                id,
+                payload: Some(ResponseMcpProbeTransportPayload {
+                    status: "error".to_string(),
+                    latency_ms: None,
+                    tools: None,
+                    error: Some(err),
+                }),
+                error: None,
+            },
+            Err(_) => RelayMessage::ResponseMcpProbeTransport {
+                id,
+                payload: Some(ResponseMcpProbeTransportPayload {
+                    status: "error".to_string(),
+                    latency_ms: None,
+                    tools: None,
+                    error: Some(format!("探测超时（{PROBE_TIMEOUT_SECS}s）")),
+                }),
+                error: None,
+            },
+        }
+    }
+
     async fn handle_mcp_list_tools(
         &self,
         id: String,

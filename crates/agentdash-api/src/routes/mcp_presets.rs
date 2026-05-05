@@ -15,6 +15,7 @@ use agentdash_application::mcp_preset::{
     UpdateMcpPresetInput, probe_transport,
 };
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
+use agentdash_spi::mcp_relay::McpRelayProvider;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -263,7 +264,7 @@ pub async fn bootstrap_mcp_presets(
 /// 传入当前要验证的 transport（卡片传已保存的；detail dialog 传编辑中的）。
 ///
 /// - Http/Sse：云端直连，返回 tools 列表 + 延迟
-/// - Stdio：返回 unsupported（后续通过 relay 下发给 local 端，当前不支持）
+/// - Stdio：通过 relay 下发给本机后端探测
 /// - 连接失败/超时：返回 error 状态 + 错误信息
 ///
 /// 需要 project View 权限（project id 仅用于鉴权，transport 不落库）。
@@ -283,7 +284,8 @@ pub async fn probe_mcp_transport_handler(
     )
     .await?;
 
-    let result = probe_transport(&transport).await;
+    let relay: &dyn McpRelayProvider = state.services.backend_registry.as_ref();
+    let result = probe_transport(&transport, Some(relay)).await;
     Ok(Json(result))
 }
 

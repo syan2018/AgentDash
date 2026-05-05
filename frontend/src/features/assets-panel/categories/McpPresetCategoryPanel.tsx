@@ -952,27 +952,22 @@ function ProbePanel({
   transportType: McpTransportConfig["type"];
   onProbe: () => void;
 }) {
-  // Stdio 云端探测当前不支持——按钮直接 disabled 并通过 title 提示用户，
-  // 避免用户点了再等一次网络往返才知道不支持。
-  const isStdio = transportType === "stdio";
-  const stdioHint = isStdio
-    ? "Stdio transport 当前不支持云端探测（需通过本机 relay）"
-    : null;
+  const subtitle =
+    transportType === "stdio"
+      ? "通过本机 relay 连接 stdio MCP Server 并调用 tools/list；15 秒超时"
+      : "实时连接 MCP Server 并调用 tools/list；15 秒超时";
 
   return (
     <div className="rounded-[10px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-foreground">连通性 & 工具发现</p>
-          <p className="mt-0.5 text-[10px] text-muted-foreground/70">
-            {stdioHint ?? "实时连接 MCP Server 并调用 tools/list；15 秒超时"}
-          </p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground/70">{subtitle}</p>
         </div>
         <button
           type="button"
           onClick={onProbe}
-          disabled={probing || isStdio}
-          title={stdioHint ?? undefined}
+          disabled={probing}
           className="agentdash-button-secondary shrink-0"
         >
           {probing ? "探测中…" : "Test Connection"}

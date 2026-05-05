@@ -13,16 +13,20 @@ function parseCanvasUri(uri: string): { canvasId: string } | null {
 }
 
 function CanvasTabContent({ uri }: TabContentRenderProps) {
-  const { sessionId } = useWorkspaceData();
+  const { sessionId, activeCanvasId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
-  const canvasId = parsed?.canvasId ?? null;
+  const canvasId = parsed?.canvasId || activeCanvasId || null;
 
   if (!canvasId) {
     return (
-      <div className="flex h-full min-h-[200px] items-center justify-center px-6">
-        <p className="text-center text-sm text-muted-foreground">
-          当前会话还没有关联的 Canvas。
-        </p>
+      <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 px-6">
+        <CanvasIcon className="h-8 w-8 text-muted-foreground/40" />
+        <div className="text-center">
+          <p className="text-sm font-medium text-muted-foreground">当前会话还没有关联的 Canvas</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            当 Agent 创建 Canvas 后，将自动在此展示
+          </p>
+        </div>
       </div>
     );
   }

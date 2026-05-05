@@ -20,6 +20,8 @@ export interface VfsBrowserPanelProps {
   surface?: ResolvedVfsSurface | null;
   vfs?: ExecutionVfs | null;
   initialMountId?: string;
+  /** 当用户切换 mount 或文件时回调，用于更新 Tab URI */
+  onNavigate?: (mountId: string, filePath: string | null) => void;
 }
 
 interface MountOption {
@@ -33,6 +35,7 @@ export function VfsBrowserPanel({
   surface,
   vfs,
   initialMountId,
+  onNavigate,
 }: VfsBrowserPanelProps) {
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -71,6 +74,7 @@ export function VfsBrowserPanel({
     async (path: string) => {
       if (!surfaceRef || !selectedMountId) return;
       setSelectedFilePath(path);
+      onNavigate?.(selectedMountId, path);
       setFileLoading(true);
       try {
         const result = await readSurfaceFile({
@@ -85,7 +89,7 @@ export function VfsBrowserPanel({
         setFileLoading(false);
       }
     },
-    [surfaceRef, selectedMountId],
+    [surfaceRef, selectedMountId, onNavigate],
   );
 
   const handleSave = useCallback(
@@ -132,9 +136,11 @@ export function VfsBrowserPanel({
         <select
           value={selectedMountId ?? ""}
           onChange={(e) => {
-            setSelectedMountId(e.target.value);
+            const newMountId = e.target.value;
+            setSelectedMountId(newMountId);
             setSelectedFilePath(null);
             setFileContent(null);
+            onNavigate?.(newMountId, null);
           }}
           className="min-w-0 flex-1 rounded-[6px] border border-border bg-background px-2 py-1 text-xs text-foreground focus:border-primary/40 focus:outline-none"
         >

@@ -7,7 +7,7 @@
  * 内容区根据 TabTypeDescriptor 渲染对应组件。
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
 import { tabTypeRegistry } from "./tab-type-registry";
 import { registerBuiltinTabTypes } from "./tab-types";
@@ -33,56 +33,62 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       activeCanvasId,
     } = props;
 
-    const store = useWorkspaceTabStore();
+    const tabs = useWorkspaceTabStore((s) => s.tabs);
+    const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
+    const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
+
+    const prevCanvasIdRef = useRef<string | null>(null);
 
     // 首次挂载或 session 切换时初始化 Tab 状态
     useEffect(() => {
-      if (store.sessionId !== sessionId) {
-        store.initialize(sessionId);
+      if (storeSessionId !== sessionId) {
+        useWorkspaceTabStore.getState().initialize(sessionId);
       }
-    }, [sessionId, store]);
+    }, [sessionId, storeSessionId]);
 
     // 外部命令式 API：按类型打开或激活 Tab
     useImperativeHandle(ref, () => ({
       openTab: (typeId: string, uri?: string) => {
+        const s = useWorkspaceTabStore.getState();
         if (uri) {
-          store.openOrActivate(typeId, uri);
+          s.openOrActivate(typeId, uri);
         } else {
           const type = tabTypeRegistry.getType(typeId);
           if (type) {
             const defaultUri = type.defaultUri ?? type.buildUri({});
-            store.openOrActivate(typeId, defaultUri);
+            s.openOrActivate(typeId, defaultUri);
           }
         }
       },
-    }), [store]);
+    }), []);
 
     // activeCanvasId 变化时，自动打开/激活 Canvas Tab
     useEffect(() => {
-      if (!activeCanvasId) return;
+      if (!activeCanvasId || activeCanvasId === prevCanvasIdRef.current) return;
+      prevCanvasIdRef.current = activeCanvasId;
       const uri = `canvas://${activeCanvasId}`;
-      store.openOrActivate("canvas", uri);
-    }, [activeCanvasId, store]);
+      useWorkspaceTabStore.getState().openOrActivate("canvas", uri);
+    }, [activeCanvasId]);
 
     const handleAddTab = useCallback((typeId: string) => {
-      store.addTab(typeId);
-    }, [store]);
+      useWorkspaceTabStore.getState().addTab(typeId);
+    }, []);
 
     const handleActivate = useCallback((tabId: string) => {
-      store.activateTab(tabId);
-    }, [store]);
+      useWorkspaceTabStore.getState().activateTab(tabId);
+    }, []);
 
     const handleClose = useCallback((tabId: string) => {
-      store.closeTab(tabId);
-    }, [store]);
+      useWorkspaceTabStore.getState().closeTab(tabId);
+    }, []);
 
     const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
-      store.reorderTabs(fromIndex, toIndex);
-    }, [store]);
+      useWorkspaceTabStore.getState().reorderTabs(fromIndex, toIndex);
+    }, []);
 
     const activeTab = useMemo(
-      () => store.tabs.find((t) => t.id === store.activeTabId) ?? null,
-      [store.tabs, store.activeTabId],
+      () => tabs.find((t) => t.id === activeTabId) ?? null,
+      [tabs, activeTabId],
     );
 
     const workspaceData: WorkspaceData = useMemo(() => ({
@@ -119,8 +125,8 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       <WorkspaceDataProvider value={workspaceData}>
         <div className="flex h-full flex-col bg-background">
           <TabBar
-            tabs={store.tabs}
-            activeTabId={store.activeTabId}
+            tabs={tabs}
+            activeTabId={activeTabId}
             onActivate={handleActivate}
             onClose={handleClose}
             onReorder={handleReorder}

@@ -11,7 +11,6 @@ import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { css } from "@codemirror/lang-css";
@@ -20,6 +19,39 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import type { Extension } from "@codemirror/state";
+
+const lightTheme = EditorView.theme({
+  "&": {
+    backgroundColor: "var(--color-background, #ffffff)",
+    color: "var(--color-foreground, #1e293b)",
+    fontSize: "12px",
+    fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Menlo, Consolas, monospace",
+  },
+  ".cm-gutters": {
+    backgroundColor: "var(--color-secondary, #f8fafc)",
+    color: "var(--color-muted-foreground, #94a3b8)",
+    borderRight: "1px solid var(--color-border, #e2e8f0)",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary, #3b82f6) 8%, transparent)",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary, #3b82f6) 5%, transparent)",
+  },
+  ".cm-cursor": {
+    borderLeftColor: "var(--color-foreground, #1e293b)",
+  },
+  ".cm-selectionBackground": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary, #3b82f6) 15%, transparent) !important",
+  },
+  "&.cm-focused .cm-selectionBackground": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary, #3b82f6) 20%, transparent) !important",
+  },
+  ".cm-matchingBracket": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary, #3b82f6) 15%, transparent)",
+    outline: "1px solid color-mix(in srgb, var(--color-primary, #3b82f6) 30%, transparent)",
+  },
+});
 
 export interface VfsCodeEditorProps {
   content: string;
@@ -95,7 +127,7 @@ export function VfsCodeEditor({
       highlightSelectionMatches(),
       history(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      oneDark,
+      lightTheme,
       keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       EditorView.lineWrapping,
       EditorState.readOnly.of(readOnly),

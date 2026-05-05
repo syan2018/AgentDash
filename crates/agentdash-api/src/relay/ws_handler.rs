@@ -305,6 +305,15 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .update_capabilities(backend_id, payload.clone())
                 .await;
         }
+        RelayMessage::EventToolShellOutput { payload, .. } => {
+            if !state.services.shell_output_registry.route(payload) {
+                tracing::debug!(
+                    backend_id = %backend_id,
+                    call_id = %payload.call_id,
+                    "shell output 到达时无匹配 sink（命令可能已结束）"
+                );
+            }
+        }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             tracing::debug!(backend_id = %backend_id, "收到选项发现 patch");
         }

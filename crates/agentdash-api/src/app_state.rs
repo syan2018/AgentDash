@@ -51,6 +51,8 @@ pub struct ServiceSet {
     pub vfs_service: Arc<RelayVfsService>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
+    /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
+    pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -192,6 +194,7 @@ impl AppState {
         };
 
         let backend_registry = BackendRegistry::new();
+        let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
             .with_builtins(
@@ -234,13 +237,16 @@ impl AppState {
         let mut prompt_config: Option<(String, Vec<String>)> = None;
 
         let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> =
-            Arc::new(RelayRuntimeToolProvider::new(
-                vfs_service.clone(),
-                repos.clone(),
-                session_hub_handle.clone(),
-                Some(inline_persister),
-                platform_config.clone(),
-            ));
+            Arc::new(
+                RelayRuntimeToolProvider::new(
+                    vfs_service.clone(),
+                    repos.clone(),
+                    session_hub_handle.clone(),
+                    Some(inline_persister),
+                    platform_config.clone(),
+                )
+                .with_shell_output_registry(shell_output_registry.clone()),
+            );
         let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
 
         if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
@@ -387,6 +393,7 @@ impl AppState {
                 connector,
                 vfs_service,
                 backend_registry,
+                shell_output_registry,
                 vfs_registry,
                 mount_provider_registry,
                 story_step_activation_service,

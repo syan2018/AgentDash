@@ -544,13 +544,26 @@ impl CommandHandler {
         id: String,
         payload: ToolShellExecPayload,
     ) -> RelayMessage {
+        let call_id = payload.call_id.clone();
+        let event_tx = self.event_tx.clone();
+
         match self
             .tool_executor
-            .shell_exec(
+            .shell_exec_streaming(
                 &payload.command,
                 &payload.mount_root_ref,
                 payload.cwd.as_deref(),
                 payload.timeout_ms,
+                |delta, stream| {
+                    let _ = event_tx.send(RelayMessage::EventToolShellOutput {
+                        id: RelayMessage::new_id("shell-out"),
+                        payload: ToolShellOutputPayload {
+                            call_id: call_id.clone(),
+                            delta: delta.to_string(),
+                            stream,
+                        },
+                    });
+                },
             )
             .await
         {

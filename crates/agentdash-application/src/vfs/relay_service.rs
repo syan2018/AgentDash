@@ -399,6 +399,7 @@ impl RelayVfsService {
                 cwd,
                 command: request.command.clone(),
                 timeout_ms: request.timeout_ms,
+                streaming_call_id: request.streaming_call_id.clone(),
             };
             return provider
                 .exec(mount, &req, &ctx)

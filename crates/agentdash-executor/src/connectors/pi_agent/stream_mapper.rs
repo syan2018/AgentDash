@@ -441,6 +441,12 @@ pub(super) fn convert_event_to_envelopes(
             partial_result,
             ..
         } => {
+            let is_shell_output = partial_result
+                .get("details")
+                .and_then(|d| d.get("type"))
+                .and_then(|t| t.as_str())
+                == Some("shell_output");
+
             let (state, _) = upsert_state_from_tool_name(
                 tool_call_states,
                 entry_index,
@@ -448,23 +454,47 @@ pub(super) fn convert_event_to_envelopes(
                 tool_name,
                 Some(args.clone()),
             );
-            let content_items = decode_tool_result_to_content_items(partial_result);
-            let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
-            let item = make_dynamic_tool_item(
-                &item_id,
-                &state,
-                codex::DynamicToolCallStatus::InProgress,
-                content_items,
-                None,
-            );
-            vec![wrap(
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
-                    item,
-                    thread_id: session_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                }),
-                state.entry_index,
-            )]
+
+            if is_shell_output {
+                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let delta = partial_result
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|p| p.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                vec![wrap(
+                    BackboneEvent::CommandOutputDelta(
+                        codex::CommandExecutionOutputDeltaNotification {
+                            thread_id: session_id.to_string(),
+                            turn_id: turn_id.to_string(),
+                            item_id,
+                            delta,
+                        },
+                    ),
+                    state.entry_index,
+                )]
+            } else {
+                let content_items = decode_tool_result_to_content_items(partial_result);
+                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item = make_dynamic_tool_item(
+                    &item_id,
+                    &state,
+                    codex::DynamicToolCallStatus::InProgress,
+                    content_items,
+                    None,
+                );
+                vec![wrap(
+                    BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                        item,
+                        thread_id: session_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                    }),
+                    state.entry_index,
+                )]
+            }
         }
 
         AgentEvent::ToolExecutionPendingApproval {

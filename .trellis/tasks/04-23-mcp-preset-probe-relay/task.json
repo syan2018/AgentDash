@@ -1,6 +1,6 @@
 {
-  "id": "04-23-mcp-preset-probe-relay",
-  "name": "04-23-mcp-preset-probe-relay",
+  "id": "mcp-preset-probe-relay",
+  "name": "mcp-preset-probe-relay",
   "title": "MCP Preset probe 支持 Stdio/Relay 下发",
   "description": "",
   "status": "planning",

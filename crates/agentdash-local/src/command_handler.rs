@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
+use crate::terminal_manager::TerminalManager;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
 use agentdash_spi::AgentConnector;
@@ -20,6 +21,7 @@ pub struct CommandHandler {
     workspace_contract_config: WorkspaceContractRuntimeConfig,
     /// 异步事件发送通道（用于 SessionNotification 等流式推送）
     event_tx: mpsc::UnboundedSender<RelayMessage>,
+    terminal_manager: Arc<TerminalManager>,
 }
 
 impl CommandHandler {
@@ -31,6 +33,7 @@ impl CommandHandler {
         workspace_contract_config: WorkspaceContractRuntimeConfig,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
+        let terminal_manager = Arc::new(TerminalManager::new(event_tx.clone()));
         Self {
             tool_executor,
             session_hub,
@@ -38,6 +41,7 @@ impl CommandHandler {
             mcp_manager,
             workspace_contract_config,
             event_tx,
+            terminal_manager,
         }
     }
 
@@ -139,6 +143,20 @@ impl CommandHandler {
             }
             RelayMessage::CommandMcpClose { id, payload } => {
                 vec![self.handle_mcp_close(id, payload).await]
+            }
+
+            // ── 交互式终端命令 ──
+            RelayMessage::CommandTerminalSpawn { id, payload } => {
+                vec![self.handle_terminal_spawn(id, payload)]
+            }
+            RelayMessage::CommandTerminalInput { id, payload } => {
+                vec![self.handle_terminal_input(id, payload)]
+            }
+            RelayMessage::CommandTerminalResize { id, payload } => {
+                vec![self.handle_terminal_resize(id, payload)]
+            }
+            RelayMessage::CommandTerminalKill { id, payload } => {
+                vec![self.handle_terminal_kill(id, payload)]
             }
 
             other => {
@@ -984,6 +1002,69 @@ impl CommandHandler {
                 id,
                 payload: None,
                 error: Some(RelayError::runtime_error(e.to_string())),
+            },
+        }
+    }
+
+    // ─── 交互式终端命令处理 ──────────────────────────────────
+
+    fn handle_terminal_spawn(&self, id: String, payload: TerminalSpawnPayload) -> RelayMessage {
+        let workspace_root = &payload.mount_root_ref;
+        match self.terminal_manager.spawn(&payload, workspace_root) {
+            Ok(resp) => RelayMessage::ResponseTerminalSpawn {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseTerminalSpawn {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e)),
+            },
+        }
+    }
+
+    fn handle_terminal_input(&self, id: String, payload: TerminalInputPayload) -> RelayMessage {
+        match self.terminal_manager.input(&payload) {
+            Ok(resp) => RelayMessage::ResponseTerminalInput {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseTerminalInput {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e)),
+            },
+        }
+    }
+
+    fn handle_terminal_resize(&self, id: String, payload: TerminalResizePayload) -> RelayMessage {
+        match self.terminal_manager.resize(&payload) {
+            Ok(resp) => RelayMessage::ResponseTerminalResize {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseTerminalResize {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e)),
+            },
+        }
+    }
+
+    fn handle_terminal_kill(&self, id: String, payload: TerminalKillPayload) -> RelayMessage {
+        match self.terminal_manager.kill(&payload) {
+            Ok(resp) => RelayMessage::ResponseTerminalKill {
+                id,
+                payload: Some(resp),
+                error: None,
+            },
+            Err(e) => RelayMessage::ResponseTerminalKill {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(e)),
             },
         }
     }

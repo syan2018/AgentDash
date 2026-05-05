@@ -1,6 +1,7 @@
 mod command_handler;
 mod local_backend_config;
 mod mcp_client_manager;
+mod terminal_manager;
 mod tool_executor;
 mod workspace_prepare;
 mod workspace_probe;

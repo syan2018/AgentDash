@@ -53,6 +53,8 @@ pub struct ServiceSet {
     pub backend_registry: Arc<BackendRegistry>,
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    /// 交互式终端运行时状态缓存
+    pub terminal_cache: Arc<agentdash_application::session::terminal_cache::SessionTerminalCache>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -195,6 +197,8 @@ impl AppState {
 
         let backend_registry = BackendRegistry::new();
         let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
+        let terminal_cache =
+            agentdash_application::session::terminal_cache::SessionTerminalCache::new();
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
             .with_builtins(
@@ -394,6 +398,7 @@ impl AppState {
                 vfs_service,
                 backend_registry,
                 shell_output_registry,
+                terminal_cache,
                 vfs_registry,
                 mount_provider_registry,
                 story_step_activation_service,

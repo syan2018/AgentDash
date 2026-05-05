@@ -299,6 +299,24 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
+    // 终端输出 → 转发到 TerminalStore，不进入 chat entries
+    if (platform.kind === "terminal_output") {
+      const { useTerminalStore } = require("./useTerminalStore");
+      useTerminalStore.getState().appendOutput(platform.data.terminal_id, platform.data.data);
+      return prev;
+    }
+
+    // 终端状态变更 → 更新 TerminalStore
+    if (platform.kind === "terminal_state_changed") {
+      const { useTerminalStore } = require("./useTerminalStore");
+      useTerminalStore.getState().updateTerminalState(
+        platform.data.terminal_id,
+        platform.data.state,
+        platform.data.exit_code,
+      );
+      return prev;
+    }
+
     if (platform.kind === "session_meta_update") {
       const key = platform.data.key;
 

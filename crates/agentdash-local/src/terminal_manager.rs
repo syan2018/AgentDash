@@ -57,7 +57,7 @@ impl TerminalManager {
             }
         });
 
-        let cwd = payload
+        let raw_cwd = payload
             .cwd
             .as_ref()
             .map(|c| {
@@ -65,6 +65,9 @@ impl TerminalManager {
                 p.to_string_lossy().to_string()
             })
             .unwrap_or_else(|| workspace_root.to_string());
+
+        // Windows canonicalize 会加 \\?\ 前缀，PowerShell 会原样显示导致提示符难看
+        let cwd = strip_extended_length_prefix(&raw_cwd);
 
         let mut cmd = CommandBuilder::new(&shell);
         cmd.cwd(&cwd);
@@ -231,5 +234,14 @@ impl TerminalManager {
         } else {
             Err(format!("terminal not found: {}", payload.terminal_id))
         }
+    }
+}
+
+/// 去除 Windows 扩展路径前缀 `\\?\`，让 PowerShell 提示符显示正常路径。
+fn strip_extended_length_prefix(path: &str) -> String {
+    if cfg!(windows) {
+        path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+    } else {
+        path.to_string()
     }
 }

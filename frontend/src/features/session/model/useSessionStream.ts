@@ -19,6 +19,8 @@ import type {
 } from "./types";
 import { extractTokenUsageFromEvent, parseContentBlock } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
+import { useTerminalStore } from "./useTerminalStore";
+import type { TerminalProcessState } from "../../../types/terminal";
 
 export interface UseSessionStreamOptions {
   sessionId: string;
@@ -299,30 +301,9 @@ function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelop
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
-    // 终端事件 → 转发到 TerminalStore，不进入 chat entries
-    // ts-rs 生成类型可能未包含新 kind，用 as unknown 跳过静态检查
-    const platformAny = platform as unknown as { kind: string; data: Record<string, unknown> };
-    if (platformAny.kind === "terminal_output") {
-      import("./useTerminalStore").then(({ useTerminalStore }) => {
-        useTerminalStore
-          .getState()
-          .appendOutput(
-            platformAny.data.terminal_id as string,
-            platformAny.data.data as string,
-          );
-      });
-      return prev;
-    }
-    if (platformAny.kind === "terminal_state_changed") {
-      import("./useTerminalStore").then(({ useTerminalStore }) => {
-        useTerminalStore
-          .getState()
-          .updateTerminalState(
-            platformAny.data.terminal_id as string,
-            platformAny.data.state as import("../../../types/terminal").TerminalProcessState,
-            platformAny.data.exit_code as number | undefined,
-          );
-      });
+    // 终端事件在 enqueueEvent 层拦截（避免 reducer 内副作用被 StrictMode 双重执行）
+    const platformAny = platform as unknown as { kind: string };
+    if (platformAny.kind === "terminal_output" || platformAny.kind === "terminal_state_changed") {
       return prev;
     }
 
@@ -425,6 +406,35 @@ export function reduceStreamState(
   };
 }
 
+/**
+ * 终端事件拦截：在进入 React state 管道之前直接转发到 TerminalStore。
+ * 返回 true 表示已拦截（调用方应跳过后续处理），false 表示非终端事件。
+ */
+function interceptTerminalEvent(event: SessionEventEnvelope): boolean {
+  const bbEvent = event.notification.event;
+  if (bbEvent.type !== "platform") return false;
+
+  const p = bbEvent.payload as unknown as { kind: string; data: Record<string, unknown> };
+
+  if (p.kind === "terminal_output") {
+    useTerminalStore
+      .getState()
+      .appendOutput(p.data.terminal_id as string, p.data.data as string);
+    return true;
+  }
+  if (p.kind === "terminal_state_changed") {
+    useTerminalStore
+      .getState()
+      .updateTerminalState(
+        p.data.terminal_id as string,
+        p.data.state as TerminalProcessState,
+        p.data.exit_code as number | undefined,
+      );
+    return true;
+  }
+  return false;
+}
+
 /** 判断事件是否需要立即 flush（item 生命周期事件） */
 function shouldFlushImmediately(event: SessionEventEnvelope): boolean {
   const t = event.notification.event.type;
@@ -503,6 +513,10 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   const enqueueEventRef = useRef<(event: SessionEventEnvelope) => void>(() => {});
 
   const enqueueEvent = useCallback((event: SessionEventEnvelope) => {
+    // 终端事件在此拦截，直接转发到 TerminalStore，不进入 React state 管道
+    // （避免 StrictMode 下 reducer 双重执行导致输出重复）
+    if (interceptTerminalEvent(event)) return;
+
     pendingEventsRef.current.push(event);
     markReceiving();
 

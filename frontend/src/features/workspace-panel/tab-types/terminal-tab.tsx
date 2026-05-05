@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -12,47 +12,55 @@ import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 
 const API_BASE = "/api";
 
+const XTERM_THEME = {
+  background: "#ffffff",
+  foreground: "#1e1e2e",
+  cursor: "#6e6e7e",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#d0d5dd",
+  selectionForeground: "#1e1e2e",
+  black: "#3c3c43",
+  red: "#d1242f",
+  green: "#1a7f37",
+  yellow: "#9a6700",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#0598bc",
+  white: "#8b949e",
+  brightBlack: "#57606a",
+  brightRed: "#cf222e",
+  brightGreen: "#116329",
+  brightYellow: "#7d4e00",
+  brightBlue: "#0550ae",
+  brightMagenta: "#6639ba",
+  brightCyan: "#0079b4",
+  brightWhite: "#6e7781",
+} as const;
+
 interface TerminalViewProps {
   terminalId: string;
   sessionId?: string;
   tabId?: string;
 }
 
-function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
+/**
+ * 交互式终端视图。
+ *
+ * 输出写入模型：useTerminalStore.outputBuffers 是唯一 source of truth，
+ * 所有写入 xterm 的数据都通过 useEffect 增量追加（lastWrittenLen 对齐），
+ * 不存在第二条写入路径，从而避免重复绘制。
+ */
+function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // state 驱动 store 订阅；ref 供 onData/onResize 等事件闭包同步读取
+  const [activeId, setActiveId] = useState(initialTerminalId);
+  const realIdRef = useRef(initialTerminalId);
   const [status, setStatus] = useState<"connecting" | "running" | "exited" | "error">("connecting");
-  const sendInput = useCallback(
-    async (data: string) => {
-      try {
-        await fetch(`${API_BASE}/terminals/${terminalId}/input`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data }),
-        });
-      } catch {
-        /* network error — terminal probably dead */
-      }
-    },
-    [terminalId],
-  );
+  const lastWrittenLenRef = useRef(0);
 
-  const sendResize = useCallback(
-    async (cols: number, rows: number) => {
-      try {
-        await fetch(`${API_BASE}/terminals/${terminalId}/resize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols, rows }),
-        });
-      } catch {
-        /* ignore */
-      }
-    },
-    [terminalId],
-  );
-
+  // ---------- xterm 实例生命周期（仅挂载/卸载） ----------
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -60,30 +68,7 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace",
-      theme: {
-        background: "#ffffff",
-        foreground: "#1e1e2e",
-        cursor: "#6e6e7e",
-        cursorAccent: "#ffffff",
-        selectionBackground: "#d0d5dd",
-        selectionForeground: "#1e1e2e",
-        black: "#3c3c43",
-        red: "#d1242f",
-        green: "#1a7f37",
-        yellow: "#9a6700",
-        blue: "#0969da",
-        magenta: "#8250df",
-        cyan: "#0598bc",
-        white: "#8b949e",
-        brightBlack: "#57606a",
-        brightRed: "#cf222e",
-        brightGreen: "#116329",
-        brightYellow: "#7d4e00",
-        brightBlue: "#0550ae",
-        brightMagenta: "#6639ba",
-        brightCyan: "#0079b4",
-        brightWhite: "#6e7781",
-      },
+      theme: XTERM_THEME,
       allowProposedApi: true,
     });
 
@@ -98,11 +83,23 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
     fitAddonRef.current = fitAddon;
 
     term.onData((data) => {
-      void sendInput(data);
+      const id = realIdRef.current;
+      if (!id || id === "new") return;
+      void fetch(`${API_BASE}/terminals/${id}/input`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data }),
+      }).catch(() => {});
     });
 
     term.onResize(({ cols, rows }) => {
-      void sendResize(cols, rows);
+      const id = realIdRef.current;
+      if (!id || id === "new") return;
+      void fetch(`${API_BASE}/terminals/${id}/resize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cols, rows }),
+      }).catch(() => {});
     });
 
     const resizeObserver = new ResizeObserver(() => {
@@ -110,9 +107,10 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
     });
     resizeObserver.observe(containerRef.current);
 
-    if (terminalId === "new" && sessionId) {
-      void spawnTerminal(sessionId, term, fitAddon, setStatus, tabId);
-    } else if (terminalId !== "new") {
+    if (initialTerminalId === "new" && sessionId) {
+      void spawnTerminal(sessionId, term, fitAddon, setStatus, tabId, realIdRef, setActiveId);
+    } else if (initialTerminalId !== "new") {
+      // 已有终端：回放通过 useEffect[output] 自动触发，此处只需设状态
       setStatus("running");
     }
 
@@ -122,30 +120,33 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [terminalId, sessionId, sendInput, sendResize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // SSE 输出订阅通过 useTerminalStore + useSessionStream 已有的 platform event 管道
+  // ---------- 唯一的 xterm 写入路径：store outputBuffer → 增量 write ----------
+  const output = useTerminalStore((s) => s.getOutput(activeId));
+
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    // output 为空意味着还没有数据（新终端刚 spawn、或尚未收到 SSE）
+    if (!output) return;
+    const pending = output.slice(lastWrittenLenRef.current);
+    if (pending.length > 0) {
+      term.write(pending);
+      lastWrittenLenRef.current = output.length;
+    }
+  }, [output]);
+
+  // ---------- 终端状态同步 ----------
   const terminalState = useTerminalStore((s) => {
-    const allTerminals = s.terminals;
-    for (const sessionMap of allTerminals.values()) {
-      const t = sessionMap.get(terminalId);
+    if (activeId === "new") return null;
+    for (const sessionMap of s.terminals.values()) {
+      const t = sessionMap.get(activeId);
       if (t) return t;
     }
     return null;
   });
-
-  // 当 output buffer 更新时写入 xterm
-  const output = useTerminalStore((s) => s.getOutput(terminalId));
-  const lastWrittenLenRef = useRef(0);
-
-  useEffect(() => {
-    if (!xtermRef.current || !output) return;
-    const newData = output.slice(lastWrittenLenRef.current);
-    if (newData) {
-      xtermRef.current.write(newData);
-      lastWrittenLenRef.current = output.length;
-    }
-  }, [output]);
 
   useEffect(() => {
     if (terminalState?.state === "exited" || terminalState?.state === "killed") {
@@ -155,9 +156,19 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
     }
   }, [terminalState?.state]);
 
+  // ---------- 外部 prop 同步（promote / tab layout 恢复） ----------
+  useEffect(() => {
+    if (initialTerminalId !== "new" && initialTerminalId !== realIdRef.current) {
+      realIdRef.current = initialTerminalId;
+      lastWrittenLenRef.current = 0;
+      if (xtermRef.current) xtermRef.current.clear();
+      setActiveId(initialTerminalId);
+      // 切换 activeId 后，useEffect[output] 会自动从 0 回放
+    }
+  }, [initialTerminalId]);
+
   return (
     <div className="flex h-full flex-col bg-white">
-      {/* Status bar */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
         <span
           className={`inline-block h-1.5 w-1.5 rounded-full ${
@@ -179,10 +190,10 @@ function TerminalView({ terminalId, sessionId, tabId }: TerminalViewProps) {
                 ? `已退出${terminalState?.exitCode !== undefined ? ` (${terminalState.exitCode})` : ""}`
                 : "错误"}
         </span>
-        <span className="ml-auto font-mono text-muted-foreground/50">{terminalId.slice(0, 12)}</span>
+        <span className="ml-auto font-mono text-muted-foreground/50">
+          {activeId !== "new" ? activeId.slice(0, 12) : ""}
+        </span>
       </div>
-
-      {/* Terminal container */}
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
     </div>
   );
@@ -194,6 +205,8 @@ async function spawnTerminal(
   fitAddon: FitAddon,
   setStatus: (s: "connecting" | "running" | "exited" | "error") => void,
   tabId?: string,
+  realIdRef?: React.MutableRefObject<string>,
+  setActiveId?: (id: string) => void,
 ) {
   try {
     const dims = fitAddon.proposeDimensions();
@@ -214,7 +227,8 @@ async function spawnTerminal(
     const data = (await resp.json()) as { terminalId: string; processId?: number };
     const realId = data.terminalId;
 
-    // 注册到 store，以便 SSE platform event 能路由输出到这个终端
+    if (realIdRef) realIdRef.current = realId;
+
     useTerminalStore.getState().registerTerminal({
       id: realId,
       sessionId,
@@ -224,10 +238,12 @@ async function spawnTerminal(
       createdAt: Date.now(),
     });
 
-    // 更新 Tab URI 为真正的 terminalId，使 input/resize/output 全部路由正确
     if (tabId) {
       useWorkspaceTabStore.getState().updateTabUri(tabId, `terminal://${realId}`);
     }
+
+    // setActiveId 放最后：确保 store 已注册终端，useEffect[output] 切换订阅后能立即读到数据
+    if (setActiveId) setActiveId(realId);
 
     setStatus("running");
   } catch (e) {
@@ -248,6 +264,7 @@ export const terminalTabType: TabTypeDescriptor = {
     const terminalId = parsed?.terminalId ?? "new";
     return (
       <TerminalView
+        key={props.tabId}
         terminalId={terminalId}
         sessionId={props.sessionId ?? undefined}
         tabId={props.tabId}

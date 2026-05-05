@@ -27,6 +27,7 @@ pub struct RelayRuntimeToolProvider {
     session_hub_handle: SharedSessionHubHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
+    shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
 }
 
 impl RelayRuntimeToolProvider {
@@ -43,7 +44,16 @@ impl RelayRuntimeToolProvider {
             session_hub_handle,
             inline_persister,
             platform_config,
+            shell_output_registry: None,
         }
+    }
+
+    pub fn with_shell_output_registry(
+        mut self,
+        registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    ) -> Self {
+        self.shell_output_registry = Some(registry);
+        self
     }
 }
 
@@ -143,10 +153,14 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Execute 簇：命令执行
         if clusters.contains(&ToolCluster::Execute) {
-            tools.push(Arc::new(ShellExecTool::new(
+            let mut shell_tool = ShellExecTool::new(
                 self.service.clone(),
                 shared_vfs.clone(),
-            )));
+            );
+            if let Some(ref registry) = self.shell_output_registry {
+                shell_tool = shell_tool.with_shell_output_registry(registry.clone());
+            }
+            tools.push(Arc::new(shell_tool));
         }
 
         // Workflow 簇：lifecycle node 推进

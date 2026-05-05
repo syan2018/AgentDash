@@ -615,10 +615,23 @@ impl AgentTool for FsGrepTool {
 pub struct ShellExecTool {
     service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
+    shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
 }
 impl ShellExecTool {
     pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
-        Self { service, vfs }
+        Self {
+            service,
+            vfs,
+            shell_output_registry: None,
+        }
+    }
+
+    pub fn with_shell_output_registry(
+        mut self,
+        registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    ) -> Self {
+        self.shell_output_registry = Some(registry);
+        self
     }
 }
 
@@ -653,10 +666,10 @@ impl AgentTool for ShellExecTool {
     }
     async fn execute(
         &self,
-        _: &str,
+        _tool_call_id: &str,
         args: serde_json::Value,
-        _: CancellationToken,
-        _: Option<ToolUpdateCallback>,
+        _cancel: CancellationToken,
+        on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
@@ -668,6 +681,36 @@ impl AgentTool for ShellExecTool {
         } else {
             target.path
         };
+
+        let streaming_call_id = self.shell_output_registry.as_ref().map(|_| {
+            agentdash_relay::RelayMessage::new_id("stream-call")
+        });
+
+        // 注册流式输出通道 + 转发任务
+        let forward_handle = if let (Some(registry), Some(call_id), Some(on_update)) = (
+            &self.shell_output_registry,
+            &streaming_call_id,
+            &on_update,
+        ) {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            registry.register(call_id, tx);
+            let cb = on_update.clone();
+            Some(tokio::spawn(async move {
+                while let Some(chunk) = rx.recv().await {
+                    cb(AgentToolResult {
+                        content: vec![ContentPart::text(chunk.delta)],
+                        is_error: false,
+                        details: Some(serde_json::json!({
+                            "type": "shell_output",
+                            "stream": chunk.stream,
+                        })),
+                    });
+                }
+            }))
+        } else {
+            None
+        };
+
         let result = self
             .service
             .exec(
@@ -677,10 +720,22 @@ impl AgentTool for ShellExecTool {
                     cwd: cwd.clone(),
                     command: params.command.clone(),
                     timeout_ms: params.timeout_secs.map(|s| s.saturating_mul(1000)),
+                    streaming_call_id: streaming_call_id.clone(),
                 },
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
+
+        // 清理通道
+        if let Some(ref call_id) = streaming_call_id {
+            if let Some(registry) = &self.shell_output_registry {
+                registry.unregister(call_id);
+            }
+        }
+        if let Some(handle) = forward_handle {
+            handle.abort();
+        }
+
         let merged = if result.stderr.trim().is_empty() {
             result.stdout
         } else if result.stdout.trim().is_empty() {

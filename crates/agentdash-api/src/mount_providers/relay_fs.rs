@@ -366,6 +366,10 @@ impl MountProvider for RelayFsMountProvider {
     ) -> Result<ExecResult, MountError> {
         let cwd = normalize_mount_relative_path(&request.cwd, true)
             .map_err(MountError::OperationFailed)?;
+        let call_id = request
+            .streaming_call_id
+            .clone()
+            .unwrap_or_else(|| RelayMessage::new_id("call"));
         let response = self
             .backends
             .send_command(
@@ -373,7 +377,7 @@ impl MountProvider for RelayFsMountProvider {
                 RelayMessage::CommandToolShellExec {
                     id: RelayMessage::new_id("mp-exec"),
                     payload: ToolShellExecPayload {
-                        call_id: RelayMessage::new_id("call"),
+                        call_id,
                         command: request.command.clone(),
                         mount_root_ref: mount.root_ref.clone(),
                         cwd: if cwd.is_empty() { None } else { Some(cwd) },

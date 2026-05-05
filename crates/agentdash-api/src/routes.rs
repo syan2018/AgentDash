@@ -19,6 +19,7 @@ pub mod settings;
 pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
+pub mod terminals;
 pub mod vfs;
 pub mod vfs_surfaces;
 pub mod workflows;
@@ -423,6 +424,20 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/vfs-surfaces/apply-patch",
             post(vfs_surfaces::apply_surface_patch),
         )
+        // Terminals（交互式终端）
+        .route(
+            "/sessions/{id}/terminals",
+            get(terminals::list_terminals).post(terminals::spawn_terminal),
+        )
+        .route(
+            "/terminals/{id}/input",
+            post(terminals::terminal_input),
+        )
+        .route(
+            "/terminals/{id}/resize",
+            post(terminals::terminal_resize),
+        )
+        .route("/terminals/{id}", delete(terminals::terminal_kill))
         // VFSs（统一寻址空间能力发现与条目检索）
         .route("/vfs", get(vfs::list_vfs))
         .route("/vfs/{space_id}/entries", get(vfs::list_address_entries))

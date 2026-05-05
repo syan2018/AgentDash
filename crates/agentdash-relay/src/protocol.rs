@@ -355,6 +355,89 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    // ── 串行 Shell 流式输出事件（本机 → 云端）──
+    /// shell_exec 执行期间的增量输出
+    #[serde(rename = "event.tool.shell_output")]
+    EventToolShellOutput {
+        id: String,
+        payload: ToolShellOutputPayload,
+    },
+
+    // ── 交互式终端命令（云端 → 本机）──
+    #[serde(rename = "command.terminal.spawn")]
+    CommandTerminalSpawn {
+        id: String,
+        payload: TerminalSpawnPayload,
+    },
+
+    #[serde(rename = "command.terminal.input")]
+    CommandTerminalInput {
+        id: String,
+        payload: TerminalInputPayload,
+    },
+
+    #[serde(rename = "command.terminal.resize")]
+    CommandTerminalResize {
+        id: String,
+        payload: TerminalResizePayload,
+    },
+
+    #[serde(rename = "command.terminal.kill")]
+    CommandTerminalKill {
+        id: String,
+        payload: TerminalKillPayload,
+    },
+
+    // ── 交互式终端响应（本机 → 云端）──
+    #[serde(rename = "response.terminal.spawn")]
+    ResponseTerminalSpawn {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalSpawnResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.terminal.input")]
+    ResponseTerminalInput {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalInputResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.terminal.resize")]
+    ResponseTerminalResize {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalResizeResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.terminal.kill")]
+    ResponseTerminalKill {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<TerminalKillResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    // ── 交互式终端事件（本机 → 云端）──
+    #[serde(rename = "event.terminal.output")]
+    EventTerminalOutput {
+        id: String,
+        payload: TerminalOutputPayload,
+    },
+
+    #[serde(rename = "event.terminal.state_changed")]
+    EventTerminalStateChanged {
+        id: String,
+        payload: TerminalStateChangedPayload,
+    },
+
     // ── 通用错误 ──
     #[serde(rename = "error")]
     Error { id: String, error: RelayError },
@@ -407,6 +490,17 @@ impl RelayMessage {
             | Self::EventSessionNotification { id, .. }
             | Self::EventSessionStateChanged { id, .. }
             | Self::EventDiscoverOptionsPatch { id, .. }
+            | Self::EventToolShellOutput { id, .. }
+            | Self::CommandTerminalSpawn { id, .. }
+            | Self::CommandTerminalInput { id, .. }
+            | Self::CommandTerminalResize { id, .. }
+            | Self::CommandTerminalKill { id, .. }
+            | Self::ResponseTerminalSpawn { id, .. }
+            | Self::ResponseTerminalInput { id, .. }
+            | Self::ResponseTerminalResize { id, .. }
+            | Self::ResponseTerminalKill { id, .. }
+            | Self::EventTerminalOutput { id, .. }
+            | Self::EventTerminalStateChanged { id, .. }
             | Self::Error { id, .. } => id,
         }
     }
@@ -843,6 +937,114 @@ pub struct SearchHit {
     pub context_before: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_after: Vec<String>,
+}
+
+// ─── 串行 Shell 流式输出 ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellOutputPayload {
+    pub call_id: String,
+    pub delta: String,
+    pub stream: ShellOutputStream,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellOutputStream {
+    Stdout,
+    Stderr,
+}
+
+// ─── 交互式终端 Payload ─────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSpawnPayload {
+    pub terminal_id: String,
+    pub session_id: String,
+    pub mount_root_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+}
+
+fn default_cols() -> u16 {
+    80
+}
+fn default_rows() -> u16 {
+    24
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalSpawnResponse {
+    pub terminal_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalInputPayload {
+    pub terminal_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalInputResponse {
+    pub terminal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalResizePayload {
+    pub terminal_id: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalResizeResponse {
+    pub terminal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalKillPayload {
+    pub terminal_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalKillResponse {
+    pub terminal_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalOutputPayload {
+    pub terminal_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalStateChangedPayload {
+    pub terminal_id: String,
+    pub state: TerminalProcessState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalProcessState {
+    Running,
+    Exited,
+    Lost,
+    Killed,
 }
 
 // ─── 事件 Payload ──────────────────────────────────────────

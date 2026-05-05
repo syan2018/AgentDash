@@ -17,6 +17,22 @@ pub enum PlatformEvent {
         key: String,
         value: serde_json::Value,
     },
+
+    /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
+    TerminalOutput {
+        terminal_id: String,
+        data: String,
+    },
+
+    /// 终端生命周期变更（创建/退出/丢失/用户终止）。
+    TerminalStateChanged {
+        terminal_id: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
 }
 
 /// Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。

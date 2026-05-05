@@ -201,6 +201,42 @@ async fn handle_backend_connection(
     }
 
     state.services.backend_registry.unregister(&bid).await;
+
+    // 标记该后端名下的所有终端为 Lost 并推送 platform event
+    let lost_terminal_ids = state.services.terminal_cache.handle_backend_disconnect(&bid);
+    for terminal_id in &lost_terminal_ids {
+        if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
+            use agentdash_application::backend_transport::RelaySessionEvent;
+            let source = agentdash_protocol::SourceInfo {
+                connector_id: "platform".to_string(),
+                connector_type: "terminal".to_string(),
+                executor_id: None,
+            };
+            let envelope = agentdash_protocol::BackboneEnvelope::new(
+                agentdash_protocol::BackboneEvent::Platform(
+                    agentdash_protocol::PlatformEvent::TerminalStateChanged {
+                        terminal_id: terminal_id.clone(),
+                        state: "lost".to_string(),
+                        exit_code: None,
+                        message: Some("backend disconnected".to_string()),
+                    },
+                ),
+                &term_state.session_id,
+                source,
+            );
+            state.services.backend_registry.feed_session_event(
+                &term_state.session_id,
+                RelaySessionEvent::Notification(envelope),
+            );
+        }
+    }
+    if !lost_terminal_ids.is_empty() {
+        tracing::info!(
+            backend_id = %bid,
+            count = lost_terminal_ids.len(),
+            "后端断连，已标记终端为 Lost"
+        );
+    }
 }
 
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {
@@ -225,7 +261,11 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         | RelayMessage::ResponseBrowseDirectory { .. }
         | RelayMessage::ResponseMcpListTools { .. }
         | RelayMessage::ResponseMcpCallTool { .. }
-        | RelayMessage::ResponseMcpClose { .. } => {
+        | RelayMessage::ResponseMcpClose { .. }
+        | RelayMessage::ResponseTerminalSpawn { .. }
+        | RelayMessage::ResponseTerminalInput { .. }
+        | RelayMessage::ResponseTerminalResize { .. }
+        | RelayMessage::ResponseTerminalKill { .. } => {
             if !state.services.backend_registry.resolve_response(&msg).await {
                 tracing::warn!(
                     backend_id = %backend_id,
@@ -304,6 +344,110 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .backend_registry
                 .update_capabilities(backend_id, payload.clone())
                 .await;
+        }
+        RelayMessage::EventToolShellOutput { payload, .. } => {
+            if !state.services.shell_output_registry.route(payload) {
+                tracing::debug!(
+                    backend_id = %backend_id,
+                    call_id = %payload.call_id,
+                    "shell output 到达时无匹配 sink（命令可能已结束）"
+                );
+            }
+        }
+        RelayMessage::EventTerminalOutput { payload, .. } => {
+            let terminal_id = &payload.terminal_id;
+            tracing::info!(
+                backend_id = %backend_id,
+                terminal_id = %terminal_id,
+                data_len = payload.data.len(),
+                "收到终端输出事件"
+            );
+            if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
+                let source = agentdash_protocol::SourceInfo {
+                    connector_id: "platform".to_string(),
+                    connector_type: "terminal".to_string(),
+                    executor_id: None,
+                };
+                let envelope = agentdash_protocol::BackboneEnvelope::new(
+                    agentdash_protocol::BackboneEvent::Platform(
+                        agentdash_protocol::PlatformEvent::TerminalOutput {
+                            terminal_id: terminal_id.clone(),
+                            data: payload.data.clone(),
+                        },
+                    ),
+                    &term_state.session_id,
+                    source,
+                );
+                if let Err(e) = state.services.session_hub.inject_notification(
+                    &term_state.session_id,
+                    envelope,
+                ).await {
+                    tracing::warn!(
+                        terminal_id = %terminal_id,
+                        session_id = %term_state.session_id,
+                        error = %e,
+                        "终端输出事件注入 session 失败"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    terminal_id = %terminal_id,
+                    "终端输出事件到达但 terminal_cache 中未找到"
+                );
+            }
+        }
+        RelayMessage::EventTerminalStateChanged { payload, .. } => {
+            tracing::info!(
+                backend_id = %backend_id,
+                terminal_id = %payload.terminal_id,
+                state = ?payload.state,
+                "收到终端状态变更事件"
+            );
+            let state_str = match payload.state {
+                agentdash_relay::TerminalProcessState::Running => "running",
+                agentdash_relay::TerminalProcessState::Exited => "exited",
+                agentdash_relay::TerminalProcessState::Lost => "lost",
+                agentdash_relay::TerminalProcessState::Killed => "killed",
+            };
+            state.services.terminal_cache.update_state(
+                &payload.terminal_id,
+                state_str,
+                payload.exit_code,
+            );
+
+            if let Some(term_state) = state
+                .services
+                .terminal_cache
+                .get_terminal(&payload.terminal_id)
+            {
+                let source = agentdash_protocol::SourceInfo {
+                    connector_id: "platform".to_string(),
+                    connector_type: "terminal".to_string(),
+                    executor_id: None,
+                };
+                let envelope = agentdash_protocol::BackboneEnvelope::new(
+                    agentdash_protocol::BackboneEvent::Platform(
+                        agentdash_protocol::PlatformEvent::TerminalStateChanged {
+                            terminal_id: payload.terminal_id.clone(),
+                            state: state_str.to_string(),
+                            exit_code: payload.exit_code,
+                            message: payload.message.clone(),
+                        },
+                    ),
+                    &term_state.session_id,
+                    source,
+                );
+                if let Err(e) = state.services.session_hub.inject_notification(
+                    &term_state.session_id,
+                    envelope,
+                ).await {
+                    tracing::warn!(
+                        terminal_id = %payload.terminal_id,
+                        error = %e,
+                        "终端状态变更注入 session 失败"
+                    );
+                }
+            }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             tracing::debug!(backend_id = %backend_id, "收到选项发现 patch");

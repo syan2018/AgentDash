@@ -24,6 +24,7 @@ import {
 } from "../model/types";
 import type { AcpDisplayItem, AcpDisplayEntry, AggregatedEntryGroup, AggregatedThinkingGroup } from "../model/types";
 import { AcpToolCallCard } from "./SessionToolCallCard";
+import { CommandExecutionCard } from "./CommandExecutionCard";
 import { AcpMessageCard } from "./SessionMessageCard";
 import { AcpPlanCard } from "./SessionPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
@@ -95,9 +96,19 @@ function SingleEntry({
 
     case "item_started":
     case "item_completed": {
+      const threadItem = event.payload.item;
+      if (threadItem.type === "commandExecution") {
+        return (
+          <CommandExecutionCard
+            item={threadItem}
+            sessionId={sessionId ?? undefined}
+            outputText={accumulatedText}
+          />
+        );
+      }
       return (
         <AcpToolCallCard
-          item={event.payload.item}
+          item={threadItem}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}
           outputText={accumulatedText}

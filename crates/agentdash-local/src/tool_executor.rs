@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agentdash_application::vfs::ApplyPatchAffectedPaths;
-use agentdash_relay::{FileEntryRelay, SearchHit};
+use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub(crate) struct SearchParams<'a> {
     pub query: &'a str,
@@ -187,6 +188,7 @@ impl ToolExecutor {
         resolve_existing_path_with_root(&ws, requested)
     }
 
+    #[allow(dead_code)]
     pub async fn shell_exec(
         &self,
         command: &str,
@@ -225,6 +227,117 @@ impl ToolExecutor {
             Ok(Err(e)) => Err(ToolError::Io(e)),
             Err(_) => Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000))),
         }
+    }
+
+    /// 流式 shell 执行 — 逐行推送 stdout/stderr 到回调，完成后返回最终结果。
+    pub async fn shell_exec_streaming<F>(
+        &self,
+        command: &str,
+        workspace_root: &str,
+        cwd: Option<&str>,
+        timeout_ms: Option<u64>,
+        mut on_output: F,
+    ) -> Result<ShellResult, ToolError>
+    where
+        F: FnMut(&str, ShellOutputStream) + Send,
+    {
+        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
+        let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
+
+        tracing::debug!(
+            command = %command,
+            cwd = %ws.display(),
+            "shell_exec_streaming"
+        );
+
+        let shell = if cfg!(windows) { "cmd" } else { "sh" };
+        let flag = if cfg!(windows) { "/C" } else { "-c" };
+
+        let mut child = tokio::process::Command::new(shell)
+            .arg(flag)
+            .arg(command)
+            .current_dir(&ws)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+        let mut stdout_buf = String::new();
+        let mut stderr_buf = String::new();
+
+        let read_loop = async {
+            loop {
+                tokio::select! {
+                    line = stdout_reader.next_line() => {
+                        match line {
+                            Ok(Some(text)) => {
+                                let chunk = format!("{text}\n");
+                                on_output(&chunk, ShellOutputStream::Stdout);
+                                stdout_buf.push_str(&chunk);
+                            }
+                            Ok(None) => {
+                                // stdout closed — wait for stderr to finish then break
+                                while let Ok(Some(text)) = stderr_reader.next_line().await {
+                                    let chunk = format!("{text}\n");
+                                    on_output(&chunk, ShellOutputStream::Stderr);
+                                    stderr_buf.push_str(&chunk);
+                                }
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "stdout read error");
+                                break;
+                            }
+                        }
+                    }
+                    line = stderr_reader.next_line() => {
+                        match line {
+                            Ok(Some(text)) => {
+                                let chunk = format!("{text}\n");
+                                on_output(&chunk, ShellOutputStream::Stderr);
+                                stderr_buf.push_str(&chunk);
+                            }
+                            Ok(None) => {
+                                // stderr closed — drain remaining stdout then break
+                                while let Ok(Some(text)) = stdout_reader.next_line().await {
+                                    let chunk = format!("{text}\n");
+                                    on_output(&chunk, ShellOutputStream::Stdout);
+                                    stdout_buf.push_str(&chunk);
+                                }
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "stderr read error");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        match tokio::time::timeout(timeout, read_loop).await {
+            Ok(()) => {}
+            Err(_) => {
+                let _ = child.kill().await;
+                return Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000)));
+            }
+        }
+
+        let status = child
+            .wait()
+            .await
+            .map_err(ToolError::Io)?;
+
+        Ok(ShellResult {
+            exit_code: status.code().unwrap_or(-1),
+            stdout: stdout_buf,
+            stderr: stderr_buf,
+        })
     }
 
     pub async fn file_list(

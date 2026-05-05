@@ -192,6 +192,10 @@ pub struct ExecRequest {
     pub cwd: String,
     pub command: String,
     pub timeout_ms: Option<u64>,
+    /// 由 ShellExecTool 生成的流式输出关联 ID。
+    /// relay_fs 会将此 ID 作为 `ToolShellExecPayload.call_id`，
+    /// 使 `EventToolShellOutput` 能路由回 `ShellOutputRegistry`。
+    pub streaming_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -12,6 +12,8 @@ pub trait CanvasRepository: Send + Sync {
         project_id: Uuid,
         mount_id: &str,
     ) -> Result<Option<Canvas>, DomainError>;
+    /// Lookup a canvas by `mount_id` without scoping to a specific project.
+    async fn find_by_mount_id(&self, mount_id: &str) -> Result<Option<Canvas>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Canvas>, DomainError>;
     async fn update(&self, canvas: &Canvas) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;

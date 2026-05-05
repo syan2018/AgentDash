@@ -6,28 +6,33 @@ import type { TabContentRenderProps, TabTypeDescriptor } from "../tab-type-regis
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import { VfsIcon } from "./icons";
 
-const SCHEME = "vfs://";
+/**
+ * VFS URI 格式：  `{mountId}://{filePath}`
+ * 例：  `main://README.md`、 `cvs-test-canvas-001://src/main.tsx`
+ * 无文件时：  `main://`
+ * 默认（无 mount 选择）：  `vfs://`
+ */
+const FALLBACK_SCHEME = "vfs://";
 
-function parseVfsUri(uri: string): { surfaceRef?: string; mountId?: string; path?: string } | null {
-  if (!uri.startsWith(SCHEME)) return null;
-  const rest = uri.slice(SCHEME.length);
-  const qIdx = rest.indexOf("?");
-  const pathPart = qIdx >= 0 ? rest.slice(0, qIdx) : rest;
-  const queryPart = qIdx >= 0 ? rest.slice(qIdx + 1) : "";
-  const parts = pathPart.split("/");
+function parseMountUri(uri: string): { mountId?: string; path?: string } | null {
+  const schemeEnd = uri.indexOf("://");
+  if (schemeEnd < 0) return null;
 
-  const params = new URLSearchParams(queryPart);
-  return {
-    surfaceRef: parts[0] || undefined,
-    mountId: parts[1] || undefined,
-    path: params.get("path") || undefined,
-  };
+  const mountId = uri.slice(0, schemeEnd);
+  if (mountId === "vfs") return {};
+
+  const path = uri.slice(schemeEnd + 3) || undefined;
+  return { mountId, path };
+}
+
+function buildMountUri(mountId: string, filePath?: string | null): string {
+  if (!mountId) return FALLBACK_SCHEME;
+  return filePath ? `${mountId}://${filePath}` : `${mountId}://`;
 }
 
 function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
   const { vfs, runtimeSurface } = useWorkspaceData();
-  const parsed = parseVfsUri(uri);
-  const surfaceRef = runtimeSurface?.surface_ref ?? "default";
+  const parsed = parseMountUri(uri);
 
   const hasMounts =
     (vfs && vfs.mounts.length > 0) ||
@@ -35,11 +40,10 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
 
   const handleNavigate = useCallback(
     (mountId: string, filePath: string | null) => {
-      let newUri = `${SCHEME}${surfaceRef}/${mountId}`;
-      if (filePath) newUri += `?path=${encodeURIComponent(filePath)}`;
+      const newUri = buildMountUri(mountId, filePath);
       useWorkspaceTabStore.getState().updateTabUri(tabId, newUri);
     },
-    [tabId, surfaceRef],
+    [tabId],
   );
 
   if (!hasMounts) {
@@ -72,32 +76,27 @@ export const vfsTabType: TabTypeDescriptor = {
   renderContent: (props) => <VfsTabContent {...props} />,
 
   resolveTitle: (uri) => {
-    const parsed = parseVfsUri(uri);
+    const parsed = parseMountUri(uri);
     if (parsed?.path) {
       const filename = parsed.path.split("/").pop() ?? parsed.path;
       return filename;
     }
-    if (parsed?.mountId && parsed.mountId !== "default") return `VFS: ${parsed.mountId}`;
+    if (parsed?.mountId) return parsed.mountId;
     return "地址空间";
   },
 
   parseUri: (uri) => {
-    const parsed = parseVfsUri(uri);
+    const parsed = parseMountUri(uri);
     return parsed as Record<string, string> | null;
   },
 
   buildUri: (params) => {
-    const surfaceRef = params?.surfaceRef;
     const mountId = params?.mountId;
     const path = params?.path;
-    let result = SCHEME;
-    if (surfaceRef && mountId) result = `${SCHEME}${surfaceRef}/${mountId}`;
-    else if (surfaceRef) result = `${SCHEME}${surfaceRef}`;
-    else result = `${SCHEME}default`;
-    if (path) result += `?path=${encodeURIComponent(path)}`;
-    return result;
+    if (!mountId) return FALLBACK_SCHEME;
+    return buildMountUri(mountId, path);
   },
 
-  defaultUri: `${SCHEME}default`,
+  defaultUri: FALLBACK_SCHEME,
   menuOrder: 20,
 };

@@ -186,14 +186,17 @@ async fn load_canvas_with_permission(
     raw_canvas_id: &str,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::canvas::Canvas, ApiError> {
-    let canvas_id = Uuid::parse_str(raw_canvas_id)
-        .map_err(|_| ApiError::BadRequest("无效的 Canvas ID".into()))?;
-    let canvas = state
-        .repos
-        .canvas_repo
-        .get_by_id(canvas_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))?;
+    let canvas = if let Ok(uuid) = Uuid::parse_str(raw_canvas_id) {
+        state.repos.canvas_repo.get_by_id(uuid).await?
+    } else {
+        state
+            .repos
+            .canvas_repo
+            .find_by_mount_id(raw_canvas_id)
+            .await?
+    };
+    let canvas =
+        canvas.ok_or_else(|| ApiError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))?;
 
     load_project_with_permission(state, current_user, canvas.project_id, permission).await?;
     Ok(canvas)

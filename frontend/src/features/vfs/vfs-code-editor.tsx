@@ -26,6 +26,10 @@ const lightTheme = EditorView.theme({
     color: "var(--color-foreground, #1e293b)",
     fontSize: "12px",
     fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Menlo, Consolas, monospace",
+    height: "100%",
+  },
+  ".cm-scroller": {
+    overflow: "auto",
   },
   ".cm-gutters": {
     backgroundColor: "var(--color-secondary, #f8fafc)",
@@ -177,8 +181,8 @@ export function VfsCodeEditor({
           )}
         </div>
       </div>
-      {/* 编辑器容器 */}
-      <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />
+      {/* 编辑器容器 — CodeMirror 管理自己的滚动 */}
+      <div ref={containerRef} className="min-h-0 flex-1" />
     </div>
   );
 }

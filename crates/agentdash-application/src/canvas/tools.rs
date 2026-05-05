@@ -630,6 +630,19 @@ mod tests {
                 .cloned())
         }
 
+        async fn find_by_mount_id(
+            &self,
+            mount_id: &str,
+        ) -> Result<Option<agentdash_domain::canvas::Canvas>, DomainError> {
+            Ok(self
+                .canvases
+                .read()
+                .await
+                .values()
+                .find(|canvas| canvas.mount_id == mount_id)
+                .cloned())
+        }
+
         async fn list_by_project(
             &self,
             project_id: Uuid,

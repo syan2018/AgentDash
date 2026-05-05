@@ -6,7 +6,7 @@ use crate::workflow::{
 };
 use agentdash_domain::workflow::LifecycleStepExecutionStatus;
 use agentdash_spi::ExecutionContext;
-use agentdash_spi::schema::schema_value;
+use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;

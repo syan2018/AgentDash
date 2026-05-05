@@ -12,7 +12,7 @@ use agentdash_domain::workflow::{
     CapabilityDirective, CapabilityReduction, CapabilitySlotState, reduce_capability_directives,
 };
 use agentdash_mcp::injection::McpInjectionConfig;
-use agentdash_spi::tool_capability::{
+use agentdash_spi::platform::tool_capability::{
     self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS, cluster_tools,
 };
 use agentdash_spi::{FlowCapabilities, ToolCluster};

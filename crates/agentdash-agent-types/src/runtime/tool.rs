@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::content::ContentPart;
+use crate::model::content::ContentPart;
 
 // ─── ToolDefinition ─────────────────────────────────────────
 

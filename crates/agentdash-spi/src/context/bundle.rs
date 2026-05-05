@@ -12,7 +12,7 @@
 
 use uuid::Uuid;
 
-use crate::context_injection::{ContextFragment, FragmentScope, MergeStrategy};
+use crate::context::injection::{ContextFragment, FragmentScope, MergeStrategy};
 
 /// 一个 session 在某个 phase / turn 的上下文 fragment 集合。
 ///
@@ -185,7 +185,7 @@ fn now_millis_u64() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context_injection::FragmentScopeSet;
+    use crate::context::injection::FragmentScopeSet;
 
     fn frag(slot: &str, order: i32, content: &str) -> ContextFragment {
         ContextFragment {

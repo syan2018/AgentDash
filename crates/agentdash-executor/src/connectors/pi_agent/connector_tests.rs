@@ -1150,7 +1150,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
 
 #[tokio::test]
 async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
-    use agentdash_spi::session_context_bundle::SessionContextBundle;
+    use agentdash_spi::context::bundle::SessionContextBundle;
 
     let bridge = Arc::new(RecordingBridge::default());
     let connector = PiAgentConnector::new(bridge.clone(), "系统提示");

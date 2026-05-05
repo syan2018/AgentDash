@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
-use agentdash_spi::mcp_relay::McpRelayProvider;
+use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use rmcp::{
     ServiceExt,
     transport::streamable_http_client::{

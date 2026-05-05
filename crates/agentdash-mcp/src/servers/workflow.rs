@@ -698,7 +698,7 @@ impl ServerHandler for WorkflowMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::schema::sanitize_tool_schema;
+    use agentdash_spi::context::tool_schema_sanitizer::sanitize_tool_schema;
     use serde_json::Value;
 
     fn assert_schema_objects_have_type(value: &Value) {

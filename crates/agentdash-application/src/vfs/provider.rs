@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub use agentdash_spi::mount::{
+pub use agentdash_spi::platform::mount::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,
     SearchQuery, SearchResult,
 };

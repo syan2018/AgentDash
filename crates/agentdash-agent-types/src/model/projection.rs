@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::message::{AgentMessage, MessageRef};
+use crate::model::message::{AgentMessage, MessageRef};
 
 // ─── ProjectionKind ────────────────────────────────────────
 

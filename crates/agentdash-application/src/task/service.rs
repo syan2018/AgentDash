@@ -118,7 +118,7 @@ impl StoryStepActivationService {
         override_prompt: Option<&str>,
         additional_prompt: Option<&str>,
         executor_config: Option<&AgentConfig>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // 1. story → story session binding（label="companion"）
         let story_session_id = self.find_story_session_id(story_id).await?;

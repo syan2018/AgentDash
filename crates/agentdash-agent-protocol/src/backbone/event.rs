@@ -2,8 +2,8 @@ use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::approval::ApprovalRequest;
-use crate::platform::PlatformEvent;
+use crate::backbone::approval::ApprovalRequest;
+use crate::backbone::platform::PlatformEvent;
 
 /// 平台内部事件流转的统一类型。
 ///

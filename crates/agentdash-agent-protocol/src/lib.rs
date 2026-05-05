@@ -1,17 +1,17 @@
-pub mod approval;
 pub mod backbone;
 pub mod compat;
-pub mod envelope;
-pub mod platform;
 
-pub use approval::ApprovalRequest;
-pub use backbone::BackboneEvent;
-pub use compat::{envelope_to_session_notification, session_notification_to_envelope};
-pub use envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
-pub use platform::{
+// ─── 集中 re-export（保持外部 API 不变）───────────────────
+
+pub use backbone::approval::ApprovalRequest;
+pub use backbone::envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
+pub use backbone::event::BackboneEvent;
+pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent,
 };
+
+pub use compat::{envelope_to_session_notification, session_notification_to_envelope};
 
 pub use codex_app_server_protocol;
 

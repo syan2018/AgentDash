@@ -6,7 +6,7 @@ use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
-use agentdash_spi::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
+use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 

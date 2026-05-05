@@ -15,7 +15,7 @@ use agentdash_application::mcp_preset::{
     UpdateMcpPresetInput, probe_transport,
 };
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
-use agentdash_spi::mcp_relay::McpRelayProvider;
+use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};

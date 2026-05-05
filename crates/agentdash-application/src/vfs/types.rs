@@ -1,4 +1,4 @@
-pub use agentdash_spi::mount::{
+pub use agentdash_spi::platform::mount::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
     ReadResult, RuntimeFileEntry,
 };

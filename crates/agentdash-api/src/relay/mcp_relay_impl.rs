@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use agentdash_relay::RelayMessage;
 use agentdash_spi::ConnectorError;
-use agentdash_spi::mcp_relay::{
+use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult, RelayProbeTool,
 };
 

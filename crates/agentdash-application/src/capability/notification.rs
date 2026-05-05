@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_spi::hooks::CapabilityDelta;
-use agentdash_spi::tool_capability::{
+use agentdash_spi::platform::tool_capability::{
     self, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
     CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
     CAP_WORKFLOW_MANAGEMENT, ToolCapability,

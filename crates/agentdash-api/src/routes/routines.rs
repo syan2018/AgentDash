@@ -470,7 +470,7 @@ fn parse_uuid(id: &str) -> Result<Uuid, ApiError> {
 
 async fn load_routine_with_permission(
     state: &AppState,
-    current_user: &agentdash_spi::auth::AuthIdentity,
+    current_user: &agentdash_spi::platform::auth::AuthIdentity,
     routine_id: &str,
     permission: ProjectPermission,
 ) -> Result<Routine, ApiError> {

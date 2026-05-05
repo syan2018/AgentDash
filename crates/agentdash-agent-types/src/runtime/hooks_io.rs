@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::content::ContentPart;
-use crate::context::AgentContext;
-use crate::message::{AgentMessage, ToolCallInfo};
-use crate::tool::AgentToolResult;
+use crate::model::content::ContentPart;
+use crate::model::context::AgentContext;
+use crate::model::message::{AgentMessage, ToolCallInfo};
+use crate::runtime::tool::AgentToolResult;
 
 // ─── Hook 输入/输出 DTO ────────────────────────────────────
 

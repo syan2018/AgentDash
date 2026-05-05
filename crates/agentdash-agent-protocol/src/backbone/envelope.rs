@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::backbone::BackboneEvent;
+use crate::backbone::event::BackboneEvent;
 
 /// 事件来源标识。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

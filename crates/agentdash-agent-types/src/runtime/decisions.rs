@@ -1,8 +1,8 @@
-use crate::content::ContentPart;
-use crate::context::AgentContext;
-use crate::message::AgentMessage;
-use crate::message::ToolCallInfo;
-use crate::tool::AgentToolResult;
+use crate::model::content::ContentPart;
+use crate::model::context::AgentContext;
+use crate::model::message::AgentMessage;
+use crate::model::message::ToolCallInfo;
+use crate::runtime::tool::AgentToolResult;
 
 // ─── RuntimeDelegate 输入/输出 ─────────────────────────────
 

@@ -3,7 +3,7 @@ use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::Story;
 use serde::Serialize;
 
-use agentdash_spi::session_capabilities::SessionBaselineCapabilities;
+use agentdash_spi::context::capability::SessionBaselineCapabilities;
 
 use super::plan::{SessionRuntimePolicySummary, SessionToolVisibilitySummary};
 use crate::runtime::{AgentConfig, ThinkingLevel};

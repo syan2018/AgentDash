@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::RoutineTriggerProvider;
-use agentdash_spi::mount::MountProvider;
+use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;

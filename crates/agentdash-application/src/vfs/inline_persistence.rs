@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::runtime::Mount;
 use crate::vfs::mount::parse_inline_mount_owner;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
-use agentdash_spi::mount::{MountEvent, MountEventKind, MountEventReceiver};
+use agentdash_spi::platform::mount::{MountEvent, MountEventKind, MountEventReceiver};
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 use uuid::Uuid;

@@ -35,7 +35,7 @@ use agentdash_domain::task::Task;
 use agentdash_domain::workflow::CapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::auth::AuthIdentity;
+use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
@@ -2383,7 +2383,7 @@ mod tests {
         #[test]
         fn identity_prepared_overrides_base() {
             // prepared.identity = Some → 覆盖 base.identity。
-            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+            use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
 
             let mut base = base_req();
             base.identity = Some(AuthIdentity {
@@ -2412,7 +2412,7 @@ mod tests {
         #[test]
         fn identity_prepared_none_preserves_base() {
             // prepared.identity = None → 保留 base.identity（不会清空）。
-            use agentdash_spi::auth::{AuthIdentity, AuthMode};
+            use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
 
             let mut base = base_req();
             let base_id = AuthIdentity {
@@ -2480,7 +2480,7 @@ mod tests {
         #[test]
         fn system_routine_identity_shape() {
             // 固化 AuthIdentity::system_routine 产出形状（E1 契约）。
-            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-abc");
+            let id = agentdash_spi::platform::auth::AuthIdentity::system_routine("r-abc");
             assert_eq!(id.user_id, "system:routine:r-abc");
             assert_eq!(id.subject, "system:routine:r-abc");
             assert_eq!(id.provider.as_deref(), Some("system.routine"));
@@ -2490,14 +2490,14 @@ mod tests {
             // auth_mode = Personal 避免匹配企业级 admin 策略
             assert!(matches!(
                 id.auth_mode,
-                agentdash_spi::auth::AuthMode::Personal
+                agentdash_spi::platform::auth::AuthMode::Personal
             ));
         }
 
         #[test]
         fn builder_with_identity_method_propagates_to_prepared() {
             // 验证 SessionAssemblyBuilder.with_identity() 的值能顺利进入 PreparedSessionInputs.identity。
-            let id = agentdash_spi::auth::AuthIdentity::system_routine("r-zzz");
+            let id = agentdash_spi::platform::auth::AuthIdentity::system_routine("r-zzz");
             let prepared = SessionAssemblyBuilder::new()
                 .with_identity(id.clone())
                 .build();

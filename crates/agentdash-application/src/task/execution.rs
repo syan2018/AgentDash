@@ -29,7 +29,7 @@ pub struct TaskExecutionCommand {
     /// Start 时为 override_prompt，Continue 时为 additional_prompt
     pub prompt: Option<String>,
     pub executor_config: Option<AgentConfig>,
-    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
+    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 
 #[derive(Debug, Clone)]

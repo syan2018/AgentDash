@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_spi::Vfs;
-use agentdash_spi::schema::schema_value;
+use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -205,14 +205,14 @@ pub struct FsReadTool {
     service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::auth::AuthIdentity>,
+    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl FsReadTool {
     pub fn new(
         service: Arc<RelayVfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -306,14 +306,14 @@ pub struct FsApplyPatchTool {
     service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::auth::AuthIdentity>,
+    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl FsApplyPatchTool {
     pub fn new(
         service: Arc<RelayVfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -405,14 +405,14 @@ pub struct FsGlobTool {
     service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
-    identity: Option<agentdash_spi::auth::AuthIdentity>,
+    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl FsGlobTool {
     pub fn new(
         service: Arc<RelayVfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        identity: Option<agentdash_spi::auth::AuthIdentity>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,
@@ -515,7 +515,7 @@ impl FsGrepTool {
         service: Arc<RelayVfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
-        _identity: Option<agentdash_spi::auth::AuthIdentity>,
+        _identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Self {
         Self {
             service,

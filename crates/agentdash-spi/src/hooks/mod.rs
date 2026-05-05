@@ -1,3 +1,5 @@
+pub mod trace;
+
 use std::sync::Arc;
 
 use agentdash_domain::session_binding::SessionOwnerType;

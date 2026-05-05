@@ -5,7 +5,7 @@ use std::sync::Arc;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
-use agentdash_spi::mount::MountProvider;
+use agentdash_spi::platform::mount::MountProvider;
 use thiserror::Error;
 
 /// 开源版内置插件集合。

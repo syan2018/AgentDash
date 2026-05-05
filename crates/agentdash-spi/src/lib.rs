@@ -1,16 +1,10 @@
-pub mod auth;
 pub mod connector;
-pub mod context_injection;
-pub mod hook_trace_notification;
+pub mod context;
 pub mod hooks;
-pub mod mcp_relay;
-pub mod mount;
-pub mod routine;
-pub mod schema;
-pub mod session_capabilities;
-pub mod session_context_bundle;
-pub mod skill;
-pub mod tool_capability;
+pub mod platform;
+
+
+// ─── agent-types re-export（保持外部 API 不变）──────────────
 
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
@@ -26,9 +20,15 @@ pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
     ToolUpdateCallback,
 };
+
+// ─── domain re-export ───────────────────────────────────────
+
 pub use agentdash_domain::common::{
     AgentConfig, Mount, MountCapability, MountLink, SystemPromptMode, ThinkingLevel, Vfs,
 };
+
+// ─── connector ──────────────────────────────────────────────
+
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
@@ -37,12 +37,24 @@ pub use connector::{
     partition_session_mcp_servers,
     content_block_to_text, workspace_path_from_context,
 };
-pub use context_injection::{
+
+// ─── context injection ──────────────────────────────────────
+
+pub use context::injection::{
     ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MergeStrategy,
     RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
     SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
 };
-pub use hook_trace_notification::build_hook_trace_envelope;
+
+// ─── context bundle & capabilities ──────────────────────────
+
+pub use context::bundle::SessionContextBundle;
+pub use context::capability::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
+pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
+
+// ─── hooks ──────────────────────────────────────────────────
+
+pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
     HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError,
@@ -52,13 +64,15 @@ pub use hooks::{
     HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
-pub use mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
-pub use mount::MountEditCapabilities;
-pub use routine::{RoutineFireCallback, RoutineTriggerProvider};
-pub use session_capabilities::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
-pub use session_context_bundle::SessionContextBundle;
-pub use skill::SkillRef;
-pub use tool_capability::{
+
+// ─── platform ───────────────────────────────────────────────
+
+pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
+pub use platform::mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
+pub use platform::mount::MountEditCapabilities;
+pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
+pub use platform::skill::SkillRef;
+pub use platform::tool_capability::{
     CapabilityVisibilityRule, PlatformMcpScope, ToolCapability, ToolDescriptor, ToolSource,
     capability_to_platform_mcp_scope, capability_to_tool_clusters, default_visibility_rules,
     format_tool_for_prompt, is_capability_visible, platform_tool_descriptors,

@@ -1,5 +1,5 @@
-use crate::message::AgentMessage;
-use crate::tool::ToolDefinition;
+use crate::model::message::AgentMessage;
+use crate::runtime::tool::ToolDefinition;
 
 /// Agent 上下文 — 仅持有 schema 快照，用于 DTO 传递。
 ///

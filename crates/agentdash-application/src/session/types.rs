@@ -39,7 +39,7 @@ pub struct PromptSessionRequest {
     /// 本字段仅是本轮 prompt 级别的 hook 触发器。
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
-    pub identity: Option<agentdash_spi::auth::AuthIdentity>,
+    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     /// Turn 事件回调（替代 TurnMonitor）。
     /// 由 task 执行层注入，在 session pipeline 事件流和终态时回调。
     /// 为 None 时不执行任何回调（普通 session prompt 场景）。

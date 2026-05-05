@@ -13,10 +13,10 @@ use std::path::Path;
 
 use agentdash_agent_types::DynAgentTool;
 use agentdash_domain::common::SystemPromptMode;
-use agentdash_spi::context_injection::RUNTIME_AGENT_CONTEXT_SLOTS;
+use agentdash_spi::context::injection::RUNTIME_AGENT_CONTEXT_SLOTS;
 use agentdash_spi::hooks::HookSessionRuntimeAccess;
-use agentdash_spi::session_capabilities::SessionBaselineCapabilities;
-use agentdash_spi::session_context_bundle::SessionContextBundle;
+use agentdash_spi::context::capability::SessionBaselineCapabilities;
+use agentdash_spi::context::bundle::SessionContextBundle;
 use agentdash_spi::{DiscoveredGuideline, Mount, MountCapability, Vfs};
 
 /// assembler 的全部输入——只在 application 层组装，不穿透到 connector。

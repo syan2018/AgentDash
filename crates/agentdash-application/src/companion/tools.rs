@@ -10,7 +10,7 @@ use agentdash_domain::session_binding::{
 };
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::action_type as at;
-use agentdash_spi::schema::schema_value;
+use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
     AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry, HookTrigger,
@@ -2424,7 +2424,7 @@ mod companion_tests {
     #[test]
     fn compact_execution_slice_drops_write_and_mcp_servers() {
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_spi::platform::mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),
@@ -2477,7 +2477,7 @@ mod companion_tests {
     #[test]
     fn workflow_only_execution_slice_uses_empty_vfs() {
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::Mount {
+            mounts: vec![agentdash_spi::platform::mount {
                 id: "main".to_string(),
                 provider: "relay_fs".to_string(),
                 backend_id: "backend-1".to_string(),

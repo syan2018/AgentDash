@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::content::ContentPart;
-use crate::tool::AgentToolResult;
+use crate::model::content::ContentPart;
+use crate::runtime::tool::AgentToolResult;
 
 // ─── MessageRef ────────────────────────────────────────────
 

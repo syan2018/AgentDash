@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::hooks::HookSessionRuntimeAccess;
-use crate::session_context_bundle::SessionContextBundle;
+use crate::context::bundle::SessionContextBundle;
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
@@ -60,7 +60,7 @@ pub struct ExecutionSessionFrame {
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
-    pub identity: Option<crate::auth::AuthIdentity>,
+    pub identity: Option<crate::platform::auth::AuthIdentity>,
 }
 
 /// Turn 级执行上下文（How + 运行时控制面）。

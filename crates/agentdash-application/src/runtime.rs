@@ -62,4 +62,4 @@ impl RuntimeMcpServer {
     }
 }
 
-pub use agentdash_spi::mount::RuntimeFileEntry;
+pub use agentdash_spi::platform::mount::RuntimeFileEntry;

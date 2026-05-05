@@ -61,7 +61,7 @@ impl RelayVfsService {
         vfs: &Vfs,
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, String> {
         let runtime_vfs = vfs.clone();
         let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)?;
@@ -95,7 +95,7 @@ impl RelayVfsService {
         target: &ResourceRef,
         content: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), String> {
         let runtime_vfs = vfs.clone();
         let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Write)?;
@@ -130,7 +130,7 @@ impl RelayVfsService {
         mount_id: &str,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchResult, String> {
         let runtime_vfs = vfs.clone();
         let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::Write)?;
@@ -205,7 +205,7 @@ impl RelayVfsService {
         default_mount_id: Option<&str>,
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<MultiMountPatchResult, String> {
         let entries = parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
         if entries.is_empty() {
@@ -271,7 +271,7 @@ impl RelayVfsService {
         mount_id: &str,
         entries: &[PatchEntry],
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchAffectedPaths, String> {
         let mount = resolve_mount(vfs, mount_id, MountCapability::Write)?;
 
@@ -315,7 +315,7 @@ impl RelayVfsService {
         mount_id: &str,
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
-        identity: Option<&agentdash_spi::auth::AuthIdentity>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, String> {
         let runtime_vfs = vfs.clone();
         let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::List)?;

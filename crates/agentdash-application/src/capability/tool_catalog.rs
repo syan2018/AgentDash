@@ -3,7 +3,7 @@
 //! 合并平台内嵌工具（编译期静态元数据）和 MCP 外部工具（运行时发现），
 //! 返回统一的 `ToolDescriptor` 列表供 CapabilitiesEditor 消费。
 
-use agentdash_spi::tool_capability::{self, ToolDescriptor, ToolSource, is_known_key};
+use agentdash_spi::platform::tool_capability::{self, ToolDescriptor, ToolSource, is_known_key};
 
 /// 按 capability keys 查询工具目录。
 ///

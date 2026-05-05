@@ -235,7 +235,7 @@ pub struct SessionEventResponse {
     pub entry_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
-    pub notification: agentdash_protocol::BackboneEnvelope,
+    pub notification: agentdash_agent_protocol::BackboneEnvelope,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agentdash_protocol::SourceInfo;
+use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::{
     HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };

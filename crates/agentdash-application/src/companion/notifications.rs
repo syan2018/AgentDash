@@ -8,7 +8,7 @@
 //! 能看到人类回应）。归位到 `companion/`，让调用链"companion 工具请求 →
 //! companion 工具回应"全部落在一个子域。
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 
 /// 构造 companion "人类回应" 事件通知。
 ///

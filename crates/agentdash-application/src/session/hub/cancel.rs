@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use agentdash_protocol::SourceInfo;
+use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use tokio::sync::broadcast;
 

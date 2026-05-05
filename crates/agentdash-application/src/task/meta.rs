@@ -46,8 +46,8 @@ pub fn build_task_lifecycle_envelope(
     event_type: &str,
     message: &str,
     data: serde_json::Value,
-) -> agentdash_protocol::BackboneEnvelope {
-    use agentdash_protocol::{BackboneEvent, PlatformEvent, SourceInfo};
+) -> agentdash_agent_protocol::BackboneEnvelope {
+    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent, SourceInfo};
 
     let source = SourceInfo {
         connector_id: "agentdash-task-execution".to_string(),
@@ -60,7 +60,7 @@ pub fn build_task_lifecycle_envelope(
         "message": message,
         "data": data,
     });
-    agentdash_protocol::BackboneEnvelope::new(
+    agentdash_agent_protocol::BackboneEnvelope::new(
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
             key: event_type.to_string(),
             value,

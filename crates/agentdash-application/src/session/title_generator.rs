@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 
 use super::hub::SessionHub;
 use super::types::TitleSource;

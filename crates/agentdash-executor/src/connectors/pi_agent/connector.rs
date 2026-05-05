@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
 use futures::stream::BoxStream;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;

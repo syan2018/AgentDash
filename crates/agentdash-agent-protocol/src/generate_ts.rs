@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use ts_rs::TS;
 
 fn main() {

@@ -4,8 +4,8 @@ use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
-use agentdash_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
-use agentdash_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::content_block_to_text;
 
 use super::persistence::PersistedSessionEvent;
@@ -600,7 +600,7 @@ fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<Comp
 }
 
 fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
-    use agentdash_protocol::{BackboneEvent, PlatformEvent};
+    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
     match &event.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
             if key == "context_compacted" =>
@@ -703,7 +703,7 @@ fn content_block_to_rendered_text(block: &ContentBlock) -> Option<String> {
 fn is_owner_context_resource_block(block: &ContentBlock) -> bool {
     match block {
         ContentBlock::Resource(resource) => match &resource.resource {
-            agentdash_protocol::EmbeddedResourceResource::TextResourceContents(
+            agentdash_agent_protocol::EmbeddedResourceResource::TextResourceContents(
                 text_resource,
             ) => {
                 let uri = text_resource.uri.as_str();

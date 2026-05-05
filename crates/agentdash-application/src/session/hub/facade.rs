@@ -9,7 +9,7 @@
 
 use std::io;
 
-use agentdash_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
 use tokio::sync::broadcast;
 
 use super::super::continuation::build_projected_transcript_from_events;

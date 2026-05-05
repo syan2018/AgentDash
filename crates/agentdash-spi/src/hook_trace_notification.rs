@@ -1,4 +1,4 @@
-use agentdash_protocol::{
+use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, HookTraceCompletion, HookTraceData, HookTraceDiagnostic,
     HookTraceInjection, HookTracePayload, HookTraceSeverity, PlatformEvent, SourceInfo, TraceInfo,
 };

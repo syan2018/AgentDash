@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use agentdash_domain::workspace::WorkspaceIdentityKind;
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

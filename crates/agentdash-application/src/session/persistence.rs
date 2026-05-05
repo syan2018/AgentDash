@@ -1,6 +1,6 @@
 use std::io;
 
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 

@@ -1,6 +1,6 @@
 [package]
-name = "agentdash-protocol"
-description = "AgentDash 平台内部协议类型 — BackboneEvent / BackboneEnvelope"
+name = "agentdash-agent-protocol"
+description = "AgentDash Agent 事件流传输协议 — BackboneEvent / BackboneEnvelope"
 version.workspace = true
 edition.workspace = true
 

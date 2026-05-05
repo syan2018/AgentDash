@@ -4,10 +4,10 @@
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
 //! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
 
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
-use agentdash_protocol::SourceInfo;
+use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
 
 use super::hub::HookTriggerInput;

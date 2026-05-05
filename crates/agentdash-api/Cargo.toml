@@ -47,7 +47,7 @@ bcrypt = "0.16"
 # Agent 类型（RuntimeToolProvider 使用 AgentTool trait）
 agentdash-agent = { workspace = true }
 
-agentdash-protocol = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
 json-patch = "2.0"
 regex.workspace = true
 postgresql_embedded = { workspace = true }

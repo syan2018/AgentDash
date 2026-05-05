@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 
 use crate::task::execution::TaskExecutionError;
 

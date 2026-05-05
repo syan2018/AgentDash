@@ -329,7 +329,7 @@ pub struct SessionHookRefreshQuery {
 /// Hook 触发点枚举。
 ///
 /// 直接复用 protocol 层定义，避免 SPI / protocol 双份枚举漂移。
-pub use agentdash_protocol::HookTraceTrigger as HookTrigger;
+pub use agentdash_agent_protocol::HookTraceTrigger as HookTrigger;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

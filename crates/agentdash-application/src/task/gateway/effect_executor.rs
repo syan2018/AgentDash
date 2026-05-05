@@ -1,4 +1,4 @@
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 use uuid::Uuid;
 
@@ -57,7 +57,7 @@ impl TaskHookEffectExecutor {
 
     async fn handle_event(&self, _session_id: &str, envelope: &BackboneEnvelope) {
         use crate::task::artifact::build_thread_item_patch;
-        use agentdash_protocol::BackboneEvent;
+        use agentdash_agent_protocol::BackboneEvent;
 
         let item = match &envelope.event {
             BackboneEvent::ItemStarted(n) => &n.item,

@@ -4,8 +4,8 @@ use agentdash_application::session::{
     ExecutionStatus, PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog,
     SessionEventPage, SessionMeta, SessionPersistence, TitleSource,
 };
-use agentdash_protocol::codex_app_server_protocol::ThreadItem;
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use sqlx::{PgPool, Row};
 
 pub struct PostgresSessionRepository {
@@ -663,9 +663,9 @@ fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
         }
         BackboneEvent::TurnCompleted(n) => {
             let status = match n.turn.status {
-                agentdash_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
-                agentdash_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
-                agentdash_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
+                agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
+                agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
+                agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
                     "interrupted"
                 }
                 _ => "completed",
@@ -750,8 +750,8 @@ fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
 mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
-    use agentdash_protocol::codex_app_server_protocol as codex;
-    use agentdash_protocol::{SourceInfo, TraceInfo};
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::{SourceInfo, TraceInfo};
     use chrono::Utc;
 
     fn turn_terminal_envelope(

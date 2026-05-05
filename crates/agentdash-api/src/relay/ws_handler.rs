@@ -207,14 +207,14 @@ async fn handle_backend_connection(
     for terminal_id in &lost_terminal_ids {
         if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
             use agentdash_application::backend_transport::RelaySessionEvent;
-            let source = agentdash_protocol::SourceInfo {
+            let source = agentdash_agent_protocol::SourceInfo {
                 connector_id: "platform".to_string(),
                 connector_type: "terminal".to_string(),
                 executor_id: None,
             };
-            let envelope = agentdash_protocol::BackboneEnvelope::new(
-                agentdash_protocol::BackboneEvent::Platform(
-                    agentdash_protocol::PlatformEvent::TerminalStateChanged {
+            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
                         terminal_id: terminal_id.clone(),
                         state: "lost".to_string(),
                         exit_code: None,
@@ -277,7 +277,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
         RelayMessage::EventSessionNotification { payload, .. } => {
             use agentdash_application::backend_transport::RelaySessionEvent;
 
-            match serde_json::from_value::<agentdash_protocol::BackboneEnvelope>(
+            match serde_json::from_value::<agentdash_agent_protocol::BackboneEnvelope>(
                 payload.notification.clone(),
             ) {
                 Ok(envelope) => {
@@ -363,14 +363,14 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 "收到终端输出事件"
             );
             if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
-                let source = agentdash_protocol::SourceInfo {
+                let source = agentdash_agent_protocol::SourceInfo {
                     connector_id: "platform".to_string(),
                     connector_type: "terminal".to_string(),
                     executor_id: None,
                 };
-                let envelope = agentdash_protocol::BackboneEnvelope::new(
-                    agentdash_protocol::BackboneEvent::Platform(
-                        agentdash_protocol::PlatformEvent::TerminalOutput {
+                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::TerminalOutput {
                             terminal_id: terminal_id.clone(),
                             data: payload.data.clone(),
                         },
@@ -420,14 +420,14 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .terminal_cache
                 .get_terminal(&payload.terminal_id)
             {
-                let source = agentdash_protocol::SourceInfo {
+                let source = agentdash_agent_protocol::SourceInfo {
                     connector_id: "platform".to_string(),
                     connector_type: "terminal".to_string(),
                     executor_id: None,
                 };
-                let envelope = agentdash_protocol::BackboneEnvelope::new(
-                    agentdash_protocol::BackboneEvent::Platform(
-                        agentdash_protocol::PlatformEvent::TerminalStateChanged {
+                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
                             terminal_id: payload.terminal_id.clone(),
                             state: state_str.to_string(),
                             exit_code: payload.exit_code,

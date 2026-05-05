@@ -5,7 +5,7 @@
 //! 精确定位历史边界。相关逻辑只与 `persist_notification` 协同，不涉及 connector。
 
 use agentdash_agent_types::{AgentMessage, MessageRef};
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
 use std::io;
 
 use super::super::continuation::build_projected_transcript_from_events;
@@ -21,7 +21,7 @@ impl SessionHub {
         envelope: BackboneEnvelope,
     ) -> io::Result<BackboneEnvelope> {
         let messages_compacted = match &envelope.event {
-            BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+            BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
                 key,
                 value,
             }) if key == "context_compacted" => value
@@ -43,7 +43,7 @@ impl SessionHub {
         };
 
         let mut enriched = envelope;
-        if let BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+        if let BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
             value,
             ..
         }) = &mut enriched.event

@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
-use agentdash_protocol::{ContentBlock, EmbeddedResourceResource};
+use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
 use agentdash_agent_types::AgentMessage;
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
@@ -421,7 +421,7 @@ mod tests {
 
 pub type ExecutionStream = Pin<
     Box<
-        dyn Stream<Item = Result<agentdash_protocol::BackboneEnvelope, ConnectorError>>
+        dyn Stream<Item = Result<agentdash_agent_protocol::BackboneEnvelope, ConnectorError>>
             + Send
             + 'static,
     >,

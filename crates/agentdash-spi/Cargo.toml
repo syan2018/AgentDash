@@ -18,7 +18,7 @@ futures = { workspace = true }
 async-trait = "0.1"
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-agentdash-protocol = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
 schemars = { workspace = true }
 json-patch = "2.0"
 

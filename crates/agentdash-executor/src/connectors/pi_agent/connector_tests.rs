@@ -3,7 +3,7 @@ use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector}
 use agentdash_agent::{AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
-use agentdash_protocol::{BackboneEvent, SourceInfo};
+use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
 use agentdash_spi::{Mount, MountCapability};
 use chrono::Utc;
 use std::sync::{Mutex as StdMutex, RwLock};
@@ -718,7 +718,7 @@ fn pending_approval_event_maps_to_tool_call_update() {
         other => panic!("unexpected backbone event: {other:?}"),
     }
     match &envelopes[1].event {
-        BackboneEvent::Platform(agentdash_protocol::PlatformEvent::SessionMetaUpdate {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
             key,
             ..
         }) => {

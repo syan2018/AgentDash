@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use agentdash_protocol::{ContentBlock, TextContent};
-use agentdash_protocol::codex_app_server_protocol as codex;
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{ContentBlock, TextContent};
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookResolution, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,

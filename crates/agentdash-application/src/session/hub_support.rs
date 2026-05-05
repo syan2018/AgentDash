@@ -1,7 +1,7 @@
 use std::io;
 
-use agentdash_protocol::ContentBlock;
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::ContentBlock;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;
 
@@ -42,7 +42,7 @@ pub(super) fn build_turn_started_envelope(
     source: &SourceInfo,
     turn_id: &str,
 ) -> BackboneEnvelope {
-    use agentdash_protocol::codex_app_server_protocol as codex;
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
     BackboneEnvelope::new(
         BackboneEvent::TurnStarted(codex::TurnStartedNotification {
             thread_id: session_id.to_string(),

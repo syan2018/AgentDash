@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use agentdash_protocol::SourceInfo;
+use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     HookEffect, HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use tokio::sync::Mutex;
 
 use super::hub_support::parse_turn_terminal_event_from_envelope;
@@ -283,7 +283,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 mod tests {
     use super::super::types::TitleSource;
     use super::*;
-    use agentdash_protocol::{
+    use agentdash_agent_protocol::{
         BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
     };
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 
 /// Session 事件回调 —— 替代 TurnMonitor 的核心抽象。

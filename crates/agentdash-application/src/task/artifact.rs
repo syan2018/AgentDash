@@ -1,6 +1,6 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::task::{Artifact, ArtifactType};
-use agentdash_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;

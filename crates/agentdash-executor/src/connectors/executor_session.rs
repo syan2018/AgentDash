@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::{
     ConnectorError, ConnectorType, ExecutionContext, ExecutionStream, PromptPayload,
     workspace_path_from_context,

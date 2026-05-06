@@ -58,9 +58,10 @@ export function WorkflowCategoryPanel() {
 
   useEffect(() => {
     void fetchTemplates();
-    void fetchDefinitions();
-    void fetchLifecycles();
-  }, [fetchTemplates, fetchDefinitions, fetchLifecycles]);
+    if (!currentProjectId) return;
+    void fetchDefinitions({ projectId: currentProjectId });
+    void fetchLifecycles({ projectId: currentProjectId });
+  }, [currentProjectId, fetchTemplates, fetchDefinitions, fetchLifecycles]);
 
   useEffect(() => {
     if (!message) return;

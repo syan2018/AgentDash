@@ -130,11 +130,15 @@ where
                 continue;
             };
 
-            let Some(workflow) = self.definition_repo.get_by_key(workflow_key).await? else {
+            let Some(workflow) = self
+                .definition_repo
+                .get_by_project_and_key(lifecycle.project_id, workflow_key)
+                .await?
+            else {
                 issues.push(ValidationIssue::error(
                     "lifecycle_step_workflow_missing",
                     format!(
-                        "lifecycle step `{}` 引用的 workflow `{}` 不存在",
+                        "lifecycle step `{}` 引用的 workflow `{}` 在当前 project 中不存在",
                         step.key, workflow_key
                     ),
                     format!("steps[{step_index}].workflow_key"),
@@ -510,6 +514,15 @@ mod tests {
         output_ports: &[&str],
         input_ports: &[&str],
     ) -> WorkflowDefinition {
+        workflow_with_ports_in_project(Uuid::new_v4(), key, output_ports, input_ports)
+    }
+
+    fn workflow_with_ports_in_project(
+        project_id: Uuid,
+        key: &str,
+        output_ports: &[&str],
+        input_ports: &[&str],
+    ) -> WorkflowDefinition {
         let contract = WorkflowContract {
             output_ports: output_ports
                 .iter()
@@ -533,7 +546,7 @@ mod tests {
             ..Default::default()
         };
         WorkflowDefinition::new(
-            Uuid::new_v4(),
+            project_id,
             key,
             format!("workflow {key}"),
             "desc",
@@ -730,6 +743,53 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn validate_lifecycle_definition_resolves_workflow_in_same_project_only() {
+        let lifecycle_project_id = Uuid::new_v4();
+        let other_project_id = Uuid::new_v4();
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        workflow_repo.seed(workflow_with_ports_in_project(
+            other_project_id,
+            "wf_shared",
+            &[],
+            &[],
+        ));
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+
+        let lifecycle = LifecycleDefinition::new(
+            lifecycle_project_id,
+            "dag",
+            "dag",
+            "desc",
+            WorkflowBindingKind::Story,
+            WorkflowDefinitionSource::UserAuthored,
+            "start",
+            vec![LifecycleStepDefinition {
+                key: "start".to_string(),
+                description: "start".to_string(),
+                workflow_key: Some("wf_shared".to_string()),
+                node_type: LifecycleNodeType::AgentNode,
+                output_ports: vec![],
+                input_ports: vec![],
+            }],
+            vec![],
+        )
+        .expect("lifecycle definition");
+
+        let issues = service
+            .validate_lifecycle_definition(&lifecycle)
+            .await
+            .expect("validate lifecycle");
+
+        assert!(issues.iter().any(|issue| {
+            issue.code == "lifecycle_step_workflow_missing"
+                && issue
+                    .message
+                    .contains("在当前 project 中不存在")
+        }));
     }
 
     #[tokio::test]

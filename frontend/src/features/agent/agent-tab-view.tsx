@@ -100,8 +100,8 @@ export function AgentTabView() {
     clearForProject(currentProjectId);
     void fetchProjectAgents(currentProjectId);
     void loadForProject(currentProjectId);
-    void fetchLifecycles();
-    void fetchDefinitions();
+    void fetchLifecycles({ projectId: currentProjectId });
+    void fetchDefinitions({ projectId: currentProjectId });
   }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchLifecycles, fetchDefinitions]);
 
   // session 关联的 lifecycle runs（session 就绪后加载）

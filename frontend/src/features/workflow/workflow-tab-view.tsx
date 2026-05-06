@@ -35,9 +35,10 @@ export function WorkflowTabView() {
 
   useEffect(() => {
     void fetchTemplates();
-    void fetchDefinitions();
-    void fetchLifecycles();
-  }, [fetchTemplates, fetchDefinitions, fetchLifecycles]);
+    if (!currentProjectId) return;
+    void fetchDefinitions({ projectId: currentProjectId });
+    void fetchLifecycles({ projectId: currentProjectId });
+  }, [currentProjectId, fetchTemplates, fetchDefinitions, fetchLifecycles]);
 
   useEffect(() => {
     if (!message) return;
@@ -130,7 +131,7 @@ export function WorkflowTabView() {
             </button>
             <button
               type="button"
-              onClick={() => { openNewDraft(); }}
+              onClick={() => { openNewDraft(currentProjectId); }}
               className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
             >
               + Workflow

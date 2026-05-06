@@ -1,0 +1,62 @@
+{
+  "id": "workflow-lifecycle-editor-flow",
+  "name": "workflow-lifecycle-editor-flow",
+  "title": "优化 Workflow/Lifecycle 编辑流程",
+  "description": "打通 Lifecycle DAG 内编辑 step 绑定 Workflow 的主路径，修正 project 作用域与引用校验，让 Workflow/Lifecycle 编辑流程更连贯。",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "frontend/backend workflow editor",
+  "package": "single-repo",
+  "priority": "P1",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-05-06",
+  "completedAt": "2026-05-06",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "id": "project-scoped-drafts",
+      "title": "新建与加载 Workflow/Lifecycle 时绑定当前 Project 作用域",
+      "status": "done"
+    },
+    {
+      "id": "inline-workflow-editor",
+      "title": "在 Lifecycle DAG 节点侧栏内联编辑或新建绑定 Workflow",
+      "status": "done"
+    },
+    {
+      "id": "backend-project-reference",
+      "title": "后端 Lifecycle 校验按 project_id 解析 step.workflow_key",
+      "status": "done"
+    },
+    {
+      "id": "reference-delete-guard",
+      "title": "删除 Workflow 时阻止删除仍被 Lifecycle step 引用的定义",
+      "status": "done"
+    },
+    {
+      "id": "verification",
+      "title": "运行前端类型检查与相关 Rust 测试",
+      "status": "done"
+    }
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "frontend/src/stores/workflowStore.ts",
+    "frontend/src/features/workflow/lifecycle-dag-editor.tsx",
+    "frontend/src/features/workflow/ui/dag-side-panel.tsx",
+    "frontend/src/features/assets-panel/categories/WorkflowCategoryPanel.tsx",
+    "frontend/src/pages/WorkflowEditorPage.tsx",
+    "frontend/src/pages/LifecycleEditorPage.tsx",
+    "crates/agentdash-application/src/workflow/catalog.rs",
+    "crates/agentdash-application/src/companion/tools.rs",
+    "crates/agentdash-api/src/routes/workflows.rs"
+  ],
+  "notes": "需求来自 review：当前编辑 lifecycle 时无法顺手编辑 step 绑定的 workflow，主体验被拆散。本轮完成 project 作用域修正、Lifecycle 节点内联 Workflow 编辑/新建入口、后端同 project 引用校验、被引用 workflow 删除保护。验证：frontend tsc 通过；cargo test -p agentdash-application workflow::catalog 通过；cargo check -p agentdash-api 通过。frontend lint 仍因既有 CommandExecutionCard Date.now purity 与 canvas-tab 条件 Hook 报错，非本轮改动引入。",
+  "meta": {}
+}

@@ -2,11 +2,13 @@ import { useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
 import { useWorkflowStore } from "../stores/workflowStore";
+import { useProjectStore } from "../stores/projectStore";
 import { WorkflowEditor } from "../features/workflow/workflow-editor";
 
 export function WorkflowEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
   const navigate = useNavigate();
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const editorDraft = useWorkflowStore((s) => s.wfEditor.draft);
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
@@ -16,11 +18,11 @@ export function WorkflowEditorPage() {
 
   useEffect(() => {
     if (isNew) {
-      openNewDraft();
+      openNewDraft(currentProjectId ?? "");
     } else if (definitionId) {
       void openEditDraft(definitionId);
     }
-  }, [definitionId, isNew, openEditDraft, openNewDraft]);
+  }, [currentProjectId, definitionId, isNew, openEditDraft, openNewDraft]);
 
   if (isLoading && !editorDraft) {
     return (
@@ -40,10 +42,10 @@ export function WorkflowEditorPage() {
           <p className="text-sm text-muted-foreground">未找到 Workflow 定义</p>
           <button
             type="button"
-            onClick={() => navigate("/dashboard/workflow")}
+            onClick={() => navigate("/dashboard/assets/workflow")}
             className="mt-4 agentdash-button-secondary"
           >
-            返回工作流系统视图
+            返回 Workflow 资产
           </button>
         </div>
       </div>
@@ -56,11 +58,11 @@ export function WorkflowEditorPage() {
       <div className="shrink-0 border-b border-border px-6 py-3">
         <button
           type="button"
-          onClick={() => navigate("/dashboard/workflow")}
+          onClick={() => navigate("/dashboard/assets/workflow")}
           className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-          返回工作流系统视图
+          返回 Workflow 资产
         </button>
       </div>
 

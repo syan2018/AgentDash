@@ -128,7 +128,7 @@ pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<WorkflowDefinition>>, ApiError> {
-    let definitions = if let Some(ref pid) = query.project_id {
+    let mut definitions = if let Some(ref pid) = query.project_id {
         let project_id = parse_uuid_required(pid, "project_id")?;
         state
             .repos
@@ -144,6 +144,9 @@ pub async fn list_workflows(
     } else {
         state.repos.workflow_definition_repo.list_all().await?
     };
+    if let Some(binding_kind) = query.binding_kind {
+        definitions.retain(|definition| definition.binding_kind == binding_kind);
+    }
     Ok(Json(definitions.into_iter().map(Into::into).collect()))
 }
 
@@ -151,7 +154,7 @@ pub async fn list_lifecycles(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<LifecycleDefinition>>, ApiError> {
-    let definitions = if let Some(ref pid) = query.project_id {
+    let mut definitions = if let Some(ref pid) = query.project_id {
         let project_id = parse_uuid_required(pid, "project_id")?;
         state
             .repos
@@ -167,6 +170,9 @@ pub async fn list_lifecycles(
     } else {
         state.repos.lifecycle_definition_repo.list_all().await?
     };
+    if let Some(binding_kind) = query.binding_kind {
+        definitions.retain(|definition| definition.binding_kind == binding_kind);
+    }
     Ok(Json(definitions.into_iter().map(Into::into).collect()))
 }
 
@@ -597,6 +603,38 @@ pub async fn delete_workflow_definition(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
+    let definition = state
+        .repos
+        .workflow_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+    let workflow_key = definition.key.clone();
+    let referencing_steps: Vec<String> = state
+        .repos
+        .lifecycle_definition_repo
+        .list_by_project(definition.project_id)
+        .await?
+        .into_iter()
+        .flat_map(|lifecycle| {
+            let lifecycle_key = lifecycle.key.clone();
+            let workflow_key = workflow_key.clone();
+            lifecycle
+                .steps
+                .into_iter()
+                .filter_map(move |step| {
+                    (step.effective_workflow_key() == Some(workflow_key.as_str()))
+                        .then(|| format!("{lifecycle_key}.{}", step.key))
+                })
+        })
+        .collect();
+    if !referencing_steps.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "workflow `{}` 仍被 Lifecycle step 引用，不能删除：{}",
+            workflow_key,
+            referencing_steps.join("、")
+        )));
+    }
     state.repos.workflow_definition_repo.delete(id).await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
 }

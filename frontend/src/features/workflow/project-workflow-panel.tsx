@@ -13,7 +13,7 @@ export function ProjectWorkflowPanel({ projectId }: { projectId: string }) {
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
 
   useEffect(() => {
-    void fetchLifecycles();
+    void fetchLifecycles({ projectId });
   }, [projectId, fetchLifecycles]);
 
   // status 字段自 migration 0013 起已废弃；全部视为可用。

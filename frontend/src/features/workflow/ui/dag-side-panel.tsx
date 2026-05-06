@@ -40,6 +40,10 @@ export interface DagSidePanelProps {
   onInputPortsChange: (ports: InputPortDefinition[]) => void;
   /** 导入 Workflow 推荐的 ports 到当前 step */
   onImportRecommendedPorts: () => void;
+  /** 打开当前绑定 Workflow 的编辑器 */
+  onEditWorkflow: (workflowId: string) => void;
+  /** 新建 Workflow 并绑定到当前 step */
+  onCreateWorkflow: () => void;
 }
 
 /**
@@ -59,6 +63,8 @@ export function DagSidePanel({
   onOutputPortsChange,
   onInputPortsChange,
   onImportRecommendedPorts,
+  onEditWorkflow,
+  onCreateWorkflow,
 }: DagSidePanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
   const isAgentNode = (step.node_type ?? "agent_node") === "agent_node";
@@ -124,6 +130,8 @@ export function DagSidePanel({
             availableWorkflows={availableWorkflows}
             onChange={onChange}
             onImportRecommendedPorts={onImportRecommendedPorts}
+            onEditWorkflow={onEditWorkflow}
+            onCreateWorkflow={onCreateWorkflow}
           />
         )}
         {activeTab === "output_ports" && isAgentNode && (
@@ -161,11 +169,15 @@ function BasicInfoTab({
   availableWorkflows,
   onChange,
   onImportRecommendedPorts,
+  onEditWorkflow,
+  onCreateWorkflow,
 }: {
   step: LifecycleStepDefinition;
   availableWorkflows: WorkflowDefinition[];
   onChange: (patch: Partial<LifecycleStepDefinition>) => void;
   onImportRecommendedPorts: () => void;
+  onEditWorkflow: (workflowId: string) => void;
+  onCreateWorkflow: () => void;
 }) {
   const nodeType = step.node_type ?? "agent_node";
   const boundWorkflow = step.workflow_key
@@ -230,14 +242,38 @@ function BasicInfoTab({
         <p className="mt-1 text-[10px] text-muted-foreground">
           绑定已发布的 Workflow 定义以驱动该步。
         </p>
-        {hasRecommendedPorts && (
-          <button
-            type="button"
-            onClick={onImportRecommendedPorts}
-            className="mt-2 w-full rounded-[8px] border border-primary/30 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/5"
-          >
-            导入 Workflow 推荐的 Ports
-          </button>
+        <div className="mt-2 grid gap-2">
+          {boundWorkflow ? (
+            <button
+              type="button"
+              onClick={() => onEditWorkflow(boundWorkflow.id)}
+              className="w-full rounded-[8px] border border-primary/30 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/5"
+            >
+              编辑绑定 Workflow
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onCreateWorkflow}
+              className="w-full rounded-[8px] border border-primary/30 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/5"
+            >
+              新建并绑定 Workflow
+            </button>
+          )}
+          {hasRecommendedPorts && (
+            <button
+              type="button"
+              onClick={onImportRecommendedPorts}
+              className="w-full rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              导入 Workflow 推荐的 Ports
+            </button>
+          )}
+        </div>
+        {step.workflow_key && !boundWorkflow && (
+          <p className="mt-2 rounded-[8px] border border-destructive/25 bg-destructive/5 px-2 py-1.5 text-[10px] leading-4 text-destructive">
+            当前绑定的 Workflow 不存在或不在本项目中。
+          </p>
         )}
       </div>
     </div>

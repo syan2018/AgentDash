@@ -3,10 +3,12 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { LifecycleDagEditor } from "../features/workflow/lifecycle-dag-editor";
 import { useWorkflowStore } from "../stores/workflowStore";
+import { useProjectStore } from "../stores/projectStore";
 
 export function LifecycleEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
   const navigate = useNavigate();
+  const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const editorDraft = useWorkflowStore((state) => state.lcEditor.draft);
   const openNewDraft = useWorkflowStore((state) => state.openNewLifecycleDraft);
   const openEditDraft = useWorkflowStore((state) => state.openEditLifecycleDraft);
@@ -16,11 +18,11 @@ export function LifecycleEditorPage() {
 
   useEffect(() => {
     if (isNew) {
-      openNewDraft();
+      openNewDraft(currentProjectId ?? "");
     } else if (definitionId) {
       void openEditDraft(definitionId);
     }
-  }, [definitionId, isNew, openEditDraft, openNewDraft]);
+  }, [currentProjectId, definitionId, isNew, openEditDraft, openNewDraft]);
 
   if (isLoading && !editorDraft) {
     return (
@@ -40,10 +42,10 @@ export function LifecycleEditorPage() {
           <p className="text-sm text-muted-foreground">未找到 Lifecycle Definition</p>
           <button
             type="button"
-            onClick={() => navigate("/dashboard/workflow")}
+            onClick={() => navigate("/dashboard/assets/workflow")}
             className="mt-4 agentdash-button-secondary"
           >
-            返回工作流系统视图
+            返回 Workflow 资产
           </button>
         </div>
       </div>
@@ -57,11 +59,11 @@ export function LifecycleEditorPage() {
         <div className="flex items-center justify-between">
           <button
             type="button"
-            onClick={() => navigate("/dashboard/workflow")}
+            onClick={() => navigate("/dashboard/assets/workflow")}
             className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-            返回工作流系统视图
+            返回 Workflow 资产
           </button>
           <p className="text-sm text-muted-foreground">
             Lifecycle 编辑器 — {editorDraft.name || editorDraft.key || "新建"}

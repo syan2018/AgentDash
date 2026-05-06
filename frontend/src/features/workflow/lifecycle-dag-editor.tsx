@@ -35,12 +35,34 @@ import { DagNode, type DagNodeData } from "./ui/dag-node";
 import { DagSidePanel } from "./ui/dag-side-panel";
 import { DagLifecyclePanel } from "./ui/dag-lifecycle-panel";
 import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "./model/dag-layout";
+import { DetailPanel } from "../../components/ui/detail-panel";
+import { WorkflowEditor } from "./workflow-editor";
 
 // ─── 常量 ───
 
 const NODE_TYPES = { dagNode: DagNode };
 
 const POSITION_STORAGE_PREFIX = "agentdash:dag-positions:";
+
+function workflowKeyFragment(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "workflow";
+}
+
+function uniqueWorkflowKey(base: string, definitions: WorkflowDefinition[]): string {
+  const used = new Set(definitions.map((definition) => definition.key));
+  let candidate = workflowKeyFragment(base);
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `${workflowKeyFragment(base)}_${index}`;
+    index += 1;
+  }
+  return candidate;
+}
 
 // ─── 位置持久化 ───
 
@@ -157,11 +179,17 @@ function LifecycleDagEditorInner() {
   const error = useWorkflowStore((s) => s.lcEditor.error);
   const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
   const workflowDefinitions = useWorkflowStore((s) => s.definitions);
+  const workflowEditorDraft = useWorkflowStore((s) => s.wfEditor.draft);
+  const workflowEditorOriginalId = useWorkflowStore((s) => s.wfEditor.originalId);
+  const closeWorkflowDraft = useWorkflowStore((s) => s.closeDraft);
 
   const updateLifecycleDraft = useWorkflowStore((s) => s.updateLifecycleDraft);
   const validateLifecycleDraft = useWorkflowStore((s) => s.validateLifecycleDraft);
   const saveLifecycleDraft = useWorkflowStore((s) => s.saveLifecycleDraft);
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
+  const openNewWorkflowDraft = useWorkflowStore((s) => s.openNewDraft);
+  const openEditWorkflowDraft = useWorkflowStore((s) => s.openEditDraft);
+  const updateWorkflowDraft = useWorkflowStore((s) => s.updateDraft);
 
   const reactFlowInstance = useReactFlow();
 
@@ -170,17 +198,18 @@ function LifecycleDagEditorInner() {
 
   // ── 加载关联的 workflow definitions ──
   const targetKind = draft?.target_kind;
+  const projectId = draft?.project_id;
   useEffect(() => {
-    if (targetKind) void fetchDefinitions({ targetKind });
-  }, [fetchDefinitions, targetKind]);
+    if (targetKind && projectId) void fetchDefinitions({ projectId, targetKind });
+  }, [fetchDefinitions, projectId, targetKind]);
 
   // ── 可选择的 workflows ──
   const availableWorkflows = useMemo(
     () =>
       workflowDefinitions
-        .filter((d) => d.target_kind === draft?.target_kind)
+        .filter((d) => d.project_id === draft?.project_id && d.target_kind === draft?.target_kind)
         .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
-    [workflowDefinitions, draft?.target_kind],
+    [workflowDefinitions, draft?.project_id, draft?.target_kind],
   );
 
   // ── 当前定义元数据 ──
@@ -467,7 +496,7 @@ function LifecycleDagEditorInner() {
     if (!draft || selectedStepIndex < 0) return;
     const step = draft.steps[selectedStepIndex];
     if (!step.workflow_key) return;
-    const wf = workflowDefinitions.find((d) => d.key === step.workflow_key);
+    const wf = availableWorkflows.find((d) => d.key === step.workflow_key);
     if (!wf) return;
     const recOut = wf.contract.output_ports ?? [];
     const recIn = wf.contract.input_ports ?? [];
@@ -477,7 +506,41 @@ function LifecycleDagEditorInner() {
     const newOut = [...step.output_ports, ...recOut.filter((p) => !existingOutKeys.has(p.key))];
     const newIn = [...step.input_ports, ...recIn.filter((p) => !existingInKeys.has(p.key))];
     updateLifecycleStep(selectedStepIndex, { output_ports: newOut, input_ports: newIn });
-  }, [draft, selectedStepIndex, workflowDefinitions, updateLifecycleStep]);
+  }, [availableWorkflows, draft, selectedStepIndex, updateLifecycleStep]);
+
+  const handleEditBoundWorkflow = useCallback(
+    (workflowId: string) => {
+      void openEditWorkflowDraft(workflowId);
+    },
+    [openEditWorkflowDraft],
+  );
+
+  const handleCreateAndBindWorkflow = useCallback(() => {
+    if (!draft || selectedStepIndex < 0) return;
+    const step = draft.steps[selectedStepIndex];
+    const workflowKey = uniqueWorkflowKey(
+      `${draft.key || "lifecycle"}_${step.key || "step"}`,
+      workflowDefinitions.filter((definition) => definition.project_id === draft.project_id),
+    );
+    const workflowName = step.description.trim() || step.key.trim() || "新建 Workflow";
+
+    openNewWorkflowDraft(draft.project_id);
+    updateWorkflowDraft({
+      key: workflowKey,
+      name: workflowName,
+      description: step.description,
+      target_kind: draft.target_kind,
+      recommended_roles: draft.recommended_roles,
+    });
+    updateLifecycleStep(selectedStepIndex, { workflow_key: workflowKey });
+  }, [
+    draft,
+    openNewWorkflowDraft,
+    selectedStepIndex,
+    updateLifecycleStep,
+    updateWorkflowDraft,
+    workflowDefinitions,
+  ]);
 
   // ── 设为入口节点 ──
   const handleSetEntry = useCallback(
@@ -538,12 +601,13 @@ function LifecycleDagEditorInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
+        if (workflowEditorDraft) return;
         if (!isSaving) void handleSave();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [handleSave, isSaving]);
+  }, [handleSave, isSaving, workflowEditorDraft]);
 
   // ── 离开确认 ──
   useEffect(() => {
@@ -594,6 +658,7 @@ function LifecycleDagEditorInner() {
   const hasErrors = validation?.issues.some((i) => i.severity === "error") ?? false;
 
   return (
+    <>
     <div className="flex h-full">
       {/* 左侧：React Flow 画布 */}
       <div className="relative flex-1">
@@ -730,6 +795,8 @@ function LifecycleDagEditorInner() {
             onOutputPortsChange={handleOutputPortsChange}
             onInputPortsChange={handleInputPortsChange}
             onImportRecommendedPorts={handleImportRecommendedPorts}
+            onEditWorkflow={handleEditBoundWorkflow}
+            onCreateWorkflow={handleCreateAndBindWorkflow}
           />
         ) : (
           <DagLifecyclePanel
@@ -746,6 +813,21 @@ function LifecycleDagEditorInner() {
         )}
       </div>
     </div>
+    <DetailPanel
+      open={workflowEditorDraft != null}
+      title={workflowEditorOriginalId ? `编辑 Workflow: ${workflowEditorDraft?.name || workflowEditorDraft?.key}` : "新建 Workflow"}
+      onClose={closeWorkflowDraft}
+      widthClassName="max-w-3xl"
+    >
+      <WorkflowEditor
+        onSaved={(definition) => {
+          if (definition.project_id) {
+            void fetchDefinitions({ projectId: definition.project_id, targetKind: definition.target_kind });
+          }
+        }}
+      />
+    </DetailPanel>
+    </>
   );
 }
 

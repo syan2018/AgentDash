@@ -209,7 +209,7 @@ interface WorkflowState {
     summary?: string;
   }) => Promise<WorkflowRun | null>;
 
-  openNewDraft: () => void;
+  openNewDraft: (projectId?: string) => void;
   openEditDraft: (definitionId: string) => Promise<void>;
   closeDraft: () => void;
   updateDraft: (patch: Partial<WorkflowEditorDraft>) => void;
@@ -224,7 +224,7 @@ interface WorkflowState {
   removeDraftHookRule: (ruleKey: string) => void;
   updateDraftHookRule: (ruleKey: string, patch: Partial<WorkflowHookRuleSpec>) => void;
 
-  openNewLifecycleDraft: () => void;
+  openNewLifecycleDraft: (projectId?: string) => void;
   openEditLifecycleDraft: (definitionId: string) => Promise<void>;
   closeLifecycleDraft: () => void;
   updateLifecycleDraft: (patch: Partial<LifecycleEditorDraft>) => void;
@@ -374,8 +374,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   // ── Workflow Definition editor ──
 
-  openNewDraft: () => {
-    set({ wfEditor: { ...emptyEditor<WorkflowEditorDraft>(), draft: createEmptyDraft() } });
+  openNewDraft: (projectId = "") => {
+    set({ wfEditor: { ...emptyEditor<WorkflowEditorDraft>(), draft: createEmptyDraft(projectId) } });
   },
 
   openEditDraft: async (definitionId) => {
@@ -579,8 +579,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   // ── Lifecycle Definition editor ──
 
-  openNewLifecycleDraft: () => {
-    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft() } });
+  openNewLifecycleDraft: (projectId = "") => {
+    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft(projectId) } });
   },
 
   openEditLifecycleDraft: async (definitionId) => {

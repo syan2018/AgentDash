@@ -12,6 +12,7 @@ import type {
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
+  WorkflowDefinition,
   GateStrategy,
   ContextStrategy,
 } from "../../types";
@@ -1187,7 +1188,11 @@ function CapabilitiesEditor({
 
 // ─── Main editor ───────────────────────────────────────
 
-export function WorkflowEditor() {
+export interface WorkflowEditorProps {
+  onSaved?: (definition: WorkflowDefinition) => void;
+}
+
+export function WorkflowEditor({ onSaved }: WorkflowEditorProps = {}) {
   const draft = useWorkflowStore((s) => s.wfEditor.draft);
   const originalId = useWorkflowStore((s) => s.wfEditor.originalId);
   const validation = useWorkflowStore((s) => s.wfEditor.validation);
@@ -1221,8 +1226,9 @@ export function WorkflowEditor() {
   const handleSave = useCallback(async () => {
     const result = await validateDraft();
     if (result && result.issues.some((i) => i.severity === "error")) return;
-    await saveDraft();
-  }, [validateDraft, saveDraft]);
+    const saved = await saveDraft();
+    if (saved) onSaved?.(saved);
+  }, [onSaved, validateDraft, saveDraft]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

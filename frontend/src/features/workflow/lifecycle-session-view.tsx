@@ -153,13 +153,12 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
 
   useEffect(() => {
-    void fetchLifecycles();
     void fetchRunsBySession(sessionId);
     const interval = setInterval(() => {
       void fetchRunsBySession(sessionId);
     }, POLL_INTERVAL);
     return () => clearInterval(interval);
-  }, [fetchLifecycles, fetchRunsBySession, sessionId]);
+  }, [fetchRunsBySession, sessionId]);
 
   const activeRun = useMemo(
     () =>
@@ -169,6 +168,11 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
       ?? null,
     [runs],
   );
+
+  useEffect(() => {
+    if (!activeRun) return;
+    void fetchLifecycles({ projectId: activeRun.project_id });
+  }, [activeRun, fetchLifecycles]);
 
   const lifecycle: LifecycleDefinition | null = useMemo(
     () => (activeRun ? lifecycleDefinitions.find((l) => l.id === activeRun.lifecycle_id) ?? null : null),

@@ -429,7 +429,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .filter(|d| d.binding_kind == binding_kind)
+                .filter(|d| d.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -513,7 +513,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .filter(|d| d.binding_kind == binding_kind)
+                .filter(|d| d.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -558,7 +558,7 @@ mod tests {
             "builtin_workflow_admin",
             "Workflow Admin",
             "",
-            WorkflowBindingKind::Project,
+            vec![WorkflowBindingKind::Project],
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
             vec![plan],
@@ -577,7 +577,7 @@ mod tests {
             ENTRY_WORKFLOW_KEY,
             "Workflow Admin / Plan",
             "",
-            WorkflowBindingKind::Project,
+            vec![WorkflowBindingKind::Project],
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -987,7 +987,7 @@ mod tests {
             "sample",
             "Sample",
             "",
-            WorkflowBindingKind::Project,
+            vec![WorkflowBindingKind::Project],
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )

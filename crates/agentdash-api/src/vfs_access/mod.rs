@@ -253,8 +253,8 @@ mod tests {
         owner_id: uuid::Uuid,
         capabilities: Vec<MountCapability>,
         default_write: bool,
-    ) -> agentdash_spi::platform::mount {
-        agentdash_spi::platform::mount {
+    ) -> agentdash_spi::Mount {
+        agentdash_spi::Mount {
             id: mount_id.to_string(),
             provider: PROVIDER_INLINE_FS.to_string(),
             backend_id: String::new(),
@@ -668,7 +668,7 @@ mod tests {
     fn runtime_tool_schemas_are_openai_compatible() {
         let service = Arc::new(RelayVfsService::new(empty_mount_registry()));
         let vfs = Vfs {
-            mounts: vec![agentdash_spi::platform::mount {
+            mounts: vec![agentdash_spi::Mount {
                 id: "brief".to_string(),
                 provider: PROVIDER_INLINE_FS.to_string(),
                 backend_id: String::new(),

@@ -626,7 +626,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|d| d.binding_kind == binding_kind)
+                .filter(|d| d.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -872,7 +872,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "start",
             steps,
@@ -948,7 +948,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "only",
             steps,
@@ -1018,7 +1018,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "only",
             steps,
@@ -1090,7 +1090,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "only",
             steps,
@@ -1159,7 +1159,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "only",
             steps,

@@ -75,7 +75,7 @@ mod tests {
             "trellis_dev_task_implement",
             "Trellis Dev Workflow / Implement",
             "workflow desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -94,7 +94,7 @@ mod tests {
             "trellis_dev_task",
             "Trellis Dev Lifecycle",
             "lifecycle desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
             vec![active_step.clone()],

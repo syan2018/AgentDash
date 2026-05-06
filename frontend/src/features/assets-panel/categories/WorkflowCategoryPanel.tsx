@@ -28,6 +28,7 @@ import type {
   WorkflowDefinitionSource,
   WorkflowTemplate,
 } from "../../../types";
+import { formatTargetKinds } from "../../workflow/shared-labels";
 
 type AssetTab = "lifecycle" | "workflow";
 
@@ -351,7 +352,7 @@ function LifecycleAssetCard({
           {edgeCount} edge
         </span>
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          target: {item.target_kind}
+          target: {formatTargetKinds(item.target_kinds)}
         </span>
       </div>
 
@@ -473,7 +474,7 @@ function WorkflowAssetCard({
           </span>
         )}
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          target: {item.target_kind}
+          target: {formatTargetKinds(item.target_kinds)}
         </span>
       </div>
 

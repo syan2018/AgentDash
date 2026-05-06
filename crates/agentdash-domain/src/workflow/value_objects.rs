@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 owner。
 /// 这里只描述绑定范围，不表达 workflow 自身的业务主语。
@@ -20,17 +20,6 @@ use crate::session_binding::{ChildSessionId, SessionOwnerType};
 /// 注意：`SessionOwnerType::Task` 仍然存在（session binding 的 owner 坐标系
 /// 不受影响），但当需要把它映射到 `WorkflowBindingKind` 时，会落到 `Story`。
 pub enum WorkflowBindingKind {
-    Project,
-    Story,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-/// Workflow 建议由哪一类 owner/session 使用。
-/// 它是绑定层提示，不是 workflow 内建业务角色。
-///
-/// 与 `WorkflowBindingKind` 1:1 对应；同步收敛为 `Project / Story`。
-pub enum WorkflowBindingRole {
     Project,
     Story,
 }
@@ -56,15 +45,6 @@ impl WorkflowBindingKind {
     }
 }
 
-impl WorkflowBindingRole {
-    pub fn binding_scope_key(self) -> &'static str {
-        match self {
-            Self::Project => "project",
-            Self::Story => "story",
-        }
-    }
-}
-
 impl From<SessionOwnerType> for WorkflowBindingKind {
     /// 将 session owner 类型映射为 workflow binding kind。
     ///
@@ -82,13 +62,26 @@ impl From<SessionOwnerType> for WorkflowBindingKind {
     }
 }
 
-impl From<WorkflowBindingKind> for WorkflowBindingRole {
-    fn from(value: WorkflowBindingKind) -> Self {
-        match value {
-            WorkflowBindingKind::Project => Self::Project,
-            WorkflowBindingKind::Story => Self::Story,
+pub fn normalize_workflow_binding_kinds(
+    kinds: Vec<WorkflowBindingKind>,
+) -> Result<Vec<WorkflowBindingKind>, String> {
+    let mut normalized = Vec::new();
+    for candidate in [WorkflowBindingKind::Project, WorkflowBindingKind::Story] {
+        if kinds.contains(&candidate) {
+            normalized.push(candidate);
         }
     }
+    if normalized.is_empty() {
+        return Err("workflow binding_kinds 至少需要一个挂载类型".to_string());
+    }
+    Ok(normalized)
+}
+
+pub fn workflow_binding_kinds_cover(
+    required: &[WorkflowBindingKind],
+    available: &[WorkflowBindingKind],
+) -> bool {
+    required.iter().all(|kind| available.contains(kind))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -1269,11 +1262,22 @@ mod tests {
             WorkflowBindingKind::Project
         );
         assert_eq!(
-            WorkflowBindingRole::from(WorkflowBindingKind::Story).binding_scope_key(),
-            "story"
+            normalize_workflow_binding_kinds(vec![
+                WorkflowBindingKind::Story,
+                WorkflowBindingKind::Project,
+                WorkflowBindingKind::Story,
+            ])
+            .unwrap(),
+            vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story]
         );
-        assert_eq!(WorkflowBindingKind::Project.binding_scope_key(), "project");
-        assert_eq!(WorkflowBindingKind::Story.binding_scope_key(), "story");
+        assert!(workflow_binding_kinds_cover(
+            &[WorkflowBindingKind::Story],
+            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story]
+        ));
+        assert!(!workflow_binding_kinds_cover(
+            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story],
+            &[WorkflowBindingKind::Story]
+        ));
     }
 
     #[test]

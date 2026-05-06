@@ -30,7 +30,9 @@ import { useWorkflowStore } from "../../stores/workflowStore";
 import { fetchProjectMcpPresets, probeMcpTransport } from "../../services/mcpPreset";
 import { fetchToolCatalog } from "../../services/workflow";
 import {
+  formatTargetKinds,
   TARGET_KIND_LABEL,
+  TARGET_KIND_OPTIONS,
 } from "./shared-labels";
 import { BindingEditor } from "./binding-editor";
 import { ValidationPanel } from "./ui/validation-panel";
@@ -432,7 +434,7 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
 //
 // 操作 `CapabilityDirective[]` —— 扁平的 Add / Remove 指令序列。
 // UI 分为两区：
-//   1. 基线能力（auto_granted baseline） —— 按 target_kind 计算，可直接「屏蔽此能力」/ 展开屏蔽单个工具
+//   1. 基线能力（auto_granted baseline） —— 按 target_kinds 计算，可直接「屏蔽此能力」/ 展开屏蔽单个工具
 //   2. 工作流追加能力 —— 非 baseline 的显式 Add（如 workflow_management、mcp:*）
 //
 // 每个按钮动作对应一条独立 Directive，与后端 slot 归约契约一一映射。
@@ -478,13 +480,21 @@ const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> 
   workflow_management: "MCP workflow 管理工具",
 };
 
-// 各 target_kind 下 auto_granted=true 的能力基线。
+// 各 target_kinds 下 auto_granted=true 的能力基线。
 // 镜像自后端 `crates/agentdash-spi/src/tool_capability.rs::default_visibility_rules`。
 // 若后端 visibility rule 调整，此处需同步更新。
 const AUTO_GRANTED_BASELINE: Record<WorkflowTargetKind, WellKnownCapabilityKey[]> = {
   project: ["file_read", "file_write", "shell_execute", "canvas", "collaboration", "relay_management"],
   story: ["file_read", "file_write", "shell_execute", "story_management"],
 };
+
+function toggleTargetKind(current: WorkflowTargetKind[], value: WorkflowTargetKind): WorkflowTargetKind[] {
+  if (current.includes(value)) {
+    const next = current.filter((kind) => kind !== value);
+    return next.length > 0 ? next : current;
+  }
+  return [...current, value];
+}
 
 function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {
   return (CAP_EDITOR_WELL_KNOWN_KEYS as readonly string[]).includes(key);
@@ -747,12 +757,12 @@ function CapabilityRow({
 
 function CapabilitiesEditor({
   projectId,
-  targetKind,
+  targetKinds,
   directives,
   onChange,
 }: {
   projectId: string;
-  targetKind: WorkflowTargetKind;
+  targetKinds: WorkflowTargetKind[];
   directives: CapabilityDirective[];
   onChange: (next: CapabilityDirective[]) => void;
 }) {
@@ -791,7 +801,10 @@ function CapabilitiesEditor({
     };
   }, [projectId]);
 
-  const baselineKeys = AUTO_GRANTED_BASELINE[targetKind];
+  const baselineKeys = useMemo(
+    () => Array.from(new Set(targetKinds.flatMap((kind) => AUTO_GRANTED_BASELINE[kind]))),
+    [targetKinds],
+  );
   const baselineSet = useMemo(() => new Set<string>(baselineKeys), [baselineKeys]);
 
   // 当前所有显式 Add 的 capability key（短 path + 长 path 合并）
@@ -945,7 +958,7 @@ function CapabilitiesEditor({
       {/* 基线能力 */}
       <div>
         <label className="agentdash-form-label">
-          基线能力（{TARGET_KIND_LABEL[targetKind]}）
+          基线能力（{formatTargetKinds(targetKinds)}）
         </label>
         <p className="mb-2 text-[11px] text-muted-foreground">
           根据挂载类型自动授予的能力基线（<code className="rounded bg-secondary/50 px-1">auto_granted</code>）。
@@ -1267,10 +1280,29 @@ export function WorkflowEditor({ onSaved }: WorkflowEditorProps = {}) {
           </div>
           <div>
             <label className="agentdash-form-label">挂载类型</label>
-            <select value={draft.target_kind} onChange={(e) => updateDraft({ target_kind: e.target.value as WorkflowTargetKind })} disabled={!isNew} className="agentdash-form-select disabled:opacity-60">
-              {Object.entries(TARGET_KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-            <p className="mt-1 text-[11px] text-muted-foreground">决定此 Workflow 挂载到哪类实体（Project/Story/Task）。</p>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {TARGET_KIND_OPTIONS.map((kind) => {
+                const checked = draft.target_kinds.includes(kind);
+                return (
+                  <label
+                    key={kind}
+                    className={`flex cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-colors ${
+                      checked
+                        ? "border-primary/40 bg-primary/5 text-foreground"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/20"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => updateDraft({ target_kinds: toggleTargetKind(draft.target_kinds, kind) })}
+                      className="sr-only"
+                    />
+                    {TARGET_KIND_LABEL[kind]}
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
       </DetailSection>
@@ -1315,7 +1347,7 @@ export function WorkflowEditor({ onSaved }: WorkflowEditorProps = {}) {
       >
         <CapabilitiesEditor
           projectId={draft.project_id}
-          targetKind={draft.target_kind}
+          targetKinds={draft.target_kinds}
           directives={draft.contract.capability_directives}
           onChange={(capability_directives) => updateDraft({ contract: { ...draft.contract, capability_directives } })}
         />

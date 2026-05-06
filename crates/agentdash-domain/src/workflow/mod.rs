@@ -12,8 +12,8 @@ pub use value_objects::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState,
     OutputPortDefinition, StandaloneFulfillment, ValidationIssue, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContextBinding, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
-    WorkflowSessionTerminalState, node_deps_from_edges, reduce_capability_directives,
-    validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowBindingKind, WorkflowContextBinding, WorkflowContract, WorkflowDefinitionSource,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowSessionTerminalState,
+    node_deps_from_edges, normalize_workflow_binding_kinds, reduce_capability_directives,
+    validate_lifecycle_definition, validate_workflow_definition, workflow_binding_kinds_cover,
 };

@@ -7,8 +7,8 @@ use crate::session_binding::StorySessionId;
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
     LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract, WorkflowDefinitionSource,
-    node_deps_from_edges, validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
+    normalize_workflow_binding_kinds, validate_lifecycle_definition, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,9 +18,7 @@ pub struct WorkflowDefinition {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
     pub version: i32,
     pub contract: WorkflowContract,
@@ -34,12 +32,13 @@ impl WorkflowDefinition {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kind: WorkflowBindingKind,
+        binding_kinds: Vec<WorkflowBindingKind>,
         source: WorkflowDefinitionSource,
         contract: WorkflowContract,
     ) -> Result<Self, String> {
         let key = key.into();
         let name = name.into();
+        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
         validate_workflow_definition(&key, &name, &contract)?;
 
         let now = Utc::now();
@@ -49,8 +48,7 @@ impl WorkflowDefinition {
             key,
             name,
             description: description.into(),
-            binding_kind,
-            recommended_binding_roles: Vec::new(),
+            binding_kinds,
             source,
             version: 1,
             contract,
@@ -78,9 +76,7 @@ pub struct LifecycleDefinition {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
     pub version: i32,
     pub entry_step_key: String,
@@ -98,7 +94,7 @@ impl LifecycleDefinition {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kind: WorkflowBindingKind,
+        binding_kinds: Vec<WorkflowBindingKind>,
         source: WorkflowDefinitionSource,
         entry_step_key: impl Into<String>,
         steps: Vec<LifecycleStepDefinition>,
@@ -107,6 +103,7 @@ impl LifecycleDefinition {
         let key = key.into();
         let name = name.into();
         let entry_step_key = entry_step_key.into();
+        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
         validate_lifecycle_definition(&key, &name, &entry_step_key, &steps, &edges)?;
 
         let now = Utc::now();
@@ -116,8 +113,7 @@ impl LifecycleDefinition {
             key,
             name,
             description: description.into(),
-            binding_kind,
-            recommended_binding_roles: Vec::new(),
+            binding_kinds,
             source,
             version: 1,
             entry_step_key,
@@ -717,7 +713,7 @@ mod tests {
             "wf_primary",
             "Primary",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             contract(),
         )
@@ -734,7 +730,7 @@ mod tests {
             "lc",
             "Lifecycle",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "start",
             vec![step("start", "wf_start")],

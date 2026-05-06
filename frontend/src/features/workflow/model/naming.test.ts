@@ -15,8 +15,7 @@ function workflow(key: string): WorkflowDefinition {
     key,
     name: key,
     description: "",
-    target_kind: "story",
-    recommended_roles: ["story"],
+    target_kinds: ["story"],
     source: "user_authored",
     version: 1,
     contract: {

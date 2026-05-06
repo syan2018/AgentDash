@@ -2,8 +2,6 @@
 
 export type WorkflowTargetKind = "project" | "story";
 
-export type WorkflowAgentRole = "project" | "story" | "task";
-
 export type WorkflowRunStatus =
   | "draft"
   | "ready"
@@ -291,8 +289,7 @@ export interface WorkflowTemplate {
   key: string;
   name: string;
   description: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   workflows: WorkflowTemplateWorkflow[];
   lifecycle: {
     key: string;
@@ -310,8 +307,7 @@ export interface WorkflowDefinition {
   key: string;
   name: string;
   description: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   source: WorkflowDefinitionSource;
   version: number;
   contract: WorkflowContract;
@@ -325,8 +321,7 @@ export interface LifecycleDefinition {
   key: string;
   name: string;
   description: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   source: WorkflowDefinitionSource;
   version: number;
   entry_step_key: string;

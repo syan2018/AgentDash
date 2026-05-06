@@ -16,8 +16,8 @@ use agentdash_application::workflow::{
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowBindingRole, WorkflowContract, WorkflowDefinition,
-    WorkflowDefinitionSource,
+    WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    normalize_workflow_binding_kinds,
 };
 
 use crate::app_state::AppState;
@@ -55,9 +55,7 @@ pub struct CreateWorkflowDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub contract: WorkflowContract,
 }
 
@@ -65,7 +63,7 @@ pub struct CreateWorkflowDefinitionRequest {
 pub struct UpdateWorkflowDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_binding_roles: Option<Vec<WorkflowBindingRole>>,
+    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
     pub contract: Option<WorkflowContract>,
 }
 
@@ -76,9 +74,7 @@ pub struct ValidateWorkflowDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub contract: WorkflowContract,
 }
 
@@ -89,9 +85,7 @@ pub struct CreateLifecycleDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
     #[serde(default)]
@@ -102,7 +96,7 @@ pub struct CreateLifecycleDefinitionRequest {
 pub struct UpdateLifecycleDefinitionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub recommended_binding_roles: Option<Vec<WorkflowBindingRole>>,
+    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
     pub entry_step_key: Option<String>,
     pub steps: Option<Vec<LifecycleStepDefinition>>,
     pub edges: Option<Vec<LifecycleEdge>>,
@@ -115,9 +109,7 @@ pub struct ValidateLifecycleDefinitionRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
     #[serde(default)]
@@ -145,7 +137,7 @@ pub async fn list_workflows(
         state.repos.workflow_definition_repo.list_all().await?
     };
     if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kind == binding_kind);
+        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
     Ok(Json(definitions.into_iter().map(Into::into).collect()))
 }
@@ -171,7 +163,7 @@ pub async fn list_lifecycles(
         state.repos.lifecycle_definition_repo.list_all().await?
     };
     if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kind == binding_kind);
+        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
     Ok(Json(definitions.into_iter().map(Into::into).collect()))
 }
@@ -181,19 +173,18 @@ pub async fn create_lifecycle_definition(
     Json(req): Json<CreateLifecycleDefinitionRequest>,
 ) -> Result<Json<LifecycleDefinition>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
-    let mut definition = LifecycleDefinition::new(
+    let definition = LifecycleDefinition::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kind,
+        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
         req.edges,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_binding_roles = req.recommended_binding_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -389,17 +380,16 @@ pub async fn create_workflow_definition(
     Json(req): Json<CreateWorkflowDefinitionRequest>,
 ) -> Result<Json<WorkflowDefinition>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
-    let mut definition = WorkflowDefinition::new(
+    let definition = WorkflowDefinition::new(
         project_id,
         req.key,
         req.name,
         req.description,
-        req.binding_kind,
+        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     )
     .map_err(ApiError::BadRequest)?;
-    definition.recommended_binding_roles = req.recommended_binding_roles;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -454,8 +444,9 @@ pub async fn update_workflow_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(roles) = req.recommended_binding_roles {
-        definition.recommended_binding_roles = roles;
+    if let Some(binding_kinds) = req.binding_kinds {
+        definition.binding_kinds =
+            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
     }
     if let Some(contract) = req.contract {
         definition.contract = contract;
@@ -475,14 +466,12 @@ pub async fn update_workflow_definition(
                 .join("; ")
         )));
     }
-    definition.version += 1;
-    definition.updated_at = chrono::Utc::now();
-    state
-        .repos
-        .workflow_definition_repo
-        .update(&definition)
-        .await?;
-    Ok(Json(definition.into()))
+    let service = WorkflowCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+    );
+    let saved = service.upsert_workflow_definition(definition).await?;
+    Ok(Json(saved.into()))
 }
 
 pub async fn update_lifecycle_definition(
@@ -503,8 +492,9 @@ pub async fn update_lifecycle_definition(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(roles) = req.recommended_binding_roles {
-        definition.recommended_binding_roles = roles;
+    if let Some(binding_kinds) = req.binding_kinds {
+        definition.binding_kinds =
+            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
     }
     if let Some(entry_step_key) = req.entry_step_key {
         definition.entry_step_key = entry_step_key;
@@ -532,12 +522,11 @@ pub async fn validate_workflow_definition(
         req.key,
         req.name,
         req.description,
-        req.binding_kind,
+        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     ) {
-        Ok(mut definition) => {
-            definition.recommended_binding_roles = req.recommended_binding_roles;
+        Ok(definition) => {
             let issues = definition.validate_full();
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
@@ -567,14 +556,13 @@ pub async fn validate_lifecycle_definition(
         req.key,
         req.name,
         req.description,
-        req.binding_kind,
+        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_step_key,
         req.steps,
         req.edges,
     ) {
-        Ok(mut definition) => {
-            definition.recommended_binding_roles = req.recommended_binding_roles;
+        Ok(definition) => {
             let service = WorkflowCatalogService::new(
                 state.repos.workflow_definition_repo.as_ref(),
                 state.repos.lifecycle_definition_repo.as_ref(),
@@ -619,13 +607,10 @@ pub async fn delete_workflow_definition(
         .flat_map(|lifecycle| {
             let lifecycle_key = lifecycle.key.clone();
             let workflow_key = workflow_key.clone();
-            lifecycle
-                .steps
-                .into_iter()
-                .filter_map(move |step| {
-                    (step.effective_workflow_key() == Some(workflow_key.as_str()))
-                        .then(|| format!("{lifecycle_key}.{}", step.key))
-                })
+            lifecycle.steps.into_iter().filter_map(move |step| {
+                (step.effective_workflow_key() == Some(workflow_key.as_str()))
+                    .then(|| format!("{lifecycle_key}.{}", step.key))
+            })
         })
         .collect();
     if !referencing_steps.is_empty() {

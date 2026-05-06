@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleStepDefinition, WorkflowBindingKind,
-    WorkflowBindingRole, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
@@ -15,9 +15,7 @@ pub struct BuiltinWorkflowTemplateBundle {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kind: WorkflowBindingKind,
-    #[serde(default)]
-    pub recommended_binding_roles: Vec<WorkflowBindingRole>,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
     #[serde(default)]
     pub workflows: Vec<BuiltinWorkflowTemplate>,
     pub lifecycle: BuiltinLifecycleTemplate,
@@ -55,32 +53,29 @@ impl BuiltinWorkflowTemplateBundle {
             .workflows
             .iter()
             .map(|template| {
-                let mut definition = WorkflowDefinition::new(
+                WorkflowDefinition::new(
                     project_id,
                     template.key.clone(),
                     template.name.clone(),
                     template.description.clone(),
-                    self.binding_kind,
+                    self.binding_kinds.clone(),
                     WorkflowDefinitionSource::BuiltinSeed,
                     template.contract.clone(),
-                )?;
-                definition.recommended_binding_roles = self.recommended_binding_roles.clone();
-                Ok(definition)
+                )
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let mut lifecycle = LifecycleDefinition::new(
+        let lifecycle = LifecycleDefinition::new(
             project_id,
             self.lifecycle.key.clone(),
             self.lifecycle.name.clone(),
             self.lifecycle.description.clone(),
-            self.binding_kind,
+            self.binding_kinds.clone(),
             WorkflowDefinitionSource::BuiltinSeed,
             self.lifecycle.entry_step_key.clone(),
             self.lifecycle.steps.clone(),
             self.lifecycle.edges.clone(),
         )?;
-        lifecycle.recommended_binding_roles = self.recommended_binding_roles.clone();
 
         Ok(BuiltinWorkflowBundle {
             workflows,
@@ -149,8 +144,11 @@ mod tests {
             .expect("build bundle");
 
         assert_eq!(bundle.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        // Model C 收敛：trellis_dag_task 的 binding_kind 从 "task" 迁移到 "story"
-        assert_eq!(bundle.lifecycle.binding_kind, WorkflowBindingKind::Story);
+        // Model C 收敛：trellis_dag_task 的挂载类型从 "task" 迁移到 "story"
+        assert_eq!(
+            bundle.lifecycle.binding_kinds,
+            vec![WorkflowBindingKind::Story]
+        );
     }
 
     #[test]
@@ -161,8 +159,8 @@ mod tests {
 
         assert_eq!(bundle.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
         assert_eq!(
-            bundle.lifecycle.binding_kind,
-            WorkflowBindingKind::Project,
+            bundle.lifecycle.binding_kinds,
+            vec![WorkflowBindingKind::Project],
             "workflow_management 仅在 Project 级 session 可见，lifecycle 必须绑定到 Project"
         );
         assert_eq!(bundle.workflows.len(), 2);

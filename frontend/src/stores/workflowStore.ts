@@ -5,7 +5,6 @@ import type {
   LifecycleDefinition,
   LifecycleEdge,
   LifecycleStepDefinition,
-  WorkflowAgentRole,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
@@ -71,8 +70,7 @@ export interface WorkflowEditorDraft {
   key: string;
   name: string;
   description: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
 }
 
@@ -82,8 +80,7 @@ export interface LifecycleEditorDraft {
   key: string;
   name: string;
   description: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
   edges: LifecycleEdge[];
@@ -102,8 +99,7 @@ export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
     key: "",
     name: "",
     description: "",
-    target_kind: "story",
-    recommended_roles: ["story"],
+    target_kinds: ["story"],
     contract: {
       injection: { guidance: null, context_bindings: [] },
       hook_rules: [],
@@ -121,8 +117,7 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
     key: definition.key,
     name: definition.name,
     description: definition.description,
-    target_kind: definition.target_kind,
-    recommended_roles: [...definition.recommended_roles],
+    target_kinds: [...definition.target_kinds],
     contract: structuredClone(definition.contract),
   };
 }
@@ -135,8 +130,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
     key: seed.key ?? "",
     name: seed.name ?? "",
     description: "",
-    target_kind: "story",
-    recommended_roles: ["story"],
+    target_kinds: ["story"],
     entry_step_key: initialStepKey,
     steps: [{ key: initialStepKey, description: "", workflow_key: null, output_ports: [], input_ports: [] }],
     edges: [],
@@ -150,8 +144,7 @@ export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEdit
     key: definition.key,
     name: definition.name,
     description: definition.description,
-    target_kind: definition.target_kind,
-    recommended_roles: [...definition.recommended_roles],
+    target_kinds: [...definition.target_kinds],
     entry_step_key: definition.entry_step_key,
     steps: structuredClone(definition.steps),
     edges: structuredClone(definition.edges ?? []),
@@ -286,7 +279,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set((state) => {
         const targetKind = opts?.targetKind;
         const next = targetKind
-          ? [...state.definitions.filter((item) => item.target_kind !== targetKind), ...definitions]
+          ? [...state.definitions.filter((item) => !item.target_kinds.includes(targetKind)), ...definitions]
           : definitions;
         return { definitions: next };
       });
@@ -303,7 +296,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       set((state) => {
         const targetKind = opts?.targetKind;
         const next = targetKind
-          ? [...state.lifecycleDefinitions.filter((item) => item.target_kind !== targetKind), ...lifecycleDefinitions]
+          ? [...state.lifecycleDefinitions.filter((item) => !item.target_kinds.includes(targetKind)), ...lifecycleDefinitions]
           : lifecycleDefinitions;
         return { lifecycleDefinitions: next };
       });
@@ -521,8 +514,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         key: draft.key,
         name: draft.name,
         description: draft.description,
-        target_kind: draft.target_kind,
-        recommended_roles: draft.recommended_roles,
+        target_kinds: draft.target_kinds,
         contract: draft.contract,
       });
       set((s) => ({ wfEditor: { ...s.wfEditor, validation: result, isValidating: false } }));
@@ -542,7 +534,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         ? await updateWorkflowDefinition(originalId, {
             name: draft.name,
             description: draft.description,
-            recommended_roles: draft.recommended_roles,
+            binding_kinds: draft.target_kinds,
             contract: draft.contract,
           })
         : await createWorkflowDefinition({
@@ -550,8 +542,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             key: draft.key,
             name: draft.name,
             description: draft.description,
-            target_kind: draft.target_kind,
-            recommended_roles: draft.recommended_roles,
+            target_kinds: draft.target_kinds,
             contract: draft.contract,
           });
       set((state) => ({
@@ -670,8 +661,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         key: draft.key,
         name: draft.name,
         description: draft.description,
-        target_kind: draft.target_kind,
-        recommended_roles: draft.recommended_roles,
+        target_kinds: draft.target_kinds,
         entry_step_key: draft.entry_step_key,
         steps: draft.steps,
         edges: draft.edges,
@@ -693,7 +683,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         ? await updateLifecycleDefinition(originalId, {
             name: draft.name,
             description: draft.description,
-            recommended_roles: draft.recommended_roles,
+            binding_kinds: draft.target_kinds,
             entry_step_key: draft.entry_step_key,
             steps: draft.steps,
             edges: draft.edges,
@@ -703,8 +693,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             key: draft.key,
             name: draft.name,
             description: draft.description,
-            target_kind: draft.target_kind,
-            recommended_roles: draft.recommended_roles,
+            target_kinds: draft.target_kinds,
             entry_step_key: draft.entry_step_key,
             steps: draft.steps,
             edges: draft.edges,

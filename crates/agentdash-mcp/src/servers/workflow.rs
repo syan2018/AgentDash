@@ -17,8 +17,8 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind, LifecycleNodeType,
     LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity, WorkflowBindingKind,
-    WorkflowBindingRole, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
-    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
 };
 
 use crate::error::McpError;
@@ -46,10 +46,10 @@ pub struct UpsertWorkflowParams {
     pub name: String,
     #[schemars(description = "描述")]
     pub description: String,
-    #[schemars(description = "绑定类型: project / story / task")]
-    pub binding_kind: String,
-    #[schemars(description = "推荐绑定角色列表（可选），如 [\"task\"]")]
-    pub recommended_binding_roles: Option<Vec<String>>,
+    #[schemars(
+        description = "可挂载类型列表: project / story，如 [\"story\"] 或 [\"project\", \"story\"]"
+    )]
+    pub binding_kinds: Vec<String>,
     #[schemars(description = "行为契约")]
     pub contract: WorkflowContractInput,
 }
@@ -98,10 +98,10 @@ pub struct UpsertLifecycleParams {
     pub name: String,
     #[schemars(description = "描述")]
     pub description: String,
-    #[schemars(description = "绑定类型: project / story / task")]
-    pub binding_kind: String,
-    #[schemars(description = "推荐绑定角色列表（可选）")]
-    pub recommended_binding_roles: Option<Vec<String>>,
+    #[schemars(
+        description = "可挂载类型列表: project / story，如 [\"story\"] 或 [\"project\", \"story\"]"
+    )]
+    pub binding_kinds: Vec<String>,
     #[schemars(description = "入口步骤 key")]
     pub entry_step_key: String,
     #[schemars(description = "步骤定义列表")]
@@ -216,26 +216,70 @@ impl WorkflowMcpServer {
             .await
             .map_err(McpError::from)?
         {
-            if existing.binding_kind != definition.binding_kind {
-                return Err(McpError::invalid_param(
-                    "binding_kind",
-                    format!(
-                        "workflow `{}` 已绑定 binding_kind={:?}，不能改为 {:?}",
-                        definition.key, existing.binding_kind, definition.binding_kind
-                    ),
-                ));
-            }
             let mut updated = definition;
             updated.id = existing.id;
             updated.version = existing.version + 1;
             updated.created_at = existing.created_at;
             updated.updated_at = chrono::Utc::now();
+            self.validate_workflow_binding_references(&updated).await?;
             repo.update(&updated).await.map_err(McpError::from)?;
             return Ok(updated);
         }
 
         repo.create(&definition).await.map_err(McpError::from)?;
         Ok(definition)
+    }
+
+    async fn validate_workflow_binding_references(
+        &self,
+        definition: &WorkflowDefinition,
+    ) -> Result<(), McpError> {
+        let lifecycles = self
+            .services
+            .lifecycle_definition_repo
+            .list_by_project(self.project_id)
+            .await
+            .map_err(McpError::from)?;
+        let conflicts = lifecycles
+            .into_iter()
+            .filter_map(|lifecycle| {
+                let referencing_steps = lifecycle
+                    .steps
+                    .iter()
+                    .filter(|step| step.effective_workflow_key() == Some(definition.key.as_str()))
+                    .map(|step| step.key.as_str())
+                    .collect::<Vec<_>>();
+                if referencing_steps.is_empty()
+                    || workflow_binding_kinds_cover(
+                        &lifecycle.binding_kinds,
+                        &definition.binding_kinds,
+                    )
+                {
+                    None
+                } else {
+                    Some(format!(
+                        "{}({}) 需要 {:?}",
+                        lifecycle.key,
+                        referencing_steps.join(","),
+                        lifecycle.binding_kinds
+                    ))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if conflicts.is_empty() {
+            Ok(())
+        } else {
+            Err(McpError::invalid_param(
+                "binding_kinds",
+                format!(
+                    "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 lifecycle：{}",
+                    definition.key,
+                    definition.binding_kinds,
+                    conflicts.join("; ")
+                ),
+            ))
+        }
     }
 
     /// Upsert lifecycle：先做完整校验（域层 + workflow 引用），再持久化。
@@ -254,12 +298,12 @@ impl WorkflowMcpServer {
             };
             match repo.get_by_key(wk).await {
                 Ok(Some(wf)) => {
-                    if wf.binding_kind != lifecycle.binding_kind {
+                    if !workflow_binding_kinds_cover(&lifecycle.binding_kinds, &wf.binding_kinds) {
                         issues.push(agentdash_domain::workflow::ValidationIssue::error(
                             "binding_kind_mismatch",
                             format!(
-                                "step `{}` 引用的 workflow `{wk}` binding_kind={:?}，与 lifecycle {:?} 不一致",
-                                step.key, wf.binding_kind, lifecycle.binding_kind
+                                "step `{}` 引用的 workflow `{wk}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
+                                step.key, wf.binding_kinds, lifecycle.binding_kinds
                             ),
                             format!("steps[{idx}].workflow_key"),
                         ));
@@ -302,15 +346,6 @@ impl WorkflowMcpServer {
             .await
             .map_err(McpError::from)?
         {
-            if existing.binding_kind != lifecycle.binding_kind {
-                return Err(McpError::invalid_param(
-                    "binding_kind",
-                    format!(
-                        "lifecycle `{}` 已绑定 binding_kind={:?}，不能改为 {:?}",
-                        lifecycle.key, existing.binding_kind, lifecycle.binding_kind
-                    ),
-                ));
-            }
             let mut updated = lifecycle;
             updated.id = existing.id;
             updated.version = existing.version + 1;
@@ -344,22 +379,14 @@ fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, McpError> {
     }
 }
 
-fn parse_binding_roles(raw: &[String]) -> Result<Vec<WorkflowBindingRole>, McpError> {
-    raw.iter()
-        .map(|s| match s.as_str() {
-            "project" => Ok(WorkflowBindingRole::Project),
-            "story" => Ok(WorkflowBindingRole::Story),
-            // Model C 收敛：task role 已废弃，请改用 story
-            "task" => Err(McpError::invalid_param(
-                "recommended_binding_roles",
-                "recommended_binding_roles 中的 \"task\" 已废弃，请改用 \"story\"",
-            )),
-            other => Err(McpError::invalid_param(
-                "recommended_binding_roles",
-                format!("不支持的角色: {other}"),
-            )),
-        })
-        .collect()
+fn parse_binding_kinds(raw: &[String]) -> Result<Vec<WorkflowBindingKind>, McpError> {
+    if raw.is_empty() {
+        return Err(McpError::invalid_param(
+            "binding_kinds",
+            "binding_kinds 至少需要一个挂载类型",
+        ));
+    }
+    raw.iter().map(|s| parse_binding_kind(s)).collect()
 }
 
 fn parse_hook_trigger(raw: &str) -> Result<WorkflowHookTrigger, McpError> {
@@ -526,14 +553,14 @@ impl WorkflowMcpServer {
                 "key": w.key,
                 "name": w.name,
                 "description": w.description,
-                "binding_kind": w.binding_kind,
+                "binding_kinds": w.binding_kinds,
                 "source": w.source,
             })).collect::<Vec<_>>(),
             "lifecycles": lifecycles.iter().map(|l| serde_json::json!({
                 "key": l.key,
                 "name": l.name,
                 "description": l.description,
-                "binding_kind": l.binding_kind,
+                "binding_kinds": l.binding_kinds,
                 "source": l.source,
                 "entry_step_key": l.entry_step_key,
                 "step_count": l.steps.len(),
@@ -595,23 +622,19 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let binding_kind = parse_binding_kind(&params.binding_kind)?;
+        let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let contract = build_contract(&params.contract)?;
 
-        let mut definition = WorkflowDefinition::new(
+        let definition = WorkflowDefinition::new(
             self.project_id,
             params.key,
             params.name,
             params.description,
-            binding_kind,
+            binding_kinds,
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )
         .map_err(|e| McpError::invalid_param("key", e))?;
-
-        if let Some(roles) = &params.recommended_binding_roles {
-            definition.recommended_binding_roles = parse_binding_roles(roles)?;
-        }
 
         let saved = self.upsert_workflow(definition).await?;
 
@@ -628,26 +651,22 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let binding_kind = parse_binding_kind(&params.binding_kind)?;
+        let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let steps = build_steps(&params.steps)?;
         let edges = build_edges(params.edges.as_deref().unwrap_or_default());
 
-        let mut definition = LifecycleDefinition::new(
+        let definition = LifecycleDefinition::new(
             self.project_id,
             params.key,
             params.name,
             params.description,
-            binding_kind,
+            binding_kinds,
             WorkflowDefinitionSource::UserAuthored,
             params.entry_step_key,
             steps,
             edges,
         )
         .map_err(|e| McpError::invalid_param("lifecycle", e))?;
-
-        if let Some(roles) = &params.recommended_binding_roles {
-            definition.recommended_binding_roles = parse_binding_roles(roles)?;
-        }
 
         let saved = self.upsert_lifecycle_definition(definition).await?;
 
@@ -687,7 +706,7 @@ impl ServerHandler for WorkflowMcpServer {
 ## 注意事项
 
 - workflow_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
-- binding_kind 一旦设定不可修改（project / story / task）
+- binding_kinds 可设置为一个或多个挂载类型（project / story），后续可编辑
 - hook_rules 支持 preset（预设名引用）和 script（Rhai 脚本）两种模式
 - 所有写操作都会即时校验，失败会返回详细错误信息供修正"#,
                 project_id = self.project_id,

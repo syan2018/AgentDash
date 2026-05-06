@@ -12,7 +12,6 @@ import type {
   LifecycleNodeType,
   LifecycleStepDefinition,
   ToolDescriptor,
-  WorkflowAgentRole,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
@@ -33,7 +32,6 @@ import type {
 // ─── 枚举 normalizer（将后端字符串收窄到前端联合类型）───
 
 const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story"]);
-const WORKFLOW_AGENT_ROLES = new Set<string>(["project", "story", "task"]);
 const WORKFLOW_RUN_STATUSES = new Set<string>([
   "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",
 ]);
@@ -68,6 +66,17 @@ function requireStringField(raw: Record<string, unknown>, field: string): string
     throw new Error(`缺少或非法的字段 ${field}`);
   }
   return value;
+}
+
+function normalizeTargetKinds(raw: unknown, field: string): WorkflowTargetKind[] {
+  const values = asStringArray(raw).map((value) =>
+    normalizeEnum<WorkflowTargetKind>(value, WORKFLOW_TARGET_KINDS, field),
+  );
+  const normalized = Array.from(new Set(values));
+  if (normalized.length === 0) {
+    throw new Error(`${field} 至少需要一个挂载类型`);
+  }
+  return normalized;
 }
 
 function mapValidationIssue(raw: Record<string, unknown>) {
@@ -251,7 +260,7 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
   };
 }
 
-// ─── Entity mapper（后端 binding_kind → 前端 target_kind 翻译层）───
+// ─── Entity mapper ─────────────────────────────────────
 
 export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
   return {
@@ -260,9 +269,7 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow target kind"),
-    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow agent role")),
+    target_kinds: normalizeTargetKinds(raw.binding_kinds, "workflow target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     contract: mapWorkflowContract(raw.contract),
@@ -278,9 +285,7 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "lifecycle target kind"),
-    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "lifecycle agent role")),
+    target_kinds: normalizeTargetKinds(raw.binding_kinds, "lifecycle target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "lifecycle definition source"),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: requireStringField(raw, "entry_step_key"),
@@ -300,9 +305,7 @@ export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTempl
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kind: normalizeEnum<WorkflowTargetKind>(raw.binding_kind ?? raw.target_kind, WORKFLOW_TARGET_KINDS, "workflow template target kind"),
-    recommended_roles: asStringArray(raw.recommended_binding_roles ?? raw.recommended_roles)
-      .map((v) => normalizeEnum<WorkflowAgentRole>(v, WORKFLOW_AGENT_ROLES, "workflow template agent role")),
+    target_kinds: normalizeTargetKinds(raw.binding_kinds, "workflow template target kinds"),
     workflows: asRecordArray(raw.workflows).map(mapWorkflowTemplateWorkflow),
     lifecycle: {
       key: requireStringField(lifecycleRaw, "key"),
@@ -364,8 +367,7 @@ export async function createLifecycleDefinition(input: {
   key: string;
   name: string;
   description?: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles?: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
   edges: LifecycleEdge[];
@@ -375,8 +377,7 @@ export async function createLifecycleDefinition(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kind: input.target_kind,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.target_kinds,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
     edges: input.edges,
@@ -394,7 +395,7 @@ export async function updateLifecycleDefinition(
   input: {
     name?: string;
     description?: string;
-    recommended_roles?: WorkflowAgentRole[];
+    binding_kinds?: WorkflowTargetKind[];
     entry_step_key?: string;
     steps?: LifecycleStepDefinition[];
     edges?: LifecycleEdge[];
@@ -403,7 +404,7 @@ export async function updateLifecycleDefinition(
   const raw = await api.put<Record<string, unknown>>(`/lifecycle-definitions/${id}`, {
     name: input.name,
     description: input.description,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.binding_kinds,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
     edges: input.edges,
@@ -416,8 +417,7 @@ export async function validateLifecycleDefinition(input: {
   key: string;
   name: string;
   description?: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles?: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   entry_step_key: string;
   steps: LifecycleStepDefinition[];
   edges: LifecycleEdge[];
@@ -427,8 +427,7 @@ export async function validateLifecycleDefinition(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kind: input.target_kind,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.target_kinds,
     entry_step_key: input.entry_step_key,
     steps: input.steps,
     edges: input.edges,
@@ -517,8 +516,7 @@ export async function createWorkflowDefinition(input: {
   key: string;
   name: string;
   description?: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles?: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
 }): Promise<WorkflowDefinition> {
   const raw = await api.post<Record<string, unknown>>("/workflow-definitions", {
@@ -526,8 +524,7 @@ export async function createWorkflowDefinition(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kind: input.target_kind,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.target_kinds,
     contract: input.contract,
   });
   return mapWorkflowDefinition(raw);
@@ -543,14 +540,14 @@ export async function updateWorkflowDefinition(
   input: {
     name?: string;
     description?: string;
-    recommended_roles?: WorkflowAgentRole[];
+    binding_kinds?: WorkflowTargetKind[];
     contract?: WorkflowContract;
   },
 ): Promise<WorkflowDefinition> {
   const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, {
     name: input.name,
     description: input.description,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.binding_kinds,
     contract: input.contract,
   });
   return mapWorkflowDefinition(raw);
@@ -561,8 +558,7 @@ export async function validateWorkflowDefinition(input: {
   key: string;
   name: string;
   description?: string;
-  target_kind: WorkflowTargetKind;
-  recommended_roles?: WorkflowAgentRole[];
+  target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
 }): Promise<WorkflowValidationResult> {
   const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", {
@@ -570,8 +566,7 @@ export async function validateWorkflowDefinition(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kind: input.target_kind,
-    recommended_binding_roles: input.recommended_roles,
+    binding_kinds: input.target_kinds,
     contract: input.contract,
   });
   return {

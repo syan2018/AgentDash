@@ -20,7 +20,7 @@ impl PostgresWorkflowRepository {
             r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
             name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-            binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
+            binding_kinds TEXT NOT NULL DEFAULT '["story"]',
             source TEXT NOT NULL, version INTEGER NOT NULL, contract TEXT NOT NULL,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
@@ -34,7 +34,7 @@ impl PostgresWorkflowRepository {
             r#"CREATE TABLE IF NOT EXISTS lifecycle_definitions (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
             name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-            binding_kind TEXT NOT NULL, recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
+            binding_kinds TEXT NOT NULL DEFAULT '["story"]',
             source TEXT NOT NULL, version INTEGER NOT NULL,
             entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -65,18 +65,17 @@ impl PostgresWorkflowRepository {
     }
 }
 
-const WF_COLS: &str = "id,project_id,key,name,description,binding_kind,recommended_binding_roles,source,version,contract,created_at,updated_at";
-const LC_COLS: &str = "id,project_id,key,name,description,binding_kind,recommended_binding_roles,source,version,entry_step_key,steps,edges,created_at,updated_at";
+const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,created_at,updated_at";
+const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO workflow_definitions ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"))
+        sqlx::query(&format!("INSERT INTO workflow_definitions ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"))
             .bind(workflow.id.to_string()).bind(workflow.project_id.to_string())
             .bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
-            .bind(serde_json::to_string(&workflow.binding_kind)?)
-            .bind(serde_json::to_string(&workflow.recommended_binding_roles)?)
+            .bind(serde_json::to_string(&workflow.binding_kinds)?)
             .bind(serde_json::to_string(&workflow.source)?)
             .bind(workflow.version).bind(serde_json::to_string(&workflow.contract)?)
             .bind(workflow.created_at.to_rfc3339()).bind(workflow.updated_at.to_rfc3339())
@@ -150,17 +149,16 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
         &self,
         binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<WorkflowDefinition>, DomainError> {
-        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions WHERE binding_kind = $1 ORDER BY created_at DESC"))
-            .bind(serde_json::to_string(&binding_kind)?).fetch_all(&self.pool).await.map_err(db_err)?
+        sqlx::query_as::<_, WorkflowDefinitionRow>(&format!("SELECT {WF_COLS} FROM workflow_definitions WHERE binding_kinds::jsonb ? $1 ORDER BY created_at DESC"))
+            .bind(binding_kind.binding_scope_key()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kind=$5,recommended_binding_roles=$6,source=$7,version=$8,contract=$9,updated_at=$10 WHERE id=$11")
+        let result = sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,updated_at=$9 WHERE id=$10")
             .bind(workflow.project_id.to_string())
             .bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
-            .bind(serde_json::to_string(&workflow.binding_kind)?)
-            .bind(serde_json::to_string(&workflow.recommended_binding_roles)?)
+            .bind(serde_json::to_string(&workflow.binding_kinds)?)
             .bind(serde_json::to_string(&workflow.source)?)
             .bind(workflow.version).bind(serde_json::to_string(&workflow.contract)?)
             .bind(chrono::Utc::now().to_rfc3339())
@@ -181,11 +179,10 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO lifecycle_definitions ({LC_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"))
+        sqlx::query(&format!("INSERT INTO lifecycle_definitions ({LC_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"))
             .bind(lifecycle.id.to_string()).bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.binding_kind)?)
-            .bind(serde_json::to_string(&lifecycle.recommended_binding_roles)?)
+            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
             .bind(serde_json::to_string(&lifecycle.edges)?)
@@ -260,17 +257,16 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
         &self,
         binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions WHERE binding_kind = $1 ORDER BY created_at DESC"))
-            .bind(serde_json::to_string(&binding_kind)?).fetch_all(&self.pool).await.map_err(db_err)?
+        sqlx::query_as::<_, LifecycleDefinitionRow>(&format!("SELECT {LC_COLS} FROM lifecycle_definitions WHERE binding_kinds::jsonb ? $1 ORDER BY created_at DESC"))
+            .bind(binding_kind.binding_scope_key()).fetch_all(&self.pool).await.map_err(db_err)?
             .into_iter().map(TryInto::try_into).collect()
     }
 
     async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kind=$5,recommended_binding_roles=$6,source=$7,version=$8,entry_step_key=$9,steps=$10,edges=$11,updated_at=$12 WHERE id=$13")
+        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,steps=$9,edges=$10,updated_at=$11 WHERE id=$12")
             .bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.binding_kind)?)
-            .bind(serde_json::to_string(&lifecycle.recommended_binding_roles)?)
+            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
             .bind(serde_json::to_string(&lifecycle.edges)?)
@@ -419,8 +415,7 @@ struct WorkflowDefinitionRow {
     key: String,
     name: String,
     description: String,
-    binding_kind: String,
-    recommended_binding_roles: String,
+    binding_kinds: String,
     source: String,
     version: i32,
     contract: String,
@@ -437,10 +432,9 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             key: row.key,
             name: row.name,
             description: row.description,
-            binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: parse_json_column(
-                &row.recommended_binding_roles,
-                "workflow_definitions.recommended_binding_roles",
+            binding_kinds: parse_json_column(
+                &row.binding_kinds,
+                "workflow_definitions.binding_kinds",
             )?,
             source: serde_json::from_str(&row.source)?,
             version: row.version,
@@ -458,8 +452,7 @@ struct LifecycleDefinitionRow {
     key: String,
     name: String,
     description: String,
-    binding_kind: String,
-    recommended_binding_roles: String,
+    binding_kinds: String,
     source: String,
     version: i32,
     entry_step_key: String,
@@ -478,10 +471,9 @@ impl TryFrom<LifecycleDefinitionRow> for LifecycleDefinition {
             key: row.key,
             name: row.name,
             description: row.description,
-            binding_kind: serde_json::from_str(&row.binding_kind)?,
-            recommended_binding_roles: parse_json_column(
-                &row.recommended_binding_roles,
-                "lifecycle_definitions.recommended_binding_roles",
+            binding_kinds: parse_json_column(
+                &row.binding_kinds,
+                "lifecycle_definitions.binding_kinds",
             )?,
             source: serde_json::from_str(&row.source)?,
             version: row.version,

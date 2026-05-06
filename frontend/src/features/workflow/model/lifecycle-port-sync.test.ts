@@ -16,8 +16,7 @@ function workflow(key: string, ports: {
     key,
     name: key,
     description: "",
-    target_kind: "story",
-    recommended_roles: ["story"],
+    target_kinds: ["story"],
     source: "user_authored",
     version: 1,
     contract: {

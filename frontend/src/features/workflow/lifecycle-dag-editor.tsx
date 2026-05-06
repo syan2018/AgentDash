@@ -28,7 +28,7 @@ import type {
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
-  TARGET_KIND_LABEL,
+  formatTargetKinds,
 } from "./shared-labels";
 import { ValidationPanel } from "./ui/validation-panel";
 import { DagNode, type DagNodeData } from "./ui/dag-node";
@@ -48,6 +48,14 @@ import { WorkflowEditor } from "./workflow-editor";
 const NODE_TYPES = { dagNode: DagNode };
 
 const POSITION_STORAGE_PREFIX = "agentdash:dag-positions:";
+
+function workflowCoversLifecycleTargetKinds(
+  workflow: WorkflowDefinition,
+  lifecycleTargetKinds: WorkflowDefinition["target_kinds"] | undefined,
+): boolean {
+  if (!lifecycleTargetKinds || lifecycleTargetKinds.length === 0) return false;
+  return lifecycleTargetKinds.every((kind) => workflow.target_kinds.includes(kind));
+}
 
 // ─── 位置持久化 ───
 
@@ -185,19 +193,22 @@ function LifecycleDagEditorInner() {
   const [workflowEditorStepKey, setWorkflowEditorStepKey] = useState<string | null>(null);
 
   // ── 加载关联的 workflow definitions ──
-  const targetKind = draft?.target_kind;
+  const targetKinds = draft?.target_kinds;
   const projectId = draft?.project_id;
   useEffect(() => {
-    if (targetKind && projectId) void fetchDefinitions({ projectId, targetKind });
-  }, [fetchDefinitions, projectId, targetKind]);
+    if (projectId) void fetchDefinitions({ projectId });
+  }, [fetchDefinitions, projectId, targetKinds]);
 
   // ── 可选择的 workflows ──
   const availableWorkflows = useMemo(
     () =>
       workflowDefinitions
-        .filter((d) => d.project_id === draft?.project_id && d.target_kind === draft?.target_kind)
+        .filter((d) =>
+          d.project_id === draft?.project_id &&
+          workflowCoversLifecycleTargetKinds(d, draft?.target_kinds),
+        )
         .sort((a, b) => a.name.localeCompare(b.name, "zh-CN")),
-    [workflowDefinitions, draft?.project_id, draft?.target_kind],
+    [workflowDefinitions, draft?.project_id, draft?.target_kinds],
   );
 
   // ── 当前定义元数据 ──
@@ -556,8 +567,7 @@ function LifecycleDagEditorInner() {
       key: workflowNames.key,
       name: workflowNames.name,
       description: step.description,
-      target_kind: draft.target_kind,
-      recommended_roles: draft.recommended_roles,
+      target_kinds: draft.target_kinds,
     });
     updateLifecycleStep(selectedStepIndex, { workflow_key: workflowNames.key });
   }, [
@@ -796,7 +806,7 @@ function LifecycleDagEditorInner() {
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                 <span>Key: <span className="text-foreground">{draft.key || "—"}</span></span>
                 <span>名称: <span className="text-foreground">{draft.name || "—"}</span></span>
-                <span>类型: <span className="text-foreground">{TARGET_KIND_LABEL[draft.target_kind]}</span></span>
+                <span>类型: <span className="text-foreground">{formatTargetKinds(draft.target_kinds)}</span></span>
                 <span>入口: <span className="text-foreground">{draft.entry_step_key || "—"}</span></span>
                 <span>{draft.steps.length} 节点 · {draft.edges.length} 边</span>
               </div>
@@ -836,9 +846,8 @@ function LifecycleDagEditorInner() {
             lifecycleKey={draft.key}
             name={draft.name}
             description={draft.description}
-            targetKind={draft.target_kind}
+            targetKinds={draft.target_kinds}
             entryStepKey={draft.entry_step_key}
-            recommendedRoles={draft.recommended_roles}
             stepKeys={draft.steps.map((s) => s.key)}
             isNew={isNew}
             onChange={updateLifecycleDraft}
@@ -863,7 +872,7 @@ function LifecycleDagEditorInner() {
             updateLifecycleDraft({ steps: nextSteps });
           }
           if (definition.project_id) {
-            void fetchDefinitions({ projectId: definition.project_id, targetKind: definition.target_kind });
+            void fetchDefinitions({ projectId: definition.project_id });
           }
         }}
       />

@@ -2074,7 +2074,7 @@ mod tests {
             "dev",
             "Dev",
             "dev lifecycle",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
             vec![step.clone()],
@@ -2095,7 +2095,7 @@ mod tests {
             "wf_impl",
             "Implementation",
             "实现工作流",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             WorkflowContract {
                 injection: WorkflowInjectionSpec {

@@ -11,6 +11,12 @@ export const TARGET_KIND_LABEL: Record<WorkflowTargetKind, string> = {
   story: "Story",
 };
 
+export const TARGET_KIND_OPTIONS: WorkflowTargetKind[] = ["project", "story"];
+
+export function formatTargetKinds(targetKinds: WorkflowTargetKind[]): string {
+  return targetKinds.map((kind) => TARGET_KIND_LABEL[kind]).join(" / ");
+}
+
 export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   draft: "Draft",
   ready: "Ready",

@@ -795,7 +795,7 @@ async fn resolve_lifecycle_key_for_link(
             return Ok(None);
         }
 
-        let _wf = state
+        let workflow = state
             .repos
             .workflow_definition_repo
             .get_by_key(&wk)
@@ -814,8 +814,7 @@ async fn resolve_lifecycle_key_for_link(
 
         if existing.is_none() {
             use agentdash_domain::workflow::{
-                LifecycleDefinition, LifecycleStepDefinition, WorkflowBindingKind,
-                WorkflowDefinitionSource,
+                LifecycleDefinition, LifecycleStepDefinition, WorkflowDefinitionSource,
             };
             let lifecycle = LifecycleDefinition {
                 id: Uuid::new_v4(),
@@ -823,8 +822,7 @@ async fn resolve_lifecycle_key_for_link(
                 key: auto_key.clone(),
                 name: format!("Auto: {wk}"),
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
-                binding_kind: WorkflowBindingKind::Project,
-                recommended_binding_roles: vec![],
+                binding_kinds: workflow.binding_kinds.clone(),
                 source: WorkflowDefinitionSource::UserAuthored,
                 version: 1,
                 steps: vec![LifecycleStepDefinition {

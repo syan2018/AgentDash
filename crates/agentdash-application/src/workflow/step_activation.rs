@@ -439,7 +439,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )

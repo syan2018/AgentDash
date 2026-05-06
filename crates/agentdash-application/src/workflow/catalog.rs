@@ -4,7 +4,7 @@ use chrono::Utc;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, ValidationIssue, ValidationSeverity,
-    WorkflowDefinition, WorkflowDefinitionRepository,
+    WorkflowDefinition, WorkflowDefinitionRepository, workflow_binding_kinds_cover,
 };
 
 use super::definition::BuiltinWorkflowBundle;
@@ -36,25 +36,66 @@ where
             .get_by_project_and_key(definition.project_id, &definition.key)
             .await?
         {
-            if existing.binding_kind != definition.binding_kind {
-                return Err(WorkflowApplicationError::Conflict(format!(
-                    "workflow `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
-                    definition.key, existing.binding_kind, definition.binding_kind
-                )));
-            }
-
             let mut updated = definition;
             updated.id = existing.id;
             updated.version = existing.version + 1;
             updated.created_at = existing.created_at;
             updated.updated_at = Utc::now();
 
+            self.validate_workflow_binding_references(&updated).await?;
             self.definition_repo.update(&updated).await?;
             return Ok(updated);
         }
 
         self.definition_repo.create(&definition).await?;
         Ok(definition)
+    }
+
+    async fn validate_workflow_binding_references(
+        &self,
+        definition: &WorkflowDefinition,
+    ) -> Result<(), WorkflowApplicationError> {
+        let lifecycles = self
+            .lifecycle_repo
+            .list_by_project(definition.project_id)
+            .await?;
+        let conflicts = lifecycles
+            .into_iter()
+            .filter_map(|lifecycle| {
+                let referencing_steps = lifecycle
+                    .steps
+                    .iter()
+                    .filter(|step| step.effective_workflow_key() == Some(definition.key.as_str()))
+                    .map(|step| step.key.as_str())
+                    .collect::<Vec<_>>();
+                if referencing_steps.is_empty()
+                    || workflow_binding_kinds_cover(
+                        &lifecycle.binding_kinds,
+                        &definition.binding_kinds,
+                    )
+                {
+                    None
+                } else {
+                    Some(format!(
+                        "{}({}) 需要 {:?}",
+                        lifecycle.key,
+                        referencing_steps.join(","),
+                        lifecycle.binding_kinds
+                    ))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if conflicts.is_empty() {
+            Ok(())
+        } else {
+            Err(WorkflowApplicationError::BadRequest(format!(
+                "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 lifecycle：{}",
+                definition.key,
+                definition.binding_kinds,
+                conflicts.join("; ")
+            )))
+        }
     }
 
     pub async fn upsert_lifecycle_definition(
@@ -82,13 +123,6 @@ where
             .get_by_project_and_key(lifecycle.project_id, &lifecycle.key)
             .await?
         {
-            if existing.binding_kind != lifecycle.binding_kind {
-                return Err(WorkflowApplicationError::Conflict(format!(
-                    "lifecycle `{}` 已绑定 binding_kind={:?}，不能直接改为 {:?}",
-                    lifecycle.key, existing.binding_kind, lifecycle.binding_kind
-                )));
-            }
-
             let mut updated = lifecycle;
             updated.id = existing.id;
             updated.version = existing.version + 1;
@@ -146,12 +180,12 @@ where
                 continue;
             };
 
-            if workflow.binding_kind != lifecycle.binding_kind {
+            if !workflow_binding_kinds_cover(&lifecycle.binding_kinds, &workflow.binding_kinds) {
                 issues.push(ValidationIssue::error(
                     "lifecycle_step_workflow_binding_kind_mismatch",
                     format!(
-                        "lifecycle step `{}` 引用的 workflow `{}` binding_kind={:?}，与 lifecycle {:?} 不一致",
-                        step.key, workflow.key, workflow.binding_kind, lifecycle.binding_kind
+                        "lifecycle step `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
+                        step.key, workflow.key, workflow.binding_kinds, lifecycle.binding_kinds
                     ),
                     format!("steps[{step_index}].workflow_key"),
                 ));
@@ -387,7 +421,7 @@ mod tests {
                 .lock()
                 .expect("workflow repo lock")
                 .values()
-                .filter(|item| item.binding_kind == binding_kind)
+                .filter(|item| item.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -487,7 +521,7 @@ mod tests {
                 .lock()
                 .expect("lifecycle repo lock")
                 .values()
-                .filter(|item| item.binding_kind == binding_kind)
+                .filter(|item| item.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -550,7 +584,7 @@ mod tests {
             key,
             format!("workflow {key}"),
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )
@@ -563,7 +597,7 @@ mod tests {
             "dag",
             "dag",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             "research",
             vec![
@@ -624,7 +658,7 @@ mod tests {
             "dag",
             "dag",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             "research",
             vec![
@@ -764,7 +798,7 @@ mod tests {
             "dag",
             "dag",
             "desc",
-            WorkflowBindingKind::Story,
+            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             "start",
             vec![LifecycleStepDefinition {
@@ -786,10 +820,57 @@ mod tests {
 
         assert!(issues.iter().any(|issue| {
             issue.code == "lifecycle_step_workflow_missing"
-                && issue
-                    .message
-                    .contains("在当前 project 中不存在")
+                && issue.message.contains("在当前 project 中不存在")
         }));
+    }
+
+    #[tokio::test]
+    async fn upsert_workflow_definition_rejects_binding_kinds_that_break_referencing_lifecycle() {
+        let project_id = Uuid::new_v4();
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let workflow = workflow_with_ports_in_project(project_id, "wf_shared", &[], &[]);
+        workflow_repo.seed(workflow.clone());
+
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        let lifecycle = LifecycleDefinition::new(
+            project_id,
+            "lc_shared",
+            "Shared lifecycle",
+            "desc",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::UserAuthored,
+            "start",
+            vec![LifecycleStepDefinition {
+                key: "start".to_string(),
+                description: "start".to_string(),
+                workflow_key: Some("wf_shared".to_string()),
+                node_type: LifecycleNodeType::AgentNode,
+                output_ports: vec![],
+                input_ports: vec![],
+            }],
+            vec![],
+        )
+        .expect("lifecycle definition");
+        lifecycle_repo
+            .create(&lifecycle)
+            .await
+            .expect("seed lifecycle");
+
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+        let mut updated = workflow;
+        updated.binding_kinds = vec![WorkflowBindingKind::Project];
+
+        let error = service
+            .upsert_workflow_definition(updated)
+            .await
+            .expect_err("workflow type edit should not break lifecycle refs");
+
+        match error {
+            WorkflowApplicationError::BadRequest(message) => {
+                assert!(message.contains("未覆盖引用它的 lifecycle"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[tokio::test]

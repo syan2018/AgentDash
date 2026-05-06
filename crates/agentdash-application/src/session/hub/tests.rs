@@ -583,6 +583,52 @@ impl BackboneEventExt for BackboneEvent {
 }
 
 #[tokio::test]
+async fn emit_capability_surface_changed_persists_structured_event() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub
+        .create_session("capability-event")
+        .await
+        .expect("create session");
+
+    let payload = json!({
+        "phase_node": "review",
+        "surface_changed": true,
+        "capabilities": ["file_read"],
+        "mounts": ["phase"],
+        "steering_delivery": { "status": "failed" }
+    });
+    hub.emit_capability_surface_changed(&session.id, Some("turn-42"), payload.clone())
+        .await
+        .expect("emit capability surface event");
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let event = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("capability_surface_changed")
+        })
+        .expect("capability surface event should exist");
+
+    assert_eq!(event.turn_id.as_deref(), Some("turn-42"));
+    match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            assert_eq!(value, &payload);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn start_prompt_triggers_session_start_before_connector_prompt() {
     let base = tempfile::tempdir().expect("tempdir");
     let connector = Arc::new(SessionStartAwareConnector::default());

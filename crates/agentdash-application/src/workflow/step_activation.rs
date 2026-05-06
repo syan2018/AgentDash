@@ -350,29 +350,53 @@ pub async fn apply_to_running_session(
         &notification_delta,
         &activation.capability_keys,
     );
-    session_hub
+    let steering_delivery = match session_hub
         .push_session_notification(hook_session.session_id(), delta_md)
         .await
-        .map_err(|error| format!("Phase node capability delta 消息注入失败: {error}"))?;
+    {
+        Ok(()) => serde_json::json!({
+            "status": "accepted_by_connector",
+        }),
+        Err(error) => {
+            tracing::warn!(
+                session_id = %hook_session.session_id(),
+                phase_node = %phase_node_key,
+                error = %error,
+                "Phase node capability steering notification delivery failed"
+            );
+            serde_json::json!({
+                "status": "failed",
+                "error": error.to_string(),
+            })
+        }
+    };
+
+    let capability_surface_event = serde_json::json!({
+        "phase_node": phase_node_key,
+        "added": notification_delta.added.clone(),
+        "removed": notification_delta.removed.clone(),
+        "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
+        "surface_changed": surface_changed,
+        "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
+        "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
+        "mcp_server_count": activation.mcp_servers.len(),
+        "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
+        "mounts": activation.lifecycle_vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>(),
+        "default_mount_id": activation.lifecycle_vfs.default_mount_id.clone(),
+        "steering_delivery": steering_delivery,
+    });
 
     session_hub
-        .emit_capability_changed_hook(
+        .emit_capability_surface_changed(
             hook_session.session_id(),
             turn_id,
-            serde_json::json!({
-                "phase_node": phase_node_key,
-                "added": notification_delta.added.clone(),
-                "removed": notification_delta.removed.clone(),
-                "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
-                "surface_changed": surface_changed,
-                "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
-                "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
-                "mcp_server_count": activation.mcp_servers.len(),
-                "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
-                "mounts": activation.lifecycle_vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>(),
-                "default_mount_id": activation.lifecycle_vfs.default_mount_id.clone(),
-            }),
+            capability_surface_event.clone(),
         )
+        .await
+        .map_err(|error| format!("Phase node capability surface 事件持久化失败: {error}"))?;
+
+    session_hub
+        .emit_capability_changed_hook(hook_session.session_id(), turn_id, capability_surface_event)
         .await;
 
     Ok(delta)

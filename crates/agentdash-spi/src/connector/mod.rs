@@ -526,10 +526,13 @@ pub trait AgentConnector: Send + Sync {
     /// 默认 no-op — 仅 in-process connector（如 PiAgent）需要实现。
     async fn push_session_notification(
         &self,
-        _session_id: &str,
+        session_id: &str,
         _message: String,
     ) -> Result<(), ConnectorError> {
-        Ok(())
+        Err(ConnectorError::Runtime(format!(
+            "connector `{}` 不支持 session `{session_id}` 的 steering notification",
+            self.connector_id()
+        )))
     }
 
     /// 向活跃 session 热更新业务上下文 Bundle（out-of-band，不等下轮 prompt）。

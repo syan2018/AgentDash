@@ -33,10 +33,27 @@ export function uniqueIdentifier(value: string, usedKeys: Iterable<string>, fall
   return candidate;
 }
 
+export function formatDisplaySegment(value: string, fallback: string): string {
+  const words = value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return fallback;
+  }
+
+  return words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export function buildLifecycleStepWorkflowNames(input: {
   lifecycleKey: string;
   lifecycleDisplayName: string;
   stepKey: string;
+  stepDisplayName?: string;
   existingWorkflows: WorkflowDefinition[];
 }): { key: string; name: string } {
   const lifecycleKey = normalizeIdentifier(input.lifecycleKey, "lifecycle");
@@ -47,9 +64,10 @@ export function buildLifecycleStepWorkflowNames(input: {
     "workflow",
   );
   const displayLifecycle = input.lifecycleDisplayName.trim() || input.lifecycleKey.trim() || "Lifecycle";
+  const displayStep = formatDisplaySegment(input.stepDisplayName ?? input.stepKey, "Step");
 
   return {
     key,
-    name: `${displayLifecycle} / ${stepKey}`,
+    name: `${displayLifecycle} / ${displayStep}`,
   };
 }

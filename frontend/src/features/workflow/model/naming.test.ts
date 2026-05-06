@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildLifecycleStepWorkflowNames, normalizeIdentifier, uniqueIdentifier } from "./naming";
+import {
+  buildLifecycleStepWorkflowNames,
+  formatDisplaySegment,
+  normalizeIdentifier,
+  uniqueIdentifier,
+} from "./naming";
 import type { WorkflowDefinition } from "../../../types";
 
 function workflow(key: string): WorkflowDefinition {
@@ -38,6 +43,12 @@ describe("workflow naming helpers", () => {
     );
   });
 
+  it("formats display segments from identifier-shaped values", () => {
+    expect(formatDisplaySegment("review", "Step")).toBe("Review");
+    expect(formatDisplaySegment("code_review", "Step")).toBe("Code Review");
+    expect(formatDisplaySegment("MissionCreate", "Step")).toBe("MissionCreate");
+  });
+
   it("builds lifecycle step workflow key and display name from lifecycle and step", () => {
     expect(
       buildLifecycleStepWorkflowNames({
@@ -48,7 +59,7 @@ describe("workflow naming helpers", () => {
       }),
     ).toEqual({
       key: "task_lifecycle_review_2",
-      name: "Task Lifecycle / review",
+      name: "Task Lifecycle / Review",
     });
   });
 });

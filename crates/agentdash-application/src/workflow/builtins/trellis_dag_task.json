@@ -11,11 +11,7 @@
       "description": "调研与方案设计阶段。",
       "contract": {
         "injection": {
-          "instructions": [
-            "当前处于 Research 阶段（agent_node），负责需求分析、技术调研和方案设计。",
-            "完成后必须调用 complete_lifecycle_node 工具声明完成，并附上调研摘要。",
-            "你需要将调研报告写入 lifecycle://artifacts/research_report 路径。"
-          ]
+          "guidance": "当前处于 Research 阶段（agent_node），负责需求分析、技术调研和方案设计。\n\n要求：\n- 将调研报告写入 lifecycle://artifacts/research_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上调研摘要"
         },
         "hook_rules": [
           {
@@ -45,11 +41,7 @@
       "description": "基于调研结论执行实现。",
       "contract": {
         "injection": {
-          "instructions": [
-            "当前处于 Implement 阶段（agent_node），基于前一阶段的调研结论执行编码实现。",
-            "完成后必须调用 complete_lifecycle_node 工具声明完成，并附上实现摘要。",
-            "你需要将实现报告写入 lifecycle://artifacts/implementation_report 路径。"
-          ]
+          "guidance": "当前处于 Implement 阶段（agent_node），基于前一阶段的调研结论执行编码实现。\n\n要求：\n- 将实现报告写入 lifecycle://artifacts/implementation_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上实现摘要"
         },
         "hook_rules": [
           {

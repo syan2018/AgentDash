@@ -105,7 +105,7 @@ export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
     target_kind: "story",
     recommended_roles: ["story"],
     contract: {
-      injection: { goal: null, instructions: [], context_bindings: [] },
+      injection: { guidance: null, context_bindings: [] },
       hook_rules: [],
       capability_directives: [],
       output_ports: [],

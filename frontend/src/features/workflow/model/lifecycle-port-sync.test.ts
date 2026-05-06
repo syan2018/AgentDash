@@ -21,7 +21,7 @@ function workflow(key: string, ports: {
     source: "user_authored",
     version: 1,
     contract: {
-      injection: { goal: null, instructions: [], context_bindings: [] },
+      injection: { guidance: null, context_bindings: [] },
       hook_rules: [],
       capability_directives: [],
       output_ports: (ports.output ?? []).map((port) => ({

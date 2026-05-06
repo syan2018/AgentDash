@@ -155,9 +155,7 @@ pub struct WorkflowContextBinding {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowInjectionSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub goal: Option<String>,
-    #[serde(default)]
-    pub instructions: Vec<String>,
+    pub guidance: Option<String>,
     #[serde(default)]
     pub context_bindings: Vec<WorkflowContextBinding>,
 }
@@ -1050,7 +1048,7 @@ mod tests {
     fn sample_contract() -> WorkflowContract {
         WorkflowContract {
             injection: WorkflowInjectionSpec {
-                instructions: vec!["read spec first".to_string()],
+                guidance: Some("read spec first".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
                     locator: ".trellis/workflow.md".to_string(),
                     reason: "workflow".to_string(),

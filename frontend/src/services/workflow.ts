@@ -96,8 +96,7 @@ function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
     throw new Error("workflow contract 缺少 injection");
   }
   return {
-    goal: optString(value.goal),
-    instructions: asStringArray(value.instructions),
+    guidance: optString(value.guidance),
     context_bindings: asRecordArray(value.context_bindings).map(mapWorkflowContextBinding),
   };
 }

@@ -56,7 +56,7 @@ pub struct UpsertWorkflowParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WorkflowContractInput {
-    #[schemars(description = "上下文注入配置（instructions、context_bindings）")]
+    #[schemars(description = "上下文注入配置（guidance、context_bindings）")]
     pub injection: Option<WorkflowInjectionSpec>,
     #[schemars(description = "Hook 规则列表")]
     pub hook_rules: Option<Vec<HookRuleInput>>,

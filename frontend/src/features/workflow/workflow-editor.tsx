@@ -77,62 +77,6 @@ const GATE_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
 const PROCESS_TRIGGER_ORDER: WorkflowHookTrigger[] = PROCESS_TRIGGER_OPTIONS;
 const GATE_TRIGGER_ORDER: WorkflowHookTrigger[] = GATE_TRIGGER_OPTIONS;
 
-// ─── Instruction list ──────────────────────────────────
-
-function InstructionListEditor({
-  values,
-  onChange,
-}: {
-  values: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [draft, setDraft] = useState("");
-
-  const addItem = () => {
-    const trimmed = draft.trim();
-    if (!trimmed) return;
-    onChange([...values, trimmed]);
-    setDraft("");
-  };
-
-  return (
-    <div>
-      <label className="agentdash-form-label">注入指令 ({values.length})</label>
-      <p className="mb-1.5 text-[11px] text-muted-foreground">
-        Session 启动时注入给 Agent 的行为指令，按数组顺序拼接到 system prompt。
-      </p>
-      <div className="space-y-1.5">
-        {values.map((value, index) => (
-          <div key={`${value}-${index}`} className="flex items-start gap-2">
-            <p className="flex-1 rounded-[8px] border border-border bg-secondary/20 px-2 py-1.5 text-xs text-foreground/80 leading-5">
-              {value}
-            </p>
-            <button
-              type="button"
-              onClick={() => onChange(values.filter((_, i) => i !== index))}
-              className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addItem(); } }}
-          className="agentdash-form-input flex-1 text-sm"
-          placeholder="添加一条注入指令…"
-        />
-        <button type="button" onClick={addItem} className="agentdash-button-secondary shrink-0 text-sm">
-          添加
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Committed rule (read mode) ────────────────────────
 
 function HookRuleItem({
@@ -1332,26 +1276,14 @@ export function WorkflowEditor({ onSaved }: WorkflowEditorProps = {}) {
       </DetailSection>
 
       {/* Session 注入 */}
-      <DetailSection title="Session 注入" description="Session 启动或 Workflow 切换时，hook 向 Agent 上下文注入的内容。">
-        <div className="space-y-3">
-          <div>
-            <label className="agentdash-form-label">目标（Goal）</label>
-            <textarea
-              value={draft.contract.injection.goal ?? ""}
-              onChange={(e) => updateInjection({ goal: e.target.value || null })}
-              rows={2}
-              className="agentdash-form-textarea"
-              placeholder="本 Workflow 的核心目标，注入 Agent 上下文作为顶层导向"
-            />
-          </div>
-          <div>
-            <label className="agentdash-form-label">指令（Instructions）</label>
-            <InstructionListEditor
-              values={draft.contract.injection.instructions}
-              onChange={(instructions) => updateInjection({ instructions })}
-            />
-          </div>
-        </div>
+      <DetailSection title="Session 指引" description="Workflow 激活时注入给 Agent 的目标、行为边界和完成要求。">
+        <textarea
+          value={draft.contract.injection.guidance ?? ""}
+          onChange={(e) => updateInjection({ guidance: e.target.value || null })}
+          rows={7}
+          className="agentdash-form-textarea"
+          placeholder={"描述这个 Workflow 下 Agent 应完成什么、遵守什么边界、如何结束。\n\n例如：\n当前处于 Review 阶段，检查实现质量与风险。\n- 先阅读相关 diff 与测试结果\n- 输出明确问题和建议\n- 完成后调用 complete_lifecycle_node"}
+        />
       </DetailSection>
 
       {/* Context Bindings */}

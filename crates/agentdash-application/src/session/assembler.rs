@@ -2099,8 +2099,7 @@ mod tests {
             WorkflowDefinitionSource::BuiltinSeed,
             WorkflowContract {
                 injection: WorkflowInjectionSpec {
-                    goal: Some("交付可验证实现".to_string()),
-                    instructions: vec!["保持上下文收口".to_string()],
+                    guidance: Some("交付可验证实现。\n\n保持上下文收口。".to_string()),
                     context_bindings: vec![],
                 },
                 ..WorkflowContract::default()

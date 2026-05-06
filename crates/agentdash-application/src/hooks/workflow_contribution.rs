@@ -31,14 +31,15 @@ pub(super) fn build_workflow_step_fragments(
         source: source.to_string(),
     }];
 
-    let instructions = workflow
+    let guidance = workflow
         .active_contract()
-        .map(|c| c.injection.instructions.as_slice())
-        .unwrap_or(&[]);
-    if !instructions.is_empty() {
+        .and_then(|c| c.injection.guidance.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(guidance) = guidance {
         injections.push(HookInjection {
             slot: "workflow".to_string(),
-            content: build_instruction_injection_markdown(instructions),
+            content: build_guidance_injection_markdown(guidance),
             source: source.to_string(),
         });
     }
@@ -46,13 +47,8 @@ pub(super) fn build_workflow_step_fragments(
     injections
 }
 
-fn build_instruction_injection_markdown(instructions: &[String]) -> String {
-    let body = instructions
-        .iter()
-        .map(|instruction| format!("- {instruction}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("## Workflow Instructions\n{body}")
+fn build_guidance_injection_markdown(guidance: &str) -> String {
+    format!("## Workflow Guidance\n{guidance}")
 }
 
 #[cfg(test)]
@@ -66,12 +62,10 @@ mod tests {
         WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
 
-    fn workflow_projection_with_instructions(
-        instructions: Vec<String>,
-    ) -> ActiveWorkflowProjection {
+    fn workflow_projection_with_guidance(guidance: Option<String>) -> ActiveWorkflowProjection {
         let contract = WorkflowContract {
             injection: WorkflowInjectionSpec {
-                instructions,
+                guidance,
                 ..WorkflowInjectionSpec::default()
             },
             ..WorkflowContract::default()
@@ -128,9 +122,8 @@ mod tests {
 
     #[test]
     fn workflow_step_fragments_do_not_duplicate_constraints_fragment() {
-        let workflow = workflow_projection_with_instructions(vec![
-            "先补齐检查证据，再结束 session".to_string(),
-        ]);
+        let workflow =
+            workflow_projection_with_guidance(Some("先补齐检查证据，再结束 session".to_string()));
         let source = super::super::workflow_source(&workflow);
 
         let injections = build_workflow_step_fragments(&workflow, &source);
@@ -139,6 +132,6 @@ mod tests {
         assert_eq!(injections[0].slot, "workflow");
         assert!(injections[0].content.contains("Active Workflow Step"));
         assert_eq!(injections[1].slot, "workflow");
-        assert!(injections[1].content.contains("Workflow Instructions"));
+        assert!(injections[1].content.contains("Workflow Guidance"));
     }
 }

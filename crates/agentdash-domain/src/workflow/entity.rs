@@ -550,7 +550,7 @@ mod tests {
     fn contract() -> WorkflowContract {
         WorkflowContract {
             injection: WorkflowInjectionSpec {
-                instructions: vec!["follow the workflow".to_string()],
+                guidance: Some("follow the workflow".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
                     locator: ".trellis/workflow.md".to_string(),
                     reason: "workflow".to_string(),

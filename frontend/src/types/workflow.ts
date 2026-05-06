@@ -29,8 +29,7 @@ export interface WorkflowContextBinding {
 }
 
 export interface WorkflowInjectionSpec {
-  goal?: string | null;
-  instructions: string[];
+  guidance?: string | null;
   context_bindings: WorkflowContextBinding[];
 }
 

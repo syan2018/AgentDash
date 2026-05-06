@@ -1,6 +1,6 @@
 //! Workflow Injection 渲染共享 helper（PR 5a）。
 //!
-//! 历史上 workflow `goal` / `instructions` / `context_bindings` 的 markdown 渲染
+//! 历史上 workflow `guidance` / `context_bindings` 的 markdown 渲染
 //! 散落在三处：
 //! - `contribute_workflow_binding`（task 路径 / workflow_bindings.rs）
 //! - `contribute_lifecycle_context`（lifecycle node 路径 / assembler.rs:1464+）
@@ -19,12 +19,12 @@ use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
 /// 渲染模式 —— 决定声明式 bindings 列表是否一并产出。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowInjectionMode {
-    /// 仅渲染 `goal` + `instructions`。
+    /// 仅渲染 `guidance`。
     ///
     /// 对应 companion+workflow 路径：companion agent 只需要 workflow 的目标和说明，
     /// 不需要 bindings 清单（companion 本身不走 context binding 解析）。
     SummaryOnly,
-    /// 渲染 `goal` + `instructions` + declarative `context_bindings` 列表。
+    /// 渲染 `guidance` + declarative `context_bindings` 列表。
     ///
     /// 对应 lifecycle node 路径：lifecycle agent 需要知道 workflow 声明了哪些
     /// context bindings（即便当前 node 没有主动解析它们），以便引用。
@@ -40,21 +40,8 @@ pub fn render_workflow_injection(
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
-    if let Some(goal) = clean_text(injection.goal.as_deref()) {
-        parts.push(format!("## Workflow Goal\n{goal}"));
-    }
-    if !injection.instructions.is_empty() {
-        let lines: Vec<String> = injection
-            .instructions
-            .iter()
-            .filter_map(|item| {
-                let trimmed = item.trim();
-                (!trimmed.is_empty()).then(|| format!("- {trimmed}"))
-            })
-            .collect();
-        if !lines.is_empty() {
-            parts.push(format!("## Workflow Instructions\n{}", lines.join("\n")));
-        }
+    if let Some(guidance) = clean_text(injection.guidance.as_deref()) {
+        parts.push(format!("## Workflow Guidance\n{guidance}"));
     }
     if matches!(mode, WorkflowInjectionMode::Declarative) && !injection.context_bindings.is_empty()
     {
@@ -157,8 +144,7 @@ mod tests {
 
     fn spec_full() -> WorkflowInjectionSpec {
         WorkflowInjectionSpec {
-            goal: Some("实现 x 能力".to_string()),
-            instructions: vec!["先读 spec".to_string(), "再改代码".to_string()],
+            guidance: Some("实现 x 能力\n\n- 先读 spec\n- 再改代码".to_string()),
             context_bindings: vec![WorkflowContextBinding {
                 locator: ".trellis/workflow.md".to_string(),
                 reason: "workflow 规则".to_string(),
@@ -172,8 +158,8 @@ mod tests {
     fn summary_only_excludes_bindings() {
         let out =
             render_workflow_injection(&spec_full(), WorkflowInjectionMode::SummaryOnly).unwrap();
-        assert!(out.contains("## Workflow Goal"));
-        assert!(out.contains("## Workflow Instructions"));
+        assert!(out.contains("## Workflow Guidance"));
+        assert!(out.contains("先读 spec"));
         assert!(!out.contains("## Workflow Context Bindings"));
     }
 
@@ -195,9 +181,9 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_only_goal_ignored() {
+    fn whitespace_only_guidance_ignored() {
         let spec = WorkflowInjectionSpec {
-            goal: Some("   ".to_string()),
+            guidance: Some("   ".to_string()),
             ..WorkflowInjectionSpec::default()
         };
         let out = render_workflow_injection(&spec, WorkflowInjectionMode::SummaryOnly);

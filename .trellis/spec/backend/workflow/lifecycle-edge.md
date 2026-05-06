@@ -80,6 +80,7 @@ pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> HashMap<&str, BTreeSet<&
 |------|---------------|
 | `steps.len() >= 2 && edges.is_empty()` → 拒绝 | `lifecycle.edges 不能为空` |
 | Entry step 不可有入边 | `entry_step_key 不应有入边` |
+| Entry step 必须是 `AgentNode`，不可是 `PhaseNode` | `入口节点必须是 AgentNode` |
 | 禁止孤岛 step（无入边也无出边；单 step lifecycle 除外） | `lifecycle.steps X 是孤岛` |
 | `kind=flow` 不可有 port | `edges[i] kind=flow 不应携带 port` |
 | `kind=artifact` 必须有 port | `edges[i] kind=artifact 必须同时声明 from_port 与 to_port` |

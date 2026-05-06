@@ -57,6 +57,17 @@ function workflowCoversLifecycleTargetKinds(
   return lifecycleTargetKinds.every((kind) => workflow.target_kinds.includes(kind));
 }
 
+function forceEntryStepToAgentNode(
+  steps: LifecycleStepDefinition[],
+  entryStepKey: string,
+): LifecycleStepDefinition[] {
+  return steps.map((step) =>
+    step.key === entryStepKey && (step.node_type ?? "agent_node") !== "agent_node"
+      ? { ...step, node_type: "agent_node" }
+      : step,
+  );
+}
+
 // ─── 位置持久化 ───
 
 function loadPositions(lifecycleKey: string): Record<string, { x: number; y: number }> {
@@ -462,7 +473,11 @@ function LifecycleDagEditorInner() {
       output_ports: [],
       input_ports: [],
     };
-    updateLifecycleDraft({ steps: [...draft.steps, newStep] });
+    const nextSteps = [...draft.steps, newStep];
+    updateLifecycleDraft({
+      steps: nextSteps,
+      entry_step_key: draft.entry_step_key || key,
+    });
     setSelectedNodeKey(key);
     setCreateStepOpen(false);
   }, [createStepName, draft, updateLifecycleDraft]);
@@ -488,25 +503,31 @@ function LifecycleDagEditorInner() {
       const oldStep = draft.steps.find((s) => s.key === nodeKey);
       if (!oldStep) return;
 
-      const newSteps = draft.steps.map((s) => (s.key === nodeKey ? { ...s, ...patch } : s));
+      const normalizedPatch =
+        draft.entry_step_key === nodeKey && patch.node_type === "phase_node"
+          ? { ...patch, node_type: "agent_node" as const }
+          : patch;
+      const newSteps = draft.steps.map((s) =>
+        s.key === nodeKey ? { ...s, ...normalizedPatch } : s,
+      );
 
       let newEdges = draft.edges;
       let newEntryKey = draft.entry_step_key;
-      if (patch.key && patch.key !== nodeKey) {
+      if (normalizedPatch.key && normalizedPatch.key !== nodeKey) {
         // 重命名：更新 edges 中的引用
         newEdges = draft.edges.map((e) => ({
           ...e,
-          from_node: e.from_node === nodeKey ? patch.key! : e.from_node,
-          to_node: e.to_node === nodeKey ? patch.key! : e.to_node,
+          from_node: e.from_node === nodeKey ? normalizedPatch.key! : e.from_node,
+          to_node: e.to_node === nodeKey ? normalizedPatch.key! : e.to_node,
         }));
         if (draft.entry_step_key === nodeKey) {
-          newEntryKey = patch.key!;
+          newEntryKey = normalizedPatch.key!;
         }
-        setSelectedNodeKey(patch.key!);
+        setSelectedNodeKey(normalizedPatch.key!);
         // 更新 localStorage position
         const pos = positions.current;
         if (pos[nodeKey]) {
-          pos[patch.key!] = pos[nodeKey];
+          pos[normalizedPatch.key!] = pos[nodeKey];
           delete pos[nodeKey];
           savePositions(draft.key, pos);
         }
@@ -582,9 +603,33 @@ function LifecycleDagEditorInner() {
   // ── 设为入口节点 ──
   const handleSetEntry = useCallback(
     (nodeKey: string) => {
-      updateLifecycleDraft({ entry_step_key: nodeKey });
+      if (!draft) return;
+      updateLifecycleDraft({
+        entry_step_key: nodeKey,
+        steps: forceEntryStepToAgentNode(draft.steps, nodeKey),
+      });
     },
-    [updateLifecycleDraft],
+    [draft, updateLifecycleDraft],
+  );
+
+  const handleLifecycleChange = useCallback(
+    (patch: {
+      key?: string;
+      name?: string;
+      description?: string;
+      target_kinds?: WorkflowDefinition["target_kinds"];
+      entry_step_key?: string;
+    }) => {
+      if (!draft || patch.entry_step_key == null) {
+        updateLifecycleDraft(patch);
+        return;
+      }
+      updateLifecycleDraft({
+        ...patch,
+        steps: forceEntryStepToAgentNode(draft.steps, patch.entry_step_key),
+      });
+    },
+    [draft, updateLifecycleDraft],
   );
 
   // ── Auto-layout ──
@@ -850,7 +895,7 @@ function LifecycleDagEditorInner() {
             entryStepKey={draft.entry_step_key}
             stepKeys={draft.steps.map((s) => s.key)}
             isNew={isNew}
-            onChange={updateLifecycleDraft}
+            onChange={handleLifecycleChange}
           />
         )}
       </div>

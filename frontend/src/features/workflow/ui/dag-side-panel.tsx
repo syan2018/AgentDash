@@ -127,6 +127,7 @@ export function DagSidePanel({
         {activeTab === "basic" && (
           <BasicInfoTab
             step={step}
+            isEntry={isEntry}
             availableWorkflows={availableWorkflows}
             onChange={onChange}
             onImportRecommendedPorts={onImportRecommendedPorts}
@@ -166,6 +167,7 @@ export function DagSidePanel({
 
 function BasicInfoTab({
   step,
+  isEntry,
   availableWorkflows,
   onChange,
   onImportRecommendedPorts,
@@ -173,6 +175,7 @@ function BasicInfoTab({
   onCreateWorkflow,
 }: {
   step: LifecycleStepDefinition;
+  isEntry: boolean;
   availableWorkflows: WorkflowDefinition[];
   onChange: (patch: Partial<LifecycleStepDefinition>) => void;
   onImportRecommendedPorts: () => void;
@@ -221,7 +224,9 @@ function BasicInfoTab({
           className="agentdash-form-select"
         >
           <option value="agent_node">Agent Node</option>
-          <option value="phase_node">Phase Node（运行时待完善）</option>
+          <option value="phase_node" disabled={isEntry}>
+            Phase Node{isEntry ? "（入口不可用）" : ""}
+          </option>
         </select>
       </div>
 

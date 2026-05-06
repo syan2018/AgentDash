@@ -74,7 +74,8 @@
   * session profile / continuation 的能力表面缓存
 * 工具级 directive 变化必须触发热更新，例如 `file_read::fs_read` 白名单变化、`remove file_read::fs_grep`、同 capability key 下 excluded tool 变化。
 * mount 级变更必须触发热更新和通知，例如某个 step 增加 `lifecycle://...` 以外的特殊 mount，进入后续 step 后撤销该 mount，或切换默认写入目标。
-* PhaseNode entry step、successor PhaseNode、terminal callback 等路径不能丢弃激活结果；如果当下没有 live hook runtime，需要有 pending transition 或明确的降级策略。
+* Lifecycle 入口节点必须是 `AgentNode`：`PhaseNode` 只负责切换已有 session 的能力表面，不负责创建第一条 session。前端创建第一个节点或将节点设为入口时应自动保持/切换为 `AgentNode`，后端定义校验必须拒绝入口 `PhaseNode`。
+* successor PhaseNode、terminal callback 推进到后继 PhaseNode 等路径不能丢弃激活结果；如果当下没有 live hook runtime，需要有 pending transition 或明确的降级策略。
 * 能力变更通知拆分为结构化事件和 Agent steering 两层，并在事件内表达顶层 Capability 变化和 CapabilitySurface 变化：
   * 结构化事件持久化到 session event stream，供 UI、审计、回放使用。
   * steering 消息以尽力投递方式注入运行中 Agent，并记录是否成功投递或被 connector 忽略。
@@ -84,7 +85,8 @@
 
 * [x] `cargo test -p agentdash-application capability::pipeline_tests --lib` 可以运行并通过。
 * [x] `cargo test -p agentdash-application step_activation --lib` 可以运行并通过。
-* [ ] 新增测试覆盖 PhaseNode 作为 entry step 和 successor step 时，能够在同一 session 内应用顶层能力模型和能力表面切换。
+* [x] 新增测试覆盖 PhaseNode 不能作为 lifecycle entry step。
+* [ ] 新增测试覆盖 successor PhaseNode 在同一 session 内应用顶层能力模型和能力表面切换。
 * [x] 新增测试覆盖 PhaseNode 目标 workflow 只声明 `workflow_management` 时，默认 owner baseline 能力不会被错误清空。
 * [x] 新增测试覆盖同一 capability key 内的工具级 directive 变化会触发工具表重建。
 * [x] 新增测试覆盖 step-specific mount add/remove/change 会触发能力表面 diff 和工具/VFS 状态更新。
@@ -101,7 +103,7 @@
 ### PR1：PhaseNode 基线测试与现状确认
 
 * 为现有 capability resolver、step activation、PhaseNode delta 路径补最小回归测试。
-* 明确 PhaseNode entry / successor / terminal callback 三类触发路径当前哪些能工作、哪些需要 pending transition。
+* 明确 successor PhaseNode / terminal callback 推进后继 PhaseNode 两类触发路径当前哪些能工作、哪些需要 pending transition；入口节点必须是 AgentNode，不再作为 PhaseNode 热更新路径。
 * 明确 review 中的风险点哪些是当前行为，哪些是 PhaseNode 完整实现前的 pending gap。
 
 ### PR2：引入 Capability Model 与 CapabilitySurface
@@ -157,10 +159,11 @@
 * 结构化事件的 `delta` 已按 ToolCapability、tool surface、MCP、VFS/mount/default mount 分维度表达 added / removed / changed；旧的顶层 `added/removed/capabilities` 摘要字段已清除，当前状态统一放在 `tool_capabilities.current`、`tool_surface`、`mcp`、`vfs` 等结构化节点下。
 * `ToolCapabilityDirective`、`ToolCapabilityPath`、`ToolCapabilityReduction` 已替代旧的泛化命名，避免工具维度继续占用顶层 Capability 语义。
 * PostgreSQL migration `0026_workflow_capability_config_tool_directives.sql` 会把旧 contract 根字段迁移到 `capability_config.tool_directives`，并从持久化 JSON 中移除旧字段。
+* Lifecycle 入口 PhaseNode 已增加定义层和 run 构造层门禁；`LifecycleNodeType` 默认值收敛为 `AgentNode`，前端新建 lifecycle 的初始节点显式为 `AgentNode`，将任意节点设为入口时会自动把该节点切回 `AgentNode`。
 
 仍待继续：
 
-* 补 PhaseNode entry step 与 successor PhaseNode 在 start-run / terminal callback 两类入口下的更高层端到端测试。这里说的“后续项”不是当前核心实现缺口，而是 API/orchestrator 级 fixture 覆盖，用来防止外层入口未来回归。
+* 补 successor PhaseNode 在 start-run / terminal callback 两类外层推进路径下的更高层端到端测试。这里说的“后续项”不是当前核心实现缺口，而是 API/orchestrator 级 fixture 覆盖，用来防止外层入口未来回归。
 * 将 `CapabilityConfig` 继续扩展到 context overlay、permission policy、resource budget 等维度，并让 `CapabilitySurfaceDelta` 对这些维度也给出 changed 摘要。
 
 ### 命名迁移候选
@@ -203,7 +206,7 @@
 * P1：PhaseNode 目标 capability 集合会丢失 owner 默认 baseline。
 * P1：运行时工具重建使用了过期的 `FlowCapabilities`。
 * P1：工具级 capability directive 变化无法被仅比较 key 的 delta 感知。
-* P2：首个 PhaseNode 激活结果可能被 start-run / callback 路径丢弃。
+* P2：入口 PhaseNode 已改为非法定义；后续风险聚焦在 successor PhaseNode 由 start-run / callback 外层推进时是否正确消费激活结果。
 * P2：能力变更通知未持久化，并且可能静默 no-op。
 * 新增范围：step-level capability changes 可能包含 mount add/remove/change，所以模型必须比 tool capability keys 更宽。
 * 新增范围：旧模型命名需要随 Capability Model / CapabilitySurface / ToolCapability / VfsCapability 分层一起收口，避免概念债继续扩散。

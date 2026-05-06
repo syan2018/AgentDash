@@ -38,18 +38,20 @@
   "lifecycle": {
     "key": "builtin_workflow_admin",
     "name": "Builtin / Workflow Admin Lifecycle",
-    "description": "Plan → Apply：先理解与设计，再执行写入与校验。两步共享同一 agent session（phase_node）。",
+    "description": "Plan → Apply：先由入口 AgentNode 创建会话，再由 Apply PhaseNode 在同一会话内切换能力表面并执行写入。",
     "entry_step_key": "plan",
     "steps": [
       {
         "key": "plan",
         "description": "理解现状并输出调整方案（仅读，不写）。",
-        "workflow_key": "builtin_workflow_admin_plan"
+        "workflow_key": "builtin_workflow_admin_plan",
+        "node_type": "agent_node"
       },
       {
         "key": "apply",
         "description": "执行 Upsert 与校验。",
-        "workflow_key": "builtin_workflow_admin_apply"
+        "workflow_key": "builtin_workflow_admin_apply",
+        "node_type": "phase_node"
       }
     ],
     "edges": [

@@ -410,7 +410,7 @@ pub enum LifecycleNodeType {
 
 impl Default for LifecycleNodeType {
     fn default() -> Self {
-        Self::PhaseNode
+        Self::AgentNode
     }
 }
 
@@ -852,9 +852,18 @@ pub fn validate_lifecycle_definition(
         )?;
     }
 
-    if !steps.iter().any(|step| step.key == entry_step_key) {
+    let entry_step = steps.iter().find(|step| step.key == entry_step_key);
+    if entry_step.is_none() {
         return Err(format!(
             "lifecycle.entry_step_key `{entry_step_key}` 未出现在 lifecycle.steps 中"
+        ));
+    }
+    if matches!(
+        entry_step.map(|step| step.node_type),
+        Some(LifecycleNodeType::PhaseNode)
+    ) {
+        return Err(format!(
+            "lifecycle.entry_step_key `{entry_step_key}` 指向 PhaseNode；入口节点必须是 AgentNode"
         ));
     }
 
@@ -1195,6 +1204,17 @@ mod tests {
         let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
             .expect_err("fail");
         assert!(error.contains("entry_step_key"));
+    }
+
+    #[test]
+    fn validate_lifecycle_definition_rejects_phase_node_entry() {
+        let mut steps = vec![simple_step("start")];
+        steps[0].node_type = LifecycleNodeType::PhaseNode;
+
+        let error = validate_lifecycle_definition("lc", "Lifecycle", "start", &steps, &[])
+            .expect_err("entry phase node should fail");
+        assert!(error.contains("PhaseNode"));
+        assert!(error.contains("AgentNode"));
     }
 
     #[test]

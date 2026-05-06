@@ -322,6 +322,7 @@ pub async fn apply_to_running_session(
     let target_surface = CapabilitySurface {
         flow_capabilities: activation.flow_capabilities.clone(),
         mcp_servers: activation.mcp_servers.clone(),
+        vfs: Some(activation.lifecycle_vfs.clone()),
     };
     let current_surface = session_hub
         .get_current_capability_surface(hook_session.session_id())
@@ -368,6 +369,8 @@ pub async fn apply_to_running_session(
                 "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
                 "mcp_server_count": activation.mcp_servers.len(),
                 "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
+                "mounts": activation.lifecycle_vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>(),
+                "default_mount_id": activation.lifecycle_vfs.default_mount_id.clone(),
             }),
         )
         .await;

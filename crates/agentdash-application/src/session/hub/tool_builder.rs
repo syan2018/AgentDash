@@ -13,7 +13,7 @@
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{ConnectorError, ExecutionContext, FlowCapabilities, SessionMcpServer};
+use agentdash_spi::{ConnectorError, ExecutionContext, FlowCapabilities, SessionMcpServer, Vfs};
 
 use super::SessionHub;
 
@@ -25,6 +25,7 @@ use super::SessionHub;
 pub struct CapabilitySurface {
     pub flow_capabilities: FlowCapabilities,
     pub mcp_servers: Vec<SessionMcpServer>,
+    pub vfs: Option<Vfs>,
 }
 
 impl SessionHub {
@@ -50,6 +51,7 @@ impl SessionHub {
             .map(|turn| CapabilitySurface {
                 flow_capabilities: turn.flow_capabilities.clone(),
                 mcp_servers: turn.session_frame.mcp_servers.clone(),
+                vfs: turn.session_frame.vfs.clone(),
             })
     }
 
@@ -66,12 +68,12 @@ impl SessionHub {
             let sessions = self.sessions.lock().await;
             let runtime = sessions.get(session_id).ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 当前没有运行态，无法热更新 MCP"
+                    "session `{session_id}` 当前没有运行态，无法热更新能力表面"
                 ))
             })?;
             let turn = runtime.turn_state.active_turn().cloned().ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 没有活跃 turn，无法热更新 MCP"
+                    "session `{session_id}` 没有活跃 turn，无法热更新能力表面"
                 ))
             })?;
             (turn, runtime.hook_session.clone())
@@ -80,6 +82,7 @@ impl SessionHub {
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
         session_frame.mcp_servers = surface.mcp_servers.clone();
+        session_frame.vfs = surface.vfs.clone();
         let context = ExecutionContext {
             session: session_frame,
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -100,6 +103,7 @@ impl SessionHub {
         if let Some(runtime) = sessions.get_mut(session_id) {
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
                 turn.session_frame.mcp_servers = surface.mcp_servers;
+                turn.session_frame.vfs = surface.vfs;
                 turn.flow_capabilities = surface.flow_capabilities;
             }
         }

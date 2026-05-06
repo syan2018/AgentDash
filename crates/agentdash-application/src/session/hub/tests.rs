@@ -254,12 +254,29 @@ async fn replace_current_capability_surface_updates_active_turn_flow_capabilitie
         },
         uses_relay: false,
     };
+    let target_vfs = agentdash_spi::Vfs {
+        mounts: vec![agentdash_domain::common::Mount {
+            id: "phase".to_string(),
+            provider: "inline_fs".to_string(),
+            backend_id: "test-backend".to_string(),
+            root_ref: "phase-root".to_string(),
+            capabilities: vec![agentdash_domain::common::MountCapability::Read],
+            default_write: false,
+            display_name: "Phase Mount".to_string(),
+            metadata: serde_json::json!({ "phase": true }),
+        }],
+        default_mount_id: Some("phase".to_string()),
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    };
 
     hub.replace_current_capability_surface(
         &session.id,
         super::CapabilitySurface {
             flow_capabilities: target_flow.clone(),
             mcp_servers: vec![target_mcp.clone()],
+            vfs: Some(target_vfs.clone()),
         },
     )
     .await
@@ -272,6 +289,7 @@ async fn replace_current_capability_surface_updates_active_turn_flow_capabilitie
         .expect("current turn execution state");
     assert_eq!(turn.flow_capabilities, target_flow);
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
+    assert_eq!(turn.session_frame.vfs, Some(target_vfs));
 }
 
 #[derive(Default)]

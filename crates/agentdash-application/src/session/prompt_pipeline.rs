@@ -11,6 +11,9 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
+use super::capability_surface::{
+    CapabilitySurfaceEventInput, build_capability_surface_event_payload, merge_vfs_overlay,
+};
 use super::hook_delegate::HookRuntimeDelegate;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::HookTriggerInput;
@@ -72,7 +75,7 @@ impl SessionHub {
             .map(|transition| transition.surface.clone());
 
         // 三级 fallback：① 请求级（Init/Rehydrate 注入） → ② session 缓存（Continue 复用） → ③ hub 默认
-        let mut effective_vfs = req
+        let base_effective_vfs = req
             .vfs
             .clone()
             .or_else(|| cached_continuation.as_ref().map(|c| c.vfs.clone()))
@@ -82,10 +85,11 @@ impl SessionHub {
                     "prompt 缺少 vfs，且 session 无缓存、SessionHub 未配置默认 vfs".to_string(),
                 )
             })?;
+        let mut effective_vfs = base_effective_vfs.clone();
         if let Some(pending_surface) = pending_capability_surface.as_ref()
             && let Some(pending_vfs) = pending_surface.vfs.as_ref()
         {
-            effective_vfs = merge_pending_surface_vfs(effective_vfs, pending_vfs);
+            effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
         }
         let default_mount_root = effective_vfs
             .default_mount()
@@ -191,9 +195,7 @@ impl SessionHub {
         let discovered_guidelines = self.discover_guidelines(&effective_vfs).await;
 
         // session 级配置：请求未提供时回退到 session_profile 缓存
-        let mcp_servers = if let Some(pending_surface) = pending_capability_surface.as_ref() {
-            pending_surface.mcp_servers.clone()
-        } else if req.mcp_servers.is_empty() {
+        let base_mcp_servers = if req.mcp_servers.is_empty() {
             cached_continuation
                 .as_ref()
                 .map(|c| c.mcp_servers.clone())
@@ -201,17 +203,24 @@ impl SessionHub {
         } else {
             req.mcp_servers.clone()
         };
+        let mcp_servers = if let Some(pending_surface) = pending_capability_surface.as_ref() {
+            pending_surface.mcp_servers.clone()
+        } else {
+            base_mcp_servers.clone()
+        };
+        let base_flow_capabilities = req
+            .flow_capabilities
+            .clone()
+            .or_else(|| {
+                cached_continuation
+                    .as_ref()
+                    .map(|c| c.flow_capabilities.clone())
+            })
+            .unwrap_or_default();
         let flow_capabilities = if let Some(pending_surface) = pending_capability_surface.as_ref() {
             pending_surface.flow_capabilities.clone()
         } else {
-            req.flow_capabilities
-                .clone()
-                .or_else(|| {
-                    cached_continuation
-                        .as_ref()
-                        .map(|c| c.flow_capabilities.clone())
-                })
-                .unwrap_or_default()
+            base_flow_capabilities.clone()
         };
         let effective_capability_keys = flow_capabilities.effective_capability_keys();
         let identity = req.identity.clone();
@@ -297,22 +306,23 @@ impl SessionHub {
             {
                 let _ = hook_session.update_capabilities(last_transition.capability_keys.clone());
             }
+            let mut pending_event_before_surface = CapabilitySurface {
+                flow_capabilities: base_flow_capabilities.clone(),
+                mcp_servers: base_mcp_servers.clone(),
+                vfs: Some(base_effective_vfs.clone()),
+            };
             for transition in &pending_capability_transitions {
-                let payload = serde_json::json!({
-                    "phase_node": transition.phase_node,
-                    "run_id": transition.run_id.to_string(),
-                    "lifecycle_key": transition.lifecycle_key,
-                    "apply_mode": "applied_on_next_turn",
-                    "surface_changed": true,
-                    "capabilities": transition.capability_keys.iter().cloned().collect::<Vec<_>>(),
-                    "enabled_clusters": transition.surface.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
-                    "excluded_tools": transition.surface.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
-                    "mcp_server_count": transition.surface.mcp_servers.len(),
-                    "mcp_servers": transition.surface.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
-                    "mounts": transition.surface.vfs.as_ref().map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()).unwrap_or_default(),
-                    "default_mount_id": transition.surface.vfs.as_ref().and_then(|vfs| vfs.default_mount_id.clone()),
-                    "steering_delivery": { "status": "applied_before_prompt" },
+                let payload = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+                    phase_node: &transition.phase_node,
+                    run_id: Some(transition.run_id.to_string()),
+                    lifecycle_key: Some(&transition.lifecycle_key),
+                    apply_mode: "applied_on_next_turn",
+                    before_surface: Some(&pending_event_before_surface),
+                    after_surface: &transition.surface,
+                    capability_keys: &transition.capability_keys,
+                    steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
                 });
+                pending_event_before_surface = transition.surface.clone();
                 let _ = self
                     .emit_capability_surface_changed(&sid, Some(&turn_id), payload.clone())
                     .await;
@@ -732,32 +742,6 @@ impl SessionHub {
             })
             .collect()
     }
-}
-
-fn merge_pending_surface_vfs(
-    mut base: agentdash_spi::Vfs,
-    pending: &agentdash_spi::Vfs,
-) -> agentdash_spi::Vfs {
-    for mount in &pending.mounts {
-        base.mounts.retain(|existing| existing.id != mount.id);
-        base.mounts.push(mount.clone());
-    }
-    for link in &pending.links {
-        base.links.retain(|existing| {
-            existing.from_mount_id != link.from_mount_id || existing.from_path != link.from_path
-        });
-        base.links.push(link.clone());
-    }
-    if pending.default_mount_id.is_some() {
-        base.default_mount_id = pending.default_mount_id.clone();
-    }
-    if pending.source_project_id.is_some() {
-        base.source_project_id = pending.source_project_id.clone();
-    }
-    if pending.source_story_id.is_some() {
-        base.source_story_id = pending.source_story_id.clone();
-    }
-    base
 }
 
 fn enrich_hook_snapshot_runtime_metadata(

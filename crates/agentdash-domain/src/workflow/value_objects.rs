@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::common::{Mount, MountLink};
 use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
@@ -151,6 +152,47 @@ pub struct WorkflowInjectionSpec {
     pub guidance: Option<String>,
     #[serde(default)]
     pub context_bindings: Vec<WorkflowContextBinding>,
+}
+
+/// 顶层能力模型的声明式配置。
+///
+/// 旧 `capability_directives` 目前仍专门承载工具能力维度；`CapabilityConfig`
+/// 用于承载更宽的运行时能力配置，先从 VFS/mount overlay 开始，后续可扩展
+/// context overlay、permission policy、resource budget 等维度。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+pub struct CapabilityConfig {
+    /// VFS/mount 维度的声明式变更。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mount_directives: Vec<MountDirective>,
+}
+
+/// VFS/mount 能力指令。
+///
+/// 这些指令描述 step/workflow 对资源空间的临时装载、撤销、link 和默认 mount
+/// 切换。实际运行时会先继承当前 session 的 VFS，再按顺序应用这些指令。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum MountDirective {
+    AddMount {
+        mount: Mount,
+    },
+    RemoveMount {
+        mount_id: String,
+    },
+    ReplaceMount {
+        mount: Mount,
+    },
+    AddLink {
+        link: MountLink,
+    },
+    RemoveLink {
+        from_mount_id: String,
+        from_path: String,
+    },
+    SetDefaultMount {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mount_id: Option<String>,
+    },
 }
 
 /// Standalone 场景下 input port 的满足策略。
@@ -324,6 +366,10 @@ pub struct WorkflowContract {
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
+    /// Workflow 级顶层能力配置。`capability_directives` 仍保留为工具能力维度；
+    /// 这里承载 mount/context/policy 等更宽的能力模型。
+    #[serde(default, skip_serializing_if = "CapabilityConfig::is_empty")]
+    pub capability_config: CapabilityConfig,
     /// Workflow 产出声明 — 同时作为完成条件：port gate 门禁根据 `gate_strategy` 检查交付。
     ///
     /// Lifecycle step 绑定 workflow 时自动继承这些 ports 作为默认值，step 编辑器可 override。
@@ -666,6 +712,9 @@ pub struct LifecycleStepDefinition {
     /// Step 级消费声明：该节点从前驱接收的 artifacts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
+    /// Step 级顶层能力配置，应用顺序在 workflow contract 配置之后。
+    #[serde(default, skip_serializing_if = "CapabilityConfig::is_empty")]
+    pub capability_config: CapabilityConfig,
 }
 
 impl LifecycleStepDefinition {
@@ -675,6 +724,12 @@ impl LifecycleStepDefinition {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+}
+
+impl CapabilityConfig {
+    pub fn is_empty(&self) -> bool {
+        self.mount_directives.is_empty()
     }
 }
 
@@ -798,6 +853,10 @@ pub fn validate_lifecycle_definition(
         if !seen_step_keys.insert(step.key.clone()) {
             return Err(format!("lifecycle.steps[{index}].key 重复: {}", step.key));
         }
+        validate_capability_config(
+            &step.capability_config,
+            &format!("lifecycle.steps[{index}].capability_config"),
+        )?;
     }
 
     if !steps.iter().any(|step| step.key == entry_step_key) {
@@ -822,6 +881,11 @@ pub fn validate_lifecycle_definition(
 }
 
 fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<(), String> {
+    validate_capability_config(
+        &contract.capability_config,
+        &format!("{field_path}.capability_config"),
+    )?;
+
     for (index, binding) in contract.injection.context_bindings.iter().enumerate() {
         validate_non_empty(
             &format!("{field_path}.injection.context_bindings[{index}].locator"),
@@ -882,6 +946,44 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
         }
     }
 
+    Ok(())
+}
+
+fn validate_capability_config(config: &CapabilityConfig, field_path: &str) -> Result<(), String> {
+    for (index, directive) in config.mount_directives.iter().enumerate() {
+        let item_path = format!("{field_path}.mount_directives[{index}]");
+        match directive {
+            MountDirective::AddMount { mount } | MountDirective::ReplaceMount { mount } => {
+                validate_identity(&format!("{item_path}.mount.id"), &mount.id)?;
+                validate_non_empty(&format!("{item_path}.mount.provider"), &mount.provider)?;
+                validate_non_empty(
+                    &format!("{item_path}.mount.display_name"),
+                    &mount.display_name,
+                )?;
+            }
+            MountDirective::RemoveMount { mount_id } => {
+                validate_identity(&format!("{item_path}.mount_id"), mount_id)?;
+            }
+            MountDirective::AddLink { link } => {
+                validate_identity(
+                    &format!("{item_path}.link.from_mount_id"),
+                    &link.from_mount_id,
+                )?;
+                validate_identity(&format!("{item_path}.link.to_mount_id"), &link.to_mount_id)?;
+            }
+            MountDirective::RemoveLink {
+                from_mount_id,
+                from_path: _,
+            } => {
+                validate_identity(&format!("{item_path}.from_mount_id"), from_mount_id)?;
+            }
+            MountDirective::SetDefaultMount { mount_id } => {
+                if let Some(mount_id) = mount_id {
+                    validate_identity(&format!("{item_path}.mount_id"), mount_id)?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1085,6 +1187,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capability_config: Default::default(),
         }];
 
         let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
@@ -1102,6 +1205,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1110,6 +1214,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             },
             LifecycleStepDefinition {
                 key: "c".to_string(),
@@ -1118,6 +1223,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             },
         ];
         // a → b → c → b（b-c 形成环，a 是入口无入边）
@@ -1141,6 +1247,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             },
             LifecycleStepDefinition {
                 key: "b".to_string(),
@@ -1149,6 +1256,7 @@ mod tests {
                 node_type: Default::default(),
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             },
         ];
         let edges = vec![LifecycleEdge::artifact("b", "out", "a", "in")];
@@ -1165,6 +1273,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capability_config: Default::default(),
         }
     }
 
@@ -1528,6 +1637,33 @@ mod tests {
         let json = serde_json::to_string(&contract).unwrap();
         let back: WorkflowContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capability_directives, contract.capability_directives);
+    }
+
+    #[test]
+    fn capability_config_mount_directives_roundtrip() {
+        let contract = WorkflowContract {
+            capability_config: CapabilityConfig {
+                mount_directives: vec![MountDirective::AddMount {
+                    mount: Mount {
+                        id: "review".to_string(),
+                        provider: "inline_fs".to_string(),
+                        backend_id: "backend".to_string(),
+                        root_ref: "inline://review".to_string(),
+                        capabilities: vec![crate::common::MountCapability::Read],
+                        default_write: false,
+                        display_name: "Review".to_string(),
+                        metadata: serde_json::Value::Null,
+                    },
+                }],
+            },
+            ..WorkflowContract::default()
+        };
+        let json = serde_json::to_string(&contract).unwrap();
+        assert!(json.contains("capability_config"));
+        assert!(json.contains("mount_directives"));
+
+        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.capability_config, contract.capability_config);
     }
 
     #[test]

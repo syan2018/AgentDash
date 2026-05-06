@@ -2,6 +2,7 @@ pub mod assembler;
 pub mod augmenter;
 pub mod baseline_capabilities;
 pub mod bootstrap;
+pub mod capability_surface;
 pub mod companion_wait;
 pub mod context;
 pub mod continuation;
@@ -35,6 +36,11 @@ pub use assembler::{
     load_available_presets,
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
+pub use capability_surface::{
+    CapabilitySurfaceDelta, CapabilitySurfaceEventInput, NamedEntityDelta, SetDelta,
+    VfsSurfaceDelta, build_capability_surface_event_payload,
+    compose_vfs_with_overlay_and_directives, compute_capability_surface_delta, merge_vfs_overlay,
+};
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;

@@ -12,7 +12,7 @@
   "assignee": "claude-agent",
   "createdAt": "2026-05-06",
   "completedAt": null,
-  "branch": null,
+  "branch": "codex/workflow-capability-surface-iteration",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,

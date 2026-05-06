@@ -2068,6 +2068,7 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
+            capability_config: Default::default(),
         };
         let lifecycle = LifecycleDefinition::new(
             project_id,
@@ -2128,6 +2129,7 @@ mod tests {
                 source_story_id: None,
                 links: Vec::new(),
             },
+            mount_directives: Vec::new(),
         };
 
         let spec = LifecycleNodeSpec {

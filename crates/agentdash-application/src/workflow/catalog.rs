@@ -608,6 +608,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capability_config: Default::default(),
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -616,6 +617,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capability_config: Default::default(),
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -624,6 +626,7 @@ mod tests {
                     node_type: LifecycleNodeType::AgentNode,
                     output_ports: vec![],
                     input_ports: vec![],
+                    capability_config: Default::default(),
                 },
             ],
             edges,
@@ -674,6 +677,7 @@ mod tests {
                         gate_params: None,
                     }],
                     input_ports: vec![],
+                    capability_config: Default::default(),
                 },
                 LifecycleStepDefinition {
                     key: "implement".to_string(),
@@ -693,6 +697,7 @@ mod tests {
                         context_template: None,
                         standalone_fulfillment: Default::default(),
                     }],
+                    capability_config: Default::default(),
                 },
                 LifecycleStepDefinition {
                     key: "check".to_string(),
@@ -712,6 +717,7 @@ mod tests {
                         context_template: None,
                         standalone_fulfillment: Default::default(),
                     }],
+                    capability_config: Default::default(),
                 },
             ],
             vec![
@@ -808,6 +814,7 @@ mod tests {
                 node_type: LifecycleNodeType::AgentNode,
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             }],
             vec![],
         )
@@ -847,6 +854,7 @@ mod tests {
                 node_type: LifecycleNodeType::AgentNode,
                 output_ports: vec![],
                 input_ports: vec![],
+                capability_config: Default::default(),
             }],
             vec![],
         )

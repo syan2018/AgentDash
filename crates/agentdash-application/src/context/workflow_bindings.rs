@@ -114,6 +114,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capability_config: Default::default(),
         };
         let lifecycle = LifecycleDefinition::new(
             Uuid::new_v4(),

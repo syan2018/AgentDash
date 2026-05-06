@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, WorkflowDefinition,
+    CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, MountDirective, WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{FlowCapabilities, Vfs};
@@ -31,7 +31,10 @@ use crate::capability::{
     CompanionSliceMode, SessionWorkflowContext,
 };
 use crate::platform_config::PlatformConfig;
-use crate::session::{CapabilitySurface, SessionHub};
+use crate::session::{
+    CapabilitySurface, CapabilitySurfaceEventInput, SessionHub,
+    build_capability_surface_event_payload, compose_vfs_with_overlay_and_directives,
+};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -109,6 +112,8 @@ pub struct StepActivation {
     pub lifecycle_mount: agentdash_domain::common::Mount,
     /// 完整 Vfs(仅 lifecycle mount;applier 若需要更多 mount,自行扩展)。
     pub lifecycle_vfs: Vfs,
+    /// workflow contract + step 级 mount overlay 指令。
+    pub mount_directives: Vec<MountDirective>,
 }
 
 /// 单 step 激活的计算核心。纯函数,不做 IO。
@@ -184,6 +189,11 @@ pub fn activate_step_with_platform(
         source_story_id: None,
         links: Vec::new(),
     };
+    let mut mount_directives = input
+        .workflow
+        .map(|workflow| workflow.contract.capability_config.mount_directives.clone())
+        .unwrap_or_default();
+    mount_directives.extend(input.active_step.capability_config.mount_directives.clone());
 
     // ── 5. kickoff prompt fragment ──
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
@@ -195,6 +205,7 @@ pub fn activate_step_with_platform(
         kickoff_prompt,
         lifecycle_mount,
         lifecycle_vfs,
+        mount_directives,
     }
 }
 
@@ -302,7 +313,11 @@ pub fn apply_to_prompt_request(
     activation: &StepActivation,
     req: &mut crate::session::PromptSessionRequest,
 ) {
-    req.vfs = Some(activation.lifecycle_vfs.clone());
+    req.vfs = Some(compose_vfs_with_overlay_and_directives(
+        req.vfs.as_ref(),
+        &activation.lifecycle_vfs,
+        &activation.mount_directives,
+    ));
     req.flow_capabilities = Some(activation.flow_capabilities.clone());
     req.mcp_servers = activation.mcp_servers.clone();
 }
@@ -334,7 +349,7 @@ pub async fn apply_to_running_session(
     }
 
     session_hub
-        .replace_current_capability_surface(hook_session.session_id(), target_surface)
+        .replace_current_capability_surface(hook_session.session_id(), target_surface.clone())
         .await
         .map_err(|error| format!("Phase node 能力表面热更新失败: {error}"))?;
 
@@ -348,7 +363,8 @@ pub async fn apply_to_running_session(
         turn_id,
         phase_node_key,
         &notification_delta,
-        surface_changed,
+        current_surface.as_ref(),
+        &target_surface,
         "live",
     )
     .await?;
@@ -360,9 +376,10 @@ pub fn build_capability_surface_for_activation(
     activation: &StepActivation,
     base_surface: Option<&CapabilitySurface>,
 ) -> CapabilitySurface {
-    let vfs = merge_activation_vfs(
+    let vfs = compose_vfs_with_overlay_and_directives(
         base_surface.and_then(|surface| surface.vfs.as_ref()),
-        activation,
+        &activation.lifecycle_vfs,
+        &activation.mount_directives,
     );
     CapabilitySurface {
         flow_capabilities: activation.flow_capabilities.clone(),
@@ -378,7 +395,8 @@ async fn emit_capability_surface_change(
     turn_id: Option<&str>,
     phase_node_key: &str,
     notification_delta: &CapabilityDelta,
-    surface_changed: bool,
+    before_surface: Option<&CapabilitySurface>,
+    after_surface: &CapabilitySurface,
     apply_mode: &str,
 ) -> Result<(), String> {
     let delta_md = crate::capability::build_capability_delta_markdown(
@@ -407,21 +425,26 @@ async fn emit_capability_surface_change(
         }
     };
 
-    let capability_surface_event = serde_json::json!({
-        "phase_node": phase_node_key,
-        "added": notification_delta.added.clone(),
-        "removed": notification_delta.removed.clone(),
-        "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
-        "apply_mode": apply_mode,
-        "surface_changed": surface_changed,
-        "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
-        "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
-        "mcp_server_count": activation.mcp_servers.len(),
-        "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
-        "mounts": activation.lifecycle_vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>(),
-        "default_mount_id": activation.lifecycle_vfs.default_mount_id.clone(),
-        "steering_delivery": steering_delivery,
-    });
+    let mut capability_surface_event =
+        build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+            phase_node: phase_node_key,
+            run_id: None,
+            lifecycle_key: None,
+            apply_mode,
+            before_surface,
+            after_surface,
+            capability_keys: &activation.capability_keys,
+            steering_delivery,
+        });
+    if let Some(object) = capability_surface_event.as_object_mut() {
+        object.insert(
+            "steering_capability_delta".to_string(),
+            serde_json::json!({
+                "added": notification_delta.added.clone(),
+                "removed": notification_delta.removed.clone(),
+            }),
+        );
+    }
 
     session_hub
         .emit_capability_surface_changed(session_id, turn_id, capability_surface_event.clone())
@@ -433,25 +456,6 @@ async fn emit_capability_surface_change(
         .await;
 
     Ok(())
-}
-
-fn merge_activation_vfs(base_vfs: Option<&Vfs>, activation: &StepActivation) -> Vfs {
-    let mut vfs = base_vfs
-        .cloned()
-        .unwrap_or_else(|| activation.lifecycle_vfs.clone());
-    vfs.mounts
-        .retain(|mount| mount.id != activation.lifecycle_mount.id);
-    vfs.mounts.push(activation.lifecycle_mount.clone());
-    for link in &activation.lifecycle_vfs.links {
-        vfs.links.retain(|existing| {
-            existing.from_mount_id != link.from_mount_id || existing.from_path != link.from_path
-        });
-        vfs.links.push(link.clone());
-    }
-    if vfs.default_mount_id.is_none() {
-        vfs.default_mount_id = activation.lifecycle_vfs.default_mount_id.clone();
-    }
-    vfs
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
@@ -511,9 +515,10 @@ pub fn empty_presets() -> AvailableMcpPresets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        LifecycleStepDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionSource,
+        CapabilityConfig, LifecycleStepDefinition, MountDirective, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
     };
 
     fn sample_step(
@@ -526,6 +531,7 @@ mod tests {
             node_type: Default::default(),
             output_ports,
             input_ports: vec![],
+            capability_config: Default::default(),
         }
     }
 
@@ -549,6 +555,19 @@ mod tests {
     fn test_platform() -> PlatformConfig {
         PlatformConfig {
             mcp_base_url: Some("http://localhost:3001".to_string()),
+        }
+    }
+
+    fn mount(id: &str, provider: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            backend_id: "test-backend".to_string(),
+            root_ref: format!("{provider}://{id}"),
+            capabilities: vec![MountCapability::Read],
+            default_write: false,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
         }
     }
 
@@ -700,6 +719,77 @@ mod tests {
     }
 
     #[test]
+    fn step_mount_directives_change_capability_surface_vfs() {
+        let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+        let mut step = sample_step(vec![]);
+        step.capability_config = CapabilityConfig {
+            mount_directives: vec![
+                MountDirective::RemoveMount {
+                    mount_id: "secret".to_string(),
+                },
+                MountDirective::AddMount {
+                    mount: mount("review", "inline_fs"),
+                },
+                MountDirective::SetDefaultMount {
+                    mount_id: Some("review".to_string()),
+                },
+            ],
+        };
+        let project_id = Uuid::new_v4();
+        let input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&workflow),
+            run_id: Uuid::new_v4(),
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            capability_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+        let activation = activate_step_with_platform(&input, &test_platform());
+        let base_surface = CapabilitySurface {
+            flow_capabilities: activation.flow_capabilities.clone(),
+            mcp_servers: activation.mcp_servers.clone(),
+            vfs: Some(Vfs {
+                mounts: vec![mount("workspace", "relay_fs"), mount("secret", "inline_fs")],
+                default_mount_id: Some("workspace".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            }),
+        };
+
+        let target = build_capability_surface_for_activation(&activation, Some(&base_surface));
+        let target_vfs = target.vfs.as_ref().expect("target vfs");
+        let mount_ids = target_vfs
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(mount_ids.contains("workspace"));
+        assert!(mount_ids.contains("review"));
+        assert!(mount_ids.contains("lifecycle"));
+        assert!(!mount_ids.contains("secret"));
+        assert_eq!(target_vfs.default_mount_id.as_deref(), Some("review"));
+        assert_ne!(base_surface, target);
+
+        let delta = crate::session::compute_capability_surface_delta(
+            Some(&base_surface),
+            &target,
+            &activation.capability_keys,
+        );
+        assert!(delta.vfs.mounts.added.contains(&"review".to_string()));
+        assert!(delta.vfs.mounts.removed.contains(&"secret".to_string()));
+        assert!(delta.vfs.default_mount.changed);
+    }
+
+    #[test]
     fn activate_step_baseline_override_takes_precedence_over_contract() {
         let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
         let step = sample_step(vec![]);
@@ -799,6 +889,7 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
+            capability_config: Default::default(),
         };
         let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();

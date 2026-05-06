@@ -20,8 +20,8 @@ use uuid::Uuid;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node_with_audit,
-    finalize_request,
+    CapabilitySurfaceEventInput, LifecycleNodeSpec, PromptSessionRequest, UserPromptInput,
+    build_capability_surface_event_payload, compose_lifecycle_node_with_audit, finalize_request,
 };
 
 use super::session_association::{
@@ -643,21 +643,24 @@ impl LifecycleOrchestrator {
                 continue;
             }
 
-            let event = serde_json::json!({
-                "phase_node": phase.node_key,
-                "run_id": run.id.to_string(),
-                "lifecycle_key": phase.lifecycle_key,
-                "apply_mode": "pending_next_turn",
-                "surface_changed": surface_changed,
-                "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
-                "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
-                "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
-                "mcp_server_count": activation.mcp_servers.len(),
-                "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
-                "mounts": surface.vfs.as_ref().map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()).unwrap_or_default(),
-                "default_mount_id": surface.vfs.as_ref().and_then(|vfs| vfs.default_mount_id.clone()),
-                "steering_delivery": { "status": "deferred_until_next_turn" },
+            let mut event = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+                phase_node: &phase.node_key,
+                run_id: Some(run.id.to_string()),
+                lifecycle_key: Some(&phase.lifecycle_key),
+                apply_mode: "pending_next_turn",
+                before_surface: base_surface.as_ref(),
+                after_surface: &surface,
+                capability_keys: &activation.capability_keys,
+                steering_delivery: serde_json::json!({
+                    "status": "deferred_until_next_turn"
+                }),
             });
+            if let Some(object) = event.as_object_mut() {
+                object.insert(
+                    "surface_changed".to_string(),
+                    serde_json::json!(surface_changed),
+                );
+            }
             if let Err(error) = self
                 .session_hub
                 .emit_capability_surface_changed(&run.session_id, turn_id, event)

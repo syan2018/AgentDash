@@ -16,6 +16,7 @@ import type {
   SessionContextSnapshot,
   Story,
   TaskSessionExecutorSummary,
+  WorkflowRun,
 } from "../../types";
 
 export interface WorkspaceData {
@@ -28,6 +29,7 @@ export interface WorkspaceData {
   vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
+  workflowRuns: WorkflowRun[];
   activeCanvasId: string | null;
 }
 

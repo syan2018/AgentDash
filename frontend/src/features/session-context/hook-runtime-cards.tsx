@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import type {
   ActiveWorkflowHookMetadata,
   HookInjection,
@@ -362,20 +362,5 @@ function HookTraceEntryCard({ entry }: { entry: HookTraceEntry }) {
         </div>
       )}
     </div>
-  );
-}
-
-// ─── Shared: Raw Diagnostics Wrapper ───────────────────
-
-export function RawDiagnosticsSection({ children }: { children: ReactNode }) {
-  return (
-    <details className="rounded-[12px] border border-dashed border-border bg-background/60 px-3 py-2">
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-        查看原始结构化诊断信息
-      </summary>
-      <div className="mt-3 space-y-3">
-        {children}
-      </div>
-    </details>
   );
 }

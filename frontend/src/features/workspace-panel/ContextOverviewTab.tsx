@@ -1,27 +1,26 @@
 /**
  * ContextOverviewTab — 右栏 "上下文" Tab 内容
  *
- * 将原来 context-panels.tsx 中 ProjectSessionContextPanel / StorySessionContextPanel
- * 的核心内容（Agent 摘要、共享目录、会话行为、Hook Runtime 等）以始终展开的
- * 滚动列表形态呈现，不再有折叠/展开切换。
+ * 展示当前 Session 的 owner、Agent、共享资料、会话编排与 Workflow 上下文。
  */
 
 import { useState } from "react";
 import { VfsBrowser } from "../vfs";
 import { SurfaceCard } from "../session-context";
-import {
-  HookRuntimeSurfaceCard,
-  HookRuntimePendingActionsCard,
-  HookRuntimeTraceCard,
-} from "../session-context";
+import { RUN_STATUS_LABEL, STEP_STATUS_LABEL } from "../workflow/shared-labels";
 import type {
+  ActiveWorkflowHookMetadata,
   ExecutionVfs,
+  HookInjection,
   HookSessionRuntimeInfo,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
+  SessionComposition,
   SessionContextSnapshot,
   Story,
   TaskSessionExecutorSummary,
+  WorkflowRun,
+  WorkflowStepState,
 } from "../../types";
 
 // ─── Props ──────────────────────────────────────────────
@@ -35,6 +34,7 @@ export interface ContextOverviewTabProps {
   vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
+  workflowRuns: WorkflowRun[];
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -53,6 +53,54 @@ function describeExecutorSource(source: string): string {
   return source;
 }
 
+function hasCompositionContent(composition: SessionComposition | null | undefined): boolean {
+  return Boolean(
+    composition?.persona_label
+    || composition?.persona_prompt
+    || composition?.workflow_steps.length
+    || composition?.required_context_blocks.length,
+  );
+}
+
+function resolveActiveRun(
+  workflowRuns: WorkflowRun[],
+  activeWorkflow: ActiveWorkflowHookMetadata | null,
+): WorkflowRun | null {
+  if (activeWorkflow) {
+    const matched = workflowRuns.find((run) => run.id === activeWorkflow.run_id);
+    if (matched) return matched;
+  }
+  return (
+    workflowRuns.find((run) => run.status === "running")
+    ?? workflowRuns.find((run) => run.status === "ready")
+    ?? workflowRuns[0]
+    ?? null
+  );
+}
+
+function resolveActiveStepState(
+  run: WorkflowRun | null,
+  activeWorkflow: ActiveWorkflowHookMetadata | null,
+): WorkflowStepState | null {
+  if (!run) return null;
+  if (activeWorkflow) {
+    const matched = run.step_states.find((step) => step.step_key === activeWorkflow.step_key);
+    if (matched) return matched;
+  }
+  const activeKey = run.active_node_keys?.[0] ?? null;
+  if (activeKey) {
+    const matched = run.step_states.find((step) => step.step_key === activeKey);
+    if (matched) return matched;
+  }
+  return run.step_states.find((step) => step.status === "running")
+    ?? run.step_states.find((step) => step.status === "ready")
+    ?? null;
+}
+
+function isWorkflowContextInjection(injection: HookInjection): boolean {
+  return injection.slot === "workflow" || injection.slot === "workflow_context";
+}
+
 // ─── Component ──────────────────────────────────────────
 
 export function ContextOverviewTab({
@@ -64,9 +112,11 @@ export function ContextOverviewTab({
   vfs,
   hookRuntime,
   sessionCapabilities,
+  workflowRuns,
 }: ContextOverviewTabProps) {
   const isProjectLevel = contextSnapshot?.owner_context.owner_level === "project";
   const title = isProjectLevel ? ownerProjectName : (ownerStory?.title ?? "会话上下文");
+  const composition = contextSnapshot?.effective.session_composition ?? null;
 
   if (!contextSnapshot && !ownerStory) {
     return (
@@ -107,15 +157,19 @@ export function ContextOverviewTab({
         runtimeSurface={runtimeSurface}
       />
 
+      <WorkflowContextCard
+        hookRuntime={hookRuntime}
+        workflowRuns={workflowRuns}
+        vfs={vfs}
+        composition={composition}
+      />
+
+      <SessionCompositionCard composition={composition} />
+
       {/* Session 能力基线 */}
       {sessionCapabilities && (
         <SessionCapabilitiesCard capabilities={sessionCapabilities} />
       )}
-
-      {/* Hook Runtime */}
-      {hookRuntime && <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />}
-      {hookRuntime && <HookRuntimePendingActionsCard hookRuntime={hookRuntime} />}
-      {hookRuntime && <HookRuntimeTraceCard hookRuntime={hookRuntime} />}
 
       {/* 技术摘要 */}
       {contextSnapshot && (
@@ -125,6 +179,227 @@ export function ContextOverviewTab({
         />
       )}
     </div>
+  );
+}
+
+function WorkflowContextCard({
+  hookRuntime,
+  workflowRuns,
+  vfs,
+  composition,
+}: {
+  hookRuntime: HookSessionRuntimeInfo | null;
+  workflowRuns: WorkflowRun[];
+  vfs: ExecutionVfs | null;
+  composition: SessionComposition | null;
+}) {
+  const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
+  const activeRun = resolveActiveRun(workflowRuns, activeWorkflow);
+  const activeStep = resolveActiveStepState(activeRun, activeWorkflow);
+  const lifecycleMounts = vfs?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
+  const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
+  const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
+
+  if (!activeWorkflow && !activeRun && lifecycleMounts.length === 0 && workflowInjections.length === 0 && !hasLegacySteps) {
+    return (
+      <SurfaceCard eyebrow="Workflow 上下文" title="未绑定活跃 Workflow">
+        <p className="text-xs text-muted-foreground">
+          当前会话没有解析到 lifecycle run、workflow_context 注入项或 workflow 步骤。
+        </p>
+      </SurfaceCard>
+    );
+  }
+
+  const completedCount = activeRun?.step_states.filter((step) => step.status === "completed").length ?? 0;
+  const totalCount = activeRun?.step_states.length ?? 0;
+
+  return (
+    <SurfaceCard
+      eyebrow="Workflow 上下文"
+      title={activeWorkflow?.lifecycle_name ?? activeWorkflow?.primary_workflow_name ?? "当前 Workflow"}
+    >
+      <div className="flex flex-wrap gap-2">
+        {activeRun && (
+          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+            Run · {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
+          </span>
+        )}
+        {activeWorkflow?.workflow_key && (
+          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+            Workflow · {activeWorkflow.workflow_key}
+          </span>
+        )}
+        {activeStep && (
+          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+            Step · {STEP_STATUS_LABEL[activeStep.status] ?? activeStep.status}
+          </span>
+        )}
+        {totalCount > 0 && (
+          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+            进度 {completedCount}/{totalCount}
+          </span>
+        )}
+        {workflowInjections.length > 0 && (
+          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+            注入 {workflowInjections.length}
+          </span>
+        )}
+      </div>
+
+      {(activeWorkflow || activeStep) && (
+        <div className="mt-3 space-y-1 rounded-[10px] border border-border bg-secondary/20 px-3 py-2 text-xs">
+          {activeWorkflow && (
+            <>
+              <p className="font-medium text-foreground">{activeWorkflow.step_title}</p>
+              <p className="text-[11px] text-muted-foreground">
+                lifecycle: {activeWorkflow.lifecycle_key} · run: {activeWorkflow.run_id.slice(0, 8)}
+              </p>
+            </>
+          )}
+          {activeStep?.summary && (
+            <p className="text-[11px] leading-5 text-muted-foreground">{activeStep.summary}</p>
+          )}
+          {activeRun?.active_node_keys && activeRun.active_node_keys.length > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              Active nodes: {activeRun.active_node_keys.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
+      {lifecycleMounts.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Lifecycle Mounts
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {lifecycleMounts.map((mount) => (
+              <span
+                key={mount.id}
+                className="rounded-[8px] border border-border bg-secondary/35 px-2 py-1 text-[11px] text-muted-foreground"
+              >
+                {mount.display_name || mount.id}
+                <span className="ml-1 font-mono text-[10px]">/{mount.id}</span>
+                {mount.default_write && <span className="ml-1 text-amber-600">可写</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {workflowInjections.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            Workflow 注入项
+          </p>
+          {workflowInjections.slice(0, 4).map((injection, index) => (
+            <WorkflowInjectionPreview
+              key={`${injection.slot}-${injection.source}-${index}`}
+              injection={injection}
+            />
+          ))}
+          {workflowInjections.length > 4 && (
+            <p className="text-[11px] text-muted-foreground">
+              另有 {workflowInjections.length - 4} 条 workflow 注入项。
+            </p>
+          )}
+        </div>
+      )}
+    </SurfaceCard>
+  );
+}
+
+function WorkflowInjectionPreview({ injection }: { injection: HookInjection }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = injection.content.length > 180
+    ? `${injection.content.slice(0, 180)}...`
+    : injection.content;
+
+  return (
+    <div className="overflow-hidden rounded-[8px] border border-border bg-background/70">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-secondary/35"
+      >
+        <span className="rounded-[4px] border border-border bg-secondary/60 px-1.5 py-0 text-[9px] font-mono text-muted-foreground">
+          {injection.slot}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
+          {injection.source}
+        </span>
+        <span className="text-[10px] text-muted-foreground/50">{expanded ? "收起" : "展开"}</span>
+      </button>
+      <pre className="max-h-56 overflow-auto whitespace-pre-wrap border-t border-border/50 px-2.5 py-2 text-[11px] leading-5 text-muted-foreground">
+        {expanded ? injection.content : preview}
+      </pre>
+    </div>
+  );
+}
+
+function SessionCompositionCard({
+  composition,
+}: {
+  composition: SessionComposition | null;
+}) {
+  if (!hasCompositionContent(composition)) {
+    return (
+      <SurfaceCard eyebrow="会话编排" title="默认协作方式">
+        <p className="text-xs text-muted-foreground">
+          当前会话没有配置显式 persona、协作步骤或必需上下文块。
+        </p>
+      </SurfaceCard>
+    );
+  }
+
+  return (
+    <SurfaceCard eyebrow="会话编排" title={composition?.persona_label || "当前生效编排"}>
+      {composition?.persona_prompt && (
+        <p className="text-xs leading-5 text-muted-foreground">
+          {composition.persona_prompt.length > 180
+            ? `${composition.persona_prompt.slice(0, 180)}...`
+            : composition.persona_prompt}
+        </p>
+      )}
+      {composition?.workflow_steps && composition.workflow_steps.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            协作步骤
+          </p>
+          <ol className="space-y-1 pl-4 text-xs text-foreground/85">
+            {composition.workflow_steps.map((step, index) => (
+              <li key={`${step}-${index}`} className="list-decimal">
+                {step}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {composition?.required_context_blocks && composition.required_context_blocks.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            必需上下文块
+          </p>
+          <div className="space-y-1.5">
+            {composition.required_context_blocks.map((block, index) => (
+              <div
+                key={`${block.title}-${index}`}
+                className="rounded-[8px] border border-border bg-secondary/25 px-2.5 py-2"
+              >
+                <p className="text-xs font-medium text-foreground">{block.title}</p>
+                {block.content && (
+                  <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                    {block.content.length > 180
+                      ? `${block.content.slice(0, 180)}...`
+                      : block.content}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </SurfaceCard>
   );
 }
 

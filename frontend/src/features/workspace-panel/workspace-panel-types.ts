@@ -6,6 +6,7 @@ import type {
   SessionContextSnapshot,
   Story,
   TaskSessionExecutorSummary,
+  WorkflowRun,
 } from "../../types";
 
 /** WorkspacePanel 对外命令式 API */
@@ -26,6 +27,7 @@ export interface WorkspacePanelProps {
   vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
+  workflowRuns: WorkflowRun[];
 
   /** Canvas Tab 所需数据 */
   activeCanvasId: string | null;

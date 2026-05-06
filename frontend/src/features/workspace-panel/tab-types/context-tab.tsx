@@ -16,6 +16,7 @@ function ContextTabContent() {
       vfs={data.vfs}
       hookRuntime={data.hookRuntime}
       sessionCapabilities={data.sessionCapabilities}
+      workflowRuns={data.workflowRuns}
     />
   );
 }

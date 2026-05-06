@@ -1,11 +1,16 @@
 /* eslint-disable react-refresh/only-export-components */
-import { ContextInspectorPanel } from "../../session-context";
+import {
+  ContextInspectorPanel,
+  HookRuntimePendingActionsCard,
+  HookRuntimeSurfaceCard,
+  HookRuntimeTraceCard,
+} from "../../session-context";
 import { useWorkspaceData } from "../workspace-data-context";
 import type { TabTypeDescriptor } from "../tab-type-registry";
 import { InspectorIcon } from "./icons";
 
 function InspectorTabContent() {
-  const { sessionId } = useWorkspaceData();
+  const { sessionId, hookRuntime } = useWorkspaceData();
   if (!sessionId) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
@@ -15,7 +20,20 @@ function InspectorTabContent() {
       </div>
     );
   }
-  return <ContextInspectorPanel sessionId={sessionId} />;
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {hookRuntime && (
+        <div className="max-h-[45vh] shrink-0 space-y-3 overflow-y-auto border-b border-border bg-secondary/10 p-3">
+          <HookRuntimeSurfaceCard hookRuntime={hookRuntime} />
+          <HookRuntimePendingActionsCard hookRuntime={hookRuntime} />
+          <HookRuntimeTraceCard hookRuntime={hookRuntime} />
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ContextInspectorPanel sessionId={sessionId} />
+      </div>
+    </div>
+  );
 }
 
 export const inspectorTabType: TabTypeDescriptor = {

@@ -657,6 +657,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             vfs={sessionVfs}
             hookRuntime={activeHookRuntime}
             sessionCapabilities={sessionCapabilities}
+            workflowRuns={lifecycleRuns}
             activeCanvasId={activeCanvasId}
           />
         </Panel>

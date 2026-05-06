@@ -30,6 +30,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       vfs,
       hookRuntime,
       sessionCapabilities,
+      workflowRuns,
       activeCanvasId,
     } = props;
 
@@ -101,11 +102,12 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       vfs,
       hookRuntime,
       sessionCapabilities,
+      workflowRuns,
       activeCanvasId,
     }), [
       sessionId, contextSnapshot, ownerStory, ownerProjectName,
       executorSummary, runtimeSurface, vfs, hookRuntime,
-      sessionCapabilities, activeCanvasId,
+      sessionCapabilities, workflowRuns, activeCanvasId,
     ]);
 
     // 渲染当前激活 Tab 的内容

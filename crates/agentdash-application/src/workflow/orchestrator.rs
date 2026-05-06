@@ -151,6 +151,41 @@ impl LifecycleOrchestrator {
         self.activate_ready_nodes(run_id, project_id).await
     }
 
+    /// 将已激活的 PhaseNode 应用到 lifecycle run 绑定的 root session。
+    ///
+    /// 适用于 start_run / terminal callback 等没有直接持有 live hook_session 的路径。
+    /// 若 root session 当前没有可热更的运行态，会返回 warning，后续可升级为 pending
+    /// transition queue。
+    pub async fn apply_activated_phase_nodes_for_run_session(
+        &self,
+        run: &LifecycleRun,
+        phases: &[ActivatedPhaseNode],
+        turn_id: Option<&str>,
+    ) -> Vec<String> {
+        if phases.is_empty() {
+            return Vec::new();
+        }
+
+        match self
+            .session_hub
+            .ensure_hook_session_runtime(&run.session_id, turn_id)
+            .await
+        {
+            Ok(Some(hook_session)) => {
+                self.apply_activated_phase_nodes(&hook_session, turn_id, run, phases)
+                    .await
+            }
+            Ok(None) => vec![format!(
+                "PhaseNode 已激活，但 root session `{}` 没有 hook runtime，暂未应用能力表面",
+                run.session_id
+            )],
+            Err(error) => vec![format!(
+                "PhaseNode 已激活，但 root session `{}` hook runtime 加载失败: {error}",
+                run.session_id
+            )],
+        }
+    }
+
     /// `complete_lifecycle_node` 的统一 workflow 入口。
     ///
     /// 负责串联：
@@ -770,6 +805,33 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
                     activated = ?result.activated_nodes.iter().map(|n| &n.node_key).collect::<Vec<_>>(),
                     "Orchestrator callback: activated successor nodes"
                 );
+                if !result.activated_phase_nodes.is_empty() {
+                    match self.load_run(result.run_id).await {
+                        Ok(run) => {
+                            let warnings = self
+                                .apply_activated_phase_nodes_for_run_session(
+                                    &run,
+                                    &result.activated_phase_nodes,
+                                    None,
+                                )
+                                .await;
+                            if !warnings.is_empty() {
+                                warn!(
+                                    run_id = %result.run_id,
+                                    warnings = ?warnings,
+                                    "Orchestrator callback: PhaseNode apply produced warnings"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            warn!(
+                                run_id = %result.run_id,
+                                error = %error,
+                                "Orchestrator callback: 无法加载 run 以应用 PhaseNode"
+                            );
+                        }
+                    }
+                }
             }
             Ok(None) => {}
             Err(e) => {

@@ -256,16 +256,36 @@ pub async fn start_lifecycle_run(
         state.repos.clone(),
         state.config.platform_config.clone(),
     );
-    if let Err(error) = orchestrator
+    match orchestrator
         .after_node_advanced(run.id, run.project_id)
         .await
     {
-        warn!(
-            run_id = %run.id,
-            project_id = %run.project_id,
-            error = %error,
-            "start_lifecycle_run 已创建 run，但触发首批 node 编排失败"
-        );
+        Ok(Some(result)) => {
+            let warnings = orchestrator
+                .apply_activated_phase_nodes_for_run_session(
+                    &run,
+                    &result.activated_phase_nodes,
+                    None,
+                )
+                .await;
+            if !warnings.is_empty() {
+                warn!(
+                    run_id = %run.id,
+                    project_id = %run.project_id,
+                    warnings = ?warnings,
+                    "start_lifecycle_run 已创建 run，但首批 PhaseNode 能力表面应用存在 warning"
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            warn!(
+                run_id = %run.id,
+                project_id = %run.project_id,
+                error = %error,
+                "start_lifecycle_run 已创建 run，但触发首批 node 编排失败"
+            );
+        }
     }
 
     let latest_run = state

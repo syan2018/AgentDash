@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use agentdash_agent_protocol::ContentBlock;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
+use uuid::Uuid;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -60,6 +61,37 @@ impl PromptSessionRequest {
             post_turn_handler: None,
         }
     }
+}
+
+/// 当前 session/turn 已解析后的能力表面。
+///
+/// `CapabilitySurface` 是能力模型在运行时的生效投影：工具簇裁剪、MCP server 列表
+/// 和 VFS/mount 表必须作为一个整体比较、持久化和应用，避免 key 集合没变但工具或
+/// mount 已经漂移。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilitySurface {
+    pub flow_capabilities: agentdash_spi::FlowCapabilities,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub vfs: Option<Vfs>,
+}
+
+/// PhaseNode 已激活但当前没有 live turn 可热更新时，暂存在 session meta 中的切换。
+///
+/// 下一次 prompt 进入 pipeline 时会按顺序消费这些 transition，把最后一个 surface
+/// 作为本轮生效 surface，并清空队列。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingCapabilitySurfaceTransition {
+    pub id: String,
+    pub run_id: Uuid,
+    pub lifecycle_key: String,
+    pub phase_node: String,
+    pub capability_keys: BTreeSet<String>,
+    pub surface: CapabilitySurface,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_turn_id: Option<String>,
 }
 
 /// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。
@@ -270,6 +302,8 @@ pub struct SessionMeta {
     pub visible_canvas_mount_ids: Vec<String>,
     #[serde(default)]
     pub bootstrap_state: SessionBootstrapState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_capability_surface_transitions: Vec<PendingCapabilitySurfaceTransition>,
 }
 
 /// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。

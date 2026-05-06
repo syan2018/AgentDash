@@ -35,7 +35,6 @@ mod tool_builder;
 mod tests;
 
 pub(super) use hook_dispatch::HookTriggerInput;
-pub(crate) use tool_builder::CapabilitySurface;
 
 #[derive(Clone)]
 pub struct SessionHub {

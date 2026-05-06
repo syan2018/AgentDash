@@ -33,7 +33,8 @@ use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
     RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    apply_to_running_session, build_step_projector_from_repos, load_port_output_map,
+    apply_to_running_session, build_capability_surface_for_activation,
+    build_step_projector_from_repos, load_port_output_map,
 };
 
 #[derive(Debug)]
@@ -154,8 +155,8 @@ impl LifecycleOrchestrator {
     /// 将已激活的 PhaseNode 应用到 lifecycle run 绑定的 root session。
     ///
     /// 适用于 start_run / terminal callback 等没有直接持有 live hook_session 的路径。
-    /// 若 root session 当前没有可热更的运行态，会返回 warning，后续可升级为 pending
-    /// transition queue。
+    /// 若 root session 当前没有可热更的 live turn，会把解析后的 CapabilitySurface 暂存到
+    /// session meta，下一轮 prompt 进入 pipeline 时再应用。
     pub async fn apply_activated_phase_nodes_for_run_session(
         &self,
         run: &LifecycleRun,
@@ -166,24 +167,45 @@ impl LifecycleOrchestrator {
             return Vec::new();
         }
 
-        match self
+        if self
             .session_hub
-            .ensure_hook_session_runtime(&run.session_id, turn_id)
+            .get_current_capability_surface(&run.session_id)
             .await
+            .is_some()
         {
-            Ok(Some(hook_session)) => {
-                self.apply_activated_phase_nodes(&hook_session, turn_id, run, phases)
+            return match self
+                .session_hub
+                .ensure_hook_session_runtime(&run.session_id, turn_id)
+                .await
+            {
+                Ok(Some(hook_session)) => {
+                    self.apply_activated_phase_nodes(&hook_session, turn_id, run, phases)
+                        .await
+                }
+                Ok(None) | Err(_) => {
+                    self.queue_pending_phase_nodes(
+                        run,
+                        phases,
+                        turn_id,
+                        SessionOwnerCtx::Project {
+                            project_id: run.project_id,
+                        },
+                    )
                     .await
-            }
-            Ok(None) => vec![format!(
-                "PhaseNode 已激活，但 root session `{}` 没有 hook runtime，暂未应用能力表面",
-                run.session_id
-            )],
-            Err(error) => vec![format!(
-                "PhaseNode 已激活，但 root session `{}` hook runtime 加载失败: {error}",
-                run.session_id
-            )],
+                }
+            };
         }
+
+        let owner_ctx = self
+            .session_hub
+            .get_hook_session_runtime(&run.session_id)
+            .await
+            .map(|hook_session| resolve_owner_scope(&hook_session.snapshot(), run.project_id))
+            .unwrap_or(SessionOwnerCtx::Project {
+                project_id: run.project_id,
+            });
+        self.queue_pending_phase_nodes(run, phases, turn_id, owner_ctx)
+            .await
     }
 
     /// `complete_lifecycle_node` 的统一 workflow 入口。
@@ -552,6 +574,102 @@ impl LifecycleOrchestrator {
                     warnings.push(error);
                 }
             }
+        }
+
+        warnings
+    }
+
+    async fn queue_pending_phase_nodes(
+        &self,
+        run: &LifecycleRun,
+        phases: &[ActivatedPhaseNode],
+        turn_id: Option<&str>,
+        owner_ctx: SessionOwnerCtx,
+    ) -> Vec<String> {
+        let available_presets =
+            crate::session::load_available_presets(&self.repos, run.project_id).await;
+        let mut base_surface = self
+            .session_hub
+            .get_latest_capability_surface(&run.session_id)
+            .await;
+        let mut warnings = Vec::new();
+
+        for phase in phases {
+            let agent_mcp_servers = base_surface
+                .as_ref()
+                .map(|surface| agent_mcp_entries_from_servers(&surface.mcp_servers))
+                .unwrap_or_default();
+            let activation = activate_step_with_platform(
+                &crate::workflow::StepActivationInput {
+                    owner_ctx,
+                    active_step: &phase.step,
+                    workflow: phase.workflow.as_ref(),
+                    run_id: run.id,
+                    lifecycle_key: &phase.lifecycle_key,
+                    edges: &phase.lifecycle_edges,
+                    agent_declared_capabilities: None,
+                    agent_mcp_servers,
+                    available_presets: available_presets.clone(),
+                    companion_slice_mode: None,
+                    baseline_override: None,
+                    capability_directives: &[],
+                    ready_port_keys: std::collections::BTreeSet::new(),
+                },
+                &self.platform_config,
+            );
+            let surface =
+                build_capability_surface_for_activation(&activation, base_surface.as_ref());
+            let surface_changed = base_surface.as_ref() != Some(&surface);
+            let transition = crate::session::PendingCapabilitySurfaceTransition {
+                id: format!("phase-{}-{}", phase.node_key, uuid::Uuid::new_v4()),
+                run_id: run.id,
+                lifecycle_key: phase.lifecycle_key.clone(),
+                phase_node: phase.node_key.clone(),
+                capability_keys: activation.capability_keys.clone(),
+                surface: surface.clone(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                source_turn_id: turn_id.map(ToString::to_string),
+            };
+
+            if let Err(error) = self
+                .session_hub
+                .enqueue_pending_capability_surface_transition(&run.session_id, transition)
+                .await
+            {
+                warnings.push(format!(
+                    "PhaseNode `{}` 能力表面 pending transition 写入失败: {error}",
+                    phase.node_key
+                ));
+                continue;
+            }
+
+            let event = serde_json::json!({
+                "phase_node": phase.node_key,
+                "run_id": run.id.to_string(),
+                "lifecycle_key": phase.lifecycle_key,
+                "apply_mode": "pending_next_turn",
+                "surface_changed": surface_changed,
+                "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
+                "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
+                "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
+                "mcp_server_count": activation.mcp_servers.len(),
+                "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
+                "mounts": surface.vfs.as_ref().map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()).unwrap_or_default(),
+                "default_mount_id": surface.vfs.as_ref().and_then(|vfs| vfs.default_mount_id.clone()),
+                "steering_delivery": { "status": "deferred_until_next_turn" },
+            });
+            if let Err(error) = self
+                .session_hub
+                .emit_capability_surface_changed(&run.session_id, turn_id, event)
+                .await
+            {
+                warnings.push(format!(
+                    "PhaseNode `{}` pending 事件持久化失败: {error}",
+                    phase.node_key
+                ));
+            }
+
+            base_surface = Some(surface);
         }
 
         warnings

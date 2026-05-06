@@ -34,7 +34,8 @@ impl PostgresSessionRepository {
                 executor_session_id TEXT,
                 companion_context_json TEXT,
                 visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
-                bootstrap_state TEXT NOT NULL DEFAULT 'plain'
+                bootstrap_state TEXT NOT NULL DEFAULT 'plain',
+                pending_capability_surface_transitions_json TEXT NOT NULL DEFAULT '[]'
             )
             "#,
             r#"
@@ -117,6 +118,16 @@ impl PostgresSessionRepository {
                 row.get::<String, _>("bootstrap_state"),
                 "sessions.bootstrap_state",
             )?,
+            pending_capability_surface_transitions: parse_optional_json_column(
+                row.get::<Option<String>, _>("pending_capability_surface_transitions_json"),
+                "pending_capability_surface_transitions_json",
+            )?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "缺少 pending_capability_surface_transitions_json",
+                )
+            })?,
         })
     }
 
@@ -168,14 +179,18 @@ impl SessionPersistence for PostgresSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
+        let pending_capability_surface_transitions_json = json_string(
+            &meta.pending_capability_surface_transitions,
+            "pending_capability_surface_transitions_json",
+        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                bootstrap_state, pending_capability_surface_transitions_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(&meta.id)
@@ -192,6 +207,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
+        .bind(pending_capability_surface_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -204,7 +220,7 @@ impl SessionPersistence for PostgresSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+                   bootstrap_state, pending_capability_surface_transitions_json
             FROM sessions
             WHERE id = $1
             "#,
@@ -222,7 +238,7 @@ impl SessionPersistence for PostgresSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+                   bootstrap_state, pending_capability_surface_transitions_json
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -243,14 +259,18 @@ impl SessionPersistence for PostgresSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
+        let pending_capability_surface_transitions_json = json_string(
+            &meta.pending_capability_surface_transitions,
+            "pending_capability_surface_transitions_json",
+        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                bootstrap_state, pending_capability_surface_transitions_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -280,7 +300,8 @@ impl SessionPersistence for PostgresSessionRepository {
                     WHEN sessions.bootstrap_state = 'bootstrapped'
                         THEN sessions.bootstrap_state
                     ELSE excluded.bootstrap_state
-                END
+                END,
+                pending_capability_surface_transitions_json = excluded.pending_capability_surface_transitions_json
             "#,
         )
         .bind(&meta.id)
@@ -297,6 +318,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
+        .bind(pending_capability_surface_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -827,6 +849,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
+            pending_capability_surface_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -892,6 +915,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
+            pending_capability_surface_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

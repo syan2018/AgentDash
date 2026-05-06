@@ -82,16 +82,16 @@
 
 ## 验收标准
 
-* [ ] `cargo test -p agentdash-application capability::pipeline_tests --lib` 可以运行并通过。
-* [ ] `cargo test -p agentdash-application step_activation --lib` 可以运行并通过。
+* [x] `cargo test -p agentdash-application capability::pipeline_tests --lib` 可以运行并通过。
+* [x] `cargo test -p agentdash-application step_activation --lib` 可以运行并通过。
 * [ ] 新增测试覆盖 PhaseNode 作为 entry step 和 successor step 时，能够在同一 session 内应用顶层能力模型和能力表面切换。
-* [ ] 新增测试覆盖 PhaseNode 目标 workflow 只声明 `workflow_management` 时，默认 owner baseline 能力不会被错误清空。
-* [ ] 新增测试覆盖同一 capability key 内的工具级 directive 变化会触发工具表重建。
+* [x] 新增测试覆盖 PhaseNode 目标 workflow 只声明 `workflow_management` 时，默认 owner baseline 能力不会被错误清空。
+* [x] 新增测试覆盖同一 capability key 内的工具级 directive 变化会触发工具表重建。
 * [ ] 新增测试覆盖 step-specific mount add/remove/change 会触发能力表面 diff 和工具/VFS 状态更新。
-* [ ] 新增测试覆盖 `replace_runtime_mcp_servers` 或替代入口使用新的 `FlowCapabilities` 重建运行时工具。
-* [ ] 新增测试覆盖 PhaseNode entry step 或 successor PhaseNode 不会只更新 run 状态却不应用能力变化。
-* [ ] 新增测试或事件快照覆盖能力表面变更结构化事件被持久化，并可从 session event history 重放。
-* [ ] PiAgent connector 中能力变更 steering message 仍可注入当前 agent；非支持 connector 不应静默伪装成功。
+* [x] 新增测试覆盖 `replace_runtime_mcp_servers` 或替代入口使用新的 `FlowCapabilities` 重建运行时工具。
+* [x] 新增测试覆盖 PhaseNode 激活后，即使当前没有 live turn，也会持久化 pending transition，并在下一次 prompt 前应用能力表面。
+* [x] 新增测试或事件快照覆盖能力表面变更结构化事件被持久化，并可从 session event history 重放。
+* [x] PiAgent connector 中能力变更 steering message 仍可注入当前 agent；非支持 connector 不应静默伪装成功。
 * [ ] 形成命名迁移清单，明确哪些旧名保留、哪些旧名废弃、哪些旧名迁移到 Capability Model / CapabilitySurface / ToolCapability / VfsCapability 语义。
 
 ## 技术方案
@@ -141,6 +141,21 @@
 * 不在本任务内做前端大型交互改版；前端可以先消费结构化事件做最小展示。
 
 ## 技术备注
+
+### 已落地进展（2026-05-06）
+
+* `CapabilitySurface` 已成为 session 层可持久化类型，当前覆盖 `FlowCapabilities`、MCP server 列表和 VFS/mount 表。
+* PhaseNode live apply 路径已按完整 `CapabilitySurface` 比较并应用，不再只比较 capability key 集合；同 key 内的工具级裁剪会触发热更新。
+* PhaseNode 激活时若 root session 没有 active turn，不再只产生 warning，而是将解析后的 `PendingCapabilitySurfaceTransition` 写入 `SessionMeta`；下一次 prompt 进入 pipeline 时会消费队列、应用最后一个 surface、清空 meta，并持久化 `capability_surface_changed` 事件。
+* pending surface 中的 lifecycle mount 会叠加到当前/默认 VFS 上，保留 workspace 默认 mount，避免 PhaseNode 切换把工作区 mount 错误清空。
+* 结构化能力表面事件已进入 session event stream；live steering message 仍是尽力投递通道，并在事件中记录 delivery status。
+* PostgreSQL / SQLite session repository 已增加 `pending_capability_surface_transitions_json` 字段和迁移。
+
+仍待继续：
+
+* 将 step-level mount add/remove/replace/link/default_mount 从“代码内合并 lifecycle mount”提升为正式声明式配置。
+* 将 `CapabilityDelta` 从 tool key 集合扩展成多维 delta，直接表达 Tool / MCP / VFS / Context / Policy 的 added / removed / changed。
+* 补 PhaseNode entry step 的端到端测试，以及 successor PhaseNode 在 start-run / terminal callback 两类入口下的完整应用测试。
 
 ### 命名迁移候选
 

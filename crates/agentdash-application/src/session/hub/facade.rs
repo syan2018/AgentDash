@@ -91,6 +91,7 @@ impl SessionHub {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
+            pending_capability_surface_transitions: Vec::new(),
         };
         self.persistence.create_session(&meta).await?;
         Ok(meta)
@@ -299,6 +300,32 @@ impl SessionHub {
         });
 
         self.persist_notification(session_id, envelope).await
+    }
+
+    pub async fn enqueue_pending_capability_surface_transition(
+        &self,
+        session_id: &str,
+        transition: PendingCapabilitySurfaceTransition,
+    ) -> io::Result<Option<SessionMeta>> {
+        let phase_node = transition.phase_node.clone();
+        let updated = self
+            .update_session_meta(session_id, move |meta| {
+                meta.pending_capability_surface_transitions
+                    .retain(|existing| existing.phase_node != phase_node);
+                meta.pending_capability_surface_transitions.push(transition);
+            })
+            .await?;
+        Ok(updated)
+    }
+
+    pub async fn clear_pending_capability_surface_transitions(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Option<SessionMeta>> {
+        self.update_session_meta(session_id, |meta| {
+            meta.pending_capability_surface_transitions.clear();
+        })
+        .await
     }
 
     pub async fn has_live_runtime(&self, session_id: &str) -> bool {

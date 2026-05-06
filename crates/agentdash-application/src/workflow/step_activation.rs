@@ -31,8 +31,7 @@ use crate::capability::{
     CompanionSliceMode, SessionWorkflowContext,
 };
 use crate::platform_config::PlatformConfig;
-use crate::session::SessionHub;
-use crate::session::hub::CapabilitySurface;
+use crate::session::{CapabilitySurface, SessionHub};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -319,14 +318,11 @@ pub async fn apply_to_running_session(
     turn_id: Option<&str>,
     phase_node_key: &str,
 ) -> Result<Option<CapabilityDelta>, String> {
-    let target_surface = CapabilitySurface {
-        flow_capabilities: activation.flow_capabilities.clone(),
-        mcp_servers: activation.mcp_servers.clone(),
-        vfs: Some(activation.lifecycle_vfs.clone()),
-    };
-    let current_surface = session_hub
+    let base_surface = session_hub
         .get_current_capability_surface(hook_session.session_id())
         .await;
+    let target_surface = build_capability_surface_for_activation(activation, base_surface.as_ref());
+    let current_surface = base_surface;
     let surface_changed = current_surface.as_ref() != Some(&target_surface);
     let key_delta = CapabilityDelta::compute(
         &hook_session.current_capabilities(),
@@ -345,13 +341,53 @@ pub async fn apply_to_running_session(
     let delta = hook_session.update_capabilities(activation.capability_keys.clone());
     let notification_delta = delta.clone().unwrap_or(key_delta);
 
-    let delta_md = crate::capability::build_capability_delta_markdown(
+    emit_capability_surface_change(
+        activation,
+        session_hub,
+        hook_session.session_id(),
+        turn_id,
         phase_node_key,
         &notification_delta,
+        surface_changed,
+        "live",
+    )
+    .await?;
+
+    Ok(delta)
+}
+
+pub fn build_capability_surface_for_activation(
+    activation: &StepActivation,
+    base_surface: Option<&CapabilitySurface>,
+) -> CapabilitySurface {
+    let vfs = merge_activation_vfs(
+        base_surface.and_then(|surface| surface.vfs.as_ref()),
+        activation,
+    );
+    CapabilitySurface {
+        flow_capabilities: activation.flow_capabilities.clone(),
+        mcp_servers: activation.mcp_servers.clone(),
+        vfs: Some(vfs),
+    }
+}
+
+async fn emit_capability_surface_change(
+    activation: &StepActivation,
+    session_hub: &SessionHub,
+    session_id: &str,
+    turn_id: Option<&str>,
+    phase_node_key: &str,
+    notification_delta: &CapabilityDelta,
+    surface_changed: bool,
+    apply_mode: &str,
+) -> Result<(), String> {
+    let delta_md = crate::capability::build_capability_delta_markdown(
+        phase_node_key,
+        notification_delta,
         &activation.capability_keys,
     );
     let steering_delivery = match session_hub
-        .push_session_notification(hook_session.session_id(), delta_md)
+        .push_session_notification(session_id, delta_md)
         .await
     {
         Ok(()) => serde_json::json!({
@@ -359,7 +395,7 @@ pub async fn apply_to_running_session(
         }),
         Err(error) => {
             tracing::warn!(
-                session_id = %hook_session.session_id(),
+                session_id = %session_id,
                 phase_node = %phase_node_key,
                 error = %error,
                 "Phase node capability steering notification delivery failed"
@@ -376,6 +412,7 @@ pub async fn apply_to_running_session(
         "added": notification_delta.added.clone(),
         "removed": notification_delta.removed.clone(),
         "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
+        "apply_mode": apply_mode,
         "surface_changed": surface_changed,
         "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
         "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
@@ -387,19 +424,34 @@ pub async fn apply_to_running_session(
     });
 
     session_hub
-        .emit_capability_surface_changed(
-            hook_session.session_id(),
-            turn_id,
-            capability_surface_event.clone(),
-        )
+        .emit_capability_surface_changed(session_id, turn_id, capability_surface_event.clone())
         .await
         .map_err(|error| format!("Phase node capability surface 事件持久化失败: {error}"))?;
 
     session_hub
-        .emit_capability_changed_hook(hook_session.session_id(), turn_id, capability_surface_event)
+        .emit_capability_changed_hook(session_id, turn_id, capability_surface_event)
         .await;
 
-    Ok(delta)
+    Ok(())
+}
+
+fn merge_activation_vfs(base_vfs: Option<&Vfs>, activation: &StepActivation) -> Vfs {
+    let mut vfs = base_vfs
+        .cloned()
+        .unwrap_or_else(|| activation.lifecycle_vfs.clone());
+    vfs.mounts
+        .retain(|mount| mount.id != activation.lifecycle_mount.id);
+    vfs.mounts.push(activation.lifecycle_mount.clone());
+    for link in &activation.lifecycle_vfs.links {
+        vfs.links.retain(|existing| {
+            existing.from_mount_id != link.from_mount_id || existing.from_path != link.from_path
+        });
+        vfs.links.push(link.clone());
+    }
+    if vfs.default_mount_id.is_none() {
+        vfs.default_mount_id = activation.lifecycle_vfs.default_mount_id.clone();
+    }
+    vfs
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,

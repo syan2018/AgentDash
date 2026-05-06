@@ -32,6 +32,6 @@
     "crates/agentdash-domain/src/workflow/value_objects.rs",
     "crates/agentdash-spi/src/connector/mod.rs"
   ],
-  "notes": "由 2026-05-06 workflow capability review 创建，并纳入 PhaseNode 模式支持与 step-level mount overlay 诉求。核心方向：以 Capability Model 作为顶层能力模型，以 RuntimeSurface/ExecutionSurface 作为运行时投影，统一 compose/diff/apply/notify/replay。",
+  "notes": "由 2026-05-06 workflow capability review 创建，并纳入 PhaseNode 模式支持与 step-level mount overlay 诉求。核心方向：以 Capability Model 作为顶层能力模型，以 CapabilitySurface 作为运行时生效投影，统一 compose/diff/apply/notify/replay。",
   "meta": {}
 }

@@ -13,20 +13,10 @@
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{ConnectorError, ExecutionContext, FlowCapabilities, SessionMcpServer, Vfs};
+use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 
 use super::SessionHub;
-
-/// 当前 turn 已解析后的能力表面。
-///
-/// 这是 `CapabilitySurface` 的第一块落点：先把工具能力裁剪和 MCP 列表作为同一个
-/// diff/apply 单位处理，后续再把 VFS/mount、context overlay、policy 等维度并入。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CapabilitySurface {
-    pub flow_capabilities: FlowCapabilities,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-}
+use crate::session::types::CapabilitySurface;
 
 impl SessionHub {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
@@ -52,6 +42,30 @@ impl SessionHub {
                 flow_capabilities: turn.flow_capabilities.clone(),
                 mcp_servers: turn.session_frame.mcp_servers.clone(),
                 vfs: turn.session_frame.vfs.clone(),
+            })
+    }
+
+    /// 读取当前 active turn；若没有 active turn，则回退到 session_profile 缓存的上一轮表面。
+    pub async fn get_latest_capability_surface(
+        &self,
+        session_id: &str,
+    ) -> Option<CapabilitySurface> {
+        let sessions = self.sessions.lock().await;
+        let runtime = sessions.get(session_id)?;
+        if let Some(turn) = runtime.turn_state.active_turn() {
+            return Some(CapabilitySurface {
+                flow_capabilities: turn.flow_capabilities.clone(),
+                mcp_servers: turn.session_frame.mcp_servers.clone(),
+                vfs: turn.session_frame.vfs.clone(),
+            });
+        }
+        runtime
+            .session_profile
+            .as_ref()
+            .map(|profile| CapabilitySurface {
+                flow_capabilities: profile.flow_capabilities.clone(),
+                mcp_servers: profile.mcp_servers.clone(),
+                vfs: Some(profile.vfs.clone()),
             })
     }
 

@@ -38,6 +38,6 @@ pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
     agent_mcp_entries_from_servers, apply_to_prompt_request, apply_to_running_session,
-    capability_delta_directives, capability_directives_from_keys, capability_keys_sorted,
-    empty_presets,
+    build_capability_surface_for_activation, capability_delta_directives,
+    capability_directives_from_keys, capability_keys_sorted, empty_presets,
 };

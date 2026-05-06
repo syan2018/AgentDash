@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     executor_config_json TEXT,
     executor_session_id TEXT,
     companion_context_json TEXT,
-    visible_canvas_mount_ids_json TEXT
+    visible_canvas_mount_ids_json TEXT,
+    pending_capability_surface_transitions_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS session_events (

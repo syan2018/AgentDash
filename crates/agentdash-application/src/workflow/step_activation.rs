@@ -12,7 +12,7 @@
 //!   agent MCP servers / available presets / baseline caps)都通过 input 传入。
 //! - **port 前驱状态剥离**:kickoff prompt 构造需要知道 "前驱 output port 是否就绪",
 //!   这部分 IO 由调用方先查好,以 `BTreeSet<String>` 形式塞进 `kickoff_context`。
-//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_directives`;
+//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_config.tool_directives`;
 //!   PhaseNode 热更新路径可传 `baseline_override = Some(hook_runtime.current_caps())`,
 //!   再叠加 directive 得到新能力集。
 
@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, MountDirective, WorkflowDefinition,
+    LifecycleEdge, LifecycleStepDefinition, MountDirective, ToolCapabilityDirective,
+    WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{FlowCapabilities, Vfs};
@@ -47,7 +48,7 @@ pub struct StepActivationInput<'a> {
     pub owner_ctx: SessionOwnerCtx,
     /// 当前激活的 step 定义;提供 output/input ports、node_type、workflow_key。
     pub active_step: &'a LifecycleStepDefinition,
-    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_directives` baseline 与
+    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
     pub workflow: Option<&'a WorkflowDefinition>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
@@ -65,11 +66,11 @@ pub struct StepActivationInput<'a> {
     /// Companion 子 session 的 slice 裁剪模式。
     pub companion_slice_mode: Option<CompanionSliceMode>,
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
-    /// 会取代 `workflow.contract.capability_directives`。
-    /// None → 使用 `workflow.contract.capability_directives`。
-    pub baseline_override: Option<Vec<CapabilityDirective>>,
+    /// 会取代 `workflow.contract.capability_config.tool_directives`。
+    /// None → 使用 `workflow.contract.capability_config.tool_directives`。
+    pub baseline_override: Option<Vec<ToolCapabilityDirective>>,
     /// 运行时 capability 指令(PhaseNode 热更新场景);追加到 baseline 后由 slot 归约。
-    pub capability_directives: &'a [CapabilityDirective],
+    pub tool_directives: &'a [ToolCapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
     /// 调用方提前通过 `load_port_output_map` 查好,activate_step 不做 IO。
     pub ready_port_keys: BTreeSet<String>,
@@ -126,22 +127,22 @@ pub fn activate_step_with_platform(
     //
     // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
     // `CapabilityResolver` 内部的 slot 归约「后来者胜」，保证运行时增删覆盖 baseline。
-    let baseline_directives: Vec<CapabilityDirective> =
+    let baseline_directives: Vec<ToolCapabilityDirective> =
         input.baseline_override.clone().unwrap_or_else(|| {
             input
                 .workflow
-                .map(|w| w.contract.capability_directives.clone())
+                .map(|w| w.contract.capability_config.tool_directives.clone())
                 .unwrap_or_default()
         });
 
     let mut combined_directives = baseline_directives;
-    combined_directives.extend(input.capability_directives.iter().cloned());
+    combined_directives.extend(input.tool_directives.iter().cloned());
 
     let has_active_workflow = input.workflow.is_some();
     let workflow_ctx = if has_active_workflow {
         SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(combined_directives),
+            workflow_tool_directives: Some(combined_directives),
         }
     } else {
         SessionWorkflowContext::NONE
@@ -464,11 +465,11 @@ pub fn capability_keys_sorted(activation: &StepActivation) -> Vec<String> {
     activation.capability_keys.iter().cloned().collect()
 }
 
-/// 把 capability key 集转换成 `Add(simple)` 指令序列。
-pub fn capability_directives_from_keys(keys: &BTreeSet<String>) -> Vec<CapabilityDirective> {
+/// 把 capability key 集转换成 `Add(simple)` 工具指令序列。
+pub fn tool_directives_from_keys(keys: &BTreeSet<String>) -> Vec<ToolCapabilityDirective> {
     keys.iter()
         .cloned()
-        .map(CapabilityDirective::add_simple)
+        .map(ToolCapabilityDirective::add_simple)
         .collect()
 }
 
@@ -476,17 +477,17 @@ pub fn capability_directives_from_keys(keys: &BTreeSet<String>) -> Vec<Capabilit
 pub fn capability_delta_directives(
     old_keys: &BTreeSet<String>,
     new_keys: &BTreeSet<String>,
-) -> Vec<CapabilityDirective> {
-    let mut directives: Vec<CapabilityDirective> = new_keys
+) -> Vec<ToolCapabilityDirective> {
+    let mut directives: Vec<ToolCapabilityDirective> = new_keys
         .difference(old_keys)
         .cloned()
-        .map(CapabilityDirective::add_simple)
+        .map(ToolCapabilityDirective::add_simple)
         .collect();
     directives.extend(
         old_keys
             .difference(new_keys)
             .cloned()
-            .map(CapabilityDirective::remove_simple),
+            .map(ToolCapabilityDirective::remove_simple),
     );
     directives
 }
@@ -535,9 +536,12 @@ mod tests {
         }
     }
 
-    fn sample_workflow(directives: Vec<CapabilityDirective>) -> WorkflowDefinition {
+    fn sample_workflow(directives: Vec<ToolCapabilityDirective>) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capability_directives: directives,
+            capability_config: CapabilityConfig {
+                tool_directives: directives,
+                ..Default::default()
+            },
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -593,7 +597,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -608,10 +612,10 @@ mod tests {
     #[test]
     fn activate_step_with_workflow_uses_contract_capabilities_as_baseline() {
         let workflow = sample_workflow(vec![
-            CapabilityDirective::add_simple("file_read"),
-            CapabilityDirective::add_simple("file_write"),
-            CapabilityDirective::add_simple("shell_execute"),
-            CapabilityDirective::add_simple("workflow_management"),
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::add_simple("file_write"),
+            ToolCapabilityDirective::add_simple("shell_execute"),
+            ToolCapabilityDirective::add_simple("workflow_management"),
         ]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
@@ -628,7 +632,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -642,8 +646,9 @@ mod tests {
 
     #[test]
     fn phase_node_target_workflow_preserves_owner_default_baseline() {
-        let workflow =
-            sample_workflow(vec![CapabilityDirective::add_simple("workflow_management")]);
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple(
+            "workflow_management",
+        )]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -659,7 +664,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -679,10 +684,10 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let full_read_workflow =
-            sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+            sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
         let restricted_read_workflow = sample_workflow(vec![
-            CapabilityDirective::add_simple("file_read"),
-            CapabilityDirective::remove_tool("file_read", "fs_grep"),
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
         ]);
 
         let base_input = StepActivationInput {
@@ -697,7 +702,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
         let restricted_input = StepActivationInput {
@@ -720,7 +725,7 @@ mod tests {
 
     #[test]
     fn step_mount_directives_change_capability_surface_vfs() {
-        let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
         let mut step = sample_step(vec![]);
         step.capability_config = CapabilityConfig {
             mount_directives: vec![
@@ -734,6 +739,7 @@ mod tests {
                     mount_id: Some("review".to_string()),
                 },
             ],
+            ..Default::default()
         };
         let project_id = Uuid::new_v4();
         let input = StepActivationInput {
@@ -748,7 +754,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
         let activation = activate_step_with_platform(&input, &test_platform());
@@ -791,7 +797,7 @@ mod tests {
 
     #[test]
     fn activate_step_baseline_override_takes_precedence_over_contract() {
-        let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -808,19 +814,19 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
-                CapabilityDirective::add_simple("canvas"),
-                CapabilityDirective::add_simple("collaboration"),
+                ToolCapabilityDirective::add_simple("canvas"),
+                ToolCapabilityDirective::add_simple("collaboration"),
                 // 显式屏蔽 workflow contract 原有的 file_read
-                CapabilityDirective::remove_simple("file_read"),
+                ToolCapabilityDirective::remove_simple("file_read"),
             ]),
-            capability_directives: &[CapabilityDirective::add_simple("workflow_management")],
+            tool_directives: &[ToolCapabilityDirective::add_simple("workflow_management")],
             ready_port_keys: BTreeSet::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
         // baseline_override = canvas + collaboration + Remove(file_read),
         // directive = +workflow_management
-        // workflow.contract.capability_directives = file_read 被 override 替代
+        // workflow.contract.capability_config.tool_directives = file_read 被 override 替代
         assert!(out.capability_keys.contains("canvas"));
         assert!(out.capability_keys.contains("collaboration"));
         assert!(out.capability_keys.contains("workflow_management"));
@@ -852,7 +858,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -907,7 +913,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: ready,
         };
 

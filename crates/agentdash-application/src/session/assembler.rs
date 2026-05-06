@@ -32,7 +32,7 @@ use agentdash_domain::project::Project;
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
-use agentdash_domain::workflow::CapabilityDirective;
+use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::platform::auth::AuthIdentity;
@@ -42,7 +42,7 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    SessionWorkflowContext, capability_directives_from_active_workflow,
+    SessionWorkflowContext, tool_directives_from_active_workflow,
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
@@ -923,11 +923,11 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 2. workflow 上下文解析 → 能力集 ──
         let workflow_directives =
-            resolve_owner_workflow_capability_directives(self.repos, &spec.owner).await;
+            resolve_owner_workflow_tool_directives(self.repos, &spec.owner).await;
         let workflow_ctx = match workflow_directives {
             Some(directives) => SessionWorkflowContext {
                 has_active_workflow: true,
-                workflow_capability_directives: Some(directives),
+                workflow_tool_directives: Some(directives),
             },
             None => SessionWorkflowContext::NONE,
         };
@@ -1161,11 +1161,11 @@ impl<'a> SessionRequestAssembler<'a> {
         let workflow_directives = workflow.as_ref().and_then(|p| {
             p.primary_workflow
                 .as_ref()
-                .map(capability_directives_from_active_workflow)
+                .map(tool_directives_from_active_workflow)
         });
         let workflow_ctx = SessionWorkflowContext {
             has_active_workflow: workflow.is_some(),
-            workflow_capability_directives: workflow_directives,
+            workflow_tool_directives: workflow_directives,
         };
         let cap_input = CapabilityResolverInput {
             owner_ctx: SessionOwnerCtx::Task {
@@ -1405,7 +1405,7 @@ pub async fn compose_lifecycle_node_with_audit(
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: ready_port_keys.clone(),
         },
         platform_config,
@@ -1764,7 +1764,7 @@ pub async fn compose_companion_with_workflow(
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(map_slice_mode(comp.slice_mode)),
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys,
         },
         platform_config,
@@ -1834,15 +1834,15 @@ pub async fn compose_companion_with_workflow(
 // SECTION 6:内部 helper
 // ═══════════════════════════════════════════════════════════════════
 
-/// Owner bootstrap 阶段解析 workflow capability directives(来自默认 agent_link → lifecycle → entry step workflow)。
+/// Owner bootstrap 阶段解析 workflow tool directives(来自默认 agent_link → lifecycle → entry step workflow)。
 ///
 /// Story owner 找 project 内 `is_default_for_story=true` 的 agent_link;
 /// Project owner 用 (project_id, agent_id) 直接查 agent_link。
 /// 找不到任何绑定返回 None。
-async fn resolve_owner_workflow_capability_directives(
+async fn resolve_owner_workflow_tool_directives(
     repos: &RepositorySet,
     owner: &OwnerScope<'_>,
-) -> Option<Vec<CapabilityDirective>> {
+) -> Option<Vec<ToolCapabilityDirective>> {
     let project_id = owner.project_id();
 
     // 1. 找到关联的 agent_link
@@ -1883,7 +1883,7 @@ async fn resolve_owner_workflow_capability_directives(
         .find(|s| s.key == lifecycle.entry_step_key)?;
     let workflow_key = entry_step.effective_workflow_key()?;
 
-    // 3. 查 workflow 定义 → contract.capability_directives
+    // 3. 查 workflow 定义 → contract.capability_config.tool_directives
     let workflow = repos
         .workflow_definition_repo
         .get_by_project_and_key(project_id, workflow_key)
@@ -1891,7 +1891,7 @@ async fn resolve_owner_workflow_capability_directives(
         .ok()
         .flatten()?;
 
-    Some(capability_directives_from_active_workflow(&workflow))
+    Some(tool_directives_from_active_workflow(&workflow))
 }
 
 #[cfg(test)]

@@ -180,9 +180,6 @@ pub fn build_capability_surface_event_payload(input: CapabilitySurfaceEventInput
     let mount_ids: Vec<String> = after_vfs
         .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
         .unwrap_or_default();
-    let added_tool_capabilities = delta.tool_capabilities.added.clone();
-    let removed_tool_capabilities = delta.tool_capabilities.removed.clone();
-
     serde_json::json!({
         "phase_node": input.phase_node,
         "run_id": input.run_id,
@@ -207,15 +204,6 @@ pub fn build_capability_surface_event_payload(input: CapabilitySurfaceEventInput
             "links": after_vfs.map(|vfs| vfs.links.iter().map(link_key).collect::<Vec<_>>()).unwrap_or_default(),
         },
         "steering_delivery": input.steering_delivery,
-        "added": added_tool_capabilities,
-        "removed": removed_tool_capabilities,
-        "capabilities": input.capability_keys.iter().cloned().collect::<Vec<_>>(),
-        "enabled_clusters": input.after_surface.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
-        "excluded_tools": input.after_surface.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
-        "mcp_server_count": input.after_surface.mcp_servers.len(),
-        "mcp_servers": input.after_surface.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
-        "mounts": after_vfs.map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect::<Vec<_>>()).unwrap_or_default(),
-        "default_mount_id": after_vfs.and_then(|vfs| vfs.default_mount_id.clone()),
     })
 }
 
@@ -341,6 +329,7 @@ fn link_key(link: &MountLink) -> String {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_spi::FlowCapabilities;
 
     fn mount(id: &str, provider: &str) -> Mount {
         Mount {
@@ -399,5 +388,44 @@ mod tests {
         assert!(!ids.contains("secret"));
         assert_eq!(result.default_mount_id.as_deref(), Some("review"));
         assert_eq!(result.links.len(), 1);
+    }
+
+    #[test]
+    fn event_payload_uses_structured_capability_surface_shape() {
+        let mut capability_keys = BTreeSet::new();
+        capability_keys.insert("file_read".to_string());
+        let after_surface = CapabilitySurface {
+            flow_capabilities: FlowCapabilities::default(),
+            mcp_servers: Vec::new(),
+            vfs: Some(Vfs {
+                mounts: vec![mount("workspace", "relay_fs")],
+                default_mount_id: Some("workspace".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            }),
+        };
+
+        let payload = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+            phase_node: "review",
+            run_id: Some("run-1".to_string()),
+            lifecycle_key: Some("lc"),
+            apply_mode: "live",
+            before_surface: None,
+            after_surface: &after_surface,
+            capability_keys: &capability_keys,
+            steering_delivery: serde_json::json!({"status": "not_required"}),
+        });
+
+        assert!(payload.get("tool_capabilities").is_some());
+        assert!(payload.get("tool_surface").is_some());
+        assert!(payload.get("mcp").is_some());
+        assert!(payload.get("vfs").is_some());
+        assert!(payload.get("added").is_none());
+        assert!(payload.get("removed").is_none());
+        assert!(payload.get("capabilities").is_none());
+        assert!(payload.get("enabled_clusters").is_none());
+        assert!(payload.get("mcp_servers").is_none());
+        assert!(payload.get("mounts").is_none());
     }
 }

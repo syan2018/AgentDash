@@ -778,8 +778,12 @@ async fn emit_capability_surface_changed_persists_structured_event() {
     let payload = json!({
         "phase_node": "review",
         "surface_changed": true,
-        "capabilities": ["file_read"],
-        "mounts": ["phase"],
+        "tool_capabilities": {
+            "current": ["file_read"]
+        },
+        "vfs": {
+            "mounts": ["phase"]
+        },
         "steering_delivery": { "status": "failed" }
     });
     hub.emit_capability_surface_changed(&session.id, Some("turn-42"), payload.clone())

@@ -58,12 +58,12 @@
   * 可选的运行时工具名 / tool fingerprint
   * 可选的 context bundle / instruction overlay fingerprint
   * 触发来源，例如 lifecycle run、step、workflow、phase node、turn
-* 设计一套更清晰、可拓展的 step capability 配置协议，不局限于旧的 `capability_directives`：
-  * tool capability add/remove/tool-level whitelist/blocklist
+* 设计一套更清晰、可拓展的 step capability 配置协议，统一以 `capability_config` 作为入口：
+  * `capability_config.tool_directives` 表达 tool capability add/remove/tool-level whitelist/blocklist
+  * `capability_config.mount_directives` 表达 mount add/remove/replace/link/default_mount 变更
   * MCP add/remove/replace 或 preset 引用
-  * mount add/remove/replace/link/default_mount 变更
   * 未来可扩展到 context injection、permission policy、resource budget 等维度
-* 梳理并逐步迁移旧模型中被 tool capability 占据的命名；原则是“顶层 Capability 保留为业务总概念，对外契约谨慎兼容，内部模型先变清楚，旧名保留 deprecated alias 过渡”。
+* 梳理并迁移旧模型中被 tool capability 占据的命名；原则是“顶层 Capability 保留为业务总概念，工具维度命名为 ToolCapability，不保留新的兼容 alias 或旧字段残余”。
 * PhaseNode 目标能力计算必须复用 `CapabilityResolver` 的正式语义，不能只对 workflow directives 做 reduce 后当成完整目标集。
 * 热更新运行中 session 时，必须同步更新：
   * hook runtime 当前能力表面
@@ -150,15 +150,17 @@
 * pending surface 中的 lifecycle mount 会叠加到当前/默认 VFS 上，保留 workspace 默认 mount，避免 PhaseNode 切换把工作区 mount 错误清空。
 * 结构化能力表面事件已进入 session event stream；live steering message 仍是尽力投递通道，并在事件中记录 delivery status。
 * PostgreSQL / SQLite session repository 已增加 `pending_capability_surface_transitions_json` 字段和迁移。
-* `CapabilityConfig` 已成为 workflow contract 与 lifecycle step 的顶层能力配置载体；旧 `capability_directives` 继续表达工具能力维度，新 `mount_directives` 表达 VFS/mount 资源能力维度。
+* `CapabilityConfig` 已成为 workflow contract 与 lifecycle step 的唯一顶层能力配置载体；`tool_directives` 表达工具能力维度，`mount_directives` 表达 VFS/mount 资源能力维度。
 * `MountDirective` 已支持 add/remove/replace mount、add/remove link、set default mount，step 级配置会在 workflow contract 配置之后应用。
 * Workflow 管理 MCP 的 upsert schema 已允许 workflow contract 与 lifecycle step 传入 `capability_config`，避免配置模型只停留在内部类型。
 * `session::capability_surface` 已收口 VFS overlay 合成、CapabilitySurface 多维 diff 与 `capability_surface_changed` 事件 payload 构建；live apply、pending transition、next-turn apply 共用同一套事件结构。
-* 结构化事件的 `delta` 已按 ToolCapability、tool surface、MCP、VFS/mount/default mount 分维度表达 added / removed / changed；旧 `added/removed/capabilities` 字段暂保留为工具能力摘要。
+* 结构化事件的 `delta` 已按 ToolCapability、tool surface、MCP、VFS/mount/default mount 分维度表达 added / removed / changed；旧的顶层 `added/removed/capabilities` 摘要字段已清除，当前状态统一放在 `tool_capabilities.current`、`tool_surface`、`mcp`、`vfs` 等结构化节点下。
+* `ToolCapabilityDirective`、`ToolCapabilityPath`、`ToolCapabilityReduction` 已替代旧的泛化命名，避免工具维度继续占用顶层 Capability 语义。
+* PostgreSQL migration `0026_workflow_capability_config_tool_directives.sql` 会把旧 contract 根字段迁移到 `capability_config.tool_directives`，并从持久化 JSON 中移除旧字段。
 
 仍待继续：
 
-* 补 PhaseNode entry step 与 successor PhaseNode 在 start-run / terminal callback 两类入口下的更高层端到端测试。当前底层 apply/pending/next-turn 语义已覆盖，但 API/orchestrator 级联动仍值得单独补一层 fixture。
+* 补 PhaseNode entry step 与 successor PhaseNode 在 start-run / terminal callback 两类入口下的更高层端到端测试。这里说的“后续项”不是当前核心实现缺口，而是 API/orchestrator 级 fixture 覆盖，用来防止外层入口未来回归。
 * 将 `CapabilityConfig` 继续扩展到 context overlay、permission policy、resource budget 等维度，并让 `CapabilitySurfaceDelta` 对这些维度也给出 changed 摘要。
 
 ### 命名迁移候选
@@ -166,12 +168,12 @@
 以下不是一次性强制改名清单，而是实现时需要逐项评估的语义收口方向：
 
 * `CapabilitySurface`：作为顶层能力模型解析后的生效表面保留，当前已经覆盖 Tool/VFS/MCP，后续扩展 Context/Policy；若某个类型只描述工具能力，应命名为 `ToolSurface` / `ToolCapabilitySurface`。
-* `CapabilityConfig`：作为 workflow contract 与 lifecycle step 的声明式顶层能力配置保留，当前先承载 `mount_directives`；后续 context/policy/resource budget 继续进入这里，而不是塞进工具能力字段。
+* `CapabilityConfig`：作为 workflow contract 与 lifecycle step 的声明式顶层能力配置保留，当前承载 `tool_directives` 与 `mount_directives`；后续 context/policy/resource budget 继续进入这里，而不是塞进工具能力字段。
 * `MountDirective`：作为 VFS/mount 资源能力变更的正式指令保留，覆盖 add/remove/replace/link/default mount。未来若资源能力超出 VFS，可再抽 `ResourceCapabilityDirective`，但当前不急于改名。
 * `CapabilityDelta`：保留给 hook runtime 的 tool capability key 集合变化，不再承担完整能力表面 diff；顶层表面差异使用 `CapabilitySurfaceDelta`。
 * `CapabilitySurfaceDelta`：作为结构化事件与 UI/审计消费的多维 diff，当前覆盖 ToolCapability、tool surface、MCP、VFS/mount/default mount。
 * `CapabilityChanged` / capability changed hook：保留为顶层能力变更 hook，但 payload 必须来自 `CapabilitySurface` 事件结构；若未来只触发工具能力变化，可另增 `ToolCapabilityChanged`。
-* `capability_directives`：保留为工具能力维度的历史字段，语义上等价于 `tool_capability_directives`；新增能力维度不再扩进该字段，而是进入 `CapabilityConfig`。
+* `ToolCapabilityDirective` / `ToolCapabilityPath`：作为工具能力维度的正式指令与寻址模型，序列化路径只允许出现在 `capability_config.tool_directives`。
 * `FlowCapabilities`：保留表示内置工具 cluster、工具级裁剪和 effective tool capability keys；MCP、mount、context overlay 不混入其中。
 * `replace_current_capability_surface`：作为完整能力表面热更新入口保留；旧 `replace_runtime_mcp_servers` 语义应避免继续扩张，MCP 替换只是表面应用的一部分。
 * 通知文案中的 “Capability Update”：作为顶层能力变更文案可以保留，但结构化事件必须分维度展示 Tool / MCP / VFS / Context / Policy；中文统一称“能力表面变更”。

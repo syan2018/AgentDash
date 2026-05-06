@@ -156,11 +156,14 @@ pub struct WorkflowInjectionSpec {
 
 /// 顶层能力模型的声明式配置。
 ///
-/// 旧 `capability_directives` 目前仍专门承载工具能力维度；`CapabilityConfig`
-/// 用于承载更宽的运行时能力配置，先从 VFS/mount overlay 开始，后续可扩展
-/// context overlay、permission policy、resource budget 等维度。
+/// 工具能力、资源挂载、上下文和策略都属于顶层 Capability Model 的不同维度。
+/// 当前已经落地 tool 与 mount 两个维度，后续 context overlay、permission policy、
+/// resource budget 等能力维度继续扩展在这里。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct CapabilityConfig {
+    /// 工具能力维度的声明式变更。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_directives: Vec<ToolCapabilityDirective>,
     /// VFS/mount 维度的声明式变更。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mount_directives: Vec<MountDirective>,
@@ -250,11 +253,11 @@ pub struct WorkflowHookRuleSpec {
     pub enabled: bool,
 }
 
-// ── Capability 路径 ──
+// ── ToolCapability 路径 ──
 
-/// Capability 路径 — 统一表达「能力级」和「工具级」两种寻址。
+/// ToolCapability 路径 — 统一表达「能力级」和「工具级」两种寻址。
 ///
-/// `capability` 是 capability key（如 `"file_read"` 或 `"mcp:code_analyzer"`）；
+/// `capability` 是 tool capability key（如 `"file_read"` 或 `"mcp:code_analyzer"`）；
 /// `tool` 为 `None` 表示短 path（整个能力），`Some(name)` 表示长 path（能力下的某个工具）。
 ///
 /// 分隔符统一为 `::`（与 Rust 模块路径同构），与 `mcp:<server>` 的单冒号前缀不冲突。
@@ -263,14 +266,14 @@ pub struct WorkflowHookRuleSpec {
 /// JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
 /// / `"mcp:code_analyzer"` / `"mcp:workflow_management::upsert"`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
-pub struct CapabilityPath {
+pub struct ToolCapabilityPath {
     pub capability: String,
     pub tool: Option<String>,
 }
 
-const CAPABILITY_PATH_SEPARATOR: &str = "::";
+const TOOL_CAPABILITY_PATH_SEPARATOR: &str = "::";
 
-impl CapabilityPath {
+impl ToolCapabilityPath {
     /// 构造能力级短 path。
     pub fn of_capability(key: impl Into<String>) -> Self {
         Self {
@@ -296,7 +299,7 @@ impl CapabilityPath {
     pub fn to_qualified_string(&self) -> String {
         match &self.tool {
             None => self.capability.clone(),
-            Some(tool) => format!("{}{CAPABILITY_PATH_SEPARATOR}{tool}", self.capability),
+            Some(tool) => format!("{}{TOOL_CAPABILITY_PATH_SEPARATOR}{tool}", self.capability),
         }
     }
 
@@ -310,11 +313,11 @@ impl CapabilityPath {
     pub fn parse(s: &str) -> Result<Self, String> {
         let trimmed = s.trim();
         if trimmed.is_empty() {
-            return Err("CapabilityPath 不能为空".to_string());
+            return Err("ToolCapabilityPath 不能为空".to_string());
         }
 
         // 统计 `::` 出现次数（按字符位置扫描，避免误处理单 `:` 前缀）
-        let parts: Vec<&str> = trimmed.split(CAPABILITY_PATH_SEPARATOR).collect();
+        let parts: Vec<&str> = trimmed.split(TOOL_CAPABILITY_PATH_SEPARATOR).collect();
         match parts.len() {
             1 => Ok(Self {
                 capability: parts[0].to_string(),
@@ -324,10 +327,10 @@ impl CapabilityPath {
                 let cap = parts[0];
                 let tool = parts[1];
                 if cap.is_empty() {
-                    return Err(format!("CapabilityPath `{s}` 缺少 capability 段"));
+                    return Err(format!("ToolCapabilityPath `{s}` 缺少 capability 段"));
                 }
                 if tool.is_empty() {
-                    return Err(format!("CapabilityPath `{s}` 缺少 tool 段"));
+                    return Err(format!("ToolCapabilityPath `{s}` 缺少 tool 段"));
                 }
                 Ok(Self {
                     capability: cap.to_string(),
@@ -335,25 +338,25 @@ impl CapabilityPath {
                 })
             }
             _ => Err(format!(
-                "CapabilityPath `{s}` 包含多个 `::` 分隔符，仅允许一级工具寻址"
+                "ToolCapabilityPath `{s}` 包含多个 `::` 分隔符，仅允许一级工具寻址"
             )),
         }
     }
 }
 
-impl fmt::Display for CapabilityPath {
+impl fmt::Display for ToolCapabilityPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_qualified_string())
     }
 }
 
-impl Serialize for CapabilityPath {
+impl Serialize for ToolCapabilityPath {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_qualified_string())
     }
 }
 
-impl<'de> Deserialize<'de> for CapabilityPath {
+impl<'de> Deserialize<'de> for ToolCapabilityPath {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         Self::parse(&s).map_err(serde::de::Error::custom)
@@ -366,8 +369,7 @@ pub struct WorkflowContract {
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
-    /// Workflow 级顶层能力配置。`capability_directives` 仍保留为工具能力维度；
-    /// 这里承载 mount/context/policy 等更宽的能力模型。
+    /// Workflow 级顶层能力配置，包含工具能力、mount/context/policy 等能力维度。
     #[serde(default, skip_serializing_if = "CapabilityConfig::is_empty")]
     pub capability_config: CapabilityConfig,
     /// Workflow 产出声明 — 同时作为完成条件：port gate 门禁根据 `gate_strategy` 检查交付。
@@ -386,20 +388,6 @@ pub struct WorkflowContract {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub input_ports: Vec<InputPortDefinition>,
-    /// Workflow 级能力指令序列。
-    ///
-    /// 每条指令在 agent baseline 上应用 Add / Remove：
-    /// - `Add(path)` — 追加能力（短 path）或启用某个工具（长 path）
-    /// - `Remove(path)` — 屏蔽能力（短 path）或屏蔽某个工具（长 path）
-    ///
-    /// 运行时 hook 可叠加 delta 指令；`compute_effective_capabilities` 走同一条归约路径。
-    ///
-    /// 序列化示例：
-    /// ```json
-    /// [{"add": "workflow_management"}, {"remove": "shell_execute"}, {"add": "file_read::fs_read"}]
-    /// ```
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capability_directives: Vec<CapabilityDirective>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -481,18 +469,18 @@ pub struct InputPortDefinition {
     pub standalone_fulfillment: StandaloneFulfillment,
 }
 
-/// 运行时能力指令 —— 在 agent baseline 上执行 Add/Remove。
+/// 工具能力指令 —— 在 agent baseline 上执行 Add/Remove。
 ///
 /// `Add(path)` 追加能力或启用工具，`Remove(path)` 屏蔽能力或屏蔽工具。
 /// `path` 为短 path 表示能力级操作；长 path 表示工具级操作。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CapabilityDirective {
-    Add(CapabilityPath),
-    Remove(CapabilityPath),
+pub enum ToolCapabilityDirective {
+    Add(ToolCapabilityPath),
+    Remove(ToolCapabilityPath),
 }
 
-impl CapabilityDirective {
+impl ToolCapabilityDirective {
     /// 返回指令操作的 capability key（无论工具级还是能力级）。
     pub fn key(&self) -> &str {
         match self {
@@ -501,7 +489,7 @@ impl CapabilityDirective {
     }
 
     /// 返回指令携带的 path 引用。
-    pub fn path(&self) -> &CapabilityPath {
+    pub fn path(&self) -> &ToolCapabilityPath {
         match self {
             Self::Add(p) | Self::Remove(p) => p,
         }
@@ -517,30 +505,30 @@ impl CapabilityDirective {
 
     /// 快捷构造：能力级 Add 指令（短 path）。
     pub fn add_simple(key: impl Into<String>) -> Self {
-        Self::Add(CapabilityPath::of_capability(key))
+        Self::Add(ToolCapabilityPath::of_capability(key))
     }
 
     /// 快捷构造：能力级 Remove 指令（短 path）。
     pub fn remove_simple(key: impl Into<String>) -> Self {
-        Self::Remove(CapabilityPath::of_capability(key))
+        Self::Remove(ToolCapabilityPath::of_capability(key))
     }
 
     /// 快捷构造：工具级 Add 指令（长 path）。
     pub fn add_tool(cap: impl Into<String>, tool: impl Into<String>) -> Self {
-        Self::Add(CapabilityPath::of_tool(cap, tool))
+        Self::Add(ToolCapabilityPath::of_tool(cap, tool))
     }
 
     /// 快捷构造：工具级 Remove 指令（长 path）。
     pub fn remove_tool(cap: impl Into<String>, tool: impl Into<String>) -> Self {
-        Self::Remove(CapabilityPath::of_tool(cap, tool))
+        Self::Remove(ToolCapabilityPath::of_tool(cap, tool))
     }
 }
 
-/// 能力归约状态机 slot —— 对单个 capability key 在一串 directive 后的最终状态。
+/// 工具能力归约状态机 slot —— 对单个 tool capability key 在一串 directive 后的最终状态。
 ///
 /// 状态转移表：见 `compute_effective_capabilities` 实现。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CapabilitySlotState {
+pub enum ToolCapabilitySlotState {
     /// 未被任何 directive 命中（对 auto_granted 能力仍可见）。
     NotDeclared,
     /// 命中过 `Add(cap, None)` —— 启用该 capability 全集。
@@ -553,12 +541,12 @@ pub enum CapabilitySlotState {
 
 /// 归约结果：按 capability key 汇总 slot 状态 + 工具级排除集合。
 #[derive(Debug, Clone, Default)]
-pub struct CapabilityReduction {
-    pub slots: std::collections::BTreeMap<String, CapabilitySlotState>,
+pub struct ToolCapabilityReduction {
+    pub slots: std::collections::BTreeMap<String, ToolCapabilitySlotState>,
     pub excluded_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
-/// 在一串 directive 上执行 slot 规则归约，产出 `CapabilityReduction`。
+/// 在一串 directive 上执行 slot 规则归约，产出 `ToolCapabilityReduction`。
 ///
 /// 规则详见 `.trellis/spec/backend/capability/tool-capability-pipeline.md`
 /// 「Slot 归约规则」章节。核心要点：
@@ -569,49 +557,54 @@ pub struct CapabilityReduction {
 /// - `Remove(cap, Some(t))` → 写入 `excluded_tools[cap] += t`，并在白名单中移除 t
 ///
 /// 后来者胜 —— 每条指令按序执行。
-pub fn reduce_capability_directives(directives: &[CapabilityDirective]) -> CapabilityReduction {
+pub fn reduce_tool_capability_directives(
+    directives: &[ToolCapabilityDirective],
+) -> ToolCapabilityReduction {
     use std::collections::{BTreeMap, BTreeSet};
 
-    let mut slots: BTreeMap<String, CapabilitySlotState> = BTreeMap::new();
+    let mut slots: BTreeMap<String, ToolCapabilitySlotState> = BTreeMap::new();
     let mut excluded_tools: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for directive in directives {
         match directive {
-            CapabilityDirective::Add(path) => {
+            ToolCapabilityDirective::Add(path) => {
                 let key = path.capability.clone();
                 match &path.tool {
                     None => {
-                        slots.insert(key, CapabilitySlotState::FullCapability);
+                        slots.insert(key, ToolCapabilitySlotState::FullCapability);
                     }
                     Some(tool) => {
                         let entry = slots
                             .entry(key.clone())
-                            .or_insert(CapabilitySlotState::NotDeclared);
+                            .or_insert(ToolCapabilitySlotState::NotDeclared);
                         match entry {
-                            CapabilitySlotState::FullCapability => {
+                            ToolCapabilitySlotState::FullCapability => {
                                 // no-op：全集已启用
                             }
-                            CapabilitySlotState::ToolWhitelist(set) => {
+                            ToolCapabilitySlotState::ToolWhitelist(set) => {
                                 set.insert(tool.clone());
                             }
-                            CapabilitySlotState::NotDeclared | CapabilitySlotState::Blocked => {
+                            ToolCapabilitySlotState::NotDeclared
+                            | ToolCapabilitySlotState::Blocked => {
                                 let mut set = BTreeSet::new();
                                 set.insert(tool.clone());
-                                *entry = CapabilitySlotState::ToolWhitelist(set);
+                                *entry = ToolCapabilitySlotState::ToolWhitelist(set);
                             }
                         }
                     }
                 }
             }
-            CapabilityDirective::Remove(path) => {
+            ToolCapabilityDirective::Remove(path) => {
                 let key = path.capability.clone();
                 match &path.tool {
                     None => {
-                        slots.insert(key, CapabilitySlotState::Blocked);
+                        slots.insert(key, ToolCapabilitySlotState::Blocked);
                     }
                     Some(tool) => {
                         // 从白名单中移除（若存在），同时写入 excluded_tools
-                        if let Some(CapabilitySlotState::ToolWhitelist(set)) = slots.get_mut(&key) {
+                        if let Some(ToolCapabilitySlotState::ToolWhitelist(set)) =
+                            slots.get_mut(&key)
+                        {
                             set.remove(tool);
                         }
                         excluded_tools.entry(key).or_default().insert(tool.clone());
@@ -621,7 +614,7 @@ pub fn reduce_capability_directives(directives: &[CapabilityDirective]) -> Capab
         }
     }
 
-    CapabilityReduction {
+    ToolCapabilityReduction {
         slots,
         excluded_tools,
     }
@@ -729,7 +722,7 @@ impl LifecycleStepDefinition {
 
 impl CapabilityConfig {
     pub fn is_empty(&self) -> bool {
-        self.mount_directives.is_empty()
+        self.tool_directives.is_empty() && self.mount_directives.is_empty()
     }
 }
 
@@ -950,6 +943,15 @@ fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<()
 }
 
 fn validate_capability_config(config: &CapabilityConfig, field_path: &str) -> Result<(), String> {
+    for (index, directive) in config.tool_directives.iter().enumerate() {
+        let path = directive.path();
+        let item_path = format!("{field_path}.tool_directives[{index}]");
+        validate_identity(&format!("{item_path}.capability"), &path.capability)?;
+        if let Some(tool) = &path.tool {
+            validate_identity(&format!("{item_path}.tool"), tool)?;
+        }
+    }
+
     for (index, directive) in config.mount_directives.iter().enumerate() {
         let item_path = format!("{field_path}.mount_directives[{index}]");
         match directive {
@@ -1404,8 +1406,8 @@ mod tests {
     }
 
     #[test]
-    fn capability_path_parse_short() {
-        let path = CapabilityPath::parse("file_read").unwrap();
+    fn tool_capability_path_parse_short() {
+        let path = ToolCapabilityPath::parse("file_read").unwrap();
         assert_eq!(path.capability, "file_read");
         assert_eq!(path.tool, None);
         assert!(!path.is_tool_level());
@@ -1413,8 +1415,8 @@ mod tests {
     }
 
     #[test]
-    fn capability_path_parse_long() {
-        let path = CapabilityPath::parse("file_read::fs_grep").unwrap();
+    fn tool_capability_path_parse_long() {
+        let path = ToolCapabilityPath::parse("file_read::fs_grep").unwrap();
         assert_eq!(path.capability, "file_read");
         assert_eq!(path.tool.as_deref(), Some("fs_grep"));
         assert!(path.is_tool_level());
@@ -1422,109 +1424,109 @@ mod tests {
     }
 
     #[test]
-    fn capability_path_parse_mcp_prefix() {
-        let short = CapabilityPath::parse("mcp:code_analyzer").unwrap();
+    fn tool_capability_path_parse_mcp_prefix() {
+        let short = ToolCapabilityPath::parse("mcp:code_analyzer").unwrap();
         assert_eq!(short.capability, "mcp:code_analyzer");
         assert_eq!(short.tool, None);
 
-        let long = CapabilityPath::parse("mcp:workflow_management::upsert").unwrap();
+        let long = ToolCapabilityPath::parse("mcp:workflow_management::upsert").unwrap();
         assert_eq!(long.capability, "mcp:workflow_management");
         assert_eq!(long.tool.as_deref(), Some("upsert"));
     }
 
     #[test]
-    fn capability_path_parse_rejects_empty() {
-        assert!(CapabilityPath::parse("").is_err());
-        assert!(CapabilityPath::parse("   ").is_err());
+    fn tool_capability_path_parse_rejects_empty() {
+        assert!(ToolCapabilityPath::parse("").is_err());
+        assert!(ToolCapabilityPath::parse("   ").is_err());
     }
 
     #[test]
-    fn capability_path_parse_rejects_empty_segments() {
-        assert!(CapabilityPath::parse("::tool").is_err());
-        assert!(CapabilityPath::parse("cap::").is_err());
+    fn tool_capability_path_parse_rejects_empty_segments() {
+        assert!(ToolCapabilityPath::parse("::tool").is_err());
+        assert!(ToolCapabilityPath::parse("cap::").is_err());
     }
 
     #[test]
-    fn capability_path_parse_rejects_multi_segment() {
-        assert!(CapabilityPath::parse("a::b::c").is_err());
+    fn tool_capability_path_parse_rejects_multi_segment() {
+        assert!(ToolCapabilityPath::parse("a::b::c").is_err());
     }
 
     #[test]
-    fn capability_path_serde_uses_qualified_string() {
-        let short = CapabilityPath::of_capability("file_read");
+    fn tool_capability_path_serde_uses_qualified_string() {
+        let short = ToolCapabilityPath::of_capability("file_read");
         assert_eq!(serde_json::to_string(&short).unwrap(), r#""file_read""#);
 
-        let long = CapabilityPath::of_tool("file_read", "fs_grep");
+        let long = ToolCapabilityPath::of_tool("file_read", "fs_grep");
         assert_eq!(
             serde_json::to_string(&long).unwrap(),
             r#""file_read::fs_grep""#
         );
 
-        let back: CapabilityPath = serde_json::from_str(r#""file_read::fs_grep""#).unwrap();
+        let back: ToolCapabilityPath = serde_json::from_str(r#""file_read::fs_grep""#).unwrap();
         assert_eq!(back, long);
     }
 
     #[test]
-    fn capability_directive_add_remove() {
-        let add = CapabilityDirective::add_simple("file_read");
+    fn tool_capability_directive_add_remove() {
+        let add = ToolCapabilityDirective::add_simple("file_read");
         assert!(add.is_add());
         assert!(!add.is_remove());
         assert_eq!(add.key(), "file_read");
 
-        let remove = CapabilityDirective::remove_simple("canvas");
+        let remove = ToolCapabilityDirective::remove_simple("canvas");
         assert!(!remove.is_add());
         assert!(remove.is_remove());
         assert_eq!(remove.key(), "canvas");
     }
 
     #[test]
-    fn capability_directive_serde_roundtrip() {
+    fn tool_capability_directive_serde_roundtrip() {
         let directives = vec![
-            CapabilityDirective::add_simple("file_read"),
-            CapabilityDirective::remove_simple("canvas"),
-            CapabilityDirective::add_tool("file_read", "fs_read"),
-            CapabilityDirective::remove_tool("file_read", "fs_grep"),
-            CapabilityDirective::add_simple("mcp:code_analyzer"),
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::remove_simple("canvas"),
+            ToolCapabilityDirective::add_tool("file_read", "fs_read"),
+            ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
+            ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
         ];
         let json = serde_json::to_string(&directives).unwrap();
-        let deserialized: Vec<CapabilityDirective> = serde_json::from_str(&json).unwrap();
+        let deserialized: Vec<ToolCapabilityDirective> = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, directives);
     }
 
     #[test]
-    fn capability_directive_json_shape() {
-        let add_tool = CapabilityDirective::add_tool("file_read", "fs_read");
+    fn tool_capability_directive_json_shape() {
+        let add_tool = ToolCapabilityDirective::add_tool("file_read", "fs_read");
         let json = serde_json::to_string(&add_tool).unwrap();
         assert_eq!(json, r#"{"add":"file_read::fs_read"}"#);
 
-        let remove_cap = CapabilityDirective::remove_simple("shell_execute");
+        let remove_cap = ToolCapabilityDirective::remove_simple("shell_execute");
         let json = serde_json::to_string(&remove_cap).unwrap();
         assert_eq!(json, r#"{"remove":"shell_execute"}"#);
     }
 
     #[test]
     fn reduce_empty_yields_empty_state() {
-        let reduction = reduce_capability_directives(&[]);
+        let reduction = reduce_tool_capability_directives(&[]);
         assert!(reduction.slots.is_empty());
         assert!(reduction.excluded_tools.is_empty());
     }
 
     #[test]
     fn reduce_add_capability_sets_full_capability() {
-        let directives = vec![CapabilityDirective::add_simple("workflow_management")];
-        let reduction = reduce_capability_directives(&directives);
+        let directives = vec![ToolCapabilityDirective::add_simple("workflow_management")];
+        let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
             reduction.slots.get("workflow_management"),
-            Some(&CapabilitySlotState::FullCapability)
+            Some(&ToolCapabilitySlotState::FullCapability)
         );
     }
 
     #[test]
     fn reduce_add_tool_yields_whitelist() {
-        let directives = vec![CapabilityDirective::add_tool("file_read", "fs_read")];
-        let reduction = reduce_capability_directives(&directives);
+        let directives = vec![ToolCapabilityDirective::add_tool("file_read", "fs_read")];
+        let reduction = reduce_tool_capability_directives(&directives);
         match reduction.slots.get("file_read") {
-            Some(CapabilitySlotState::ToolWhitelist(set)) => {
+            Some(ToolCapabilitySlotState::ToolWhitelist(set)) => {
                 assert!(set.contains("fs_read"));
             }
             other => panic!("期望 ToolWhitelist,实际: {other:?}"),
@@ -1533,18 +1535,18 @@ mod tests {
 
     #[test]
     fn reduce_remove_capability_marks_blocked() {
-        let directives = vec![CapabilityDirective::remove_simple("shell_execute")];
-        let reduction = reduce_capability_directives(&directives);
+        let directives = vec![ToolCapabilityDirective::remove_simple("shell_execute")];
+        let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
             reduction.slots.get("shell_execute"),
-            Some(&CapabilitySlotState::Blocked)
+            Some(&ToolCapabilitySlotState::Blocked)
         );
     }
 
     #[test]
     fn reduce_remove_tool_writes_excluded() {
-        let directives = vec![CapabilityDirective::remove_tool("file_read", "fs_grep")];
-        let reduction = reduce_capability_directives(&directives);
+        let directives = vec![ToolCapabilityDirective::remove_tool("file_read", "fs_grep")];
+        let reduction = reduce_tool_capability_directives(&directives);
         let excluded = reduction.excluded_tools.get("file_read").unwrap();
         assert!(excluded.contains("fs_grep"));
     }
@@ -1552,13 +1554,13 @@ mod tests {
     #[test]
     fn reduce_add_tool_then_add_cap_upgrades_to_full() {
         let directives = vec![
-            CapabilityDirective::add_tool("file_read", "fs_read"),
-            CapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::add_tool("file_read", "fs_read"),
+            ToolCapabilityDirective::add_simple("file_read"),
         ];
-        let reduction = reduce_capability_directives(&directives);
+        let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
             reduction.slots.get("file_read"),
-            Some(&CapabilitySlotState::FullCapability)
+            Some(&ToolCapabilitySlotState::FullCapability)
         );
     }
 
@@ -1566,13 +1568,13 @@ mod tests {
     fn reduce_add_cap_then_remove_tool_keeps_full_plus_exclusion() {
         // FullCapability 状态下的 Remove(tool) 不降级，excluded_tools 记录屏蔽项
         let directives = vec![
-            CapabilityDirective::add_simple("file_read"),
-            CapabilityDirective::remove_tool("file_read", "fs_grep"),
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
         ];
-        let reduction = reduce_capability_directives(&directives);
+        let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
             reduction.slots.get("file_read"),
-            Some(&CapabilitySlotState::FullCapability)
+            Some(&ToolCapabilitySlotState::FullCapability)
         );
         let excluded = reduction.excluded_tools.get("file_read").unwrap();
         assert!(excluded.contains("fs_grep"));
@@ -1582,26 +1584,26 @@ mod tests {
     fn reduce_remove_then_add_re_enables() {
         // 后来者胜
         let directives = vec![
-            CapabilityDirective::remove_simple("canvas"),
-            CapabilityDirective::add_simple("canvas"),
+            ToolCapabilityDirective::remove_simple("canvas"),
+            ToolCapabilityDirective::add_simple("canvas"),
         ];
-        let reduction = reduce_capability_directives(&directives);
+        let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
             reduction.slots.get("canvas"),
-            Some(&CapabilitySlotState::FullCapability)
+            Some(&ToolCapabilitySlotState::FullCapability)
         );
     }
 
     #[test]
     fn reduce_add_tool_then_remove_tool_drops_from_whitelist() {
         let directives = vec![
-            CapabilityDirective::add_tool("file_read", "fs_read"),
-            CapabilityDirective::add_tool("file_read", "fs_glob"),
-            CapabilityDirective::remove_tool("file_read", "fs_read"),
+            ToolCapabilityDirective::add_tool("file_read", "fs_read"),
+            ToolCapabilityDirective::add_tool("file_read", "fs_glob"),
+            ToolCapabilityDirective::remove_tool("file_read", "fs_read"),
         ];
-        let reduction = reduce_capability_directives(&directives);
+        let reduction = reduce_tool_capability_directives(&directives);
         match reduction.slots.get("file_read") {
-            Some(CapabilitySlotState::ToolWhitelist(set)) => {
+            Some(ToolCapabilitySlotState::ToolWhitelist(set)) => {
                 assert!(!set.contains("fs_read"));
                 assert!(set.contains("fs_glob"));
             }
@@ -1612,31 +1614,37 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_capability_directives_default_empty() {
+    fn workflow_contract_capability_config_default_empty() {
         let json = r#"{}"#;
         let contract: WorkflowContract = serde_json::from_str(json).unwrap();
-        assert!(contract.capability_directives.is_empty());
+        assert!(contract.capability_config.is_empty());
 
         let back = serde_json::to_string(&contract).unwrap();
         assert!(
-            !back.contains("capability_directives"),
-            "空 capability_directives 不应出现在序列化结果中: {back}"
+            !back.contains("capability_config"),
+            "空 capability_config 不应出现在序列化结果中: {back}"
         );
     }
 
     #[test]
-    fn workflow_contract_capability_directives_roundtrip() {
+    fn workflow_contract_tool_directives_roundtrip() {
         let contract = WorkflowContract {
-            capability_directives: vec![
-                CapabilityDirective::add_simple("workflow_management"),
-                CapabilityDirective::remove_simple("shell_execute"),
-                CapabilityDirective::add_tool("file_read", "fs_read"),
-            ],
+            capability_config: CapabilityConfig {
+                tool_directives: vec![
+                    ToolCapabilityDirective::add_simple("workflow_management"),
+                    ToolCapabilityDirective::remove_simple("shell_execute"),
+                    ToolCapabilityDirective::add_tool("file_read", "fs_read"),
+                ],
+                ..CapabilityConfig::default()
+            },
             ..WorkflowContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
+        assert!(json.contains("capability_config"));
+        assert!(json.contains("tool_directives"));
+        assert!(!json.contains("capability_directives"));
         let back: WorkflowContract = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.capability_directives, contract.capability_directives);
+        assert_eq!(back.capability_config, contract.capability_config);
     }
 
     #[test]
@@ -1655,6 +1663,7 @@ mod tests {
                         metadata: serde_json::Value::Null,
                     },
                 }],
+                ..CapabilityConfig::default()
             },
             ..WorkflowContract::default()
         };

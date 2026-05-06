@@ -401,7 +401,9 @@ impl SessionHub {
                             payload: Some(serde_json::json!({
                                 "text_prompt": resolved_payload.text_prompt,
                                 "user_block_count": resolved_payload.user_blocks.len(),
-                                "capabilities": initial_caps.iter().collect::<Vec<_>>(),
+                                "tool_capabilities": {
+                                    "current": initial_caps.iter().collect::<Vec<_>>(),
+                                },
                             })),
                             refresh_reason: "trigger:session_start",
                             source: source.clone(),

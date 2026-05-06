@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     CapabilityResolver, CapabilityResolverInput, SessionWorkflowContext,
-    capability_directives_from_active_workflow,
+    tool_directives_from_active_workflow,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -76,7 +76,7 @@ pub async fn build_task_session_context(
     let workflow_directives = workflow.as_ref().and_then(|p| {
         p.primary_workflow
             .as_ref()
-            .map(capability_directives_from_active_workflow)
+            .map(tool_directives_from_active_workflow)
     });
     let cap_input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Task {
@@ -87,7 +87,7 @@ pub async fn build_task_session_context(
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: workflow.is_some(),
-            workflow_capability_directives: workflow_directives,
+            workflow_tool_directives: workflow_directives,
         },
         agent_mcp_servers: vec![],
         available_presets: load_available_presets(repos, task.project_id).await,

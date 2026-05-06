@@ -12,9 +12,11 @@
         "injection": {
           "guidance": "当前处于 Plan 阶段。你是 Project 工作流管家，目标是帮助用户理解并调整该 Project 的 Workflow/Lifecycle 定义。\n\n要求：\n- 先用 list_workflows / get_workflow / get_lifecycle 这些只读工具摸清现状：已有哪些 workflow？lifecycle 编排和 step 结构如何？对照用户诉求找出缺口\n- 本阶段只做理解与方案设计，暂不调用 upsert_workflow / upsert_lifecycle；把结构化设计交付给用户，进入 Apply 阶段后再实际写入\n- 设计输出应包含：新增/修改的 workflow key、contract 关键字段（injection、constraints、completion）、lifecycle 步骤编排和 edges、以及对既有引用的影响"
         },
-        "capability_directives": [
-          { "add": "workflow_management" }
-        ]
+        "capability_config": {
+          "tool_directives": [
+            { "add": "workflow_management" }
+          ]
+        }
       }
     },
     {
@@ -25,27 +27,31 @@
         "injection": {
           "guidance": "当前处于 Apply 阶段。基于 Plan 阶段的设计执行实际写入。\n\n要求：\n- 每次 upsert_workflow / upsert_lifecycle 前，先用 get_workflow / get_lifecycle 读取当前定义，避免覆盖并行改动\n- upsert 失败时先看返回的 ValidationResponse：按 error severity 逐条修正，再重新提交；不要忽略 warning\n- Lifecycle 的 step.workflow_key 引用必须先存在，先 upsert workflow 再 upsert lifecycle\n- 完成后用 list_workflows 回读确认新定义已生效"
         },
-        "capability_directives": [
-          { "add": "workflow_management" }
-        ]
+        "capability_config": {
+          "tool_directives": [
+            { "add": "workflow_management" }
+          ]
+        }
       }
     }
   ],
   "lifecycle": {
     "key": "builtin_workflow_admin",
     "name": "Builtin / Workflow Admin Lifecycle",
-    "description": "Plan → Apply：先理解与设计，再执行写入与校验。两步共享同一 agent session（phase_node）。",
+    "description": "Plan → Apply：先由入口 AgentNode 创建会话，再由 Apply PhaseNode 在同一会话内切换能力表面并执行写入。",
     "entry_step_key": "plan",
     "steps": [
       {
         "key": "plan",
         "description": "理解现状并输出调整方案（仅读，不写）。",
-        "workflow_key": "builtin_workflow_admin_plan"
+        "workflow_key": "builtin_workflow_admin_plan",
+        "node_type": "agent_node"
       },
       {
         "key": "apply",
         "description": "执行 Upsert 与校验。",
-        "workflow_key": "builtin_workflow_admin_apply"
+        "workflow_key": "builtin_workflow_admin_apply",
+        "node_type": "phase_node"
       }
     ],
     "edges": [

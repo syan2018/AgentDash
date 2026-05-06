@@ -24,8 +24,8 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PromptSessionRequest, SessionBootstrapState, SessionExecutionState,
-    UserPromptInput,
+    CapabilitySurface, HookSnapshotReloadTrigger, PendingCapabilitySurfaceTransition,
+    PromptSessionRequest, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -166,6 +166,314 @@ async fn start_prompt_records_current_turn_state() {
         turn.flow_capabilities.enabled_clusters,
         flow_caps.enabled_clusters
     );
+}
+
+#[derive(Default)]
+struct PendingConnector;
+
+#[async_trait::async_trait]
+impl AgentConnector for PendingConnector {
+    fn connector_id(&self) -> &'static str {
+        "pending"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        Ok(Box::pin(stream::pending()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct CapturingConnector {
+    captures: Arc<TokioMutex<Vec<CapturedPromptSurface>>>,
+}
+
+#[derive(Debug, Clone)]
+struct CapturedPromptSurface {
+    mcp_names: Vec<String>,
+    enabled_clusters: std::collections::BTreeSet<agentdash_spi::ToolCluster>,
+    mount_ids: Vec<String>,
+    default_mount_id: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl AgentConnector for CapturingConnector {
+    fn connector_id(&self) -> &'static str {
+        "capturing"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        let vfs = context.session.vfs.clone();
+        self.captures.lock().await.push(CapturedPromptSurface {
+            mcp_names: context
+                .session
+                .mcp_servers
+                .iter()
+                .map(|server| server.name.clone())
+                .collect(),
+            enabled_clusters: context.turn.flow_capabilities.enabled_clusters.clone(),
+            mount_ids: vfs
+                .as_ref()
+                .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
+                .unwrap_or_default(),
+            default_mount_id: vfs.and_then(|vfs| vfs.default_mount_id),
+        });
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn replace_current_capability_surface_updates_active_turn_flow_capabilities() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let session = hub
+        .create_session("capability-surface")
+        .await
+        .expect("create");
+
+    let initial_flow =
+        agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Read]);
+    let mut req = simple_prompt_request("hello");
+    req.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.flow_capabilities = Some(initial_flow);
+
+    hub.start_prompt(&session.id, req)
+        .await
+        .expect("prompt should start");
+
+    let mut target_flow =
+        agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Write]);
+    target_flow
+        .excluded_tools
+        .insert("fs_apply_patch".to_string());
+    let target_mcp = agentdash_spi::SessionMcpServer {
+        name: "phase_tools".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://127.0.0.1:19091/mcp".to_string(),
+            headers: vec![],
+        },
+        uses_relay: false,
+    };
+    let target_vfs = agentdash_spi::Vfs {
+        mounts: vec![agentdash_domain::common::Mount {
+            id: "phase".to_string(),
+            provider: "inline_fs".to_string(),
+            backend_id: "test-backend".to_string(),
+            root_ref: "phase-root".to_string(),
+            capabilities: vec![agentdash_domain::common::MountCapability::Read],
+            default_write: false,
+            display_name: "Phase Mount".to_string(),
+            metadata: serde_json::json!({ "phase": true }),
+        }],
+        default_mount_id: Some("phase".to_string()),
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    };
+
+    hub.replace_current_capability_surface(
+        &session.id,
+        CapabilitySurface {
+            flow_capabilities: target_flow.clone(),
+            mcp_servers: vec![target_mcp.clone()],
+            vfs: Some(target_vfs.clone()),
+        },
+    )
+    .await
+    .expect("replace capability surface");
+
+    let sessions = hub.sessions.lock().await;
+    let turn = sessions
+        .get(&session.id)
+        .and_then(|runtime| runtime.turn_state.active_turn())
+        .expect("current turn execution state");
+    assert_eq!(turn.flow_capabilities, target_flow);
+    assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
+    assert_eq!(turn.session_frame.vfs, Some(target_vfs));
+}
+
+#[tokio::test]
+async fn pending_capability_surface_transition_applies_on_next_prompt_and_clears_meta() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let captures = Arc::new(TokioMutex::new(Vec::new()));
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(CapturingConnector {
+            captures: captures.clone(),
+        }),
+        None,
+    );
+    let session = hub
+        .create_session("pending-capability-surface")
+        .await
+        .expect("create");
+
+    let mut target_flow =
+        agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Write]);
+    target_flow
+        .effective_capabilities
+        .insert(agentdash_spi::ToolCapability::new("file_write"));
+    let target_mcp = agentdash_spi::SessionMcpServer {
+        name: "phase_tools".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://127.0.0.1:19092/mcp".to_string(),
+            headers: vec![],
+        },
+        uses_relay: false,
+    };
+    let lifecycle_mount = agentdash_domain::common::Mount {
+        id: "lifecycle".to_string(),
+        provider: "lifecycle_vfs".to_string(),
+        backend_id: String::new(),
+        root_ref: "lifecycle://run/test".to_string(),
+        capabilities: vec![agentdash_domain::common::MountCapability::Read],
+        default_write: false,
+        display_name: "Lifecycle".to_string(),
+        metadata: serde_json::json!({ "phase": "review" }),
+    };
+    let pending_vfs = agentdash_spi::Vfs {
+        mounts: vec![lifecycle_mount],
+        default_mount_id: None,
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    };
+    hub.enqueue_pending_capability_surface_transition(
+        &session.id,
+        PendingCapabilitySurfaceTransition {
+            id: "transition-1".to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "review".to_string(),
+            capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
+            surface: CapabilitySurface {
+                flow_capabilities: target_flow,
+                mcp_servers: vec![target_mcp],
+                vfs: Some(pending_vfs),
+            },
+            created_at: 1,
+            source_turn_id: None,
+        },
+    )
+    .await
+    .expect("enqueue pending transition")
+    .expect("session should exist");
+
+    hub.start_prompt(&session.id, simple_prompt_request("hello"))
+        .await
+        .expect("prompt should start");
+
+    let captures = captures.lock().await;
+    let captured = captures.first().expect("connector should be called");
+    assert_eq!(captured.mcp_names, vec!["phase_tools"]);
+    assert!(
+        captured
+            .enabled_clusters
+            .contains(&agentdash_spi::ToolCluster::Write)
+    );
+    assert!(captured.mount_ids.contains(&"workspace".to_string()));
+    assert!(captured.mount_ids.contains(&"lifecycle".to_string()));
+    assert_eq!(captured.default_mount_id.as_deref(), Some("workspace"));
+
+    let meta = hub
+        .get_session_meta(&session.id)
+        .await
+        .expect("meta should load")
+        .expect("session should exist");
+    assert!(meta.pending_capability_surface_transitions.is_empty());
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    assert!(events.iter().any(|event| {
+        matches!(
+            &event.notification.event,
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                if key == "capability_surface_changed"
+                    && value.get("apply_mode").and_then(serde_json::Value::as_str)
+                        == Some("applied_on_next_turn")
+        )
+    }));
 }
 
 #[derive(Default)]
@@ -455,6 +763,56 @@ trait BackboneEventExt {
 impl BackboneEventExt for BackboneEvent {
     fn as_ref(&self) -> &BackboneEvent {
         self
+    }
+}
+
+#[tokio::test]
+async fn emit_capability_surface_changed_persists_structured_event() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub
+        .create_session("capability-event")
+        .await
+        .expect("create session");
+
+    let payload = json!({
+        "phase_node": "review",
+        "surface_changed": true,
+        "tool_capabilities": {
+            "current": ["file_read"]
+        },
+        "vfs": {
+            "mounts": ["phase"]
+        },
+        "steering_delivery": { "status": "failed" }
+    });
+    hub.emit_capability_surface_changed(&session.id, Some("turn-42"), payload.clone())
+        .await
+        .expect("emit capability surface event");
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let event = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("capability_surface_changed")
+        })
+        .expect("capability surface event should exist");
+
+    assert_eq!(event.turn_id.as_deref(), Some("turn-42"));
+    match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            assert_eq!(value, &payload);
+        }
+        other => panic!("unexpected event: {other:?}"),
     }
 }
 

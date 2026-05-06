@@ -15,10 +15,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind, LifecycleNodeType,
-    LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
+    CapabilityConfig, InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind,
+    LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
+    WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
 };
 
 use crate::error::McpError;
@@ -65,9 +65,9 @@ pub struct WorkflowContractInput {
     #[schemars(description = "输入端口定义 — 声明本 workflow 所需的外部数据")]
     pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(
-        description = "Workflow 基线能力 key 集合。平台 well-known key（如 file_system、workflow_management），或自定义 MCP 引用 mcp:<preset_name>。"
+        description = "顶层能力配置：tool_directives 声明工具能力，mount_directives 声明 VFS/mount 资源能力。"
     )]
-    pub capabilities: Option<Vec<String>>,
+    pub capability_config: Option<CapabilityConfig>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -124,13 +124,8 @@ pub struct StepInput {
     pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(description = "输出端口列表")]
     pub output_ports: Option<Vec<OutputPortInput>>,
-    /// 旧版字段：step 级 capability 指令。新模型已将 capability 归属迁移到 WorkflowContract,
-    /// 此字段若有值仅会落 warn 日志，不再实际参与解析；兼容已有 upsert 请求避免强制破坏契约。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "已废弃：step 级 capabilities 已迁移到 workflow.contract.capabilities，此字段收到后会被忽略。"
-    )]
-    pub capabilities: Option<serde_json::Value>,
+    #[schemars(description = "Step 级顶层能力配置，会在 workflow contract 配置之后应用。")]
+    pub capability_config: Option<CapabilityConfig>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -450,13 +445,7 @@ fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, Mcp
         },
         output_ports: build_output_ports(input.output_ports.as_deref().unwrap_or_default()),
         input_ports: build_input_ports(input.input_ports.as_deref().unwrap_or_default()),
-        capability_directives: input
-            .capabilities
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .map(|s| agentdash_domain::workflow::CapabilityDirective::add_simple(s.clone()))
-            .collect(),
+        capability_config: input.capability_config.clone().unwrap_or_default(),
     })
 }
 
@@ -489,23 +478,14 @@ fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, Mcp
     inputs
         .iter()
         .map(|step| {
-            if step.capabilities.is_some() {
-                tracing::warn!(
-                    step_key = %step.key,
-                    "upsert_lifecycle: 收到已废弃的 step.capabilities 字段,已忽略。请改用 workflow.contract.capabilities。"
-                );
-            }
             Ok(LifecycleStepDefinition {
                 key: step.key.clone(),
                 description: step.description.clone().unwrap_or_default(),
                 workflow_key: step.workflow_key.clone(),
                 node_type: parse_node_type(step.node_type.as_deref())?,
-                input_ports: build_input_ports(
-                    step.input_ports.as_deref().unwrap_or_default(),
-                ),
-                output_ports: build_output_ports(
-                    step.output_ports.as_deref().unwrap_or_default(),
-                ),
+                input_ports: build_input_ports(step.input_ports.as_deref().unwrap_or_default()),
+                output_ports: build_output_ports(step.output_ports.as_deref().unwrap_or_default()),
+                capability_config: step.capability_config.clone().unwrap_or_default(),
             })
         })
         .collect()

@@ -186,8 +186,17 @@ impl LifecycleRun {
         if steps.is_empty() {
             return Err("lifecycle run 至少需要一个 step".to_string());
         }
-        if !steps.iter().any(|step| step.key == entry_step_key) {
+        let entry_step = steps.iter().find(|step| step.key == entry_step_key);
+        if entry_step.is_none() {
             return Err(format!("entry_step_key `{entry_step_key}` 不存在"));
+        }
+        if matches!(
+            entry_step.map(|step| step.node_type),
+            Some(super::value_objects::LifecycleNodeType::PhaseNode)
+        ) {
+            return Err(format!(
+                "entry_step_key `{entry_step_key}` 指向 PhaseNode；入口节点必须是 AgentNode"
+            ));
         }
 
         let node_deps = node_deps_from_edges(edges);
@@ -541,7 +550,9 @@ pub fn build_effective_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowInjectionSpec};
+    use crate::workflow::value_objects::{
+        LifecycleNodeType, WorkflowContextBinding, WorkflowInjectionSpec,
+    };
 
     fn contract() -> WorkflowContract {
         WorkflowContract {
@@ -567,7 +578,27 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capability_config: Default::default(),
         }
+    }
+
+    #[test]
+    fn lifecycle_run_rejects_phase_node_entry() {
+        let mut steps = vec![step("start", "wf_start")];
+        steps[0].node_type = LifecycleNodeType::PhaseNode;
+
+        let err = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-phase-entry",
+            &steps,
+            "start",
+            &[],
+        )
+        .expect_err("phase node entry should not start a lifecycle run");
+
+        assert!(err.contains("PhaseNode"));
+        assert!(err.contains("AgentNode"));
     }
 
     fn edge(from_node: &str, from_port: &str, to_node: &str, to_port: &str) -> LifecycleEdge {

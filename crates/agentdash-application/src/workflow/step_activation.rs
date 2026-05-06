@@ -12,7 +12,7 @@
 //!   agent MCP servers / available presets / baseline caps)都通过 input 传入。
 //! - **port 前驱状态剥离**:kickoff prompt 构造需要知道 "前驱 output port 是否就绪",
 //!   这部分 IO 由调用方先查好,以 `BTreeSet<String>` 形式塞进 `kickoff_context`。
-//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_directives`;
+//! - **baseline 可覆盖**:默认 baseline = `workflow.contract.capability_config.tool_directives`;
 //!   PhaseNode 热更新路径可传 `baseline_override = Some(hook_runtime.current_caps())`,
 //!   再叠加 directive 得到新能力集。
 
@@ -20,7 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    CapabilityDirective, LifecycleEdge, LifecycleStepDefinition, WorkflowDefinition,
+    LifecycleEdge, LifecycleStepDefinition, MountDirective, ToolCapabilityDirective,
+    WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{FlowCapabilities, Vfs};
@@ -31,7 +32,10 @@ use crate::capability::{
     CompanionSliceMode, SessionWorkflowContext,
 };
 use crate::platform_config::PlatformConfig;
-use crate::session::SessionHub;
+use crate::session::{
+    CapabilitySurface, CapabilitySurfaceEventInput, SessionHub,
+    build_capability_surface_event_payload, compose_vfs_with_overlay_and_directives,
+};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -44,7 +48,7 @@ pub struct StepActivationInput<'a> {
     pub owner_ctx: SessionOwnerCtx,
     /// 当前激活的 step 定义;提供 output/input ports、node_type、workflow_key。
     pub active_step: &'a LifecycleStepDefinition,
-    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_directives` baseline 与
+    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
     pub workflow: Option<&'a WorkflowDefinition>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
@@ -62,11 +66,11 @@ pub struct StepActivationInput<'a> {
     /// Companion 子 session 的 slice 裁剪模式。
     pub companion_slice_mode: Option<CompanionSliceMode>,
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
-    /// 会取代 `workflow.contract.capability_directives`。
-    /// None → 使用 `workflow.contract.capability_directives`。
-    pub baseline_override: Option<Vec<CapabilityDirective>>,
+    /// 会取代 `workflow.contract.capability_config.tool_directives`。
+    /// None → 使用 `workflow.contract.capability_config.tool_directives`。
+    pub baseline_override: Option<Vec<ToolCapabilityDirective>>,
     /// 运行时 capability 指令(PhaseNode 热更新场景);追加到 baseline 后由 slot 归约。
-    pub capability_directives: &'a [CapabilityDirective],
+    pub tool_directives: &'a [ToolCapabilityDirective],
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
     /// 调用方提前通过 `load_port_output_map` 查好,activate_step 不做 IO。
     pub ready_port_keys: BTreeSet<String>,
@@ -109,6 +113,8 @@ pub struct StepActivation {
     pub lifecycle_mount: agentdash_domain::common::Mount,
     /// 完整 Vfs(仅 lifecycle mount;applier 若需要更多 mount,自行扩展)。
     pub lifecycle_vfs: Vfs,
+    /// workflow contract + step 级 mount overlay 指令。
+    pub mount_directives: Vec<MountDirective>,
 }
 
 /// 单 step 激活的计算核心。纯函数,不做 IO。
@@ -121,22 +127,22 @@ pub fn activate_step_with_platform(
     //
     // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
     // `CapabilityResolver` 内部的 slot 归约「后来者胜」，保证运行时增删覆盖 baseline。
-    let baseline_directives: Vec<CapabilityDirective> =
+    let baseline_directives: Vec<ToolCapabilityDirective> =
         input.baseline_override.clone().unwrap_or_else(|| {
             input
                 .workflow
-                .map(|w| w.contract.capability_directives.clone())
+                .map(|w| w.contract.capability_config.tool_directives.clone())
                 .unwrap_or_default()
         });
 
     let mut combined_directives = baseline_directives;
-    combined_directives.extend(input.capability_directives.iter().cloned());
+    combined_directives.extend(input.tool_directives.iter().cloned());
 
     let has_active_workflow = input.workflow.is_some();
     let workflow_ctx = if has_active_workflow {
         SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(combined_directives),
+            workflow_tool_directives: Some(combined_directives),
         }
     } else {
         SessionWorkflowContext::NONE
@@ -184,6 +190,11 @@ pub fn activate_step_with_platform(
         source_story_id: None,
         links: Vec::new(),
     };
+    let mut mount_directives = input
+        .workflow
+        .map(|workflow| workflow.contract.capability_config.mount_directives.clone())
+        .unwrap_or_default();
+    mount_directives.extend(input.active_step.capability_config.mount_directives.clone());
 
     // ── 5. kickoff prompt fragment ──
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
@@ -195,6 +206,7 @@ pub fn activate_step_with_platform(
         kickoff_prompt,
         lifecycle_mount,
         lifecycle_vfs,
+        mount_directives,
     }
 }
 
@@ -302,15 +314,19 @@ pub fn apply_to_prompt_request(
     activation: &StepActivation,
     req: &mut crate::session::PromptSessionRequest,
 ) {
-    req.vfs = Some(activation.lifecycle_vfs.clone());
+    req.vfs = Some(compose_vfs_with_overlay_and_directives(
+        req.vfs.as_ref(),
+        &activation.lifecycle_vfs,
+        &activation.mount_directives,
+    ));
     req.flow_capabilities = Some(activation.flow_capabilities.clone());
     req.mcp_servers = activation.mcp_servers.clone();
 }
 
 /// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
 ///
-/// 返回 capability delta；若无能力变化则返回 `Ok(None)`，并保持与旧实现一致：
-/// 不触发 MCP 替换、steering 注入或 capability changed hook。
+/// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，返回值仍可能是
+/// `Ok(None)`，但会触发工具重建、steering 注入和 capability changed hook。
 pub async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
@@ -318,40 +334,129 @@ pub async fn apply_to_running_session(
     turn_id: Option<&str>,
     phase_node_key: &str,
 ) -> Result<Option<CapabilityDelta>, String> {
-    let Some(delta) = hook_session.update_capabilities(activation.capability_keys.clone()) else {
-        return Ok(None);
-    };
-
-    session_hub
-        .replace_runtime_mcp_servers(hook_session.session_id(), activation.mcp_servers.clone())
-        .await
-        .map_err(|error| format!("Phase node MCP 热更新失败: {error}"))?;
-
-    let delta_md = crate::capability::build_capability_delta_markdown(
-        phase_node_key,
-        &delta,
+    let base_surface = session_hub
+        .get_current_capability_surface(hook_session.session_id())
+        .await;
+    let target_surface = build_capability_surface_for_activation(activation, base_surface.as_ref());
+    let current_surface = base_surface;
+    let surface_changed = current_surface.as_ref() != Some(&target_surface);
+    let key_delta = CapabilityDelta::compute(
+        &hook_session.current_capabilities(),
         &activation.capability_keys,
     );
-    session_hub
-        .push_session_notification(hook_session.session_id(), delta_md)
-        .await
-        .map_err(|error| format!("Phase node capability delta 消息注入失败: {error}"))?;
+
+    if key_delta.is_empty() && !surface_changed {
+        return Ok(None);
+    }
 
     session_hub
-        .emit_capability_changed_hook(
-            hook_session.session_id(),
-            turn_id,
+        .replace_current_capability_surface(hook_session.session_id(), target_surface.clone())
+        .await
+        .map_err(|error| format!("Phase node 能力表面热更新失败: {error}"))?;
+
+    let delta = hook_session.update_capabilities(activation.capability_keys.clone());
+    let notification_delta = delta.clone().unwrap_or(key_delta);
+
+    emit_capability_surface_change(
+        activation,
+        session_hub,
+        hook_session.session_id(),
+        turn_id,
+        phase_node_key,
+        &notification_delta,
+        current_surface.as_ref(),
+        &target_surface,
+        "live",
+    )
+    .await?;
+
+    Ok(delta)
+}
+
+pub fn build_capability_surface_for_activation(
+    activation: &StepActivation,
+    base_surface: Option<&CapabilitySurface>,
+) -> CapabilitySurface {
+    let vfs = compose_vfs_with_overlay_and_directives(
+        base_surface.and_then(|surface| surface.vfs.as_ref()),
+        &activation.lifecycle_vfs,
+        &activation.mount_directives,
+    );
+    CapabilitySurface {
+        flow_capabilities: activation.flow_capabilities.clone(),
+        mcp_servers: activation.mcp_servers.clone(),
+        vfs: Some(vfs),
+    }
+}
+
+async fn emit_capability_surface_change(
+    activation: &StepActivation,
+    session_hub: &SessionHub,
+    session_id: &str,
+    turn_id: Option<&str>,
+    phase_node_key: &str,
+    notification_delta: &CapabilityDelta,
+    before_surface: Option<&CapabilitySurface>,
+    after_surface: &CapabilitySurface,
+    apply_mode: &str,
+) -> Result<(), String> {
+    let delta_md = crate::capability::build_capability_delta_markdown(
+        phase_node_key,
+        notification_delta,
+        &activation.capability_keys,
+    );
+    let steering_delivery = match session_hub
+        .push_session_notification(session_id, delta_md)
+        .await
+    {
+        Ok(()) => serde_json::json!({
+            "status": "accepted_by_connector",
+        }),
+        Err(error) => {
+            tracing::warn!(
+                session_id = %session_id,
+                phase_node = %phase_node_key,
+                error = %error,
+                "Phase node capability steering notification delivery failed"
+            );
             serde_json::json!({
-                "phase_node": phase_node_key,
-                "added": delta.added.clone(),
-                "removed": delta.removed.clone(),
-                "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
-                "mcp_server_count": activation.mcp_servers.len(),
+                "status": "failed",
+                "error": error.to_string(),
+            })
+        }
+    };
+
+    let mut capability_surface_event =
+        build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+            phase_node: phase_node_key,
+            run_id: None,
+            lifecycle_key: None,
+            apply_mode,
+            before_surface,
+            after_surface,
+            capability_keys: &activation.capability_keys,
+            steering_delivery,
+        });
+    if let Some(object) = capability_surface_event.as_object_mut() {
+        object.insert(
+            "steering_capability_delta".to_string(),
+            serde_json::json!({
+                "added": notification_delta.added.clone(),
+                "removed": notification_delta.removed.clone(),
             }),
-        )
+        );
+    }
+
+    session_hub
+        .emit_capability_surface_changed(session_id, turn_id, capability_surface_event.clone())
+        .await
+        .map_err(|error| format!("Phase node capability surface 事件持久化失败: {error}"))?;
+
+    session_hub
+        .emit_capability_changed_hook(session_id, turn_id, capability_surface_event)
         .await;
 
-    Ok(Some(delta))
+    Ok(())
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
@@ -360,11 +465,11 @@ pub fn capability_keys_sorted(activation: &StepActivation) -> Vec<String> {
     activation.capability_keys.iter().cloned().collect()
 }
 
-/// 把 capability key 集转换成 `Add(simple)` 指令序列。
-pub fn capability_directives_from_keys(keys: &BTreeSet<String>) -> Vec<CapabilityDirective> {
+/// 把 capability key 集转换成 `Add(simple)` 工具指令序列。
+pub fn tool_directives_from_keys(keys: &BTreeSet<String>) -> Vec<ToolCapabilityDirective> {
     keys.iter()
         .cloned()
-        .map(CapabilityDirective::add_simple)
+        .map(ToolCapabilityDirective::add_simple)
         .collect()
 }
 
@@ -372,17 +477,17 @@ pub fn capability_directives_from_keys(keys: &BTreeSet<String>) -> Vec<Capabilit
 pub fn capability_delta_directives(
     old_keys: &BTreeSet<String>,
     new_keys: &BTreeSet<String>,
-) -> Vec<CapabilityDirective> {
-    let mut directives: Vec<CapabilityDirective> = new_keys
+) -> Vec<ToolCapabilityDirective> {
+    let mut directives: Vec<ToolCapabilityDirective> = new_keys
         .difference(old_keys)
         .cloned()
-        .map(CapabilityDirective::add_simple)
+        .map(ToolCapabilityDirective::add_simple)
         .collect();
     directives.extend(
         old_keys
             .difference(new_keys)
             .cloned()
-            .map(CapabilityDirective::remove_simple),
+            .map(ToolCapabilityDirective::remove_simple),
     );
     directives
 }
@@ -411,9 +516,10 @@ pub fn empty_presets() -> AvailableMcpPresets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        LifecycleStepDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionSource,
+        CapabilityConfig, LifecycleStepDefinition, MountDirective, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
     };
 
     fn sample_step(
@@ -426,12 +532,16 @@ mod tests {
             node_type: Default::default(),
             output_ports,
             input_ports: vec![],
+            capability_config: Default::default(),
         }
     }
 
-    fn sample_workflow(directives: Vec<CapabilityDirective>) -> WorkflowDefinition {
+    fn sample_workflow(directives: Vec<ToolCapabilityDirective>) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capability_directives: directives,
+            capability_config: CapabilityConfig {
+                tool_directives: directives,
+                ..Default::default()
+            },
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -449,6 +559,19 @@ mod tests {
     fn test_platform() -> PlatformConfig {
         PlatformConfig {
             mcp_base_url: Some("http://localhost:3001".to_string()),
+        }
+    }
+
+    fn mount(id: &str, provider: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            backend_id: "test-backend".to_string(),
+            root_ref: format!("{provider}://{id}"),
+            capabilities: vec![MountCapability::Read],
+            default_write: false,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
         }
     }
 
@@ -474,7 +597,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -489,10 +612,10 @@ mod tests {
     #[test]
     fn activate_step_with_workflow_uses_contract_capabilities_as_baseline() {
         let workflow = sample_workflow(vec![
-            CapabilityDirective::add_simple("file_read"),
-            CapabilityDirective::add_simple("file_write"),
-            CapabilityDirective::add_simple("shell_execute"),
-            CapabilityDirective::add_simple("workflow_management"),
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::add_simple("file_write"),
+            ToolCapabilityDirective::add_simple("shell_execute"),
+            ToolCapabilityDirective::add_simple("workflow_management"),
         ]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
@@ -509,7 +632,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -522,8 +645,159 @@ mod tests {
     }
 
     #[test]
+    fn phase_node_target_workflow_preserves_owner_default_baseline() {
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple(
+            "workflow_management",
+        )]);
+        let step = sample_step(vec![]);
+        let project_id = Uuid::new_v4();
+
+        let input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&workflow),
+            run_id: Uuid::new_v4(),
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            tool_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+
+        let out = activate_step_with_platform(&input, &test_platform());
+
+        assert!(out.capability_keys.contains("workflow_management"));
+        assert!(out.capability_keys.contains("file_read"));
+        assert!(out.capability_keys.contains("file_write"));
+        assert!(out.capability_keys.contains("shell_execute"));
+        assert!(out.capability_keys.contains("canvas"));
+        assert!(out.capability_keys.contains("collaboration"));
+    }
+
+    #[test]
+    fn same_capability_key_tool_directive_changes_tool_surface() {
+        let step = sample_step(vec![]);
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let full_read_workflow =
+            sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
+        let restricted_read_workflow = sample_workflow(vec![
+            ToolCapabilityDirective::add_simple("file_read"),
+            ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
+        ]);
+
+        let base_input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&full_read_workflow),
+            run_id,
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            tool_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+        let restricted_input = StepActivationInput {
+            workflow: Some(&restricted_read_workflow),
+            ..base_input.clone()
+        };
+
+        let base = activate_step_with_platform(&base_input, &test_platform());
+        let restricted = activate_step_with_platform(&restricted_input, &test_platform());
+
+        assert_eq!(base.capability_keys, restricted.capability_keys);
+        assert!(!base.flow_capabilities.excluded_tools.contains("fs_grep"));
+        assert!(
+            restricted
+                .flow_capabilities
+                .excluded_tools
+                .contains("fs_grep")
+        );
+    }
+
+    #[test]
+    fn step_mount_directives_change_capability_surface_vfs() {
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
+        let mut step = sample_step(vec![]);
+        step.capability_config = CapabilityConfig {
+            mount_directives: vec![
+                MountDirective::RemoveMount {
+                    mount_id: "secret".to_string(),
+                },
+                MountDirective::AddMount {
+                    mount: mount("review", "inline_fs"),
+                },
+                MountDirective::SetDefaultMount {
+                    mount_id: Some("review".to_string()),
+                },
+            ],
+            ..Default::default()
+        };
+        let project_id = Uuid::new_v4();
+        let input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&workflow),
+            run_id: Uuid::new_v4(),
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            tool_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+        let activation = activate_step_with_platform(&input, &test_platform());
+        let base_surface = CapabilitySurface {
+            flow_capabilities: activation.flow_capabilities.clone(),
+            mcp_servers: activation.mcp_servers.clone(),
+            vfs: Some(Vfs {
+                mounts: vec![mount("workspace", "relay_fs"), mount("secret", "inline_fs")],
+                default_mount_id: Some("workspace".to_string()),
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            }),
+        };
+
+        let target = build_capability_surface_for_activation(&activation, Some(&base_surface));
+        let target_vfs = target.vfs.as_ref().expect("target vfs");
+        let mount_ids = target_vfs
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(mount_ids.contains("workspace"));
+        assert!(mount_ids.contains("review"));
+        assert!(mount_ids.contains("lifecycle"));
+        assert!(!mount_ids.contains("secret"));
+        assert_eq!(target_vfs.default_mount_id.as_deref(), Some("review"));
+        assert_ne!(base_surface, target);
+
+        let delta = crate::session::compute_capability_surface_delta(
+            Some(&base_surface),
+            &target,
+            &activation.capability_keys,
+        );
+        assert!(delta.vfs.mounts.added.contains(&"review".to_string()));
+        assert!(delta.vfs.mounts.removed.contains(&"secret".to_string()));
+        assert!(delta.vfs.default_mount.changed);
+    }
+
+    #[test]
     fn activate_step_baseline_override_takes_precedence_over_contract() {
-        let workflow = sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
 
@@ -540,19 +814,19 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: Some(vec![
-                CapabilityDirective::add_simple("canvas"),
-                CapabilityDirective::add_simple("collaboration"),
+                ToolCapabilityDirective::add_simple("canvas"),
+                ToolCapabilityDirective::add_simple("collaboration"),
                 // 显式屏蔽 workflow contract 原有的 file_read
-                CapabilityDirective::remove_simple("file_read"),
+                ToolCapabilityDirective::remove_simple("file_read"),
             ]),
-            capability_directives: &[CapabilityDirective::add_simple("workflow_management")],
+            tool_directives: &[ToolCapabilityDirective::add_simple("workflow_management")],
             ready_port_keys: BTreeSet::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
         // baseline_override = canvas + collaboration + Remove(file_read),
         // directive = +workflow_management
-        // workflow.contract.capability_directives = file_read 被 override 替代
+        // workflow.contract.capability_config.tool_directives = file_read 被 override 替代
         assert!(out.capability_keys.contains("canvas"));
         assert!(out.capability_keys.contains("collaboration"));
         assert!(out.capability_keys.contains("workflow_management"));
@@ -584,7 +858,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
         };
 
@@ -621,6 +895,7 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
+            capability_config: Default::default(),
         };
         let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();
@@ -638,7 +913,7 @@ mod tests {
             available_presets: empty_presets(),
             companion_slice_mode: None,
             baseline_override: None,
-            capability_directives: &[],
+            tool_directives: &[],
             ready_port_keys: ready,
         };
 

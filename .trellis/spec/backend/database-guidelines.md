@@ -153,6 +153,8 @@ ADD COLUMN IF NOT EXISTS title_source TEXT NOT NULL DEFAULT 'auto';
 
 sqlx migrate 在应用启动时自动执行尚未应用的迁移。
 
+已提交并可能被本地或共享数据库应用过的 migration 文件不可再修改。sqlx 会记录每个版本的校验和；修改历史文件会导致启动时报 `migration N was previously applied but has been modified`。任何 schema 或数据修复都必须新增更高编号 migration。
+
 ### SQLite（手动 initialize）
 
 SQLite 不支持 `ADD COLUMN IF NOT EXISTS` 语法。在对应 Repository 的 `initialize()` 方法中，于 `CREATE TABLE IF NOT EXISTS` 之后追加 `ALTER TABLE ADD COLUMN`，并**忽略错误**（列已存在时 SQLite 会报 duplicate column error）：
@@ -169,6 +171,7 @@ let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL 
 
 - [ ] 更新 `CREATE TABLE IF NOT EXISTS` 语句（保证新建库的 schema 完整）
 - [ ] **PostgreSQL**: 新增 `migrations/NNNN_xxx.sql` 迁移文件
+- [ ] 不修改已存在的 PostgreSQL migration；如果新建库 schema 也需要完整字段，只能在同一次未发布变更内调整初始建表文件，历史已应用后必须保持原样
 - [ ] **SQLite**: 在 `initialize()` 中追加 `ALTER TABLE ADD COLUMN`（忽略 duplicate 错误）
 - [ ] 更新所有 `INSERT`/`SELECT`/`UPSERT` 语句和 `map_*_row` 映射函数
 - [ ] 更新所有手动构造该 struct 的测试代码

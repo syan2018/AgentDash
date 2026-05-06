@@ -31,7 +31,7 @@ function nodeStatusBadgeClass(status: WorkflowStepState["status"]) {
 
 function nodeTypeLabel(def: LifecycleStepDefinition | null): string {
   if (!def) return "";
-  return def.node_type === "agent_node" ? "Agent Node" : "Phase Node";
+  return (def.node_type ?? "agent_node") === "agent_node" ? "Agent Node" : "Phase Node";
 }
 
 interface LifecycleNodeCardProps {

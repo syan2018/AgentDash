@@ -1,6 +1,6 @@
 //! Session workflow context 解析
 //!
-//! 统一入口：给定 session owner 上下文，解析出 (has_active_workflow, workflow_capability_directives)，
+//! 统一入口：给定 session owner 上下文，解析出 (has_active_workflow, workflow_tool_directives)，
 //! 取代 session 创建路径上分散的 `false / None` 硬编码。
 //!
 //! 覆盖：
@@ -9,7 +9,7 @@
 //! - `Routine { project_id, agent_id }` —— 复用 Project 查询（routine 自带 agent 绑定）
 //!
 //! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
-//! 无需走 helper；那边直接用 `capability_directives_from_active_workflow` 做单步计算即可。
+//! 无需走 helper；那边直接用 `tool_directives_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
 //! [`SessionWorkflowContext::NONE`]，只记录 `tracing::warn!`，不中断 session 创建。
@@ -18,22 +18,22 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentLinkRepository;
 use agentdash_domain::workflow::{
-    CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
-    LifecycleStepDefinition, WorkflowDefinition, WorkflowDefinitionRepository,
+    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+    ToolCapabilityDirective, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 /// session bootstrap 阶段要注入 resolver 的 workflow 上下文。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionWorkflowContext {
     pub has_active_workflow: bool,
-    pub workflow_capability_directives: Option<Vec<CapabilityDirective>>,
+    pub workflow_tool_directives: Option<Vec<ToolCapabilityDirective>>,
 }
 
 impl SessionWorkflowContext {
     /// 未绑定 / 无法解析时的中性返回值，保持与现状一致的默认行为。
     pub const NONE: Self = Self {
         has_active_workflow: false,
-        workflow_capability_directives: None,
+        workflow_tool_directives: None,
     };
 }
 
@@ -53,14 +53,14 @@ pub struct SessionWorkflowRepos<'a> {
     pub agent_link: &'a dyn ProjectAgentLinkRepository,
     pub lifecycle_def: &'a dyn LifecycleDefinitionRepository,
     /// workflow_def 在解析链末端用于拉取 entry step 对应的 WorkflowDefinition,
-    /// 其 `contract.capability_directives` 即 session bootstrap baseline。
+    /// 其 `contract.capability_config.tool_directives` 即 session bootstrap baseline。
     pub workflow_def: &'a dyn WorkflowDefinitionRepository,
 }
 
 /// 解析 session bootstrap workflow 上下文。
 ///
 /// 规则：
-/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capability_directives` →
+/// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capability_config.tool_directives` →
 ///   返回 `(true, Some(directives))`
 /// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 [`SessionWorkflowContext::NONE`]
 pub async fn resolve_session_workflow_context(
@@ -195,7 +195,7 @@ async fn resolve_from_lifecycle_key(
         // entry step 没有绑定 workflow，无法推断能力基线，但活跃标志仍成立。
         return SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(Vec::new()),
+            workflow_tool_directives: Some(Vec::new()),
         };
     };
 
@@ -227,7 +227,7 @@ async fn resolve_from_lifecycle_key(
 
     SessionWorkflowContext {
         has_active_workflow: true,
-        workflow_capability_directives: Some(capability_directives_from_active_workflow(&workflow)),
+        workflow_tool_directives: Some(tool_directives_from_active_workflow(&workflow)),
     }
 }
 
@@ -245,17 +245,14 @@ fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
     }
 }
 
-/// 从当前活跃 workflow 的 `contract.capability_directives` 构建 session 基线能力指令。
+/// 从当前活跃 workflow 的 `contract.capability_config.tool_directives` 构建 session 基线工具指令。
 ///
-/// session bootstrap 阶段直接使用这些 directive；hook runtime 的动态增减（`CapabilityDirective`）
+/// session bootstrap 阶段直接使用这些 directive；hook runtime 的动态增减（`ToolCapabilityDirective`）
 /// 由 workflow 级调用方在运行时叠加。
-///
-/// 新模型中 workflow.contract.capability_directives 本身就是 directive 序列，
-/// 因此直接 clone 即可 —— 不再像旧模型那样需要把条目包装成 Add 指令。
-pub fn capability_directives_from_active_workflow(
+pub fn tool_directives_from_active_workflow(
     workflow: &WorkflowDefinition,
-) -> Vec<CapabilityDirective> {
-    workflow.contract.capability_directives.clone()
+) -> Vec<ToolCapabilityDirective> {
+    workflow.contract.capability_config.tool_directives.clone()
 }
 
 #[cfg(test)]
@@ -268,8 +265,8 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgentLink, ProjectAgentLinkRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        CapabilityDirective, LifecycleDefinition, LifecycleDefinitionRepository,
-        LifecycleStepDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+        ToolCapabilityDirective, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
         WorkflowDefinitionRepository, WorkflowDefinitionSource,
     };
 
@@ -543,7 +540,7 @@ mod tests {
     }
 
     /// 构造 `builtin_workflow_admin` lifecycle 及其 entry step workflow。
-    /// workflow.contract.capability_directives 放一个 Add("workflow_management"),对应 PRD 的新结构。
+    /// workflow.contract.capability_config.tool_directives 放一个 Add("workflow_management")。
     fn admin_lifecycle(project_id: Uuid) -> LifecycleDefinition {
         let plan = LifecycleStepDefinition {
             key: "plan".to_string(),
@@ -552,6 +549,7 @@ mod tests {
             node_type: Default::default(),
             output_ports: vec![],
             input_ports: vec![],
+            capability_config: Default::default(),
         };
         LifecycleDefinition::new(
             project_id,
@@ -569,7 +567,10 @@ mod tests {
 
     fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
         let contract = WorkflowContract {
-            capability_directives: vec![CapabilityDirective::add_simple("workflow_management")],
+            capability_config: agentdash_domain::workflow::CapabilityConfig {
+                tool_directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
+                ..Default::default()
+            },
             ..WorkflowContract::default()
         };
         WorkflowDefinition::new(
@@ -627,8 +628,10 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::add_simple("workflow_management")])
+            ctx.workflow_tool_directives,
+            Some(vec![ToolCapabilityDirective::add_simple(
+                "workflow_management"
+            )])
         );
     }
 
@@ -891,8 +894,10 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::add_simple("workflow_management")])
+            ctx.workflow_tool_directives,
+            Some(vec![ToolCapabilityDirective::add_simple(
+                "workflow_management"
+            )])
         );
     }
 
@@ -966,20 +971,25 @@ mod tests {
 
         assert!(ctx.has_active_workflow);
         assert_eq!(
-            ctx.workflow_capability_directives,
-            Some(vec![CapabilityDirective::add_simple("workflow_management")])
+            ctx.workflow_tool_directives,
+            Some(vec![ToolCapabilityDirective::add_simple(
+                "workflow_management"
+            )])
         );
     }
 
     #[test]
-    fn capability_directives_from_active_workflow_preserves_directives() {
+    fn tool_directives_from_active_workflow_preserves_directives() {
         let contract = WorkflowContract {
-            capability_directives: vec![
-                CapabilityDirective::add_simple("workflow_management"),
-                CapabilityDirective::add_simple("file_read"),
-                CapabilityDirective::remove_simple("shell_execute"),
-                CapabilityDirective::add_simple("mcp:code_analyzer"),
-            ],
+            capability_config: agentdash_domain::workflow::CapabilityConfig {
+                tool_directives: vec![
+                    ToolCapabilityDirective::add_simple("workflow_management"),
+                    ToolCapabilityDirective::add_simple("file_read"),
+                    ToolCapabilityDirective::remove_simple("shell_execute"),
+                    ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
+                ],
+                ..Default::default()
+            },
             ..WorkflowContract::default()
         };
         let workflow = WorkflowDefinition::new(
@@ -993,17 +1003,17 @@ mod tests {
         )
         .expect("workflow");
 
-        let directives = capability_directives_from_active_workflow(&workflow);
+        let directives = tool_directives_from_active_workflow(&workflow);
         assert_eq!(directives.len(), 4);
         // 指令序列必须保持与 contract 完全一致（顺序 + 内容）—— 不再做 Add 包装，
         // workflow 声明的 Remove 指令能够传递到 resolver。
         assert!(directives.iter().any(|d| matches!(
             d,
-            CapabilityDirective::Remove(path) if path.capability == "shell_execute"
+            ToolCapabilityDirective::Remove(path) if path.capability == "shell_execute"
         )));
         assert!(directives.iter().any(|d| matches!(
             d,
-            CapabilityDirective::Add(path) if path.capability == "workflow_management"
+            ToolCapabilityDirective::Add(path) if path.capability == "workflow_management"
         )));
     }
 }

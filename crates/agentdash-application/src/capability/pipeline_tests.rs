@@ -3,9 +3,9 @@
 //! 覆盖 agent_node + phase_node 两种 step 激活场景在 domain → application 层的
 //! 完整数据流：
 //!
-//! - step CapabilityDirective → workflow baseline + directive 运算 → effective key 集合
+//! - step ToolCapabilityDirective → workflow baseline + directive 运算 → effective key 集合
 //! - CapabilityDelta::compute → 前后差异
-//! - CapabilityResolver::resolve(workflow_capability_directives) → 实际 FlowCapabilities
+//! - CapabilityResolver::resolve(workflow_tool_directives) → 实际 FlowCapabilities
 //!   + platform MCP configs + 自定义 mcp:* 注入
 //! - build_capability_delta_markdown → 供 agent 直接消费的通知文本
 
@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
-use agentdash_domain::workflow::CapabilityDirective;
+use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::hooks::CapabilityDelta;
 use uuid::Uuid;
@@ -49,9 +49,9 @@ fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
 #[test]
 fn agent_node_step_directives_produce_expected_session_tools() {
     let directives = vec![
-        CapabilityDirective::add_simple("workflow_management"),
-        CapabilityDirective::add_simple("mcp:code_analyzer"),
-        CapabilityDirective::remove_simple("collaboration"),
+        ToolCapabilityDirective::add_simple("workflow_management"),
+        ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
+        ToolCapabilityDirective::remove_simple("collaboration"),
     ];
 
     let input = CapabilityResolverInput {
@@ -61,7 +61,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(directives.clone()),
+            workflow_tool_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         available_presets: Default::default(),
@@ -93,9 +93,9 @@ fn agent_node_step_directives_produce_expected_session_tools() {
 #[test]
 fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     let directives = vec![
-        CapabilityDirective::add_simple("workflow_management"),
-        CapabilityDirective::add_simple("mcp:external_analyzer"),
-        CapabilityDirective::remove_simple("canvas"),
+        ToolCapabilityDirective::add_simple("workflow_management"),
+        ToolCapabilityDirective::add_simple("mcp:external_analyzer"),
+        ToolCapabilityDirective::remove_simple("canvas"),
     ];
 
     let input = CapabilityResolverInput {
@@ -105,7 +105,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(directives.clone()),
+            workflow_tool_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
         available_presets: Default::default(),
@@ -186,8 +186,8 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
 #[test]
 fn phase_node_invalid_directives_are_tolerated() {
     let directives = vec![
-        CapabilityDirective::remove_simple("never_existed"),
-        CapabilityDirective::add_simple("mcp:missing_server"),
+        ToolCapabilityDirective::remove_simple("never_existed"),
+        ToolCapabilityDirective::add_simple("mcp:missing_server"),
     ];
 
     let input = CapabilityResolverInput {
@@ -197,7 +197,7 @@ fn phase_node_invalid_directives_are_tolerated() {
         agent_declared_capabilities: None,
         workflow_ctx: SessionWorkflowContext {
             has_active_workflow: true,
-            workflow_capability_directives: Some(directives.clone()),
+            workflow_tool_directives: Some(directives.clone()),
         },
         agent_mcp_servers: vec![],
         available_presets: Default::default(),

@@ -436,6 +436,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Pending,
+            pending_capability_surface_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -461,6 +462,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
+            pending_capability_surface_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -492,6 +494,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
+            pending_capability_surface_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -517,6 +520,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
+            pending_capability_surface_transitions: Vec::new(),
         };
 
         assert_eq!(

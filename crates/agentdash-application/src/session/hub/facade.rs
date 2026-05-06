@@ -9,7 +9,9 @@
 
 use std::io;
 
-use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use tokio::sync::broadcast;
 
 use super::super::continuation::build_projected_transcript_from_events;
@@ -89,6 +91,7 @@ impl SessionHub {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
+            pending_capability_surface_transitions: Vec::new(),
         };
         self.persistence.create_session(&meta).await?;
         Ok(meta)
@@ -262,6 +265,67 @@ impl SessionHub {
         self.connector
             .push_session_notification(session_id, message)
             .await
+    }
+
+    /// 持久化一条结构化能力表面变更事件。
+    ///
+    /// 这是 UI / 审计 / 回放的事实源；connector steering 消息只是 live agent 的
+    /// 尽力投递通道。
+    pub async fn emit_capability_surface_changed(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        value: serde_json::Value,
+    ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
+        let connector_type = match self.connector.connector_type() {
+            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
+            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: connector_type.to_string(),
+            executor_id: None,
+        };
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "capability_surface_changed".to_string(),
+                value,
+            }),
+            session_id,
+            source,
+        )
+        .with_trace(TraceInfo {
+            turn_id: turn_id.map(ToString::to_string),
+            entry_index: None,
+        });
+
+        self.persist_notification(session_id, envelope).await
+    }
+
+    pub async fn enqueue_pending_capability_surface_transition(
+        &self,
+        session_id: &str,
+        transition: PendingCapabilitySurfaceTransition,
+    ) -> io::Result<Option<SessionMeta>> {
+        let phase_node = transition.phase_node.clone();
+        let updated = self
+            .update_session_meta(session_id, move |meta| {
+                meta.pending_capability_surface_transitions
+                    .retain(|existing| existing.phase_node != phase_node);
+                meta.pending_capability_surface_transitions.push(transition);
+            })
+            .await?;
+        Ok(updated)
+    }
+
+    pub async fn clear_pending_capability_surface_transitions(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Option<SessionMeta>> {
+        self.update_session_meta(session_id, |meta| {
+            meta.pending_capability_surface_transitions.clear();
+        })
+        .await
     }
 
     pub async fn has_live_runtime(&self, session_id: &str) -> bool {

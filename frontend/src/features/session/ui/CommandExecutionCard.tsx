@@ -157,19 +157,23 @@ export const CommandExecutionCard = memo(function CommandExecutionCard({
 });
 
 function useElapsed(active: boolean): string | null {
-  const [, setTick] = useState(0);
-  const startRef = useRef(Date.now());
+  const [clock, setClock] = useState<{ start: number; now: number } | null>(null);
 
   useEffect(() => {
     if (!active) return;
-    startRef.current = Date.now();
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
+    const start = Date.now();
+    const update = () => setClock({ start, now: Date.now() });
+    const firstTick = window.setTimeout(update, 0);
+    const interval = window.setInterval(update, 1000);
+    return () => {
+      window.clearTimeout(firstTick);
+      window.clearInterval(interval);
+    };
   }, [active]);
 
-  if (!active) return null;
+  if (!active || clock === null) return null;
 
-  const secs = Math.floor((Date.now() - startRef.current) / 1000);
+  const secs = Math.floor((clock.now - clock.start) / 1000);
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return `${m}:${String(s).padStart(2, "0")}`;

@@ -19,6 +19,11 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
   const parsed = parseCanvasUri(uri);
   const canvasId = parsed?.canvasId || activeCanvasId || null;
 
+  const handleBrowseFiles = useCallback((mountId: string) => {
+    const uri = `${mountId}://`;
+    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
+  }, []);
+
   if (!canvasId) {
     return (
       <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 px-6">
@@ -32,11 +37,6 @@ function CanvasTabContent({ uri }: TabContentRenderProps) {
       </div>
     );
   }
-
-  const handleBrowseFiles = useCallback((mountId: string) => {
-    const uri = `${mountId}://`;
-    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
-  }, []);
 
   return (
     <CanvasSessionPanel

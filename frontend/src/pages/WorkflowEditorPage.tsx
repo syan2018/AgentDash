@@ -13,8 +13,15 @@ export function WorkflowEditorPage() {
   const openNewDraft = useWorkflowStore((s) => s.openNewDraft);
   const openEditDraft = useWorkflowStore((s) => s.openEditDraft);
   const isLoading = useWorkflowStore((s) => s.wfEditor.isLoading);
+  const isDirty = useWorkflowStore((s) => s.wfEditor.dirty);
 
   const isNew = definitionId === "new";
+  const handleBack = () => {
+    if (isDirty && !window.confirm("当前 Workflow 有未保存修改，确定离开吗？")) {
+      return;
+    }
+    navigate("/dashboard/assets/workflow");
+  };
 
   useEffect(() => {
     if (isNew) {
@@ -42,7 +49,7 @@ export function WorkflowEditorPage() {
           <p className="text-sm text-muted-foreground">未找到 Workflow 定义</p>
           <button
             type="button"
-            onClick={() => navigate("/dashboard/assets/workflow")}
+            onClick={handleBack}
             className="mt-4 agentdash-button-secondary"
           >
             返回 Workflow 资产
@@ -58,7 +65,7 @@ export function WorkflowEditorPage() {
       <div className="shrink-0 border-b border-border px-6 py-3">
         <button
           type="button"
-          onClick={() => navigate("/dashboard/assets/workflow")}
+          onClick={handleBack}
           className="inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>

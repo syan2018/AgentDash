@@ -35,6 +35,10 @@ import { DagNode, type DagNodeData } from "./ui/dag-node";
 import { DagSidePanel } from "./ui/dag-side-panel";
 import { DagLifecyclePanel } from "./ui/dag-lifecycle-panel";
 import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "./model/dag-layout";
+import {
+  mergeWorkflowPortsIntoLifecycleStep,
+  syncLifecycleStepPortsForArtifactEdges,
+} from "./model/lifecycle-port-sync";
 import { buildLifecycleStepWorkflowNames, uniqueIdentifier } from "./model/naming";
 import { DetailPanel } from "../../components/ui/detail-panel";
 import { WorkflowEditor } from "./workflow-editor";
@@ -178,6 +182,7 @@ function LifecycleDagEditorInner() {
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
   const [createStepOpen, setCreateStepOpen] = useState(false);
   const [createStepName, setCreateStepName] = useState("step");
+  const [workflowEditorStepKey, setWorkflowEditorStepKey] = useState<string | null>(null);
 
   // ── 加载关联的 workflow definitions ──
   const targetKind = draft?.target_kind;
@@ -200,6 +205,32 @@ function LifecycleDagEditorInner() {
     () => (originalId ? lifecycleDefinitions.find((d) => d.id === originalId) ?? null : null),
     [lifecycleDefinitions, originalId],
   );
+  const allBoundWorkflowsLoaded = useMemo(() => {
+    if (!draft) return false;
+    const availableWorkflowKeys = new Set(availableWorkflows.map((workflow) => workflow.key));
+    return draft.steps.every((step) => {
+      const workflowKey = step.workflow_key?.trim();
+      return !workflowKey || availableWorkflowKeys.has(workflowKey);
+    });
+  }, [availableWorkflows, draft]);
+
+  const syncArtifactEdgePorts = useCallback((): boolean => {
+    if (!draft) return false;
+    const result = syncLifecycleStepPortsForArtifactEdges({
+      steps: draft.steps,
+      edges: draft.edges,
+      workflows: availableWorkflows,
+    });
+    if (result.changed) {
+      updateLifecycleDraft({ steps: result.steps });
+    }
+    return result.changed;
+  }, [availableWorkflows, draft, updateLifecycleDraft]);
+
+  useEffect(() => {
+    if (!allBoundWorkflowsLoaded) return;
+    syncArtifactEdgePorts();
+  }, [allBoundWorkflowsLoaded, syncArtifactEdgePorts]);
 
   // ── ReactFlow nodes & edges state ──
   const positions = useRef(loadPositions(draft?.key ?? "__new"));
@@ -364,7 +395,13 @@ function LifecycleDagEditorInner() {
           to_node: connection.target,
           to_port: toPort,
         };
-        updateLifecycleDraft({ steps: newSteps, edges: [...draft.edges, newEdge] });
+        const nextEdges = [...draft.edges, newEdge];
+        const synced = syncLifecycleStepPortsForArtifactEdges({
+          steps: newSteps,
+          edges: nextEdges,
+          workflows: availableWorkflows,
+        });
+        updateLifecycleDraft({ steps: synced.steps, edges: nextEdges });
       } else {
         // Flow edge：仅控制流，禁止重复（同一 from→to 只允许一条 flow edge）
         const existsFlow = draft.edges.some(
@@ -383,7 +420,7 @@ function LifecycleDagEditorInner() {
         updateLifecycleDraft({ edges: [...draft.edges, newEdge] });
       }
     },
-    [draft, updateLifecycleDraft],
+    [availableWorkflows, draft, updateLifecycleDraft],
   );
 
   // ── 节点点击 → 选中 ──
@@ -495,14 +532,18 @@ function LifecycleDagEditorInner() {
 
   const handleEditBoundWorkflow = useCallback(
     (workflowId: string) => {
+      if (selectedStepIndex >= 0 && draft) {
+        setWorkflowEditorStepKey(draft.steps[selectedStepIndex].key);
+      }
       void openEditWorkflowDraft(workflowId);
     },
-    [openEditWorkflowDraft],
+    [draft, openEditWorkflowDraft, selectedStepIndex],
   );
 
   const handleCreateAndBindWorkflow = useCallback(() => {
     if (!draft || selectedStepIndex < 0) return;
     const step = draft.steps[selectedStepIndex];
+    setWorkflowEditorStepKey(step.key);
     const workflowNames = buildLifecycleStepWorkflowNames({
       lifecycleKey: draft.key,
       lifecycleDisplayName: draft.name,
@@ -577,10 +618,16 @@ function LifecycleDagEditorInner() {
 
   // ── 保存 ──
   const handleSave = useCallback(async () => {
+    syncArtifactEdgePorts();
     const result = await validateLifecycleDraft();
     if (result && result.issues.some((i) => i.severity === "error")) return;
     await saveLifecycleDraft();
-  }, [validateLifecycleDraft, saveLifecycleDraft]);
+  }, [saveLifecycleDraft, syncArtifactEdgePorts, validateLifecycleDraft]);
+
+  const handleValidate = useCallback(() => {
+    syncArtifactEdgePorts();
+    void validateLifecycleDraft();
+  }, [syncArtifactEdgePorts, validateLifecycleDraft]);
 
   // ── Ctrl+S ──
   useEffect(() => {
@@ -701,7 +748,7 @@ function LifecycleDagEditorInner() {
               <div className="mx-1 h-5 w-px bg-border" />
               <button
                 type="button"
-                onClick={() => void validateLifecycleDraft()}
+                onClick={handleValidate}
                 disabled={isValidating}
                 className="agentdash-button-secondary px-2 py-1 text-xs"
               >
@@ -807,6 +854,14 @@ function LifecycleDagEditorInner() {
     >
       <WorkflowEditor
         onSaved={(definition) => {
+          if (workflowEditorStepKey && draft) {
+            const nextSteps = draft.steps.map((step) =>
+              step.key === workflowEditorStepKey
+                ? mergeWorkflowPortsIntoLifecycleStep({ ...step, workflow_key: definition.key }, definition)
+                : step,
+            );
+            updateLifecycleDraft({ steps: nextSteps });
+          }
           if (definition.project_id) {
             void fetchDefinitions({ projectId: definition.project_id, targetKind: definition.target_kind });
           }

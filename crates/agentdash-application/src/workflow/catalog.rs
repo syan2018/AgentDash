@@ -815,4 +815,28 @@ mod tests {
         assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
         assert_eq!(saved.lifecycle.steps.len(), 2);
     }
+
+    #[tokio::test]
+    async fn upsert_bundle_accepts_trellis_dag_task() {
+        use crate::workflow::definition::{
+            TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
+        };
+
+        let project_id = Uuid::new_v4();
+        let bundle = build_builtin_workflow_bundle(project_id, TRELLIS_DAG_TASK_TEMPLATE_KEY)
+            .expect("build trellis_dag_task bundle");
+
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+
+        let saved = service
+            .upsert_bundle(bundle)
+            .await
+            .expect("bootstrap Trellis DAG Task 应通过 step 级 port 校验");
+
+        assert_eq!(saved.workflows.len(), 2);
+        assert_eq!(saved.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
+        assert_eq!(saved.lifecycle.steps.len(), 2);
+    }
 }

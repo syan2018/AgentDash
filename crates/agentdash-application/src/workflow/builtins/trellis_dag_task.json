@@ -91,13 +91,34 @@
         "key": "research",
         "description": "需求分析与技术调研（独立 Agent Session）",
         "workflow_key": "trellis_dag_task_research",
-        "node_type": "agent_node"
+        "node_type": "agent_node",
+        "output_ports": [
+          {
+            "key": "research_report",
+            "description": "调研报告——包含需求分析、技术选型和方案设计",
+            "gate_strategy": "existence"
+          }
+        ]
       },
       {
         "key": "implement",
         "description": "基于调研结论执行实现（独立 Agent Session）",
         "workflow_key": "trellis_dag_task_implement",
-        "node_type": "agent_node"
+        "node_type": "agent_node",
+        "input_ports": [
+          {
+            "key": "research_input",
+            "description": "来自 Research 阶段的调研报告",
+            "context_strategy": "full"
+          }
+        ],
+        "output_ports": [
+          {
+            "key": "implementation_report",
+            "description": "实现报告——包含实现方案、变更摘要和测试结果",
+            "gate_strategy": "existence"
+          }
+        ]
       }
     ],
     "edges": [

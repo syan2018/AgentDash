@@ -179,7 +179,7 @@ pub enum ToolCluster {
 /// 可进一步与 agent base_config 中的 tool_clusters 做交集裁剪。
 ///
 /// 支持两层裁剪：cluster 级开关 + 工具级排除。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlowCapabilities {
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 工具级排除集：即使所属 cluster 已启用，名在此集合中的工具仍不注入。
@@ -258,7 +258,7 @@ impl FlowCapabilities {
 /// Session 级 MCP server — 内部统一类型，通过 `uses_relay` 标记区分直连与中继。
 ///
 /// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionMcpServer {
     pub name: String,
     pub transport: McpTransportConfig,
@@ -267,7 +267,7 @@ pub struct SessionMcpServer {
 }
 
 /// MCP server 的传输配置。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpTransportConfig {
     Http {
@@ -285,13 +285,13 @@ pub enum McpTransportConfig {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct McpHeader {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct McpEnvVar {
     pub name: String,
     pub value: String,

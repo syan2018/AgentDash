@@ -3,7 +3,7 @@
 //! 按 PR 6 拆分：
 //! - [`facade`]：session CRUD / subscribe / inject / 基本 prompt routing / companion。
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
-//! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_runtime_mcp_servers`。
+//! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_surface`。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
 //!   `emit_capability_changed_hook` / `schedule_hook_auto_resume`。
 //!   （原 `session/event_bridge.rs` 已于 PR 6 迁入本模块并顺手删除 `_tx` 占位参数。）
@@ -35,6 +35,7 @@ mod tool_builder;
 mod tests;
 
 pub(super) use hook_dispatch::HookTriggerInput;
+pub(crate) use tool_builder::CapabilitySurface;
 
 #[derive(Clone)]
 pub struct SessionHub {

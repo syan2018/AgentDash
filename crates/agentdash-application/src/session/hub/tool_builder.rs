@@ -2,19 +2,30 @@
 //!
 //! 集中：
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
-//!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_runtime_mcp_servers
+//!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_current_capability_surface
 //!   在运行中热更时重构）。
-//! - `get_runtime_mcp_servers` / `replace_runtime_mcp_servers`：读/改 active session
-//!   的 MCP 列表并同步到 connector。
+//! - `get_runtime_mcp_servers` / `get_current_capability_surface` /
+//!   `replace_current_capability_surface`：读/改 active session 的能力表面并同步到
+//!   connector。
 //!
 //! 注：本文件仍依赖 `agentdash_executor::mcp::discover_*`。该依赖早于 PR 6 存在
 //! （application 层直接调用 executor 实现），PRD 允许"通过 tool_builder 间接依赖"，
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
+use agentdash_spi::{ConnectorError, ExecutionContext, FlowCapabilities, SessionMcpServer};
 
 use super::SessionHub;
+
+/// 当前 turn 已解析后的能力表面。
+///
+/// 这是 `CapabilitySurface` 的第一块落点：先把工具能力裁剪和 MCP 列表作为同一个
+/// diff/apply 单位处理，后续再把 VFS/mount、context overlay、policy 等维度并入。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilitySurface {
+    pub flow_capabilities: FlowCapabilities,
+    pub mcp_servers: Vec<SessionMcpServer>,
+}
 
 impl SessionHub {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
@@ -27,13 +38,29 @@ impl SessionHub {
             .unwrap_or_default()
     }
 
-    /// 替换运行中 session 的 MCP server 列表并同步 connector。
-    ///
-    /// Hub 层自行完成 MCP 工具发现，将预构建好的工具集传给 connector。
-    pub async fn replace_runtime_mcp_servers(
+    /// 读取 session 当前 turn 生效的能力表面。
+    pub async fn get_current_capability_surface(
         &self,
         session_id: &str,
-        mcp_servers: Vec<SessionMcpServer>,
+    ) -> Option<CapabilitySurface> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .and_then(|runtime| runtime.turn_state.active_turn())
+            .map(|turn| CapabilitySurface {
+                flow_capabilities: turn.flow_capabilities.clone(),
+                mcp_servers: turn.session_frame.mcp_servers.clone(),
+            })
+    }
+
+    /// 替换运行中 session 的能力表面并同步 connector。
+    ///
+    /// Hub 层自行完成 runtime tools + MCP 工具发现，将预构建好的完整工具集传给
+    /// connector。
+    pub async fn replace_current_capability_surface(
+        &self,
+        session_id: &str,
+        surface: CapabilitySurface,
     ) -> Result<(), ConnectorError> {
         let (turn_snapshot, hook_session) = {
             let sessions = self.sessions.lock().await;
@@ -52,17 +79,17 @@ impl SessionHub {
 
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
-        session_frame.mcp_servers = mcp_servers.clone();
+        session_frame.mcp_servers = surface.mcp_servers.clone();
         let context = ExecutionContext {
             session: session_frame,
             turn: agentdash_spi::ExecutionTurnFrame {
                 hook_session,
-                flow_capabilities: turn_snapshot.flow_capabilities.clone(),
+                flow_capabilities: surface.flow_capabilities.clone(),
                 ..Default::default()
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(session_id, &context, &mcp_servers)
+            .build_tools_for_execution_context(session_id, &context, &surface.mcp_servers)
             .await;
 
         self.connector
@@ -72,7 +99,8 @@ impl SessionHub {
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                turn.session_frame.mcp_servers = mcp_servers;
+                turn.session_frame.mcp_servers = surface.mcp_servers;
+                turn.flow_capabilities = surface.flow_capabilities;
             }
         }
         Ok(())

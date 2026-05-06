@@ -32,6 +32,7 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::SessionHub;
+use crate::session::hub::CapabilitySurface;
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -309,8 +310,8 @@ pub fn apply_to_prompt_request(
 
 /// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
 ///
-/// 返回 capability delta；若无能力变化则返回 `Ok(None)`，并保持与旧实现一致：
-/// 不触发 MCP 替换、steering 注入或 capability changed hook。
+/// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，返回值仍可能是
+/// `Ok(None)`，但会触发工具重建、steering 注入和 capability changed hook。
 pub async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
@@ -318,18 +319,34 @@ pub async fn apply_to_running_session(
     turn_id: Option<&str>,
     phase_node_key: &str,
 ) -> Result<Option<CapabilityDelta>, String> {
-    let Some(delta) = hook_session.update_capabilities(activation.capability_keys.clone()) else {
-        return Ok(None);
+    let target_surface = CapabilitySurface {
+        flow_capabilities: activation.flow_capabilities.clone(),
+        mcp_servers: activation.mcp_servers.clone(),
     };
+    let current_surface = session_hub
+        .get_current_capability_surface(hook_session.session_id())
+        .await;
+    let surface_changed = current_surface.as_ref() != Some(&target_surface);
+    let key_delta = CapabilityDelta::compute(
+        &hook_session.current_capabilities(),
+        &activation.capability_keys,
+    );
+
+    if key_delta.is_empty() && !surface_changed {
+        return Ok(None);
+    }
 
     session_hub
-        .replace_runtime_mcp_servers(hook_session.session_id(), activation.mcp_servers.clone())
+        .replace_current_capability_surface(hook_session.session_id(), target_surface)
         .await
-        .map_err(|error| format!("Phase node MCP 热更新失败: {error}"))?;
+        .map_err(|error| format!("Phase node 能力表面热更新失败: {error}"))?;
+
+    let delta = hook_session.update_capabilities(activation.capability_keys.clone());
+    let notification_delta = delta.clone().unwrap_or(key_delta);
 
     let delta_md = crate::capability::build_capability_delta_markdown(
         phase_node_key,
-        &delta,
+        &notification_delta,
         &activation.capability_keys,
     );
     session_hub
@@ -343,15 +360,19 @@ pub async fn apply_to_running_session(
             turn_id,
             serde_json::json!({
                 "phase_node": phase_node_key,
-                "added": delta.added.clone(),
-                "removed": delta.removed.clone(),
+                "added": notification_delta.added.clone(),
+                "removed": notification_delta.removed.clone(),
                 "capabilities": activation.capability_keys.iter().cloned().collect::<Vec<_>>(),
+                "surface_changed": surface_changed,
+                "enabled_clusters": activation.flow_capabilities.enabled_clusters.iter().map(|cluster| format!("{cluster:?}")).collect::<Vec<_>>(),
+                "excluded_tools": activation.flow_capabilities.excluded_tools.iter().cloned().collect::<Vec<_>>(),
                 "mcp_server_count": activation.mcp_servers.len(),
+                "mcp_servers": activation.mcp_servers.iter().map(|server| server.name.clone()).collect::<Vec<_>>(),
             }),
         )
         .await;
 
-    Ok(Some(delta))
+    Ok(delta)
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
@@ -519,6 +540,84 @@ mod tests {
         assert!(out.capability_keys.contains("file_read"));
         assert!(out.capability_keys.contains("file_write"));
         assert!(out.capability_keys.contains("shell_execute"));
+    }
+
+    #[test]
+    fn phase_node_target_workflow_preserves_owner_default_baseline() {
+        let workflow =
+            sample_workflow(vec![CapabilityDirective::add_simple("workflow_management")]);
+        let step = sample_step(vec![]);
+        let project_id = Uuid::new_v4();
+
+        let input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&workflow),
+            run_id: Uuid::new_v4(),
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            capability_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+
+        let out = activate_step_with_platform(&input, &test_platform());
+
+        assert!(out.capability_keys.contains("workflow_management"));
+        assert!(out.capability_keys.contains("file_read"));
+        assert!(out.capability_keys.contains("file_write"));
+        assert!(out.capability_keys.contains("shell_execute"));
+        assert!(out.capability_keys.contains("canvas"));
+        assert!(out.capability_keys.contains("collaboration"));
+    }
+
+    #[test]
+    fn same_capability_key_tool_directive_changes_tool_surface() {
+        let step = sample_step(vec![]);
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let full_read_workflow =
+            sample_workflow(vec![CapabilityDirective::add_simple("file_read")]);
+        let restricted_read_workflow = sample_workflow(vec![
+            CapabilityDirective::add_simple("file_read"),
+            CapabilityDirective::remove_tool("file_read", "fs_grep"),
+        ]);
+
+        let base_input = StepActivationInput {
+            owner_ctx: SessionOwnerCtx::Project { project_id },
+            active_step: &step,
+            workflow: Some(&full_read_workflow),
+            run_id,
+            lifecycle_key: "lc_phase",
+            edges: &[],
+            agent_declared_capabilities: None,
+            agent_mcp_servers: vec![],
+            available_presets: empty_presets(),
+            companion_slice_mode: None,
+            baseline_override: None,
+            capability_directives: &[],
+            ready_port_keys: BTreeSet::new(),
+        };
+        let restricted_input = StepActivationInput {
+            workflow: Some(&restricted_read_workflow),
+            ..base_input.clone()
+        };
+
+        let base = activate_step_with_platform(&base_input, &test_platform());
+        let restricted = activate_step_with_platform(&restricted_input, &test_platform());
+
+        assert_eq!(base.capability_keys, restricted.capability_keys);
+        assert!(!base.flow_capabilities.excluded_tools.contains("fs_grep"));
+        assert!(
+            restricted
+                .flow_capabilities
+                .excluded_tools
+                .contains("fs_grep")
+        );
     }
 
     #[test]

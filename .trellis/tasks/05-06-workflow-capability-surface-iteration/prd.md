@@ -16,10 +16,10 @@
 
 ## 概念关系
 
-本任务里的 `Capability` 应回到顶层业务概念：它表达一个 step 在当前 session 内赋予 Agent 的完整可行动边界。`RuntimeSurface` / `ExecutionSurface` 则是这个能力模型在某个 turn 上解析、组合之后实际暴露给运行时的投影结果。建议分层理解：
+本任务里的 `Capability` 应回到顶层业务概念：它表达一个 step 在当前 session 内赋予 Agent 的完整可行动边界。`CapabilitySurface` 是这个能力模型在某个 turn 上解析、组合之后实际生效的能力表面。建议分层理解：
 
 * `Capability Model` 是顶层能力模型，描述 workflow step 希望赋予 Agent 的工具、资源、上下文和策略能力。
-* `RuntimeSurface` / `ExecutionSurface` 是能力模型的运行时投影，描述当前 turn 实际生效的工具表、VFS、MCP、上下文和策略状态。
+* `CapabilitySurface` 是能力模型解析后的生效表面，描述当前 turn 实际可见的工具表、VFS、MCP、上下文和策略状态。
 * `ToolCapability` 是工具语义能力，例如 `file_read`、`workflow_management`、`mcp:code_analyzer`。
 * `ToolSurface` 是工具能力解析后的投影层，包含 `FlowCapabilities`、工具级裁剪、MCP 注入和最终运行时工具集合。
 * `ResourceCapability` / `VfsCapability` 是资源访问能力，描述哪些 mount 可见、各 mount 允许哪些操作、默认读写目标是什么。
@@ -30,7 +30,7 @@
 
 * `ToolCapability` 是上层语义声明，例如 `file_read`、`workflow_management`、`mcp:code_analyzer`。
 * 工具裁剪是 `ToolCapability` 解析后的工具级结果，例如启用 `file_read` 但排除 `fs_grep`。
-* `MCP` 是工具来源和 transport/provider，例如平台 Workflow MCP、project preset MCP、agent inline MCP。它通常由 `ToolCapability` 解析产生，但也需要被 `ToolSurface` / `RuntimeSurface` 记录，方便 diff、热更新和通知。
+* `MCP` 是工具来源和 transport/provider，例如平台 Workflow MCP、project preset MCP、agent inline MCP。它通常由 `ToolCapability` 解析产生，但也需要被 `ToolSurface` / `CapabilitySurface` 记录，方便 diff、热更新和通知。
 
 `VfsCapability` 与 `ToolCapability` 类似，都是顶层 `Capability Model` 的组成部分；区别是它描述资源空间而不是工具集合。`VfsSurface` 则是这些资源能力实际投影到运行时后的 mount 状态。挂载工作空间、挂载 lifecycle artifact、挂载 canvas、挂载外部 provider，本质上都通过 VFS 统一访问，但它们的 provider 类型、生命周期、权限边界和默认读写语义不同：
 
@@ -39,17 +39,17 @@
 * canvas mount 是应用内托管的可视化/结构化资产空间，不应被误解为普通文件系统目录。
 * 外部 provider mount 可能来自远程服务或未来插件，能力协商、缓存、错误恢复和审计要求会不同。
 
-因此，PhaseNode transition 应先被建模为一次顶层 `Capability Model` 的变更，再投影为 `RuntimeSurface` 变更：既可能改变工具能力，也可能改变 MCP、工具表、VFS/mount、context overlay 和策略约束。通知体系也应围绕顶层能力变更及其运行时投影建模，而不是只围绕 tool capability key。
+因此，PhaseNode transition 应先被建模为一次顶层 `Capability Model` 的变更，再解析为 `CapabilitySurface` 变更：既可能改变工具能力，也可能改变 MCP、工具表、VFS/mount、context overlay 和策略约束。通知体系也应围绕顶层能力表面建模，而不是只围绕 tool capability key。
 
 ## 需求
 
-* 将 PhaseNode 模式支持纳入本任务整体目标：PhaseNode 不创建新 session，而是在当前 session 内完成 step contract、顶层能力模型和运行时投影的可靠切换。
-* 引入或明确顶层 `Capability Model`，并区分声明模型与运行时投影：
+* 将 PhaseNode 模式支持纳入本任务整体目标：PhaseNode 不创建新 session，而是在当前 session 内完成 step contract、顶层能力模型和能力表面的可靠切换。
+* 引入或明确顶层 `Capability Model`，并区分声明模型与生效表面：
   * `ToolCapability` / tool capability directives
   * `ResourceCapability` / VFS mount directives
   * `ContextCapability` / context injection 或 instruction overlay
   * `PolicyCapability` / permission policy、resource budget 等约束
-* 引入或明确 `RuntimeSurface` / `ExecutionSurface` 作为能力模型的运行时投影，至少覆盖：
+* 引入或明确 `CapabilitySurface` 作为能力模型解析后的生效表面，至少覆盖：
   * effective tool capability keys / tool capability directives
   * `FlowCapabilities.enabled_clusters`
   * `FlowCapabilities.excluded_tools`
@@ -66,16 +66,16 @@
 * 梳理并逐步迁移旧模型中被 tool capability 占据的命名；原则是“顶层 Capability 保留为业务总概念，对外契约谨慎兼容，内部模型先变清楚，旧名保留 deprecated alias 过渡”。
 * PhaseNode 目标能力计算必须复用 `CapabilityResolver` 的正式语义，不能只对 workflow directives 做 reduce 后当成完整目标集。
 * 热更新运行中 session 时，必须同步更新：
-  * hook runtime 当前运行时表面
+  * hook runtime 当前能力表面
   * active turn 的 `flow_capabilities`
   * active turn / session frame 的 VFS/mount 状态
   * runtime MCP server 列表
   * connector 内的工具表
-  * session profile / continuation 的运行时表面缓存
+  * session profile / continuation 的能力表面缓存
 * 工具级 directive 变化必须触发热更新，例如 `file_read::fs_read` 白名单变化、`remove file_read::fs_grep`、同 capability key 下 excluded tool 变化。
 * mount 级变更必须触发热更新和通知，例如某个 step 增加 `lifecycle://...` 以外的特殊 mount，进入后续 step 后撤销该 mount，或切换默认写入目标。
 * PhaseNode entry step、successor PhaseNode、terminal callback 等路径不能丢弃激活结果；如果当下没有 live hook runtime，需要有 pending transition 或明确的降级策略。
-* 能力变更通知拆分为结构化事件和 Agent steering 两层，并在事件内同时表达顶层 Capability 变化和 RuntimeSurface 投影变化：
+* 能力变更通知拆分为结构化事件和 Agent steering 两层，并在事件内表达顶层 Capability 变化和 CapabilitySurface 变化：
   * 结构化事件持久化到 session event stream，供 UI、审计、回放使用。
   * steering 消息以尽力投递方式注入运行中 Agent，并记录是否成功投递或被 connector 忽略。
   * 事件 payload 应能表达 ToolCapability / MCP / tool / VfsCapability / mount / context overlay 的 added、removed、changed、unchanged 摘要。
@@ -84,19 +84,19 @@
 
 * [ ] `cargo test -p agentdash-application capability::pipeline_tests --lib` 可以运行并通过。
 * [ ] `cargo test -p agentdash-application step_activation --lib` 可以运行并通过。
-* [ ] 新增测试覆盖 PhaseNode 作为 entry step 和 successor step 时，能够在同一 session 内应用顶层能力模型和运行时投影切换。
+* [ ] 新增测试覆盖 PhaseNode 作为 entry step 和 successor step 时，能够在同一 session 内应用顶层能力模型和能力表面切换。
 * [ ] 新增测试覆盖 PhaseNode 目标 workflow 只声明 `workflow_management` 时，默认 owner baseline 能力不会被错误清空。
 * [ ] 新增测试覆盖同一 capability key 内的工具级 directive 变化会触发工具表重建。
-* [ ] 新增测试覆盖 step-specific mount add/remove/change 会触发运行时表面 diff 和工具/VFS 状态更新。
+* [ ] 新增测试覆盖 step-specific mount add/remove/change 会触发能力表面 diff 和工具/VFS 状态更新。
 * [ ] 新增测试覆盖 `replace_runtime_mcp_servers` 或替代入口使用新的 `FlowCapabilities` 重建运行时工具。
 * [ ] 新增测试覆盖 PhaseNode entry step 或 successor PhaseNode 不会只更新 run 状态却不应用能力变化。
-* [ ] 新增测试或事件快照覆盖运行时表面变更结构化事件被持久化，并可从 session event history 重放。
+* [ ] 新增测试或事件快照覆盖能力表面变更结构化事件被持久化，并可从 session event history 重放。
 * [ ] PiAgent connector 中能力变更 steering message 仍可注入当前 agent；非支持 connector 不应静默伪装成功。
-* [ ] 形成命名迁移清单，明确哪些旧名保留、哪些旧名废弃、哪些旧名迁移到 Capability Model / ToolCapability / VfsCapability / RuntimeSurface 语义。
+* [ ] 形成命名迁移清单，明确哪些旧名保留、哪些旧名废弃、哪些旧名迁移到 Capability Model / CapabilitySurface / ToolCapability / VfsCapability 语义。
 
 ## 技术方案
 
-推荐以小 PR 串行推进，先修一致性内核，再扩展顶层能力模型与运行时投影，最后补可观测性。
+推荐以小 PR 串行推进，先修一致性内核，再扩展顶层能力模型与能力表面，最后补可观测性。
 
 ### PR1：PhaseNode 基线测试与现状确认
 
@@ -104,23 +104,23 @@
 * 明确 PhaseNode entry / successor / terminal callback 三类触发路径当前哪些能工作、哪些需要 pending transition。
 * 明确 review 中的风险点哪些是当前行为，哪些是 PhaseNode 完整实现前的 pending gap。
 
-### PR2：引入 Capability Model 与 RuntimeSurface
+### PR2：引入 Capability Model 与 CapabilitySurface
 
 * 引入顶层 `Capability Model`，把 `ToolCapability`、`VfsCapability`、`ContextCapability`、`PolicyCapability` 等维度明确分层。
-* 引入 `RuntimeSurface` / `ExecutionSurface` 或等价内部结构，作为能力模型解析后的完整运行时投影和 diff 单位。
-* 将旧 `CapabilityDelta` 从仅比较 tool capability key 集合，升级为更完整的 capability/surface delta，或拆分为 `CapabilityDelta`（顶层）与 `RuntimeSurfaceDelta`（投影层）。
+* 引入 `CapabilitySurface` 或等价内部结构，作为能力模型解析后的完整生效表面和 diff 单位。
+* 将旧 `CapabilityDelta` 从仅比较 tool capability key 集合，升级为更完整的 capability/surface delta。纯工具能力差异可进一步收窄为 `ToolCapabilityDelta`。
 * 让 PhaseNode target capability/surface 通过统一 resolver / composer 计算，而不是手写 `target_capability_keys`。
 * 同步整理旧模型命名，优先让内部类型、事件名、函数名表达真实语义；必要时保留旧 API 字段作为兼容 alias。
 
-### PR3：原子化应用运行时表面
+### PR3：原子化应用 CapabilitySurface
 
-* 收口 `apply_to_running_session` / `replace_runtime_mcp_servers` / VFS update 为一个“应用运行时表面”的入口。
+* 收口 `apply_to_running_session` / `replace_runtime_mcp_servers` / VFS update 为一个“应用 CapabilitySurface”的入口。
 * 重建工具时使用目标 `FlowCapabilities` 和目标 VFS/mount，并同步 active turn、session profile、MCP servers、hook runtime revision。
 * 处理无 live runtime 时的策略：pending transition、明确错误、或延迟到下一 turn apply。
 
 ### PR4：结构化通知与前端入口
 
-* 新增持久化的能力变更 / 运行时投影变更事件。
+* 新增持久化的能力表面变更事件。
 * 保留 Agent steering Markdown，但将其视为投递通道，而不是唯一事实源。
 * 前端 session timeline / workspace panel 后续可读取结构化事件，展示 phase transition card、能力 diff、MCP diff、mount diff 和投递状态。
 
@@ -128,7 +128,7 @@
 
 **背景**：Workflow / Lifecycle 未来会承担 Agent 工作阶段切换职责，尤其是 PhaseNode 希望在同一 session 内切换 contract、工具、MCP、mount 和行为约束。`Capability` 作为顶层业务概念是合适的，但旧模型把这个词收窄到了 tool capability key。如果只更新部分字段，会出现“模型以为有能力但工具没有”“工具还在但通知说移除”“mount 已撤销但系统上下文还在引用”“UI 历史无法回放”等漂移。
 
-**决策**：保留 `Capability` 作为顶层能力模型命名，将 step 切换建模为 `Capability Model` 的状态转换；再将其解析为 `RuntimeSurface` / `ExecutionSurface` 投影，并让所有运行时入口共享同一个 compose/diff/apply/notify 流程。工具能力只是顶层 capability 的一个维度，mount/MCP/context overlay 都应进入同一套能力变更模型。
+**决策**：保留 `Capability` 作为顶层能力模型命名，将 step 切换建模为 `Capability Model` 的状态转换；再将其解析为 `CapabilitySurface`，并让所有运行时入口共享同一个 compose/diff/apply/notify 流程。工具能力只是顶层 capability 的一个维度，mount/MCP/context overlay 都应进入同一套能力变更模型。
 
 **影响**：短期实现会比只修单点 bug 稍重，但可以避免 PhaseNode、AgentNode、Task session、companion workflow、特殊 mount 装载等路径继续分叉。后续也能自然支持 UI diff、回放、policy guard、dry-run 预览和 step-level resource overlay。
 
@@ -146,13 +146,13 @@
 
 以下不是一次性强制改名清单，而是实现时需要逐项评估的语义收口方向：
 
-* `CapabilitySurface`：不建议废弃 Capability 顶层语义。若该类型只描述工具能力，应迁移为 `ToolSurface` / `ToolCapabilitySurface`；若承载顶层能力模型，可保留并明确包含 Tool/VFS/Context/Policy 维度；若承载运行时投影，应迁移为 `RuntimeSurface` / `ExecutionSurface`。
-* `CapabilityDelta`：当前只比较 tool capability key。若用于顶层能力变更，可升级为多维 capability delta；若用于运行时投影热更新，可替换或派生为 `RuntimeSurfaceDelta`；纯工具能力差异可命名为 `ToolCapabilityDelta`。
-* `CapabilityChanged` / capability changed hook：可以保留为顶层能力变更事件；但 payload 必须明确维度。如果只表示工具能力变化，应收窄为 `ToolCapabilityChanged`；如果表示投影变化，可新增 `RuntimeSurfaceChanged` 作为运行时事件。
+* `CapabilitySurface`：作为顶层能力模型解析后的生效表面，保留并明确包含 Tool/VFS/Context/Policy 维度；若某个类型只描述工具能力，应命名为 `ToolSurface` / `ToolCapabilitySurface`。
+* `CapabilityDelta`：当前只比较 tool capability key。若用于顶层能力变更，可升级为多维 capability delta；纯工具能力差异可命名为 `ToolCapabilityDelta`。
+* `CapabilityChanged` / capability changed hook：可以保留为顶层能力变更事件；但 payload 必须明确维度。如果只表示工具能力变化，应收窄为 `ToolCapabilityChanged`；如果表示能力表面变化，可新增 `CapabilitySurfaceChanged`。
 * `capability_directives`：当前实际语义更接近 `tool_capability_directives`。作为兼容字段可保留，但 step-level 总配置不应继续塞进该字段，建议新增 `step_capability_config` / `runtime_capability_directives` 或等价结构。
 * `FlowCapabilities`：保留表示内置工具 cluster 和工具级裁剪；不要继续把 MCP、mount、context overlay 的状态混入其中。
-* `replace_runtime_mcp_servers`：如果未来承担完整工具表/VFS 热更新，应拆分或改名为 `apply_runtime_surface` 一类入口，MCP 替换只作为内部步骤。
-* 通知文案中的 “Capability Update”：作为顶层能力变更文案可以保留，但正文需要分维度展示 Tool / MCP / VFS / Context / Policy；如果强调运行时投影差异，可使用 “Runtime Surface Update” 或中文“运行时投影变更”。
+* `replace_runtime_mcp_servers`：如果未来承担完整工具表/VFS 热更新，应拆分或改名为 `apply_capability_surface` 一类入口，MCP 替换只作为内部步骤。
+* 通知文案中的 “Capability Update”：作为顶层能力变更文案可以保留，但正文需要分维度展示 Tool / MCP / VFS / Context / Policy；如果强调表面差异，可使用 “Capability Surface Update” 或中文“能力表面变更”。
 
 评审关联文件：
 
@@ -182,13 +182,13 @@
 * P2：首个 PhaseNode 激活结果可能被 start-run / callback 路径丢弃。
 * P2：能力变更通知未持久化，并且可能静默 no-op。
 * 新增范围：step-level capability changes 可能包含 mount add/remove/change，所以模型必须比 tool capability keys 更宽。
-* 新增范围：旧模型命名需要随 Capability Model / ToolCapability / VfsCapability / RuntimeSurface 分层一起收口，避免概念债继续扩散。
+* 新增范围：旧模型命名需要随 Capability Model / CapabilitySurface / ToolCapability / VfsCapability 分层一起收口，避免概念债继续扩散。
 
 ## 后续展望
 
-* 在 Workflow 编辑器中提供运行时表面 dry-run 预览，保存 workflow/lifecycle 前先展示每个 step 的表面变化。
+* 在 Workflow 编辑器中提供能力表面 dry-run 预览，保存 workflow/lifecycle 前先展示每个 step 的表面变化。
 * 在 session timeline 中展示 phase transition card，包含 step 切换、capability 增删、MCP/tool/mount 变化和投递状态。
-* 从 session event stream 回放 RuntimeSurface，使恢复后的 session 能重建每个历史 turn 当时的工具和 mount 表面。
+* 从 session event stream 回放 CapabilitySurface，使恢复后的 session 能重建每个历史 turn 当时的工具和 mount 表面。
 * 支持 policy guard，例如“review phase 不得拥有 `file_write`”或“apply phase 必须包含 `workflow_management`”。
 * 支持 pending PhaseNode transition queue，应对 lifecycle 状态变化时目标 session 不在运行中的情况。
 * 支持 step-level resource overlay，让 workflow 作者声明式地给某个阶段挂载临时 project snapshot、artifact、外部 provider mount 或受限资源范围。

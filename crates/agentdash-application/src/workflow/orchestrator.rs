@@ -33,8 +33,7 @@ use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
     RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    apply_to_running_session, build_step_projector_from_repos, capability_delta_directives,
-    capability_directives_from_keys, load_port_output_map,
+    apply_to_running_session, build_step_projector_from_repos, load_port_output_map,
 };
 
 #[derive(Debug)]
@@ -463,22 +462,12 @@ impl LifecycleOrchestrator {
             crate::session::load_available_presets(&self.repos, run.project_id).await;
 
         let mut warnings = Vec::new();
-        let mut current_caps = hook_session.current_capabilities();
         let mut runtime_mcp_servers = self
             .session_hub
             .get_runtime_mcp_servers(hook_session.session_id())
             .await;
 
         for phase in phases {
-            let target_caps = target_capability_keys(
-                phase
-                    .workflow
-                    .as_ref()
-                    .map(|wf| wf.contract.capability_directives.as_slice())
-                    .unwrap_or(&[]),
-            );
-            let baseline_override = capability_directives_from_keys(&current_caps);
-            let runtime_delta = capability_delta_directives(&current_caps, &target_caps);
             let ready_port_keys = std::collections::BTreeSet::new();
             let agent_mcp_servers = agent_mcp_entries_from_servers(&runtime_mcp_servers);
 
@@ -494,8 +483,8 @@ impl LifecycleOrchestrator {
                     agent_mcp_servers,
                     available_presets: available_presets.clone(),
                     companion_slice_mode: None,
-                    baseline_override: Some(baseline_override),
-                    capability_directives: &runtime_delta,
+                    baseline_override: None,
+                    capability_directives: &[],
                     ready_port_keys,
                 },
                 &self.platform_config,
@@ -511,11 +500,10 @@ impl LifecycleOrchestrator {
             .await
             {
                 Ok(_) => {
-                    current_caps = activation.capability_keys.clone();
                     runtime_mcp_servers = activation.mcp_servers.clone();
                     tracing::info!(
                         phase_node = %phase.node_key,
-                        capabilities = ?current_caps,
+                        capabilities = ?activation.capability_keys,
                         "Phase node capability surface applied"
                     );
                 }
@@ -843,21 +831,4 @@ fn resolve_owner_scope(
             SessionOwnerCtx::Project { project_id }
         }
     }
-}
-
-fn target_capability_keys(
-    directives: &[agentdash_domain::workflow::CapabilityDirective],
-) -> std::collections::BTreeSet<String> {
-    let reduction = agentdash_domain::workflow::reduce_capability_directives(directives);
-    reduction
-        .slots
-        .iter()
-        .filter_map(|(key, state)| {
-            use agentdash_domain::workflow::CapabilitySlotState::*;
-            match state {
-                FullCapability | ToolWhitelist(_) => Some(key.clone()),
-                NotDeclared | Blocked => None,
-            }
-        })
-        .collect()
 }

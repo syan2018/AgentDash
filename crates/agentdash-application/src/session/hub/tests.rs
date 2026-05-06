@@ -169,6 +169,112 @@ async fn start_prompt_records_current_turn_state() {
 }
 
 #[derive(Default)]
+struct PendingConnector;
+
+#[async_trait::async_trait]
+impl AgentConnector for PendingConnector {
+    fn connector_id(&self) -> &'static str {
+        "pending"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        Ok(Box::pin(stream::pending()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn replace_current_capability_surface_updates_active_turn_flow_capabilities() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let session = hub
+        .create_session("capability-surface")
+        .await
+        .expect("create");
+
+    let initial_flow =
+        agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Read]);
+    let mut req = simple_prompt_request("hello");
+    req.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.flow_capabilities = Some(initial_flow);
+
+    hub.start_prompt(&session.id, req)
+        .await
+        .expect("prompt should start");
+
+    let mut target_flow =
+        agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Write]);
+    target_flow
+        .excluded_tools
+        .insert("fs_apply_patch".to_string());
+    let target_mcp = agentdash_spi::SessionMcpServer {
+        name: "phase_tools".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://127.0.0.1:19091/mcp".to_string(),
+            headers: vec![],
+        },
+        uses_relay: false,
+    };
+
+    hub.replace_current_capability_surface(
+        &session.id,
+        super::CapabilitySurface {
+            flow_capabilities: target_flow.clone(),
+            mcp_servers: vec![target_mcp.clone()],
+        },
+    )
+    .await
+    .expect("replace capability surface");
+
+    let sessions = hub.sessions.lock().await;
+    let turn = sessions
+        .get(&session.id)
+        .and_then(|runtime| runtime.turn_state.active_turn())
+        .expect("current turn execution state");
+    assert_eq!(turn.flow_capabilities, target_flow);
+    assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
+}
+
+#[derive(Default)]
 struct SessionStartAwareConnector {
     session_start_seen: Arc<TokioMutex<Vec<bool>>>,
 }

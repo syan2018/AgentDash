@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
+use agentdash_domain::canvas::{
+    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, ensure_canvas_system_skill,
+    is_canvas_system_skill_path,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct CanvasMutationInput {
@@ -29,6 +32,7 @@ pub fn build_canvas(
     let mut canvas = Canvas::new(project_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
     apply_canvas_mutation(&mut canvas, input)?;
+    ensure_canvas_system_skill(&mut canvas.files);
     validate_canvas_contract(&canvas)?;
     Ok(canvas)
 }
@@ -37,6 +41,11 @@ pub fn apply_canvas_mutation(
     canvas: &mut Canvas,
     input: CanvasMutationInput,
 ) -> Result<(), DomainError> {
+    let had_canvas_system_skill = canvas
+        .files
+        .iter()
+        .any(|file| is_canvas_system_skill_path(&file.path));
+
     if let Some(title) = input.title {
         canvas.title = title;
     }
@@ -57,6 +66,9 @@ pub fn apply_canvas_mutation(
     }
 
     normalize_canvas(canvas)?;
+    if had_canvas_system_skill {
+        ensure_canvas_system_skill(&mut canvas.files);
+    }
     validate_canvas_contract(canvas)?;
     canvas.touch();
     Ok(())
@@ -277,12 +289,50 @@ mod tests {
         .expect("应能创建 canvas");
 
         assert_eq!(canvas.entry_file, "src/main.tsx");
-        assert_eq!(canvas.files.len(), 1);
+        assert!(canvas.files.iter().any(|file| file.path == "src/main.tsx"));
+        assert!(
+            canvas
+                .files
+                .iter()
+                .any(|file| file.path == "skills/canvas-system/SKILL.md"
+                    && file.content.contains("name: canvas-system"))
+        );
         assert!(
             canvas
                 .sandbox_config
                 .libraries
                 .contains(&"react".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_canvas_mutation_preserves_existing_canvas_system_skill() {
+        let mut canvas = build_canvas(
+            Uuid::new_v4(),
+            Some("demo".to_string()),
+            "Demo".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能创建 canvas");
+
+        apply_canvas_mutation(
+            &mut canvas,
+            CanvasMutationInput {
+                files: Some(vec![CanvasFile::new(
+                    "src/main.tsx".to_string(),
+                    "console.log('updated')".to_string(),
+                )]),
+                ..CanvasMutationInput::default()
+            },
+        )
+        .expect("应能更新 canvas");
+
+        assert!(
+            canvas
+                .files
+                .iter()
+                .any(|file| file.path == "skills/canvas-system/SKILL.md")
         );
     }
 

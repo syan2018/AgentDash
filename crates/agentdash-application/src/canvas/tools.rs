@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasRepository};
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
+use agentdash_domain::canvas::{
+    CANVAS_SYSTEM_SKILL_NAME, CANVAS_SYSTEM_SKILL_PATH, Canvas, CanvasDataBinding, CanvasRepository,
+};
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -130,6 +134,8 @@ struct CanvasToolResult {
     mount_id: String,
     title: String,
     entry_file: String,
+    skill_name: String,
+    skill_path: String,
 }
 
 #[async_trait]
@@ -139,7 +145,7 @@ impl AgentTool for ListCanvasesTool {
     }
 
     fn description(&self) -> &str {
-        "List canvases in the current project. Returns canvas_id, mount_id (use as URI scheme for file operations, e.g. `<mount_id>://path`), and title for each canvas."
+        "List canvases in the current project. Returns canvas_id, mount_id (use as URI scheme for file operations, e.g. `<mount_id>://path`), and title for each canvas. New canvases include the `canvas-system` skill at `<mount_id>://skills/canvas-system/SKILL.md`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -228,7 +234,7 @@ impl AgentTool for StartCanvasTool {
     }
 
     fn description(&self) -> &str {
-        "Attach an existing canvas or create a new one. If `canvas_id` matches an existing canvas, attach it to the current session; otherwise create a new canvas with that stable id. If `canvas_id` is omitted, derive it from `title`. Returns canvas_id and mount_id; use mount_id as the URI scheme for file operations (e.g. `<mount_id>://path`)."
+        "Attach an existing canvas or create a new one. If `canvas_id` matches an existing canvas, attach it to the current session; otherwise create a new canvas with that stable id. If `canvas_id` is omitted, derive it from `title`. New canvases include the `canvas-system` skill; the result returns canvas_id, mount_id, entry_file, and skill_path so the agent can load the canvas rules before editing."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -342,6 +348,12 @@ impl AgentTool for StartCanvasTool {
             mount_id: build_canvas_mount_id(&canvas),
             title: canvas.title.clone(),
             entry_file: canvas.entry_file.clone(),
+            skill_name: CANVAS_SYSTEM_SKILL_NAME.to_string(),
+            skill_path: format!(
+                "{}://{}",
+                build_canvas_mount_id(&canvas),
+                CANVAS_SYSTEM_SKILL_PATH
+            ),
         };
         let details = serde_json::to_value(&result).map_err(|error| {
             AgentToolError::ExecutionFailed(format!("failed to serialize canvas result: {error}"))
@@ -349,12 +361,14 @@ impl AgentTool for StartCanvasTool {
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "action={}\ncanvas_id={}\nmount={}://\ntitle={}\nentry_file={}",
+                "action={}\ncanvas_id={}\nmount={}://\ntitle={}\nentry_file={}\nskill={}\nskill_path={}",
                 result.action,
                 result.canvas_id,
                 build_canvas_mount_id(&canvas),
                 result.title,
-                result.entry_file
+                result.entry_file,
+                result.skill_name,
+                result.skill_path
             ))],
             is_error: false,
             details: Some(details),
@@ -369,7 +383,7 @@ impl AgentTool for BindCanvasDataTool {
     }
 
     fn description(&self) -> &str {
-        "Declare a canvas data binding. Maps `source_uri` to runtime path `bindings/<alias>.json`. `content_type` is optional and defaults to `application/json`."
+        "Declare a canvas data binding. Maps `source_uri` to runtime path `bindings/<alias>.json`. `content_type` is optional and defaults to `application/json`. The `canvas-system` skill explains how bound JSON files are imported from canvas source code."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -691,7 +705,7 @@ mod tests {
             SharedSessionHubHandle::default(),
             Some("sess-test".to_string()),
         );
-        let patch_tool = FsApplyPatchTool::new(service, shared_vfs.clone(), None, None);
+        let patch_tool = FsApplyPatchTool::new(service.clone(), shared_vfs.clone(), None, None);
 
         let create_result = start_tool
             .execute(
@@ -713,12 +727,30 @@ mod tests {
             .get("canvas_id")
             .and_then(serde_json::Value::as_str)
             .expect("canvas_id should exist");
+        assert_eq!(
+            create_details
+                .get("skill_name")
+                .and_then(serde_json::Value::as_str),
+            Some("canvas-system")
+        );
 
         let vfs = shared_vfs.snapshot().await;
         let expected_mount_id = format!("cvs-{canvas_id}");
         assert!(
             vfs.mounts.iter().any(|mount| mount.id == expected_mount_id),
             "shared VFS should contain the new canvas mount after canvas_start"
+        );
+        let discovered_skills = crate::skill::load_skills_from_vfs(&service, &vfs).await;
+        assert!(
+            discovered_skills
+                .skills
+                .iter()
+                .any(|skill| skill.name == "canvas-system"
+                    && skill
+                        .file_path
+                        .to_string_lossy()
+                        .ends_with("skills/canvas-system/SKILL.md")),
+            "new canvas mounts should expose the managed canvas-system skill"
         );
 
         let patch_content = format!(

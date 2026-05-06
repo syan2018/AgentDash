@@ -31,7 +31,10 @@ impl Canvas {
             description,
             entry_file: "src/main.tsx".to_string(),
             sandbox_config: CanvasSandboxConfig::default(),
-            files: vec![CanvasFile::default_entry()],
+            files: vec![
+                CanvasFile::default_entry(),
+                CanvasFile::default_canvas_system_skill(),
+            ],
             bindings: Vec::new(),
             created_at: now,
             updated_at: now,

@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
+pub const CANVAS_SYSTEM_SKILL_PATH: &str = "skills/canvas-system/SKILL.md";
+const CANVAS_SYSTEM_SKILL_CONTENT: &str = include_str!("skills/canvas-system/SKILL.md");
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanvasSandboxConfig {
     #[serde(default)]
@@ -67,6 +71,38 @@ root.innerHTML = `
             .to_string(),
         }
     }
+
+    pub fn default_canvas_system_skill() -> Self {
+        Self {
+            path: CANVAS_SYSTEM_SKILL_PATH.to_string(),
+            content: canvas_system_skill_content().to_string(),
+        }
+    }
+}
+
+pub fn ensure_canvas_system_skill(files: &mut Vec<CanvasFile>) -> bool {
+    let content = canvas_system_skill_content();
+    if let Some(file) = files
+        .iter_mut()
+        .find(|file| file.path == CANVAS_SYSTEM_SKILL_PATH)
+    {
+        if file.content == content {
+            return false;
+        }
+        file.content = content.to_string();
+        return true;
+    }
+
+    files.push(CanvasFile::default_canvas_system_skill());
+    true
+}
+
+pub fn is_canvas_system_skill_path(path: &str) -> bool {
+    path.trim().replace('\\', "/").trim_matches('/') == CANVAS_SYSTEM_SKILL_PATH
+}
+
+pub fn canvas_system_skill_content() -> &'static str {
+    CANVAS_SYSTEM_SKILL_CONTENT
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

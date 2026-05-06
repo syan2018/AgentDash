@@ -335,7 +335,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform(
             "canvas_start",
             "Start Canvas",
-            "创建新画布资产",
+            "创建或接入画布资产，并返回 canvas-system skill 路径",
             ToolCluster::Canvas,
             CAP_CANVAS,
         ),

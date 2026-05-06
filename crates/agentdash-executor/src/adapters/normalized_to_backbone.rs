@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use codex_app_server_protocol as codex;
 use executors::{
     approvals::ToolCallMetadata,

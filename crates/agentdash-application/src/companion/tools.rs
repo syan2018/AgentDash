@@ -4,11 +4,13 @@ use crate::session::{
     CompanionSessionContext, PromptSessionRequest, SessionHub, UserPromptInput,
     build_hook_trace_envelope,
 };
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
 };
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
@@ -2306,13 +2308,13 @@ mod companion_tests {
         CompanionSliceMode, build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, companion_owner_candidates,
     };
-    use agentdash_spi::{McpTransportConfig, SessionMcpServer};
     use agentdash_domain::session_binding::SessionOwnerType;
     use agentdash_spi::AgentTool;
     use agentdash_spi::{
         AgentConfig, AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError,
         ConnectorType, ExecutionContext, ExecutionStream, MountCapability, PromptPayload, Vfs,
     };
+    use agentdash_spi::{McpTransportConfig, SessionMcpServer};
     use futures::stream;
     use std::path::PathBuf;
     use std::sync::Arc;

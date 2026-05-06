@@ -276,7 +276,6 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
         }
         _ => {}
     }
-
 }
 
 #[cfg(test)]

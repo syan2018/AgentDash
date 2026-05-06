@@ -253,14 +253,13 @@ impl RoutineExecutor {
             .filter(|value| !value.is_empty())
             .unwrap_or(agent.name.as_str())
             .to_string();
-        let preset_mcp_servers =
-            crate::mcp_preset::resolve_config_mcp_preset_refs(
-                self.repos.mcp_preset_repo.as_ref(),
-                project.id,
-                &merged_config,
-            )
-            .await
-            .map_err(|err| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {err}", agent.id))?;
+        let preset_mcp_servers = crate::mcp_preset::resolve_config_mcp_preset_refs(
+            self.repos.mcp_preset_repo.as_ref(),
+            project.id,
+            &merged_config,
+        )
+        .await
+        .map_err(|err| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {err}", agent.id))?;
 
         Ok(RoutineAgentContext {
             project,
@@ -450,9 +449,8 @@ impl RoutineExecutor {
                     .build_projected_transcript(session_id)
                     .await
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
-                let markdown = crate::session::continuation::render_system_context_markdown(
-                    &transcript, None,
-                );
+                let markdown =
+                    crate::session::continuation::render_system_context_markdown(&transcript, None);
                 let bundle_session_id =
                     Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
                 let prebuilt_continuation_bundle = markdown.map(|md| {

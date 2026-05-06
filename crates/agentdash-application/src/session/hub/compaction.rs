@@ -4,8 +4,8 @@
 //! `compacted_until_ref`——hub 在持久化前回补 MessageRef，让 Inspector/前端能够
 //! 精确定位历史边界。相关逻辑只与 `persist_notification` 协同，不涉及 connector。
 
-use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
+use agentdash_agent_types::{AgentMessage, MessageRef};
 use std::io;
 
 use super::super::continuation::build_projected_transcript_from_events;
@@ -21,10 +21,9 @@ impl SessionHub {
         envelope: BackboneEnvelope,
     ) -> io::Result<BackboneEnvelope> {
         let messages_compacted = match &envelope.event {
-            BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
-                key,
-                value,
-            }) if key == "context_compacted" => value
+            BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+            ) if key == "context_compacted" => value
                 .get("messages_compacted")
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok()),
@@ -43,10 +42,9 @@ impl SessionHub {
         };
 
         let mut enriched = envelope;
-        if let BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
-            value,
-            ..
-        }) = &mut enriched.event
+        if let BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { value, .. },
+        ) = &mut enriched.event
         {
             if let Some(obj) = value.as_object_mut() {
                 if let Ok(ref_value) = serde_json::to_value(&compacted_until_ref) {

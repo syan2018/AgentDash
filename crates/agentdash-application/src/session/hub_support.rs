@@ -1,7 +1,9 @@
 use std::io;
 
 use agentdash_agent_protocol::ContentBlock;
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
 use tokio::sync::broadcast;
 
@@ -65,7 +67,6 @@ pub(super) fn build_turn_started_envelope(
     })
 }
 
-
 pub(super) fn build_turn_terminal_notification(
     session_id: &str,
     source: &SourceInfo,
@@ -100,7 +101,6 @@ pub(super) fn build_turn_terminal_envelope(
         entry_index: None,
     })
 }
-
 
 /// 从 BackboneEnvelope 直接解析 turn terminal 事件。
 pub(super) fn parse_turn_terminal_event_from_envelope(

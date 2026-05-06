@@ -138,10 +138,7 @@ impl TerminalManager {
 
             // 等待子进程退出
             // PTY read 结束意味着子进程已退出
-            reader_sessions
-                .lock()
-                .unwrap()
-                .remove(&reader_terminal_id);
+            reader_sessions.lock().unwrap().remove(&reader_terminal_id);
 
             let _ = reader_event_tx.send(RelayMessage::EventTerminalStateChanged {
                 id: RelayMessage::new_id("term-state"),
@@ -160,10 +157,7 @@ impl TerminalManager {
             master_pty: pair.master,
         };
 
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(terminal_id, session);
+        self.sessions.lock().unwrap().insert(terminal_id, session);
 
         Ok(TerminalSpawnResponse {
             terminal_id: payload.terminal_id.clone(),

@@ -1,7 +1,7 @@
-use agentdash_spi::hooks::HookSessionRuntimeAccess;
 use agentdash_spi::context::capability::{
     CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry,
 };
+use agentdash_spi::hooks::HookSessionRuntimeAccess;
 use agentdash_spi::platform::skill::SkillRef;
 
 const COMPANION_AGENTS_SLOT: &str = "companion_agents";

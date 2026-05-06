@@ -10,8 +10,8 @@ pub mod hook_events;
 mod hook_messages;
 pub mod hook_runtime;
 pub mod hub;
-pub mod launch_intent;
 mod hub_support;
+pub mod launch_intent;
 mod memory_persistence;
 pub(crate) mod path_policy;
 pub mod persistence;
@@ -30,9 +30,9 @@ pub use assembler::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowOutput, CompanionWorkflowSpec,
     LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PreparedSessionInputs,
     SessionAssemblyBuilder, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    compose_companion, compose_companion_with_workflow,
-    compose_lifecycle_node, compose_lifecycle_node_with_audit, extract_agent_mcp_entries,
-    finalize_request, load_available_presets,
+    compose_companion, compose_companion_with_workflow, compose_lifecycle_node,
+    compose_lifecycle_node_with_audit, extract_agent_mcp_entries, finalize_request,
+    load_available_presets,
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use context::ExecutorResolution;
@@ -40,10 +40,10 @@ pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hub::SessionHub;
+pub use hub_support::TurnTerminalKind;
 pub use launch_intent::{
     SessionLaunchIntent, SessionLaunchPreparation, SessionLaunchSource, SessionLaunchStrictness,
 };
-pub use hub_support::TurnTerminalKind;
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,

@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
-use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_spi::content_block_to_text;
 
 use super::persistence::PersistedSessionEvent;
@@ -297,12 +297,7 @@ pub(super) fn build_projected_transcript_from_events(
                         }
                     });
                     state.order = state.order.min(event.event_seq);
-                    upsert_restored_tool_call(
-                        state,
-                        &tc.id,
-                        Some(&tc.name),
-                        tc.raw_input.as_ref(),
-                    );
+                    upsert_restored_tool_call(state, &tc.id, Some(&tc.name), tc.raw_input.as_ref());
                     if tc.is_terminal {
                         update_restored_tool_result(
                             &mut tool_results,
@@ -330,12 +325,7 @@ pub(super) fn build_projected_transcript_from_events(
                         }
                     });
                     state.order = state.order.min(event.event_seq);
-                    upsert_restored_tool_call(
-                        state,
-                        &tc.id,
-                        Some(&tc.name),
-                        tc.raw_input.as_ref(),
-                    );
+                    upsert_restored_tool_call(state, &tc.id, Some(&tc.name), tc.raw_input.as_ref());
                     if tc.is_terminal {
                         update_restored_tool_result(
                             &mut tool_results,
@@ -605,10 +595,9 @@ fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<Compac
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
             if key == "context_compacted" =>
         {
-            let compacted_until_ref = serde_json::from_value::<MessageRef>(
-                value.get("compacted_until_ref")?.clone(),
-            )
-            .ok()?;
+            let compacted_until_ref =
+                serde_json::from_value::<MessageRef>(value.get("compacted_until_ref")?.clone())
+                    .ok()?;
             Some(CompactionCheckpoint {
                 summary: value.get("summary")?.as_str()?.to_string(),
                 tokens_before: value
@@ -787,8 +776,7 @@ fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<Extrac
                 raw_output,
                 content_parts: Vec::new(),
                 is_terminal,
-                is_error: error.is_some()
-                    || matches!(status, codex::McpToolCallStatus::Failed),
+                is_error: error.is_some() || matches!(status, codex::McpToolCallStatus::Failed),
             })
         }
         codex::ThreadItem::CommandExecution {

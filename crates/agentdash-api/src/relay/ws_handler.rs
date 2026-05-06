@@ -203,7 +203,10 @@ async fn handle_backend_connection(
     state.services.backend_registry.unregister(&bid).await;
 
     // 标记该后端名下的所有终端为 Lost 并推送 platform event
-    let lost_terminal_ids = state.services.terminal_cache.handle_backend_disconnect(&bid);
+    let lost_terminal_ids = state
+        .services
+        .terminal_cache
+        .handle_backend_disconnect(&bid);
     for terminal_id in &lost_terminal_ids {
         if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
             use agentdash_application::backend_transport::RelaySessionEvent;
@@ -378,10 +381,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     &term_state.session_id,
                     source,
                 );
-                if let Err(e) = state.services.session_hub.inject_notification(
-                    &term_state.session_id,
-                    envelope,
-                ).await {
+                if let Err(e) = state
+                    .services
+                    .session_hub
+                    .inject_notification(&term_state.session_id, envelope)
+                    .await
+                {
                     tracing::warn!(
                         terminal_id = %terminal_id,
                         session_id = %term_state.session_id,
@@ -437,10 +442,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     &term_state.session_id,
                     source,
                 );
-                if let Err(e) = state.services.session_hub.inject_notification(
-                    &term_state.session_id,
-                    envelope,
-                ).await {
+                if let Err(e) = state
+                    .services
+                    .session_hub
+                    .inject_notification(&term_state.session_id, envelope)
+                    .await
+                {
                     tracing::warn!(
                         terminal_id = %payload.terminal_id,
                         error = %e,

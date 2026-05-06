@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::Deserialize;
 
 use agentdash_relay::*;
@@ -15,10 +15,7 @@ pub async fn list_terminals(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
 ) -> impl IntoResponse {
-    let terminals = state
-        .services
-        .terminal_cache
-        .list_terminals(&session_id);
+    let terminals = state.services.terminal_cache.list_terminals(&session_id);
     Json(terminals)
 }
 
@@ -70,12 +67,10 @@ pub async fn spawn_terminal(
     };
 
     // 预注册到 cache，避免 event_tx 事件到达时 cache 尚未就绪的 race condition
-    state.services.terminal_cache.register_terminal(
-        &session_id,
-        &terminal_id,
-        &backend_id,
-        None,
-    );
+    state
+        .services
+        .terminal_cache
+        .register_terminal(&session_id, &terminal_id, &backend_id, None);
 
     match state
         .services
@@ -94,10 +89,10 @@ pub async fn spawn_terminal(
             ..
         }) => {
             if resp.process_id.is_some() {
-                state.services.terminal_cache.update_process_id(
-                    &resp.terminal_id,
-                    resp.process_id,
-                );
+                state
+                    .services
+                    .terminal_cache
+                    .update_process_id(&resp.terminal_id, resp.process_id);
             }
             Json(serde_json::json!({
                 "terminalId": resp.terminal_id,

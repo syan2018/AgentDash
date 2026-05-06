@@ -40,7 +40,6 @@ use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
-use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
     SessionWorkflowContext, capability_directives_from_active_workflow,
@@ -57,6 +56,7 @@ use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
+use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptSessionRequest, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
@@ -502,9 +502,7 @@ impl SessionAssemblyBuilder {
     ) -> Self {
         self.vfs = Some(activation.lifecycle_vfs.clone());
         self.flow_capabilities = Some(activation.flow_capabilities.clone());
-        self.mcp_servers = activation
-            .mcp_servers
-            .clone();
+        self.mcp_servers = activation.mcp_servers.clone();
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
             "text": "请执行当前 lifecycle 节点。",
@@ -939,9 +937,7 @@ impl<'a> SessionRequestAssembler<'a> {
             owner_ctx,
             agent_declared_capabilities: spec.agent_declared_capabilities,
             workflow_ctx,
-            agent_mcp_servers: extract_agent_mcp_entries(
-                &spec.agent_mcp.preset_mcp_servers,
-            ),
+            agent_mcp_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
             available_presets: load_available_presets(self.repos, project_id).await,
             companion_slice_mode: None,
         };
@@ -1897,7 +1893,6 @@ async fn resolve_owner_workflow_capability_directives(
 
     Some(capability_directives_from_active_workflow(&workflow))
 }
-
 
 #[cfg(test)]
 mod tests {

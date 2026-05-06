@@ -35,10 +35,9 @@ impl SessionHub {
                     session_id = %meta.id,
                     "启动恢复：session 上次未正常结束，标记为 interrupted"
                 );
-                let turn_id = meta
-                    .last_turn_id
-                    .clone()
-                    .unwrap_or_else(|| format!("t_recovery_{}", chrono::Utc::now().timestamp_millis()));
+                let turn_id = meta.last_turn_id.clone().unwrap_or_else(|| {
+                    format!("t_recovery_{}", chrono::Utc::now().timestamp_millis())
+                });
                 let source = SourceInfo {
                     connector_id: "agentdash-server".to_string(),
                     connector_type: "system".to_string(),
@@ -333,12 +332,8 @@ impl SessionHub {
             },
             SessionLaunchPreparation::PreAssembled => req,
         };
-        self.start_prompt_with_follow_up(
-            session_id,
-            intent.follow_up_session_id(),
-            req,
-        )
-        .await
+        self.start_prompt_with_follow_up(session_id, intent.follow_up_session_id(), req)
+            .await
     }
 
     /// Task 执行链启动入口：请求已在 Task service 内 compose+finalize，直接启动。
@@ -536,7 +531,9 @@ impl SessionHub {
         let sessions = self.sessions.lock().await;
         sessions
             .iter()
-            .filter(|(_, runtime)| runtime.is_running() && (now - runtime.last_activity_at) > threshold)
+            .filter(|(_, runtime)| {
+                runtime.is_running() && (now - runtime.last_activity_at) > threshold
+            })
             .map(|(id, _)| id.clone())
             .collect()
     }

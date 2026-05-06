@@ -35,7 +35,12 @@ impl SessionHub {
                 .active_turn()
                 .map(|turn| (Some(turn.turn_id.clone()), turn.processor_tx.clone()))
                 .unwrap_or((None, None));
-            (runtime.is_running(), turn_id, runtime.tx.clone(), processor_tx)
+            (
+                runtime.is_running(),
+                turn_id,
+                runtime.tx.clone(),
+                processor_tx,
+            )
         };
 
         if running {

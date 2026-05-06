@@ -1164,8 +1164,8 @@ pub struct ResponseMcpClosePayload {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::CommandPromptPayload;
+    use super::*;
 
     #[test]
     fn command_prompt_payload_requires_mount_root_ref() {

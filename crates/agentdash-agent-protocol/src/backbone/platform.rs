@@ -19,10 +19,7 @@ pub enum PlatformEvent {
     },
 
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
-    TerminalOutput {
-        terminal_id: String,
-        data: String,
-    },
+    TerminalOutput { terminal_id: String, data: String },
 
     /// 终端生命周期变更（创建/退出/丢失/用户终止）。
     TerminalStateChanged {

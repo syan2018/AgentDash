@@ -650,5 +650,4 @@ mod tests {
         );
         assert!(out.kickoff_prompt.input_section.contains("已就绪"));
     }
-
 }

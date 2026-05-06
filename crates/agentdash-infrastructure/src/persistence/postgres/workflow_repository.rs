@@ -296,13 +296,22 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO lifecycle_runs ({RUN_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"))
-            .bind(run.id.to_string()).bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
-            .bind(&run.session_id).bind(serde_json::to_string(&run.status)?)
-            .bind(serde_json::to_string(&run.step_states)?)
-            .bind(serde_json::to_string(&run.execution_log)?)
-            .bind(run.created_at.to_rfc3339()).bind(run.updated_at.to_rfc3339()).bind(run.last_activity_at.to_rfc3339())
-            .execute(&self.pool).await.map_err(db_err)?;
+        sqlx::query(&format!(
+            "INSERT INTO lifecycle_runs ({RUN_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+        ))
+        .bind(run.id.to_string())
+        .bind(run.project_id.to_string())
+        .bind(run.lifecycle_id.to_string())
+        .bind(&run.session_id)
+        .bind(serde_json::to_string(&run.status)?)
+        .bind(serde_json::to_string(&run.step_states)?)
+        .bind(serde_json::to_string(&run.execution_log)?)
+        .bind(run.created_at.to_rfc3339())
+        .bind(run.updated_at.to_rfc3339())
+        .bind(run.last_activity_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
         Ok(())
     }
 

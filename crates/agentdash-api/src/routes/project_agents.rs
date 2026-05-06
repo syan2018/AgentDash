@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_spi::SessionMcpServer;
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
     project::Project,
@@ -8,6 +7,7 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 use agentdash_spi::AgentConfig;
+use agentdash_spi::SessionMcpServer;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -879,19 +879,18 @@ pub(crate) async fn build_agent_bridge(
         .map(String::from)
         .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
-    let preset_mcp_servers =
-        agentdash_application::mcp_preset::resolve_config_mcp_preset_refs(
-            state.repos.mcp_preset_repo.as_ref(),
-            link.project_id,
-            &merged_config,
-        )
-        .await
-        .map_err(|error| {
-            ApiError::Internal(format!(
-                "Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
-                agent.id
-            ))
-        })?;
+    let preset_mcp_servers = agentdash_application::mcp_preset::resolve_config_mcp_preset_refs(
+        state.repos.mcp_preset_repo.as_ref(),
+        link.project_id,
+        &merged_config,
+    )
+    .await
+    .map_err(|error| {
+        ApiError::Internal(format!(
+            "Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
+            agent.id
+        ))
+    })?;
 
     Ok(ProjectAgentBridge {
         key: agent.id.to_string(),

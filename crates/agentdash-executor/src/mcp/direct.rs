@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use agentdash_spi::{McpTransportConfig, SessionMcpServer};
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
+use agentdash_spi::{McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
 use rmcp::{
     ServiceExt,

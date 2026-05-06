@@ -83,13 +83,8 @@ impl SessionTurnProcessor {
         while let Some(event) = rx.recv().await {
             match event {
                 TurnEvent::Notification(notification) => {
-                    Self::handle_notification(
-                        &hub,
-                        &session_id,
-                        &notification,
-                        &post_turn_handler,
-                    )
-                    .await;
+                    Self::handle_notification(&hub, &session_id, &notification, &post_turn_handler)
+                        .await;
                 }
                 TurnEvent::Terminal { kind, message } => {
                     terminal_kind = kind;

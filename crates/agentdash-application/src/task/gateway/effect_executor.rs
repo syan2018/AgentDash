@@ -69,11 +69,7 @@ impl TaskHookEffectExecutor {
             return;
         };
 
-        let turn_id = envelope
-            .trace
-            .turn_id
-            .as_deref()
-            .unwrap_or_default();
+        let turn_id = envelope.trace.turn_id.as_deref().unwrap_or_default();
 
         let _ = persist_tool_call_artifact(
             &self.repos,

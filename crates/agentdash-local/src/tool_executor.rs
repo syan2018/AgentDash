@@ -328,10 +328,7 @@ impl ToolExecutor {
             }
         }
 
-        let status = child
-            .wait()
-            .await
-            .map_err(ToolError::Io)?;
+        let status = child.wait().await.map_err(ToolError::Io)?;
 
         Ok(ShellResult {
             exit_code: status.code().unwrap_or(-1),

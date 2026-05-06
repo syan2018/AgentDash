@@ -161,12 +161,7 @@ impl BackendRegistry {
 
     /// 获取任意一个在线 backend ID（probe 场景使用，不关心选择哪个）
     pub async fn find_any_online_backend(&self) -> Option<String> {
-        self.backends
-            .read()
-            .await
-            .keys()
-            .next()
-            .cloned()
+        self.backends.read().await.keys().next().cloned()
     }
 
     /// 注册 per-session 通知接收端。

@@ -3,7 +3,6 @@ pub mod context;
 pub mod hooks;
 pub mod platform;
 
-
 // ─── agent-types re-export（保持外部 API 不变）──────────────
 
 pub use agentdash_agent_types::{
@@ -32,10 +31,9 @@ pub use agentdash_domain::common::{
 pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
-    ExecutionTurnFrame, FlowCapabilities, McpEnvVar, McpHeader, McpTransportConfig,
-    PromptPayload, RestoredSessionState, SessionMcpServer, ToolCluster,
-    partition_session_mcp_servers,
-    content_block_to_text, workspace_path_from_context,
+    ExecutionTurnFrame, FlowCapabilities, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
+    RestoredSessionState, SessionMcpServer, ToolCluster, content_block_to_text,
+    partition_session_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

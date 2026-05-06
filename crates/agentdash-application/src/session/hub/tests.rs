@@ -2,9 +2,11 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
+use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookResolution, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
@@ -166,7 +168,6 @@ async fn start_prompt_records_current_turn_state() {
     );
 }
 
-
 #[derive(Default)]
 struct SessionStartAwareConnector {
     session_start_seen: Arc<TokioMutex<Vec<bool>>>,
@@ -263,7 +264,6 @@ impl ExecutionHookProvider for RecordingHookProvider {
         Ok(HookResolution::default())
     }
 }
-
 
 #[test]
 fn resolve_prompt_payload_from_text_block() {
@@ -577,7 +577,8 @@ async fn render_system_context_markdown_strips_owner_resource_blocks() {
         .await
         .expect("transcript should build");
     let context = super::super::continuation::render_system_context_markdown(
-        &transcript, Some("## Owner\nproject"),
+        &transcript,
+        Some("## Owner\nproject"),
     )
     .expect("continuation context should exist");
     assert!(context.contains("继续分析 session 生命周期"));
@@ -911,10 +912,8 @@ async fn render_system_context_markdown_uses_compacted_projection() {
         .build_projected_transcript(&session.id)
         .await
         .expect("transcript should build");
-    let context = super::super::continuation::render_system_context_markdown(
-        &transcript, None,
-    )
-    .expect("continuation context should exist");
+    let context = super::super::continuation::render_system_context_markdown(&transcript, None)
+        .expect("continuation context should exist");
 
     assert!(context.contains("压缩后的历史摘要"));
     assert!(context.contains("保留的新历史"));
@@ -1206,7 +1205,10 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
         }),
         None,
     );
-    let session = hub.create_session("strict-auto-resume").await.expect("create");
+    let session = hub
+        .create_session("strict-auto-resume")
+        .await
+        .expect("create");
 
     // 不注入 augmenter，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
     hub.schedule_hook_auto_resume(session.id.clone());

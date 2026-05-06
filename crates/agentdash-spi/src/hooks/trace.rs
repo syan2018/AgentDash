@@ -297,10 +297,7 @@ mod tests {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 let data = payload.data.as_ref().unwrap();
                 assert_eq!(data.injections.len(), 1);
-                assert_eq!(
-                    data.injections[0].slot.as_deref(),
-                    Some("companion_agents")
-                );
+                assert_eq!(data.injections[0].slot.as_deref(), Some("companion_agents"));
             }
             other => panic!("unexpected event: {other:?}"),
         }

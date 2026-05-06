@@ -1,11 +1,11 @@
 use std::io;
 
+use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use agentdash_application::session::{
     ExecutionStatus, PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog,
     SessionEventPage, SessionMeta, SessionPersistence, TitleSource,
 };
-use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use sqlx::{Row, SqlitePool};
 
 pub struct SqliteSessionRepository {
@@ -672,7 +672,9 @@ fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionProjection {
         }
         BackboneEvent::TurnCompleted(n) => {
             let status = match n.turn.status {
-                agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Completed => "completed",
+                agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Completed => {
+                    "completed"
+                }
                 agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed => "failed",
                 agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
                     "interrupted"

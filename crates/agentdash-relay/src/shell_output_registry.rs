@@ -22,15 +22,8 @@ impl ShellOutputRegistry {
         })
     }
 
-    pub fn register(
-        &self,
-        call_id: &str,
-        tx: mpsc::UnboundedSender<ToolShellOutputPayload>,
-    ) {
-        self.sinks
-            .write()
-            .unwrap()
-            .insert(call_id.to_string(), tx);
+    pub fn register(&self, call_id: &str, tx: mpsc::UnboundedSender<ToolShellOutputPayload>) {
+        self.sinks.write().unwrap().insert(call_id.to_string(), tx);
     }
 
     pub fn unregister(&self, call_id: &str) {

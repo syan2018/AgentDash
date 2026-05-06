@@ -109,8 +109,7 @@ impl SessionHub {
         }
 
         if let Some(relay) = &self.mcp_relay_provider {
-            let tools =
-                mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
             all_tools.extend(tools);
         }
 

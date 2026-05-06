@@ -1077,7 +1077,8 @@ pub(crate) async fn augment_prompt_request_for_owner(
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let markdown = agentdash_application::session::continuation::render_system_context_markdown(
-            &transcript, None,
+            &transcript,
+            None,
         );
         let bundle_session_id =
             uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
@@ -1276,9 +1277,7 @@ async fn build_project_owner_prompt_request(
             },
             executor_config: effective_executor_config,
             user_prompt_blocks,
-            agent_mcp: AgentLevelMcp {
-                preset_mcp_servers,
-            },
+            agent_mcp: AgentLevelMcp { preset_mcp_servers },
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
@@ -1347,7 +1346,8 @@ async fn resolve_continuation_system_context(
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         let markdown = agentdash_application::session::continuation::render_system_context_markdown(
-            &transcript, None,
+            &transcript,
+            None,
         );
         let bundle_session_id =
             uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());

@@ -153,7 +153,9 @@ impl CapabilityResolver {
                             if let Some(preset) = input.available_presets.get(&server_name) {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    custom_mcp_servers.push(crate::mcp_preset::preset_to_session_mcp_server(preset));
+                                    custom_mcp_servers.push(
+                                        crate::mcp_preset::preset_to_session_mcp_server(preset),
+                                    );
                                 }
                             } else if let Some(agent_entry) = input
                                 .agent_mcp_servers

@@ -35,7 +35,6 @@ impl Default for WorkspaceContractRuntimeConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitWorkspaceRuntimeConfig {
     #[serde(default)]
@@ -59,7 +58,6 @@ impl Default for GitWorkspaceRuntimeConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct P4WorkspaceRuntimeConfig {
     #[serde(default)]
@@ -76,7 +74,6 @@ impl Default for P4WorkspaceRuntimeConfig {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct McpLocalServerEntry {
@@ -98,7 +95,6 @@ pub struct McpEnvEntry {
     pub name: String,
     pub value: String,
 }
-
 
 pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendConfigFile {
     let Some(root) = accessible_roots.first() else {
@@ -146,7 +142,6 @@ pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendCo
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +156,4 @@ mod tests {
         assert!(!config.workspace_contract.git.enabled);
         assert!(!config.workspace_contract.p4.enabled);
     }
-
 }

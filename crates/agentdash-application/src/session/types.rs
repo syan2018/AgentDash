@@ -272,7 +272,6 @@ pub struct SessionMeta {
     pub bootstrap_state: SessionBootstrapState,
 }
 
-
 /// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。
 ///
 /// 替代原先裸字符串 `"idle"/"running"/"completed"/"failed"/"interrupted"` 的散落字面量。

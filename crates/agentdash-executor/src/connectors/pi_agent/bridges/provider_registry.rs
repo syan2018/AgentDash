@@ -44,7 +44,6 @@ impl ModelMeta {
     fn fallback(id: &str) -> Self {
         Self::from_id(id.to_string())
     }
-
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

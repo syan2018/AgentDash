@@ -37,22 +37,38 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
     match server {
         RuntimeMcpServer::Http { name, url } => Some(SessionMcpServer {
             name: name.clone(),
-            transport: McpTransportConfig::Http { url: url.clone(), headers: vec![] },
+            transport: McpTransportConfig::Http {
+                url: url.clone(),
+                headers: vec![],
+            },
             uses_relay: false,
         }),
         RuntimeMcpServer::Sse { name, url } => Some(SessionMcpServer {
             name: name.clone(),
-            transport: McpTransportConfig::Sse { url: url.clone(), headers: vec![] },
+            transport: McpTransportConfig::Sse {
+                url: url.clone(),
+                headers: vec![],
+            },
             uses_relay: false,
         }),
-        RuntimeMcpServer::Stdio { name, command, args, env, .. } => Some(SessionMcpServer {
+        RuntimeMcpServer::Stdio {
+            name,
+            command,
+            args,
+            env,
+            ..
+        } => Some(SessionMcpServer {
             name: name.clone(),
             transport: McpTransportConfig::Stdio {
                 command: command.clone(),
                 args: args.clone(),
-                env: env.iter().map(|(k, v)| agentdash_spi::McpEnvVar {
-                    name: k.clone(), value: v.clone(),
-                }).collect(),
+                env: env
+                    .iter()
+                    .map(|(k, v)| agentdash_spi::McpEnvVar {
+                        name: k.clone(),
+                        value: v.clone(),
+                    })
+                    .collect(),
             },
             uses_relay: false,
         }),
@@ -61,7 +77,8 @@ pub fn runtime_mcp_server_to_session(server: &RuntimeMcpServer) -> Option<Sessio
 }
 
 pub fn runtime_mcp_servers_to_session(servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServer> {
-    servers.iter().filter_map(runtime_mcp_server_to_session).collect()
+    servers
+        .iter()
+        .filter_map(runtime_mcp_server_to_session)
+        .collect()
 }
-
-

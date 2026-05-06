@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use agentdash_spi::{McpEnvVar, McpHeader, McpTransportConfig as SpiTransportConfig, SessionMcpServer};
+use agentdash_spi::{
+    McpEnvVar, McpHeader, McpTransportConfig as SpiTransportConfig, SessionMcpServer,
+};
 use uuid::Uuid;
 
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetRepository, McpTransportConfig};
@@ -10,19 +12,41 @@ pub fn preset_to_session_mcp_server(preset: &McpPreset) -> SessionMcpServer {
     let transport = match &preset.transport {
         McpTransportConfig::Http { url, headers } => SpiTransportConfig::Http {
             url: url.clone(),
-            headers: headers.iter().map(|h| McpHeader { name: h.name.clone(), value: h.value.clone() }).collect(),
+            headers: headers
+                .iter()
+                .map(|h| McpHeader {
+                    name: h.name.clone(),
+                    value: h.value.clone(),
+                })
+                .collect(),
         },
         McpTransportConfig::Sse { url, headers } => SpiTransportConfig::Sse {
             url: url.clone(),
-            headers: headers.iter().map(|h| McpHeader { name: h.name.clone(), value: h.value.clone() }).collect(),
+            headers: headers
+                .iter()
+                .map(|h| McpHeader {
+                    name: h.name.clone(),
+                    value: h.value.clone(),
+                })
+                .collect(),
         },
         McpTransportConfig::Stdio { command, args, env } => SpiTransportConfig::Stdio {
             command: command.clone(),
             args: args.clone(),
-            env: env.iter().map(|e| McpEnvVar { name: e.name.clone(), value: e.value.clone() }).collect(),
+            env: env
+                .iter()
+                .map(|e| McpEnvVar {
+                    name: e.name.clone(),
+                    value: e.value.clone(),
+                })
+                .collect(),
         },
     };
-    SessionMcpServer { name: preset.key.clone(), transport, uses_relay }
+    SessionMcpServer {
+        name: preset.key.clone(),
+        transport,
+        uses_relay,
+    }
 }
 
 pub fn preset_uses_relay(preset: &McpPreset) -> bool {

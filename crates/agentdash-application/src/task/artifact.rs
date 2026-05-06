@@ -1,6 +1,6 @@
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_domain::DomainError;
 use agentdash_domain::task::{Artifact, ArtifactType};
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -101,14 +101,14 @@ pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<
                 json!(dynamic_tool_call_status_str(status)),
             );
             patch.insert("raw_input".to_string(), arguments.clone());
-            patch.insert(
-                "input_preview".to_string(),
-                json!(preview_value(arguments)),
-            );
+            patch.insert("input_preview".to_string(), json!(preview_value(arguments)));
             if let Some(items) = content_items {
                 let content_value = serialize_or_fail(items, "content_items");
                 patch.insert("content".to_string(), content_value.clone());
-                patch.insert("output_preview".to_string(), json!(preview_value(&content_value)));
+                patch.insert(
+                    "output_preview".to_string(),
+                    json!(preview_value(&content_value)),
+                );
             }
             if let Some(s) = success {
                 patch.insert("success".to_string(), json!(s));
@@ -136,10 +136,7 @@ pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<
                 json!(mcp_tool_call_status_str(status)),
             );
             patch.insert("raw_input".to_string(), arguments.clone());
-            patch.insert(
-                "input_preview".to_string(),
-                json!(preview_value(arguments)),
-            );
+            patch.insert("input_preview".to_string(), json!(preview_value(arguments)));
             if let Some(r) = result {
                 let output = serialize_or_fail(r, "mcp_result");
                 patch.insert("raw_output".to_string(), output.clone());
@@ -172,7 +169,10 @@ pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<
             patch.insert("raw_input".to_string(), json!({ "command": command }));
             if let Some(output) = aggregated_output {
                 patch.insert("raw_output".to_string(), json!(output));
-                patch.insert("output_preview".to_string(), json!(preview_value(&json!(output))));
+                patch.insert(
+                    "output_preview".to_string(),
+                    json!(preview_value(&json!(output))),
+                );
             }
             if let Some(code) = exit_code {
                 patch.insert("exit_code".to_string(), json!(code));

@@ -682,16 +682,15 @@ impl AgentTool for ShellExecTool {
             target.path
         };
 
-        let streaming_call_id = self.shell_output_registry.as_ref().map(|_| {
-            agentdash_relay::RelayMessage::new_id("stream-call")
-        });
+        let streaming_call_id = self
+            .shell_output_registry
+            .as_ref()
+            .map(|_| agentdash_relay::RelayMessage::new_id("stream-call"));
 
         // 注册流式输出通道 + 转发任务
-        let forward_handle = if let (Some(registry), Some(call_id), Some(on_update)) = (
-            &self.shell_output_registry,
-            &streaming_call_id,
-            &on_update,
-        ) {
+        let forward_handle = if let (Some(registry), Some(call_id), Some(on_update)) =
+            (&self.shell_output_registry, &streaming_call_id, &on_update)
+        {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             registry.register(call_id, tx);
             let cb = on_update.clone();

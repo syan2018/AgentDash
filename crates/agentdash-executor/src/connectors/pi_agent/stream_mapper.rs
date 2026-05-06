@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use codex_app_server_protocol as codex;
 
 fn make_envelope(
@@ -130,10 +132,7 @@ fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
         .and_then(|v| v.as_str())
         .unwrap_or("(unknown)")
         .to_string();
-    let raw_cwd = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let raw_cwd = args.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
     let cwd_path = std::path::Path::new(raw_cwd);
     let cwd = if cwd_path.is_absolute() {
         raw_cwd.to_string()
@@ -686,13 +685,7 @@ pub(super) fn convert_event_to_envelopes(
                 } else {
                     codex::CommandExecutionStatus::Completed
                 };
-                make_command_execution_item(
-                    &item_id,
-                    &state,
-                    status,
-                    aggregated_output,
-                    exit_code,
-                )
+                make_command_execution_item(&item_id, &state, status, aggregated_output, exit_code)
             } else {
                 let content_items = decode_tool_result_to_content_items(result);
                 let success = Some(!is_error);

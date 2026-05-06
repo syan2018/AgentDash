@@ -116,11 +116,7 @@ pub fn envelope_to_session_notification(
         _ => {
             let event_type = envelope_event_type_label(&envelope.event);
             Some(wrap_session_info_update(
-                session_id,
-                envelope,
-                event_type,
-                None,
-                None,
+                session_id, envelope, event_type, None, None,
             ))
         }
     }
@@ -261,12 +257,9 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                                 .get("message")
                                 .and_then(Value::as_str)
                                 .map(ToString::to_string),
-                            data: e
-                                .get("data")
-                                .cloned()
-                                .and_then(|raw| {
-                                    serde_json::from_value::<crate::HookTraceData>(raw).ok()
-                                }),
+                            data: e.get("data").cloned().and_then(|raw| {
+                                serde_json::from_value::<crate::HookTraceData>(raw).ok()
+                            }),
                         })
                         .unwrap_or_else(|| crate::HookTracePayload {
                             event_type: Some("hook_event".to_string()),
@@ -353,9 +346,7 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 .as_ref()
                 .map(|c| acp_tool_content_to_codex_items(c));
             let success = if is_terminal {
-                Some(
-                    tcu.fields.status == Some(ToolCallStatus::Completed),
-                )
+                Some(tcu.fields.status == Some(ToolCallStatus::Completed))
             } else {
                 None
             };

@@ -153,10 +153,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         // Execute 簇：命令执行
         if clusters.contains(&ToolCluster::Execute) {
-            let mut shell_tool = ShellExecTool::new(
-                self.service.clone(),
-                shared_vfs.clone(),
-            );
+            let mut shell_tool = ShellExecTool::new(self.service.clone(), shared_vfs.clone());
             if let Some(ref registry) = self.shell_output_registry {
                 shell_tool = shell_tool.with_shell_output_registry(registry.clone());
             }

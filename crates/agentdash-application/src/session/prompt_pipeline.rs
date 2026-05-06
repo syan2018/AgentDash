@@ -159,16 +159,17 @@ impl SessionHub {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => {
-                let transcript = self
-                    .build_projected_transcript(session_id)
-                    .await
-                    .map_err(|error| {
-                        ConnectorError::Runtime(format!(
-                            "重建 session `{session_id}` 历史消息失败: {error}"
-                        ))
-                    })?;
-                (!transcript.is_empty())
-                    .then(|| RestoredSessionState { messages: transcript.into_messages() })
+                let transcript =
+                    self.build_projected_transcript(session_id)
+                        .await
+                        .map_err(|error| {
+                            ConnectorError::Runtime(format!(
+                                "重建 session `{session_id}` 历史消息失败: {error}"
+                            ))
+                        })?;
+                (!transcript.is_empty()).then(|| RestoredSessionState {
+                    messages: transcript.into_messages(),
+                })
             }
             _ => None,
         };
@@ -190,7 +191,11 @@ impl SessionHub {
         let flow_capabilities = req
             .flow_capabilities
             .clone()
-            .or_else(|| cached_continuation.as_ref().map(|c| c.flow_capabilities.clone()))
+            .or_else(|| {
+                cached_continuation
+                    .as_ref()
+                    .map(|c| c.flow_capabilities.clone())
+            })
             .unwrap_or_default();
         let effective_capability_keys = flow_capabilities.effective_capability_keys();
         let identity = req.identity.clone();
@@ -247,12 +252,11 @@ impl SessionHub {
         {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.session_profile =
-                    Some(super::hub_support::SessionProfile {
-                        vfs: effective_vfs.clone(),
-                        mcp_servers: mcp_servers.clone(),
-                        flow_capabilities: flow_capabilities.clone(),
-                    });
+                runtime.session_profile = Some(super::hub_support::SessionProfile {
+                    vfs: effective_vfs.clone(),
+                    mcp_servers: mcp_servers.clone(),
+                    flow_capabilities: flow_capabilities.clone(),
+                });
                 runtime.turn_state = TurnState::Active(TurnExecution::new(
                     turn_id.clone(),
                     context.session.clone(),
@@ -420,17 +424,16 @@ impl SessionHub {
 
     /// 将 connector stream 桥接到 processor channel 的后台任务。
     fn spawn_stream_adapter(
-        sessions: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>>,
+        sessions: std::sync::Arc<
+            tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>,
+        >,
         session_id: String,
         turn_id: String,
         stream: &mut agentdash_spi::ExecutionStream,
         processor_tx: tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>,
     ) {
         use futures::StreamExt;
-        let mut stream = std::mem::replace(
-            stream,
-            Box::pin(futures::stream::empty()),
-        );
+        let mut stream = std::mem::replace(stream, Box::pin(futures::stream::empty()));
         tokio::spawn(async move {
             while let Some(next) = stream.next().await {
                 match next {
@@ -441,17 +444,20 @@ impl SessionHub {
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
                         let (kind, message) = Self::resolve_stream_terminal(
-                            &sessions, &session_id, &turn_id, Some(e),
-                        ).await;
+                            &sessions,
+                            &session_id,
+                            &turn_id,
+                            Some(e),
+                        )
+                        .await;
                         let _ = processor_tx
                             .send(super::turn_processor::TurnEvent::Terminal { kind, message });
                         return;
                     }
                 }
             }
-            let (kind, message) = Self::resolve_stream_terminal(
-                &sessions, &session_id, &turn_id, None,
-            ).await;
+            let (kind, message) =
+                Self::resolve_stream_terminal(&sessions, &session_id, &turn_id, None).await;
             let _ = processor_tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
         });
     }
@@ -465,16 +471,19 @@ impl SessionHub {
     ) -> (TurnTerminalKind, Option<String>) {
         let (cancel_requested, live_turn_matches) = {
             let guard = sessions.lock().await;
-            match guard.get(session_id).and_then(|rt| rt.turn_state.active_turn()) {
-                Some(turn) => (
-                    turn.cancel_requested,
-                    turn.turn_id.as_str() == turn_id,
-                ),
+            match guard
+                .get(session_id)
+                .and_then(|rt| rt.turn_state.active_turn())
+            {
+                Some(turn) => (turn.cancel_requested, turn.turn_id.as_str() == turn_id),
                 None => (false, false),
             }
         };
         if cancel_requested && live_turn_matches {
-            (TurnTerminalKind::Interrupted, Some("执行已取消".to_string()))
+            (
+                TurnTerminalKind::Interrupted,
+                Some("执行已取消".to_string()),
+            )
         } else if let Some(e) = error {
             (TurnTerminalKind::Failed, Some(e.to_string()))
         } else {
@@ -608,10 +617,7 @@ impl SessionHub {
         Ok(Some(runtime))
     }
 
-    async fn discover_skills(
-        &self,
-        vfs: &agentdash_spi::Vfs,
-    ) -> Vec<agentdash_spi::SkillRef> {
+    async fn discover_skills(&self, vfs: &agentdash_spi::Vfs) -> Vec<agentdash_spi::SkillRef> {
         let mut skills = if let Some(service) = &self.vfs_service {
             let result = crate::skill::load_skills_from_vfs(service, vfs).await;
             for diag in &result.diagnostics {
@@ -699,7 +705,6 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.permission_policy = permission_policy.map(ToString::to_string);
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
-
 
 #[cfg(test)]
 mod tests {

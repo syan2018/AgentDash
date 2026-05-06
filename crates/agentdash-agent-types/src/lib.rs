@@ -5,7 +5,9 @@ pub mod runtime;
 
 pub use model::content::ContentPart;
 pub use model::context::AgentContext;
-pub use model::message::{AgentMessage, MessageRef, StopReason, TokenUsage, ToolCallInfo, now_millis};
+pub use model::message::{
+    AgentMessage, MessageRef, StopReason, TokenUsage, ToolCallInfo, now_millis,
+};
 pub use model::projection::{ProjectedEntry, ProjectedTranscript, ProjectionKind};
 
 pub use runtime::decisions::{

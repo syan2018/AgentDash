@@ -60,12 +60,7 @@ impl SessionTerminalCache {
             .insert(terminal_id.to_string(), state);
     }
 
-    pub fn update_state(
-        &self,
-        terminal_id: &str,
-        new_state: &str,
-        exit_code: Option<i32>,
-    ) {
+    pub fn update_state(&self, terminal_id: &str, new_state: &str, exit_code: Option<i32>) {
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {

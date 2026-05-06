@@ -4,6 +4,7 @@ import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { DetailPanel } from "../../components/ui/detail-panel";
 import { WorkflowEditor } from "./workflow-editor";
+import { normalizeIdentifier, uniqueIdentifier } from "./model/naming";
 import type {
   LifecycleDefinition,
   WorkflowDefinition,
@@ -32,6 +33,11 @@ export function WorkflowTabView() {
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ type: "workflow" | "lifecycle"; id: string; name: string } | null>(null);
+  const [createLifecycleOpen, setCreateLifecycleOpen] = useState(false);
+  const [createLifecycleName, setCreateLifecycleName] = useState("");
+  const [createLifecycleKey, setCreateLifecycleKey] = useState("");
+  const [createLifecycleKeyTouched, setCreateLifecycleKeyTouched] = useState(false);
+  const [createInitialStepName, setCreateInitialStepName] = useState("start");
 
   useEffect(() => {
     void fetchTemplates();
@@ -74,6 +80,38 @@ export function WorkflowTabView() {
     setConfirmDelete(null);
     setBusyKey(null);
   }, [confirmDelete, removeDefinition, removeLifecycle]);
+
+  const openCreateLifecycleDialog = useCallback(() => {
+    setCreateLifecycleName("");
+    setCreateLifecycleKey("");
+    setCreateLifecycleKeyTouched(false);
+    setCreateInitialStepName("start");
+    setCreateLifecycleOpen(true);
+  }, []);
+
+  const handleLifecycleNameChange = useCallback(
+    (value: string) => {
+      setCreateLifecycleName(value);
+      if (!createLifecycleKeyTouched) {
+        setCreateLifecycleKey(normalizeIdentifier(value, "lifecycle"));
+      }
+    },
+    [createLifecycleKeyTouched],
+  );
+
+  const handleCreateLifecycle = useCallback(() => {
+    const usedLifecycleKeys = lifecycles.map((lifecycle) => lifecycle.key);
+    const key = uniqueIdentifier(
+      createLifecycleKey || createLifecycleName,
+      usedLifecycleKeys,
+      "lifecycle",
+    );
+    const name = createLifecycleName.trim() || key;
+    const stepKey = uniqueIdentifier(createInitialStepName, [], "start");
+    const params = new URLSearchParams({ key, name, step: stepKey });
+    setCreateLifecycleOpen(false);
+    navigate(`/lifecycle-editor/new?${params.toString()}`);
+  }, [createInitialStepName, createLifecycleKey, createLifecycleName, lifecycles, navigate]);
 
   if (!currentProjectId) {
     return (
@@ -124,7 +162,7 @@ export function WorkflowTabView() {
             )}
             <button
               type="button"
-              onClick={() => navigate("/lifecycle-editor/new")}
+              onClick={openCreateLifecycleDialog}
               className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary"
             >
               + Lifecycle
@@ -226,6 +264,66 @@ export function WorkflowTabView() {
                 className="rounded-[8px] border border-destructive/30 bg-destructive px-3 py-1.5 text-xs text-destructive-foreground transition-colors hover:opacity-90 disabled:opacity-50"
               >
                 {busyKey != null ? "删除中…" : "删除"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {createLifecycleOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCreateLifecycleOpen(false)}>
+          <div className="w-[380px] rounded-[14px] border border-border bg-background p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-foreground">新建 Lifecycle</h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="agentdash-form-label">名称</label>
+                <input
+                  autoFocus
+                  value={createLifecycleName}
+                  onChange={(event) => handleLifecycleNameChange(event.target.value)}
+                  className="agentdash-form-input"
+                  placeholder="Task Lifecycle"
+                />
+              </div>
+              <div>
+                <label className="agentdash-form-label">Key</label>
+                <input
+                  value={createLifecycleKey}
+                  onChange={(event) => {
+                    setCreateLifecycleKeyTouched(true);
+                    setCreateLifecycleKey(event.target.value);
+                  }}
+                  className="agentdash-form-input"
+                  placeholder="task_lifecycle"
+                />
+              </div>
+              <div>
+                <label className="agentdash-form-label">起始 Step</label>
+                <input
+                  value={createInitialStepName}
+                  onChange={(event) => setCreateInitialStepName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleCreateLifecycle();
+                    if (event.key === "Escape") setCreateLifecycleOpen(false);
+                  }}
+                  className="agentdash-form-input"
+                  placeholder="start"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateLifecycleOpen(false)}
+                className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateLifecycle}
+                className="rounded-[8px] border border-primary bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-colors hover:opacity-90"
+              >
+                创建
               </button>
             </div>
           </div>

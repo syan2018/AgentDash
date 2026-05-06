@@ -35,6 +35,7 @@ import { DagNode, type DagNodeData } from "./ui/dag-node";
 import { DagSidePanel } from "./ui/dag-side-panel";
 import { DagLifecyclePanel } from "./ui/dag-lifecycle-panel";
 import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "./model/dag-layout";
+import { buildLifecycleStepWorkflowNames, uniqueIdentifier } from "./model/naming";
 import { DetailPanel } from "../../components/ui/detail-panel";
 import { WorkflowEditor } from "./workflow-editor";
 
@@ -43,26 +44,6 @@ import { WorkflowEditor } from "./workflow-editor";
 const NODE_TYPES = { dagNode: DagNode };
 
 const POSITION_STORAGE_PREFIX = "agentdash:dag-positions:";
-
-function workflowKeyFragment(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return normalized || "workflow";
-}
-
-function uniqueWorkflowKey(base: string, definitions: WorkflowDefinition[]): string {
-  const used = new Set(definitions.map((definition) => definition.key));
-  let candidate = workflowKeyFragment(base);
-  let index = 2;
-  while (used.has(candidate)) {
-    candidate = `${workflowKeyFragment(base)}_${index}`;
-    index += 1;
-  }
-  return candidate;
-}
 
 // ─── 位置持久化 ───
 
@@ -195,6 +176,8 @@ function LifecycleDagEditorInner() {
 
   // ── 选中节点 ──
   const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
+  const [createStepOpen, setCreateStepOpen] = useState(false);
+  const [createStepName, setCreateStepName] = useState("step");
 
   // ── 加载关联的 workflow definitions ──
   const targetKind = draft?.target_kind;
@@ -414,15 +397,15 @@ function LifecycleDagEditorInner() {
   }, []);
 
   // ── 添加节点 ──
-  const handleAddNode = useCallback(() => {
+  const handleOpenCreateStep = useCallback(() => {
     if (!draft) return;
-    const existingKeys = new Set(draft.steps.map((s) => s.key));
-    let idx = draft.steps.length + 1;
-    let key = `step_${idx}`;
-    while (existingKeys.has(key)) {
-      idx++;
-      key = `step_${idx}`;
-    }
+    setCreateStepName(`step_${draft.steps.length + 1}`);
+    setCreateStepOpen(true);
+  }, [draft]);
+
+  const handleCreateStep = useCallback(() => {
+    if (!draft) return;
+    const key = uniqueIdentifier(createStepName, draft.steps.map((step) => step.key), "step");
     const newStep: LifecycleStepDefinition = {
       key,
       description: "",
@@ -432,7 +415,9 @@ function LifecycleDagEditorInner() {
       input_ports: [],
     };
     updateLifecycleDraft({ steps: [...draft.steps, newStep] });
-  }, [draft, updateLifecycleDraft]);
+    setSelectedNodeKey(key);
+    setCreateStepOpen(false);
+  }, [createStepName, draft, updateLifecycleDraft]);
 
   // ── 删除节点 ──
   const handleRemoveNode = useCallback(
@@ -518,21 +503,22 @@ function LifecycleDagEditorInner() {
   const handleCreateAndBindWorkflow = useCallback(() => {
     if (!draft || selectedStepIndex < 0) return;
     const step = draft.steps[selectedStepIndex];
-    const workflowKey = uniqueWorkflowKey(
-      `${draft.key || "lifecycle"}_${step.key || "step"}`,
-      workflowDefinitions.filter((definition) => definition.project_id === draft.project_id),
-    );
-    const workflowName = step.description.trim() || step.key.trim() || "新建 Workflow";
+    const workflowNames = buildLifecycleStepWorkflowNames({
+      lifecycleKey: draft.key,
+      lifecycleDisplayName: draft.name,
+      stepKey: step.key,
+      existingWorkflows: workflowDefinitions.filter((definition) => definition.project_id === draft.project_id),
+    });
 
     openNewWorkflowDraft(draft.project_id);
     updateWorkflowDraft({
-      key: workflowKey,
-      name: workflowName,
+      key: workflowNames.key,
+      name: workflowNames.name,
       description: step.description,
       target_kind: draft.target_kind,
       recommended_roles: draft.recommended_roles,
     });
-    updateLifecycleStep(selectedStepIndex, { workflow_key: workflowKey });
+    updateLifecycleStep(selectedStepIndex, { workflow_key: workflowNames.key });
   }, [
     draft,
     openNewWorkflowDraft,
@@ -692,7 +678,7 @@ function LifecycleDagEditorInner() {
             <div className="flex items-center gap-2 rounded-[10px] border border-border bg-background/95 px-3 py-2 shadow-sm backdrop-blur-sm">
               <button
                 type="button"
-                onClick={handleAddNode}
+                onClick={handleOpenCreateStep}
                 className="agentdash-button-secondary px-2 py-1 text-xs"
               >
                 + 添加节点
@@ -827,6 +813,46 @@ function LifecycleDagEditorInner() {
         }}
       />
     </DetailPanel>
+    {createStepOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={() => setCreateStepOpen(false)}>
+        <div
+          className="w-[360px] rounded-[12px] border border-border bg-background p-4 shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3 className="text-sm font-semibold text-foreground">添加 Step</h3>
+          <div className="mt-4">
+            <label className="agentdash-form-label">Step name</label>
+            <input
+              autoFocus
+              value={createStepName}
+              onChange={(event) => setCreateStepName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") handleCreateStep();
+                if (event.key === "Escape") setCreateStepOpen(false);
+              }}
+              className="agentdash-form-input"
+              placeholder="review"
+            />
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCreateStepOpen(false)}
+              className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateStep}
+              className="rounded-[8px] border border-primary bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-colors hover:opacity-90"
+            >
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }

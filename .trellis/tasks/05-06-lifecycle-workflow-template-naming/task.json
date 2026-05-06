@@ -1,0 +1,54 @@
+{
+  "id": "lifecycle-workflow-template-naming",
+  "name": "lifecycle-workflow-template-naming",
+  "title": "Lifecycle 命名引导与 Workflow 模板命名",
+  "description": "创建 Lifecycle 时先支持命名，并在 Lifecycle step 创建 Workflow 时按 lifecycle/step 自动生成规范 key 与显示名。",
+  "status": "completed",
+  "dev_type": "frontend",
+  "scope": "workflow-lifecycle-editor",
+  "package": "frontend",
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-06",
+  "completedAt": "2026-05-06",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [
+    {
+      "title": "创建 Lifecycle 前置命名对话框",
+      "status": "completed"
+    },
+    {
+      "title": "Lifecycle 新建页支持读取预填 key/name/initial step",
+      "status": "completed"
+    },
+    {
+      "title": "新增 Step 时只输入 step name 并自动规范化 key",
+      "status": "completed"
+    },
+    {
+      "title": "新建并绑定 Workflow 时使用 lifecycle/step 模板命名",
+      "status": "completed"
+    },
+    {
+      "title": "补充命名 helper 单元测试并运行质量检查",
+      "status": "completed"
+    }
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "frontend/src/features/workflow/model/naming.ts",
+    "frontend/src/features/workflow/model/naming.test.ts",
+    "frontend/src/features/workflow/workflow-tab-view.tsx",
+    "frontend/src/features/workflow/lifecycle-dag-editor.tsx",
+    "frontend/src/pages/LifecycleEditorPage.tsx",
+    "frontend/src/stores/workflowStore.ts"
+  ],
+  "notes": "命名规则：Workflow key 按 normalize(lifecycle_key)_normalize(step_key) 生成并自动去重；Workflow 显示名按 lifecycle_display_name / normalized_step_key 生成。Lifecycle 创建入口先收集名称、key 与起始 step，DAG 添加 step 时只需输入 step name。验证通过：pnpm --filter frontend exec tsc --noEmit -p tsconfig.app.json；pnpm --filter frontend lint；pnpm --filter frontend test；git diff --check。",
+  "meta": {}
+}

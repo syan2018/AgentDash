@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { LifecycleDagEditor } from "../features/workflow/lifecycle-dag-editor";
 import { useWorkflowStore } from "../stores/workflowStore";
@@ -7,6 +7,7 @@ import { useProjectStore } from "../stores/projectStore";
 
 export function LifecycleEditorPage() {
   const { definitionId } = useParams<{ definitionId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const editorDraft = useWorkflowStore((state) => state.lcEditor.draft);
@@ -16,6 +17,9 @@ export function LifecycleEditorPage() {
   const isDirty = useWorkflowStore((state) => state.lcEditor.dirty);
 
   const isNew = definitionId === "new";
+  const seedKey = searchParams.get("key") ?? undefined;
+  const seedName = searchParams.get("name") ?? undefined;
+  const seedInitialStepKey = searchParams.get("step") ?? undefined;
   const handleBack = () => {
     if (isDirty && !window.confirm("当前 Lifecycle 有未保存修改，确定离开吗？")) {
       return;
@@ -25,11 +29,15 @@ export function LifecycleEditorPage() {
 
   useEffect(() => {
     if (isNew) {
-      openNewDraft(currentProjectId ?? "");
+      openNewDraft(currentProjectId ?? "", {
+        key: seedKey,
+        name: seedName,
+        initial_step_key: seedInitialStepKey,
+      });
     } else if (definitionId) {
       void openEditDraft(definitionId);
     }
-  }, [currentProjectId, definitionId, isNew, openEditDraft, openNewDraft]);
+  }, [currentProjectId, definitionId, isNew, openEditDraft, openNewDraft, seedInitialStepKey, seedKey, seedName]);
 
   if (isLoading && !editorDraft) {
     return (

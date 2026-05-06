@@ -89,6 +89,12 @@ export interface LifecycleEditorDraft {
   edges: LifecycleEdge[];
 }
 
+export interface LifecycleDraftSeed {
+  key?: string;
+  name?: string;
+  initial_step_key?: string;
+}
+
 export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
   return {
     id: null,
@@ -121,17 +127,18 @@ export function definitionToDraft(definition: WorkflowDefinition): WorkflowEdito
   };
 }
 
-export function createEmptyLifecycleDraft(projectId = ""): LifecycleEditorDraft {
+export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSeed = {}): LifecycleEditorDraft {
+  const initialStepKey = seed.initial_step_key ?? "";
   return {
     id: null,
     project_id: projectId,
-    key: "",
-    name: "",
+    key: seed.key ?? "",
+    name: seed.name ?? "",
     description: "",
     target_kind: "story",
     recommended_roles: ["story"],
-    entry_step_key: "",
-    steps: [{ key: "", description: "", workflow_key: null, output_ports: [], input_ports: [] }],
+    entry_step_key: initialStepKey,
+    steps: [{ key: initialStepKey, description: "", workflow_key: null, output_ports: [], input_ports: [] }],
     edges: [],
   };
 }
@@ -224,7 +231,7 @@ interface WorkflowState {
   removeDraftHookRule: (ruleKey: string) => void;
   updateDraftHookRule: (ruleKey: string, patch: Partial<WorkflowHookRuleSpec>) => void;
 
-  openNewLifecycleDraft: (projectId?: string) => void;
+  openNewLifecycleDraft: (projectId?: string, seed?: LifecycleDraftSeed) => void;
   openEditLifecycleDraft: (definitionId: string) => Promise<void>;
   closeLifecycleDraft: () => void;
   updateLifecycleDraft: (patch: Partial<LifecycleEditorDraft>) => void;
@@ -579,8 +586,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   // ── Lifecycle Definition editor ──
 
-  openNewLifecycleDraft: (projectId = "") => {
-    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft(projectId) } });
+  openNewLifecycleDraft: (projectId = "", seed = {}) => {
+    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft(projectId, seed) } });
   },
 
   openEditLifecycleDraft: async (definitionId) => {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
@@ -8,10 +8,12 @@ use agentdash_spi::{
     TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::hook_messages as msg;
+use super::hub_support::SessionRuntime;
 
 use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
@@ -26,6 +28,88 @@ pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
     default_mount_root_ref: Option<String>,
     audit_bus: Option<SharedContextAuditBus>,
+    injection_sink: Option<DynRuntimeHookInjectionSink>,
+}
+
+pub type DynRuntimeHookInjectionSink = Arc<dyn RuntimeHookInjectionSink>;
+
+#[async_trait]
+pub trait RuntimeHookInjectionSink: Send + Sync {
+    async fn emit_hook_injections(
+        &self,
+        session_id: &str,
+        trigger: HookTrigger,
+        injections: &[HookInjection],
+    );
+}
+
+pub(super) struct SessionRuntimeHookInjectionSink {
+    sessions: Arc<TokioMutex<HashMap<String, SessionRuntime>>>,
+    audit_bus: Option<SharedContextAuditBus>,
+}
+
+impl SessionRuntimeHookInjectionSink {
+    pub(super) fn new(
+        sessions: Arc<TokioMutex<HashMap<String, SessionRuntime>>>,
+        audit_bus: Option<SharedContextAuditBus>,
+    ) -> Self {
+        Self {
+            sessions,
+            audit_bus,
+        }
+    }
+}
+
+#[async_trait]
+impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
+    async fn emit_hook_injections(
+        &self,
+        session_id: &str,
+        trigger: HookTrigger,
+        injections: &[HookInjection],
+    ) {
+        if injections.is_empty() {
+            return;
+        }
+
+        let fragments = injections
+            .iter()
+            .cloned()
+            .map(hook_injection_to_fragment)
+            .collect::<Vec<_>>();
+        let (bundle_id, bundle_session_uuid) = {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(bundle) = sessions
+                .get_mut(session_id)
+                .and_then(|runtime| runtime.turn_state.active_turn_mut())
+                .and_then(|turn| turn.context_bundle.as_mut())
+            {
+                let bundle_id = bundle.bundle_id;
+                let bundle_session_uuid = bundle.session_id;
+                bundle.extend_turn_delta(fragments.clone());
+                (bundle_id, bundle_session_uuid)
+            } else {
+                (Uuid::new_v4(), Uuid::new_v4())
+            }
+        };
+
+        let Some(bus) = self.audit_bus.as_ref() else {
+            return;
+        };
+        let trigger_label = format!("{trigger:?}");
+        for fragment in fragments {
+            emit_fragment(
+                bus.as_ref(),
+                bundle_id,
+                session_id,
+                bundle_session_uuid,
+                AuditTrigger::HookInjection {
+                    trigger: trigger_label.clone(),
+                },
+                &fragment,
+            );
+        }
+    }
 }
 
 impl HookRuntimeDelegate {
@@ -48,10 +132,26 @@ impl HookRuntimeDelegate {
         default_mount_root_ref: Option<String>,
         audit_bus: Option<SharedContextAuditBus>,
     ) -> DynAgentRuntimeDelegate {
+        Self::new_with_mount_root_audit_and_sink(
+            hook_session,
+            default_mount_root_ref,
+            audit_bus,
+            None,
+        )
+    }
+
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_mount_root_audit_and_sink(
+        hook_session: SharedHookSessionRuntime,
+        default_mount_root_ref: Option<String>,
+        audit_bus: Option<SharedContextAuditBus>,
+        injection_sink: Option<DynRuntimeHookInjectionSink>,
+    ) -> DynAgentRuntimeDelegate {
         Arc::new(Self {
             hook_session,
             default_mount_root_ref,
             audit_bus,
+            injection_sink,
         })
     }
 
@@ -90,12 +190,27 @@ impl HookRuntimeDelegate {
                 .await
                 .map_err(map_runtime_error)?;
         }
+        self.emit_runtime_hook_injections(trigger.clone(), &resolution.injections)
+            .await;
 
         Ok(EvaluatedResolution {
             snapshot: self.hook_session.snapshot(),
             resolution,
             runtime: self.hook_session.runtime_snapshot(),
         })
+    }
+
+    async fn emit_runtime_hook_injections(
+        &self,
+        trigger: HookTrigger,
+        injections: &[HookInjection],
+    ) {
+        if let Some(sink) = self.injection_sink.as_ref() {
+            sink.emit_hook_injections(self.hook_session.session_id(), trigger, injections)
+                .await;
+        } else {
+            self.emit_hook_injection_fragments(trigger, injections);
+        }
     }
 
     fn emit_hook_injection_fragments(&self, trigger: HookTrigger, injections: &[HookInjection]) {
@@ -338,10 +453,6 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
-        self.emit_hook_injection_fragments(
-            HookTrigger::UserPromptSubmit,
-            &evaluated.resolution.injections,
-        );
 
         // 2a. block_reason — hook 要求阻止当前用户输入
         if let Some(reason) = evaluated.resolution.block_reason.clone() {
@@ -595,10 +706,6 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
-        self.emit_hook_injection_fragments(
-            HookTrigger::BeforeStop,
-            &evaluated.resolution.injections,
-        );
 
         // BeforeStop 只消费显式 pending action 回流，不再隐式桥接普通 injections。
         let mut steering = Vec::new();
@@ -842,7 +949,7 @@ mod tests {
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
-    use super::HookRuntimeDelegate;
+    use super::{HookRuntimeDelegate, RuntimeHookInjectionSink};
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
@@ -870,6 +977,26 @@ mod tests {
 
     #[derive(Clone)]
     struct AfterTurnInjectionProvider;
+
+    #[derive(Default)]
+    struct RecordingInjectionSink {
+        records: Mutex<Vec<(String, HookTrigger, Vec<HookInjection>)>>,
+    }
+
+    #[async_trait]
+    impl RuntimeHookInjectionSink for RecordingInjectionSink {
+        async fn emit_hook_injections(
+            &self,
+            session_id: &str,
+            trigger: HookTrigger,
+            injections: &[HookInjection],
+        ) {
+            self.records
+                .lock()
+                .expect("recording sink lock poisoned")
+                .push((session_id.to_string(), trigger, injections.to_vec()));
+        }
+    }
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
@@ -1492,6 +1619,49 @@ mod tests {
             trace.injections.is_empty(),
             "after_turn trace 不应携带通用注入内容",
         );
+    }
+
+    #[tokio::test]
+    async fn after_turn_routes_hook_injections_through_runtime_sink() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(AfterTurnInjectionProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        let sink = Arc::new(RecordingInjectionSink::default());
+        let delegate = HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
+            hook_session,
+            None,
+            None,
+            Some(sink.clone()),
+        );
+
+        delegate
+            .after_turn(
+                agentdash_spi::AfterTurnInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![],
+                        tools: vec![],
+                    },
+                    message: AgentMessage::assistant("ok"),
+                    tool_results: vec![],
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("after_turn should succeed");
+
+        let records = sink.records.lock().expect("recording sink lock poisoned");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, "sess-hook");
+        assert_eq!(records[0].1, HookTrigger::AfterTurn);
+        assert_eq!(records[0].2.len(), 1);
+        assert_eq!(records[0].2[0].slot, "workflow");
+        assert!(records[0].2[0].content.contains("phase: project_agent"));
     }
 
     #[test]

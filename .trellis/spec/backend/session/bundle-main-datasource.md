@@ -67,9 +67,13 @@ pub struct SessionContextBundle {
 
 - **写入时机**：每轮 prompt 开始或 Hook 触发时追加；每个新 turn 通常会得到一
   个新的 `context_bundle` clone，`turn_delta` 从空开始。
-- **写入者**：主要是 `HookRuntimeDelegate.transform_context / after_turn /
-  before_stop` 等运行期 hook 路径，通过 `bundle.push_turn_delta` /
-  `bundle.extend_turn_delta`（后续 fragment bridge 在运行期接入，见 §4.2）。
+- **写入者**：`SessionRuntimeHookInjectionSink` 是运行期唯一结构化写入口。
+  `HookRuntimeDelegate.evaluate(...)` 会把所有 agent-loop 边界 trigger 的
+  `HookResolution.injections` 统一交给该 sink；hub 侧
+  `emit_session_hook_trigger(...)` 也用同一 sink 处理 `SessionStart` /
+  `SessionTerminal` / `CapabilityChanged` 等 out-of-band trigger。
+  sink 负责调用 `hook_injection_to_fragment` 后执行
+  `bundle.extend_turn_delta(...)`（见 §4.2）。
 - **合并语义**：`turn_delta` **不做** slot 去重，允许同 slot 多条，由
   `render_section` 按 `order` 升序合并（见 `session_context_bundle.rs:148-168`）。
   这是为了让 Hook 在同一轮内多次追加同 slot 时不互相覆盖（例如多条
@@ -168,16 +172,19 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
 
 #### 3.1.2 运行期入口（`turn_delta`）
 
-- 目标态：`HookRuntimeDelegate.transform_context / after_turn / before_stop`
-  在 evaluate 后调 `hook_injection_to_fragment` 产出 `ContextFragment`，用于
-  audit / turn_delta 记录；若内容需要当前 running turn 立刻消费，必须同时或改为
-  产出动态 steering / pending action / session notification，而不是重设
-  system prompt。
-- 当前实现位点：`hook_delegate.rs::emit_hook_injection_fragments` 经
-  `ContextAuditBus` 把同样的 fragment emit 给审计总线（以 `AuditTrigger::HookInjection`
-  标签），在架构意图中与 `turn_delta` 对齐（同一份 fragment 既进 Bundle 又
-  进 audit）；最终形态 `turn_delta` 作为 SPI 数据面主写入目标，audit 只作为
-  旁路订阅。
+- 正式入口：`crates/agentdash-application/src/session/hook_delegate.rs`
+  中的 `RuntimeHookInjectionSink::emit_hook_injections(...)`。生产路径使用
+  `SessionRuntimeHookInjectionSink`，该 sink 同时被 `HookRuntimeDelegate`
+  和 hub 级 `emit_session_hook_trigger(...)` 复用。
+- 执行顺序：`HookResolution.injections` → `hook_injection_to_fragment`
+  → `TurnExecution.context_bundle.turn_delta.extend(...)` → 如有
+  `ContextAuditBus`，再 emit `AuditTrigger::HookInjection { trigger }`。
+  `emit_hook_injection_fragments(...)` 只保留为无 session runtime sink 的测试 /
+  兼容 fallback，不是生产主路径。
+- 即时消费：若内容需要当前 running turn 立刻影响模型，必须显式走动态
+  steering / pending action / session notification。例如 `CapabilityChanged`
+  在完成上述结构化回灌后，额外通过 `push_session_notification(...)` 注入 live
+  Agent 输入面；不得重设 system prompt。
 - **约束**：SPI crate 不反向依赖 `agentdash-spi`（decisions.rs 注释明确）；
   因此 `TransformContextOutput` 结构上**不**直接承载 `bundle_delta`，Bundle
   写入由 application 层的 hook delegate 在 evaluate 完成后自己写到
@@ -272,7 +279,7 @@ pub struct TransformContextOutput {
   Bundle.bootstrap_fragments。
 - 运行期 hook fragment：
   - emit 到 audit bus（`AuditTrigger::HookInjection { trigger }`）；
-  - 同时（目标态）回灌到 `turn_delta`。
+  - 同时经 `SessionRuntimeHookInjectionSink` 回灌到 `turn_delta`。
 - 两路同步可见是 D3 决策的关键收益：Inspector 既能看到"Bundle 最终形态"（经
   `iter_fragments` 或 `render_section`），又能看到"谁在什么时候加了这一条"。
 
@@ -309,14 +316,21 @@ flowchart LR
 sequenceDiagram
     participant Agent as Agent Loop
     participant Delegate as HookRuntimeDelegate
+    participant Hub as Hub Hook Dispatch
+    participant Sink as SessionRuntimeHookInjectionSink
     participant Bundle as TurnFrame.context_bundle
     participant Audit as ContextAuditBus
 
     Agent->>Delegate: transform_context(UserPromptSubmit)
     Delegate->>Delegate: evaluate(...) + collect injections
-    Delegate->>Bundle: bundle.extend_turn_delta(injections as fragments)
-    Delegate->>Audit: emit_fragment(AuditTrigger::HookInjection { trigger })
+    Delegate->>Sink: emit_hook_injections(trigger, injections)
+    Sink->>Bundle: bundle.extend_turn_delta(injections as fragments)
+    Sink->>Audit: emit_fragment(AuditTrigger::HookInjection { trigger })
     Delegate-->>Agent: TransformContextOutput { steering_messages, blocked }
+
+    Hub->>Hub: emit_session_hook_trigger(CapabilityChanged/SessionStart/SessionTerminal)
+    Hub->>Sink: emit_hook_injections(trigger, injections)
+    Sink->>Bundle: bundle.extend_turn_delta(injections as fragments)
 
     alt hook 要求 block
         Agent->>Agent: 停止本轮、向用户报告 blocked 原因
@@ -325,7 +339,7 @@ sequenceDiagram
         Note over Agent: 不为运行期 hook injection 重设 system prompt
     end
 
-    Note over Delegate,Bundle: after_turn / before_stop 遵循同构流程
+    Note over Delegate,Hub: 所有 runtime HookResolution.injections 先走同一 sink
 ```
 
 ### 5.3 Connector 消费
@@ -397,8 +411,12 @@ sequenceDiagram
   - `impl From<&SessionHookSnapshot> for Contribution`
   - `HOOK_SLOT_ORDERS`
 - `crates/agentdash-application/src/session/hook_delegate.rs`
-  - `HookRuntimeDelegate::transform_context / after_turn / before_stop`
-  - `emit_hook_injection_fragments`（audit bus 路径）
+  - `HookRuntimeDelegate::evaluate`（agent-loop 边界统一分发）
+  - `RuntimeHookInjectionSink` / `SessionRuntimeHookInjectionSink`
+  - `emit_hook_injection_fragments`（无 sink fallback）
+- `crates/agentdash-application/src/session/hub/hook_dispatch.rs`
+  - `emit_session_hook_trigger`（hub 级 trigger 统一回灌）
+  - `emit_capability_changed_hook`（结构化回灌后额外 live notification）
 - `crates/agentdash-application/src/session/prompt_pipeline.rs:380-410`
   — user_blocks 不再注入 `session-capabilities://` 的确认点。
 - `crates/agentdash-application/src/context/` — Bundle reducer /

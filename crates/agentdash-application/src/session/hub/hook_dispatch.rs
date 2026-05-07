@@ -16,6 +16,7 @@ use agentdash_spi::hooks::{
 };
 use tokio::sync::broadcast;
 
+use super::super::hook_delegate::{RuntimeHookInjectionSink, SessionRuntimeHookInjectionSink};
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
 use super::super::hook_runtime::HookSessionRuntime;
@@ -35,8 +36,9 @@ pub(in crate::session) struct HookTriggerInput<'a> {
 
 /// Hook trigger 调度结果。
 ///
-/// `effects` 仍交由原调用点处理；`injections` 用于 CapabilityChanged 这类
-/// out-of-band trigger 追加到 live Agent 输入面，避免只留在 trace 中。
+/// `effects` 仍交由原调用点处理；`injections` 已由统一调度路径回灌
+/// `turn_delta` / audit，返回值仅用于调用点追加即时消费动作（如 live
+/// notification）。
 #[derive(Debug, Clone, Default)]
 pub(in crate::session) struct HookTriggerDispatchResult {
     pub effects: Vec<HookEffect>,
@@ -108,6 +110,14 @@ impl SessionHub {
                 let envelope =
                     build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
                 let _ = self.persist_notification(session_id, envelope).await;
+                if !injections.is_empty() {
+                    let sink = SessionRuntimeHookInjectionSink::new(
+                        self.sessions.clone(),
+                        self.current_context_audit_bus().await,
+                    );
+                    sink.emit_hook_injections(session_id, trigger.clone(), &injections)
+                        .await;
+                }
                 HookTriggerDispatchResult {
                     effects,
                     injections,

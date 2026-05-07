@@ -15,7 +15,7 @@
   `ExecutionTurnFrame`（What + How + Trigger 副作用）per-turn 可变。
 - `SessionRuntime` 只持 session 级状态；per-turn 状态（`processor_tx` /
   `cancel_requested` / `session_frame` 快照等）下沉到
-  `SessionRuntime.current_turn: Option<TurnExecution>`。
+  `SessionRuntime.turn_state: TurnState` 的 `Active(TurnExecution)` 分支。
 - Bundle 是主数据面：`TurnFrame.context_bundle: Option<SessionContextBundle>`；
   PiAgent 通过 `bundle_id` 比对在不重新创建 agent 的情况下热更 system prompt。
 - `assembled_system_prompt` 字段存在仅作为 Relay / vibe_kanban 的过渡 fallback，
@@ -69,7 +69,7 @@ pub struct ExecutionSessionFrame {
 
 **SessionFrame 与 `ActiveSessionExecutionState` 的收敛**：历史上 session 运行
 态在 `ActiveSessionExecutionState` 内另存了 working_directory / mcp_servers /
-executor_config / vfs / identity 等副本。目标态将这些字段**统一**以
+executor_config / vfs / identity 等副本。当前这些字段**统一**以
 `ExecutionSessionFrame` 为权威，运行态通过 `TurnExecution.session_frame`
 （`Clone`）持一份快照供热更路径用（见 §4.3）。
 
@@ -135,9 +135,9 @@ pub struct ExecutionTurnFrame {
 ```rust
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
-    pub running: bool,
     pub hook_session: Option<SharedHookSessionRuntime>,
-    pub current_turn: Option<TurnExecution>,
+    pub turn_state: TurnState,
+    pub session_profile: Option<SessionProfile>,
     pub hook_auto_resume_count: u32,
     pub last_activity_at: i64,
 }
@@ -146,12 +146,14 @@ pub(super) struct SessionRuntime {
 - 生命周期：`ensure_session` / 首次 prompt / subscribe / cancel 都会
   `or_insert_with(build_session_runtime)`；真正销毁只有
   `SessionHub.delete_session`。
-- **纯 session 级字段**：`tx`（SSE fan-out）、`running`（互斥开关）、
+- **纯 session 级字段**：`tx`（SSE fan-out）、`turn_state`（Idle / Claimed /
+  Active 的互斥状态机）、`session_profile`（跨 turn 复用的 VFS / MCP / flow
+  capabilities）、
   `hook_session`（跨 turn 共享）、`last_activity_at`（stall 检测）、
   `hook_auto_resume_count`（跨 auto-resume 链累积的限流计数，新 turn 不清零）。
 - **禁令**：`SessionRuntime` struct 上不再出现 `processor_tx` / `turn_id` /
   `cancel_requested` / `session_frame`（参见 target-architecture.md §I5）。
-- `current_turn` 是唯一 per-turn 字段；无活跃 turn 时为 `None`。
+- `turn_state.active_turn()` 是唯一 per-turn 入口；无活跃 turn 时为 `None`。
 
 ### 4.2 `TurnExecution`（per-turn）
 
@@ -159,23 +161,26 @@ pub(super) struct SessionRuntime {
 pub(super) struct TurnExecution {
     pub turn_id: String,
     pub session_frame: ExecutionSessionFrame,
-    pub relay_mcp_server_names: HashSet<String>,
     pub flow_capabilities: FlowCapabilities,
+    pub context_bundle: Option<SessionContextBundle>,
     pub cancel_requested: bool,
     pub processor_tx: Option<UnboundedSender<TurnEvent>>,
 }
 ```
 
-- 生命周期：`prompt_pipeline` 在组装完成后写入 `SessionRuntime.current_turn =
-  Some(TurnExecution::new(...))`；`turn_processor` 收到 `TurnEvent::Terminal`
-  后清理（下沉到 hub 的 `TurnEvent::Terminal` 路径，target 态由 hub 负责清除
-  `current_turn`、`processor_tx`，参见 target-architecture.md §4.3 / I6）。
+- 生命周期：`prompt_pipeline` 在组装完成后写入
+  `SessionRuntime.turn_state = TurnState::Active(TurnExecution::new(...))`；
+  `turn_processor` 收到 `TurnEvent::Terminal` 后清理 active turn 与
+  `processor_tx`。
 - `session_frame`：`ExecutionSessionFrame` 的 clone，供 MCP 热更 /
   `replace_runtime_mcp_servers` 重建 `ExecutionContext` 使用，避免回读 wire
   `PromptSessionRequest`。
-- `relay_mcp_server_names`：伴随 `session_frame.mcp_servers` 的 classification
-  集；`tool_builder` 据此分 direct / relay 构建工具集。
 - `flow_capabilities`：per-turn 能力集，作为 MCP / 工具集重建时的入参。
+- `context_bundle`：当前 turn 的 Bundle 主数据面 clone。运行期 hook
+  injections 由 `SessionRuntimeHookInjectionSink` 追加到
+  `context_bundle.turn_delta`，供结构化审计与后续上下文装配使用；即时模型消费
+  仍必须走 steering / notification / pending action，不能把这里的变化解释为
+  live system prompt reset。
 - `cancel_requested`：`hub.cancel` 置 `true`；`turn_processor` / stream adapter
   读它决定发 `Interrupted` 终态。
 - `processor_tx`：stream adapter 与 cancel 路径向 `SessionTurnProcessor` 发送
@@ -187,12 +192,13 @@ pub(super) struct TurnExecution {
 
 ```text
 hub.replace_runtime_mcp_servers(session_id, new_mcp_servers)
-  └─ 读 SessionRuntime.current_turn.session_frame（clone）
+  └─ 读 SessionRuntime.turn_state.active_turn().session_frame（clone）
   └─ 用 new_mcp_servers 覆盖 session_frame.mcp_servers
   └─ 构造一次性 ExecutionContext { session: session_frame, turn: default }
   └─ RuntimeToolProvider::build_tools(&ctx) → Vec<DynAgentTool>
   └─ connector.update_session_tools(session_id, tools)
-  └─ 回写 SessionRuntime.current_turn.session_frame.mcp_servers（保持 per-turn 一致）
+  └─ 回写 SessionRuntime.turn_state.active_turn_mut().session_frame.mcp_servers
+     （保持 per-turn 一致）
 ```
 
 - 关键约束：热更路径**不**改写 `PromptSessionRequest`，也**不**构造 "ghost"
@@ -314,10 +320,10 @@ sequenceDiagram
   - `SessionRuntime`（~169 行，session 级）
   - `TurnExecution`（~187 行，per-turn）
 - `crates/agentdash-application/src/session/prompt_pipeline.rs:270-350` —
-  构造 `ExecutionContext` / 写入 `SessionRuntime.current_turn` / 预渲染
+  构造 `ExecutionContext` / 写入 `SessionRuntime.turn_state` / 预渲染
   `assembled_system_prompt`。
 - `crates/agentdash-application/src/session/hub/tool_builder.rs` — MCP 热更
-  从 `current_turn.session_frame` 出发构建工具集的路径。
+  从 `turn_state.active_turn().session_frame` 出发构建工具集的路径。
 - `crates/agentdash-application/src/session/hub/cancel.rs` — cancel 路径如何
   读写 `TurnExecution.cancel_requested` / `processor_tx`。
 - `crates/agentdash-executor/src/connectors/pi_agent/connector.rs:312-412` —

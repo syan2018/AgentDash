@@ -14,7 +14,9 @@ use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_surface::{
     CapabilitySurfaceEventInput, build_capability_surface_event_payload, merge_vfs_overlay,
 };
-use super::hook_delegate::HookRuntimeDelegate;
+use super::hook_delegate::{
+    DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
+};
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
@@ -156,10 +158,16 @@ impl SessionHub {
 
         let context_audit_bus = self.current_context_audit_bus().await;
         let runtime_delegate = hook_session.as_ref().map(|hs| {
-            HookRuntimeDelegate::new_with_mount_root_and_audit(
+            let injection_sink: DynRuntimeHookInjectionSink =
+                Arc::new(SessionRuntimeHookInjectionSink::new(
+                    self.sessions.clone(),
+                    context_audit_bus.clone(),
+                ));
+            HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
                 hs.clone(),
                 Some(default_mount_root.to_string_lossy().replace('\\', "/")),
                 context_audit_bus.clone(),
+                Some(injection_sink),
             )
         });
         let supports_repository_restore = self
@@ -286,6 +294,7 @@ impl SessionHub {
                     turn_id.clone(),
                     context.session.clone(),
                     flow_capabilities.clone(),
+                    context.turn.context_bundle.clone(),
                 ));
             }
         }

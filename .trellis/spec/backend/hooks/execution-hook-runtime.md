@@ -71,7 +71,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 | Trigger | 核心约束 |
 |---|---|
 | `UserPromptSubmit` | **唯一**动态文本注入主通道（context_fragments + constraints + policies） |
-| `CapabilityChanged` | Workflow/phase 能力变化后的 out-of-band 动态注入只进入 session notification / steering；不得通过 live system prompt 热更表达 |
+| `CapabilityChanged` | Workflow/phase 能力变化后的 out-of-band 动态注入先经统一 sink 回灌 `TurnExecution.context_bundle.turn_delta` / audit；若需要当前 running turn 立即消费，再额外走 session notification / steering；不得通过 live system prompt 热更表达 |
 | `BeforeTool` | `Ask` 必须在 tool call 边界同步挂起等待审批，不得退化为"先报错下一轮再猜" |
 | `BeforeStop` | 无 workflow 绑定时 `completion = None`，必须允许自然结束，不得因 `completion_satisfied = false` 错误阻止退出 |
 | `AfterTurn` | 不能重复注入 step 基线约束，避免永续 steering 导致无法抵达 `BeforeStop` |

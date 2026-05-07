@@ -4,7 +4,7 @@ use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, Vfs};
+use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, SessionContextBundle, Vfs};
 use tokio::sync::broadcast;
 
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
@@ -233,6 +233,11 @@ pub(super) struct TurnExecution {
     /// Turn 级 capability 集合（per-prompt 下发）。
     /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
     pub flow_capabilities: FlowCapabilities,
+    /// 当前 turn 的 Bundle 主数据面。
+    ///
+    /// 运行期 hook injection 统一回灌到这里的 `turn_delta`，作为结构化审计与
+    /// 下一轮 prompt 装配输入；即时模型消费仍走动态 steering/notification。
+    pub context_bundle: Option<SessionContextBundle>,
     /// 取消请求标记。hub.cancel 置 true；processor / adapter 读它决定发
     /// `Interrupted` 还是 `Completed/Failed` 终态。
     pub cancel_requested: bool,
@@ -247,11 +252,13 @@ impl TurnExecution {
         turn_id: String,
         session_frame: ExecutionSessionFrame,
         flow_capabilities: FlowCapabilities,
+        context_bundle: Option<SessionContextBundle>,
     ) -> Self {
         Self {
             turn_id,
             session_frame,
             flow_capabilities,
+            context_bundle,
             cancel_requested: false,
             processor_tx: None,
         }

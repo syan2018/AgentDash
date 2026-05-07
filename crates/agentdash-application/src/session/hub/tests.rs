@@ -11,7 +11,10 @@ use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookInjection, HookResolution, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
-use agentdash_spi::{AgentConnector, ConnectorError, PromptPayload, StopReason};
+use agentdash_spi::{
+    AgentConfig, AgentConnector, ConnectorError, ExecutionSessionFrame, FlowCapabilities,
+    PromptPayload, SessionContextBundle, StopReason,
+};
 use futures::stream;
 use serde_json::json;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
@@ -20,7 +23,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::super::MemorySessionPersistence;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
-    build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
+    TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
@@ -713,6 +716,31 @@ async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
     hub.reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
+    let bundle_session_uuid = uuid::Uuid::new_v4();
+    {
+        let mut sessions = hub.sessions.lock().await;
+        let runtime = sessions
+            .get_mut(&session.id)
+            .expect("session runtime should exist");
+        runtime.turn_state = TurnState::Active(TurnExecution::new(
+            "turn-cap".to_string(),
+            ExecutionSessionFrame {
+                turn_id: "turn-cap".to_string(),
+                working_directory: base.path().to_path_buf(),
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::new("PI_AGENT"),
+                mcp_servers: vec![],
+                vfs: Some(local_workspace_vfs(base.path())),
+                identity: None,
+            },
+            FlowCapabilities::default(),
+            Some(SessionContextBundle::new(
+                bundle_session_uuid,
+                "capability_changed_test",
+            )),
+        ));
+    }
+
     hub.emit_capability_changed_hook(&session.id, Some("turn-cap"), json!({ "phase": "phase_b" }))
         .await;
 
@@ -744,6 +772,23 @@ async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
     let trace = hook_session.trace();
     assert_eq!(trace.len(), 1);
     assert_eq!(trace[0].injections, vec![injection]);
+
+    let sessions = hub.sessions.lock().await;
+    let turn = sessions
+        .get(&session.id)
+        .and_then(|runtime| runtime.turn_state.active_turn())
+        .expect("active turn should remain available");
+    let bundle = turn
+        .context_bundle
+        .as_ref()
+        .expect("active turn should retain context bundle");
+    assert_eq!(bundle.turn_delta.len(), 1);
+    assert_eq!(bundle.turn_delta[0].slot, "workflow_context");
+    assert_eq!(bundle.turn_delta[0].source, "workflow:phase_b");
+    assert_eq!(
+        bundle.turn_delta[0].content,
+        "请使用 phase B 的工具约束继续推进。"
+    );
 }
 
 #[test]

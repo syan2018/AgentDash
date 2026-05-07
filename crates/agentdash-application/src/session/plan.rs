@@ -582,10 +582,7 @@ fn summarize_mcp_servers(mcp_servers: &[RuntimeMcpServer]) -> Vec<SessionMcpServ
 }
 
 fn render_mcp_server_summary(server: &SessionMcpServerSummary) -> String {
-    format!(
-        "- `{}`: {} `{}`",
-        server.name, server.transport, server.target
-    )
+    format!("- `{}`: {}", server.name, server.transport)
 }
 
 fn display_list<T: AsRef<str>>(items: &[T]) -> String {
@@ -697,6 +694,7 @@ mod tests {
         );
         assert!(summary.markdown.contains("## Tool Visibility"));
         assert!(summary.markdown.contains("`agentdash-story-tools`"));
+        assert!(!summary.markdown.contains("/mcp/story/123"));
     }
 
     #[test]
@@ -803,6 +801,7 @@ mod tests {
         assert!(!summary.tool_names.iter().any(|tool| tool == "shell"));
         assert!(summary.markdown.contains("resolved: no"));
         assert!(summary.markdown.contains("`agentdash-project-tools`"));
+        assert!(!summary.markdown.contains("/mcp/project/123"));
     }
 
     #[test]

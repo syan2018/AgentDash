@@ -37,12 +37,13 @@ impl McpToolAdapter {
     fn from_tool(server: McpHttpServerSpec, tool: Tool) -> Self {
         let original_name = tool.name.to_string();
         let runtime_name = namespaced_tool_name(&server.name, &original_name);
-        let description = format!(
-            "MCP 工具（server={}, original={}）: {}",
-            server.name,
-            original_name,
-            tool.description.as_deref().unwrap_or("无描述")
-        );
+        let description = tool
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("MCP 工具")
+            .to_string();
         let parameters_schema =
             sanitize_tool_schema(serde_json::Value::Object((*tool.input_schema).clone()));
 
@@ -108,8 +109,7 @@ impl AgentTool for McpToolAdapter {
                 result,
             )),
             Err(error) => Err(AgentToolError::ExecutionFailed(format!(
-                "调用 MCP 工具失败（server={}, tool={}）: {}",
-                self.server.name,
+                "调用 MCP 工具失败（tool={}）: {}",
                 self.original_name,
                 format_service_error(&error)
             ))),
@@ -160,14 +160,11 @@ async fn connect_http_server(
 }
 
 fn convert_call_result(
-    server: &McpHttpServerSpec,
+    _server: &McpHttpServerSpec,
     tool_name: &str,
     result: CallToolResult,
 ) -> AgentToolResult {
-    let mut sections = vec![format!(
-        "MCP server: {}\nMCP tool: {}",
-        server.name, tool_name
-    )];
+    let mut sections = vec![format!("MCP tool: {tool_name}")];
 
     if let Some(structured) = &result.structured_content {
         sections.push(format!(
@@ -229,11 +226,28 @@ fn parse_http_session_server(server: &SessionMcpServer) -> Option<McpHttpServerS
 }
 
 pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
+    let agent_facing_server = agent_facing_mcp_server_name(server_name);
     format!(
         "mcp_{}_{}",
-        sanitize_identifier(server_name),
+        sanitize_identifier(&agent_facing_server),
         sanitize_identifier(tool_name)
     )
+}
+
+pub fn agent_facing_mcp_server_name(server_name: &str) -> String {
+    const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
+        ("agentdash-story-tools-", "agentdash-story-tools"),
+        ("agentdash-task-tools-", "agentdash-task-tools"),
+        ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
+    ];
+
+    for (prefix, stable_name) in PLATFORM_SCOPED_PREFIXES {
+        if server_name.starts_with(prefix) {
+            return (*stable_name).to_string();
+        }
+    }
+
+    server_name.to_string()
 }
 
 pub(crate) fn sanitize_identifier(input: &str) -> String {
@@ -255,10 +269,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn namespaced_name_is_stable() {
+    fn namespaced_name_hides_platform_scope_ids() {
         assert_eq!(
             namespaced_tool_name("agentdash-task-tools-1234", "update_status"),
-            "mcp_agentdash_task_tools_1234_update_status"
+            "mcp_agentdash_task_tools_update_status"
+        );
+        assert_eq!(
+            namespaced_tool_name("agentdash-workflow-tools-8de613e7", "get_lifecycle"),
+            "mcp_agentdash_workflow_tools_get_lifecycle"
+        );
+    }
+
+    #[test]
+    fn namespaced_name_keeps_custom_server_namespace() {
+        assert_eq!(
+            namespaced_tool_name("code-analyzer", "scan_repo"),
+            "mcp_code_analyzer_scan_repo"
         );
     }
 }

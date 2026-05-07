@@ -1162,7 +1162,7 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
                         mut bundle: Option<SessionContextBundle>,
                         rendered_sp: Option<&str>|
      -> ExecutionContext {
-        if let (Some(ref mut b), Some(sp)) = (&mut bundle, rendered_sp) {
+        if let (Some(b), Some(sp)) = (&mut bundle, rendered_sp) {
             b.rendered_system_prompt = Some(sp.to_string());
         }
         let turn_frame = agentdash_spi::ExecutionTurnFrame {

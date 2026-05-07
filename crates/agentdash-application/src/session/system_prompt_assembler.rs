@@ -225,12 +225,16 @@ fn is_platform_mcp_server(server: &agentdash_spi::SessionMcpServer) -> bool {
 
 fn describe_mcp_server(server: &agentdash_spi::SessionMcpServer) -> String {
     use agentdash_spi::McpTransportConfig;
-    let (server_type, url) = match &server.transport {
-        McpTransportConfig::Http { url, .. } => ("http", url.as_str()),
-        McpTransportConfig::Sse { url, .. } => ("sse", url.as_str()),
-        McpTransportConfig::Stdio { command, .. } => ("stdio", command.as_str()),
+    if is_platform_mcp_server(server) {
+        return format!("- {}: 平台 MCP 管理工具", server.name);
+    }
+
+    let server_type = match &server.transport {
+        McpTransportConfig::Http { .. } => "http",
+        McpTransportConfig::Sse { .. } => "sse",
+        McpTransportConfig::Stdio { .. } => "stdio",
     };
-    format!("- {} ({}): {}", server.name, server_type, url)
+    format!("- {} ({server_type})", server.name)
 }
 
 fn describe_builtin_tool(tool: &DynAgentTool) -> String {
@@ -353,6 +357,45 @@ fn build_hook_runtime_sections(hook_session: &dyn HookSessionRuntimeAccess) -> V
         ));
     }
     sections
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_spi::{McpTransportConfig, SessionMcpServer};
+
+    #[test]
+    fn platform_mcp_summary_hides_endpoint_details() {
+        let mcp_servers = vec![SessionMcpServer {
+            name: "agentdash-workflow-tools".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://127.0.0.1:3001/mcp/workflow/8de613e7-0000-0000-0000-000000000000"
+                    .to_string(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        }];
+        let tools: Vec<DynAgentTool> = vec![];
+        let prompt = assemble_system_prompt(&SystemPromptInput {
+            base_system_prompt: "base",
+            agent_system_prompt: None,
+            agent_system_prompt_mode: None,
+            user_preferences: &[],
+            discovered_guidelines: &[],
+            context_bundle: None,
+            session_capabilities: None,
+            vfs: None,
+            working_directory: Path::new("."),
+            runtime_tools: &tools,
+            mcp_servers: &mcp_servers,
+            hook_session: None,
+        });
+
+        assert!(prompt.contains("agentdash-workflow-tools"));
+        assert!(prompt.contains("平台 MCP 管理工具"));
+        assert!(!prompt.contains("/mcp/workflow/"));
+        assert!(!prompt.contains("8de613e7"));
+    }
 }
 
 fn render_path_conventions(tool_section: &mut String, vfs: Option<&Vfs>, working_directory: &Path) {

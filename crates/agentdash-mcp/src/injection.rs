@@ -1,7 +1,7 @@
 //! MCP 能力注入模块
 //!
-//! 提供 `McpInjectionConfig`，用于在 Agent 上下文构建时注入 MCP Server 连接信息。
-//! Agent 收到包含 MCP 端点信息的上下文后，可自动连接对应的 MCP Server 获取工具。
+//! 提供 `McpInjectionConfig`，用于在 Agent 会话构建时注入 MCP Server 连接信息。
+//! 端点配置通过结构化 `SessionMcpServer` 下发，面向 Agent 的文本只展示能力边界。
 //!
 //! ## 三层注入策略
 //!
@@ -96,18 +96,9 @@ impl McpInjectionConfig {
     pub fn server_name(&self) -> String {
         match self.scope {
             ToolScope::Relay => "agentdash-relay-tools".to_string(),
-            ToolScope::Story => format!(
-                "agentdash-story-tools-{}",
-                &self.story_id.unwrap().to_string()[..8]
-            ),
-            ToolScope::Task => format!(
-                "agentdash-task-tools-{}",
-                &self.task_id.unwrap().to_string()[..8]
-            ),
-            ToolScope::Workflow => format!(
-                "agentdash-workflow-tools-{}",
-                &self.project_id.to_string()[..8]
-            ),
+            ToolScope::Story => "agentdash-story-tools".to_string(),
+            ToolScope::Task => "agentdash-task-tools".to_string(),
+            ToolScope::Workflow => "agentdash-workflow-tools".to_string(),
         }
     }
 
@@ -127,10 +118,9 @@ impl McpInjectionConfig {
         };
 
         format!(
-            "## MCP: {name}\n- url: {url}\n- scope: {scope}\n\
+            "## MCP: {name}\n- scope: {scope}\n\
              可通过此 MCP Server 使用以下能力：{desc}",
             name = self.server_name(),
-            url = self.endpoint_url(),
             scope = scope_label,
             desc = tool_desc,
         )
@@ -166,7 +156,7 @@ mod tests {
             config.endpoint_url(),
             format!("http://localhost:3001/mcp/task/{task_id}")
         );
-        assert!(config.server_name().starts_with("agentdash-task-tools-"));
+        assert_eq!(config.server_name(), "agentdash-task-tools");
     }
 
     #[test]
@@ -201,9 +191,9 @@ mod tests {
         let content = config.to_context_content();
 
         assert!(content.contains("## MCP: "));
-        assert!(content.contains("- url: http://localhost:3001/mcp/task/"));
         assert!(content.contains("- scope: task"));
         assert!(content.contains("Task 状态更新"));
+        assert!(!content.contains("/mcp/task/"));
     }
 
     #[test]
@@ -216,7 +206,7 @@ mod tests {
             task_id,
         );
         let server = config.to_session_mcp_server();
-        assert!(server.name.starts_with("agentdash-task-tools-"));
+        assert_eq!(server.name, "agentdash-task-tools");
         assert!(!server.uses_relay);
         match &server.transport {
             McpTransportConfig::Http { url, .. } => {

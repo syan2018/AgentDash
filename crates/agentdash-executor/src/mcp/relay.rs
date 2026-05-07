@@ -29,10 +29,12 @@ pub struct RelayMcpToolAdapter {
 impl RelayMcpToolAdapter {
     pub fn from_info(info: &RelayMcpToolInfo, provider: Arc<dyn McpRelayProvider>) -> Self {
         let runtime_name = namespaced_tool_name(&info.server_name, &info.tool_name);
-        let description = format!(
-            "MCP 工具（server={}, original={}）: {}",
-            info.server_name, info.tool_name, info.description
-        );
+        let description = info.description.trim();
+        let description = if description.is_empty() {
+            "MCP 工具".to_string()
+        } else {
+            description.to_string()
+        };
         let parameters_schema = sanitize_tool_schema(info.parameters_schema.clone());
         Self {
             runtime_name,
@@ -85,8 +87,8 @@ impl AgentTool for RelayMcpToolAdapter {
 
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "MCP server: {}\nMCP tool: {}\n\n{}",
-                self.server_name, self.original_tool_name, result.content
+                "MCP tool: {}\n\n{}",
+                self.original_tool_name, result.content
             ))],
             is_error: result.is_error,
             details: None,

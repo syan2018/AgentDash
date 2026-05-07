@@ -172,3 +172,36 @@ started: 2026-04-30
 下一步建议（由 user 裁决）：
 - 开 PR 合入 `main`（或按子 PR 粒度分批合）；
 - 或先跑 E2E 场景（HTTP prompt / task start / workflow orchestrator / companion dispatch / routine tick / cancel × 3 / compaction）作 acceptance 最后一道闸门。
+
+
+## Session 32: 实现 Lifecycle Journey VFS
+
+**Date**: 2026-05-07
+**Task**: 实现 Lifecycle Journey VFS
+**Branch**: `main`
+
+### Summary
+
+完成 lifecycle 当前 node/session 根投影、tool-calls/writes 派生索引、records overlay 写读、agent VFS 自动挂载合并，并补充 provider/assembler/step activation focused tests。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f695ded` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

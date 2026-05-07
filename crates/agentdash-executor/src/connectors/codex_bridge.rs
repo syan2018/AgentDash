@@ -488,7 +488,7 @@ impl AgentConnector for CodexBridgeConnector {
 
         let mut process = tokio::process::Command::new("npx");
         process
-            .args(["-y", "@openai/codex@0.121.0", "app-server"])
+            .args(["-y", "@openai/codex@0.124.0", "app-server"])
             .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

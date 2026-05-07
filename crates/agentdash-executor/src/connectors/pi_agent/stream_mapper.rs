@@ -200,6 +200,7 @@ fn make_dynamic_tool_item(
         .unwrap_or(serde_json::Value::Object(Default::default()));
     codex::ThreadItem::DynamicToolCall {
         id: item_id.to_string(),
+        namespace: None,
         tool: state.tool_name.clone(),
         arguments,
         status,

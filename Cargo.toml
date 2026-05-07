@@ -76,7 +76,7 @@ agentdash-local = { path = "crates/agentdash-local" }
 agentdash-plugin-api = { path = "crates/agentdash-plugin-api" }
 
 # Codex App Server Protocol
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.121.0", package = "codex-app-server-protocol" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.124.0", package = "codex-app-server-protocol" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }
@@ -85,8 +85,8 @@ agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 ts-rs = { version = "11.1", features = ["serde-json-impl", "no-serde-warnings", "chrono-impl"] }
 
-# vibe-kanban (git dep, tracks default branch)
-executors = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "executors" }
+# vibe-kanban executors; pinned so Codex Rust protocol stays aligned with workspace.
+executors = { git = "https://github.com/BloopAI/vibe-kanban.git", rev = "4deb7eca8f381f7cbc1f9d15515a9ab8f8009053", package = "executors" }
 
 [patch.crates-io]
 # vibe-kanban 的 executors → codex-core 依赖 tokio-tungstenite/proxy feature，

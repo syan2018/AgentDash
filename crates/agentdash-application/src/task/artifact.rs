@@ -92,6 +92,7 @@ pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<
             content_items,
             success,
             duration_ms,
+            ..
         } => {
             let mut patch = Map::new();
             patch.insert("title".to_string(), json!(tool));

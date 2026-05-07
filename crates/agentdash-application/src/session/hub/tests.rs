@@ -1003,6 +1003,7 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
 
     let item_started = codex::ThreadItem::DynamicToolCall {
         id: "tool-1".to_string(),
+        namespace: None,
         tool: "shell_exec".to_string(),
         arguments: serde_json::json!({ "command": "pwd" }),
         status: codex::DynamicToolCallStatus::InProgress,
@@ -1031,6 +1032,7 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
 
     let item_completed = codex::ThreadItem::DynamicToolCall {
         id: "tool-1".to_string(),
+        namespace: None,
         tool: "shell_exec".to_string(),
         arguments: serde_json::json!({ "command": "pwd" }),
         status: codex::DynamicToolCallStatus::Completed,

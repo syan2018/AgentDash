@@ -20,7 +20,7 @@ tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 executors = { workspace = true }
-workspace_utils = { git = "https://github.com/BloopAI/vibe-kanban.git", package = "utils" }
+workspace_utils = { git = "https://github.com/BloopAI/vibe-kanban.git", rev = "4deb7eca8f381f7cbc1f9d15515a9ab8f8009053", package = "utils" }
 codex-app-server-protocol = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 json-patch = "2.0"

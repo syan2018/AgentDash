@@ -223,6 +223,7 @@ impl NormalizedToBackboneConverter {
 
         let item = codex::ThreadItem::DynamicToolCall {
             id: item_id,
+            namespace: None,
             tool: tool_name.to_string(),
             arguments,
             status: codex_status,

@@ -1039,6 +1039,7 @@ mod tests {
     ) -> codex::ThreadItem {
         codex::ThreadItem::DynamicToolCall {
             id: id.to_string(),
+            namespace: None,
             tool: tool.to_string(),
             arguments: serde_json::json!({ "path": "src/lib.rs" }),
             status,

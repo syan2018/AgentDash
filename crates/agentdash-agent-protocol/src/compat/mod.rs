@@ -304,6 +304,7 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
             };
             let item = codex::ThreadItem::DynamicToolCall {
                 id: tc.tool_call_id.to_string(),
+                namespace: None,
                 tool: tc.title.clone(),
                 arguments,
                 status,
@@ -352,6 +353,7 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
             };
             let item = codex::ThreadItem::DynamicToolCall {
                 id: tcu.tool_call_id.to_string(),
+                namespace: None,
                 tool: tcu.fields.title.clone().unwrap_or_default(),
                 arguments,
                 status,

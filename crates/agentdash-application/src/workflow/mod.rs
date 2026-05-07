@@ -3,6 +3,7 @@ mod completion;
 mod definition;
 mod error;
 pub mod execution_log;
+pub mod lifecycle;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;

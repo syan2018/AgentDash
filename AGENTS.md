@@ -59,7 +59,9 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 # 用户声明
 
 1. 使用中文和用户交流
-2. 这是一个预研期间的项目，当前完全未上线，不需要准备任何兼容性方案；也完全不需要考虑API/数据库字段修改相关的问题，让项目保持最正确的状态
+2. 这是一个预研期间的项目，当前完全未上线，请规避使用任何兼容性方案、回退方案；也完全不需要考虑API/数据库字段修改相关的问题，让项目保持最正确的状态（但请注意处理数据库migrate）
+3. 本项目要求的Commit格式为 `type(scope): 中文提交信息`，并分点描述具体更新内容作为commit备注。
+4. 使用 `pnpm dev` 启动调试，其会自动编译 Rust binary，再依次拉起 云端后端 / 本机后端 / 前端；Rust后端无法热重载，更新后重新调试需要杀先前进程。
 
 # 问题收纳
 
@@ -68,15 +70,3 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 ## 问题说明
 
 - 通过 PowerShell 把包含中文的 inline Node/Playwright 脚本直接管道给 `node -` 时，中文内容可能在进入浏览器前就被降成 `?`，会让会话输入框和 session 历史里都出现 `????`。如果要做中文端到端浏览器调试，优先使用 UTF-8 文件脚本、Unicode escape，或避免经由当前 PowerShell 管道直接注入中文字符串。
-- `gix` 若在 `Cargo.toml` 里使用 `default-features = false`，仅打开 `revision` 之类子特性并不足以支撑常规 Git 仓库探测；`gix-hash` 仍会因为缺少对象哈希算法直接编译失败，报 “Please set either the sha1 or the sha256 feature flag”。当前项目若要用 `gix` 做 Git workspace 识别，至少要显式带上 `sha1`。
-- `PI_AGENT` 在会话页里执行 shell 任务时，模型有时会把工作空间绝对路径直接塞进 `shell.cwd`。当前 Hook Runtime 已会把“位于 workspace root 内的绝对 cwd”自动 rewrite 成相对路径，因此这类 shell 调用通常不会再因绝对路径直接失败；如果仍看到 cwd 相关错误，优先排查是否为非 shell 工具、路径已越出 workspace root，或查看历史 session jsonl 是否来自修复前的旧会话。
-- `crates/agentdash-injection/src/vfs.rs` 里已经有一个名为 `VfsProvider` 的 trait，但它当前只负责 VFS descriptor / 能力发现，不是“统一 read/write/list/search/exec 访问层”里的目标 provider。推进统一 VFS 方案时，不要因为同名就误判为底层访问抽象已经存在；需要明确是扩展、替换还是重命名这一层。
-- `.trellis/scripts/task.py create` 会自动给任务目录补 `MM-DD-` 日期前缀；如果传入的 `--slug` 自己已经带日期前缀，就会生成类似 `03-22-03-22-...` 的双日期目录。创建 task 时，`--slug` 应只写语义名，不要重复带日期。
-- `pnpm dev` 走的是 [scripts/dev-joint.js](scripts/dev-joint.js)，它在启动时会先编译一次 Rust binary，再拉起 `agentdash-server` / `agentdash-local` / 前端；如果你修改了 Rust 代码但没有完整重启 `pnpm dev`，浏览器里很可能仍然跑的是旧后端。另一个高频坑是残留的 `agentdash-local` 会因为重复 `backend_id` 注册把整套 dev 服务带崩；当前脚本已默认在启动前按进程名清理 `agentdash-local`，如果仍遇到“本机后端重复注册被拒绝”，优先检查是否用了 `--skip-local`、是否还有手工启动的同名本机后端，或是否是历史旧脚本未生效。
-- Session 持久化里，`SessionMeta.last_event_seq / last_execution_status / last_turn_id / last_terminal_message` 是事件投影字段，不能被旧的 `SessionMeta` 快照通过 `save_session_meta()` 整块覆盖。此前 PostgreSQL embedded 下出现过 `session_events(session_id, event_seq)` 主键冲突，以及前端/数据库长期卡在 `waiting`，根因就是旧快照把 `last_event_seq` 和运行状态回写回去了。后续如果只是补写 `executor_session_id`、`companion_context`、`visible_canvas_mount_ids` 等普通元信息，必须确认底层是“合并写入”而不是整行覆盖。
-- **数据库 Schema 变更必须配套迁移。** 仅修改 `CREATE TABLE IF NOT EXISTS` 中的列定义，对**已存在的表**不会生效。PostgreSQL 端必须新建 `migrations/NNNN_xxx.sql`（sqlx migrate 自动执行）；SQLite 端必须在 `initialize()` 中追加 `ALTER TABLE ADD COLUMN`（忽略 duplicate 错误）。详见 `.trellis/spec/backend/database-guidelines.md` 的 "Schema 变更与迁移" 章节。
-- **不要修改已经提交/可能已应用的旧 PostgreSQL migration。** sqlx 会在 `_sqlx_migrations` 中记录校验和；历史 migration 内容一旦变化，启动会报 `migration N was previously applied but has been modified`。需要修 schema 时新增更高编号 migration，旧文件保持原样。
-- **提交信息必须遵守中文 Conventional Commit。** 本项目要求 `type(scope): 中文动作结果`，例如 `fix(workflow): 绑定 Project Agent lifecycle 首步 session`；不要提交裸中文描述，也不要提交 `chore: record journal` 这类缺少 scope 或中文说明的 message。
-- `/api/discovery` 会把在线本机 backend 上报的 executors 合并进前端下拉列表，但这**不等于**云端 `AppState.services.connector` 已经能直接路由这些 executor。当前若会话页手动选择 `CODEX` / `CLAUDE_CODE` 等远程执行器，而 prompt 路径仍走云端 `CompositeConnector`，可能会直接报“未知执行器 `CODEX`，无法路由到任何连接器”。遇到“前端可选但发送 400”时，优先区分是 session 生命周期回归，还是 discovery 与实际 prompt 路由能力未对齐。
-- `context_compacted` 事件现在要求能定位精确压缩边界；如果上游只上报 `messages_compacted` 而没带 `compacted_until_ref`，恢复链路在应用层会先按当前已持久化 transcript 推导出边界 ref 再落盘。手写 session 测试事件或 fixture 时，若想直接覆盖“已补全后的持久化形态”，应显式提供 `{ turn_id, entry_index }`；若要覆盖真实上游输入，可以故意省略该字段并走 `SessionHub::inject_notification()` 的补全过程。
-- Workflow/Lifecycle 能力配置不只存在于 `WorkflowDefinition.contract.capability_config`，`LifecycleStepDefinition.capability_config` 也是运行期能力切换输入，并且应用在绑定 workflow 的 contract 之后。前端 mapper、store、editor 即使暂不提供 step 级能力编辑 UI，也必须 roundtrip 保留 `capability_config.tool_directives` / `mount_directives`；否则会出现“模板/仓储看似没持久化能力配置”的假象。

@@ -107,9 +107,14 @@ impl SessionHub {
                     injections: resolution.injections,
                 };
                 hook_session.append_trace(trace.clone());
-                let envelope =
-                    build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
-                let _ = self.persist_notification(session_id, envelope).await;
+                // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
+                // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
+                // 时兜底持久化，避免前端出现重复 Hook 卡片。
+                if !self.has_live_runtime(session_id).await {
+                    let envelope =
+                        build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
+                    let _ = self.persist_notification(session_id, envelope).await;
+                }
                 if !injections.is_empty() {
                     let sink = SessionRuntimeHookInjectionSink::new(
                         self.sessions.clone(),

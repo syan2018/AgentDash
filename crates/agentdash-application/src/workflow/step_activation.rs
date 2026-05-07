@@ -325,15 +325,24 @@ pub fn apply_to_prompt_request(
 
 /// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
 ///
-/// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，返回值仍可能是
-/// `Ok(None)`，但会触发工具重建、steering 注入和 capability changed hook。
+/// PhaseNode live apply 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyToRunningSessionOutcome {
+    pub capability_delta: Option<CapabilityDelta>,
+    /// 是否已经发出 capability surface changed 事件及 CapabilityChanged hook。
+    pub emitted_capability_change: bool,
+}
+
+/// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
+/// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
+/// steering 注入和 capability changed hook。
 pub async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
     session_hub: &SessionHub,
     turn_id: Option<&str>,
     phase_node_key: &str,
-) -> Result<Option<CapabilityDelta>, String> {
+) -> Result<ApplyToRunningSessionOutcome, String> {
     let base_surface = session_hub
         .get_current_capability_surface(hook_session.session_id())
         .await;
@@ -346,7 +355,10 @@ pub async fn apply_to_running_session(
     );
 
     if key_delta.is_empty() && !surface_changed {
-        return Ok(None);
+        return Ok(ApplyToRunningSessionOutcome {
+            capability_delta: None,
+            emitted_capability_change: false,
+        });
     }
 
     session_hub
@@ -370,7 +382,10 @@ pub async fn apply_to_running_session(
     )
     .await?;
 
-    Ok(delta)
+    Ok(ApplyToRunningSessionOutcome {
+        capability_delta: delta,
+        emitted_capability_change: true,
+    })
 }
 
 pub fn build_capability_surface_for_activation(

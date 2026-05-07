@@ -223,11 +223,18 @@ export interface ToolDescriptor {
 
 // ─── Workflow Contract ─────────────────────────────────
 
+export interface WorkflowCapabilityConfig {
+  /** 工具能力维度的 Add / Remove 指令序列。 */
+  tool_directives: CapabilityDirective[];
+  /** VFS/mount 维度暂未提供编辑器，前端透传后端已有配置。 */
+  mount_directives: unknown[];
+}
+
 export interface WorkflowContract {
   injection: WorkflowInjectionSpec;
   hook_rules: WorkflowHookRuleSpec[];
   /**
-   * Workflow 级能力指令序列 —— 在 agent baseline 上 Add / Remove 能力或工具。
+   * Workflow 级能力配置 —— 在 agent baseline 上 Add / Remove 能力或工具。
    *
    * 每条指令：
    * - `{ add: "<path>" }` —— 追加能力（短 path）或启用某个工具（长 path）
@@ -239,7 +246,7 @@ export interface WorkflowContract {
    *
    * 运行时 hook 可叠加 delta 指令；后端 `compute_effective_capabilities` 走同一条归约路径。
    */
-  capability_directives: CapabilityDirective[];
+  capability_config: WorkflowCapabilityConfig;
   /** Output ports — 同时作为完成门禁（全部交付才可推进） */
   output_ports: OutputPortDefinition[];
   /** Input ports — 声明本 workflow 所需的外部数据 */

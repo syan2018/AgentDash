@@ -22,7 +22,7 @@ function workflow(key: string, ports: {
     contract: {
       injection: { guidance: null, context_bindings: [] },
       hook_rules: [],
-      capability_directives: [],
+      capability_config: { tool_directives: [], mount_directives: [] },
       output_ports: (ports.output ?? []).map((port) => ({
         key: port,
         description: `${port} output`,

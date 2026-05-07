@@ -82,6 +82,13 @@ pub trait ExecutionHookProvider: Send + Sync {
 - `WorkflowDefinition.contract` 三段核心：`injection` / `hook_policy` / `completion`
 - provider 先解释为 `HookContributionSet`，再 merge 进 snapshot
 - `HookPolicyView` 只是 runtime 观测面，不是第二套执行 authority
+- PhaseNode 激活后即使 tool/MCP capability surface 没有增减，只要 active workflow
+  step / effective contract 发生变化，也必须触发 `CapabilityChanged` hook。原因是
+  workflow guidance / context binding 属于动态上下文变化，不能依赖工具 surface
+  delta 才投递给当前 running Agent。
+- `CapabilityChanged` 的 live notification 必须通过顶层 connector 路由到真正持有
+  live session 的子 connector（例如 `CompositeConnector -> PiAgentConnector`）。
+  顶层 connector 返回 unsupported 会造成 trace 看得到但模型收不到。
 
 ### Ask / Approval
 

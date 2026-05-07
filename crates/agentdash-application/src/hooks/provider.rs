@@ -424,10 +424,10 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             ..HookResolution::default()
         };
 
+        seed_snapshot_injections_for_trigger(&query.trigger, &snapshot, &mut resolution);
+
         match query.trigger {
-            HookTrigger::SessionStart => {
-                resolution.injections = snapshot.injections.clone();
-            }
+            HookTrigger::SessionStart => {}
             HookTrigger::UserPromptSubmit => {
                 // PR 4（04-30-session-pipeline-architecture-refactor）：静态
                 // `snapshot.injections`（companion_agents / workflow / constraint
@@ -540,6 +540,23 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     }
 }
 
+fn trigger_includes_snapshot_injections(trigger: &HookTrigger) -> bool {
+    matches!(
+        trigger,
+        HookTrigger::SessionStart | HookTrigger::CapabilityChanged
+    )
+}
+
+fn seed_snapshot_injections_for_trigger(
+    trigger: &HookTrigger,
+    snapshot: &SessionHookSnapshot,
+    resolution: &mut HookResolution,
+) {
+    if trigger_includes_snapshot_injections(trigger) {
+        resolution.injections = snapshot.injections.clone();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -561,6 +578,35 @@ mod tests {
     use super::super::rules::{HookEvaluationContext, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
+
+    #[test]
+    fn capability_changed_includes_refreshed_snapshot_injections() {
+        let injection = agentdash_spi::HookInjection {
+            slot: "workflow".to_string(),
+            content: "## Workflow Guidance\n进入 Apply 阶段".to_string(),
+            source: "workflow:builtin_workflow_admin_apply:apply".to_string(),
+        };
+        let snapshot = SessionHookSnapshot {
+            session_id: "session-1".to_string(),
+            injections: vec![injection.clone()],
+            ..SessionHookSnapshot::default()
+        };
+        let mut resolution = HookResolution::default();
+
+        super::seed_snapshot_injections_for_trigger(
+            &HookTrigger::CapabilityChanged,
+            &snapshot,
+            &mut resolution,
+        );
+
+        assert_eq!(resolution.injections, vec![injection]);
+        assert!(super::trigger_includes_snapshot_injections(
+            &HookTrigger::SessionStart
+        ));
+        assert!(!super::trigger_includes_snapshot_injections(
+            &HookTrigger::UserPromptSubmit
+        ));
+    }
 
     struct RuleEngineTestProvider {
         snapshot: SessionHookSnapshot,

@@ -1,4 +1,4 @@
-// Capability Directive 序列操作 —— 对应后端 `reduce_capability_directives` 的前端视图层工具。
+// Capability Directive 序列操作 —— 对应后端 tool directives 归约的前端视图层工具。
 //
 // 设计原则：
 // - 每条 UI 动作只产出一条 Directive（能力级 Add/Remove 或工具级 Add/Remove）

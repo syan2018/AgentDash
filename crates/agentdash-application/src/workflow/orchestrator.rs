@@ -491,11 +491,25 @@ impl LifecycleOrchestrator {
         hook_session: &SharedHookSessionRuntime,
         turn_id: &str,
     ) -> Result<(), String> {
+        self.refresh_hook_snapshot_for_turn(
+            hook_session,
+            Some(turn_id),
+            "tool:complete_lifecycle_node",
+        )
+        .await
+    }
+
+    async fn refresh_hook_snapshot_for_turn(
+        &self,
+        hook_session: &SharedHookSessionRuntime,
+        turn_id: Option<&str>,
+        reason: &'static str,
+    ) -> Result<(), String> {
         hook_session
             .refresh(SessionHookRefreshQuery {
                 session_id: hook_session.session_id().to_string(),
-                turn_id: Some(turn_id.to_string()),
-                reason: Some("tool:complete_lifecycle_node".to_string()),
+                turn_id: turn_id.map(ToString::to_string),
+                reason: Some(reason.to_string()),
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -513,12 +527,24 @@ impl LifecycleOrchestrator {
             return Vec::new();
         }
 
+        let mut warnings = Vec::new();
+        if let Err(error) = self
+            .refresh_hook_snapshot_for_turn(
+                hook_session,
+                turn_id,
+                "phase_node_activated:refresh_snapshot",
+            )
+            .await
+        {
+            warnings.push(format!("PhaseNode 激活后刷新 Hook snapshot 失败: {error}"));
+            return warnings;
+        }
+
         let snapshot = hook_session.snapshot();
         let owner_ctx = resolve_owner_scope(&snapshot, run.project_id);
         let available_presets =
             crate::session::load_available_presets(&self.repos, run.project_id).await;
 
-        let mut warnings = Vec::new();
         let mut runtime_mcp_servers = self
             .session_hub
             .get_runtime_mcp_servers(hook_session.session_id())
@@ -556,8 +582,12 @@ impl LifecycleOrchestrator {
             )
             .await
             {
-                Ok(_) => {
+                Ok(outcome) => {
                     runtime_mcp_servers = activation.mcp_servers.clone();
+                    if !outcome.emitted_capability_change {
+                        self.emit_phase_node_context_changed_hook(hook_session, turn_id, phase)
+                            .await;
+                    }
                     tracing::info!(
                         phase_node = %phase.node_key,
                         capabilities = ?activation.capability_keys,
@@ -577,6 +607,33 @@ impl LifecycleOrchestrator {
         }
 
         warnings
+    }
+
+    async fn emit_phase_node_context_changed_hook(
+        &self,
+        hook_session: &SharedHookSessionRuntime,
+        turn_id: Option<&str>,
+        phase: &ActivatedPhaseNode,
+    ) {
+        let workflow_key = phase
+            .workflow
+            .as_ref()
+            .map(|workflow| workflow.key.as_str())
+            .unwrap_or_default();
+        self.session_hub
+            .emit_capability_changed_hook(
+                hook_session.session_id(),
+                turn_id,
+                serde_json::json!({
+                    "phase_node": phase.node_key.as_str(),
+                    "lifecycle_key": phase.lifecycle_key.as_str(),
+                    "workflow_key": workflow_key,
+                    "apply_mode": "live",
+                    "capability_surface_changed": false,
+                    "reason": "phase_node_context_changed"
+                }),
+            )
+            .await;
     }
 
     async fn queue_pending_phase_nodes(

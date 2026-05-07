@@ -30,6 +30,7 @@ mod tests {
     struct StubConnector {
         live_session: Option<String>,
         update_calls: Arc<AtomicUsize>,
+        notification_calls: Arc<AtomicUsize>,
     }
 
     #[async_trait::async_trait]
@@ -101,6 +102,15 @@ mod tests {
             self.update_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+
+        async fn push_session_notification(
+            &self,
+            _session_id: &str,
+            _message: String,
+        ) -> Result<(), ConnectorError> {
+            self.notification_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -111,10 +121,12 @@ mod tests {
             Arc::new(StubConnector {
                 live_session: Some("other".to_string()),
                 update_calls: skipped_calls.clone(),
+                notification_calls: Arc::new(AtomicUsize::new(0)),
             }),
             Arc::new(StubConnector {
                 live_session: Some("session-1".to_string()),
                 update_calls: routed_calls.clone(),
+                notification_calls: Arc::new(AtomicUsize::new(0)),
             }),
         ]);
 
@@ -137,6 +149,32 @@ mod tests {
             .expect_err("missing live child should fail");
 
         assert!(error.to_string().contains("无法热更新工具"));
+    }
+
+    #[tokio::test]
+    async fn push_session_notification_routes_to_live_child() {
+        let skipped_calls = Arc::new(AtomicUsize::new(0));
+        let routed_calls = Arc::new(AtomicUsize::new(0));
+        let composite = CompositeConnector::new(vec![
+            Arc::new(StubConnector {
+                live_session: Some("other".to_string()),
+                update_calls: Arc::new(AtomicUsize::new(0)),
+                notification_calls: skipped_calls.clone(),
+            }),
+            Arc::new(StubConnector {
+                live_session: Some("session-1".to_string()),
+                update_calls: Arc::new(AtomicUsize::new(0)),
+                notification_calls: routed_calls.clone(),
+            }),
+        ]);
+
+        composite
+            .push_session_notification("session-1", "phase changed".to_string())
+            .await
+            .expect("live child should receive notification");
+
+        assert_eq!(skipped_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(routed_calls.load(Ordering::SeqCst), 1);
     }
 }
 
@@ -335,6 +373,24 @@ impl AgentConnector for CompositeConnector {
 
         Err(ConnectorError::Runtime(format!(
             "当前没有持有 session `{session_id}` 的连接器，无法热更新工具"
+        )))
+    }
+
+    async fn push_session_notification(
+        &self,
+        session_id: &str,
+        message: String,
+    ) -> Result<(), ConnectorError> {
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                return connector
+                    .push_session_notification(session_id, message)
+                    .await;
+            }
+        }
+
+        Err(ConnectorError::Runtime(format!(
+            "当前没有持有 session `{session_id}` 的连接器，无法推送 steering notification"
         )))
     }
 }

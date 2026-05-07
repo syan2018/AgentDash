@@ -903,6 +903,23 @@ mod tests {
         assert_eq!(saved.workflows.len(), 2);
         assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
         assert_eq!(saved.lifecycle.steps.len(), 2);
+        for workflow in &saved.workflows {
+            assert!(
+                workflow.contract.injection.guidance.is_some(),
+                "内建 workflow `{}` 必须保留 guidance 注入",
+                workflow.key
+            );
+            assert!(
+                workflow
+                    .contract
+                    .capability_config
+                    .tool_directives
+                    .iter()
+                    .any(|directive| directive.is_add() && directive.key() == "workflow_management"),
+                "内建 workflow `{}` 必须保留 workflow_management 能力",
+                workflow.key
+            );
+        }
     }
 
     #[tokio::test]

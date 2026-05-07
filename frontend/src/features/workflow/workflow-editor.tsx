@@ -432,7 +432,7 @@ function buildDefaultParams(schema: Record<string, unknown>): Record<string, unk
 
 // ─── Capabilities Editor ──────────────────────────────
 //
-// 操作 `CapabilityDirective[]` —— 扁平的 Add / Remove 指令序列。
+// 操作 `capability_config.tool_directives` —— 扁平的 Add / Remove 指令序列。
 // UI 分为两区：
 //   1. 基线能力（auto_granted baseline） —— 按 target_kinds 计算，可直接「屏蔽此能力」/ 展开屏蔽单个工具
 //   2. 工作流追加能力 —— 非 baseline 的显式 Add（如 workflow_management、mcp:*）
@@ -1342,14 +1342,24 @@ export function WorkflowEditor({ onSaved }: WorkflowEditorProps = {}) {
 
       {/* Agent 工具能力 */}
       <DetailSection
-        title={`Agent 工具能力 (${draft.contract.capability_directives.length})`}
+        title={`Agent 工具能力 (${draft.contract.capability_config.tool_directives.length})`}
         description="声明此 workflow 下 agent 可用的工具基线。每个按钮动作对应一条 Add / Remove 指令，与后端 slot 归约契约一一映射。"
       >
         <CapabilitiesEditor
           projectId={draft.project_id}
           targetKinds={draft.target_kinds}
-          directives={draft.contract.capability_directives}
-          onChange={(capability_directives) => updateDraft({ contract: { ...draft.contract, capability_directives } })}
+          directives={draft.contract.capability_config.tool_directives}
+          onChange={(tool_directives) =>
+            updateDraft({
+              contract: {
+                ...draft.contract,
+                capability_config: {
+                  ...draft.contract.capability_config,
+                  tool_directives,
+                },
+              },
+            })
+          }
         />
       </DetailSection>
 

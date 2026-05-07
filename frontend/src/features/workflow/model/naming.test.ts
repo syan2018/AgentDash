@@ -21,7 +21,7 @@ function workflow(key: string): WorkflowDefinition {
     contract: {
       injection: { guidance: null, context_bindings: [] },
       hook_rules: [],
-      capability_directives: [],
+      capability_config: { tool_directives: [], mount_directives: [] },
       output_ports: [],
       input_ports: [],
     },

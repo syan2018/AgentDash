@@ -171,23 +171,36 @@ function mapLifecycleEdge(raw: unknown): LifecycleEdge {
 function mapCapabilityDirective(raw: unknown, index: number): CapabilityDirective {
   const value = asRecord(raw);
   if (!value) {
-    throw new Error(`capability_directives[${index}] 必须是对象`);
+    throw new Error(`capability_config.tool_directives[${index}] 必须是对象`);
   }
   const add = value.add;
   const remove = value.remove;
   if (typeof add === "string") {
     if (add.trim().length === 0) {
-      throw new Error(`capability_directives[${index}].add 不能为空`);
+      throw new Error(`capability_config.tool_directives[${index}].add 不能为空`);
     }
     return { add };
   }
   if (typeof remove === "string") {
     if (remove.trim().length === 0) {
-      throw new Error(`capability_directives[${index}].remove 不能为空`);
+      throw new Error(`capability_config.tool_directives[${index}].remove 不能为空`);
     }
     return { remove };
   }
-  throw new Error(`capability_directives[${index}] 缺少 add / remove 字段`);
+  throw new Error(`capability_config.tool_directives[${index}] 缺少 add / remove 字段`);
+}
+
+function mapWorkflowCapabilityConfig(raw: unknown) {
+  const value = asRecord(raw);
+  const directivesRaw = value && Array.isArray(value.tool_directives)
+    ? value.tool_directives
+    : [];
+  return {
+    tool_directives: directivesRaw.map((item, idx) => mapCapabilityDirective(item, idx)),
+    mount_directives: value && Array.isArray(value.mount_directives)
+      ? [...value.mount_directives]
+      : [],
+  };
 }
 
 function mapWorkflowContract(raw: unknown): WorkflowContract {
@@ -195,13 +208,10 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
   if (!value) {
     throw new Error("workflow contract 缺失或不是对象");
   }
-  const directivesRaw = Array.isArray(value.capability_directives)
-    ? value.capability_directives
-    : [];
   return {
     injection: mapWorkflowInjectionSpec(value.injection),
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
-    capability_directives: directivesRaw.map((item, idx) => mapCapabilityDirective(item, idx)),
+    capability_config: mapWorkflowCapabilityConfig(value.capability_config),
     output_ports: asRecordArray(value.output_ports ?? value.recommended_output_ports).map(mapOutputPortDefinition),
     input_ports: asRecordArray(value.input_ports ?? value.recommended_input_ports).map(mapInputPortDefinition),
   };

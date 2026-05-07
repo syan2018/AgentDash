@@ -416,7 +416,13 @@ sequenceDiagram
   - `emit_hook_injection_fragments`（无 sink fallback）
 - `crates/agentdash-application/src/session/hub/hook_dispatch.rs`
   - `emit_session_hook_trigger`（hub 级 trigger 统一回灌）
-  - `emit_capability_changed_hook`（结构化回灌后额外 live notification）
+  - `emit_capability_changed_hook`（runtime context transition applier 内部 primitive；
+    结构化回灌后额外 live notification）
+- `crates/agentdash-application/src/session/hub/runtime_context_transition.rs`
+  - `apply_live_runtime_context_transition`
+  - `enqueue_pending_runtime_context_transition`
+  - `apply_pending_runtime_context_transitions_on_turn`
+  - 三条 workflow phase/context transition 生产路径的唯一应用入口
 - `crates/agentdash-application/src/session/prompt_pipeline.rs:380-410`
   — user_blocks 不再注入 `session-capabilities://` 的确认点。
 - `crates/agentdash-application/src/context/` — Bundle reducer /

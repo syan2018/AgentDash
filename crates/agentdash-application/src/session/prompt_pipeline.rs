@@ -11,7 +11,7 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::capability_surface::{RuntimeContextTransition, merge_vfs_overlay};
+use super::capability_surface::merge_vfs_overlay;
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
@@ -308,37 +308,19 @@ impl SessionHub {
         let _ = persistence.save_session_meta(&session_meta).await;
 
         if !pending_capability_transitions.is_empty() {
-            if let Some(hook_session) = hook_session.as_ref()
-                && let Some(last_transition) = pending_capability_transitions.last()
-            {
-                let _ = hook_session.update_capabilities(last_transition.capability_keys.clone());
-            }
-            let mut pending_event_before_surface = CapabilitySurface {
+            let pending_event_before_surface = CapabilitySurface {
                 flow_capabilities: base_flow_capabilities.clone(),
                 mcp_servers: base_mcp_servers.clone(),
                 vfs: Some(base_effective_vfs.clone()),
             };
-            for transition in &pending_capability_transitions {
-                let payload = RuntimeContextTransition {
-                    phase_node: &transition.phase_node,
-                    run_id: Some(transition.run_id),
-                    lifecycle_key: Some(&transition.lifecycle_key),
-                    apply_mode: "applied_on_next_turn",
-                    before_surface: Some(&pending_event_before_surface),
-                    after_surface: &transition.surface,
-                    capability_keys: &transition.capability_keys,
-                    steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
-                    surface_changed_override: None,
-                    steering_capability_delta: None,
-                }
-                .event_payload();
-                pending_event_before_surface = transition.surface.clone();
-                let _ = self
-                    .emit_capability_surface_changed(&sid, Some(&turn_id), payload.clone())
-                    .await;
-                self.emit_capability_changed_hook(&sid, Some(&turn_id), payload)
-                    .await;
-            }
+            self.apply_pending_runtime_context_transitions_on_turn(
+                &sid,
+                &turn_id,
+                hook_session.as_ref(),
+                pending_event_before_surface,
+                &pending_capability_transitions,
+            )
+            .await;
         }
 
         // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成

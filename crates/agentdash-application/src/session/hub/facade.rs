@@ -271,7 +271,7 @@ impl SessionHub {
     ///
     /// 这是 UI / 审计 / 回放的事实源；connector steering 消息只是 live agent 的
     /// 尽力投递通道。
-    pub async fn emit_capability_surface_changed(
+    pub(crate) async fn emit_capability_surface_changed(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
@@ -302,7 +302,7 @@ impl SessionHub {
         self.persist_notification(session_id, envelope).await
     }
 
-    pub async fn enqueue_pending_capability_surface_transition(
+    pub(crate) async fn enqueue_pending_capability_surface_transition(
         &self,
         session_id: &str,
         transition: PendingCapabilitySurfaceTransition,

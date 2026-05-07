@@ -144,3 +144,4 @@ Lifecycle advance / Phase activation
 
 - 2026-05-07：完成第一轮命名盘点，详见 `surface-naming-inventory.md`。
 - 2026-05-07：新增 `RuntimeContextTransition` 值对象，统一 live apply、pending next turn、applied on next turn 三条路径的 `capability_surface_changed` 事件构建与 pending metadata 派生。
+- 2026-05-07：新增 `session::hub::runtime_context_transition` 统一 applier，收束 live apply、pending 入队、next-turn apply 三条生产路径；底层 surface/hook/event 方法降为 crate 内部 primitive，避免后续绕路调用。

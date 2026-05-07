@@ -32,10 +32,8 @@ use crate::capability::{
     CompanionSliceMode, SessionWorkflowContext,
 };
 use crate::platform_config::PlatformConfig;
-use crate::session::{
-    CapabilitySurface, RuntimeContextTransition, SessionHub,
-    compose_vfs_with_overlay_and_directives,
-};
+use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
+use crate::session::{CapabilitySurface, SessionHub, compose_vfs_with_overlay_and_directives};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -323,69 +321,46 @@ pub fn apply_to_prompt_request(
     req.mcp_servers = activation.mcp_servers.clone();
 }
 
-/// Applier C:把 `StepActivation` 的 capability / MCP 结果应用到运行中的 session。
-///
-/// PhaseNode live apply 的结果。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyToRunningSessionOutcome {
-    pub capability_delta: Option<CapabilityDelta>,
-    /// 是否已经发出 capability surface changed 事件及 CapabilityChanged hook。
-    pub emitted_capability_change: bool,
-}
-
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
 /// steering 注入和 capability changed hook。
-pub async fn apply_to_running_session(
+pub(crate) async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
     session_hub: &SessionHub,
     turn_id: Option<&str>,
     phase_node_key: &str,
-) -> Result<ApplyToRunningSessionOutcome, String> {
+    run_id: Option<Uuid>,
+    lifecycle_key: Option<&str>,
+    workflow_key: Option<&str>,
+) -> Result<RuntimeContextTransitionOutcome, String> {
     let base_surface = session_hub
         .get_current_capability_surface(hook_session.session_id())
         .await;
     let target_surface = build_capability_surface_for_activation(activation, base_surface.as_ref());
-    let current_surface = base_surface;
-    let surface_changed = current_surface.as_ref() != Some(&target_surface);
     let key_delta = CapabilityDelta::compute(
         &hook_session.current_capabilities(),
         &activation.capability_keys,
     );
 
-    if key_delta.is_empty() && !surface_changed {
-        return Ok(ApplyToRunningSessionOutcome {
-            capability_delta: None,
-            emitted_capability_change: false,
-        });
-    }
-
     session_hub
-        .replace_current_capability_surface(hook_session.session_id(), target_surface.clone())
+        .apply_live_runtime_context_transition(
+            hook_session,
+            LiveRuntimeContextTransitionInput {
+                session_id: hook_session.session_id().to_string(),
+                turn_id: turn_id.map(ToString::to_string),
+                phase_node: phase_node_key.to_string(),
+                run_id,
+                lifecycle_key: lifecycle_key.map(ToString::to_string),
+                workflow_key: workflow_key.map(ToString::to_string),
+                before_surface: base_surface,
+                after_surface: target_surface,
+                capability_keys: activation.capability_keys.clone(),
+                key_delta,
+                apply_mode: "live",
+            },
+        )
         .await
-        .map_err(|error| format!("Phase node 能力表面热更新失败: {error}"))?;
-
-    let delta = hook_session.update_capabilities(activation.capability_keys.clone());
-    let notification_delta = delta.clone().unwrap_or(key_delta);
-
-    emit_capability_surface_change(
-        activation,
-        session_hub,
-        hook_session.session_id(),
-        turn_id,
-        phase_node_key,
-        &notification_delta,
-        current_surface.as_ref(),
-        &target_surface,
-        "live",
-    )
-    .await?;
-
-    Ok(ApplyToRunningSessionOutcome {
-        capability_delta: delta,
-        emitted_capability_change: true,
-    })
 }
 
 pub fn build_capability_surface_for_activation(
@@ -402,69 +377,6 @@ pub fn build_capability_surface_for_activation(
         mcp_servers: activation.mcp_servers.clone(),
         vfs: Some(vfs),
     }
-}
-
-async fn emit_capability_surface_change(
-    activation: &StepActivation,
-    session_hub: &SessionHub,
-    session_id: &str,
-    turn_id: Option<&str>,
-    phase_node_key: &str,
-    notification_delta: &CapabilityDelta,
-    before_surface: Option<&CapabilitySurface>,
-    after_surface: &CapabilitySurface,
-    apply_mode: &str,
-) -> Result<(), String> {
-    let delta_md = crate::capability::build_capability_delta_markdown(
-        phase_node_key,
-        notification_delta,
-        &activation.capability_keys,
-    );
-    let steering_delivery = match session_hub
-        .push_session_notification(session_id, delta_md)
-        .await
-    {
-        Ok(()) => serde_json::json!({
-            "status": "accepted_by_connector",
-        }),
-        Err(error) => {
-            tracing::warn!(
-                session_id = %session_id,
-                phase_node = %phase_node_key,
-                error = %error,
-                "Phase node capability steering notification delivery failed"
-            );
-            serde_json::json!({
-                "status": "failed",
-                "error": error.to_string(),
-            })
-        }
-    };
-
-    let capability_surface_event = RuntimeContextTransition {
-        phase_node: phase_node_key,
-        run_id: None,
-        lifecycle_key: None,
-        apply_mode,
-        before_surface,
-        after_surface,
-        capability_keys: &activation.capability_keys,
-        steering_delivery,
-        surface_changed_override: None,
-        steering_capability_delta: Some(notification_delta),
-    }
-    .event_payload();
-
-    session_hub
-        .emit_capability_surface_changed(session_id, turn_id, capability_surface_event.clone())
-        .await
-        .map_err(|error| format!("Phase node capability surface 事件持久化失败: {error}"))?;
-
-    session_hub
-        .emit_capability_changed_hook(session_id, turn_id, capability_surface_event)
-        .await;
-
-    Ok(())
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,

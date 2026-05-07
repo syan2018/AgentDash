@@ -141,7 +141,7 @@ impl SessionHub {
     }
 
     /// 触发 `CapabilityChanged` hook（PhaseNode 等动态能力更新路径使用）。
-    pub async fn emit_capability_changed_hook(
+    pub(crate) async fn emit_capability_changed_hook(
         &self,
         session_id: &str,
         turn_id: Option<&str>,

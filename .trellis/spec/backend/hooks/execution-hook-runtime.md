@@ -89,6 +89,10 @@ pub trait ExecutionHookProvider: Send + Sync {
 - PhaseNode 的 live apply、pending next turn、applied on next turn 三条路径必须
   通过同一份 runtime context transition 结构派生 `capability_surface_changed`
   事件 payload 与 pending metadata；禁止各入口手写互不一致的事件 JSON。
+- 生产路径必须通过 `SessionHub` 的 runtime context transition applier 应用
+  transition。`replace_current_capability_surface`、`emit_capability_surface_changed`、
+  `emit_capability_changed_hook`、pending transition 写入等低层方法只允许作为
+  applier 内部 primitive 使用。
 - `CapabilityChanged` 的 live notification 必须通过顶层 connector 路由到真正持有
   live session 的子 connector（例如 `CompositeConnector -> PiAgentConnector`）。
   顶层 connector 返回 unsupported 会造成 trace 看得到但模型收不到。

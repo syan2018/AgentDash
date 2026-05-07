@@ -4,9 +4,9 @@
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
 //!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_current_capability_surface
 //!   在运行中热更时重构）。
-//! - `get_runtime_mcp_servers` / `get_current_capability_surface` /
-//!   `replace_current_capability_surface`：读/改 active session 的能力表面并同步到
-//!   connector。
+//! - `get_runtime_mcp_servers` / `get_current_capability_surface`：读取当前能力表面。
+//! - `replace_current_capability_surface`：底层热更 primitive，仅供
+//!   `runtime_context_transition` 统一 applier 调用。
 //!
 //! 注：本文件仍依赖 `agentdash_executor::mcp::discover_*`。该依赖早于 PR 6 存在
 //! （application 层直接调用 executor 实现），PRD 允许"通过 tool_builder 间接依赖"，
@@ -73,7 +73,7 @@ impl SessionHub {
     ///
     /// Hub 层自行完成 runtime tools + MCP 工具发现，将预构建好的完整工具集传给
     /// connector。
-    pub async fn replace_current_capability_surface(
+    pub(crate) async fn replace_current_capability_surface(
         &self,
         session_id: &str,
         surface: CapabilitySurface,

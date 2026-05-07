@@ -7,6 +7,8 @@
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
 //!   `emit_capability_changed_hook` / `schedule_hook_auto_resume`。
 //!   （原 `session/event_bridge.rs` 已于 PR 6 迁入本模块并顺手删除 `_tx` 占位参数。）
+//! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
+//!   apply、pending 入队与 next-turn 应用。
 //! - [`cancel`]：`cancel` 路径与 interrupted 事件补发。
 //! - [`compaction`]：`context_compacted` 事件元数据富化（填 `compacted_until_ref`）。
 //!
@@ -29,12 +31,17 @@ mod compaction;
 mod facade;
 mod factory;
 mod hook_dispatch;
+mod runtime_context_transition;
 mod tool_builder;
 
 #[cfg(test)]
 mod tests;
 
 pub(super) use hook_dispatch::HookTriggerInput;
+pub(crate) use runtime_context_transition::{
+    LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput,
+    RuntimeContextTransitionOutcome,
+};
 
 #[derive(Clone)]
 pub struct SessionHub {

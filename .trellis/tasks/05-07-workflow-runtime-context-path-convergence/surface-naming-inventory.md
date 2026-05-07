@@ -24,6 +24,16 @@
 
 这些入口都在表达同一件事：一次 workflow runtime context transition。差别只在 `apply_mode` 和 delivery 状态。把 payload 构建收束到 `RuntimeContextTransition` 后，后续新增 context/policy/resource budget 维度时，只需要扩展一个值对象，而不是三处 JSON。
 
+第二轮收束后，三条生产路径进一步统一到 `SessionHub` 的 `runtime_context_transition` applier：
+
+| 场景 | 统一入口 |
+| --- | --- |
+| live apply | `apply_live_runtime_context_transition` |
+| 无 live turn 时 pending 入队 | `enqueue_pending_runtime_context_transition` |
+| 下一轮 prompt 消费 pending | `apply_pending_runtime_context_transitions_on_turn` |
+
+`replace_current_capability_surface`、`emit_capability_surface_changed`、`emit_capability_changed_hook`、`enqueue_pending_capability_surface_transition` 现在都是 crate 内部低层 primitive；生产代码不得绕开 applier 手写半条链。
+
 ## 当前不改名的原因
 
 - `CapabilitySurface` 当前已经覆盖 tool/MCP/VFS，并且事件 delta 也按多维结构表达；它不是单纯工具面，因此暂不改成 `ToolAccessSurface`。

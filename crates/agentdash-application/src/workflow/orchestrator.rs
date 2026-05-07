@@ -19,9 +19,10 @@ use uuid::Uuid;
 
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
+use crate::session::hub::PendingRuntimeContextTransitionInput;
 use crate::session::{
-    LifecycleNodeSpec, PromptSessionRequest, RuntimeContextTransition, UserPromptInput,
-    compose_lifecycle_node_with_audit, finalize_request,
+    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node_with_audit,
+    finalize_request,
 };
 
 use super::session_association::{
@@ -29,12 +30,12 @@ use super::session_association::{
 };
 use crate::session::SessionHub;
 use crate::session::SessionTerminalCallback;
+use crate::workflow::step_activation::apply_to_running_session;
 use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
     RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    apply_to_running_session, build_capability_surface_for_activation,
-    build_step_projector_from_repos, load_port_output_map,
+    build_capability_surface_for_activation, build_step_projector_from_repos, load_port_output_map,
 };
 
 #[derive(Debug)]
@@ -579,18 +580,21 @@ impl LifecycleOrchestrator {
                 &self.session_hub,
                 turn_id,
                 &phase.node_key,
+                Some(run.id),
+                Some(&phase.lifecycle_key),
+                phase
+                    .workflow
+                    .as_ref()
+                    .map(|workflow| workflow.key.as_str()),
             )
             .await
             {
                 Ok(outcome) => {
                     runtime_mcp_servers = activation.mcp_servers.clone();
-                    if !outcome.emitted_capability_change {
-                        self.emit_phase_node_context_changed_hook(hook_session, turn_id, phase)
-                            .await;
-                    }
                     tracing::info!(
                         phase_node = %phase.node_key,
                         capabilities = ?activation.capability_keys,
+                        emitted_capability_change = outcome.emitted_capability_change,
                         "Phase node capability surface applied"
                     );
                 }
@@ -607,33 +611,6 @@ impl LifecycleOrchestrator {
         }
 
         warnings
-    }
-
-    async fn emit_phase_node_context_changed_hook(
-        &self,
-        hook_session: &SharedHookSessionRuntime,
-        turn_id: Option<&str>,
-        phase: &ActivatedPhaseNode,
-    ) {
-        let workflow_key = phase
-            .workflow
-            .as_ref()
-            .map(|workflow| workflow.key.as_str())
-            .unwrap_or_default();
-        self.session_hub
-            .emit_capability_changed_hook(
-                hook_session.session_id(),
-                turn_id,
-                serde_json::json!({
-                    "phase_node": phase.node_key.as_str(),
-                    "lifecycle_key": phase.lifecycle_key.as_str(),
-                    "workflow_key": workflow_key,
-                    "apply_mode": "live",
-                    "capability_surface_changed": false,
-                    "reason": "phase_node_context_changed"
-                }),
-            )
-            .await;
     }
 
     async fn queue_pending_phase_nodes(
@@ -676,56 +653,24 @@ impl LifecycleOrchestrator {
             );
             let surface =
                 build_capability_surface_for_activation(&activation, base_surface.as_ref());
-            let surface_changed = base_surface.as_ref() != Some(&surface);
-            let transition_id = format!("phase-{}-{}", phase.node_key, uuid::Uuid::new_v4());
-            let transition = RuntimeContextTransition {
-                phase_node: &phase.node_key,
-                run_id: Some(run.id),
-                lifecycle_key: Some(&phase.lifecycle_key),
-                apply_mode: "pending_next_turn",
-                before_surface: base_surface.as_ref(),
-                after_surface: &surface,
-                capability_keys: &activation.capability_keys,
-                steering_delivery: serde_json::json!({
-                    "status": "deferred_until_next_turn"
-                }),
-                surface_changed_override: Some(surface_changed),
-                steering_capability_delta: None,
-            };
-            let Some(pending_transition) = transition.to_pending_capability_surface_transition(
-                transition_id,
-                turn_id.map(ToString::to_string),
-                chrono::Utc::now().timestamp_millis(),
-            ) else {
-                warnings.push(format!(
-                    "PhaseNode `{}` pending transition 缺少 run/lifecycle 元数据",
-                    phase.node_key
-                ));
-                continue;
-            };
-
             if let Err(error) = self
                 .session_hub
-                .enqueue_pending_capability_surface_transition(&run.session_id, pending_transition)
+                .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
+                    session_id: run.session_id.clone(),
+                    turn_id: turn_id.map(ToString::to_string),
+                    transition_id: format!("phase-{}-{}", phase.node_key, uuid::Uuid::new_v4()),
+                    phase_node: phase.node_key.clone(),
+                    run_id: run.id,
+                    lifecycle_key: phase.lifecycle_key.clone(),
+                    before_surface: base_surface.clone(),
+                    after_surface: surface.clone(),
+                    capability_keys: activation.capability_keys.clone(),
+                    source_turn_id: turn_id.map(ToString::to_string),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                })
                 .await
             {
-                warnings.push(format!(
-                    "PhaseNode `{}` 能力表面 pending transition 写入失败: {error}",
-                    phase.node_key
-                ));
-                continue;
-            }
-
-            let event = transition.event_payload();
-            if let Err(error) = self
-                .session_hub
-                .emit_capability_surface_changed(&run.session_id, turn_id, event)
-                .await
-            {
-                warnings.push(format!(
-                    "PhaseNode `{}` pending 事件持久化失败: {error}",
-                    phase.node_key
-                ));
+                warnings.push(error);
             }
 
             base_surface = Some(surface);

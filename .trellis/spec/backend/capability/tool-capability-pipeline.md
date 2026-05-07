@@ -358,9 +358,27 @@ workflow_tool_directives: None
 | Workflow run 推进 | `workflow/orchestrator.rs` / `workflow/tools/advance_node.rs` | `reduce_tool_capability_directives(hook_runtime_baseline + step.tool_directives)` |
 | Context contributor | `context/builtins.rs` | `McpContextContributor` 接受 `McpInjectionConfig` |
 
+## 前端/API Roundtrip 契约
+
+Workflow 与 Lifecycle 编辑链路必须把能力配置当成结构化字段透传，不允许在前端 DTO
+中丢弃后端字段后再保存。
+
+- Workflow 级能力配置权威字段是
+  `WorkflowDefinition.contract.capability_config.tool_directives`。
+- Lifecycle step 级能力配置权威字段是
+  `LifecycleStepDefinition.capability_config.tool_directives`；它应用在绑定 workflow
+  的 contract 配置之后。
+- 前端 mapper / store / editor 新建节点时必须保留 `capability_config` 的
+  `tool_directives` 与 `mount_directives`。即使当前 UI 暂不提供 step 级能力编辑器，
+  也必须在读取、保存和模板 bootstrap 后 roundtrip 不丢字段。
+- 平台 well-known capability 使用平台 key，例如
+  `workflow_management::upsert_workflow_tool`；`mcp:<server>` 只表示用户自定义 MCP
+  server，例如 `mcp:code_analyzer::scan`。
+
 ---
 
 *创建：2026-04-19 — Phase 1 工具能力管线收口*
 *更新：2026-04-20 — 新增「装配时机」章节 + 消费者一览对齐到 `resolve_session_workflow_context`*
-*更新：2026-04-22 — Directive 模型重构：引入 `ToolCapabilityPath` + slot 归约；`CapabilityEntry` / `file_system` 别名彻底下线；`WorkflowContract.capabilities` → `capability_directives`（migration 0018）*
+*更新：2026-04-22 — Directive 模型重构：引入 `ToolCapabilityPath` + slot 归约；`CapabilityEntry` / `file_system` 别名彻底下线；历史 `WorkflowContract.capabilities` 已迁入结构化能力配置。*
 *更新：2026-05-06 — 工具能力指令路径硬切到 `WorkflowContract.capability_config.tool_directives`；旧根字段仅作为数据迁移来源，不再是运行时/接口定义。*
+*更新：2026-05-07 — 补齐前端/API roundtrip 契约：Lifecycle step 级 `capability_config` 不得在编辑链路丢失。*

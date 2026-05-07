@@ -31,7 +31,9 @@ export interface WorkflowInjectionSpec {
   context_bindings: WorkflowContextBinding[];
 }
 
-export type StandaloneFulfillment = "none" | "text_input" | "file_upload";
+export type StandaloneFulfillment =
+  | "required"
+  | { optional: { default_value?: string | null } };
 
 export type WorkflowHookTrigger =
   | "user_prompt_submit"
@@ -113,7 +115,7 @@ export type LifecycleEdge =
  * 分隔符统一为 `::`（与 Rust 模块路径同构），与 `mcp:<server>` 的单冒号前缀不冲突。
  *
  * JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
- * / `"mcp:code_analyzer"` / `"mcp:workflow_management::upsert"`。
+ * / `"workflow_management::upsert_workflow_tool"` / `"mcp:code_analyzer::scan"`。
  */
 export interface CapabilityPath {
   capability: string;
@@ -242,7 +244,7 @@ export interface WorkflowContract {
    *
    * Path 语法：
    * - 短 path（能力级）：`"file_read"` / `"mcp:code_analyzer"`
-   * - 长 path（工具级）：`"file_read::fs_grep"` / `"mcp:workflow_management::upsert"`
+   * - 长 path（工具级）：`"file_read::fs_grep"` / `"workflow_management::upsert_workflow_tool"`
    *
    * 运行时 hook 可叠加 delta 指令；后端 `compute_effective_capabilities` 走同一条归约路径。
    */
@@ -290,6 +292,8 @@ export interface LifecycleStepDefinition {
   output_ports: OutputPortDefinition[];
   /** Step 级消费声明 */
   input_ports: InputPortDefinition[];
+  /** Step 级能力配置；应用顺序在绑定 workflow 的 contract.capability_config 之后。 */
+  capability_config?: WorkflowCapabilityConfig;
 }
 
 export interface WorkflowTemplate {

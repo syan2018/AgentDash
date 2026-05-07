@@ -47,10 +47,17 @@ describe("CapabilityPath 序列化", () => {
     });
   });
 
-  it("parseCapabilityPath 解析 mcp 长 path", () => {
-    expect(parseCapabilityPath("mcp:workflow_management::upsert")).toEqual({
-      capability: "mcp:workflow_management",
-      tool: "upsert",
+  it("parseCapabilityPath 解析平台 MCP 工具长 path", () => {
+    expect(parseCapabilityPath("workflow_management::upsert_workflow_tool")).toEqual({
+      capability: "workflow_management",
+      tool: "upsert_workflow_tool",
+    });
+  });
+
+  it("parseCapabilityPath 解析自定义 MCP 长 path", () => {
+    expect(parseCapabilityPath("mcp:code_analyzer::scan")).toEqual({
+      capability: "mcp:code_analyzer",
+      tool: "scan",
     });
   });
 

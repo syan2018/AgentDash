@@ -5,6 +5,7 @@ import type {
   HookRulePreset,
   ContextStrategy,
   GateStrategy,
+  StandaloneFulfillment,
   LifecycleDefinition,
   LifecycleEdge,
   LifecycleExecutionEntry,
@@ -141,7 +142,23 @@ function mapInputPortDefinition(raw: Record<string, unknown>) {
       ? normalizeEnum<ContextStrategy>(raw.context_strategy, CONTEXT_STRATEGIES, "input port context strategy")
       : undefined,
     context_template: optString(raw.context_template),
+    standalone_fulfillment: mapStandaloneFulfillment(raw.standalone_fulfillment),
   };
+}
+
+function mapStandaloneFulfillment(raw: unknown): StandaloneFulfillment | undefined {
+  if (raw == null) return undefined;
+  if (raw === "required") return "required";
+  const value = asRecord(raw);
+  const optional = value ? asRecord(value.optional) : null;
+  if (optional) {
+    return {
+      optional: {
+        default_value: optString(optional.default_value),
+      },
+    };
+  }
+  throw new Error("input port standalone_fulfillment 非法");
 }
 
 function mapLifecycleEdge(raw: unknown): LifecycleEdge {
@@ -241,6 +258,7 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
       : undefined,
     output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
     input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
+    capability_config: mapWorkflowCapabilityConfig(value.capability_config),
   };
 }
 

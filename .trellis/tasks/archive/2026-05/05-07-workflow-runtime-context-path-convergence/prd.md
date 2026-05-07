@@ -145,3 +145,5 @@ Lifecycle advance / Phase activation
 - 2026-05-07：完成第一轮命名盘点，详见 `surface-naming-inventory.md`。
 - 2026-05-07：新增 `RuntimeContextTransition` 值对象，统一 live apply、pending next turn、applied on next turn 三条路径的 `capability_surface_changed` 事件构建与 pending metadata 派生。
 - 2026-05-07：新增 `session::hub::runtime_context_transition` 统一 applier，收束 live apply、pending 入队、next-turn apply 三条生产路径；底层 surface/hook/event 方法降为 crate 内部 primitive，避免后续绕路调用。
+- 2026-05-07：补齐前端 workflow/lifecycle DTO roundtrip。`WorkflowDefinition.contract.capability_config` 已保持结构化透传；`LifecycleStepDefinition.capability_config` 也纳入 mapper/store/new-step 默认值，避免 step 级能力配置经过前端编辑后丢失。同步修正前端能力路径示例，平台 `workflow_management` 不再误写成 `mcp:workflow_management`。
+- 2026-05-07：收束结论：生产路径已经统一到 runtime context transition applier；builtin workflow admin 的 Plan/Apply 能力切换配置、模板 bootstrap 入库、前端/API roundtrip 和工具路径语法均有验证。后续如需继续扩大，应作为独立任务处理 `runtime_surface` → VFS 命名清理或 builtin template checksum/version UI 提示，不再阻塞本任务。

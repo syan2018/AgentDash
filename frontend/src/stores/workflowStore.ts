@@ -110,6 +110,10 @@ export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
   };
 }
 
+function emptyCapabilityConfig(): WorkflowContract["capability_config"] {
+  return { tool_directives: [], mount_directives: [] };
+}
+
 export function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft {
   return {
     id: definition.id,
@@ -139,6 +143,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
       node_type: "agent_node",
       output_ports: [],
       input_ports: [],
+      capability_config: emptyCapabilityConfig(),
     }],
     edges: [],
   };
@@ -648,6 +653,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
                 node_type: "agent_node",
                 output_ports: [],
                 input_ports: [],
+                capability_config: emptyCapabilityConfig(),
               },
             ],
           },

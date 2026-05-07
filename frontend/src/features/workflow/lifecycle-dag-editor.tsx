@@ -472,6 +472,7 @@ function LifecycleDagEditorInner() {
       node_type: "agent_node",
       output_ports: [],
       input_ports: [],
+      capability_config: { tool_directives: [], mount_directives: [] },
     };
     const nextSteps = [...draft.steps, newStep];
     updateLifecycleDraft({

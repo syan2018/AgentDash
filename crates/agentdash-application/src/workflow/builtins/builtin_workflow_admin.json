@@ -15,8 +15,8 @@
         "capability_config": {
           "tool_directives": [
             { "add": "workflow_management" },
-            { "remove": "mcp:workflow_management::upsert_workflow_tool" },
-            { "remove": "mcp:workflow_management::upsert_lifecycle_tool" }
+            { "remove": "workflow_management::upsert_workflow_tool" },
+            { "remove": "workflow_management::upsert_lifecycle_tool" }
           ]
         }
       }

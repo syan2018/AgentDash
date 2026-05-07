@@ -21,11 +21,24 @@
 4. 补齐 builtin workflow template 的持久化/回放/前后端契约防线，避免编辑器、模板、仓储各自理解字段。
 5. 建立端到端测试，证明真实 Agent 在 plan → apply 后能拿到新工具、新 hook 指令和新上下文，而不仅是后端状态对象更新。
 
+## 任务评估
+
+这个任务不是“继续补几个 hook 点”的修复任务，而是一次架构收束任务。它的价值在于把已经多次出问题的 phase 切换链路收成一条可命名、可测试、可审计的事务边界；风险在于范围天然很大，容易退化成泛泛的“统一 runtime surface”。
+
+因此建议把它拆成三个可独立验收的 PR，而不是一次性重构：
+
+1. **命名与路径盘点 PR**：只输出 rename map 和调用点清单，确认 `CapabilitySurface`、`ResolvedVfsSurface`、tool access surface、runtime context transition 各自语义，不做大规模行为改动。
+2. **统一 transition applier PR**：抽一个唯一入口承载 phase/context/tool/hook 变化，把现有 live apply、pending transition、hook dispatch、Bundle sink 调用收口进去。
+3. **模板/仓储/前端 roundtrip PR**：解决 builtin template 与项目持久化副本漂移、前端字段漂移，以及真实 plan → apply 端到端验证。
+
+衡量这个任务是否成功，不看新增了多少 surface 类型，而看以后新增一个 workflow phase 变化维度时，是否只需要接入同一个 transition applier，而不是在 hub、hook、prompt、connector、前端各补一刀。
+
 ## 非目标
 
 - 不为旧 API、旧数据库字段或旧模板语义保留兼容层；项目仍处于预研期，应直接迁到最正确状态。
 - 不把动态 workflow/hook 内容塞回 system prompt 来换取短期可见性。
 - 不把所有 connector 一次性改造成同等 Bundle 原生消费者；但统一数据流必须给每类 connector 明确消费边界。
+- 不为单个 builtin JSON 配置逐项写死单测；配置正确性应主要依赖 schema/roundtrip、resolver 行为测试和真实端到端验证。
 
 ## 命名收束
 
@@ -91,6 +104,19 @@ Lifecycle advance / Phase activation
 - bootstrap 是否允许覆盖项目中同 key 的 builtin-managed 定义；
 - UI 是否能提示“项目内定义落后于内建模板”；
 - workflow definition roundtrip 是否覆盖 `capability_config.tool_directives`。
+
+### 工具指令语法约束
+
+平台 well-known capability 的 add/remove 必须使用同一个 capability key：
+
+```json
+[
+  { "add": "workflow_management" },
+  { "remove": "workflow_management::upsert_workflow_tool" }
+]
+```
+
+`mcp:<server_name>` 只用于用户自定义 MCP server，例如 `mcp:code_analyzer::scan`。不要把平台 `workflow_management` 写成 `mcp:workflow_management`，否则语义会和 resolver 的 custom MCP 分支混淆。
 
 ## 验收标准
 

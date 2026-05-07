@@ -114,8 +114,8 @@ MCP server name 禁止含 `::`，由 `McpPreset` 校验层强制。
 | ---------------------------------------- | --------------------------- |
 | `file_read`                              | 短 path — 平台能力级         |
 | `file_read::fs_grep`                     | 长 path — 平台 cluster 工具级 |
-| `mcp:workflow_management`                | 短 path — 平台 MCP 能力级     |
-| `mcp:workflow_management::upsert`        | 长 path — 平台 MCP 工具级     |
+| `workflow_management`                    | 短 path — 平台 MCP 能力级     |
+| `workflow_management::upsert`            | 长 path — 平台 MCP 工具级     |
 | `mcp:code_analyzer::scan`                | 长 path — 用户自定义 MCP 工具级 |
 
 序列化形式：path 整体以 qualified string 表示，directive 包装为 `{"add": "<path>"}` / `{"remove": "<path>"}`。

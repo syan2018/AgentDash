@@ -264,7 +264,7 @@ pub struct WorkflowHookRuleSpec {
 /// MCP server name 禁止含 `::`，由 preset 校验层强制。
 ///
 /// JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
-/// / `"mcp:code_analyzer"` / `"mcp:workflow_management::upsert"`。
+/// / `"workflow_management::upsert_workflow_tool"` / `"mcp:code_analyzer::scan"`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 pub struct ToolCapabilityPath {
     pub capability: String,
@@ -1449,9 +1449,9 @@ mod tests {
         assert_eq!(short.capability, "mcp:code_analyzer");
         assert_eq!(short.tool, None);
 
-        let long = ToolCapabilityPath::parse("mcp:workflow_management::upsert").unwrap();
-        assert_eq!(long.capability, "mcp:workflow_management");
-        assert_eq!(long.tool.as_deref(), Some("upsert"));
+        let long = ToolCapabilityPath::parse("mcp:code_analyzer::scan").unwrap();
+        assert_eq!(long.capability, "mcp:code_analyzer");
+        assert_eq!(long.tool.as_deref(), Some("scan"));
     }
 
     #[test]

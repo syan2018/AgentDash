@@ -57,6 +57,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
+use crate::session::capability_surface::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptSessionRequest, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
@@ -261,13 +262,15 @@ impl SessionAssemblyBuilder {
         lifecycle_key: &str,
         writable_port_keys: &[String],
     ) -> Self {
-        if let Some(space) = self.vfs.as_mut() {
-            space.mounts.push(build_lifecycle_mount_with_ports(
-                run_id,
-                lifecycle_key,
-                writable_port_keys,
-            ));
-        }
+        let lifecycle_mount =
+            build_lifecycle_mount_with_ports(run_id, lifecycle_key, writable_port_keys);
+        let mut overlay = Vfs::default();
+        overlay.mounts.push(lifecycle_mount);
+        self.vfs = Some(compose_vfs_with_overlay_and_directives(
+            self.vfs.as_ref(),
+            &overlay,
+            &[],
+        ));
         self
     }
 
@@ -500,7 +503,11 @@ impl SessionAssemblyBuilder {
         activation: &crate::workflow::StepActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        self.vfs = Some(activation.lifecycle_vfs.clone());
+        self.vfs = Some(compose_vfs_with_overlay_and_directives(
+            self.vfs.as_ref(),
+            &activation.lifecycle_vfs,
+            &activation.mount_directives,
+        ));
         self.flow_capabilities = Some(activation.flow_capabilities.clone());
         self.mcp_servers = activation.mcp_servers.clone();
         self.prompt_blocks = Some(vec![serde_json::json!({
@@ -2045,6 +2052,92 @@ mod tests {
             resolve_owner_audit_trigger(OwnerAuditLifecycle::Plain, false),
             None,
         );
+    }
+
+    fn test_workspace_mount() -> agentdash_domain::common::Mount {
+        agentdash_domain::common::Mount {
+            id: "workspace".to_string(),
+            provider: "relay_fs".to_string(),
+            backend_id: "backend-test".to_string(),
+            root_ref: "workspace://test".to_string(),
+            capabilities: vec![
+                agentdash_domain::common::MountCapability::Read,
+                agentdash_domain::common::MountCapability::List,
+            ],
+            default_write: false,
+            display_name: "Workspace".to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn test_step_activation(run_id: Uuid) -> crate::workflow::StepActivation {
+        let lifecycle_mount =
+            build_lifecycle_mount_with_ports(run_id, "test-lifecycle", &["report".to_string()]);
+        crate::workflow::StepActivation {
+            flow_capabilities: Default::default(),
+            mcp_servers: Vec::new(),
+            capability_keys: BTreeSet::new(),
+            kickoff_prompt: crate::workflow::KickoffPromptFragment {
+                title_line: String::new(),
+                output_section: String::new(),
+                input_section: String::new(),
+            },
+            lifecycle_mount: lifecycle_mount.clone(),
+            lifecycle_vfs: Vfs {
+                mounts: vec![lifecycle_mount],
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            },
+            mount_directives: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
+        let prepared = SessionAssemblyBuilder::new()
+            .append_lifecycle_mount(Uuid::new_v4(), "test-lifecycle", &[])
+            .build();
+
+        let vfs = prepared.vfs.expect("lifecycle mount should create VFS");
+        let lifecycle = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "lifecycle")
+            .expect("lifecycle mount should be visible");
+        assert!(
+            lifecycle
+                .capabilities
+                .contains(&agentdash_domain::common::MountCapability::Write)
+        );
+    }
+
+    #[test]
+    fn apply_lifecycle_activation_merges_existing_vfs() {
+        let activation = test_step_activation(Uuid::new_v4());
+        let base_vfs = Vfs {
+            mounts: vec![test_workspace_mount()],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let prepared = SessionAssemblyBuilder::new()
+            .with_vfs(base_vfs)
+            .apply_lifecycle_activation(&activation, None)
+            .build();
+
+        let vfs = prepared.vfs.expect("merged VFS");
+        let mount_ids = vfs
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(mount_ids.contains("workspace"));
+        assert!(mount_ids.contains("lifecycle"));
+        assert_eq!(vfs.default_mount_id.as_deref(), Some("workspace"));
     }
 
     #[test]

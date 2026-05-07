@@ -228,22 +228,22 @@ lifecycle://runs/{run_id}
 
 ## 验收标准
 
-* [ ] 旧 `04-15-workflow-dynamic-lifecycle-context` 任务已归档，新任务成为当前推进载体。
-* [ ] active lifecycle node session 中，agent 的实际 VFS surface / `mounts.list` 能看到 `lifecycle` mount。
-* [ ] `lifecycle://session/turns/{turn_id}/events.json` 能返回当前 node session 中该 turn 的 raw event JSON。
-* [ ] `lifecycle://nodes/{node}/session/turns/{turn_id}/events.json` 能返回指定 node session 中该 turn 的 raw event JSON。
-* [ ] `lifecycle://tool-calls` 能列出当前 node session 的 tool call summary，包含 `tool_call_id`、tool kind/name、turn、状态、事件范围。
-* [ ] MCP 调用作为 tool call 出现在 `tool-calls` 索引中，不提供独立 `mcp-calls` 路径族。
-* [ ] `tool-calls/{id}/raw.json` 返回该 tool call 的原始事件投影。
-* [ ] `tool-calls/{id}/request.json` 和 `result.json` 尽可能无损返回请求和结果结构；缺失时给出明确 `NotFound`。
-* [ ] shell / terminal 类 tool call 至少可读取命令、状态、stdout/stderr 或 output delta 聚合结果。
-* [ ] `writes` 能索引文件写入、patch、artifact 写入等写操作记录。
-* [ ] `artifacts/{port_key}` 仍按 `writable_port_keys` 控制写入。
-* [ ] raw session history、state projection、derived index projection 不可写。
-* [ ] `records/{name}` 可写入当前 node overlay，并可通过 VFS 读回。
-* [ ] `nodes/{node}/records/{name}` 可写入指定 node overlay，并可通过 VFS 读回。
-* [ ] lifecycle tool result URI 能被标准 VFS service 解析和读取，供上层通用消费者复用。
-* [ ] 新增或更新测试覆盖 VFS list/read/write 和通用 URI 读取闭环。
+* [x] 旧 `04-15-workflow-dynamic-lifecycle-context` 任务已归档，新任务成为当前推进载体。
+* [x] active lifecycle node session 中，agent 的实际 VFS surface / `mounts.list` 能看到 `lifecycle` mount。
+* [x] `lifecycle://session/turns/{turn_id}/events.json` 能返回当前 node session 中该 turn 的 raw event JSON。
+* [x] `lifecycle://nodes/{node}/session/turns/{turn_id}/events.json` 能返回指定 node session 中该 turn 的 raw event JSON。
+* [x] `lifecycle://tool-calls` 能列出当前 node session 的 tool call summary，包含 `tool_call_id`、tool kind/name、turn、状态、事件范围。
+* [x] MCP 调用作为 tool call 出现在 `tool-calls` 索引中，不提供独立 `mcp-calls` 路径族。
+* [x] `tool-calls/{id}/raw.json` 返回该 tool call 的原始事件投影。
+* [x] `tool-calls/{id}/request.json` 和 `result.json` 尽可能无损返回请求和结果结构；缺失时给出明确 `NotFound`。
+* [x] shell / terminal 类 tool call 至少可读取命令、状态、stdout/stderr 或 output delta 聚合结果。
+* [x] `writes` 能索引文件写入、patch、artifact 写入等写操作记录。
+* [x] `artifacts/{port_key}` 仍按 `writable_port_keys` 控制写入。
+* [x] raw session history、state projection、derived index projection 不可写。
+* [x] `records/{name}` 可写入当前 node overlay，并可通过 VFS 读回。
+* [x] `nodes/{node}/records/{name}` 可写入指定 node overlay，并可通过 VFS 读回。
+* [x] lifecycle tool result URI 能被标准 VFS service 解析和读取，供上层通用消费者复用。
+* [x] 新增或更新测试覆盖 VFS list/read/write 和通用 URI 读取闭环。
 
 ## 决策记录
 

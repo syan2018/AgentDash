@@ -172,3 +172,74 @@ started: 2026-04-30
 下一步建议（由 user 裁决）：
 - 开 PR 合入 `main`（或按子 PR 粒度分批合）；
 - 或先跑 E2E 场景（HTTP prompt / task start / workflow orchestrator / companion dispatch / routine tick / cancel × 3 / compaction）作 acceptance 最后一道闸门。
+
+
+## Session 32: 实现 Lifecycle Journey VFS
+
+**Date**: 2026-05-07
+**Task**: 实现 Lifecycle Journey VFS
+**Branch**: `main`
+
+### Summary
+
+完成 lifecycle 当前 node/session 根投影、tool-calls/writes 派生索引、records overlay 写读、agent VFS 自动挂载合并，并补充 provider/assembler/step activation focused tests。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a0cf627` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 33: Lifecycle Journey VFS 收尾
+
+**Date**: 2026-05-07
+**Task**: Lifecycle Journey VFS 收尾
+**Branch**: `codex/lifecycle-vfs-owner-binding`
+
+### Summary
+
+完成 lifecycle journey VFS 任务推进与收尾：落地 session/tool-call/write/record 投影，拆分 lifecycle journey/mount 逻辑，修复 owner session lifecycle VFS 挂载，并让 Project Agent 新建 lifecycle run 时真实绑定主 session 到入口 node；已归档 05-07-lifecycle-journey-vfs。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `12f81e2` | (see git log) |
+| `a0cf627` | (see git log) |
+| `ec22ec6` | (see git log) |
+| `ed78669` | (see git log) |
+| `2f43761` | (see git log) |
+| `5eb63b7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -102,7 +102,7 @@ crates/
 │       │   └── tools/           # Task 相关 tool 实现（companion/hook）
 │       ├── vfs/       # 寻址空间组装（mount/path/types）
 │       │   ├── mod.rs
-│       │   ├── mount.rs         # Mount 派生与 Address Space 组装
+│       │   ├── mount.rs         # Mount 派生与 VFS 组装
 │       │   ├── path.rs          # Mount 解析与路径归一化
 │       │   ├── types.rs         # ResourceRef, ListOptions, ExecRequest 等值类型
 │       │   ├── inline_persistence.rs # 内联内容持久化
@@ -264,13 +264,13 @@ agentdash-agent-types  (零 runtime 核心类型)
 | 分层 | Crate | 职责 | 允许依赖 | 状态 |
 |------|-------|------|----------|------|
 | **Interface** | `agentdash-api` | HTTP 路由、DTO/Assembler、中间件、错误映射 | application, domain | ✅ |
-| **Application** | `agentdash-application` | 用例编排：session plan / context / task / address space / story | domain, injection, executor, spi | ✅ 已填充 |
+| **Application** | `agentdash-application` | 用例编排：session plan / context / task / VFS / story | domain, injection, executor, spi | ✅ 已填充 |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部库（仅 async-trait 等基础库） | ✅ |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor`, `agentdash-relay` | Repository 实现、连接器、WebSocket 中继 | domain | ✅ |
 | **Agent Types** | `agentdash-agent-types` | 跨层共享的 Agent 类型（Message/Tool/Context/Delegate） | serde, async-trait, tokio-util | ✅ |
 | **Agent Engine** | `agentdash-agent` | Agent Loop 引擎、LlmBridge trait、内置工具 | agent-types, domain | ✅ |
 
-> Application 层（`agentdash-application`）已包含 session plan 构建、context contributor 框架、task 执行纯逻辑、address space 组装、story owner 编排等核心用例。API 层只保留请求解析→调用用例→映射 DTO 的协调职责。
+> Application 层（`agentdash-application`）已包含 session plan 构建、context contributor 框架、task 执行纯逻辑、VFS 组装、story owner 编排等核心用例。API 层只保留请求解析→调用用例→映射 DTO 的协调职责。
 
 #### Hook Runtime 分层约定
 

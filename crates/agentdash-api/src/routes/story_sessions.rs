@@ -15,6 +15,9 @@ use agentdash_application::session::bootstrap::{
 use agentdash_application::session::context::{
     SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
 };
+use agentdash_application::workflow::{
+    ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
+};
 
 use crate::{
     app_state::AppState,
@@ -469,30 +472,43 @@ pub(crate) async fn build_story_session_context_response(
         .as_ref()
         .is_some_and(|c| c.is_cloud_native())
         || (resolved_config.is_none() && default_agent_type.is_some());
-    let vfs = if use_vfs {
-        let mut vfs = state
-            .services
-            .vfs_service
-            .build_vfs(
-                &project,
-                Some(story),
-                workspace.as_ref(),
-                SessionMountTarget::Story,
-                effective_agent_type.as_deref(),
-            )
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.session_binding_repo.as_ref(),
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+    let mut vfs = if use_vfs {
+        Some(
+            state
+                .services
+                .vfs_service
+                .build_vfs(
+                    &project,
+                    Some(story),
+                    workspace.as_ref(),
+                    SessionMountTarget::Story,
+                    effective_agent_type.as_deref(),
+                )
+                .map_err(|error| ApiError::Internal(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
+    if let Some(vfs) = vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
-            &mut vfs,
+            vfs,
             &session_meta.visible_canvas_mount_ids,
         )
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-        Some(vfs)
-    } else {
-        None
-    };
+    }
     // ── 解析 Story session 的 workflow 上下文 ──
     let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
         agentdash_application::capability::SessionWorkflowRepos {
@@ -553,7 +569,7 @@ pub(crate) async fn build_story_session_context_response(
             executor_source,
         ),
         owner_variant: BootstrapOwnerVariant::Story { story_overrides },
-        workflow: None,
+        workflow: active_workflow,
     });
 
     let snapshot = derive_session_context_snapshot(&plan);

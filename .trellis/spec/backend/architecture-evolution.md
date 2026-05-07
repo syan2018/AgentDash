@@ -45,7 +45,7 @@
 |-------|------|------|
 | 1 | Session Plan + Context Composition → application | ✅ |
 | 2 | Task Execution Gateway 纯逻辑 → application/task/ | ✅ |
-| 3 | Address Space Access 三重职责拆分 | ✅ |
+| 3 | VFS Access 三重职责拆分 | ✅ |
 | 4 | Story Owner Session 编排 → application/story/ | ✅ |
 | 5 | 引入 Response DTO / Assembler 层 (api/dto/) | ✅ |
 | 6 | AppState 瘦身 → RepositorySet / ServiceSet / TaskRuntime / AppConfig | ✅ |

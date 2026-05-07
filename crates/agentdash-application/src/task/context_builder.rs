@@ -19,8 +19,11 @@ use crate::session::context::{
 };
 use crate::session::{ExecutorResolution, load_available_presets};
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
-use crate::vfs::{RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports};
-use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
+use crate::vfs::{RelayVfsService, SessionMountTarget};
+use crate::workflow::{
+    ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount,
+    resolve_active_workflow_projection_for_session,
+};
 use agentdash_domain::common::Vfs;
 use agentdash_domain::session_binding::SessionOwnerType;
 
@@ -112,32 +115,21 @@ pub async fn build_task_session_context(
         .as_ref()
         .map(|config| config.executor.as_str());
     let mut runtime_vfs: Option<RuntimeVfs> = if use_vfs {
-        let mut space = vfs_service
-            .build_vfs(
-                &project,
-                Some(&story),
-                workspace.as_ref(),
-                SessionMountTarget::Task,
-                effective_agent_type,
-            )
-            .ok()?;
-        if let Some(active_workflow) = workflow.as_ref() {
-            let writable_port_keys: Vec<String> = active_workflow
-                .active_step
-                .output_ports
-                .iter()
-                .map(|p| p.key.clone())
-                .collect();
-            space.mounts.push(build_lifecycle_mount_with_ports(
-                active_workflow.run.id,
-                &active_workflow.lifecycle.key,
-                &writable_port_keys,
-            ));
-        }
-        Some(space)
+        Some(
+            vfs_service
+                .build_vfs(
+                    &project,
+                    Some(&story),
+                    workspace.as_ref(),
+                    SessionMountTarget::Task,
+                    effective_agent_type,
+                )
+                .ok()?,
+        )
     } else {
         None
     };
+    runtime_vfs = ensure_active_workflow_lifecycle_mount(runtime_vfs, workflow.as_ref());
 
     let preset_name = normalize_optional_string(task.agent_binding.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {

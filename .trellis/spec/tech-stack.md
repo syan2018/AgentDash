@@ -110,7 +110,7 @@ crates/
 ├── agentdash-agent-types/       # Agent 领域通用类型（零 runtime 核心）
 ├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
 ├── agentdash-domain/            # 领域层（实体、值对象、Repository trait）
-├── agentdash-application/       # 应用层（用例编排、hooks、context、address space）
+├── agentdash-application/       # 应用层（用例编排、hooks、context、VFS）
 ├── agentdash-infrastructure/    # 基础设施层（PostgreSQL + SQLite Repository 实现）
 ├── agentdash-executor/          # 执行器（连接器、RigBridge、hook runtime）
 ├── agentdash-spi/               # SPI（re-export agent-types + Connector/Hook trait）

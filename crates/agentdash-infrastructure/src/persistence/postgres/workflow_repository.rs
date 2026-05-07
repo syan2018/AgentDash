@@ -68,6 +68,7 @@ impl PostgresWorkflowRepository {
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,created_at,updated_at";
 const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
@@ -293,7 +294,7 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
@@ -301,6 +302,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind(&run.session_id)
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.step_states)?)
+        .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(run.created_at.to_rfc3339())
         .bind(run.updated_at.to_rfc3339())

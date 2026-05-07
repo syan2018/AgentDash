@@ -992,12 +992,13 @@ async fn auto_start_lifecycle_run(
 
     // 自动激活首步
     if let Some(step_key) = run.current_step_key() {
-        use agentdash_application::workflow::ActivateLifecycleStepCommand;
-        let activate_cmd = ActivateLifecycleStepCommand {
+        use agentdash_application::workflow::BindAndActivateLifecycleStepCommand;
+        let activate_cmd = BindAndActivateLifecycleStepCommand {
             run_id: run.id,
             step_key: step_key.to_string(),
+            session_id: session_id.to_string(),
         };
-        if let Err(e) = service.activate_step(activate_cmd).await {
+        if let Err(e) = service.bind_session_and_activate_step(activate_cmd).await {
             tracing::warn!(run_id = %run.id, step_key = %step_key, error = %e, "自动激活首步失败");
         }
     }

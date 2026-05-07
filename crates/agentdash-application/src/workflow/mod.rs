@@ -3,6 +3,7 @@ mod completion;
 mod definition;
 mod error;
 pub mod execution_log;
+pub mod lifecycle;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
@@ -20,6 +21,10 @@ pub use definition::{
 };
 pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, materialize_step_summary};
+pub use lifecycle::mount::{
+    append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,
+    writable_port_keys_for_active_workflow,
+};
 pub use orchestrator::{
     AdvanceCurrentNodeInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,

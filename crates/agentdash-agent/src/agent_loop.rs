@@ -26,7 +26,8 @@ use crate::types::{
     BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
     BeforeToolCallResult, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
     EvaluateCompactionInput, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
-    ToolCallDecision, ToolCallInfo, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
+    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback,
+    TransformContextInput,
 };
 
 // ─── 回调类型别名 ───────────────────────────────────────────
@@ -45,6 +46,12 @@ pub type TransformContextFn = Arc<
 /// Steering 消息获取回调
 /// 对齐 Pi `AgentLoopConfig.getSteeringMessages`
 pub type GetMessagesFn = Arc<dyn Fn() -> Vec<AgentMessage> + Send + Sync>;
+
+/// Live 工具获取回调。
+///
+/// 工具表可能在当前 running turn 内由 workflow phase 切换热更新，因此 LLM
+/// 请求和工具执行不能只读 run_loop 启动时的快照。
+pub type GetToolsFn = Arc<dyn Fn() -> Vec<DynAgentTool> + Send + Sync>;
 
 /// before_tool_call 钩子
 /// 对齐 Pi `AgentLoopConfig.beforeToolCall`
@@ -96,6 +103,9 @@ pub struct AgentLoopConfig {
     /// 获取 follow-up 消息
     pub get_follow_up_messages: Option<GetMessagesFn>,
 
+    /// 获取当前 live 工具表。
+    pub get_tools: Option<GetToolsFn>,
+
     /// 工具执行模式
     /// 对齐 Pi `toolExecution`，默认 Parallel。
     pub tool_execution: ToolExecutionMode,
@@ -121,6 +131,7 @@ impl Default for AgentLoopConfig {
             transform_context: None,
             get_steering_messages: None,
             get_follow_up_messages: None,
+            get_tools: None,
             tool_execution: ToolExecutionMode::default(),
             before_tool_call: None,
             after_tool_call: None,
@@ -270,7 +281,8 @@ async fn run_loop(
             }
 
             let assistant_message =
-                stream_assistant_response(context, config, bridge, emit, cancel).await?;
+                stream_assistant_response(context, tool_instances, config, bridge, emit, cancel)
+                    .await?;
             new_messages.push(assistant_message.clone());
 
             if assistant_message.is_error_or_aborted() {
@@ -504,6 +516,7 @@ impl PartialAssistantState {
 
 async fn stream_assistant_response(
     context: &mut AgentContext,
+    fallback_tool_instances: &[DynAgentTool],
     config: &AgentLoopConfig,
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
@@ -537,6 +550,8 @@ async fn stream_assistant_response(
             .await
             .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
     }
+
+    refresh_context_tools(context, fallback_tool_instances, config);
 
     // delegate / transform_context 可在发送前裁剪或注入消息。
     //
@@ -1371,7 +1386,8 @@ async fn prepare_tool_call(
     config: &AgentLoopConfig,
     cancel: &CancellationToken,
 ) -> ToolCallPreparation {
-    let tool = tool_instances.iter().find(|t| t.name() == tc.name);
+    let current_tools = current_tool_instances(tool_instances, config);
+    let tool = current_tools.iter().find(|t| t.name() == tc.name);
     let tool = match tool {
         Some(t) => t.clone(),
         None => {
@@ -1393,11 +1409,13 @@ async fn prepare_tool_call(
     };
 
     if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let mut hook_context = context.clone();
+        apply_tool_definitions(&mut hook_context, &current_tools);
         let input = BeforeToolCallInput {
             assistant_message: assistant_message.clone(),
             tool_call: tc.clone(),
             args: args.clone(),
-            context: context.clone(),
+            context: hook_context,
         };
         let decision = match delegate.before_tool_call(input, cancel.clone()).await {
             Ok(decision) => decision,
@@ -1466,11 +1484,13 @@ async fn prepare_tool_call(
     }
 
     if let Some(ref hook) = config.before_tool_call {
+        let mut hook_context = context.clone();
+        apply_tool_definitions(&mut hook_context, &current_tools);
         let ctx = BeforeToolCallContext {
             assistant_message,
             tool_call: tc,
             args: &args,
-            context,
+            context: &hook_context,
         };
         if let Some(before_result) = hook(ctx, cancel.clone()).await
             && before_result.block
@@ -1487,6 +1507,34 @@ async fn prepare_tool_call(
     }
 
     ToolCallPreparation::Prepared { tool, args }
+}
+
+fn current_tool_instances(
+    fallback_tool_instances: &[DynAgentTool],
+    config: &AgentLoopConfig,
+) -> Vec<DynAgentTool> {
+    config
+        .get_tools
+        .as_ref()
+        .map(|get_tools| get_tools())
+        .unwrap_or_else(|| fallback_tool_instances.to_vec())
+}
+
+fn refresh_context_tools(
+    context: &mut AgentContext,
+    fallback_tool_instances: &[DynAgentTool],
+    config: &AgentLoopConfig,
+) -> Vec<DynAgentTool> {
+    let tools = current_tool_instances(fallback_tool_instances, config);
+    apply_tool_definitions(context, &tools);
+    tools
+}
+
+fn apply_tool_definitions(context: &mut AgentContext, tools: &[DynAgentTool]) {
+    context.tools = tools
+        .iter()
+        .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
+        .collect();
 }
 
 /// Phase 2: execute — 对齐 Pi `executePreparedToolCall` (agent-loop.ts:509-544)

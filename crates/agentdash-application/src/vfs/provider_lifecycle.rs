@@ -1060,11 +1060,12 @@ mod tests {
             tool: "lookup".to_string(),
             status: codex::McpToolCallStatus::Completed,
             arguments: serde_json::json!({ "query": "lifecycle" }),
-            result: Some(codex::McpToolCallResult {
+            mcp_app_resource_uri: None,
+            result: Some(Box::new(codex::McpToolCallResult {
                 content: vec![serde_json::json!({ "type": "text", "text": "mcp result" })],
                 structured_content: Some(serde_json::json!({ "answer": 42 })),
                 meta: None,
-            }),
+            })),
             error: None,
             duration_ms: Some(7),
         }

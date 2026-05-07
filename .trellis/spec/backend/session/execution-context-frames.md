@@ -249,14 +249,16 @@ sequenceDiagram
   自行渲染。
 - **out-of-band 热更钩**：`AgentConnector::update_session_context_bundle(
   session_id, bundle)` 默认 no-op，用于 MCP 热更 / hook snapshot 刷新等非
-  prompt 边界的 Bundle 变化。PiAgent 应在此钩内做相同的 `set_system_prompt`
-  触发（在活跃 session 才生效）；Relay / vibe_kanban 保持 no-op，等下一次
-  prompt 的 Bundle 透传。
+  prompt 边界的 Bundle 变化。该钩不得用于当前 running turn 的动态 workflow /
+  hook injection 消费，也不得在运行中重设 system prompt；需要立刻影响模型的
+  内容必须走 steering / follow-up / pending action / session notification。
+  Relay / vibe_kanban 保持 no-op，等下一次 prompt 的 Bundle 透传。
 
 ### 5.3 不变式
 
 - PiAgent 的 agent 实例跨 turn 复用；仅在 `bundle_id` 变化或首次构造时重置
-  system prompt；不每 turn 刷一次（避免 KV cache 失效）。
+  system prompt；不每 turn 刷一次（避免 KV cache 失效）。运行期动态内容不
+  通过 `set_system_prompt` 表达。
 - 同一 `bundle_id` 跨 turn 不触发 `set_system_prompt`。
 - `assembled_system_prompt == None` 时，`set_system_prompt` 不调用（Bundle
   为空等边界场景直接 fallback 到 agent 的默认 prompt）。

@@ -11,8 +11,8 @@ use std::sync::Arc;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookEffect, HookEvaluationQuery, HookSessionRuntimeAccess, HookTraceEntry, HookTrigger,
-    SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    HookEffect, HookEvaluationQuery, HookInjection, HookSessionRuntimeAccess, HookTraceEntry,
+    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 use tokio::sync::broadcast;
 
@@ -33,6 +33,16 @@ pub(in crate::session) struct HookTriggerInput<'a> {
     pub source: SourceInfo,
 }
 
+/// Hook trigger 调度结果。
+///
+/// `effects` 仍交由原调用点处理；`injections` 用于 CapabilityChanged 这类
+/// out-of-band trigger 追加到 live Agent 输入面，避免只留在 trace 中。
+#[derive(Debug, Clone, Default)]
+pub(in crate::session) struct HookTriggerDispatchResult {
+    pub effects: Vec<HookEffect>,
+    pub injections: Vec<HookInjection>,
+}
+
 impl SessionHub {
     /// 评估 session hook 并广播 trace 事件。返回 hook 产出的 effects 列表，
     /// 由调用方决定是否/如何执行这些副作用。
@@ -43,7 +53,7 @@ impl SessionHub {
         &self,
         hook_session: &dyn HookSessionRuntimeAccess,
         input: &HookTriggerInput<'_>,
-    ) -> Vec<HookEffect> {
+    ) -> HookTriggerDispatchResult {
         let HookTriggerInput {
             session_id,
             turn_id,
@@ -77,6 +87,7 @@ impl SessionHub {
                         .await;
                 }
                 let effects = resolution.effects.clone();
+                let injections = resolution.injections.clone();
                 let trace = HookTraceEntry {
                     sequence: hook_session.next_trace_sequence(),
                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
@@ -97,7 +108,10 @@ impl SessionHub {
                 let envelope =
                     build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
                 let _ = self.persist_notification(session_id, envelope).await;
-                effects
+                HookTriggerDispatchResult {
+                    effects,
+                    injections,
+                }
             }
             Err(error) => {
                 tracing::warn!(
@@ -106,7 +120,7 @@ impl SessionHub {
                     error = %error,
                     "session hook 评估失败"
                 );
-                Vec::new()
+                HookTriggerDispatchResult::default()
             }
         }
     }
@@ -139,7 +153,7 @@ impl SessionHub {
             executor_id: None,
         };
 
-        let _ = self
+        let result = self
             .emit_session_hook_trigger(
                 hook_session.as_ref(),
                 &HookTriggerInput {
@@ -152,6 +166,22 @@ impl SessionHub {
                 },
             )
             .await;
+        if !result.injections.is_empty() {
+            let message = msg::runtime_hook_injection_notification(
+                "CapabilityChanged Hook 注入",
+                "Workflow capability surface 已更新。以下 Hook 注入需要立即作为当前运行约束/上下文处理：",
+                &result.injections,
+            );
+            if let Some(message) = message
+                && let Err(error) = self.push_session_notification(session_id, message).await
+            {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "CapabilityChanged hook 注入推送到 live agent 失败"
+                );
+            }
+        }
     }
 
     pub async fn ensure_hook_session_runtime(

@@ -145,6 +145,7 @@ impl SessionTurnProcessor {
                 },
             )
             .await
+            .effects
         } else {
             Vec::new()
         };

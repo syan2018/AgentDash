@@ -795,24 +795,7 @@ fn build_pending_action_message(
         if !sources.is_empty() {
             sections.push(msg::context_fragments_label(&sources.join("，")));
         }
-        let details = action
-            .injections
-            .iter()
-            .map(|injection| {
-                let source = if injection.source.trim().is_empty() {
-                    "unknown"
-                } else {
-                    injection.source.trim()
-                };
-                let content = injection.content.trim();
-                if content.is_empty() {
-                    format!("- [{}] {}", injection.slot, source)
-                } else {
-                    format!("- [{}] {}: {}", injection.slot, source, content)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let details = msg::hook_injection_items_md(&action.injections);
         if !details.is_empty() {
             sections.push(msg::pending_action_injections_section(&details));
         }

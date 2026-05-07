@@ -1,4 +1,3 @@
-use std::sync::Arc;
 /// Agent 结构体 — 面向使用者的高层封装
 ///
 /// 严格对齐 Pi `Agent` 类 (agent.ts:116-612)
@@ -10,6 +9,7 @@ use std::sync::Arc;
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 use tokio::sync::{Mutex, Notify, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -105,6 +105,9 @@ pub struct Agent {
     bridge: Arc<dyn LlmBridge>,
     /// 统一运行时状态 — 对齐 Pi `Agent._state`
     state: Arc<Mutex<AgentState>>,
+    /// Live 工具表。AgentState 仍保留工具快照供 UI/调试读取；实际 running loop
+    /// 每次请求前从这里读取，支持 workflow phase 内热更新。
+    tools: Arc<RwLock<Vec<DynAgentTool>>>,
     steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     pending_approvals: Arc<Mutex<std::collections::HashMap<String, PendingApprovalEntry>>>,
@@ -130,6 +133,7 @@ impl Agent {
             config,
             bridge,
             state: Arc::new(Mutex::new(state)),
+            tools: Arc::new(RwLock::new(Vec::new())),
             steering_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
             pending_approvals: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -142,6 +146,9 @@ impl Agent {
     // ── Tool 管理 ──
 
     pub fn add_tool(&mut self, tool: DynAgentTool) {
+        if let Ok(mut tools) = self.tools.write() {
+            tools.push(tool.clone());
+        }
         // 不阻塞 — 只在非运行期间调用
         let state = self.state.try_lock();
         if let Ok(mut s) = state {
@@ -150,6 +157,9 @@ impl Agent {
     }
 
     pub fn set_tools(&mut self, tools: Vec<DynAgentTool>) {
+        if let Ok(mut live_tools) = self.tools.write() {
+            *live_tools = tools.clone();
+        }
         if let Ok(mut s) = self.state.try_lock() {
             s.tools = tools;
         }
@@ -412,6 +422,7 @@ impl Agent {
         let bridge = self.bridge.clone();
         let steering_queue = self.steering_queue.clone();
         let follow_up_queue = self.follow_up_queue.clone();
+        let live_tools = self.tools.clone();
         let pending_approvals = self.pending_approvals.clone();
         let steering_mode = self.config.steering_mode;
         let follow_up_mode = self.config.follow_up_mode;
@@ -422,13 +433,17 @@ impl Agent {
             Arc::new(AtomicBool::new(options.skip_initial_steering_poll));
 
         // 从 state 中取出构建 context 所需数据
-        let (system_prompt, messages, tool_instances) = {
+        let (system_prompt, messages) = {
             let s = self
                 .state
                 .try_lock()
                 .expect("Agent state lock should not be contended at prompt() time");
-            (s.system_prompt.clone(), s.messages.clone(), s.tools.clone())
+            (s.system_prompt.clone(), s.messages.clone())
         };
+        let tool_instances = live_tools
+            .read()
+            .map(|tools| tools.clone())
+            .unwrap_or_default();
 
         if let Ok(mut s) = self.state.try_lock() {
             s.is_streaming = true;
@@ -453,6 +468,12 @@ impl Agent {
             after_tool_call: self.config.after_tool_call.clone(),
             await_tool_approval: Some(build_tool_approval_waiter(pending_approvals)),
             runtime_delegate: self.config.runtime_delegate.clone(),
+            get_tools: Some(Arc::new(move || {
+                live_tools
+                    .read()
+                    .map(|tools| tools.clone())
+                    .unwrap_or_default()
+            })),
             get_steering_messages: Some(Arc::new(move || {
                 if skip_initial_steering_poll.swap(false, Ordering::SeqCst) {
                     return Vec::new();

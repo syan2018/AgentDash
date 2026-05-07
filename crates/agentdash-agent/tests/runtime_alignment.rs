@@ -29,13 +29,19 @@ enum ScriptStep {
 #[derive(Clone)]
 struct ScriptedBridge {
     scripts: Arc<Mutex<VecDeque<Vec<ScriptStep>>>>,
+    tool_snapshots: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 impl ScriptedBridge {
     fn new(scripts: Vec<Vec<ScriptStep>>) -> Self {
         Self {
             scripts: Arc::new(Mutex::new(scripts.into())),
+            tool_snapshots: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    async fn tool_snapshots(&self) -> Vec<Vec<String>> {
+        self.tool_snapshots.lock().await.clone()
     }
 }
 
@@ -43,8 +49,12 @@ impl ScriptedBridge {
 impl LlmBridge for ScriptedBridge {
     async fn stream_complete(
         &self,
-        _request: BridgeRequest,
+        request: BridgeRequest,
     ) -> Pin<Box<dyn Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        self.tool_snapshots
+            .lock()
+            .await
+            .push(request.tools.iter().map(|tool| tool.name.clone()).collect());
         let script = self
             .scripts
             .lock()
@@ -72,6 +82,58 @@ impl LlmBridge for ScriptedBridge {
 #[derive(Clone)]
 struct RecordingTool {
     executed: Arc<AtomicUsize>,
+}
+
+#[derive(Clone)]
+struct NamedTool {
+    name: String,
+    executed: Arc<AtomicUsize>,
+}
+
+impl NamedTool {
+    fn new(name: impl Into<String>, executed: Arc<AtomicUsize>) -> Self {
+        Self {
+            name: name.into(),
+            executed,
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for NamedTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "named test tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "value": { "type": "string" }
+            },
+            "required": ["value"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        args: serde_json::Value,
+        _cancel: CancellationToken,
+        _on_update: Option<agentdash_agent::ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        self.executed.fetch_add(1, Ordering::SeqCst);
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(format!("{}:{args}", self.name))],
+            is_error: false,
+            details: None,
+        })
+    }
 }
 
 #[async_trait]
@@ -131,12 +193,16 @@ fn assistant_text(text: &str) -> AgentMessage {
 }
 
 fn assistant_tool_call(id: &str, arguments: serde_json::Value) -> AgentMessage {
+    assistant_tool_call_named(id, "echo", arguments)
+}
+
+fn assistant_tool_call_named(id: &str, name: &str, arguments: serde_json::Value) -> AgentMessage {
     AgentMessage::Assistant {
         content: vec![],
         tool_calls: vec![ToolCallInfo {
             id: id.to_string(),
             call_id: Some(id.to_string()),
-            name: "echo".to_string(),
+            name: name.to_string(),
             arguments,
         }],
         stop_reason: Some(StopReason::ToolUse),
@@ -350,6 +416,104 @@ async fn continue_from_assistant_tail_consumes_follow_up_messages() {
         texts,
         vec!["initial", "seed", "follow up", "after follow up"]
     );
+}
+
+#[tokio::test]
+async fn running_agent_refreshes_tool_schema_before_next_llm_request() {
+    let first_request_started = Arc::new(Notify::new());
+    let release_first_response = Arc::new(Notify::new());
+    let bridge = ScriptedBridge::new(vec![
+        vec![
+            ScriptStep::Signal(first_request_started.clone()),
+            ScriptStep::Wait(release_first_response.clone()),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+                assistant_text("first pass"),
+            ))),
+        ],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("second pass")),
+        ))],
+    ]);
+    let old_tool: DynAgentTool =
+        Arc::new(NamedTool::new("old_tool", Arc::new(AtomicUsize::new(0))));
+    let new_tool: DynAgentTool =
+        Arc::new(NamedTool::new("new_tool", Arc::new(AtomicUsize::new(0))));
+    let mut agent = Agent::new(Arc::new(bridge.clone()), AgentConfig::default());
+    agent.set_runtime_delegate(Some(Arc::new(EmptyContinueDelegate::default())));
+    agent.set_tools(vec![old_tool]);
+
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("start"))
+        .expect("prompt should start");
+    first_request_started.notified().await;
+    agent.set_tools(vec![new_tool]);
+    release_first_response.notify_waiters();
+
+    handle
+        .await
+        .expect("task should not panic")
+        .expect("agent loop should succeed");
+
+    let snapshots = bridge.tool_snapshots().await;
+    assert_eq!(
+        snapshots,
+        vec![vec!["old_tool".to_string()], vec!["new_tool".to_string()]]
+    );
+}
+
+#[tokio::test]
+async fn running_agent_uses_live_tool_instances_for_tool_lookup() {
+    let first_request_started = Arc::new(Notify::new());
+    let release_first_response = Arc::new(Notify::new());
+    let new_tool_executed = Arc::new(AtomicUsize::new(0));
+    let bridge = ScriptedBridge::new(vec![
+        vec![
+            ScriptStep::Signal(first_request_started.clone()),
+            ScriptStep::Wait(release_first_response.clone()),
+            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+                assistant_text("first pass"),
+            ))),
+        ],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call_named(
+                "tool-new-1",
+                "new_tool",
+                serde_json::json!({ "value": "from live registry" }),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let old_tool: DynAgentTool =
+        Arc::new(NamedTool::new("old_tool", Arc::new(AtomicUsize::new(0))));
+    let new_tool: DynAgentTool = Arc::new(NamedTool::new("new_tool", new_tool_executed.clone()));
+    let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
+    agent.set_runtime_delegate(Some(Arc::new(EmptyContinueDelegate::default())));
+    agent.set_tools(vec![old_tool]);
+
+    let (_rx, handle) = agent
+        .prompt(AgentMessage::user("start"))
+        .expect("prompt should start");
+    first_request_started.notified().await;
+    agent.set_tools(vec![new_tool]);
+    release_first_response.notify_waiters();
+
+    let new_messages = handle
+        .await
+        .expect("task should not panic")
+        .expect("agent loop should succeed");
+
+    assert_eq!(new_tool_executed.load(Ordering::SeqCst), 1);
+    assert!(!new_messages.iter().any(|message| {
+        matches!(
+            message,
+            AgentMessage::ToolResult { is_error: true, .. }
+                if message
+                    .first_text()
+                    .is_some_and(|text| text.contains("Tool new_tool not found"))
+        )
+    }));
 }
 
 #[tokio::test]

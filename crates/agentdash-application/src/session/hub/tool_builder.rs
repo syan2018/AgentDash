@@ -115,6 +115,28 @@ impl SessionHub {
 
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
+            let profile_vfs = surface
+                .vfs
+                .clone()
+                .or_else(|| {
+                    runtime
+                        .turn_state
+                        .active_turn()
+                        .and_then(|turn| turn.session_frame.vfs.clone())
+                })
+                .or_else(|| {
+                    runtime
+                        .session_profile
+                        .as_ref()
+                        .map(|profile| profile.vfs.clone())
+                });
+            if let Some(vfs) = profile_vfs {
+                runtime.session_profile = Some(super::super::hub_support::SessionProfile {
+                    vfs,
+                    mcp_servers: surface.mcp_servers.clone(),
+                    flow_capabilities: surface.flow_capabilities.clone(),
+                });
+            }
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
                 turn.session_frame.mcp_servers = surface.mcp_servers;
                 turn.session_frame.vfs = surface.vfs;

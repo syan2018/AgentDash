@@ -71,6 +71,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 | Trigger | 核心约束 |
 |---|---|
 | `UserPromptSubmit` | **唯一**动态文本注入主通道（context_fragments + constraints + policies） |
+| `CapabilityChanged` | Workflow/phase 能力变化后的 out-of-band 动态注入只进入 session notification / steering；不得通过 live system prompt 热更表达 |
 | `BeforeTool` | `Ask` 必须在 tool call 边界同步挂起等待审批，不得退化为"先报错下一轮再猜" |
 | `BeforeStop` | 无 workflow 绑定时 `completion = None`，必须允许自然结束，不得因 `completion_satisfied = false` 错误阻止退出 |
 | `AfterTurn` | 不能重复注入 step 基线约束，避免永续 steering 导致无法抵达 `BeforeStop` |
@@ -115,6 +116,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 ❌ 在 agent_loop 里直接查 repo / workflow run / task status
 ❌ 前端只展示 workflow step 文本，不展示实际 runtime policies
 ❌ connector system prompt 重复展开 workflow constraint 静态副本
+❌ 为了让当前 running turn 看到 workflow/hook 动态变化而重设 system prompt
 ❌ 把 HookPolicyView 当第二套执行 authority
 ```
 

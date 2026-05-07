@@ -23,6 +23,10 @@
   steering messages（`TransformContextOutput.steering_messages`，只承动态指
   令，不承静态上下文）；③ 控制流副作用（`blocked` / `Deny` / `Rewrite`
   等）。
+- **System prompt 是稳定前缀，不是运行期动态注入面**。Workflow phase /
+  `CapabilityChanged` / runtime hook 的即时补充必须走动态 Agent 输入面
+  （steering / follow-up / pending action / notification），不得为了让当前
+  running turn 看见内容而重设 system prompt。
 - `HOOK_USER_MESSAGE_SKIP_SLOTS` 已废除；`session-capabilities://` 资源块注入
   user_blocks 的旧路径已拆除；companion_agents 只经 Bundle 一条路径。
 
@@ -73,6 +77,9 @@ pub struct SessionContextBundle {
 - **Inspector 可见**：`ContextAuditBus` 订阅同样会看到 turn_delta 产出的
   fragment（当 fragment scope 含 `FragmentScope::Audit` 时），便于前端按 turn
   粒度审计。
+- **运行期消费边界**：`turn_delta` 不是“当前 running turn 重设 system prompt”
+  的理由。若注入内容必须立刻影响模型，本轮消费通道应是动态消息；`turn_delta`
+  只作为结构化审计 / 下一轮 prompt 装配输入。
 
 ### 1.3 渲染入口
 
@@ -142,7 +149,7 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
 
 | 类别 | 语义 | 承载通道 | 消费者 |
 |---|---|---|---|
-| ① **Bundle 改写** | 静态 / 半静态上下文变化（companion_agents / workflow / constraint 等） | Hook snapshot → `Contribution` → Bundle `bootstrap_fragments`；运行期经 `fragment_bridge` 回灌 `turn_delta` | PiAgent / system_prompt_assembler / Inspector（经 ContextAuditBus） |
+| ① **Bundle 改写** | 静态 / 半静态上下文变化（companion_agents / workflow / constraint 等） | Hook snapshot → `Contribution` → Bundle `bootstrap_fragments`；运行期经 `fragment_bridge` 回灌 `turn_delta` | 下一轮 prompt 的 system prompt 装配 / Inspector（经 ContextAuditBus）；不驱动当前 running turn 重设 system prompt |
 | ② **Per-turn steering** | 本轮 agent loop 的动态 user message 增量（rolling instruction、runtime steering） | `TransformContextOutput.steering_messages: Vec<AgentMessage>` | Agent loop（直接追加到 user messages 队列，不进 system prompt） |
 | ③ **控制流副作用** | 阻断 / 拒绝 / 改写本轮请求或工具调用 | `TransformContextOutput.blocked: Option<String>` / `ToolCallDecision::Deny / Rewrite / Ask` / `StopDecision` | Agent loop（决定是否中止 / 改写 / 转询问） |
 
@@ -162,10 +169,10 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
 #### 3.1.2 运行期入口（`turn_delta`）
 
 - 目标态：`HookRuntimeDelegate.transform_context / after_turn / before_stop`
-  在 evaluate 后调 `hook_injection_to_fragment` 产出 `ContextFragment`，
-  通过新设计的 channel / 直接 mutate 回灌到当前 turn 的
-  `TurnFrame.context_bundle.turn_delta`（see PRD §"Bundle 主数据面" / §"Hook
-  三类语义分离"）。
+  在 evaluate 后调 `hook_injection_to_fragment` 产出 `ContextFragment`，用于
+  audit / turn_delta 记录；若内容需要当前 running turn 立刻消费，必须同时或改为
+  产出动态 steering / pending action / session notification，而不是重设
+  system prompt。
 - 当前实现位点：`hook_delegate.rs::emit_hook_injection_fragments` 经
   `ContextAuditBus` 把同样的 fragment emit 给审计总线（以 `AuditTrigger::HookInjection`
   标签），在架构意图中与 `turn_delta` 对齐（同一份 fragment 既进 Bundle 又
@@ -315,7 +322,7 @@ sequenceDiagram
         Agent->>Agent: 停止本轮、向用户报告 blocked 原因
     else 正常继续
         Agent->>Agent: 把 steering_messages 追加到 user messages
-        Agent->>Agent: 若 bundle_id 变化通知 connector（execution-context-frames.md §5）
+        Note over Agent: 不为运行期 hook injection 重设 system prompt
     end
 
     Note over Delegate,Bundle: after_turn / before_stop 遵循同构流程

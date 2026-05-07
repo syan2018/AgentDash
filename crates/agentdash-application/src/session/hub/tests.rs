@@ -8,7 +8,7 @@ use agentdash_agent_protocol::{
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_spi::hooks::{
-    ExecutionHookProvider, HookEvaluationQuery, HookResolution, HookTrigger,
+    ExecutionHookProvider, HookEvaluationQuery, HookInjection, HookResolution, HookTrigger,
     SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use agentdash_spi::{AgentConnector, ConnectorError, PromptPayload, StopReason};
@@ -368,6 +368,16 @@ async fn replace_current_capability_surface_updates_active_turn_flow_capabilitie
     assert_eq!(turn.flow_capabilities, target_flow);
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
     assert_eq!(turn.session_frame.vfs, Some(target_vfs));
+    let profile = sessions
+        .get(&session.id)
+        .and_then(|runtime| runtime.session_profile.as_ref())
+        .expect("session profile should be synchronized");
+    assert_eq!(profile.flow_capabilities, target_flow);
+    assert_eq!(profile.mcp_servers, turn.session_frame.mcp_servers);
+    assert_eq!(
+        profile.vfs,
+        turn.session_frame.vfs.clone().expect("profile vfs")
+    );
 }
 
 #[tokio::test]
@@ -571,6 +581,169 @@ impl ExecutionHookProvider for RecordingHookProvider {
         self.queries.lock().await.push(query);
         Ok(HookResolution::default())
     }
+}
+
+struct StaticResolutionHookProvider {
+    queries: Arc<TokioMutex<Vec<HookEvaluationQuery>>>,
+    resolution: HookResolution,
+}
+
+#[async_trait::async_trait]
+impl ExecutionHookProvider for StaticResolutionHookProvider {
+    async fn load_session_snapshot(
+        &self,
+        query: SessionHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(SessionHookSnapshot {
+            session_id: query.session_id,
+            ..SessionHookSnapshot::default()
+        })
+    }
+
+    async fn refresh_session_snapshot(
+        &self,
+        query: SessionHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(SessionHookSnapshot {
+            session_id: query.session_id,
+            ..SessionHookSnapshot::default()
+        })
+    }
+
+    async fn evaluate_hook(
+        &self,
+        query: HookEvaluationQuery,
+    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+        self.queries.lock().await.push(query);
+        Ok(self.resolution.clone())
+    }
+}
+
+#[derive(Default)]
+struct NotificationCapturingConnector {
+    notifications: Arc<TokioMutex<Vec<(String, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl AgentConnector for NotificationCapturingConnector {
+    fn connector_id(&self) -> &'static str {
+        "notification-capturing"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        _context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn push_session_notification(
+        &self,
+        session_id: &str,
+        message: String,
+    ) -> Result<(), ConnectorError> {
+        self.notifications
+            .lock()
+            .await
+            .push((session_id.to_string(), message));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let queries = Arc::new(TokioMutex::new(Vec::new()));
+    let injection = HookInjection {
+        slot: "workflow_context".to_string(),
+        content: "请使用 phase B 的工具约束继续推进。".to_string(),
+        source: "workflow:phase_b".to_string(),
+    };
+    let provider = Arc::new(StaticResolutionHookProvider {
+        queries: queries.clone(),
+        resolution: HookResolution {
+            injections: vec![injection.clone()],
+            ..HookResolution::default()
+        },
+    });
+    let connector = Arc::new(NotificationCapturingConnector::default());
+    let notifications = connector.notifications.clone();
+    let hub = test_hub(base.path().to_path_buf(), connector, Some(provider));
+    let session = hub
+        .create_session("capability-hook-injection")
+        .await
+        .expect("create");
+    let _rx = hub.ensure_session(&session.id).await;
+
+    hub.reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+        .await
+        .expect("hook runtime should load");
+    hub.emit_capability_changed_hook(&session.id, Some("turn-cap"), json!({ "phase": "phase_b" }))
+        .await;
+
+    let recorded_queries = queries.lock().await;
+    assert_eq!(recorded_queries.len(), 1);
+    assert_eq!(recorded_queries[0].trigger, HookTrigger::CapabilityChanged);
+    drop(recorded_queries);
+
+    let captured = notifications.lock().await;
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].0, session.id);
+    assert!(captured[0].1.contains("CapabilityChanged Hook 注入"));
+    assert!(
+        captured[0]
+            .1
+            .contains("[workflow_context] workflow:phase_b")
+    );
+    assert!(
+        captured[0]
+            .1
+            .contains("请使用 phase B 的工具约束继续推进。")
+    );
+    drop(captured);
+
+    let hook_session = hub
+        .get_hook_session_runtime(&session.id)
+        .await
+        .expect("hook runtime should remain available");
+    let trace = hook_session.trace();
+    assert_eq!(trace.len(), 1);
+    assert_eq!(trace[0].injections, vec![injection]);
 }
 
 #[test]

@@ -15,9 +15,37 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_domain::common::SystemPromptMode;
 use agentdash_spi::context::bundle::SessionContextBundle;
 use agentdash_spi::context::capability::SessionBaselineCapabilities;
-use agentdash_spi::context::injection::RUNTIME_AGENT_CONTEXT_SLOTS;
 use agentdash_spi::hooks::HookSessionRuntimeAccess;
 use agentdash_spi::{DiscoveredGuideline, Mount, MountCapability, Vfs};
+
+/// `Project Context` 渲染的业务上下文 slot。
+///
+/// VFS、工具、runtime policy、MCP server 等运行时表面由本文件后续的
+/// `Workspace` / `Available Tools` 章节统一渲染；这里排除这些 slot，避免同一
+/// mount/tool/MCP 能力在 system prompt 里重复出现。
+const PROJECT_CONTEXT_SLOTS: &[&str] = &[
+    "task",
+    "story",
+    "project",
+    "workspace",
+    "initial_context",
+    "persona",
+    "required_context",
+    "workflow",
+    "workflow_context",
+    "story_context",
+    "declared_source",
+    "static_fragment",
+    "requirements",
+    "constraints",
+    "constraint",
+    "codebase",
+    "references",
+    "project_guidelines",
+    "instruction",
+    "instruction_append",
+    "companion_agents",
+];
 
 /// assembler 的全部输入——只在 application 层组装，不穿透到 connector。
 pub struct SystemPromptInput<'a> {
@@ -106,59 +134,19 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
 
     // ── 4. Available Tools ──
     {
-        let has_builtin = !input.runtime_tools.is_empty();
-        let (platform_mcp_servers, user_mcp_servers): (Vec<_>, Vec<_>) = input
-            .mcp_servers
-            .iter()
-            .partition(|server| is_platform_mcp_server(server));
-        let has_platform_mcp = !platform_mcp_servers.is_empty();
-        let has_user_mcp = !user_mcp_servers.is_empty();
-
-        if has_builtin || has_platform_mcp || has_user_mcp {
+        if !input.runtime_tools.is_empty() {
             let mut tool_section =
                 String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
 
-            if has_builtin || has_platform_mcp {
-                tool_section.push_str("### Platform Tools\n\n");
-                if has_builtin {
-                    let builtin_lines = input
-                        .runtime_tools
-                        .iter()
-                        .map(describe_builtin_tool)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    tool_section.push_str(&builtin_lines);
-                    tool_section.push_str("\n\n");
-                }
-                if has_platform_mcp {
-                    let lines = platform_mcp_servers
-                        .iter()
-                        .map(|s| describe_mcp_server(s))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    tool_section.push_str(
-                        "以下平台 MCP Server 提供 Project/Story/Task/Workflow 级管理工具：\n\n",
-                    );
-                    tool_section.push_str(&lines);
-                    tool_section.push_str("\n\n");
-                }
-            }
-
-            if has_user_mcp {
-                let lines = user_mcp_servers
-                    .iter()
-                    .map(|s| describe_mcp_server(s))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                tool_section.push_str("### MCP Tools\n\n");
-                tool_section.push_str("以下 MCP Server 已注入当前会话，其工具可在需要时使用：\n\n");
-                tool_section.push_str(&lines);
-                tool_section.push_str("\n\n");
-            }
-
-            if has_builtin {
-                render_path_conventions(&mut tool_section, input.vfs, input.working_directory);
-            }
+            let tool_lines = input
+                .runtime_tools
+                .iter()
+                .map(describe_builtin_tool)
+                .collect::<Vec<_>>()
+                .join("\n");
+            tool_section.push_str(&tool_lines);
+            tool_section.push_str("\n\n");
+            render_path_conventions(&mut tool_section, input.vfs, input.working_directory);
             sections.push(tool_section);
         }
     }
@@ -181,14 +169,13 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
     sections.join("\n\n")
 }
 
-/// 渲染 Bundle 的"Project Context"段落——connector 可在 Bundle 变化时直接调用该 helper
-/// 取得结构化段落文本（保持与 `assemble_system_prompt` 一致的 slot 白名单 / 标题）。
+/// 渲染 Bundle 的"Project Context"段落。
 ///
 /// 返回 `None` 表示 Bundle 的 `RuntimeAgent` scope 下未产出任何可见内容。
 pub fn render_runtime_section(bundle: &SessionContextBundle) -> Option<String> {
     let project_context = bundle.render_section(
         agentdash_spi::FragmentScope::RuntimeAgent,
-        RUNTIME_AGENT_CONTEXT_SLOTS,
+        PROJECT_CONTEXT_SLOTS,
     );
     if project_context.trim().is_empty() {
         None
@@ -217,24 +204,6 @@ fn describe_mount(mount: &Mount) -> String {
         "- {}: {}（provider={}, root_ref={}, capabilities=[{}]）",
         mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
     )
-}
-
-fn is_platform_mcp_server(server: &agentdash_spi::SessionMcpServer) -> bool {
-    server.name.starts_with("agentdash-")
-}
-
-fn describe_mcp_server(server: &agentdash_spi::SessionMcpServer) -> String {
-    use agentdash_spi::McpTransportConfig;
-    if is_platform_mcp_server(server) {
-        return format!("- {}: 平台 MCP 管理工具", server.name);
-    }
-
-    let server_type = match &server.transport {
-        McpTransportConfig::Http { .. } => "http",
-        McpTransportConfig::Sse { .. } => "sse",
-        McpTransportConfig::Stdio { .. } => "stdio",
-    };
-    format!("- {} ({server_type})", server.name)
 }
 
 fn describe_builtin_tool(tool: &DynAgentTool) -> String {
@@ -362,10 +331,24 @@ fn build_hook_runtime_sections(hook_session: &dyn HookSessionRuntimeAccess) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::{McpTransportConfig, SessionMcpServer};
+    use agentdash_spi::{
+        ContextFragment, McpTransportConfig, MergeStrategy, SessionContextBundle, SessionMcpServer,
+    };
+
+    fn fragment(slot: &str, content: &str) -> ContextFragment {
+        ContextFragment {
+            slot: slot.to_string(),
+            label: format!("test_{slot}"),
+            order: 10,
+            strategy: MergeStrategy::Append,
+            scope: ContextFragment::default_scope(),
+            source: "test".to_string(),
+            content: content.to_string(),
+        }
+    }
 
     #[test]
-    fn platform_mcp_summary_hides_endpoint_details() {
+    fn mcp_server_declarations_are_not_rendered_as_prompt_context() {
         let mcp_servers = vec![SessionMcpServer {
             name: "agentdash-workflow-tools".to_string(),
             transport: McpTransportConfig::Http {
@@ -391,10 +374,30 @@ mod tests {
             hook_session: None,
         });
 
-        assert!(prompt.contains("agentdash-workflow-tools"));
-        assert!(prompt.contains("平台 MCP 管理工具"));
+        assert!(!prompt.contains("agentdash-workflow-tools"));
+        assert!(!prompt.contains("平台 MCP 管理工具"));
         assert!(!prompt.contains("/mcp/workflow/"));
         assert!(!prompt.contains("8de613e7"));
+    }
+
+    #[test]
+    fn project_context_excludes_runtime_surface_slots() {
+        let mut bundle = SessionContextBundle::new(uuid::Uuid::new_v4(), "task_start");
+        bundle.merge([
+            fragment("task", "## Task\n业务任务"),
+            fragment("vfs", "## VFS\n重复 mount 摘要"),
+            fragment("tools", "## Tool Visibility\n重复工具摘要"),
+            fragment("runtime_policy", "## Runtime Policy\n重复 runtime 策略"),
+            fragment("mcp_config", "## MCP\n重复 MCP 摘要"),
+        ]);
+
+        let rendered = render_runtime_section(&bundle).expect("project context");
+
+        assert!(rendered.contains("业务任务"));
+        assert!(!rendered.contains("重复 mount 摘要"));
+        assert!(!rendered.contains("重复工具摘要"));
+        assert!(!rendered.contains("重复 runtime 策略"));
+        assert!(!rendered.contains("重复 MCP 摘要"));
     }
 }
 

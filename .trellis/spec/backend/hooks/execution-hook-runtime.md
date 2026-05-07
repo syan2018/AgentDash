@@ -86,6 +86,9 @@ pub trait ExecutionHookProvider: Send + Sync {
   step / effective contract 发生变化，也必须触发 `CapabilityChanged` hook。原因是
   workflow guidance / context binding 属于动态上下文变化，不能依赖工具 surface
   delta 才投递给当前 running Agent。
+- PhaseNode 的 live apply、pending next turn、applied on next turn 三条路径必须
+  通过同一份 runtime context transition 结构派生 `capability_surface_changed`
+  事件 payload 与 pending metadata；禁止各入口手写互不一致的事件 JSON。
 - `CapabilityChanged` 的 live notification 必须通过顶层 connector 路由到真正持有
   live session 的子 connector（例如 `CompositeConnector -> PiAgentConnector`）。
   顶层 connector 返回 unsupported 会造成 trace 看得到但模型收不到。

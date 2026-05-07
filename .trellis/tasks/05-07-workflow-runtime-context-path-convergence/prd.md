@@ -139,3 +139,8 @@ Lifecycle advance / Phase activation
 3. 补齐 builtin template 版本/回放/roundtrip 防线。
 4. 用端到端测试覆盖真实 plan → apply 切换，断言 Agent 运行面而不只是仓储状态。
 5. 更新 `.trellis/spec/backend/*` 中的 capability、hook、bundle、workflow 文档，确保未来实现沿同一路径扩展。
+
+## 当前推进记录
+
+- 2026-05-07：完成第一轮命名盘点，详见 `surface-naming-inventory.md`。
+- 2026-05-07：新增 `RuntimeContextTransition` 值对象，统一 live apply、pending next turn、applied on next turn 三条路径的 `capability_surface_changed` 事件构建与 pending metadata 派生。

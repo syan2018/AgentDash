@@ -37,8 +37,7 @@ pub use assembler::{
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
 pub use capability_surface::{
-    CapabilitySurfaceDelta, CapabilitySurfaceEventInput, NamedEntityDelta, SetDelta,
-    VfsSurfaceDelta, build_capability_surface_event_payload,
+    CapabilitySurfaceDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
     compose_vfs_with_overlay_and_directives, compute_capability_surface_delta, merge_vfs_overlay,
 };
 pub use context::ExecutorResolution;

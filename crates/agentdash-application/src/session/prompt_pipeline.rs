@@ -11,9 +11,7 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::capability_surface::{
-    CapabilitySurfaceEventInput, build_capability_surface_event_payload, merge_vfs_overlay,
-};
+use super::capability_surface::{RuntimeContextTransition, merge_vfs_overlay};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
@@ -321,16 +319,19 @@ impl SessionHub {
                 vfs: Some(base_effective_vfs.clone()),
             };
             for transition in &pending_capability_transitions {
-                let payload = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+                let payload = RuntimeContextTransition {
                     phase_node: &transition.phase_node,
-                    run_id: Some(transition.run_id.to_string()),
+                    run_id: Some(transition.run_id),
                     lifecycle_key: Some(&transition.lifecycle_key),
                     apply_mode: "applied_on_next_turn",
                     before_surface: Some(&pending_event_before_surface),
                     after_surface: &transition.surface,
                     capability_keys: &transition.capability_keys,
                     steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
-                });
+                    surface_changed_override: None,
+                    steering_capability_delta: None,
+                }
+                .event_payload();
                 pending_event_before_surface = transition.surface.clone();
                 let _ = self
                     .emit_capability_surface_changed(&sid, Some(&turn_id), payload.clone())

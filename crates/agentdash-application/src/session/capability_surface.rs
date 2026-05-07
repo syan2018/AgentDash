@@ -2,10 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::MountDirective;
+use agentdash_spi::hooks::CapabilityDelta;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
-use super::types::CapabilitySurface;
+use super::types::{CapabilitySurface, PendingCapabilitySurfaceTransition};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,15 +78,114 @@ impl CapabilitySurfaceDelta {
     }
 }
 
-pub struct CapabilitySurfaceEventInput<'a> {
+/// 一次 workflow/runtime 上下文切换的结构化描述。
+///
+/// 它不是“又一个 surface”，而是把 phase 切换带来的 active workflow、能力表面、
+/// hook/event payload 和 pending metadata 统一放进同一个事务值对象。live apply、
+/// pending next turn、next-turn apply 都应从这里派生事件，避免多个入口各自拼 JSON。
+pub struct RuntimeContextTransition<'a> {
     pub phase_node: &'a str,
-    pub run_id: Option<String>,
+    pub run_id: Option<Uuid>,
     pub lifecycle_key: Option<&'a str>,
     pub apply_mode: &'a str,
     pub before_surface: Option<&'a CapabilitySurface>,
     pub after_surface: &'a CapabilitySurface,
     pub capability_keys: &'a BTreeSet<String>,
     pub steering_delivery: Value,
+    pub surface_changed_override: Option<bool>,
+    pub steering_capability_delta: Option<&'a CapabilityDelta>,
+}
+
+impl<'a> RuntimeContextTransition<'a> {
+    pub fn event_payload(&self) -> Value {
+        let delta = compute_capability_surface_delta(
+            self.before_surface,
+            self.after_surface,
+            self.capability_keys,
+        );
+        let surface_changed = self
+            .surface_changed_override
+            .unwrap_or(self.before_surface != Some(self.after_surface));
+        let after_vfs = self.after_surface.vfs.as_ref();
+        let current_clusters = self
+            .after_surface
+            .flow_capabilities
+            .enabled_clusters
+            .iter()
+            .map(|cluster| format!("{cluster:?}"))
+            .collect::<Vec<_>>();
+        let current_excluded = self
+            .after_surface
+            .flow_capabilities
+            .excluded_tools
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mcp_servers = self
+            .after_surface
+            .mcp_servers
+            .iter()
+            .map(|server| server.name.clone())
+            .collect::<Vec<_>>();
+        let mount_ids: Vec<String> = after_vfs
+            .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
+            .unwrap_or_default();
+        let mut payload = serde_json::json!({
+            "phase_node": self.phase_node,
+            "run_id": self.run_id.map(|id| id.to_string()),
+            "lifecycle_key": self.lifecycle_key,
+            "apply_mode": self.apply_mode,
+            "surface_changed": surface_changed,
+            "delta": delta,
+            "tool_capabilities": {
+                "current": self.capability_keys.iter().cloned().collect::<Vec<_>>(),
+            },
+            "tool_surface": {
+                "enabled_clusters": current_clusters,
+                "excluded_tools": current_excluded,
+            },
+            "mcp": {
+                "server_count": self.after_surface.mcp_servers.len(),
+                "servers": mcp_servers,
+            },
+            "vfs": {
+                "mounts": mount_ids,
+                "default_mount_id": after_vfs.and_then(|vfs| vfs.default_mount_id.clone()),
+                "links": after_vfs.map(|vfs| vfs.links.iter().map(link_key).collect::<Vec<_>>()).unwrap_or_default(),
+            },
+            "steering_delivery": self.steering_delivery.clone(),
+        });
+        if let (Some(object), Some(delta)) =
+            (payload.as_object_mut(), self.steering_capability_delta)
+        {
+            object.insert(
+                "steering_capability_delta".to_string(),
+                serde_json::json!({
+                    "added": delta.added.clone(),
+                    "removed": delta.removed.clone(),
+                }),
+            );
+        }
+        payload
+    }
+
+    pub fn to_pending_capability_surface_transition(
+        &self,
+        id: String,
+        source_turn_id: Option<String>,
+        created_at: i64,
+    ) -> Option<PendingCapabilitySurfaceTransition> {
+        Some(PendingCapabilitySurfaceTransition {
+            id,
+            run_id: self.run_id?,
+            lifecycle_key: self.lifecycle_key?.to_string(),
+            phase_node: self.phase_node.to_string(),
+            capability_keys: self.capability_keys.clone(),
+            surface: self.after_surface.clone(),
+            created_at,
+            source_turn_id,
+        })
+    }
 }
 
 pub fn compose_vfs_with_overlay_and_directives(
@@ -147,64 +248,6 @@ pub fn compute_capability_surface_delta(
             after.vfs.as_ref(),
         ),
     }
-}
-
-pub fn build_capability_surface_event_payload(input: CapabilitySurfaceEventInput<'_>) -> Value {
-    let delta = compute_capability_surface_delta(
-        input.before_surface,
-        input.after_surface,
-        input.capability_keys,
-    );
-    let surface_changed = input.before_surface != Some(input.after_surface);
-    let after_vfs = input.after_surface.vfs.as_ref();
-    let current_clusters = input
-        .after_surface
-        .flow_capabilities
-        .enabled_clusters
-        .iter()
-        .map(|cluster| format!("{cluster:?}"))
-        .collect::<Vec<_>>();
-    let current_excluded = input
-        .after_surface
-        .flow_capabilities
-        .excluded_tools
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    let mcp_servers = input
-        .after_surface
-        .mcp_servers
-        .iter()
-        .map(|server| server.name.clone())
-        .collect::<Vec<_>>();
-    let mount_ids: Vec<String> = after_vfs
-        .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
-        .unwrap_or_default();
-    serde_json::json!({
-        "phase_node": input.phase_node,
-        "run_id": input.run_id,
-        "lifecycle_key": input.lifecycle_key,
-        "apply_mode": input.apply_mode,
-        "surface_changed": surface_changed,
-        "delta": delta,
-        "tool_capabilities": {
-            "current": input.capability_keys.iter().cloned().collect::<Vec<_>>(),
-        },
-        "tool_surface": {
-            "enabled_clusters": current_clusters,
-            "excluded_tools": current_excluded,
-        },
-        "mcp": {
-            "server_count": input.after_surface.mcp_servers.len(),
-            "servers": mcp_servers,
-        },
-        "vfs": {
-            "mounts": mount_ids,
-            "default_mount_id": after_vfs.and_then(|vfs| vfs.default_mount_id.clone()),
-            "links": after_vfs.map(|vfs| vfs.links.iter().map(link_key).collect::<Vec<_>>()).unwrap_or_default(),
-        },
-        "steering_delivery": input.steering_delivery,
-    })
 }
 
 fn merge_vfs_overlay_into(base: &mut Vfs, overlay: &Vfs) {
@@ -406,16 +449,19 @@ mod tests {
             }),
         };
 
-        let payload = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
+        let payload = RuntimeContextTransition {
             phase_node: "review",
-            run_id: Some("run-1".to_string()),
+            run_id: Some(Uuid::new_v4()),
             lifecycle_key: Some("lc"),
             apply_mode: "live",
             before_surface: None,
             after_surface: &after_surface,
             capability_keys: &capability_keys,
             steering_delivery: serde_json::json!({"status": "not_required"}),
-        });
+            surface_changed_override: None,
+            steering_capability_delta: None,
+        }
+        .event_payload();
 
         assert!(payload.get("tool_capabilities").is_some());
         assert!(payload.get("tool_surface").is_some());

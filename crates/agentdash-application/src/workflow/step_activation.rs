@@ -33,8 +33,8 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::{
-    CapabilitySurface, CapabilitySurfaceEventInput, SessionHub,
-    build_capability_surface_event_payload, compose_vfs_with_overlay_and_directives,
+    CapabilitySurface, RuntimeContextTransition, SessionHub,
+    compose_vfs_with_overlay_and_directives,
 };
 use crate::vfs::build_lifecycle_mount_with_ports;
 
@@ -441,26 +441,19 @@ async fn emit_capability_surface_change(
         }
     };
 
-    let mut capability_surface_event =
-        build_capability_surface_event_payload(CapabilitySurfaceEventInput {
-            phase_node: phase_node_key,
-            run_id: None,
-            lifecycle_key: None,
-            apply_mode,
-            before_surface,
-            after_surface,
-            capability_keys: &activation.capability_keys,
-            steering_delivery,
-        });
-    if let Some(object) = capability_surface_event.as_object_mut() {
-        object.insert(
-            "steering_capability_delta".to_string(),
-            serde_json::json!({
-                "added": notification_delta.added.clone(),
-                "removed": notification_delta.removed.clone(),
-            }),
-        );
+    let capability_surface_event = RuntimeContextTransition {
+        phase_node: phase_node_key,
+        run_id: None,
+        lifecycle_key: None,
+        apply_mode,
+        before_surface,
+        after_surface,
+        capability_keys: &activation.capability_keys,
+        steering_delivery,
+        surface_changed_override: None,
+        steering_capability_delta: Some(notification_delta),
     }
+    .event_payload();
 
     session_hub
         .emit_capability_surface_changed(session_id, turn_id, capability_surface_event.clone())

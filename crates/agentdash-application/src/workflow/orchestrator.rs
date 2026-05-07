@@ -20,8 +20,8 @@ use uuid::Uuid;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    CapabilitySurfaceEventInput, LifecycleNodeSpec, PromptSessionRequest, UserPromptInput,
-    build_capability_surface_event_payload, compose_lifecycle_node_with_audit, finalize_request,
+    LifecycleNodeSpec, PromptSessionRequest, RuntimeContextTransition, UserPromptInput,
+    compose_lifecycle_node_with_audit, finalize_request,
 };
 
 use super::session_association::{
@@ -677,20 +677,36 @@ impl LifecycleOrchestrator {
             let surface =
                 build_capability_surface_for_activation(&activation, base_surface.as_ref());
             let surface_changed = base_surface.as_ref() != Some(&surface);
-            let transition = crate::session::PendingCapabilitySurfaceTransition {
-                id: format!("phase-{}-{}", phase.node_key, uuid::Uuid::new_v4()),
-                run_id: run.id,
-                lifecycle_key: phase.lifecycle_key.clone(),
-                phase_node: phase.node_key.clone(),
-                capability_keys: activation.capability_keys.clone(),
-                surface: surface.clone(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                source_turn_id: turn_id.map(ToString::to_string),
+            let transition_id = format!("phase-{}-{}", phase.node_key, uuid::Uuid::new_v4());
+            let transition = RuntimeContextTransition {
+                phase_node: &phase.node_key,
+                run_id: Some(run.id),
+                lifecycle_key: Some(&phase.lifecycle_key),
+                apply_mode: "pending_next_turn",
+                before_surface: base_surface.as_ref(),
+                after_surface: &surface,
+                capability_keys: &activation.capability_keys,
+                steering_delivery: serde_json::json!({
+                    "status": "deferred_until_next_turn"
+                }),
+                surface_changed_override: Some(surface_changed),
+                steering_capability_delta: None,
+            };
+            let Some(pending_transition) = transition.to_pending_capability_surface_transition(
+                transition_id,
+                turn_id.map(ToString::to_string),
+                chrono::Utc::now().timestamp_millis(),
+            ) else {
+                warnings.push(format!(
+                    "PhaseNode `{}` pending transition 缺少 run/lifecycle 元数据",
+                    phase.node_key
+                ));
+                continue;
             };
 
             if let Err(error) = self
                 .session_hub
-                .enqueue_pending_capability_surface_transition(&run.session_id, transition)
+                .enqueue_pending_capability_surface_transition(&run.session_id, pending_transition)
                 .await
             {
                 warnings.push(format!(
@@ -700,24 +716,7 @@ impl LifecycleOrchestrator {
                 continue;
             }
 
-            let mut event = build_capability_surface_event_payload(CapabilitySurfaceEventInput {
-                phase_node: &phase.node_key,
-                run_id: Some(run.id.to_string()),
-                lifecycle_key: Some(&phase.lifecycle_key),
-                apply_mode: "pending_next_turn",
-                before_surface: base_surface.as_ref(),
-                after_surface: &surface,
-                capability_keys: &activation.capability_keys,
-                steering_delivery: serde_json::json!({
-                    "status": "deferred_until_next_turn"
-                }),
-            });
-            if let Some(object) = event.as_object_mut() {
-                object.insert(
-                    "surface_changed".to_string(),
-                    serde_json::json!(surface_changed),
-                );
-            }
+            let event = transition.event_payload();
             if let Err(error) = self
                 .session_hub
                 .emit_capability_surface_changed(&run.session_id, turn_id, event)

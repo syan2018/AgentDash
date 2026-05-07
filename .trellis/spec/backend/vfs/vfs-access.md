@@ -1,8 +1,8 @@
-# Scenario: 统一 Address Space / Runtime Access Layer（跨层契约）
+# Scenario: 统一 VFS / Runtime Access Layer（跨层契约）
 
 ### 1. Scope / Trigger
 
-- **Trigger**: 当功能同时涉及云端上下文注入、本机文件访问、Agent 运行时工具调用、多 workspace 挂载或非物理 workspace（KM / Snapshot / 资源库）时，必须使用统一的 Address Space 抽象，而不是继续新增独立访问链路。
+- **Trigger**: 当功能同时涉及云端上下文注入、本机文件访问、Agent 运行时工具调用、多 workspace 挂载或非物理 workspace（KM / Snapshot / 资源库）时，必须使用统一的 VFS 抽象，而不是继续新增独立访问链路。
 - **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.`*、本机 `ToolExecutor`、PiAgent runtime tools、`Project / Story` 级上下文容器、未来 KM warp。
 
 ---
@@ -43,7 +43,7 @@ trait VfsProvider {
 
 #### 2.2.1 命名注意（当前代码现状）
 
-- 当前代码里的 `agentdash-injection::VfsProvider` 仅用于暴露 address space descriptor，服务 `/api/vfs` 能力发现。
+- 当前代码里的 `agentdash-injection::VfsProvider` 仅用于暴露 VFS descriptor，服务 `/api/vfs` 能力发现。
 - 它还不是本规范这里的统一读写 provider，不承担 `read / write / list / search / exec`。
 - 后续落地时必须显式决定是：
   - 扩展现有 descriptor provider
@@ -248,7 +248,7 @@ trait VfsProvider {
 - `path` 为绝对路径或含 `..` 时必须被拒绝。
 - provider 能力矩阵正确生效：无 `exec` 的 mount 不允许执行命令。
 - `inline_fs` 至少支持 `read / list / search`，且结果与 mount/path 模型一致。
-- `lifecycle_vfs` 支持 `read / list / search / write`（写入仅限 `artifacts/{port_key}` 子路径）。
+- `lifecycle_vfs` 支持 `read / list / search / write`（写入限 `artifacts/{port_key}` 与 `records/{name}` / `nodes/{step_key}/records/{name}` 子路径）。
 
 #### Lifecycle VFS Provider（`lifecycle_vfs`）
 
@@ -266,14 +266,14 @@ trait VfsProvider {
 
 **写入约束**：
 
-- 仅 `artifacts/{port_key}` 路径可写
-- 可写范围由 mount metadata 中的 `writable_port_keys` 控制（即当前 node 的 output port keys）
-- 无 `writable_port_keys` 时整个 mount 为只读
+- `artifacts/{port_key}` 路径可写，可写范围由 mount metadata 中的 `writable_port_keys` 控制（即当前 node 的 output port keys）
+- `records/{name}` 与 `nodes/{step_key}/records/{name}` 作为 journey record overlay 可写，用于把当前推理/审阅记录沉淀回 lifecycle 投影空间
+- 无 `writable_port_keys` 时，`artifacts/*` 不可写；records overlay 仍按 provider 路径规则开放
 
 **构建函数**：
 
-- `build_lifecycle_mount(run_id, lifecycle_key)` — 只读模式（兼容旧调用）
-- `build_lifecycle_mount_with_ports(run_id, lifecycle_key, &writable_port_keys)` — 写入模式
+- `build_lifecycle_mount(run_id, lifecycle_key)` — 构建 lifecycle 投影 mount，`artifacts/*` 无 port 白名单
+- `build_lifecycle_mount_with_ports(run_id, lifecycle_key, &writable_port_keys)` — 构建 lifecycle 投影 mount，并开放指定 port output 写入
 
 #### relay / local provider
 
@@ -312,14 +312,14 @@ future snapshot -> snapshot_tool.*
 - 权限和错误语义无法统一
 - 多 workspace / 非物理空间难以复用
 
-#### Correct：先统一到底层 Address Space，再暴露稳定工具面
+#### Correct：先统一到底层 VFS，再暴露稳定工具面
 
 ```text
 declared source
 runtime tool
 frontend read-only browse
         ↓
-Address Space Provider
+VFS Provider
         ↓
 relay_fs / local_fs / km / snapshot
 ```
@@ -353,7 +353,7 @@ relay_fs / local_fs / km / snapshot
 
 **Decision**:
 
-- 底层统一为 Address Space Provider
+- 底层统一为 VFS Provider
 - 上层统一为 `mount + relative path`
 - Agent 工具保持小而稳定
 
@@ -417,7 +417,7 @@ async fn stat(&self, mount: &Mount, path: &str, ctx: &MountOperationContext)
 **当前实现**：
 
 - `lifecycle_vfs` 的 `active/*`、`nodes/*`、`runs/*` 路径已标记 `is_virtual = true`
-- `lifecycle_vfs` 的 `artifacts/*` 是真实 inline_file 存储，不是 virtual
+- `lifecycle_vfs` 的 `artifacts/*` 与 `records/*` 是真实 inline_file overlay 存储，不是 virtual
 
 ### 8.3 Mount Link（声明式 symlink alias）
 

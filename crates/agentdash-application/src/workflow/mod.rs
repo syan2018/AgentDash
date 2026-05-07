@@ -21,6 +21,10 @@ pub use definition::{
 };
 pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, materialize_step_summary};
+pub use lifecycle::mount::{
+    append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,
+    writable_port_keys_for_active_workflow,
+};
 pub use orchestrator::{
     AdvanceCurrentNodeInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,

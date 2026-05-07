@@ -93,7 +93,7 @@ run_server(plugins).await
 
 - 这些点分别位于 descriptor discovery、声明式来源解析、外部内容读取三个不同层级
 - 它们尚未被统一到一个稳定的 runtime provider / mount model 中
-- 如果现在冻结为外部合同，未来统一 Address Space 时几乎必然带来破坏性迁移
+- 如果现在冻结为外部合同，未来统一 VFS 时几乎必然带来破坏性迁移
 
 ### 3.3 Internal
 
@@ -115,7 +115,7 @@ run_server(plugins).await
 - 用于开始切出宿主与插件之间的边界
 - 还需要经过 first-party 验证与依赖收敛
 
-### 4.2 不要把过渡态 Address Space 抽象直接冻结给企业仓
+### 4.2 不要把过渡态 VFS 抽象直接冻结给企业仓
 
 根据 [vfs-access.md](../vfs/vfs-access.md)，当前
 `agentdash_injection::VfsProvider` 只是 descriptor / discovery provider，
@@ -268,9 +268,9 @@ contract crate 的职责是：
 
 ---
 
-## 10. 与 Address Space 长期方向的关系
+## 10. 与 VFS 长期方向的关系
 
-插件体系必须服从统一 Address Space 的长期方向，而不是绕开它。
+插件体系必须服从统一 VFS 的长期方向，而不是绕开它。
 
 根据 [vfs-access.md](../vfs/vfs-access.md)：
 
@@ -280,7 +280,7 @@ contract crate 的职责是：
 因此对企业内容扩展的正确节奏是：
 
 1. 先把外部稳定合同收缩到最小
-2. 再在开源仓内部推进 Address Space runtime provider 收敛
+2. 再在开源仓内部推进 VFS runtime provider 收敛
 3. 最后再决定 descriptor / source resolver / external content client 的稳定外部形态
 
 **不要倒过来做**，否则会把过渡态模型冻结到企业仓。

@@ -73,7 +73,7 @@ Agent完成 → ExecutionManager.reportCompletion(taskId)
 | Validation ↔ Orchestration | 验证失败后的重试vs暂停决策 |
 | Backend ↔ Frontend | 实时状态推送协议、断线重连 |
 | Connection ↔ State | 多后端数据隔离、会话失效 |
-| Cloud ↔ Local Address Space | mount 语义不一致、绝对路径泄漏、context 与 runtime tool 分叉 |
+| Cloud ↔ Local VFS | mount 语义不一致、绝对路径泄漏、context 与 runtime tool 分叉 |
 <!-- PROJECT-SPECIFIC-END -->
 
 ### Step 3: Define Contracts

@@ -18,6 +18,9 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::vfs::{
     SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
 };
+use agentdash_application::workflow::{
+    ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
+};
 
 use crate::{
     app_state::AppState,
@@ -188,38 +191,54 @@ pub(crate) async fn build_project_session_context_response(
     } else {
         None
     };
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.session_binding_repo.as_ref(),
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+    )
+    .await
+    .map_err(ApiError::Internal)?;
 
-    let vfs = if use_vfs {
-        let mut vfs = state
-            .services
-            .vfs_service
-            .build_vfs(
-                project,
-                None,
-                workspace.as_ref(),
-                SessionMountTarget::Project,
-                resolved_config.as_ref().map(|c| c.executor.as_str()),
-            )
-            .map_err(ApiError::BadRequest)?;
+    let mut vfs = if use_vfs {
+        Some(
+            state
+                .services
+                .vfs_service
+                .build_vfs(
+                    project,
+                    None,
+                    workspace.as_ref(),
+                    SessionMountTarget::Project,
+                    resolved_config.as_ref().map(|c| c.executor.as_str()),
+                )
+                .map_err(ApiError::BadRequest)?,
+        )
+    } else {
+        None
+    };
 
+    if let Some(vfs) = vfs.as_mut() {
         // Agent 级容器管控：白名单过滤 + 知识库注入
         if let Some(link) = &agent_link {
-            filter_project_containers_by_whitelist(&mut vfs, link);
-            append_agent_knowledge_mounts(&mut vfs, link).map_err(ApiError::Internal)?;
+            filter_project_containers_by_whitelist(vfs, link);
+            append_agent_knowledge_mounts(vfs, link).map_err(ApiError::Internal)?;
         }
+    }
 
+    vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
+
+    if let Some(vfs) = vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             project.id,
-            &mut vfs,
+            vfs,
             &session_meta.visible_canvas_mount_ids,
         )
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-        Some(vfs)
-    } else {
-        None
-    };
+    }
     let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
         agentdash_application::session::extract_agent_mcp_entries(
             &project_agent.preset_mcp_servers,
@@ -291,7 +310,7 @@ pub(crate) async fn build_project_session_context_response(
             agent_key: project_agent.key,
             agent_display_name: project_agent.display_name,
         },
-        workflow: None,
+        workflow: active_workflow,
     });
 
     let snapshot = derive_session_context_snapshot(&plan);

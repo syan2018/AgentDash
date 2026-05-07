@@ -67,7 +67,7 @@ use crate::vfs::{
 };
 use crate::workflow::{
     ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
-    load_port_output_map,
+    ensure_active_workflow_lifecycle_mount, load_port_output_map,
 };
 use crate::workspace::BackendAvailability;
 
@@ -669,6 +669,9 @@ pub struct OwnerBootstrapSpec<'a> {
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
     pub agent_declared_capabilities: Option<Vec<String>>,
+    /// 当前 session 已绑定的活跃 workflow run。Project/Story owner session 在
+    /// bootstrap 或续跑时可通过它获得 lifecycle VFS 与 workflow 能力基线。
+    pub active_workflow: Option<ActiveWorkflowProjection>,
     /// Session lifecycle 三态判定结果,决定 context bundle / prompt_blocks 组装方式。
     pub lifecycle: OwnerPromptLifecycle,
     /// 审计总线用于索引的 session key（SessionHub 分配的 `sess-<ms>-<short>`）。
@@ -886,9 +889,10 @@ impl<'a> SessionRequestAssembler<'a> {
     ) -> Result<PreparedSessionInputs, String> {
         let project_id = spec.owner.project_id();
         let owner_ctx = spec.owner.owner_ctx();
+        let active_workflow = spec.active_workflow.clone();
 
         // ── 1. VFS 构建 + canvas 挂载 ──
-        let mut vfs = match spec.existing_vfs {
+        let vfs = match spec.existing_vfs {
             Some(vfs) => Some(vfs),
             None => {
                 let target = spec.owner.mount_target();
@@ -917,6 +921,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 Some(built)
             }
         };
+        let mut vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
         if let Some(space) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 self.canvas_repo,
@@ -929,14 +934,25 @@ impl<'a> SessionRequestAssembler<'a> {
         }
 
         // ── 2. workflow 上下文解析 → 能力集 ──
-        let workflow_directives =
-            resolve_owner_workflow_tool_directives(self.repos, &spec.owner).await;
-        let workflow_ctx = match workflow_directives {
-            Some(directives) => SessionWorkflowContext {
+        let workflow_ctx = if let Some(workflow) = active_workflow.as_ref() {
+            SessionWorkflowContext {
                 has_active_workflow: true,
-                workflow_tool_directives: Some(directives),
-            },
-            None => SessionWorkflowContext::NONE,
+                workflow_tool_directives: workflow
+                    .primary_workflow
+                    .as_ref()
+                    .map(tool_directives_from_active_workflow)
+                    .or_else(|| Some(Vec::new())),
+            }
+        } else {
+            let workflow_directives =
+                resolve_owner_workflow_tool_directives(self.repos, &spec.owner).await;
+            match workflow_directives {
+                Some(directives) => SessionWorkflowContext {
+                    has_active_workflow: true,
+                    workflow_tool_directives: Some(directives),
+                },
+                None => SessionWorkflowContext::NONE,
+            }
         };
 
         // ── 3. CapabilityResolver ──
@@ -1115,34 +1131,21 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 3. VFS(workspace + lifecycle mount) ──
         let vfs = if use_cloud_native {
-            let mut space = self
-                .vfs_service
-                .build_vfs(
-                    spec.project,
-                    Some(spec.story),
-                    spec.workspace,
-                    SessionMountTarget::Task,
-                    effective_agent_type,
-                )
-                .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
-
-            if let Some(active_workflow) = workflow.as_ref() {
-                let writable_port_keys: Vec<String> = active_workflow
-                    .active_step
-                    .output_ports
-                    .iter()
-                    .map(|p| p.key.clone())
-                    .collect();
-                space.mounts.push(build_lifecycle_mount_with_ports(
-                    active_workflow.run.id,
-                    &active_workflow.lifecycle.key,
-                    &writable_port_keys,
-                ));
-            }
-            Some(space)
+            Some(
+                self.vfs_service
+                    .build_vfs(
+                        spec.project,
+                        Some(spec.story),
+                        spec.workspace,
+                        SessionMountTarget::Task,
+                        effective_agent_type,
+                    )
+                    .map_err(|error| TaskExecutionError::Internal(error.to_string()))?,
+            )
         } else {
             None
         };
+        let vfs = ensure_active_workflow_lifecycle_mount(vfs, workflow.as_ref());
 
         // ── 4. 解析 context bindings(需要 vfs 已就绪) ──
         let resolved_bindings = match (&vfs, &workflow) {

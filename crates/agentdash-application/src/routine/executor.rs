@@ -506,6 +506,7 @@ impl RoutineExecutor {
                 existing_vfs: None,
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
                 agent_declared_capabilities,
+                active_workflow: None,
                 lifecycle,
                 audit_session_key: Some(session_id.to_string()),
             })

@@ -97,7 +97,7 @@ frontend/src/
 │   ├── executor.ts                 # ExecutorConfig + promptSession API
 │   ├── session.ts                  # Session 管理 API
 │   ├── workflow.ts                 # Workflow 管理 API
-│   ├── vfs.ts            # Address Space API
+│   ├── vfs.ts            # VFS API
 │   ├── browseDirectory.ts          # 目录浏览 API
 │   ├── directory.ts                # 目录服务
 │   ├── filePicker.ts               # 文件选择器 API

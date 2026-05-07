@@ -1188,6 +1188,15 @@ async fn build_story_owner_prompt_request(
         None, // RepositoryRehydrate(SystemContext) 预算在 compose 内;此处传 None 让 compose 走默认
     );
     let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.session_binding_repo.as_ref(),
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+    )
+    .await
+    .map_err(ApiError::Internal)?;
 
     let assembler = build_session_assembler(state);
     let prepared = assembler
@@ -1204,6 +1213,7 @@ async fn build_story_owner_prompt_request(
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities: None,
+            active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
         })
@@ -1268,6 +1278,15 @@ async fn build_project_owner_prompt_request(
 
     let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
     let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
+    let active_workflow = resolve_active_workflow_projection_for_session(
+        session_id,
+        state.repos.session_binding_repo.as_ref(),
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+    )
+    .await
+    .map_err(ApiError::Internal)?;
 
     let assembler = build_session_assembler(state);
     let prepared = assembler
@@ -1286,6 +1305,7 @@ async fn build_project_owner_prompt_request(
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
             agent_declared_capabilities,
+            active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
         })

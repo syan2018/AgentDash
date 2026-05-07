@@ -41,7 +41,7 @@
 - `session/` — 流式协议、Pi Agent 流式合并
 - `hooks/` — Hook Runtime 跨层契约、Rhai 脚本引擎
 - `workflow/` — Lifecycle Edge 设计
-- `vfs/` — 统一 Address Space
+- `vfs/` — 统一 VFS
 - `capability/` — 工具能力管线、Plugin API、LLM Model Config
 
 ### 跨层契约

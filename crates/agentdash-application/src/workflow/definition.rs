@@ -182,6 +182,17 @@ mod tests {
         assert_eq!(edge.from_node, "plan");
         assert_eq!(edge.to_node, "apply");
 
+        let plan_workflow = bundle
+            .workflows
+            .iter()
+            .find(|workflow| workflow.key == "builtin_workflow_admin_plan")
+            .expect("plan workflow");
+        let apply_workflow = bundle
+            .workflows
+            .iter()
+            .find(|workflow| workflow.key == "builtin_workflow_admin_apply")
+            .expect("apply workflow");
+
         // 工具能力声明统一进入 workflow.contract.capability_config.tool_directives。
         // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project
         // session 在启动时拿到 workflow 管理工具集。
@@ -197,5 +208,31 @@ mod tests {
                 workflow.key
             );
         }
+
+        let plan_tool_directives = &plan_workflow.contract.capability_config.tool_directives;
+        assert!(
+            plan_tool_directives.iter().any(|d| d.is_remove()
+                && d.path().to_qualified_string()
+                    == "mcp:workflow_management::upsert_workflow_tool"),
+            "Plan 阶段必须屏蔽 workflow 写入工具，才能直观看到 Apply 阶段能力切换"
+        );
+        assert!(
+            plan_tool_directives.iter().any(|d| d.is_remove()
+                && d.path().to_qualified_string()
+                    == "mcp:workflow_management::upsert_lifecycle_tool"),
+            "Plan 阶段必须屏蔽 lifecycle 写入工具，才能直观看到 Apply 阶段能力切换"
+        );
+
+        let apply_tool_directives = &apply_workflow.contract.capability_config.tool_directives;
+        assert!(
+            apply_tool_directives.iter().all(|d| {
+                !d.is_remove()
+                    || (d.path().to_qualified_string()
+                        != "mcp:workflow_management::upsert_workflow_tool"
+                        && d.path().to_qualified_string()
+                            != "mcp:workflow_management::upsert_lifecycle_tool")
+            }),
+            "Apply 阶段必须保留 workflow/lifecycle 写入工具"
+        );
     }
 }

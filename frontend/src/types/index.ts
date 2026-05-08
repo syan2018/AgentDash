@@ -59,30 +59,41 @@ export function isAuthMode(value: unknown): value is AuthMode {
   return value === "personal" || value === "enterprise";
 }
 
-export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
+export type CapabilityKey =
+  | "file_read"
+  | "file_write"
+  | "shell_execute"
+  | "workflow"
+  | "collaboration"
+  | "canvas";
 
-export type ToolClusterGroup = "basic" | "extended";
+export type CapabilityDirective = { add: CapabilityKey } | { remove: CapabilityKey };
 
-export interface ToolClusterOption {
-  value: ToolCluster;
+export type CapabilityGroup = "basic" | "extended";
+
+export interface CapabilityOption {
+  value: CapabilityKey;
   label: string;
   description: string;
-  group: ToolClusterGroup;
+  group: CapabilityGroup;
 }
 
-export const TOOL_CLUSTER_GROUPS: Array<{ key: ToolClusterGroup; label: string }> = [
+export const CAPABILITY_GROUPS: Array<{ key: CapabilityGroup; label: string }> = [
   { key: "basic", label: "基础能力" },
   { key: "extended", label: "扩展能力" },
 ];
 
-export const TOOL_CLUSTER_OPTIONS: ToolClusterOption[] = [
-  { value: "read", label: "只读访问", description: "文件读取、目录列表、搜索", group: "basic" },
-  { value: "write", label: "文件写入", description: "文件写入、补丁应用", group: "basic" },
-  { value: "execute", label: "命令执行", description: "Shell 命令执行", group: "basic" },
+export const CAPABILITY_OPTIONS: CapabilityOption[] = [
+  { value: "file_read", label: "只读访问", description: "文件读取、目录列表、搜索", group: "basic" },
+  { value: "file_write", label: "文件写入", description: "文件写入、补丁应用", group: "basic" },
+  { value: "shell_execute", label: "命令执行", description: "Shell 命令执行", group: "basic" },
   { value: "workflow", label: "工作流", description: "Workflow 产出汇报", group: "extended" },
   { value: "collaboration", label: "协作", description: "Companion 派发、回传、Hook 审核", group: "extended" },
   { value: "canvas", label: "Canvas", description: "Canvas 资产创建与展示", group: "extended" },
 ];
+
+/** @deprecated 运行态 ToolCluster 名称，仅用于旧 event 展示 */
+export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
 
 export type SystemPromptMode = "append" | "override";
 

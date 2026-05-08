@@ -53,15 +53,15 @@ pub fn preset_uses_relay(preset: &McpPreset) -> bool {
     preset.route_policy.uses_relay(&preset.transport)
 }
 
-pub async fn resolve_config_mcp_preset_refs(
+/// 从 preset key 列表解析出对应的 `SessionMcpServer` 列表。
+pub async fn resolve_preset_mcp_refs(
     repo: &dyn McpPresetRepository,
     project_id: Uuid,
-    config: &serde_json::Value,
+    keys: &[String],
 ) -> Result<Vec<SessionMcpServer>, String> {
-    let raw_list = match config.get("mcp_preset_keys").and_then(|v| v.as_array()) {
-        Some(list) => list,
-        None => return Ok(vec![]),
-    };
+    if keys.is_empty() {
+        return Ok(vec![]);
+    }
 
     let presets = repo
         .list_by_project(project_id)
@@ -75,12 +75,11 @@ pub async fn resolve_config_mcp_preset_refs(
     let mut mcp_servers = Vec::new();
     let mut seen = HashSet::new();
 
-    for (index, entry) in raw_list.iter().enumerate() {
-        let key = entry
-            .as_str()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("mcp_preset_keys[{index}] 缺失或不是非空字符串"))?;
+    for (index, key) in keys.iter().enumerate() {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("mcp_preset_keys[{index}] 不能为空字符串"));
+        }
         let preset = preset_map
             .get(key)
             .ok_or_else(|| format!("mcp_preset_keys[{index}] 引用了不存在的 preset: {key}"))?;

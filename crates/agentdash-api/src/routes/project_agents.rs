@@ -512,7 +512,7 @@ pub struct ProjectAgentLinkResponse {
     pub agent_id: String,
     pub agent_name: String,
     pub agent_type: String,
-    pub merged_config: serde_json::Value,
+    pub merged_config: agentdash_domain::common::AgentPresetConfig,
     pub config_override: Option<serde_json::Value>,
     pub default_lifecycle_key: Option<String>,
     pub is_default_for_story: bool,
@@ -530,7 +530,7 @@ fn build_link_response(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentLi
         agent_id: link.agent_id.to_string(),
         agent_name: agent.name.clone(),
         agent_type: agent.agent_type.clone(),
-        merged_config: link.merged_config(&agent.base_config),
+        merged_config: link.merged_preset_config(agent),
         config_override: link.config_override.clone(),
         default_lifecycle_key: link.default_lifecycle_key.clone(),
         is_default_for_story: link.is_default_for_story,
@@ -859,29 +859,23 @@ pub(crate) async fn build_agent_bridge(
     agent: &Agent,
     link: &ProjectAgentLink,
 ) -> Result<ProjectAgentBridge, ApiError> {
-    let merged_config = link.merged_config(&agent.base_config);
-    let executor_config = executor_config_from_agent_config(&agent.agent_type, &merged_config);
+    let preset = link.merged_preset_config(agent);
+    let executor_config = preset.to_agent_config(&agent.agent_type);
 
-    let display_name = merged_config
-        .get("display_name")
-        .and_then(|v| v.as_str())
+    let display_name = preset
+        .display_name
+        .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or(&agent.name)
         .to_string();
 
-    let description = merged_config
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
+    let description = format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type);
 
-    let preset_mcp_servers = agentdash_application::mcp_preset::resolve_config_mcp_preset_refs(
+    let preset_mcp_servers = agentdash_application::mcp_preset::resolve_preset_mcp_refs(
         state.repos.mcp_preset_repo.as_ref(),
         link.project_id,
-        &merged_config,
+        preset.mcp_preset_keys.as_deref().unwrap_or_default(),
     )
     .await
     .map_err(|error| {
@@ -900,50 +894,6 @@ pub(crate) async fn build_agent_bridge(
         source: format!("agents[{}]", agent.id),
         preset_mcp_servers,
     })
-}
-
-fn executor_config_from_agent_config(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
-    let mut ec = AgentConfig::new(agent_type.to_string());
-    if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
-        ec.provider_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("model_id").and_then(|v| v.as_str()) {
-        ec.model_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("agent_id").and_then(|v| v.as_str()) {
-        ec.agent_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("permission_policy").and_then(|v| v.as_str()) {
-        ec.permission_policy = Some(v.to_string());
-    }
-    if let Some(v) = config
-        .get("thinking_level")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::ThinkingLevel>(v.clone()).ok())
-    {
-        ec.thinking_level = Some(v);
-    }
-    if let Some(arr) = config.get("tool_clusters").and_then(|v| v.as_array()) {
-        let clusters: Vec<String> = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-        if !clusters.is_empty() {
-            ec.tool_clusters = Some(clusters);
-        }
-    }
-    if let Some(v) = config.get("system_prompt").and_then(|v| v.as_str()) {
-        let trimmed = v.trim();
-        if !trimmed.is_empty() {
-            ec.system_prompt = Some(trimmed.to_string());
-        }
-    }
-    if let Some(v) = config
-        .get("system_prompt_mode")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::SystemPromptMode>(v.clone()).ok())
-    {
-        ec.system_prompt_mode = Some(v);
-    }
-    ec
 }
 
 async fn resolve_agent_default_lifecycle(

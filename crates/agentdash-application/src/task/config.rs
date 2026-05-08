@@ -1,17 +1,14 @@
 use agentdash_domain::{
+    common::AgentPresetConfig,
     project::{AgentPreset, Project},
     task::Task,
 };
 
-use crate::runtime::{AgentConfig, SystemPromptMode, ThinkingLevel};
+use crate::runtime::AgentConfig;
 
 use super::execution::TaskExecutionError;
 
 /// 诊断用标签：描述本次 task executor config 从哪个来源解析而来。
-///
-/// 结果进入 `ExecutorResolution.source`，供运行时 metadata 展示。
-/// 原先重复定义在 `task/session_runtime_inputs.rs` 与 `session/assembler.rs`,
-/// M5 后收敛到此处作为唯一副本。
 pub fn resolve_task_executor_source(
     task: &Task,
     project: &Project,
@@ -92,53 +89,8 @@ pub fn executor_config_from_preset(
         TaskExecutionError::BadRequest(format!("Preset `{}` 缺少有效 agent_type", preset.name))
     })?;
 
-    let mut config = AgentConfig::new(agent_type);
-    if let Some(obj) = preset.config.as_object() {
-        if let Some(v) = obj.get("provider_id").and_then(|v| v.as_str()) {
-            config.provider_id = normalize_option_string(Some(v.to_string()));
-        }
-        if let Some(v) = obj.get("model_id").and_then(|v| v.as_str()) {
-            config.model_id = normalize_option_string(Some(v.to_string()));
-        }
-        if let Some(v) = obj.get("agent_id").and_then(|v| v.as_str()) {
-            config.agent_id = normalize_option_string(Some(v.to_string()));
-        }
-        if let Some(v) = obj.get("thinking_level").and_then(|v| v.as_str()) {
-            let level =
-                serde_json::from_value::<ThinkingLevel>(serde_json::Value::String(v.to_string()))
-                    .map_err(|error| {
-                    TaskExecutionError::BadRequest(format!(
-                        "Preset `{}` 的 thinking_level 非法: {error}",
-                        preset.name
-                    ))
-                })?;
-            config.thinking_level = Some(level);
-        }
-        if let Some(v) = obj.get("permission_policy").and_then(|v| v.as_str()) {
-            config.permission_policy = normalize_option_string(Some(v.to_string()));
-        }
-        if let Some(arr) = obj.get("tool_clusters").and_then(|v| v.as_array()) {
-            let clusters: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-            if !clusters.is_empty() {
-                config.tool_clusters = Some(clusters);
-            }
-        }
-        if let Some(v) = obj.get("system_prompt").and_then(|v| v.as_str()) {
-            config.system_prompt = normalize_option_string(Some(v.to_string()));
-        }
-        if let Some(v) = obj.get("system_prompt_mode").and_then(|v| v.as_str()) {
-            if let Ok(mode) =
-                serde_json::from_value::<SystemPromptMode>(serde_json::Value::String(v.to_string()))
-            {
-                config.system_prompt_mode = Some(mode);
-            }
-        }
-    }
-
-    Ok(config)
+    let preset_config = AgentPresetConfig::from_json(&preset.config);
+    Ok(preset_config.to_agent_config(&agent_type))
 }
 
 pub fn normalize_option_string(value: Option<String>) -> Option<String> {

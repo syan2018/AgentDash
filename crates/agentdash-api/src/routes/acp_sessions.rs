@@ -1237,17 +1237,12 @@ async fn build_project_owner_prompt_request(
 
     let effective_executor_config = match req.user_input.executor_config.clone() {
         Some(mut user_ec) => {
-            // 前端传入的 executor_config 可能只包含 model 选择等字段，
-            // 需要从 preset 补全 agent 级配置（system_prompt, tool_clusters 等）
             let preset_ec = &project_agent.executor_config;
             if user_ec.system_prompt.is_none() {
                 user_ec.system_prompt = preset_ec.system_prompt.clone();
             }
             if user_ec.system_prompt_mode.is_none() {
                 user_ec.system_prompt_mode = preset_ec.system_prompt_mode;
-            }
-            if user_ec.tool_clusters.is_none() {
-                user_ec.tool_clusters = preset_ec.tool_clusters.clone();
             }
             user_ec
         }
@@ -1261,7 +1256,7 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let agent_id = uuid::Uuid::parse_str(agent_key).ok();
-    let agent_declared_capabilities = effective_executor_config.tool_clusters.as_ref().cloned();
+    let agent_declared_capabilities: Option<Vec<String>> = None;
     let agent_display_name = project_agent.display_name.clone();
     let preset_name = project_agent.preset_name.clone();
     let preset_mcp_servers = project_agent.preset_mcp_servers.clone();

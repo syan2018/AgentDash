@@ -604,15 +604,9 @@ async fn load_companion_candidates(
         let link = links.iter().find(|l| l.agent_id == caller_id);
         if let Some(link) = link {
             if let Ok(Some(agent)) = repos.agent_repo.get_by_id(caller_id).await {
-                let merged = link.merged_config(&agent.base_config);
-                merged
-                    .get("allowed_companions")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect::<Vec<_>>()
-                    })
+                let preset = link.merged_preset_config(&agent);
+                preset
+                    .allowed_companions
                     .filter(|v| !v.is_empty())
             } else {
                 None
@@ -632,11 +626,12 @@ async fn load_companion_candidates(
                     continue;
                 }
             }
-            let display = link
-                .merged_config(&agent.base_config)
-                .get("display_name")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
+            let preset = link.merged_preset_config(&agent);
+            let display = preset
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .map(String::from)
                 .unwrap_or_else(|| agent.name.clone());
             entries.push(agentdash_spi::context::capability::CompanionAgentEntry {

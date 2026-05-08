@@ -268,9 +268,7 @@ pub(crate) async fn build_project_session_context_response(
             owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
                 project_id: project.id,
             },
-            agent_declared_capabilities: resolved_config
-                .as_ref()
-                .and_then(|config| config.tool_clusters.clone()),
+            agent_declared_capabilities: None,
             workflow_ctx,
             agent_mcp_servers: agent_mcp_entries,
             available_presets: load_project_presets(state, project.id).await,
@@ -409,10 +407,10 @@ pub async fn list_project_sessions(
         let mut map = HashMap::new();
         for link in &links {
             if let Ok(Some(agent)) = state.repos.agent_repo.get_by_id(link.agent_id).await {
-                let merged = link.merged_config(&agent.base_config);
-                let name = merged
-                    .get("display_name")
-                    .and_then(|v| v.as_str())
+                let preset = link.merged_preset_config(&agent);
+                let name = preset
+                    .display_name
+                    .as_deref()
                     .map(str::trim)
                     .filter(|v| !v.is_empty())
                     .unwrap_or(&agent.name)

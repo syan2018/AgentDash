@@ -5,15 +5,16 @@ import {
 } from "../../services/mcpPreset";
 import type {
   AgentPreset,
+  CapabilityDirective,
+  CapabilityKey,
   CreateMcpPresetRequest,
   McpPresetDto,
   McpRoutePolicy,
   McpTransportConfig,
   SystemPromptMode,
   ThinkingLevel,
-  ToolCluster,
 } from "../../types";
-import { THINKING_LEVEL_OPTIONS, TOOL_CLUSTER_OPTIONS, isThinkingLevel } from "../../types";
+import { THINKING_LEVEL_OPTIONS, CAPABILITY_OPTIONS, isThinkingLevel } from "../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../executor-selector";
 import { VfsBrowser } from "../vfs";
@@ -41,7 +42,7 @@ export interface PresetFormState {
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
   mcp_preset_keys: string[];
-  tool_clusters: ToolCluster[];
+  capability_directives: CapabilityKey[];
   allowed_companions: string[];
 }
 
@@ -51,7 +52,10 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
   const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
     ? (cfg.mcp_preset_keys as string[])
     : [];
-  const rawClusters = Array.isArray(cfg.tool_clusters) ? (cfg.tool_clusters as ToolCluster[]) : [];
+  const rawDirectives = Array.isArray(cfg.capability_directives) ? cfg.capability_directives as CapabilityDirective[] : [];
+  const capKeys: CapabilityKey[] = rawDirectives
+    .filter((d): d is { add: CapabilityKey } => "add" in d)
+    .map((d) => d.add);
   const rawCompanions = Array.isArray(cfg.allowed_companions) ? (cfg.allowed_companions as string[]) : [];
   return {
     name: preset?.name ?? "",
@@ -66,7 +70,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     mcp_preset_keys: rawMcpPresetKeys,
-    tool_clusters: rawClusters,
+    capability_directives: capKeys,
     allowed_companions: rawCompanions,
   };
 }
@@ -84,7 +88,9 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.mcp_preset_keys.length > 0) config.mcp_preset_keys = form.mcp_preset_keys;
-  if (form.tool_clusters.length > 0) config.tool_clusters = form.tool_clusters;
+  if (form.capability_directives.length > 0) {
+    config.capability_directives = form.capability_directives.map((key) => ({ add: key }));
+  }
   if (form.allowed_companions.length > 0) config.allowed_companions = form.allowed_companions;
   return {
     name: form.name.trim(),
@@ -96,31 +102,28 @@ export function formToPreset(form: PresetFormState): AgentPreset {
 // ─── Tool Capabilities ──────────────────────────────────
 
 function ToolCapabilitiesField({
-  clusters,
+  capabilities,
   onChange,
 }: {
-  clusters: ToolCluster[];
-  onChange: (next: ToolCluster[]) => void;
+  capabilities: CapabilityKey[];
+  onChange: (next: CapabilityKey[]) => void;
 }) {
-  // empty = all enabled (no restriction)
-  const isAll = clusters.length === 0;
-  const has = (v: ToolCluster) => isAll || clusters.includes(v);
+  const isAll = capabilities.length === 0;
+  const has = (v: CapabilityKey) => isAll || capabilities.includes(v);
 
-  const toggle = (v: ToolCluster) => {
+  const toggle = (v: CapabilityKey) => {
     if (isAll) {
-      // entering custom mode: enable everything except the toggled one
-      onChange(TOOL_CLUSTER_OPTIONS.map((o) => o.value).filter((c) => c !== v));
+      onChange(CAPABILITY_OPTIONS.map((o) => o.value).filter((c) => c !== v));
       return;
     }
-    const next = clusters.includes(v)
-      ? clusters.filter((c) => c !== v)
-      : [...clusters, v];
-    // if all re-selected, collapse back to []
-    onChange(next.length >= TOOL_CLUSTER_OPTIONS.length ? [] : next);
+    const next = capabilities.includes(v)
+      ? capabilities.filter((c) => c !== v)
+      : [...capabilities, v];
+    onChange(next.length >= CAPABILITY_OPTIONS.length ? [] : next);
   };
 
-  const basicOpts = TOOL_CLUSTER_OPTIONS.filter((o) => o.group === "basic");
-  const extOpts = TOOL_CLUSTER_OPTIONS.filter((o) => o.group === "extended");
+  const basicOpts = CAPABILITY_OPTIONS.filter((o) => o.group === "basic");
+  const extOpts = CAPABILITY_OPTIONS.filter((o) => o.group === "extended");
 
   return (
     <div className="space-y-3">
@@ -540,14 +543,14 @@ export function PresetFormFields({
         title="工具 & 协作"
         defaultOpen={false}
         badge={
-          form.tool_clusters.length > 0
-            ? `${form.tool_clusters.length}/${TOOL_CLUSTER_OPTIONS.length}`
+          form.capability_directives.length > 0
+            ? `${form.capability_directives.length}/${CAPABILITY_OPTIONS.length}`
             : companionCount > 0 && form.allowed_companions.length > 0
               ? `${form.allowed_companions.length} companion`
               : undefined
         }
       >
-        <ToolCapabilitiesField clusters={form.tool_clusters} onChange={(v) => patchForm({ tool_clusters: v })} />
+        <ToolCapabilitiesField capabilities={form.capability_directives} onChange={(v) => patchForm({ capability_directives: v })} />
 
         {companionCount > 0 && (
           <div className="space-y-1 border-t border-border/50 pt-3">

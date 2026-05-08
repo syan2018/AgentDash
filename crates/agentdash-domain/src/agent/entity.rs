@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::common::AgentPresetConfig;
+
 /// Agent — 独立的 Agent 实体
 ///
 /// 与 Project 通过 `ProjectAgentLink` 建立多对多关系。
@@ -14,7 +16,7 @@ pub struct Agent {
     pub name: String,
     /// 执行器类型（如 "PI_AGENT", "claude-code"）
     pub agent_type: String,
-    /// 基础配置 JSON（model_id, provider_id, mcp_preset_keys, thinking_level 等）
+    /// 基础配置 JSON — DB 层 jsonb 存储，运行时通过 `preset_config()` 获取类型安全访问。
     pub base_config: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -31,6 +33,11 @@ impl Agent {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// 将 base_config JSON 反序列化为类型安全的 `AgentPresetConfig`。
+    pub fn preset_config(&self) -> AgentPresetConfig {
+        AgentPresetConfig::from_json(&self.base_config)
     }
 }
 
@@ -84,27 +91,16 @@ impl ProjectAgentLink {
         }
     }
 
-    /// 将 Agent.base_config 与 link.config_override 合并，override 优先
-    pub fn merged_config(&self, base: &serde_json::Value) -> serde_json::Value {
+    /// 将 Agent.base_config 与 link.config_override 合并为类型安全的 `AgentPresetConfig`。
+    /// override 字段级优先于 base。
+    pub fn merged_preset_config(&self, agent: &Agent) -> AgentPresetConfig {
+        let base = agent.preset_config();
         match &self.config_override {
-            Some(over) => merge_json(base, over),
-            None => base.clone(),
-        }
-    }
-}
-
-fn merge_json(base: &serde_json::Value, over: &serde_json::Value) -> serde_json::Value {
-    match (base, over) {
-        (serde_json::Value::Object(b), serde_json::Value::Object(o)) => {
-            let mut merged = b.clone();
-            for (key, value) in o {
-                merged.insert(
-                    key.clone(),
-                    merge_json(b.get(key).unwrap_or(&serde_json::Value::Null), value),
-                );
+            Some(over_json) => {
+                let over = AgentPresetConfig::from_json(over_json);
+                over.merge_over(&base)
             }
-            serde_json::Value::Object(merged)
+            None => base,
         }
-        (_, over) => over.clone(),
     }
 }

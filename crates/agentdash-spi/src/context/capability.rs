@@ -1,5 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+/// Companion sub-session 的能力裁剪模式。
+///
+/// 控制 companion 继承父 session 能力时保留的范围。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionSliceMode {
+    /// 完整继承父 session 能力。
+    Full,
+    /// 精简模式 — 保留 Read/List/Execute/Exec，移除 MCP。
+    #[default]
+    Compact,
+    /// 仅保留 workflow 相关能力子集。
+    WorkflowOnly,
+    /// 仅保留约束相关能力子集。
+    ConstraintsOnly,
+}
+
 /// 会话级 baseline capability 数据契约。
 ///
 /// 承载"稳定能力描述"——skills 列表。

@@ -299,8 +299,7 @@ impl SessionAssemblyBuilder {
 
     /// 使用 companion 专属能力裁剪。
     pub fn with_companion_capabilities(mut self, mode: CompanionSliceMode) -> Self {
-        let mapped = map_slice_mode(mode);
-        let flow_caps = CapabilityResolver::resolve_companion_caps(mapped);
+        let flow_caps = CapabilityResolver::resolve_companion_caps(mode);
         self.capability_state = Some(flow_caps);
         self
     }
@@ -468,8 +467,7 @@ impl SessionAssemblyBuilder {
         use crate::companion::tools::build_companion_execution_slice;
 
         let slice = build_companion_execution_slice(parent_vfs, parent_mcp_servers, mode);
-        let mapped = map_slice_mode(mode);
-        let flow_caps = CapabilityResolver::resolve_companion_caps(mapped);
+        let flow_caps = CapabilityResolver::resolve_companion_caps(mode);
 
         let prompt_blocks = vec![serde_json::json!({
             "type": "text",
@@ -1653,20 +1651,6 @@ pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
         .build()
 }
 
-/// `companion::tools::CompanionSliceMode` → `capability::resolver::CompanionSliceMode`。
-///
-/// 两个 enum 在字段上等价(Full / Compact / WorkflowOnly / ConstraintsOnly),
-/// 历史上为避免循环依赖分裂成两处。此 mapper 是桥接。后续清理可统一到单一定义。
-fn map_slice_mode(mode: CompanionSliceMode) -> crate::capability::CompanionSliceMode {
-    match mode {
-        CompanionSliceMode::Full => crate::capability::CompanionSliceMode::Full,
-        CompanionSliceMode::Compact => crate::capability::CompanionSliceMode::Compact,
-        CompanionSliceMode::WorkflowOnly => crate::capability::CompanionSliceMode::WorkflowOnly,
-        CompanionSliceMode::ConstraintsOnly => {
-            crate::capability::CompanionSliceMode::ConstraintsOnly
-        }
-    }
-}
 
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
 ///
@@ -1834,7 +1818,7 @@ pub async fn compose_companion_with_workflow(
             agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
-            companion_slice_mode: Some(map_slice_mode(comp.slice_mode)),
+            companion_slice_mode: Some(comp.slice_mode),
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys,

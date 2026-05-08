@@ -20,9 +20,10 @@ mod pipeline_tests;
 pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };
+pub use agentdash_spi::CompanionSliceMode;
 pub use resolver::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CapabilityResolverOutput, CompanionSliceMode,
+    CapabilityResolverOutput,
 };
 pub use session_workflow_context::{
     SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,

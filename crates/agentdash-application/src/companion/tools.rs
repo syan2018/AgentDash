@@ -27,17 +27,7 @@ use uuid::Uuid;
 
 use crate::vfs::tools::provider::SharedSessionHubHandle;
 
-// ─── 公共枚举（保留不变，内部逻辑使用） ────────────────────────────────
-
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CompanionSliceMode {
-    #[default]
-    Compact,
-    Full,
-    WorkflowOnly,
-    ConstraintsOnly,
-}
+pub use agentdash_spi::CompanionSliceMode;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

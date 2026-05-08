@@ -17,7 +17,7 @@ use agentdash_spi::platform::tool_capability::{
 };
 use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
-use agentdash_spi::{CapabilityState, ToolCapabilityFilter, ToolCluster};
+use agentdash_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
@@ -64,16 +64,6 @@ pub struct CapabilityResolverInput {
     pub available_companions: Vec<CompanionAgentEntry>,
 }
 
-/// Companion sub-session 的能力裁剪模式。
-///
-/// 控制 companion 继承父 session 能力时保留的范围。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompanionSliceMode {
-    Full,
-    Compact,
-    WorkflowOnly,
-    ConstraintsOnly,
-}
 
 /// agent config 中注册的 MCP server 条目（用于 `mcp:*` key 解析）
 #[derive(Debug, Clone)]

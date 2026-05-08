@@ -48,7 +48,9 @@ pub use context::injection::{
 // ─── context bundle & capabilities ──────────────────────────
 
 pub use context::bundle::SessionContextBundle;
-pub use context::capability::{CompanionAgentEntry, SessionBaselineCapabilities, SkillEntry};
+pub use context::capability::{
+    CompanionAgentEntry, CompanionSliceMode, SessionBaselineCapabilities, SkillEntry,
+};
 pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
 
 // ─── hooks ──────────────────────────────────────────────────

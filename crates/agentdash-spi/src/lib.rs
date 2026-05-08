@@ -56,11 +56,12 @@ pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
     HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError,
-    HookEvaluationQuery, HookInjection, HookOwnerSummary, HookPendingAction,
+    HookEvaluationQuery, HookEvaluationTrigger, HookInjection, HookOwnerSummary, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
     HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
-    HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
+    HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+    RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

@@ -3,7 +3,7 @@
 //! 集中：
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
 //! - `ensure_hook_session_runtime`（按需懒重建 hook snapshot runtime）
-//! - `evaluate_capability_changed_hook`（PhaseNode 等动态能力更新）
+//! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
 //! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 augmenter 后转 prompt）
 
 use std::sync::Arc;
@@ -16,7 +16,9 @@ use agentdash_spi::hooks::{
 };
 use tokio::sync::broadcast;
 
-use super::super::hook_delegate::{RuntimeHookInjectionSink, SessionRuntimeHookInjectionSink};
+use super::super::hook_delegate::{
+    RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
+};
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
 use super::super::hook_runtime::HookSessionRuntime;
@@ -37,12 +39,10 @@ pub(in crate::session) struct HookTriggerInput<'a> {
 /// Hook trigger 调度结果。
 ///
 /// `effects` 仍交由原调用点处理；`injections` 已由统一调度路径回灌
-/// `turn_delta` / audit，返回值仅用于调用点追加即时消费动作（如 live
-/// notification）。
+/// `turn_delta` / audit，返回值仅用于调用点执行 hook effect。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HookTriggerDispatchResult {
     pub effects: Vec<HookEffect>,
-    pub injections: Vec<HookInjection>,
 }
 
 impl SessionHub {
@@ -90,43 +90,46 @@ impl SessionHub {
                 }
                 let effects = resolution.effects.clone();
                 let injections = resolution.injections.clone();
-                let trace = HookTraceEntry {
-                    sequence: hook_session.next_trace_sequence(),
-                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
-                    revision: hook_session.revision(),
-                    trigger: trigger.clone(),
-                    decision: session_hook_trace_decision(trigger, &resolution).to_string(),
-                    tool_name: None,
-                    tool_call_id: None,
-                    subagent_type: None,
-                    matched_rule_keys: resolution.matched_rule_keys,
-                    refresh_snapshot: resolution.refresh_snapshot,
-                    block_reason: resolution.block_reason,
-                    completion: resolution.completion,
-                    diagnostics: resolution.diagnostics,
-                    injections: resolution.injections,
-                };
-                hook_session.append_trace(trace.clone());
-                // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
-                // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
-                // 时兜底持久化，避免前端出现重复 Hook 卡片。
-                if !self.has_live_runtime(session_id).await {
-                    let envelope =
-                        build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
-                    let _ = self.persist_notification(session_id, envelope).await;
+                if let Some(trace_trigger) = trigger.trace_trigger() {
+                    let trace = HookTraceEntry {
+                        sequence: hook_session.next_trace_sequence(),
+                        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                        revision: hook_session.revision(),
+                        trigger: trace_trigger,
+                        decision: session_hook_trace_decision(trigger, &resolution).to_string(),
+                        tool_name: None,
+                        tool_call_id: None,
+                        subagent_type: None,
+                        matched_rule_keys: resolution.matched_rule_keys,
+                        refresh_snapshot: resolution.refresh_snapshot,
+                        block_reason: resolution.block_reason,
+                        completion: resolution.completion,
+                        diagnostics: resolution.diagnostics,
+                        injections: resolution.injections,
+                    };
+                    hook_session.append_trace(trace.clone());
+                    // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
+                    // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
+                    // 时兜底持久化，避免前端出现重复 Hook 卡片。
+                    if !self.has_live_runtime(session_id).await {
+                        let envelope =
+                            build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
+                        let _ = self.persist_notification(session_id, envelope).await;
+                    }
                 }
                 if !injections.is_empty() {
                     let sink = SessionRuntimeHookInjectionSink::new(
                         self.sessions.clone(),
                         self.current_context_audit_bus().await,
                     );
-                    sink.emit_hook_injections(session_id, trigger.clone(), &injections)
-                        .await;
+                    sink.emit_injections(
+                        session_id,
+                        RuntimeInjectionSource::Hook(trigger.clone()),
+                        &injections,
+                    )
+                    .await;
                 }
-                HookTriggerDispatchResult {
-                    effects,
-                    injections,
-                }
+                HookTriggerDispatchResult { effects }
             }
             Err(error) => {
                 tracing::warn!(
@@ -140,50 +143,42 @@ impl SessionHub {
         }
     }
 
-    /// 评估 `CapabilityChanged` hook（PhaseNode 等动态能力更新路径使用）。
+    /// 收集 runtime context update 对应的动态 injections。
     ///
-    /// 这里只负责把 hook resolution 写入 trace / bundle turn_delta / audit。
-    /// Agent 可见的文本由 runtime context transition 入队，随后在 AgentLoop
-    /// `transform_context` 边界统一消费，避免同一次流转拆成多条即时注入。
-    pub(crate) async fn evaluate_capability_changed_hook(
+    /// 这不是 Agent 生命周期 hook，不写 HookTrace，也不走 HookTrigger。PhaseNode 等
+    /// transition 只把最新 snapshot 中的 workflow/context 注入回灌到 bundle/audit，
+    /// Agent 可见文本由 turn-start notice 队列在 `transform_context` 边界统一消费。
+    pub(crate) async fn collect_runtime_context_update_injections(
         &self,
         session_id: &str,
-        turn_id: Option<&str>,
-        payload: serde_json::Value,
-    ) -> HookTriggerDispatchResult {
+    ) -> Vec<HookInjection> {
         let hook_session = {
             let sessions = self.sessions.lock().await;
             let Some(runtime) = sessions.get(session_id) else {
-                return HookTriggerDispatchResult::default();
+                return Vec::new();
             };
             let Some(hook_session) = runtime.hook_session.clone() else {
-                return HookTriggerDispatchResult::default();
+                return Vec::new();
             };
             hook_session
         };
 
-        let connector_type = match self.connector.connector_type() {
-            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
-            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
-        };
-        let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
-            connector_type: connector_type.to_string(),
-            executor_id: None,
-        };
+        let injections = hook_session.snapshot().injections;
+        if injections.is_empty() {
+            return Vec::new();
+        }
 
-        self.emit_session_hook_trigger(
-            hook_session.as_ref(),
-            &HookTriggerInput {
-                session_id,
-                turn_id,
-                trigger: HookTrigger::CapabilityChanged,
-                payload: Some(payload),
-                refresh_reason: "trigger:capability_changed",
-                source,
-            },
+        let sink = SessionRuntimeHookInjectionSink::new(
+            self.sessions.clone(),
+            self.current_context_audit_bus().await,
+        );
+        sink.emit_injections(
+            session_id,
+            RuntimeInjectionSource::RuntimeContextUpdate,
+            &injections,
         )
-        .await
+        .await;
+        injections
     }
 
     pub async fn ensure_hook_session_runtime(

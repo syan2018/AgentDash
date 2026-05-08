@@ -177,7 +177,7 @@ pub struct HookPendingAction {
     pub action_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
-    pub source_trigger: HookTrigger,
+    pub source: RuntimeEventSource,
     #[serde(default)]
     pub status: HookPendingActionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,10 +196,26 @@ pub struct HookPendingAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookRuntimeNotice {
+pub enum RuntimeEventSource {
+    RuntimeContextUpdate,
+    CompanionResult,
+}
+
+impl RuntimeEventSource {
+    pub const fn as_key(&self) -> &'static str {
+        match self {
+            Self::RuntimeContextUpdate => "runtime_context_update",
+            Self::CompanionResult => "companion_result",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookTurnStartNotice {
     pub id: String,
     pub created_at_ms: i64,
-    pub source_trigger: HookTrigger,
+    pub source: RuntimeEventSource,
     pub content: String,
 }
 
@@ -283,8 +299,8 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn next_trace_sequence(&self) -> u64;
     fn enqueue_pending_action(&self, action: HookPendingAction);
     fn collect_pending_actions_for_injection(&self) -> Vec<HookPendingAction>;
-    fn enqueue_runtime_notice(&self, notice: HookRuntimeNotice);
-    fn collect_runtime_notices_for_injection(&self) -> Vec<HookRuntimeNotice>;
+    fn enqueue_turn_start_notice(&self, notice: HookTurnStartNotice);
+    fn collect_turn_start_notices_for_injection(&self) -> Vec<HookTurnStartNotice>;
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction>;
     fn unresolved_blocking_actions(&self) -> Vec<HookPendingAction>;
     fn resolve_pending_action(
@@ -339,10 +355,93 @@ pub struct SessionHookRefreshQuery {
     pub reason: Option<String>,
 }
 
-/// Hook 触发点枚举。
+/// Hook trace 触发点：只用于 Agent 核心生命周期的可见追踪。
+pub use agentdash_agent_protocol::HookTraceTrigger;
+
+/// Hook 规则评估入口。
 ///
-/// 直接复用 protocol 层定义，避免 SPI / protocol 双份枚举漂移。
-pub use agentdash_agent_protocol::HookTraceTrigger as HookTrigger;
+/// 与 [`HookTraceTrigger`] 不同，这里可以包含运行期事件（例如 companion 结果回流）。
+/// 这类事件可驱动规则产生 pending action / turn-start notice，但不应写入 HookTrace。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvaluationTrigger {
+    SessionStart,
+    UserPromptSubmit,
+    BeforeTool,
+    AfterTool,
+    AfterTurn,
+    BeforeStop,
+    SessionTerminal,
+    BeforeSubagentDispatch,
+    AfterSubagentDispatch,
+    CompanionResult,
+    BeforeCompact,
+    AfterCompact,
+    BeforeProviderRequest,
+}
+
+impl HookEvaluationTrigger {
+    #[must_use]
+    pub const fn as_key(self) -> &'static str {
+        match self {
+            Self::SessionStart => "session_start",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::BeforeTool => "before_tool",
+            Self::AfterTool => "after_tool",
+            Self::AfterTurn => "after_turn",
+            Self::BeforeStop => "before_stop",
+            Self::SessionTerminal => "session_terminal",
+            Self::BeforeSubagentDispatch => "before_subagent_dispatch",
+            Self::AfterSubagentDispatch => "after_subagent_dispatch",
+            Self::CompanionResult => "companion_result",
+            Self::BeforeCompact => "before_compact",
+            Self::AfterCompact => "after_compact",
+            Self::BeforeProviderRequest => "before_provider_request",
+        }
+    }
+
+    #[must_use]
+    pub const fn trace_trigger(self) -> Option<HookTraceTrigger> {
+        match self {
+            Self::SessionStart => Some(HookTraceTrigger::SessionStart),
+            Self::UserPromptSubmit => Some(HookTraceTrigger::UserPromptSubmit),
+            Self::BeforeTool => Some(HookTraceTrigger::BeforeTool),
+            Self::AfterTool => Some(HookTraceTrigger::AfterTool),
+            Self::AfterTurn => Some(HookTraceTrigger::AfterTurn),
+            Self::BeforeStop => Some(HookTraceTrigger::BeforeStop),
+            Self::SessionTerminal => Some(HookTraceTrigger::SessionTerminal),
+            Self::BeforeSubagentDispatch => Some(HookTraceTrigger::BeforeSubagentDispatch),
+            Self::AfterSubagentDispatch => Some(HookTraceTrigger::AfterSubagentDispatch),
+            Self::CompanionResult => None,
+            Self::BeforeCompact => Some(HookTraceTrigger::BeforeCompact),
+            Self::AfterCompact => Some(HookTraceTrigger::AfterCompact),
+            Self::BeforeProviderRequest => Some(HookTraceTrigger::BeforeProviderRequest),
+        }
+    }
+}
+
+impl From<HookTraceTrigger> for HookEvaluationTrigger {
+    fn from(value: HookTraceTrigger) -> Self {
+        match value {
+            HookTraceTrigger::SessionStart => Self::SessionStart,
+            HookTraceTrigger::UserPromptSubmit => Self::UserPromptSubmit,
+            HookTraceTrigger::BeforeTool => Self::BeforeTool,
+            HookTraceTrigger::AfterTool => Self::AfterTool,
+            HookTraceTrigger::AfterTurn => Self::AfterTurn,
+            HookTraceTrigger::BeforeStop => Self::BeforeStop,
+            HookTraceTrigger::SessionTerminal => Self::SessionTerminal,
+            HookTraceTrigger::BeforeSubagentDispatch => Self::BeforeSubagentDispatch,
+            HookTraceTrigger::AfterSubagentDispatch => Self::AfterSubagentDispatch,
+            HookTraceTrigger::BeforeCompact => Self::BeforeCompact,
+            HookTraceTrigger::AfterCompact => Self::AfterCompact,
+            HookTraceTrigger::BeforeProviderRequest => Self::BeforeProviderRequest,
+        }
+    }
+}
+
+/// Hook 评估入口的本地别名。新代码如果需要强调“不是 trace”，优先使用
+/// [`HookEvaluationTrigger`] 全名。
+pub use HookEvaluationTrigger as HookTrigger;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -501,7 +600,7 @@ pub struct HookTraceEntry {
     pub sequence: u64,
     pub timestamp_ms: i64,
     pub revision: u64,
-    pub trigger: HookTrigger,
+    pub trigger: HookTraceTrigger,
     pub decision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,

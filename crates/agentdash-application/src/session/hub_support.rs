@@ -381,7 +381,6 @@ pub(super) fn session_hook_trace_decision(
                 "terminal_observed"
             }
         }
-        HookTrigger::CapabilityChanged => "capability_changed",
         _ => "noop",
     }
 }

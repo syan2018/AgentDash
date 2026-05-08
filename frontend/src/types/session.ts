@@ -99,7 +99,7 @@ export interface HookPendingAction {
   summary: string;
   action_type: string;
   turn_id?: string | null;
-  source_trigger: string;
+  source: string;
   status: "pending" | "resolved";
   last_injected_at_ms?: number | null;
   resolved_at_ms?: number | null;

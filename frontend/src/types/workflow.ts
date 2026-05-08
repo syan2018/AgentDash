@@ -44,7 +44,7 @@ export type WorkflowHookTrigger =
   | "session_terminal"
   | "before_subagent_dispatch"
   | "after_subagent_dispatch"
-  | "subagent_result"
+  | "companion_result"
   | "before_compact"
   | "after_compact"
   | "before_provider_request";

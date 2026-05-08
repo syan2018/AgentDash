@@ -43,7 +43,7 @@ const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "
 const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
   "user_prompt_submit",
   "before_tool", "after_tool", "after_turn", "before_stop", "session_terminal",
-  "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
+  "before_subagent_dispatch", "after_subagent_dispatch", "companion_result",
   "before_compact", "after_compact", "before_provider_request",
 ]);
 const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);

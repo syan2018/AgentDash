@@ -1,4 +1,4 @@
-// subagent_result_channel — 处理子 Agent 回流结果
+// companion_result_channel — 处理 Companion 回流结果
 
 let p = ctx.payload;
 if p == () {
@@ -23,7 +23,7 @@ let artifact_refs = if p.artifact_refs != () { p.artifact_refs } else { [] };
 let src = ctx.workflow.source;
 
 let base_diag = make_diagnostic(
-    "subagent_result_recorded",
+    "companion_result_recorded",
     "已收到 `" + stype + "` 的回流结果：" + summary
         + " (status=" + status
         + ", adoption_mode=" + adoption
@@ -74,9 +74,9 @@ let constraint_text = if is_blocking {
 };
 
 let extra_diag_code = if is_blocking {
-    "subagent_result_blocking_review_enqueued"
+    "companion_result_blocking_review_enqueued"
 } else {
-    "subagent_result_follow_up_enqueued"
+    "companion_result_follow_up_enqueued"
 };
 let extra_diag_msg = if is_blocking {
     "已把 companion 回流升级为阻塞式 review 待办，要求主 session 优先处理"

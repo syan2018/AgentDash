@@ -165,7 +165,7 @@ export type HookTracePayload = { eventType: string | null, message: string | nul
 
 export type HookTraceSeverity = "error" | "warning" | "success" | "info";
 
-export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "subagent_result" | "before_compact" | "after_compact" | "before_provider_request" | "capability_changed";
+export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "before_compact" | "after_compact" | "before_provider_request";
 
 export type ItemCompletedNotification = { item: ThreadItem, threadId: string, turnId: string, };
 

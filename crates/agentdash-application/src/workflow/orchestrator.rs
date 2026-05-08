@@ -582,10 +582,6 @@ impl LifecycleOrchestrator {
                 &phase.node_key,
                 Some(run.id),
                 Some(&phase.lifecycle_key),
-                phase
-                    .workflow
-                    .as_ref()
-                    .map(|workflow| workflow.key.as_str()),
             )
             .await
             {

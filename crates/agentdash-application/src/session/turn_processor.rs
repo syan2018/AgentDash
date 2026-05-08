@@ -8,7 +8,7 @@ use agentdash_agent_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::hooks::{HookTrigger, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{HookTraceTrigger, HookTrigger, SharedHookSessionRuntime};
 
 use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
@@ -180,7 +180,7 @@ impl SessionTurnProcessor {
                 trace
                     .iter()
                     .rev()
-                    .find(|t| matches!(t.trigger, HookTrigger::BeforeStop))
+                    .find(|t| matches!(t.trigger, HookTraceTrigger::BeforeStop))
                     .is_some_and(|t| t.decision == "continue")
             });
 

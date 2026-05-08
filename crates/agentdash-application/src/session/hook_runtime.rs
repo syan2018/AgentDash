@@ -7,8 +7,8 @@ use std::sync::{
 use agentdash_spi::hooks::{
     CapabilityDelta, ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookRuntimeNotice, HookSessionRuntimeAccess,
-    HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery, SessionHookSnapshot,
+    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
+    HookTraceEntry, HookTurnStartNotice, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ pub struct HookSessionRuntime {
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
     trace: RwLock<Vec<HookTraceEntry>>,
     pending_actions: RwLock<Vec<HookPendingAction>>,
-    runtime_notices: RwLock<Vec<HookRuntimeNotice>>,
+    turn_start_notices: RwLock<Vec<HookTurnStartNotice>>,
     token_stats: RwLock<ContextTokenStats>,
     capabilities: RwLock<BTreeSet<String>>,
     revision: AtomicU64,
@@ -58,7 +58,7 @@ impl HookSessionRuntime {
             diagnostics: RwLock::new(diagnostics),
             trace: RwLock::new(Vec::new()),
             pending_actions: RwLock::new(Vec::new()),
-            runtime_notices: RwLock::new(Vec::new()),
+            turn_start_notices: RwLock::new(Vec::new()),
             token_stats: RwLock::new(ContextTokenStats::default()),
             capabilities: RwLock::new(BTreeSet::new()),
             revision: AtomicU64::new(1),
@@ -331,14 +331,14 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
         injected
     }
 
-    fn enqueue_runtime_notice(&self, notice: HookRuntimeNotice) {
+    fn enqueue_turn_start_notice(&self, notice: HookTurnStartNotice) {
         if notice.content.trim().is_empty() {
             return;
         }
         let mut guard = self
-            .runtime_notices
+            .turn_start_notices
             .write()
-            .expect("hook runtime notices write lock poisoned");
+            .expect("hook turn-start notices write lock poisoned");
         if guard.iter().any(|existing| existing.id == notice.id) {
             return;
         }
@@ -350,11 +350,11 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
         self.revision.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn collect_runtime_notices_for_injection(&self) -> Vec<HookRuntimeNotice> {
+    fn collect_turn_start_notices_for_injection(&self) -> Vec<HookTurnStartNotice> {
         let mut guard = self
-            .runtime_notices
+            .turn_start_notices
             .write()
-            .expect("hook runtime notices write lock poisoned");
+            .expect("hook turn-start notices write lock poisoned");
         if guard.is_empty() {
             return Vec::new();
         }

@@ -480,7 +480,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
             HookTrigger::BeforeSubagentDispatch
             | HookTrigger::AfterSubagentDispatch
-            | HookTrigger::SubagentResult => {
+            | HookTrigger::CompanionResult => {
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,
@@ -501,16 +501,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 );
             }
             HookTrigger::BeforeProviderRequest => {
-                apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
-                    &mut resolution,
-                    &self.script_engine,
-                );
-            }
-            HookTrigger::CapabilityChanged => {
                 apply_hook_rules(
                     HookEvaluationContext {
                         snapshot: &snapshot,
@@ -541,10 +531,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 }
 
 fn trigger_includes_snapshot_injections(trigger: &HookTrigger) -> bool {
-    matches!(
-        trigger,
-        HookTrigger::SessionStart | HookTrigger::CapabilityChanged
-    )
+    matches!(trigger, HookTrigger::SessionStart)
 }
 
 fn seed_snapshot_injections_for_trigger(
@@ -568,7 +555,7 @@ mod tests {
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
     use agentdash_spi::{
-        ExecutionHookProvider, HookError, HookTrigger, SessionHookRefreshQuery,
+        ExecutionHookProvider, HookError, HookTraceTrigger, HookTrigger, SessionHookRefreshQuery,
         SessionHookSnapshotQuery,
     };
     use async_trait::async_trait;
@@ -580,7 +567,7 @@ mod tests {
     use super::super::test_fixtures::snapshot_with_workflow;
 
     #[test]
-    fn capability_changed_includes_refreshed_snapshot_injections() {
+    fn session_start_includes_snapshot_injections() {
         let injection = agentdash_spi::HookInjection {
             slot: "workflow".to_string(),
             content: "## Workflow Guidance\n进入 Apply 阶段".to_string(),
@@ -594,7 +581,7 @@ mod tests {
         let mut resolution = HookResolution::default();
 
         super::seed_snapshot_injections_for_trigger(
-            &HookTrigger::CapabilityChanged,
+            &HookTrigger::SessionStart,
             &snapshot,
             &mut resolution,
         );
@@ -715,7 +702,7 @@ mod tests {
         let runtime: agentdash_spi::hooks::HookSessionRuntimeSnapshot =
             hook_session.runtime_snapshot();
         assert_eq!(runtime.trace.len(), 1);
-        assert_eq!(runtime.trace[0].trigger, HookTrigger::BeforeTool);
+        assert_eq!(runtime.trace[0].trigger, HookTraceTrigger::BeforeTool);
         assert_eq!(runtime.trace[0].decision, "rewrite");
         assert!(
             runtime.trace[0]

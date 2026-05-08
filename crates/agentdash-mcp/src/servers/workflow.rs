@@ -394,7 +394,7 @@ fn parse_hook_trigger(raw: &str) -> Result<WorkflowHookTrigger, McpError> {
         "session_terminal" => Ok(WorkflowHookTrigger::SessionTerminal),
         "before_subagent_dispatch" => Ok(WorkflowHookTrigger::BeforeSubagentDispatch),
         "after_subagent_dispatch" => Ok(WorkflowHookTrigger::AfterSubagentDispatch),
-        "subagent_result" => Ok(WorkflowHookTrigger::SubagentResult),
+        "companion_result" => Ok(WorkflowHookTrigger::CompanionResult),
         "before_compact" => Ok(WorkflowHookTrigger::BeforeCompact),
         other => Err(McpError::invalid_param(
             "trigger",
@@ -402,7 +402,7 @@ fn parse_hook_trigger(raw: &str) -> Result<WorkflowHookTrigger, McpError> {
                 "不支持的触发时机: {other}，\
                  可选值: user_prompt_submit / before_tool / after_tool / after_turn / \
                  before_stop / session_terminal / before_subagent_dispatch / \
-                 after_subagent_dispatch / subagent_result / before_compact"
+                 after_subagent_dispatch / companion_result / before_compact"
             ),
         )),
     }

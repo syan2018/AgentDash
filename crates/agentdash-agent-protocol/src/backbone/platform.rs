@@ -90,11 +90,9 @@ pub enum HookTraceTrigger {
     SessionTerminal,
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
-    SubagentResult,
     BeforeCompact,
     AfterCompact,
     BeforeProviderRequest,
-    CapabilityChanged,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -120,11 +118,9 @@ impl HookTraceTrigger {
             Self::SessionTerminal => "session_terminal",
             Self::BeforeSubagentDispatch => "before_subagent_dispatch",
             Self::AfterSubagentDispatch => "after_subagent_dispatch",
-            Self::SubagentResult => "subagent_result",
             Self::BeforeCompact => "before_compact",
             Self::AfterCompact => "after_compact",
             Self::BeforeProviderRequest => "before_provider_request",
-            Self::CapabilityChanged => "capability_changed",
         }
     }
 }

@@ -8,8 +8,8 @@ use agentdash_agent_protocol::{
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_spi::hooks::{
-    ExecutionHookProvider, HookEvaluationQuery, HookInjection, HookResolution, HookTrigger,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    ExecutionHookProvider, HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger,
+    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionSessionFrame,
@@ -524,7 +524,7 @@ impl AgentConnector for SessionStartAwareConnector {
             runtime
                 .trace()
                 .iter()
-                .any(|trace| matches!(&trace.trigger, HookTrigger::SessionStart))
+                .any(|trace| matches!(&trace.trigger, HookTraceTrigger::SessionStart))
         });
         self.session_start_seen.lock().await.push(seen);
         Ok(Box::pin(stream::empty()))
@@ -686,7 +686,7 @@ impl AgentConnector for NotificationCapturingConnector {
 }
 
 #[tokio::test]
-async fn capability_changed_hook_injections_are_recorded_without_direct_notification() {
+async fn runtime_context_update_injections_are_recorded_without_direct_notification() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));
     let injection = HookInjection {
@@ -696,10 +696,7 @@ async fn capability_changed_hook_injections_are_recorded_without_direct_notifica
     };
     let provider = Arc::new(StaticResolutionHookProvider {
         queries: queries.clone(),
-        resolution: HookResolution {
-            injections: vec![injection.clone()],
-            ..HookResolution::default()
-        },
+        resolution: HookResolution::default(),
     });
     let connector = Arc::new(NotificationCapturingConnector::default());
     let notifications = connector.notifications.clone();
@@ -733,39 +730,43 @@ async fn capability_changed_hook_injections_are_recorded_without_direct_notifica
             CapabilityState::default(),
             Some(SessionContextBundle::new(
                 bundle_session_uuid,
-                "capability_changed_test",
+                "runtime_context_update_test",
             )),
         ));
     }
-
-    let result = hub
-        .evaluate_capability_changed_hook(
-            &session.id,
-            Some("turn-cap"),
-            json!({ "phase": "phase_b" }),
-        )
-        .await;
-    assert_eq!(result.injections, vec![injection.clone()]);
-
-    let recorded_queries = queries.lock().await;
-    assert_eq!(recorded_queries.len(), 1);
-    assert_eq!(recorded_queries[0].trigger, HookTrigger::CapabilityChanged);
-    drop(recorded_queries);
-
-    let captured = notifications.lock().await;
-    assert!(
-        captured.is_empty(),
-        "CapabilityChanged 不应再直接推送第二条 live notification"
-    );
-    drop(captured);
 
     let hook_session = hub
         .get_hook_session_runtime(&session.id)
         .await
         .expect("hook runtime should remain available");
+    let mut snapshot = hook_session.snapshot();
+    snapshot.injections = vec![injection.clone()];
+    hook_session.replace_snapshot(snapshot);
+
+    let result = hub
+        .collect_runtime_context_update_injections(&session.id)
+        .await;
+    assert_eq!(result, vec![injection.clone()]);
+
+    let recorded_queries = queries.lock().await;
+    assert!(
+        recorded_queries.is_empty(),
+        "runtime context update 不应再走 Hook provider evaluate_hook"
+    );
+    drop(recorded_queries);
+
+    let captured = notifications.lock().await;
+    assert!(
+        captured.is_empty(),
+        "runtime context update 不应直接推送第二条 live notification"
+    );
+    drop(captured);
+
     let trace = hook_session.trace();
-    assert_eq!(trace.len(), 1);
-    assert_eq!(trace[0].injections, vec![injection]);
+    assert!(
+        trace.is_empty(),
+        "runtime context update 不是 HookTrace trigger，不应写 trace"
+    );
 
     let sessions = hub.sessions.lock().await;
     let turn = sessions

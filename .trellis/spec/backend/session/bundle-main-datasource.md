@@ -24,9 +24,10 @@
   令，不承静态上下文）；③ 控制流副作用（`blocked` / `Deny` / `Rewrite`
   等）。
 - **System prompt 是稳定前缀，不是运行期动态注入面**。Workflow phase /
-  `CapabilityChanged` / runtime hook 的即时补充必须走动态 Agent 输入面
-  （steering / follow-up / pending action / notification），不得为了让当前
-  running turn 看见内容而重设 system prompt。
+  runtime context update / companion result 的即时补充必须先进入 turn-start
+  暂存事件队列（`HookTurnStartNotice` / `HookPendingAction`），再在下一次
+  `transform_context(UserPromptSubmit)` 统一注入，不得为了让当前 running turn
+  看见内容而重设 system prompt。
 - `HOOK_USER_MESSAGE_SKIP_SLOTS` 已废除；`session-capabilities://` 资源块注入
   user_blocks 的旧路径已拆除；companion_agents 只经 Bundle 一条路径。
 
@@ -71,7 +72,8 @@ pub struct SessionContextBundle {
   `HookRuntimeDelegate.evaluate(...)` 会把所有 agent-loop 边界 trigger 的
   `HookResolution.injections` 统一交给该 sink；hub 侧
   `emit_session_hook_trigger(...)` 也用同一 sink 处理 `SessionStart` /
-  `SessionTerminal` / `CapabilityChanged` 等 out-of-band trigger。
+  `SessionTerminal` 等 lifecycle trigger。`runtime_context_update` 等运行时事件
+  不是 HookTrigger，但同样通过 sink 回灌 snapshot injections。
   sink 负责调用 `hook_injection_to_fragment` 后执行
   `bundle.extend_turn_delta(...)`（见 §4.2）。
 - **合并语义**：`turn_delta` **不做** slot 去重，允许同 slot 多条，由
@@ -181,10 +183,11 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
   `ContextAuditBus`，再 emit `AuditTrigger::HookInjection { trigger }`。
   `emit_hook_injection_fragments(...)` 只保留为无 session runtime sink 的测试 /
   兼容 fallback，不是生产主路径。
-- 即时消费：若内容需要当前 running turn 立刻影响模型，必须显式走动态
-  steering / pending action / session notification。例如 `CapabilityChanged`
-  在完成上述结构化回灌后，额外通过 `push_session_notification(...)` 注入 live
-  Agent 输入面；不得重设 system prompt。
+- 即时消费：若内容需要影响模型，必须显式进入 TurnStart 暂存事件队列：
+  `HookTurnStartNotice` 用于一次性告知，`HookPendingAction` 用于带状态和
+  resolution 的可处置事件。`AfterTurn` / `BeforeStop` 不得各自消费这些队列；
+  它们只做 lifecycle/gate 判断，实际消息注入统一发生在
+  `transform_context(UserPromptSubmit)`。
 - **约束**：SPI crate 不反向依赖 `agentdash-spi`（decisions.rs 注释明确）；
   因此 `TransformContextOutput` 结构上**不**直接承载 `bundle_delta`，Bundle
   写入由 application 层的 hook delegate 在 evaluate 完成后自己写到
@@ -328,9 +331,13 @@ sequenceDiagram
     Sink->>Audit: emit_fragment(AuditTrigger::HookInjection { trigger })
     Delegate-->>Agent: TransformContextOutput { steering_messages, blocked }
 
-    Hub->>Hub: emit_session_hook_trigger(CapabilityChanged/SessionStart/SessionTerminal)
-    Hub->>Sink: emit_hook_injections(trigger, injections)
+    Hub->>Hub: runtime_context_update / SessionStart / SessionTerminal
+    Hub->>Sink: emit_injections(source, injections)
     Sink->>Bundle: bundle.extend_turn_delta(injections as fragments)
+
+    Hub->>Hub: enqueue HookTurnStartNotice / HookPendingAction
+    Agent->>Delegate: next transform_context(UserPromptSubmit)
+    Delegate-->>Agent: consume queued turn-start events as steering messages
 
     alt hook 要求 block
         Agent->>Agent: 停止本轮、向用户报告 blocked 原因
@@ -416,8 +423,8 @@ sequenceDiagram
   - `emit_hook_injection_fragments`（无 sink fallback）
 - `crates/agentdash-application/src/session/hub/hook_dispatch.rs`
   - `emit_session_hook_trigger`（hub 级 trigger 统一回灌）
-  - `evaluate_capability_changed_hook`（runtime context transition applier 内部 primitive；
-    只负责 trace / turn_delta / audit，Agent 可见文本进入 runtime notice 队列）
+  - `collect_runtime_context_update_injections`（runtime context transition applier 内部 primitive；
+    不写 HookTrace，只负责 turn_delta / audit，Agent 可见文本进入 turn-start notice 队列）
 - `crates/agentdash-application/src/session/hub/runtime_context_transition.rs`
   - `apply_live_runtime_context_transition`
   - `enqueue_pending_runtime_context_transition`

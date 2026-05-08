@@ -259,7 +259,7 @@ export function HookRuntimePendingActionsCard({
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                   <span>action: {action.id}</span>
                   {action.turn_id && <span>turn: {action.turn_id}</span>}
-                  <span>trigger: {action.source_trigger}</span>
+                  <span>source: {action.source}</span>
                   <span>injections: {action.injections.length}</span>
                   {action.last_injected_at_ms != null && <span>last_injected: 已注入</span>}
                   {action.resolution_kind && <span>resolution: {action.resolution_kind}</span>}

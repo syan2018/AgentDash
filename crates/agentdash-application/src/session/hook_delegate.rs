@@ -20,8 +20,8 @@ use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
     ContextTokenStats, HookEvaluationQuery, HookInjection, HookPendingAction,
-    HookPendingActionStatus, HookRuntimeNotice, HookSessionRuntimeSnapshot, HookTraceEntry,
-    HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
+    HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
+    HookTrigger, HookTurnStartNotice, SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
 
 pub struct HookRuntimeDelegate {
@@ -33,12 +33,27 @@ pub struct HookRuntimeDelegate {
 
 pub type DynRuntimeHookInjectionSink = Arc<dyn RuntimeHookInjectionSink>;
 
+#[derive(Debug, Clone)]
+pub enum RuntimeInjectionSource {
+    Hook(HookTrigger),
+    RuntimeContextUpdate,
+}
+
+impl RuntimeInjectionSource {
+    fn audit_label(&self) -> String {
+        match self {
+            Self::Hook(trigger) => format!("{trigger:?}"),
+            Self::RuntimeContextUpdate => "runtime_context_update".to_string(),
+        }
+    }
+}
+
 #[async_trait]
 pub trait RuntimeHookInjectionSink: Send + Sync {
-    async fn emit_hook_injections(
+    async fn emit_injections(
         &self,
         session_id: &str,
-        trigger: HookTrigger,
+        source: RuntimeInjectionSource,
         injections: &[HookInjection],
     );
 }
@@ -62,10 +77,10 @@ impl SessionRuntimeHookInjectionSink {
 
 #[async_trait]
 impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
-    async fn emit_hook_injections(
+    async fn emit_injections(
         &self,
         session_id: &str,
-        trigger: HookTrigger,
+        source: RuntimeInjectionSource,
         injections: &[HookInjection],
     ) {
         if injections.is_empty() {
@@ -96,7 +111,7 @@ impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
         let Some(bus) = self.audit_bus.as_ref() else {
             return;
         };
-        let trigger_label = format!("{trigger:?}");
+        let trigger_label = source.audit_label();
         for fragment in fragments {
             emit_fragment(
                 bus.as_ref(),
@@ -206,8 +221,12 @@ impl HookRuntimeDelegate {
         injections: &[HookInjection],
     ) {
         if let Some(sink) = self.injection_sink.as_ref() {
-            sink.emit_hook_injections(self.hook_session.session_id(), trigger, injections)
-                .await;
+            sink.emit_injections(
+                self.hook_session.session_id(),
+                RuntimeInjectionSource::Hook(trigger),
+                injections,
+            )
+            .await;
         } else {
             self.emit_hook_injection_fragments(trigger, injections);
         }
@@ -277,13 +296,16 @@ impl HookRuntimeDelegate {
         subagent_type: Option<String>,
         evaluated: &EvaluatedResolution,
     ) {
+        let Some(trace_trigger) = trigger.trace_trigger() else {
+            return;
+        };
         let decision = decision.into();
         let include_injections = should_include_trace_injections(&trigger, &decision);
         let trace = HookTraceEntry {
             sequence: self.hook_session.next_trace_sequence(),
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             revision: evaluated.runtime.revision,
-            trigger,
+            trigger: trace_trigger,
             decision,
             tool_name,
             tool_call_id,
@@ -470,8 +492,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             });
         }
 
-        let runtime_notices = collect_runtime_notice_messages(self.hook_session.as_ref());
-        let pending_messages = collect_pending_hook_messages(
+        let turn_start_messages = collect_turn_start_injection_messages(
             self.hook_session.as_ref(),
             &evaluated.snapshot,
             &self.hook_session.runtime_snapshot(),
@@ -479,7 +500,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         if should_trace_user_prompt_context_injection(
             &evaluated.runtime,
             &evaluated.resolution.injections,
-            pending_messages.consumed,
+            turn_start_messages.consumed,
         ) {
             self.record_trace(
                 HookTrigger::UserPromptSubmit,
@@ -489,7 +510,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 None,
                 &evaluated,
             );
-        } else if evaluated.resolution.injections.is_empty() && pending_messages.consumed == 0 {
+        } else if evaluated.resolution.injections.is_empty() && turn_start_messages.consumed == 0 {
             self.record_trace(
                 HookTrigger::UserPromptSubmit,
                 "noop",
@@ -510,11 +531,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             }
         }
 
-        // 通用层不再把 hook injections 直接桥接为 inline user message；
-        // 仅保留显式 runtime notice / pending action 回流，避免“隐式注入刷屏”。
-        messages.extend(runtime_notices);
-        messages.extend(pending_messages.steering);
-        messages.extend(pending_messages.follow_up);
+        // TurnStart 统一消费 turn-start notice / pending action 这类暂存注入事件；
+        // 通用 hook injections 不再隐式桥接为 inline user message。
+        messages.extend(turn_start_messages.steering);
+        messages.extend(turn_start_messages.follow_up);
 
         Ok(TransformContextOutput {
             steering_messages: messages,
@@ -656,32 +676,11 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
             )
             .await?;
-        // after_turn 的通用内嵌注入会在每轮工具调用后反复刷屏，改为只保留
-        // pending action 回流消息；常规 hook 注入不再走这里的 inline message 通道。
-        let mut steering = Vec::new();
-        let pending_messages = collect_pending_hook_messages(
-            self.hook_session.as_ref(),
-            &evaluated.snapshot,
-            &self.hook_session.runtime_snapshot(),
-        );
-        let has_runtime_output = pending_messages.consumed > 0;
-        self.record_trace(
-            HookTrigger::AfterTurn,
-            if has_runtime_output {
-                "steering_injected"
-            } else {
-                "noop"
-            },
-            None,
-            None,
-            None,
-            &evaluated,
-        );
-        steering.extend(pending_messages.steering);
+        self.record_trace(HookTrigger::AfterTurn, "noop", None, None, None, &evaluated);
 
         Ok(TurnControlDecision {
-            steering,
-            follow_up: pending_messages.follow_up,
+            steering: Vec::new(),
+            follow_up: Vec::new(),
             refresh_snapshot: evaluated.resolution.refresh_snapshot,
             diagnostics: evaluated
                 .resolution
@@ -709,14 +708,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             )
             .await?;
 
-        // BeforeStop 只消费显式 pending action 回流，不再隐式桥接普通 injections。
-        let mut steering = Vec::new();
-        let pending_messages = collect_pending_hook_messages(
-            self.hook_session.as_ref(),
-            &evaluated.snapshot,
-            &self.hook_session.runtime_snapshot(),
-        );
-        steering.extend(pending_messages.steering.clone());
+        // BeforeStop 只做 gate：暂存 runtime 事件统一留到下一次 TurnStart 注入。
+        let unresolved_runtime_events = self.hook_session.unresolved_pending_actions();
         let completion_satisfied = evaluated
             .resolution
             .completion
@@ -724,10 +717,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .is_some_and(|completion| completion.satisfied);
         let has_completion_gate = evaluated.resolution.completion.is_some();
 
-        if steering.is_empty()
-            && pending_messages.follow_up.is_empty()
-            && (!has_completion_gate || completion_satisfied)
-        {
+        if unresolved_runtime_events.is_empty() && (!has_completion_gate || completion_satisfied) {
             self.record_trace(
                 HookTrigger::BeforeStop,
                 "stop",
@@ -739,10 +729,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             return Ok(StopDecision::Stop);
         }
 
-        let allow_empty_continue = steering.is_empty()
-            && pending_messages.follow_up.is_empty()
-            && has_completion_gate
-            && !completion_satisfied;
+        let allow_empty_continue = true;
 
         self.record_trace(
             HookTrigger::BeforeStop,
@@ -753,9 +740,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated,
         );
         Ok(StopDecision::Continue {
-            steering,
-            follow_up: pending_messages.follow_up,
-            reason: Some(if pending_messages.consumed > 0 {
+            steering: Vec::new(),
+            follow_up: Vec::new(),
+            reason: Some(if !unresolved_runtime_events.is_empty() {
                 msg::REASON_PENDING_COMPANION_CONSUMED.to_string()
             } else if completion_satisfied {
                 msg::REASON_EXTRA_CONSTRAINTS_PENDING.to_string()
@@ -803,7 +790,7 @@ struct EvaluatedResolution {
 }
 
 #[derive(Default)]
-struct PendingHookMessages {
+struct TurnStartInjectionMessages {
     steering: Vec<AgentMessage>,
     follow_up: Vec<AgentMessage>,
     consumed: usize,
@@ -832,7 +819,7 @@ fn should_trace_user_prompt_context_injection(
         .trace
         .iter()
         .rev()
-        .find(|entry| matches!(entry.trigger, HookTrigger::UserPromptSubmit));
+        .find(|entry| matches!(entry.trigger, HookTraceTrigger::UserPromptSubmit));
 
     match previous {
         Some(entry) => entry.injections != injections,
@@ -840,21 +827,18 @@ fn should_trace_user_prompt_context_injection(
     }
 }
 
-fn collect_pending_hook_messages(
+fn collect_turn_start_injection_messages(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     runtime: &HookSessionRuntimeSnapshot,
-) -> PendingHookMessages {
-    let actions = hook_session.collect_pending_actions_for_injection();
-    let consumed = actions.len();
-    if consumed == 0 {
-        return PendingHookMessages::default();
-    }
+) -> TurnStartInjectionMessages {
+    let mut messages = TurnStartInjectionMessages::default();
+    let turn_start_notices = collect_turn_start_notice_messages(hook_session);
+    messages.consumed += turn_start_notices.len();
+    messages.steering.extend(turn_start_notices);
 
-    let mut messages = PendingHookMessages {
-        consumed,
-        ..PendingHookMessages::default()
-    };
+    let actions = hook_session.collect_pending_actions_for_injection();
+    messages.consumed += actions.len();
     for action in actions {
         let Some(message) = build_pending_action_message(snapshot, &action, runtime) else {
             continue;
@@ -868,26 +852,26 @@ fn collect_pending_hook_messages(
     messages
 }
 
-fn collect_runtime_notice_messages(
+fn collect_turn_start_notice_messages(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
 ) -> Vec<AgentMessage> {
-    let notices = hook_session.collect_runtime_notices_for_injection();
+    let notices = hook_session.collect_turn_start_notices_for_injection();
     if notices.is_empty() {
         return Vec::new();
     }
     let body = notices
         .iter()
-        .map(format_runtime_notice)
+        .map(format_turn_start_notice)
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
     vec![AgentMessage::user(body)]
 }
 
-fn format_runtime_notice(notice: &HookRuntimeNotice) -> String {
+fn format_turn_start_notice(notice: &HookTurnStartNotice) -> String {
     format!(
         "[运行时上下文更新]\nnotice_id: {}\nsource: {}\n\n{}",
         notice.id,
-        notice.source_trigger.as_key(),
+        notice.source.as_key(),
         notice.content.trim()
     )
 }
@@ -975,15 +959,16 @@ mod tests {
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
-    use super::{HookRuntimeDelegate, RuntimeHookInjectionSink};
+    use super::{HookRuntimeDelegate, RuntimeHookInjectionSink, RuntimeInjectionSource};
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::session::HookSessionRuntime;
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
         HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookRuntimeNotice,
-        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
+        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess, HookTrigger,
+        HookTraceTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
+        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]
@@ -1006,21 +991,21 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingInjectionSink {
-        records: Mutex<Vec<(String, HookTrigger, Vec<HookInjection>)>>,
+        records: Mutex<Vec<(String, RuntimeInjectionSource, Vec<HookInjection>)>>,
     }
 
     #[async_trait]
     impl RuntimeHookInjectionSink for RecordingInjectionSink {
-        async fn emit_hook_injections(
+        async fn emit_injections(
             &self,
             session_id: &str,
-            trigger: HookTrigger,
+            source: RuntimeInjectionSource,
             injections: &[HookInjection],
         ) {
             self.records
                 .lock()
                 .expect("recording sink lock poisoned")
-                .push((session_id.to_string(), trigger, injections.to_vec()));
+                .push((session_id.to_string(), source, injections.to_vec()));
         }
     }
 
@@ -1280,7 +1265,7 @@ mod tests {
             summary: "请先确认是否采纳 review 结论".to_string(),
             action_type: "blocking_review".to_string(),
             turn_id: Some("turn-parent-1".to_string()),
-            source_trigger: HookTrigger::SubagentResult,
+            source: RuntimeEventSource::CompanionResult,
             status: agentdash_spi::hooks::HookPendingActionStatus::Pending,
             last_injected_at_ms: None,
             resolved_at_ms: None,
@@ -1554,7 +1539,7 @@ mod tests {
             .runtime_snapshot()
             .trace
             .into_iter()
-            .filter(|trace| matches!(trace.trigger, HookTrigger::UserPromptSubmit))
+            .filter(|trace| matches!(trace.trigger, HookTraceTrigger::UserPromptSubmit))
             .collect::<Vec<_>>();
         assert_eq!(
             submit_traces.len(),
@@ -1565,7 +1550,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transform_context_consumes_runtime_notices_once() {
+    async fn transform_context_consumes_turn_start_notices_once() {
         let hook_session = Arc::new(HookSessionRuntime::new(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
@@ -1574,10 +1559,10 @@ mod tests {
                 ..SessionHookSnapshot::default()
             },
         ));
-        hook_session.enqueue_runtime_notice(HookRuntimeNotice {
+        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
             id: "notice-1".to_string(),
             created_at_ms: 1,
-            source_trigger: HookTrigger::CapabilityChanged,
+            source: RuntimeEventSource::RuntimeContextUpdate,
             content: "## Capability Update\n- tool schema refreshed".to_string(),
         });
         let delegate = HookRuntimeDelegate::new(hook_session.clone());
@@ -1708,7 +1693,7 @@ mod tests {
             .runtime_snapshot()
             .trace
             .into_iter()
-            .find(|entry| matches!(entry.trigger, HookTrigger::AfterTurn))
+            .find(|entry| matches!(entry.trigger, HookTraceTrigger::AfterTurn))
             .expect("should record after_turn trace");
         assert!(
             trace.injections.is_empty(),
@@ -1753,7 +1738,10 @@ mod tests {
         let records = sink.records.lock().expect("recording sink lock poisoned");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].0, "sess-hook");
-        assert_eq!(records[0].1, HookTrigger::AfterTurn);
+        assert!(matches!(
+            records[0].1,
+            RuntimeInjectionSource::Hook(HookTrigger::AfterTurn)
+        ));
         assert_eq!(records[0].2.len(), 1);
         assert_eq!(records[0].2[0].slot, "workflow");
         assert!(records[0].2[0].content.contains("phase: project_agent"));
@@ -1778,7 +1766,7 @@ mod tests {
             summary: "补充 follow-up".to_string(),
             action_type: "follow_up_required".to_string(),
             turn_id: Some("turn-1".to_string()),
-            source_trigger: HookTrigger::SubagentResult,
+            source: RuntimeEventSource::CompanionResult,
             status: agentdash_spi::hooks::HookPendingActionStatus::Pending,
             last_injected_at_ms: Some(1_710_000_100_000),
             resolved_at_ms: None,

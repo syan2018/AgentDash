@@ -16,7 +16,7 @@ use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
     AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry, HookTrigger,
-    MountCapability, SessionHookRefreshQuery, Vfs,
+    MountCapability, RuntimeEventSource, SessionHookRefreshQuery, Vfs,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -616,7 +616,7 @@ impl CompanionRequestTool {
 
         let request_id = format!("review-{}", Uuid::new_v4().simple());
 
-        // 走 SubagentResult hook trigger 统一路径，由 hook 规则决定是否创建 pending action
+        // 走 companion_result 运行期事件统一路径，由 hook 规则决定是否创建 pending action
         // 与 companion_respond → try_complete_to_parent 的回流路径对称
         let review_payload = serde_json::json!({
             "dispatch_id": companion_context.dispatch_id,
@@ -642,7 +642,7 @@ impl CompanionRequestTool {
         {
             let resolution = evaluate_subagent_hook(
                 parent_hook_session.as_ref(),
-                HookTrigger::SubagentResult,
+                HookTrigger::CompanionResult,
                 Some(companion_context.parent_turn_id.clone()),
                 &companion_context.companion_label,
                 Some(review_payload.clone()),
@@ -661,7 +661,7 @@ impl CompanionRequestTool {
                 parent_hook_session.as_ref(),
                 Some(&session_hub),
                 Some(companion_context.parent_turn_id.as_str()),
-                HookTrigger::SubagentResult,
+                HookTrigger::CompanionResult,
                 "review_request",
                 &companion_context.companion_label,
                 &resolution,
@@ -1188,7 +1188,7 @@ impl AgentTool for CompanionRespondTool {
 
         // 两个独立副作用，不互斥：
         // 1. resolve 当前 session 的 pending action（hook runtime → 解锁 before_stop gate）
-        // 2. 回传结果给父 session（companion context → SubagentResult hook）
+        // 2. 回传结果给父 session（companion context → companion_result 运行期事件）
         // 哪些命中由上下文决定，可以同时命中多个。
 
         let resolved_action = self
@@ -1440,7 +1440,7 @@ impl CompanionRespondTool {
         {
             let resolution = evaluate_subagent_hook(
                 parent_hook_session.as_ref(),
-                HookTrigger::SubagentResult,
+                HookTrigger::CompanionResult,
                 Some(companion_context.parent_turn_id.clone()),
                 &companion_context.companion_label,
                 Some(hook_payload.clone()),
@@ -1459,7 +1459,7 @@ impl CompanionRespondTool {
                 parent_hook_session.as_ref(),
                 Some(&session_hub),
                 Some(companion_context.parent_turn_id.as_str()),
-                HookTrigger::SubagentResult,
+                HookTrigger::CompanionResult,
                 "result_returned",
                 &companion_context.companion_label,
                 &resolution,
@@ -1711,11 +1711,14 @@ async fn record_subagent_trace(
     subagent_type: &str,
     resolution: &agentdash_spi::HookResolution,
 ) {
+    let Some(trace_trigger) = trigger.trace_trigger() else {
+        return;
+    };
     let trace = HookTraceEntry {
         sequence: hook_session.next_trace_sequence(),
         timestamp_ms: chrono::Utc::now().timestamp_millis(),
         revision: hook_session.revision(),
-        trigger,
+        trigger: trace_trigger,
         decision: decision.to_string(),
         tool_name: None,
         tool_call_id: None,
@@ -1793,7 +1796,7 @@ fn build_subagent_pending_action(
         summary: format!("status={status}, dispatch_id={dispatch_id}, summary={summary}"),
         action_type: adoption_mode,
         turn_id: Some(parent_turn_id.to_string()),
-        source_trigger: HookTrigger::SubagentResult,
+        source: RuntimeEventSource::CompanionResult,
         status: agentdash_spi::HookPendingActionStatus::Pending,
         last_injected_at_ms: None,
         resolved_at_ms: None,

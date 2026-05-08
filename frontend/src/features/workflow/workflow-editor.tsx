@@ -47,7 +47,7 @@ const TRIGGER_LABEL: Record<WorkflowHookTrigger, string> = {
   session_terminal: "Session 终态",
   before_subagent_dispatch: "子 Agent 派发前",
   after_subagent_dispatch: "子 Agent 派发后",
-  subagent_result: "子 Agent 结果回流",
+  companion_result: "Companion 结果回流",
   before_compact: "上下文压缩前",
   after_compact: "上下文压缩后",
   before_provider_request: "LLM 请求前",
@@ -64,12 +64,12 @@ const PROCESS_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
   "after_turn",
   "before_subagent_dispatch",
   "after_subagent_dispatch",
-  "subagent_result",
+  "companion_result",
 ]);
 
 const PROCESS_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
   "before_tool", "after_tool", "after_turn",
-  "before_subagent_dispatch", "after_subagent_dispatch", "subagent_result",
+  "before_subagent_dispatch", "after_subagent_dispatch", "companion_result",
 ];
 
 const GATE_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [

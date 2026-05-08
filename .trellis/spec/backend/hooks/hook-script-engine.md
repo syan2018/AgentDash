@@ -295,7 +295,7 @@ HookScriptEngine.eval_script(inline_script, ctx, None)
 - `before_tool_blocks_record_artifact_during_implement_phase` — 通过 preset 脚本阻止 artifact
 - `before_stop_requires_checklist_evidence_when_auto_checks_enabled` — 通过 preset 脚本注入 stop gate
 - `before_subagent_dispatch_inherits_runtime_context` — 通过 preset 脚本继承上下文
-- `subagent_result_records_structured_return_channel_diagnostic` — 通过 preset 脚本处理回流
+- `companion_result_records_structured_return_channel_diagnostic` — 通过 preset 脚本处理回流
 
 #### 编译检查
 
@@ -337,7 +337,7 @@ crates/agentdash-application/scripts/hook-presets/
 ├── manual_step_notice.rhai
 ├── subagent_inherit_context.rhai
 ├── subagent_record_result.rhai
-├── subagent_result_channel.rhai
+├── companion_result_channel.rhai
 └── supervised_tool_gate.rhai
 ```
 
@@ -459,7 +459,7 @@ if tool == () || !requires_supervised_approval(tool) {
 | `context_compaction_trigger` | `AfterCompaction`        | 上下文压缩触发后刷新 snapshot               | 无                          |
 | `subagent_inherit_context`   | `BeforeSubagentDispatch` | 子 Agent 继承当前 session 注入和约束        | 无                          |
 | `subagent_record_result`     | `AfterSubagentDispatch`  | 记录子 Agent 派发结果                    | 无                          |
-| `subagent_result_channel`    | `SubagentResult`         | 处理子 Agent 回流，按 adoption_mode 注入   | 无                          |
+| `companion_result_channel`   | `CompanionResult`        | 处理 Companion 回流，按 adoption_mode 注入 | 无                          |
 | `supervised_tool_gate`       | `BeforeTool`             | SUPERVISED 策略下工具审批门禁              | `allowlist?: string[]`     |
 
 

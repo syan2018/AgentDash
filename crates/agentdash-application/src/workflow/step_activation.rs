@@ -315,7 +315,7 @@ pub fn apply_to_prompt_request(
 
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
-/// steering 注入和 capability changed hook。
+/// runtime context update 事件。
 pub(crate) async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
@@ -324,7 +324,6 @@ pub(crate) async fn apply_to_running_session(
     phase_node_key: &str,
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
-    workflow_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
     let base_surface = session_hub
         .get_current_capability_state(hook_session.session_id())
@@ -344,7 +343,6 @@ pub(crate) async fn apply_to_running_session(
                 phase_node: phase_node_key.to_string(),
                 run_id,
                 lifecycle_key: lifecycle_key.map(ToString::to_string),
-                workflow_key: workflow_key.map(ToString::to_string),
                 before_state: base_surface,
                 after_state: target_surface,
                 capability_keys: activation.capability_keys.clone(),

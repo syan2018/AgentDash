@@ -138,6 +138,15 @@ Capability Update Markdown 保留 capability 段落，同时从 canonical `tool_
 - `Capability Update` Markdown 展示 tool path diff，不再输出无条件的“工具 schema 已同步更新”固定文案。
 - `capability_surface_changed` 事件进入前端可见系统事件，并展示 capability / tool path /
   MCP server 的结构化变化。
+- Hook 生命周期触发点已收敛为 AgentLoop 核心节点；能力变化不再占用
+  `HookTraceTrigger`，phase/capability 变化改为 `runtime_context_update`
+  runtime event，通过 `HookTurnStartNotice` 在下一次 `UserPromptSubmit` 边界注入。
+- Companion 回流不再作为 HookTrace；改为 `companion_result`
+  runtime event，hook rule 仍可评估并生成 `HookPendingAction`，但消息消费统一走
+  TurnStart 暂存事件队列。
+- `HookTurnStartNotice` 与 `HookPendingAction` 明确区分：前者一次性告知并消费即清，
+  后者是可处置事件，保留 pending/resolved 与 adopted/dismissed 状态，并可参与
+  `BeforeStop` gate。
 
 ## 相关规范
 

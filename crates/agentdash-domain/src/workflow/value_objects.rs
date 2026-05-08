@@ -231,7 +231,7 @@ pub enum WorkflowHookTrigger {
     SessionTerminal,
     BeforeSubagentDispatch,
     AfterSubagentDispatch,
-    SubagentResult,
+    CompanionResult,
     BeforeCompact,
     AfterCompact,
     BeforeProviderRequest,

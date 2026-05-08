@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
 use agentdash_spi::hooks::{
-    CapabilityDelta, HookInjection, HookRuntimeNotice, HookTrigger, SharedHookSessionRuntime,
+    CapabilityDelta, HookInjection, HookTurnStartNotice, RuntimeEventSource,
+    SharedHookSessionRuntime,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -28,7 +29,6 @@ pub(crate) struct LiveRuntimeContextTransitionInput {
     pub phase_node: String,
     pub run_id: Option<Uuid>,
     pub lifecycle_key: Option<String>,
-    pub workflow_key: Option<String>,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
     pub capability_keys: BTreeSet<String>,
@@ -65,7 +65,7 @@ impl SessionHub {
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let state_changed = input.before_state.as_ref() != Some(&input.after_state);
         if input.key_delta.is_empty() && !state_changed {
-            self.emit_runtime_context_changed_hook(&input).await;
+            self.emit_runtime_context_changed_notice(&input).await;
             return Ok(RuntimeContextTransitionOutcome {
                 capability_delta: None,
                 emitted_capability_change: false,
@@ -105,8 +105,8 @@ impl SessionHub {
         .await
         .map_err(|error| format!("Phase node capability state 事件持久化失败: {error}"))?;
 
-        let hook_result = self
-            .evaluate_capability_changed_hook(&input.session_id, input.turn_id.as_deref(), event)
+        let injections = self
+            .collect_runtime_context_update_injections(&input.session_id)
             .await;
         let state_delta = compute_capability_state_delta(
             input.before_state.as_ref(),
@@ -118,14 +118,9 @@ impl SessionHub {
             &notification_delta,
             &state_delta,
             &tools,
-            &hook_result.injections,
+            &injections,
         );
-        enqueue_runtime_context_notice(
-            hook_session.as_ref(),
-            input.phase_node.as_str(),
-            HookTrigger::CapabilityChanged,
-            notice,
-        );
+        enqueue_runtime_context_notice(hook_session.as_ref(), input.phase_node.as_str(), notice);
 
         Ok(RuntimeContextTransitionOutcome {
             capability_delta: delta,
@@ -225,45 +220,32 @@ impl SessionHub {
             let _ = self
                 .emit_capability_state_changed(session_id, Some(turn_id), payload.clone())
                 .await;
-            let hook_result = self
-                .evaluate_capability_changed_hook(session_id, Some(turn_id), payload)
+            let _ = payload;
+            let injections = self
+                .collect_runtime_context_update_injections(session_id)
                 .await;
-            if !hook_result.injections.is_empty()
+            if !injections.is_empty()
                 && let Some(hook_session) = hook_session
             {
                 enqueue_runtime_context_notice(
                     hook_session.as_ref(),
                     pending.phase_node.as_str(),
-                    HookTrigger::CapabilityChanged,
-                    build_context_only_notice(&pending.phase_node, &hook_result.injections),
+                    build_context_only_notice(&pending.phase_node, &injections),
                 );
             }
         }
     }
 
-    async fn emit_runtime_context_changed_hook(&self, input: &LiveRuntimeContextTransitionInput) {
-        let hook_result = self
-            .evaluate_capability_changed_hook(
-                &input.session_id,
-                input.turn_id.as_deref(),
-                serde_json::json!({
-                    "phase_node": input.phase_node.as_str(),
-                    "run_id": input.run_id.map(|id| id.to_string()),
-                    "lifecycle_key": input.lifecycle_key.as_deref(),
-                    "workflow_key": input.workflow_key.as_deref(),
-                    "apply_mode": input.apply_mode,
-                    "capability_state_changed": false,
-                    "reason": "phase_node_context_changed"
-                }),
-            )
+    async fn emit_runtime_context_changed_notice(&self, input: &LiveRuntimeContextTransitionInput) {
+        let injections = self
+            .collect_runtime_context_update_injections(&input.session_id)
             .await;
-        if !hook_result.injections.is_empty() {
-            let notice = build_context_only_notice(&input.phase_node, &hook_result.injections);
+        if !injections.is_empty() {
+            let notice = build_context_only_notice(&input.phase_node, &injections);
             if let Some(hook_session) = self.get_hook_session_runtime(&input.session_id).await {
                 enqueue_runtime_context_notice(
                     hook_session.as_ref(),
                     input.phase_node.as_str(),
-                    HookTrigger::CapabilityChanged,
                     notice,
                 );
             }
@@ -306,16 +288,15 @@ fn build_context_only_notice(phase_node: &str, injections: &[HookInjection]) -> 
 fn enqueue_runtime_context_notice(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
     phase_node: &str,
-    source_trigger: HookTrigger,
     content: String,
 ) {
-    hook_session.enqueue_runtime_notice(HookRuntimeNotice {
+    hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
         id: format!(
             "runtime-context-{phase_node}-{}",
             chrono::Utc::now().timestamp_millis()
         ),
         created_at_ms: chrono::Utc::now().timestamp_millis(),
-        source_trigger,
+        source: RuntimeEventSource::RuntimeContextUpdate,
         content,
     });
 }

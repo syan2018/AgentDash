@@ -483,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_result_records_structured_return_channel_diagnostic() {
+    fn companion_result_records_structured_return_channel_diagnostic() {
         use agentdash_domain::workflow::{WorkflowHookRuleSpec, WorkflowHookTrigger};
         let mut snapshot = snapshot_with_workflow("check", "checklist_passed");
         if let Some(meta) = snapshot.metadata.as_mut() {
@@ -491,9 +491,9 @@ mod tests {
                 if let Some(ec) = aw.effective_contract.as_mut() {
                     ec.hook_rules.push(WorkflowHookRuleSpec {
                         key: "result_channel".to_string(),
-                        trigger: WorkflowHookTrigger::SubagentResult,
-                        description: "subagent result channel".to_string(),
-                        preset: Some("subagent_result_channel".to_string()),
+                        trigger: WorkflowHookTrigger::CompanionResult,
+                        description: "companion result channel".to_string(),
+                        preset: Some("companion_result_channel".to_string()),
                         params: None,
                         script: None,
                         enabled: true,
@@ -504,7 +504,7 @@ mod tests {
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
             session_id: snapshot.session_id.clone(),
-            trigger: HookTrigger::SubagentResult,
+            trigger: HookTrigger::CompanionResult,
             turn_id: Some("turn-parent-1".to_string()),
             tool_name: None,
             tool_call_id: None,
@@ -534,8 +534,8 @@ mod tests {
             resolution
                 .matched_rule_keys
                 .iter()
-                .any(|k| k.contains("subagent_result_channel")),
-            "expected matched_rule_keys to contain subagent_result_channel, got: {:?}\ndiagnostics: {:?}",
+                .any(|k| k.contains("companion_result_channel")),
+            "expected matched_rule_keys to contain companion_result_channel, got: {:?}\ndiagnostics: {:?}",
             resolution.matched_rule_keys,
             resolution.diagnostics,
         );

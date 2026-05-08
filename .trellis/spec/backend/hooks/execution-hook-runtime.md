@@ -71,10 +71,24 @@ pub trait ExecutionHookProvider: Send + Sync {
 | Trigger | 核心约束 |
 |---|---|
 | `UserPromptSubmit` | **唯一**动态文本注入主通道（context_fragments + constraints + policies） |
-| `CapabilityChanged` | Workflow/phase 能力变化后的 out-of-band 动态注入先经统一 sink 回灌 `TurnExecution.context_bundle.turn_delta` / audit；若需要当前 running turn 立即消费，再额外走 session notification / steering；不得通过 live system prompt 热更表达 |
 | `BeforeTool` | `Ask` 必须在 tool call 边界同步挂起等待审批，不得退化为"先报错下一轮再猜" |
 | `BeforeStop` | 无 workflow 绑定时 `completion = None`，必须允许自然结束，不得因 `completion_satisfied = false` 错误阻止退出 |
-| `AfterTurn` | 不能重复注入 step 基线约束，避免永续 steering 导致无法抵达 `BeforeStop` |
+| `AfterTurn` | 只做生命周期观察与 effect，不消费 turn-start 暂存事件，避免重复注入 step 基线约束 |
+
+### Runtime Event 行为要点
+
+- `HookTraceTrigger` 只表示 AgentLoop 生命周期节点：`SessionStart` /
+  `UserPromptSubmit` / tool 边界 / `AfterTurn` / `BeforeStop` /
+  `SessionTerminal` / compact/provider request 等。
+- `runtime_context_update` 与 `companion_result` 是 runtime event，不是
+  `HookTraceTrigger`。它们可以驱动 hook rule 评估、turn_delta/audit 回灌、
+  `HookTurnStartNotice` 或 `HookPendingAction` 入队，但不写 HookTrace。
+- TurnStart 注入统一发生在 `transform_context(UserPromptSubmit)`：先消费
+  `HookTurnStartNotice`（一次性消息），再消费 `HookPendingAction`（带状态与
+  resolution 的可处置事件）。`AfterTurn` / `BeforeStop` 不得取走这些队列。
+- `HookTurnStartNotice` 与 `HookPendingAction` 的区别只在生命周期：前者一次性
+  告知，消费即清；后者有 `pending/resolved`、`adopted/dismissed`、阻塞 stop 等
+  状态语义。
 
 ### Workflow -> Hook Policy
 
@@ -91,11 +105,12 @@ pub trait ExecutionHookProvider: Send + Sync {
   事件 payload 与 pending metadata；禁止各入口手写互不一致的事件 JSON。
 - 生产路径必须通过 `SessionHub` 的 runtime context transition applier 应用
   transition。`replace_current_capability_state`、`emit_capability_state_changed`、
-  `evaluate_capability_changed_hook`、pending transition 写入等低层方法只允许作为
-  applier 内部 primitive 使用。
-- `CapabilityChanged` 不应作为第二条即时 live notification 推给 Agent。transition
-  applier 应先更新 `CapabilityState` 与 tool set，再评估 capability context update，
-  将合并后的能力变化、工具定义摘要与 workflow 注入写入 Hook runtime notice 队列；
+  runtime context update injection 收集、pending transition 写入等低层方法只允许
+  作为 applier 内部 primitive 使用。
+- runtime context update 不应作为第二条即时 live notification 推给 Agent。transition
+  applier 应先更新 `CapabilityState` 与 tool set，再收集当前 hook snapshot 中的
+  workflow/context 注入，将合并后的能力变化、工具定义摘要与 workflow 注入写入
+  `HookTurnStartNotice` 队列；
   下一次 `transform_context` 边界统一消费。
 
 ### Ask / Approval
@@ -109,7 +124,9 @@ pub trait ExecutionHookProvider: Send + Sync {
 - runtime tool：`companion_dispatch` / `companion_complete`
 - dispatch 前后显式调用 `BeforeSubagentDispatch` / `AfterSubagentDispatch`
 - 子 agent 继承的 context/constraints 由 dispatch resolution 生成，按 `slice_mode` 过滤
-- 回流结果进入 `HookSessionRuntime.pending_actions`，由 runtime delegate 在 `AfterTurn` / `BeforeStop` / `TransformContext` 边界消费
+- 回流结果以 `companion_result` runtime event 进入 hook rule；需要后续处置时写入
+  `HookSessionRuntime.pending_actions`，统一由 runtime delegate 在
+  `TransformContext(UserPromptSubmit)` TurnStart 边界消费。
 
 ### Hook Event Stream
 

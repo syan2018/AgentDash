@@ -197,5 +197,39 @@ mod tests {
                 workflow.key
             );
         }
+
+        let plan = bundle
+            .workflows
+            .iter()
+            .find(|workflow| workflow.key == "builtin_workflow_admin_plan")
+            .expect("plan workflow exists");
+        let apply = bundle
+            .workflows
+            .iter()
+            .find(|workflow| workflow.key == "builtin_workflow_admin_apply")
+            .expect("apply workflow exists");
+        for tool in ["upsert_workflow_tool", "upsert_lifecycle_tool"] {
+            assert!(
+                plan.contract
+                    .capability_config
+                    .tool_directives
+                    .iter()
+                    .any(|directive| directive.is_remove()
+                        && directive.key() == "workflow_management"
+                        && directive.path().tool.as_deref() == Some(tool)),
+                "Plan 阶段必须屏蔽 workflow_management::{tool}"
+            );
+            assert!(
+                !apply
+                    .contract
+                    .capability_config
+                    .tool_directives
+                    .iter()
+                    .any(|directive| directive.is_remove()
+                        && directive.key() == "workflow_management"
+                        && directive.path().tool.as_deref() == Some(tool)),
+                "Apply 阶段不得继续屏蔽 workflow_management::{tool}"
+            );
+        }
     }
 }

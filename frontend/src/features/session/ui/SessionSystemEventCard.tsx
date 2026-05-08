@@ -89,6 +89,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_human_response:        "用户已回应 Agent",
   companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
+  capability_surface_changed:      "能力表面已更新",
   hook_event:                      "流程事件",
   hook_trace:                      "流程事件",
 };
@@ -112,6 +113,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_human_response:        "已将用户回应写入当前会话",
   companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
+  capability_surface_changed:      "当前会话的工具与上下文表面已更新",
   hook_event:                      "流程产生新事件",
   hook_trace:                      "流程产生新事件",
 };
@@ -491,7 +493,71 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
     return lines;
   }
 
+  if (eventType === "capability_surface_changed") {
+    return buildCapabilitySurfaceDetailLines(data);
+  }
+
   return lines;
+}
+
+function buildCapabilitySurfaceDetailLines(data: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const phaseNode = readOptionalString(data.phase_node);
+  const applyMode = readOptionalString(data.apply_mode);
+  const surfaceChanged = readOptionalBoolean(data.surface_changed);
+
+  if (phaseNode) lines.push(`阶段：${phaseNode}`);
+  if (applyMode) lines.push(`应用模式：${applyMode}`);
+  if (surfaceChanged != null) lines.push(`表面变化：${surfaceChanged ? "是" : "否"}`);
+
+  const delta = isRecord(data.delta) ? data.delta : null;
+  if (delta) {
+    appendSetDeltaLines(lines, "能力", delta.tool_capabilities);
+    appendSetDeltaLines(lines, "工具簇", delta.enabled_clusters);
+    appendSetDeltaLines(lines, "屏蔽工具路径", delta.excluded_tool_paths);
+    appendSetDeltaLines(lines, "白名单工具路径", delta.included_tool_paths);
+    appendNamedDeltaLines(lines, "MCP Server", delta.mcp_servers);
+  }
+
+  const toolSurface = isRecord(data.tool_surface) ? data.tool_surface : null;
+  if (toolSurface) {
+    const currentExcluded = readStringArray(toolSurface.excluded_tool_paths);
+    const currentIncluded = readStringArray(toolSurface.included_tool_paths);
+    if (currentExcluded) lines.push(`当前屏蔽工具：${formatCompactList(currentExcluded)}`);
+    if (currentIncluded) lines.push(`当前白名单工具：${formatCompactList(currentIncluded)}`);
+  }
+
+  const mcp = isRecord(data.mcp) ? data.mcp : null;
+  if (mcp) {
+    const servers = readStringArray(mcp.servers);
+    if (servers) lines.push(`当前 MCP：${formatCompactList(servers)}`);
+  }
+
+  return lines;
+}
+
+function appendSetDeltaLines(lines: string[], label: string, value: unknown): void {
+  if (!isRecord(value)) return;
+  const added = readStringArray(value.added);
+  const removed = readStringArray(value.removed);
+  if (added) lines.push(`${label}新增：${formatCompactList(added)}`);
+  if (removed) lines.push(`${label}移除：${formatCompactList(removed)}`);
+}
+
+function appendNamedDeltaLines(lines: string[], label: string, value: unknown): void {
+  if (!isRecord(value)) return;
+  const added = readStringArray(value.added);
+  const removed = readStringArray(value.removed);
+  const changed = readStringArray(value.changed);
+  if (added) lines.push(`${label}新增：${formatCompactList(added)}`);
+  if (removed) lines.push(`${label}移除：${formatCompactList(removed)}`);
+  if (changed) lines.push(`${label}变更：${formatCompactList(changed)}`);
+}
+
+function formatCompactList(values: string[]): string {
+  const visible = values.slice(0, 4);
+  const suffix = values.length > visible.length ? ` 等 ${values.length} 项` : "";
+  return `${visible.join("，")}${suffix}`;
 }
 
 function extractHookEventData(

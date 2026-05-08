@@ -25,6 +25,7 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "companion_human_response",
   "companion_review_request",
   "canvas_presented",
+  "capability_surface_changed",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([

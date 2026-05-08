@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "权威定义 ToolCapabilityDirective、ToolCapabilityPath、Resolver 与工具级裁剪契约"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "确认运行期工具热更、ExecutionContext、FlowCapabilities 字段所有权"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量与跨层 DTO/事件契约约束"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端系统事件展示时遵守类型安全和 snake_case 契约"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端测试和禁止模式"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本修复跨 resolver、session、executor、MCP、前端事件展示多层，需要完整数据流检查"}
+{"file": "crates/agentdash-spi/src/connector/mod.rs", "reason": "新增 ToolCapabilityFilter 与 capability-aware 工具判定，作为运行态唯一工具级 policy"}
+{"file": "crates/agentdash-application/src/capability/resolver.rs", "reason": "将 ToolCapabilityReduction 编译到 FlowCapabilities.tool_filters，并覆盖 workflow_management Plan 阶段屏蔽 upsert 的测试"}
+{"file": "crates/agentdash-application/src/vfs/tools/provider.rs", "reason": "本地 runtime tools 改为按 capability key 与 cluster 共同裁剪"}
+{"file": "crates/agentdash-executor/src/mcp/direct.rs", "reason": "直连 MCP discovery 在 namespacing 前按 server capability 与原始 tool name 过滤"}
+{"file": "crates/agentdash-executor/src/mcp/relay.rs", "reason": "Relay MCP discovery 消费同一套 FlowCapabilities.tool_filters"}
+{"file": "crates/agentdash-application/src/capability/notification.rs", "reason": "Capability Update Markdown 展示工具级 surface diff，移除误导性 schema 同步固定文案"}
+{"file": "crates/agentdash-application/src/session/capability_surface.rs", "reason": "capability_surface_changed 事件从 tool_filters 派生 included/excluded path diff，并统一 snake_case delta 字段"}
+{"file": "frontend/src/features/session/ui/SessionSystemEventGuard.ts", "reason": "将 capability_surface_changed 纳入可见系统事件"}
+{"file": "frontend/src/features/session/ui/SessionSystemEventCard.tsx", "reason": "展示 capability/tool path/MCP server 的结构化 surface diff"}

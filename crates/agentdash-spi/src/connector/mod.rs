@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+};
 
 use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
 use agentdash_agent_types::AgentMessage;
@@ -174,16 +179,40 @@ pub enum ToolCluster {
     Canvas,
 }
 
+/// 单个 capability 下的工具级过滤规则。
+///
+/// 这是 `ToolCapabilityDirective` 归约后的运行态权威表示；directive 只存在于配置层。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCapabilityFilter {
+    /// 非空时，该 capability 只允许这些工具。
+    pub include_only: BTreeSet<String>,
+    /// 明确屏蔽的工具。
+    pub exclude: BTreeSet<String>,
+}
+
+impl ToolCapabilityFilter {
+    pub fn is_empty(&self) -> bool {
+        self.include_only.is_empty() && self.exclude.is_empty()
+    }
+
+    pub fn allows(&self, tool_name: &str) -> bool {
+        if !self.include_only.is_empty() && !self.include_only.contains(tool_name) {
+            return false;
+        }
+        !self.exclude.contains(tool_name)
+    }
+}
+
 /// 流程工具能力声明。
 /// 按 session 类型在 session plan 阶段填充，runtime tool provider 据此裁剪注入。
 /// 可进一步与 agent base_config 中的 tool_clusters 做交集裁剪。
 ///
-/// 支持两层裁剪：cluster 级开关 + 工具级排除。
+/// 支持两层裁剪：cluster 级开关 + capability-aware 工具级过滤。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowCapabilities {
     pub enabled_clusters: BTreeSet<ToolCluster>,
-    /// 工具级排除集：即使所属 cluster 已启用，名在此集合中的工具仍不注入。
-    pub excluded_tools: BTreeSet<String>,
+    /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
+    pub tool_filters: BTreeMap<String, ToolCapabilityFilter>,
     /// 最终生效的能力全集（well-known + custom MCP），由 CapabilityResolver 填充。
     /// 用于 hook runtime 初始化 capability tracking 及 delta 计算。
     pub effective_capabilities: BTreeSet<crate::ToolCapability>,
@@ -210,9 +239,68 @@ impl FlowCapabilities {
         self.enabled_clusters.contains(&cluster)
     }
 
-    /// 检查指定工具是否可用（cluster 启用 且 未被排除）。
+    /// 检查指定工具是否可用（cluster 启用）。
+    ///
+    /// 该方法仅保留给没有 capability 维度的旧调用点；新代码应使用
+    /// `is_capability_tool_enabled`。
     pub fn is_tool_enabled(&self, tool_name: &str, cluster: ToolCluster) -> bool {
-        self.has(cluster) && !self.excluded_tools.contains(tool_name)
+        let _ = tool_name;
+        self.has(cluster)
+    }
+
+    /// 检查指定 capability 下的工具是否可用。
+    pub fn is_capability_tool_enabled(
+        &self,
+        capability_key: &str,
+        tool_name: &str,
+        cluster: Option<ToolCluster>,
+    ) -> bool {
+        if let Some(cluster) = cluster
+            && !self.has(cluster)
+        {
+            return false;
+        }
+        if !self.effective_capabilities.is_empty()
+            && !self
+                .effective_capabilities
+                .contains(&crate::ToolCapability::new(capability_key))
+        {
+            return false;
+        }
+        self.tool_filters
+            .get(capability_key)
+            .is_none_or(|filter| filter.allows(tool_name))
+    }
+
+    /// 检查 `<capability>::<tool>` 是否被工具级 directive 屏蔽。
+    pub fn is_tool_path_excluded(&self, capability_key: &str, tool_name: &str) -> bool {
+        !self.is_capability_tool_enabled(capability_key, tool_name, None)
+    }
+
+    /// 以 `<capability>::<tool>` 形式导出当前白名单路径，供事件 diff / UI 展示使用。
+    pub fn included_tool_paths(&self) -> BTreeSet<String> {
+        self.tool_filters
+            .iter()
+            .flat_map(|(capability, filter)| {
+                filter
+                    .include_only
+                    .iter()
+                    .map(move |tool| format!("{capability}::{tool}"))
+            })
+            .collect()
+    }
+
+    /// 以 `<capability>::<tool>` 形式导出当前屏蔽路径，供事件 diff / UI 展示使用。
+    pub fn excluded_tool_paths(&self) -> BTreeSet<String> {
+        self.tool_filters
+            .iter()
+            .flat_map(|(capability, filter)| {
+                filter
+                    .exclude
+                    .iter()
+                    .map(move |tool| format!("{capability}::{tool}"))
+            })
+            .collect()
     }
 
     /// 从簇数组构造。
@@ -239,11 +327,10 @@ impl FlowCapabilities {
                 .intersection(&other.enabled_clusters)
                 .copied()
                 .collect(),
-            excluded_tools: self
-                .excluded_tools
-                .union(&other.excluded_tools)
-                .cloned()
-                .collect(),
+            tool_filters: merge_tool_filters_for_intersection(
+                &self.tool_filters,
+                &other.tool_filters,
+            ),
             effective_capabilities: self
                 .effective_capabilities
                 .intersection(&other.effective_capabilities)
@@ -251,6 +338,28 @@ impl FlowCapabilities {
                 .collect(),
         }
     }
+}
+
+fn merge_tool_filters_for_intersection(
+    left: &BTreeMap<String, ToolCapabilityFilter>,
+    right: &BTreeMap<String, ToolCapabilityFilter>,
+) -> BTreeMap<String, ToolCapabilityFilter> {
+    let mut merged = left.clone();
+    for (capability, filter) in right {
+        let entry = merged.entry(capability.clone()).or_default();
+        if entry.include_only.is_empty() {
+            entry.include_only = filter.include_only.clone();
+        } else if !filter.include_only.is_empty() {
+            entry.include_only = entry
+                .include_only
+                .intersection(&filter.include_only)
+                .cloned()
+                .collect();
+        }
+        entry.exclude.extend(filter.exclude.iter().cloned());
+    }
+    merged.retain(|_, filter| !filter.is_empty());
+    merged
 }
 
 // ── Session 级 MCP Server 声明 ─────────────────────────────────
@@ -416,6 +525,44 @@ mod tests {
         assert!(text.contains("[引用文件: src/lib.rs (file:///workspace/src/lib.rs)]"));
         assert!(text.contains("[引用图片: mimeType=image/png"));
         assert!(text.contains("[引用音频: mimeType=audio/wav"));
+    }
+
+    #[test]
+    fn capability_tool_filter_excludes_and_whitelists_by_capability_key() {
+        let mut flow = FlowCapabilities::from_clusters([ToolCluster::Read]);
+        flow.effective_capabilities
+            .insert(crate::ToolCapability::new("file_read"));
+        flow.tool_filters
+            .entry("file_read".to_string())
+            .or_default()
+            .exclude
+            .insert("fs_grep".to_string());
+
+        assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
+        assert!(!flow.is_capability_tool_enabled("file_read", "fs_grep", Some(ToolCluster::Read)));
+
+        let filter = flow
+            .tool_filters
+            .entry("file_read".to_string())
+            .or_default();
+        filter.include_only.insert("fs_read".to_string());
+
+        assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
+        assert!(!flow.is_capability_tool_enabled(
+            "file_read",
+            "mounts_list",
+            Some(ToolCluster::Read)
+        ));
+    }
+
+    #[test]
+    fn capability_tool_filter_respects_effective_capabilities_when_present() {
+        let mut flow = FlowCapabilities::default();
+        flow.effective_capabilities
+            .insert(crate::ToolCapability::new("workflow_management"));
+
+        assert!(flow.is_capability_tool_enabled("workflow_management", "get_workflow", None));
+        assert!(!flow.is_capability_tool_enabled("story_management", "get_story_context", None));
     }
 }
 

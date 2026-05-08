@@ -14,9 +14,9 @@ use agentdash_domain::workflow::{
 };
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::platform::tool_capability::{
-    self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS, cluster_tools,
+    self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
-use agentdash_spi::{FlowCapabilities, ToolCluster};
+use agentdash_spi::{FlowCapabilities, ToolCapabilityFilter, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
@@ -112,7 +112,7 @@ impl CapabilityResolver {
     /// 2. 对 workflow_tool_directives 执行 slot 归约（FullCapability /
     ///    ToolWhitelist / Blocked），对 baseline 做覆盖
     /// 3. 解析自定义 MCP (`mcp:<server>`) —— 优先查 preset，回退 agent inline
-    /// 4. 映射到 cluster / platform MCP scope / excluded_tools
+    /// 4. 映射到 cluster / platform MCP scope / capability-aware tool_filters
     pub fn resolve(
         input: &CapabilityResolverInput,
         platform: &PlatformConfig,
@@ -200,12 +200,12 @@ impl CapabilityResolver {
             }
         }
 
-        // ── 计算 excluded_tools（ToolWhitelist + Remove(tool) 合集）──
-        let excluded_tools = compute_excluded_tools(&reduction, &effective_caps);
+        // ── 编译工具级过滤策略（ToolWhitelist + Remove(tool) 合集）──
+        let tool_filters = compute_tool_filters(&reduction, &effective_caps);
 
         let mut flow_capabilities = FlowCapabilities {
             enabled_clusters: tool_clusters,
-            excluded_tools,
+            tool_filters,
             effective_capabilities: effective_caps.clone(),
         };
 
@@ -222,46 +222,40 @@ impl CapabilityResolver {
     }
 }
 
-/// 从 reduction 结果产出 `excluded_tools` 集合。
-///
-/// 规则：
-/// - `ToolWhitelist(set)`：cluster 内不在 set 中的工具加入 excluded
-/// - `Remove(cap, tool)` （来自 `reduction.excluded_tools`）：直接加入 excluded
-///
-/// 仅对当前 `effective_caps` 内的能力生效；Blocked 的 capability 已从 effective 中移除，
-/// 不需要在工具层重复屏蔽。
-fn compute_excluded_tools(
+/// 将 directive reduction 编译成运行态唯一工具过滤表。
+fn compute_tool_filters(
     reduction: &ToolCapabilityReduction,
     effective_caps: &BTreeSet<ToolCapability>,
-) -> BTreeSet<String> {
-    let mut excluded = BTreeSet::<String>::new();
+) -> BTreeMap<String, ToolCapabilityFilter> {
+    let mut filters = BTreeMap::<String, ToolCapabilityFilter>::new();
 
-    // ── 工具级 Remove ──
-    for (_, tools) in &reduction.excluded_tools {
+    for (key, tools) in &reduction.excluded_tools {
+        let cap = ToolCapability::new(key);
+        if !effective_caps.contains(&cap) {
+            continue;
+        }
+        let filter = filters.entry(key.clone()).or_default();
         for tool in tools {
-            excluded.insert(tool.clone());
+            filter.exclude.insert(tool.clone());
         }
     }
 
-    // ── ToolWhitelist：排除未命中的工具 ──
     for (key, state) in &reduction.slots {
         if let ToolCapabilitySlotState::ToolWhitelist(whitelist) = state {
             let cap = ToolCapability::new(key);
             if !effective_caps.contains(&cap) {
                 continue;
             }
-            let clusters = tool_capability::capability_to_tool_clusters(&cap);
-            for cluster in clusters {
-                for &tool in cluster_tools(cluster) {
-                    if !whitelist.contains(tool) {
-                        excluded.insert(tool.to_string());
-                    }
-                }
-            }
+            filters
+                .entry(key.clone())
+                .or_default()
+                .include_only
+                .extend(whitelist.iter().cloned());
         }
     }
 
-    excluded
+    filters.retain(|_, filter| !filter.is_empty());
+    filters
 }
 
 fn default_visible_capabilities(
@@ -714,7 +708,7 @@ mod tests {
 
     #[test]
     fn workflow_directive_remove_tool_keeps_capability_but_excludes_tool() {
-        // Remove(file_read::fs_grep) 应保留 file_read 能力，但把 fs_grep 放入 excluded_tools
+        // Remove(file_read::fs_grep) 应保留 file_read 能力，但屏蔽对应 capability 下的 fs_grep
         let mut input = base_input();
         input.workflow_ctx.workflow_tool_directives =
             Some(vec![ToolCapabilityDirective::remove_tool(
@@ -728,8 +722,64 @@ mod tests {
             "file_read 能力整体仍可见"
         );
         assert!(
-            output.flow_capabilities.excluded_tools.contains("fs_grep"),
-            "fs_grep 应进入 excluded_tools"
+            output
+                .flow_capabilities
+                .is_tool_path_excluded("file_read", "fs_grep"),
+            "fs_grep 应进入 file_read 的工具过滤策略"
+        );
+    }
+
+    #[test]
+    fn workflow_management_plan_keeps_mcp_but_blocks_upsert_tools() {
+        let mut input = base_input();
+        input.workflow_ctx = SessionWorkflowContext {
+            has_active_workflow: true,
+            workflow_tool_directives: Some(vec![
+                ToolCapabilityDirective::add_simple("workflow_management"),
+                ToolCapabilityDirective::remove_tool("workflow_management", "upsert_workflow_tool"),
+                ToolCapabilityDirective::remove_tool(
+                    "workflow_management",
+                    "upsert_lifecycle_tool",
+                ),
+            ]),
+        };
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output
+                .effective_capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "Plan 阶段仍需要 workflow_management 的只读工具"
+        );
+        assert!(
+            output
+                .platform_mcp_configs
+                .iter()
+                .any(|config| config.endpoint_url().contains("/mcp/workflow/")),
+            "workflow_management capability 应继续注入 Workflow MCP server"
+        );
+        assert!(output.flow_capabilities.is_capability_tool_enabled(
+            "workflow_management",
+            "get_workflow",
+            None
+        ));
+        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+            "workflow_management",
+            "upsert_workflow_tool",
+            None
+        ));
+        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+            "workflow_management",
+            "upsert_lifecycle_tool",
+            None
+        ));
+        assert_eq!(
+            output.flow_capabilities.excluded_tool_paths(),
+            BTreeSet::from([
+                "workflow_management::upsert_lifecycle_tool".to_string(),
+                "workflow_management::upsert_workflow_tool".to_string(),
+            ])
         );
     }
 
@@ -757,7 +807,7 @@ mod tests {
     #[test]
     fn workflow_directive_add_tool_whitelist_excludes_other_tools() {
         // Add(file_read::fs_read) → whitelist 只保留 fs_read，
-        // 其他 read 工具（mounts_list/fs_glob/fs_grep）进入 excluded_tools
+        // 其他 read 工具（mounts_list/fs_glob/fs_grep）不再可见。
         let mut input = base_input();
         input.workflow_ctx.workflow_tool_directives =
             Some(vec![ToolCapabilityDirective::add_tool(
@@ -767,11 +817,26 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.flow_capabilities.has(ToolCluster::Read));
-        let excluded = &output.flow_capabilities.excluded_tools;
-        assert!(!excluded.contains("fs_read"));
-        assert!(excluded.contains("fs_grep"));
-        assert!(excluded.contains("fs_glob"));
-        assert!(excluded.contains("mounts_list"));
+        assert!(output.flow_capabilities.is_capability_tool_enabled(
+            "file_read",
+            "fs_read",
+            Some(ToolCluster::Read)
+        ));
+        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+            "file_read",
+            "fs_grep",
+            Some(ToolCluster::Read)
+        ));
+        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+            "file_read",
+            "fs_glob",
+            Some(ToolCluster::Read)
+        ));
+        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+            "file_read",
+            "mounts_list",
+            Some(ToolCluster::Read)
+        ));
     }
 
     // ── SessionOwnerCtx 变体 × MCP 注入边界回归 ──────────────────────────────

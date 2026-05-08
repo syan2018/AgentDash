@@ -149,7 +149,9 @@ enum ToolCapabilitySlotState {
 }
 ```
 
-工具级屏蔽独立维护 `excluded_tools: BTreeMap<capability, BTreeSet<tool>>`。
+工具级屏蔽只在归约中间态维护 `ToolCapabilityReduction.excluded_tools:
+BTreeMap<capability, BTreeSet<tool>>`，用于让 Resolver 编译出运行态策略。
+它不是运行态工具表面，禁止直接被 tool builder、MCP discovery 或前端事件消费。
 
 转移表（后来者胜）：
 
@@ -162,8 +164,58 @@ enum ToolCapabilitySlotState {
 
 `CapabilityResolver` 在 agent baseline（auto_granted）上应用以上 reduction：
 - `Blocked` → baseline 中即便 auto_granted=true 也被移除
-- `FullCapability` / `ToolWhitelist` → 加入 effective_caps；`ToolWhitelist` 下未命中的工具进入 `flow_capabilities.excluded_tools`
-- `excluded_tools` 直接传递到 `flow_capabilities.excluded_tools`（叠加在能力仍可见的情况下）
+- `FullCapability` / `ToolWhitelist` → 加入 effective_caps
+- `ToolWhitelist` 与 `Remove(cap, Some(tool))` 统一编译到
+  `FlowCapabilities.tool_filters[capability]`
+- 若 capability 最终不在 `effective_caps`，该 capability 下的工具级 filter 不进入运行态
+
+## 运行态工具策略
+
+运行态只有一个工具级策略字段：
+
+```rust
+pub struct FlowCapabilities {
+    pub enabled_clusters: BTreeSet<ToolCluster>,
+    pub tool_filters: BTreeMap<String, ToolCapabilityFilter>,
+    pub effective_capabilities: BTreeSet<ToolCapability>,
+}
+
+pub struct ToolCapabilityFilter {
+    pub include_only: BTreeSet<String>,
+    pub exclude: BTreeSet<String>,
+}
+```
+
+边界定义：
+
+- `ToolCapabilityDirective`：配置层输入 DSL，仅表达 workflow / step 的 add/remove 意图
+- `ToolCapabilityReduction`：Resolver 内部归约中间态，仅用于实现 slot 状态机
+- `FlowCapabilities.tool_filters`：运行态唯一工具级 policy，所有工具暴露层必须消费它
+
+运行态禁止新增或保留与 `tool_filters` 并行表达同一件事的状态字段，例如
+`FlowCapabilities.excluded_tools`、`FlowCapabilities.included_tools` 或持久化的
+`*_tool_paths`。事件、Markdown 通知、前端展示所需的 path 列表，必须从
+`tool_filters` 派生。
+
+所有工具发现入口必须调用 capability-aware 判定：
+
+```rust
+flow_capabilities.is_capability_tool_enabled(
+    capability_key,
+    tool_name,
+    optional_cluster,
+)
+```
+
+适用入口：
+
+- 本地 runtime tools：按平台 capability key + `ToolCluster` 双重裁剪
+- 直连 MCP discovery：先把 server name 映射回 capability key，再按原始 MCP tool name 裁剪
+- Relay MCP discovery：按 relay 返回的 `server_name` / `tool_name` 裁剪
+
+`is_capability_tool_enabled` 在 `effective_capabilities` 非空时必须先确认 capability
+本身有效，再应用 `include_only` / `exclude`。这样即使某条链路意外挂上 MCP server，
+只要 canonical surface 没授予对应 capability，工具仍不会暴露。
 
 ## CapabilityResolver
 
@@ -382,3 +434,4 @@ Workflow 与 Lifecycle 编辑链路必须把能力配置当成结构化字段透
 *更新：2026-04-22 — Directive 模型重构：引入 `ToolCapabilityPath` + slot 归约；`CapabilityEntry` / `file_system` 别名彻底下线；历史 `WorkflowContract.capabilities` 已迁入结构化能力配置。*
 *更新：2026-05-06 — 工具能力指令路径硬切到 `WorkflowContract.capability_config.tool_directives`；旧根字段仅作为数据迁移来源，不再是运行时/接口定义。*
 *更新：2026-05-07 — 补齐前端/API roundtrip 契约：Lifecycle step 级 `capability_config` 不得在编辑链路丢失。*
+*更新：2026-05-08 — 运行态工具策略收敛到 `FlowCapabilities.tool_filters`；`ToolCapabilityDirective`/`ToolCapabilityReduction` 仅作为配置输入与 Resolver 中间态，所有本地/MCP 工具暴露入口必须消费 capability-aware 判定。*

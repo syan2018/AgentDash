@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查工具级 directive 是否端到端生效且不再丢失 capability 维度"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查运行期热更是否正确替换工具表面并同步 connector"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Rust 测试、错误处理和 DTO/事件契约"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端事件数据读取是否类型安全"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端测试与 lint 约束"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查后端事实源、Agent steering、前端展示三者是否一致"}
+{"command": "cargo check -p agentdash-spi -p agentdash-application -p agentdash-executor", "result": "passed", "reason": "三包编译通过"}
+{"command": "cargo test -p agentdash-spi", "result": "passed", "reason": "SPI FlowCapabilities/tool_filters 单元测试通过"}
+{"command": "cargo test -p agentdash-application", "result": "passed", "reason": "Application 全量 323 个单元测试通过，覆盖 resolver、notification、surface event、runtime hot update"}
+{"command": "cargo test -p agentdash-executor mcp::", "result": "passed", "reason": "MCP direct/relay filtering 相关测试通过"}
+{"command": "cargo test -p agentdash-application builtin_workflow_admin_has_expected_shape", "result": "passed", "reason": "内嵌 Workflow Admin Plan/Apply 模板断言通过：Plan 屏蔽 upsert，Apply 不屏蔽 upsert"}
+{"command": "cargo test -p agentdash-spi -p agentdash-application -p agentdash-executor capability", "result": "passed", "reason": "Capability 定向测试通过"}
+{"command": "pnpm --filter frontend exec tsc --noEmit", "result": "passed", "reason": "前端类型检查通过"}
+{"command": "pnpm --filter frontend lint", "result": "passed", "reason": "前端 lint 通过"}
+{"command": "cargo test -p agentdash-spi -p agentdash-application -p agentdash-executor", "result": "failed_unrelated_executor_tests", "reason": "agentdash-application 323/323 通过；agentdash-executor 有 4 个既有 PiAgent dynamic tool stream 测试失败，失败集中在 connector_tests.rs 的 tool call event 映射，与本次 MCP/tool_filters 链路无直接交集；MCP 定向测试已单独通过"}

@@ -16,6 +16,8 @@ use agentdash_spi::platform::tool_capability::{
     CAP_WORKFLOW_MANAGEMENT, ToolCapability,
 };
 
+use crate::session::CapabilitySurfaceDelta;
+
 /// 能力 key 的人类可读短描述 —— 与 `McpInjectionConfig::to_context_content` 保持口径一致。
 pub fn capability_description(key: &str) -> &'static str {
     match key {
@@ -47,6 +49,7 @@ pub fn build_capability_delta_markdown(
     phase_node_key: &str,
     delta: &CapabilityDelta,
     effective_caps: &BTreeSet<String>,
+    surface_delta: Option<&CapabilitySurfaceDelta>,
 ) -> String {
     let mut sections = Vec::new();
     sections.push(format!(
@@ -90,9 +93,80 @@ pub fn build_capability_delta_markdown(
     };
     sections.push(format!("### Effective Capabilities\n{caps_block}"));
 
-    sections.push("> 工具 schema 已同步更新，可直接调用上述能力；历史对话未被改写。".to_string());
+    if let Some(surface_delta) = surface_delta
+        && let Some(block) = build_tool_surface_block(surface_delta)
+    {
+        sections.push(block);
+    }
+
+    if delta.is_empty()
+        && surface_delta.is_none_or(|surface_delta| {
+            surface_delta.excluded_tool_paths.is_empty()
+                && surface_delta.included_tool_paths.is_empty()
+                && surface_delta.mcp_servers.is_empty()
+        })
+    {
+        sections.push("> 本次没有 capability key 或工具级表面变化；历史对话未被改写。".to_string());
+    } else {
+        sections.push(
+            "> 工具表面已按上述 capability 与 tool path 更新；历史对话未被改写。".to_string(),
+        );
+    }
 
     sections.join("\n\n")
+}
+
+fn build_tool_surface_block(surface_delta: &CapabilitySurfaceDelta) -> Option<String> {
+    let mut lines = vec!["### Tool Surface Changes".to_string()];
+
+    append_path_lines(
+        &mut lines,
+        "Blocked tool paths",
+        &surface_delta.excluded_tool_paths.added,
+        "不再暴露",
+    );
+    append_path_lines(
+        &mut lines,
+        "Unblocked tool paths",
+        &surface_delta.excluded_tool_paths.removed,
+        "重新暴露",
+    );
+    append_path_lines(
+        &mut lines,
+        "Whitelisted tool paths",
+        &surface_delta.included_tool_paths.added,
+        "进入白名单",
+    );
+    append_path_lines(
+        &mut lines,
+        "Removed whitelist paths",
+        &surface_delta.included_tool_paths.removed,
+        "移出白名单",
+    );
+    append_path_lines(
+        &mut lines,
+        "Added MCP servers",
+        &surface_delta.mcp_servers.added,
+        "已注入",
+    );
+    append_path_lines(
+        &mut lines,
+        "Removed MCP servers",
+        &surface_delta.mcp_servers.removed,
+        "已移除",
+    );
+
+    (lines.len() > 1).then(|| lines.join("\n"))
+}
+
+fn append_path_lines(lines: &mut Vec<String>, title: &str, values: &[String], suffix: &str) {
+    if values.is_empty() {
+        return;
+    }
+    lines.push(format!("- {title}:"));
+    for value in values {
+        lines.push(format!("  - `{value}` — {suffix}"));
+    }
 }
 
 /// 防御性检查：key 是否属于 well-known 集合或 `mcp:*` 格式。
@@ -117,7 +191,7 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        let md = build_capability_delta_markdown("implement", &delta, &effective);
+        let md = build_capability_delta_markdown("implement", &delta, &effective, None);
 
         assert!(md.contains("## Capability Update — Step Transition: implement"));
         assert!(md.contains("### Added Capabilities"));
@@ -137,11 +211,34 @@ mod tests {
         };
         let effective = BTreeSet::new();
 
-        let md = build_capability_delta_markdown("wrap_up", &delta, &effective);
+        let md = build_capability_delta_markdown("wrap_up", &delta, &effective, None);
 
         assert!(md.contains("Removed Capabilities"));
         assert!(!md.contains("### Added Capabilities"));
         assert!(md.contains("### Effective Capabilities\n- （无）"));
+    }
+
+    #[test]
+    fn delta_markdown_reports_tool_surface_changes_without_key_delta() {
+        let delta = CapabilityDelta::default();
+        let effective: BTreeSet<String> = ["workflow_management".to_string()].into_iter().collect();
+        let surface_delta = CapabilitySurfaceDelta {
+            excluded_tool_paths: crate::session::SetDelta {
+                added: vec![
+                    "workflow_management::upsert_workflow_tool".to_string(),
+                    "workflow_management::upsert_lifecycle_tool".to_string(),
+                ],
+                removed: vec![],
+            },
+            ..Default::default()
+        };
+
+        let md = build_capability_delta_markdown("plan", &delta, &effective, Some(&surface_delta));
+
+        assert!(md.contains("### Tool Surface Changes"));
+        assert!(md.contains("workflow_management::upsert_workflow_tool"));
+        assert!(md.contains("不再暴露"));
+        assert!(!md.contains("工具 schema 已同步更新，可直接调用上述能力"));
     }
 
     #[test]

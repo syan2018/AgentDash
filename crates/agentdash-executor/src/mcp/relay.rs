@@ -6,11 +6,12 @@ use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
+use agentdash_spi::FlowCapabilities;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::direct::namespaced_tool_name;
+use super::direct::{capability_key_for_mcp_server_name, namespaced_tool_name};
 
 /// 将 relay MCP 工具适配为 Pi Agent 可调用的 AgentTool。
 ///
@@ -101,6 +102,7 @@ impl AgentTool for RelayMcpToolAdapter {
 pub async fn discover_relay_mcp_tools(
     provider: Arc<dyn McpRelayProvider>,
     server_names: &[String],
+    flow_capabilities: &FlowCapabilities,
 ) -> Vec<DynAgentTool> {
     if server_names.is_empty() {
         return Vec::new();
@@ -108,8 +110,96 @@ pub async fn discover_relay_mcp_tools(
     let tools = provider.list_relay_tools(server_names).await;
     tools
         .iter()
+        .filter(|info| {
+            let capability_key = capability_key_for_mcp_server_name(&info.server_name);
+            flow_capabilities.is_capability_tool_enabled(&capability_key, &info.tool_name, None)
+        })
         .map(|info| {
             Arc::new(RelayMcpToolAdapter::from_info(info, provider.clone())) as DynAgentTool
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_spi::platform::mcp_relay::{RelayMcpCallResult, RelayProbeResult};
+    use agentdash_spi::{ConnectorError, ToolCapabilityFilter};
+    use async_trait::async_trait;
+
+    #[derive(Debug)]
+    struct FakeRelayProvider {
+        tools: Vec<RelayMcpToolInfo>,
+    }
+
+    #[async_trait]
+    impl McpRelayProvider for FakeRelayProvider {
+        async fn list_relay_tools(&self, _requested_servers: &[String]) -> Vec<RelayMcpToolInfo> {
+            self.tools.clone()
+        }
+
+        async fn call_relay_tool(
+            &self,
+            _server_name: &str,
+            _tool_name: &str,
+            _arguments: Option<serde_json::Map<String, serde_json::Value>>,
+        ) -> Result<RelayMcpCallResult, ConnectorError> {
+            Ok(RelayMcpCallResult {
+                content: String::new(),
+                is_error: false,
+            })
+        }
+
+        async fn probe_transport(
+            &self,
+            _transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+        ) -> Result<RelayProbeResult, ConnectorError> {
+            Ok(RelayProbeResult {
+                status: "ok".to_string(),
+                latency_ms: None,
+                tools: None,
+                error: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_discovery_filters_tools_by_capability_policy() {
+        let provider = Arc::new(FakeRelayProvider {
+            tools: vec![
+                RelayMcpToolInfo {
+                    server_name: "agentdash-workflow-tools-123".to_string(),
+                    tool_name: "get_workflow".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+                RelayMcpToolInfo {
+                    server_name: "agentdash-workflow-tools-123".to_string(),
+                    tool_name: "upsert_workflow_tool".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+            ],
+        });
+        let mut flow = FlowCapabilities::default();
+        flow.effective_capabilities
+            .insert(agentdash_spi::ToolCapability::new("workflow_management"));
+        flow.tool_filters.insert(
+            "workflow_management".to_string(),
+            ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["upsert_workflow_tool".to_string()].into_iter().collect(),
+            },
+        );
+
+        let tools = discover_relay_mcp_tools(
+            provider,
+            &["agentdash-workflow-tools-123".to_string()],
+            &flow,
+        )
+        .await;
+        let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["mcp_agentdash_workflow_tools_get_workflow"]);
+    }
 }

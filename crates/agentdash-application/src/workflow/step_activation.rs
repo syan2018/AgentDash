@@ -634,12 +634,15 @@ mod tests {
         let restricted = activate_step_with_platform(&restricted_input, &test_platform());
 
         assert_eq!(base.capability_keys, restricted.capability_keys);
-        assert!(!base.flow_capabilities.excluded_tools.contains("fs_grep"));
+        assert!(
+            !base
+                .flow_capabilities
+                .is_tool_path_excluded("file_read", "fs_grep")
+        );
         assert!(
             restricted
                 .flow_capabilities
-                .excluded_tools
-                .contains("fs_grep")
+                .is_tool_path_excluded("file_read", "fs_grep")
         );
     }
 

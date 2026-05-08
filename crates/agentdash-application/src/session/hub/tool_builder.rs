@@ -168,7 +168,9 @@ impl SessionHub {
 
         let (relay_names, direct_servers) =
             agentdash_spi::partition_session_mcp_servers(mcp_servers);
-        match mcp_discovery::discover_mcp_tools(&direct_servers).await {
+        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.flow_capabilities)
+            .await
+        {
             Ok(tools) => all_tools.extend(tools),
             Err(e) => tracing::warn!(
                 session_id = %session_id,
@@ -177,7 +179,12 @@ impl SessionHub {
         }
 
         if let Some(relay) = &self.mcp_relay_provider {
-            let tools = mcp_discovery::discover_relay_mcp_tools(relay.clone(), &relay_names).await;
+            let tools = mcp_discovery::discover_relay_mcp_tools(
+                relay.clone(),
+                &relay_names,
+                &context.turn.flow_capabilities,
+            )
+            .await;
             all_tools.extend(tools);
         }
 

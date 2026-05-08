@@ -325,7 +325,10 @@ async fn replace_current_capability_surface_updates_active_turn_flow_capabilitie
     let mut target_flow =
         agentdash_spi::FlowCapabilities::from_clusters([agentdash_spi::ToolCluster::Write]);
     target_flow
-        .excluded_tools
+        .tool_filters
+        .entry("file_write".to_string())
+        .or_default()
+        .exclude
         .insert("fs_apply_patch".to_string());
     let target_mcp = agentdash_spi::SessionMcpServer {
         name: "phase_tools".to_string(),

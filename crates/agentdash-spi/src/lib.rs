@@ -32,8 +32,8 @@ pub use connector::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
     ExecutionTurnFrame, FlowCapabilities, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
-    RestoredSessionState, SessionMcpServer, ToolCluster, content_block_to_text,
-    partition_session_mcp_servers, workspace_path_from_context,
+    RestoredSessionState, SessionMcpServer, ToolCapabilityFilter, ToolCluster,
+    content_block_to_text, partition_session_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

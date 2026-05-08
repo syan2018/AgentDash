@@ -4,7 +4,10 @@ use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
-use agentdash_spi::{McpTransportConfig, SessionMcpServer};
+use agentdash_spi::platform::tool_capability::{
+    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
+};
+use agentdash_spi::{FlowCapabilities, McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
 use rmcp::{
     ServiceExt,
@@ -119,6 +122,7 @@ impl AgentTool for McpToolAdapter {
 
 pub async fn discover_mcp_tools(
     servers: &[SessionMcpServer],
+    flow_capabilities: &FlowCapabilities,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
     let mut tools: Vec<DynAgentTool> = Vec::new();
 
@@ -137,7 +141,15 @@ pub async fn discover_mcp_tools(
             .map_err(|e| ConnectorError::ConnectionFailed(format_service_error(&e)))?;
         let _ = client.cancel().await;
 
+        let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
         for tool in listed {
+            if !flow_capabilities.is_capability_tool_enabled(
+                &capability_key,
+                tool.name.as_ref(),
+                None,
+            ) {
+                continue;
+            }
             tools.push(
                 Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool)) as DynAgentTool,
             );
@@ -145,6 +157,16 @@ pub async fn discover_mcp_tools(
     }
 
     Ok(tools)
+}
+
+pub fn capability_key_for_mcp_server_name(server_name: &str) -> String {
+    match agent_facing_mcp_server_name(server_name).as_str() {
+        "agentdash-relay-tools" => CAP_RELAY_MANAGEMENT.to_string(),
+        "agentdash-story-tools" => CAP_STORY_MANAGEMENT.to_string(),
+        "agentdash-task-tools" => CAP_TASK_MANAGEMENT.to_string(),
+        "agentdash-workflow-tools" => CAP_WORKFLOW_MANAGEMENT.to_string(),
+        other => format!("mcp:{other}"),
+    }
 }
 
 async fn connect_http_server(
@@ -285,6 +307,22 @@ mod tests {
         assert_eq!(
             namespaced_tool_name("code-analyzer", "scan_repo"),
             "mcp_code_analyzer_scan_repo"
+        );
+    }
+
+    #[test]
+    fn platform_mcp_server_names_map_to_capability_keys() {
+        assert_eq!(
+            capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
+            "workflow_management"
+        );
+        assert_eq!(
+            capability_key_for_mcp_server_name("agentdash-task-tools-1234"),
+            "task_management"
+        );
+        assert_eq!(
+            capability_key_for_mcp_server_name("code-analyzer"),
+            "mcp:code-analyzer"
         );
     }
 }

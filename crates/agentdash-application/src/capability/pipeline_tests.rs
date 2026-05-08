@@ -142,7 +142,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         .collect();
     let delta = CapabilityDelta::compute(&baseline_set, &effective_set);
 
-    let md = build_capability_delta_markdown("implement", &delta, &effective_set);
+    let md = build_capability_delta_markdown("implement", &delta, &effective_set, None);
     assert!(md.contains("## Capability Update — Step Transition: implement"));
     assert!(md.contains("### Added Capabilities"));
     assert!(md.contains("**workflow_management**"));

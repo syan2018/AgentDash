@@ -14,6 +14,7 @@ use super::SessionHub;
 use crate::capability::build_capability_delta_markdown;
 use crate::session::{
     CapabilitySurface, PendingCapabilitySurfaceTransition, RuntimeContextTransition,
+    compute_capability_surface_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -214,6 +215,11 @@ impl SessionHub {
             &input.phase_node,
             notification_delta,
             &input.capability_keys,
+            Some(&compute_capability_surface_delta(
+                input.before_surface.as_ref(),
+                &input.after_surface,
+                &input.capability_keys,
+            )),
         );
         match self
             .push_session_notification(&input.session_id, delta_md)

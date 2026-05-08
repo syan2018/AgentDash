@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::types::{CapabilitySurface, PendingCapabilitySurfaceTransition};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct SetDelta {
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -23,7 +23,7 @@ impl SetDelta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct NamedEntityDelta {
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -37,7 +37,7 @@ impl NamedEntityDelta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct DefaultMountDelta {
     pub before: Option<String>,
     pub after: Option<String>,
@@ -45,7 +45,7 @@ pub struct DefaultMountDelta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct VfsSurfaceDelta {
     pub mounts: NamedEntityDelta,
     pub links: NamedEntityDelta,
@@ -59,11 +59,12 @@ impl VfsSurfaceDelta {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct CapabilitySurfaceDelta {
     pub tool_capabilities: SetDelta,
     pub enabled_clusters: SetDelta,
-    pub excluded_tools: SetDelta,
+    pub excluded_tool_paths: SetDelta,
+    pub included_tool_paths: SetDelta,
     pub mcp_servers: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
 }
@@ -72,7 +73,8 @@ impl CapabilitySurfaceDelta {
     pub fn is_empty(&self) -> bool {
         self.tool_capabilities.is_empty()
             && self.enabled_clusters.is_empty()
-            && self.excluded_tools.is_empty()
+            && self.excluded_tool_paths.is_empty()
+            && self.included_tool_paths.is_empty()
             && self.mcp_servers.is_empty()
             && self.vfs.is_empty()
     }
@@ -114,12 +116,17 @@ impl<'a> RuntimeContextTransition<'a> {
             .iter()
             .map(|cluster| format!("{cluster:?}"))
             .collect::<Vec<_>>();
-        let current_excluded = self
+        let current_excluded_paths = self
             .after_surface
             .flow_capabilities
-            .excluded_tools
-            .iter()
-            .cloned()
+            .excluded_tool_paths()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let current_included_paths = self
+            .after_surface
+            .flow_capabilities
+            .included_tool_paths()
+            .into_iter()
             .collect::<Vec<_>>();
         let mcp_servers = self
             .after_surface
@@ -142,7 +149,8 @@ impl<'a> RuntimeContextTransition<'a> {
             },
             "tool_surface": {
                 "enabled_clusters": current_clusters,
-                "excluded_tools": current_excluded,
+                "excluded_tool_paths": current_excluded_paths,
+                "included_tool_paths": current_included_paths,
             },
             "mcp": {
                 "server_count": self.after_surface.mcp_servers.len(),
@@ -228,14 +236,24 @@ pub fn compute_capability_surface_delta(
         .iter()
         .map(|cluster| format!("{cluster:?}"))
         .collect::<BTreeSet<_>>();
-    let before_excluded = before
-        .map(|surface| surface.flow_capabilities.excluded_tools.clone())
+    let before_excluded_paths = before
+        .map(|surface| surface.flow_capabilities.excluded_tool_paths())
+        .unwrap_or_default();
+    let before_included_paths = before
+        .map(|surface| surface.flow_capabilities.included_tool_paths())
         .unwrap_or_default();
 
     CapabilitySurfaceDelta {
         tool_capabilities: set_delta(&before_capabilities, after_capability_keys),
         enabled_clusters: set_delta(&before_clusters, &after_clusters),
-        excluded_tools: set_delta(&before_excluded, &after.flow_capabilities.excluded_tools),
+        excluded_tool_paths: set_delta(
+            &before_excluded_paths,
+            &after.flow_capabilities.excluded_tool_paths(),
+        ),
+        included_tool_paths: set_delta(
+            &before_included_paths,
+            &after.flow_capabilities.included_tool_paths(),
+        ),
         mcp_servers: named_entity_delta(
             before
                 .map(|surface| surface.mcp_servers.as_slice())
@@ -467,6 +485,13 @@ mod tests {
         assert!(payload.get("tool_surface").is_some());
         assert!(payload.get("mcp").is_some());
         assert!(payload.get("vfs").is_some());
+        assert!(
+            payload
+                .get("delta")
+                .and_then(|value| value.get("tool_capabilities"))
+                .is_some(),
+            "delta 字段应使用 snake_case，便于前端直接读取规范字段"
+        );
         assert!(payload.get("added").is_none());
         assert!(payload.get("removed").is_none());
         assert!(payload.get("capabilities").is_none());

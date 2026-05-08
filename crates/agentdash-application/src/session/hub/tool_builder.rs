@@ -30,35 +30,30 @@ impl SessionHub {
     }
 
     /// 读取 session 当前 turn 生效的能力状态。
+    ///
+    /// `TurnExecution.capability_state` 在 pipeline 组装时已包含完整的 MCP/VFS 维度，
+    /// 无需从 session_frame 手动拼合。
     pub async fn get_current_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.turn_state.active_turn())
-            .map(|turn| {
-                let mut state = turn.capability_state.clone();
-                state.tool.mcp_servers = turn.session_frame.mcp_servers.clone();
-                state.vfs.active = turn.session_frame.vfs.clone();
-                state
-            })
+            .map(|turn| turn.capability_state.clone())
     }
 
-    /// 读取当前 active turn；若没有 active turn，则回退到 session_profile 缓存的上一轮表面。
+    /// 读取当前 active turn；若没有 active turn，则回退到 session_profile 缓存。
+    ///
+    /// `SessionProfile.capability_state` 已包含完整维度，直读即可。
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         let sessions = self.sessions.lock().await;
         let runtime = sessions.get(session_id)?;
         if let Some(turn) = runtime.turn_state.active_turn() {
-            let mut state = turn.capability_state.clone();
-            state.tool.mcp_servers = turn.session_frame.mcp_servers.clone();
-            state.vfs.active = turn.session_frame.vfs.clone();
-            return Some(state);
+            return Some(turn.capability_state.clone());
         }
-        runtime.session_profile.as_ref().map(|profile| {
-            let mut state = profile.capability_state.clone();
-            state.tool.mcp_servers = profile.mcp_servers.clone();
-            state.vfs.active = Some(profile.vfs.clone());
-            state
-        })
+        runtime
+            .session_profile
+            .as_ref()
+            .map(|profile| profile.capability_state.clone())
     }
 
     /// 替换运行中 session 的能力状态并同步 connector。
@@ -68,7 +63,7 @@ impl SessionHub {
     pub(crate) async fn replace_current_capability_state(
         &self,
         session_id: &str,
-        state: CapabilityState,
+        mut state: CapabilityState,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
         let (turn_snapshot, hook_session) = {
             let sessions = self.sessions.lock().await;
@@ -107,29 +102,23 @@ impl SessionHub {
 
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
-            let profile_vfs = state
-                .vfs
-                .active
-                .clone()
-                .or_else(|| {
-                    runtime
-                        .turn_state
-                        .active_turn()
-                        .and_then(|turn| turn.session_frame.vfs.clone())
-                })
-                .or_else(|| {
-                    runtime
-                        .session_profile
-                        .as_ref()
-                        .map(|profile| profile.vfs.clone())
-                });
-            if let Some(vfs) = profile_vfs {
-                runtime.session_profile = Some(super::super::hub_support::SessionProfile {
-                    vfs,
-                    mcp_servers: state.tool.mcp_servers.clone(),
-                    capability_state: state.clone(),
-                });
+            // 若 state.vfs.active 为 None，从当前 turn 或 profile 回填
+            if state.vfs.active.is_none() {
+                let fallback_vfs = runtime
+                    .turn_state
+                    .active_turn()
+                    .and_then(|turn| turn.capability_state.vfs.active.clone())
+                    .or_else(|| {
+                        runtime
+                            .session_profile
+                            .as_ref()
+                            .and_then(|p| p.capability_state.vfs.active.clone())
+                    });
+                state.vfs.active = fallback_vfs;
             }
+            runtime.session_profile = Some(super::super::hub_support::SessionProfile {
+                capability_state: state.clone(),
+            });
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
                 turn.session_frame.mcp_servers = state.tool.mcp_servers.clone();
                 turn.session_frame.vfs = state.vfs.active.clone();

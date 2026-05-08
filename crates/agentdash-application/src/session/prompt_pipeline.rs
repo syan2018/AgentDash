@@ -79,7 +79,11 @@ impl SessionHub {
         let base_effective_vfs = req
             .vfs
             .clone()
-            .or_else(|| cached_continuation.as_ref().map(|c| c.vfs.clone()))
+            .or_else(|| {
+                cached_continuation
+                    .as_ref()
+                    .and_then(|c| c.capability_state.vfs.active.clone())
+            })
             .or_else(|| self.default_vfs.clone())
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(
@@ -204,7 +208,7 @@ impl SessionHub {
         let base_mcp_servers = if req.mcp_servers.is_empty() {
             cached_continuation
                 .as_ref()
-                .map(|c| c.mcp_servers.clone())
+                .map(|c| c.capability_state.tool.mcp_servers.clone())
                 .unwrap_or_default()
         } else {
             req.mcp_servers.clone()
@@ -214,32 +218,43 @@ impl SessionHub {
         } else {
             base_mcp_servers.clone()
         };
-        let mut base_capability_state = req
-            .capability_state
-            .clone()
-            .or_else(|| {
-                cached_continuation
-                    .as_ref()
-                    .map(|c| c.capability_state.clone())
-            })
-            .unwrap_or_default();
-        base_capability_state.tool.mcp_servers = base_mcp_servers.clone();
-        base_capability_state.vfs.active = Some(base_effective_vfs.clone());
-        let capability_state = if let Some(pending_state) = pending_capability_state.as_ref() {
-            pending_state.clone()
+        // base capability state: resolver 产出 + session-level MCP/VFS 完整合入
+        let base_capability_state = {
+            let mut state = req
+                .capability_state
+                .clone()
+                .or_else(|| {
+                    cached_continuation
+                        .as_ref()
+                        .map(|c| c.capability_state.clone())
+                })
+                .unwrap_or_default();
+            state.tool.mcp_servers = base_mcp_servers.clone();
+            state.vfs.active = Some(base_effective_vfs.clone());
+            state
+        };
+        // 最终 capability state: 若有 pending transition 则使用其状态（补全 MCP/VFS）
+        let capability_state = if let Some(pending_state) =
+            pending_capability_state.as_ref()
+        {
+            let mut state = pending_state.clone();
+            state.tool.mcp_servers = mcp_servers.clone();
+            state.vfs.active = Some(effective_vfs.clone());
+            state
         } else {
             base_capability_state.clone()
         };
         let capability_keys = capability_state.capability_keys();
         let identity = req.identity.clone();
 
+        // session_frame 从完整 capability_state 派生
         let session_frame = ExecutionSessionFrame {
             turn_id: turn_id.clone(),
             working_directory,
             environment_variables: req.user_input.env,
             executor_config,
-            mcp_servers: mcp_servers.clone(),
-            vfs: Some(effective_vfs.clone()),
+            mcp_servers: capability_state.tool.mcp_servers.clone(),
+            vfs: capability_state.vfs.active.clone(),
             identity: identity.clone(),
         };
         let turn_frame = ExecutionTurnFrame {
@@ -257,7 +272,11 @@ impl SessionHub {
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
         context.turn.assembled_tools = self
-            .build_tools_for_execution_context(session_id, &context, &mcp_servers)
+            .build_tools_for_execution_context(
+                session_id,
+                &context,
+                &capability_state.tool.mcp_servers,
+            )
             .await;
 
         // pipeline 层预组装 system prompt → 写入 bundle.rendered_system_prompt
@@ -273,7 +292,7 @@ impl SessionHub {
                 vfs: Some(&effective_vfs),
                 working_directory: &context.session.working_directory,
                 runtime_tools: &context.turn.assembled_tools,
-                mcp_servers: &mcp_servers,
+                mcp_servers: &capability_state.tool.mcp_servers,
                 hook_session: hook_session.as_deref(),
             };
             let rendered = super::system_prompt_assembler::assemble_system_prompt(&prompt_input);
@@ -286,8 +305,6 @@ impl SessionHub {
             let mut sessions = self.sessions.lock().await;
             if let Some(runtime) = sessions.get_mut(session_id) {
                 runtime.session_profile = Some(super::hub_support::SessionProfile {
-                    vfs: effective_vfs.clone(),
-                    mcp_servers: mcp_servers.clone(),
                     capability_state: capability_state.clone(),
                 });
                 runtime.turn_state = TurnState::Active(TurnExecution::new(

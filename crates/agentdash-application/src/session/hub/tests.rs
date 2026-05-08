@@ -540,11 +540,6 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .and_then(|runtime| runtime.session_profile.as_ref())
         .expect("session profile should be synchronized");
     assert_eq!(profile.capability_state, turn.capability_state);
-    assert_eq!(profile.mcp_servers, turn.session_frame.mcp_servers);
-    assert_eq!(
-        profile.vfs,
-        turn.session_frame.vfs.clone().expect("profile vfs")
-    );
 }
 
 #[tokio::test]

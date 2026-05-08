@@ -4,7 +4,7 @@ use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_spi::{CapabilityState, ExecutionSessionFrame, SessionContextBundle, Vfs};
+use agentdash_spi::{CapabilityState, ExecutionSessionFrame, SessionContextBundle};
 use tokio::sync::broadcast;
 
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
@@ -158,12 +158,10 @@ pub(super) fn build_session_runtime(
 
 /// Session 的内禀运行时配置——Init 时确立，跨 turn 持续生效。
 ///
-/// 这些字段是 session 的固有属性（VFS、MCP、能力集），不是每轮 prompt 的
-/// 请求负载。Continue 直接复用，Rehydrate 重建后覆盖。
+/// 持有完整的 `CapabilityState`（含 VFS、MCP、companion 所有维度），
+/// 是 session 存续期间能力状态的唯一缓存。Continue 直接复用，Rehydrate 重建后覆盖。
 #[derive(Clone)]
 pub(super) struct SessionProfile {
-    pub vfs: Vfs,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     pub capability_state: CapabilityState,
 }
 

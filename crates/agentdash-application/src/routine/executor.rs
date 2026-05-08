@@ -481,8 +481,6 @@ impl RoutineExecutor {
             assembler = assembler.with_audit_bus(bus.clone());
         }
 
-        let agent_declared_capabilities: Option<Vec<String>> = None;
-
         let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
         let mut prepared = assembler
             .compose_owner_bootstrap(OwnerBootstrapSpec {
@@ -501,7 +499,6 @@ impl RoutineExecutor {
                 request_mcp_servers: Vec::new(),
                 existing_vfs: None,
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
-                agent_declared_capabilities,
                 active_workflow: None,
                 lifecycle,
                 audit_session_key: Some(session_id.to_string()),

@@ -1201,7 +1201,6 @@ async fn build_story_owner_prompt_request(
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            agent_declared_capabilities: None,
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
@@ -1256,7 +1255,6 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let agent_id = uuid::Uuid::parse_str(agent_key).ok();
-    let agent_declared_capabilities: Option<Vec<String>> = None;
     let agent_display_name = project_agent.display_name.clone();
     let preset_name = project_agent.preset_name.clone();
     let preset_mcp_servers = project_agent.preset_mcp_servers.clone();
@@ -1289,7 +1287,6 @@ async fn build_project_owner_prompt_request(
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            agent_declared_capabilities,
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),

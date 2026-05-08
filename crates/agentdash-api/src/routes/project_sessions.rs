@@ -263,17 +263,26 @@ pub(crate) async fn build_project_session_context_response(
     };
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
+    let mut contributions = Vec::new();
+    if workflow_ctx.has_active_workflow {
+        contributions.push(agentdash_application::capability::ContextContributions {
+            tool: Some(agentdash_application::capability::ToolContribution {
+                directives: workflow_ctx.workflow_tool_directives.unwrap_or_default(),
+                has_active_workflow: true,
+            }),
+            companion: None,
+        });
+    }
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
             owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
                 project_id: project.id,
             },
-            agent_declared_capabilities: None,
-            workflow_ctx,
-            agent_mcp_servers: agent_mcp_entries,
-            available_presets: load_project_presets(state, project.id).await,
-            companion_slice_mode: None,
-            available_companions: Vec::new(),
+            contributions,
+            mcp_candidates: agentdash_application::capability::McpCandidates {
+                presets: load_project_presets(state, project.id).await,
+                agent_servers: agent_mcp_entries,
+            },
         },
         &state.config.platform_config,
     );

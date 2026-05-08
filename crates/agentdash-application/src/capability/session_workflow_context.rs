@@ -811,17 +811,20 @@ mod tests {
         let platform = PlatformConfig {
             mcp_base_url: Some("http://localhost:3001".to_string()),
         };
+        let contributions = vec![crate::capability::ContextContributions {
+            tool: Some(crate::capability::ToolContribution {
+                directives: wf_ctx.workflow_tool_directives.unwrap_or_default(),
+                has_active_workflow: wf_ctx.has_active_workflow,
+            }),
+            companion: None,
+        }];
         let output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
                 owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
                     project_id,
                 },
-                agent_declared_capabilities: None,
-                workflow_ctx: wf_ctx,
-                agent_mcp_servers: vec![],
-                available_presets: Default::default(),
-                companion_slice_mode: None,
-                available_companions: Vec::new(),
+                contributions,
+                mcp_candidates: Default::default(),
             },
             &platform,
         );

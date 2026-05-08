@@ -23,7 +23,8 @@ pub use notification::{
 pub use agentdash_spi::CompanionSliceMode;
 pub use resolver::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CapabilityResolverOutput,
+    CapabilityResolverOutput, CompanionContribution, ContextContributions, McpCandidates,
+    ToolContribution,
 };
 pub use session_workflow_context::{
     SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,

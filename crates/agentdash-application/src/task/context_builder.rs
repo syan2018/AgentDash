@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, SessionWorkflowContext,
-    tool_directives_from_active_workflow,
+    CapabilityResolver, CapabilityResolverInput, ContextContributions, McpCandidates,
+    ToolContribution, tool_directives_from_active_workflow,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -81,21 +81,27 @@ pub async fn build_task_session_context(
             .as_ref()
             .map(tool_directives_from_active_workflow)
     });
+    let mut contributions = Vec::new();
+    if let Some(directives) = workflow_directives {
+        contributions.push(ContextContributions {
+            tool: Some(ToolContribution {
+                directives,
+                has_active_workflow: true,
+            }),
+            companion: None,
+        });
+    }
     let cap_input = CapabilityResolverInput {
         owner_ctx: SessionOwnerCtx::Task {
             project_id: task.project_id,
             story_id: task.story_id,
             task_id: task.id,
         },
-        agent_declared_capabilities: None,
-        workflow_ctx: SessionWorkflowContext {
-            has_active_workflow: workflow.is_some(),
-            workflow_tool_directives: workflow_directives,
+        contributions,
+        mcp_candidates: McpCandidates {
+            presets: load_available_presets(repos, task.project_id).await,
+            agent_servers: vec![],
         },
-        agent_mcp_servers: vec![],
-        available_presets: load_available_presets(repos, task.project_id).await,
-        companion_slice_mode: None,
-        available_companions: Vec::new(),
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
     let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();

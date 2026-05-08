@@ -202,4 +202,28 @@ mod tests {
 
         assert_eq!(names, vec!["mcp_agentdash_workflow_tools_get_workflow"]);
     }
+
+    #[tokio::test]
+    async fn relay_discovery_denies_mcp_tools_when_capability_state_is_empty() {
+        let provider = Arc::new(FakeRelayProvider {
+            tools: vec![RelayMcpToolInfo {
+                server_name: "agentdash-workflow-tools-123".to_string(),
+                tool_name: "upsert_workflow_tool".to_string(),
+                description: String::new(),
+                parameters_schema: serde_json::json!({ "type": "object" }),
+            }],
+        });
+
+        let tools = discover_relay_mcp_tools(
+            provider,
+            &["agentdash-workflow-tools-123".to_string()],
+            &CapabilityState::default(),
+        )
+        .await;
+
+        assert!(
+            tools.is_empty(),
+            "空 CapabilityState 不得因为 MCP server 已挂载而暴露 workflow 写入工具"
+        );
+    }
 }

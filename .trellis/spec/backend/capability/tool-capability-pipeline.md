@@ -219,6 +219,11 @@ capability_state.is_capability_tool_enabled(
 本身有效，再应用 `include_only` / `exclude`。这样即使某条链路意外挂上 MCP server，
 只要 canonical state 没授予对应 capability，工具仍不会暴露。
 
+MCP / 平台 MCP 工具没有 cluster 兜底，必须始终先命中
+`CapabilityState.capabilities` 中的 capability key 才能暴露。`CapabilityState::default()`
+不得被解释为 MCP 工具的兼容式全量放行；这条约束用于防止 session bootstrap 或
+agent preset 把 MCP server 透传进来时绕过 workflow step 的工具级策略。
+
 ## CapabilityResolver
 
 ### 位置

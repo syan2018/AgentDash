@@ -264,13 +264,17 @@ impl CapabilityState {
         {
             return false;
         }
-        if !self.capabilities.is_empty()
-            && !self
-                .capabilities
-                .contains(&crate::ToolCapability::new(capability_key))
-        {
+
+        let capability_granted = self
+            .capabilities
+            .contains(&crate::ToolCapability::new(capability_key));
+        if cluster.is_none() && !capability_granted {
             return false;
         }
+        if !self.capabilities.is_empty() && !capability_granted {
+            return false;
+        }
+
         self.tool_policy
             .get(capability_key)
             .is_none_or(|filter| filter.allows(tool_name))
@@ -563,6 +567,16 @@ mod tests {
 
         assert!(flow.is_capability_tool_enabled("workflow_management", "get_workflow", None));
         assert!(!flow.is_capability_tool_enabled("story_management", "get_story_context", None));
+    }
+
+    #[test]
+    fn capability_tool_filter_denies_mcp_tools_when_capability_state_is_empty() {
+        let flow = CapabilityState::default();
+
+        assert!(
+            !flow.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
+            "MCP 工具没有 cluster 兜底，必须先由 canonical CapabilityState 授予 capability"
+        );
     }
 }
 

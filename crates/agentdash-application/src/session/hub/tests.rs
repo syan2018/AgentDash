@@ -125,6 +125,45 @@ impl AgentConnector for EmptyConnector {
     }
 }
 
+#[derive(Clone)]
+struct StaticRelayMcpProvider {
+    tools: Vec<agentdash_spi::RelayMcpToolInfo>,
+}
+
+#[async_trait::async_trait]
+impl agentdash_spi::McpRelayProvider for StaticRelayMcpProvider {
+    async fn list_relay_tools(
+        &self,
+        _requested_servers: &[String],
+    ) -> Vec<agentdash_spi::RelayMcpToolInfo> {
+        self.tools.clone()
+    }
+
+    async fn call_relay_tool(
+        &self,
+        _server_name: &str,
+        _tool_name: &str,
+        _arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<agentdash_spi::RelayMcpCallResult, ConnectorError> {
+        Ok(agentdash_spi::RelayMcpCallResult {
+            content: String::new(),
+            is_error: false,
+        })
+    }
+
+    async fn probe_transport(
+        &self,
+        _transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+    ) -> Result<agentdash_spi::platform::mcp_relay::RelayProbeResult, ConnectorError> {
+        Ok(agentdash_spi::platform::mcp_relay::RelayProbeResult {
+            status: "ok".to_string(),
+            latency_ms: None,
+            tools: None,
+            error: None,
+        })
+    }
+}
+
 #[tokio::test]
 async fn start_prompt_records_current_turn_state() {
     let base = tempfile::tempdir().expect("tempdir");
@@ -166,6 +205,129 @@ async fn start_prompt_records_current_turn_state() {
     );
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
     assert_eq!(turn.capability_state.tool_clusters, flow_caps.tool_clusters);
+}
+
+#[tokio::test]
+async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workflow_server = agentdash_spi::SessionMcpServer {
+        name: "agentdash-workflow-tools-123".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://relay/ignored".to_string(),
+            headers: vec![],
+        },
+        uses_relay: true,
+    };
+    let relay = Arc::new(StaticRelayMcpProvider {
+        tools: vec![
+            agentdash_spi::RelayMcpToolInfo {
+                server_name: workflow_server.name.clone(),
+                tool_name: "list_workflows".to_string(),
+                description: "list".to_string(),
+                parameters_schema: json!({ "type": "object" }),
+            },
+            agentdash_spi::RelayMcpToolInfo {
+                server_name: workflow_server.name.clone(),
+                tool_name: "upsert_workflow_tool".to_string(),
+                description: "upsert".to_string(),
+                parameters_schema: json!({ "type": "object" }),
+            },
+            agentdash_spi::RelayMcpToolInfo {
+                server_name: workflow_server.name.clone(),
+                tool_name: "upsert_lifecycle_tool".to_string(),
+                description: "upsert lifecycle".to_string(),
+                parameters_schema: json!({ "type": "object" }),
+            },
+        ],
+    });
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
+        .with_mcp_relay_provider(relay);
+
+    let mut plan_state = CapabilityState::default();
+    plan_state
+        .capabilities
+        .insert(agentdash_spi::ToolCapability::new("workflow_management"));
+    plan_state
+        .tool_policy
+        .entry("workflow_management".to_string())
+        .or_default()
+        .exclude
+        .insert("upsert_workflow_tool".to_string());
+    plan_state
+        .tool_policy
+        .entry("workflow_management".to_string())
+        .or_default()
+        .exclude
+        .insert("upsert_lifecycle_tool".to_string());
+    plan_state.mcp_servers = vec![workflow_server.clone()];
+
+    let plan_context = agentdash_spi::ExecutionContext {
+        session: ExecutionSessionFrame {
+            turn_id: "turn-initial-tools".to_string(),
+            working_directory: base.path().to_path_buf(),
+            environment_variables: HashMap::new(),
+            executor_config: AgentConfig::new("PI_AGENT"),
+            mcp_servers: vec![workflow_server.clone()],
+            vfs: Some(local_workspace_vfs(base.path())),
+            identity: None,
+        },
+        turn: agentdash_spi::ExecutionTurnFrame {
+            capability_state: plan_state,
+            ..Default::default()
+        },
+    };
+
+    let plan_tools = hub
+        .build_tools_for_execution_context(
+            "session-initial-tools",
+            &plan_context,
+            std::slice::from_ref(&workflow_server),
+        )
+        .await;
+    let plan_names = plan_tools
+        .iter()
+        .map(|tool| tool.name())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        plan_names,
+        vec!["mcp_agentdash_workflow_tools_list_workflows"],
+        "Plan 初始化工具 schema 只能暴露 workflow 管理只读工具"
+    );
+
+    let mut apply_state = CapabilityState::default();
+    apply_state
+        .capabilities
+        .insert(agentdash_spi::ToolCapability::new("workflow_management"));
+    apply_state.mcp_servers = vec![workflow_server.clone()];
+    let apply_context = agentdash_spi::ExecutionContext {
+        turn: agentdash_spi::ExecutionTurnFrame {
+            capability_state: apply_state,
+            ..Default::default()
+        },
+        ..plan_context
+    };
+
+    let apply_tools = hub
+        .build_tools_for_execution_context(
+            "session-initial-tools",
+            &apply_context,
+            &[workflow_server],
+        )
+        .await;
+    let apply_names = apply_tools
+        .iter()
+        .map(|tool| tool.name())
+        .collect::<Vec<_>>();
+
+    assert!(
+        apply_names.contains(&"mcp_agentdash_workflow_tools_upsert_workflow_tool"),
+        "Apply capability state 解除 tool_policy 后必须重新暴露 upsert_workflow_tool schema"
+    );
+    assert!(
+        apply_names.contains(&"mcp_agentdash_workflow_tools_upsert_lifecycle_tool"),
+        "Apply capability state 解除 tool_policy 后必须重新暴露 upsert_lifecycle_tool schema"
+    );
 }
 
 #[derive(Default)]

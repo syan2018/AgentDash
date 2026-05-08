@@ -539,8 +539,16 @@ mod tests {
         link
     }
 
+    fn admin_plan_directives() -> Vec<ToolCapabilityDirective> {
+        vec![
+            ToolCapabilityDirective::add_simple("workflow_management"),
+            ToolCapabilityDirective::remove_tool("workflow_management", "upsert_workflow_tool"),
+            ToolCapabilityDirective::remove_tool("workflow_management", "upsert_lifecycle_tool"),
+        ]
+    }
+
     /// 构造 `builtin_workflow_admin` lifecycle 及其 entry step workflow。
-    /// workflow.contract.capability_config.tool_directives 放一个 Add("workflow_management")。
+    /// Plan 阶段必须保留 workflow_management 只读工具，同时屏蔽 upsert 写入工具。
     fn admin_lifecycle(project_id: Uuid) -> LifecycleDefinition {
         let plan = LifecycleStepDefinition {
             key: "plan".to_string(),
@@ -568,7 +576,7 @@ mod tests {
     fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
         let contract = WorkflowContract {
             capability_config: agentdash_domain::workflow::CapabilityConfig {
-                tool_directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
+                tool_directives: admin_plan_directives(),
                 ..Default::default()
             },
             ..WorkflowContract::default()
@@ -627,12 +635,7 @@ mod tests {
         .await;
 
         assert!(ctx.has_active_workflow);
-        assert_eq!(
-            ctx.workflow_tool_directives,
-            Some(vec![ToolCapabilityDirective::add_simple(
-                "workflow_management"
-            )])
-        );
+        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
     }
 
     #[tokio::test]
@@ -798,6 +801,11 @@ mod tests {
         .await;
 
         assert!(wf_ctx.has_active_workflow);
+        assert_eq!(
+            wf_ctx.workflow_tool_directives,
+            Some(admin_plan_directives()),
+            "bootstrap workflow 上下文必须携带 Plan 阶段工具级 remove，不能只授予 capability"
+        );
 
         // Step 2: 将解析结果喂给 CapabilityResolver
         let platform = PlatformConfig {
@@ -835,6 +843,23 @@ mod tests {
                     if url.contains("/mcp/workflow/")
             )),
             "应注入 WorkflowMcpServer"
+        );
+
+        assert!(
+            !output.state.is_capability_tool_enabled(
+                "workflow_management",
+                "upsert_workflow_tool",
+                None
+            ),
+            "Plan 初始化阶段不得暴露 upsert_workflow_tool schema"
+        );
+        assert!(
+            !output.state.is_capability_tool_enabled(
+                "workflow_management",
+                "upsert_lifecycle_tool",
+                None
+            ),
+            "Plan 初始化阶段不得暴露 upsert_lifecycle_tool schema"
         );
     }
 
@@ -895,12 +920,7 @@ mod tests {
         .await;
 
         assert!(ctx.has_active_workflow);
-        assert_eq!(
-            ctx.workflow_tool_directives,
-            Some(vec![ToolCapabilityDirective::add_simple(
-                "workflow_management"
-            )])
-        );
+        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
     }
 
     #[tokio::test]
@@ -972,12 +992,7 @@ mod tests {
         .await;
 
         assert!(ctx.has_active_workflow);
-        assert_eq!(
-            ctx.workflow_tool_directives,
-            Some(vec![ToolCapabilityDirective::add_simple(
-                "workflow_management"
-            )])
-        );
+        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
     }
 
     #[test]

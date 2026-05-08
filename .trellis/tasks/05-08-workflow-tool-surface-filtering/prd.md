@@ -135,6 +135,11 @@ Capability Update Markdown 保留 capability 段落，同时从 canonical `tool_
   内部中间态，不再作为运行态工具表面被消费。
 - 本地 runtime tools、直连 MCP discovery、Relay MCP discovery 统一调用
   `is_capability_tool_enabled(capability, tool, cluster)`。
+- MCP / 平台 MCP 工具没有 cluster 兜底；即使 session bootstrap 或 agent preset 已
+  传入 MCP server，`CapabilityState.capabilities` 未授予对应 capability 时也不得发现工具。
+- Owner bootstrap 的回归测试覆盖 `builtin_workflow_admin` Plan 阶段初始 state：
+  `workflow_management` 只读工具可见，`upsert_workflow_tool` /
+  `upsert_lifecycle_tool` 在流转到 Apply 前不可见。
 - `Capability Update` Markdown 展示 tool path diff，不再输出无条件的“工具 schema 已同步更新”固定文案。
 - `capability_surface_changed` 事件进入前端可见系统事件，并展示 capability / tool path /
   MCP server 的结构化变化。

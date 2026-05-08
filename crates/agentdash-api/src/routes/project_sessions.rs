@@ -279,7 +279,7 @@ pub(crate) async fn build_project_session_context_response(
         &state.config.platform_config,
     );
     let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.state.mcp_servers.clone();
+        cap_output.state.tool.mcp_servers.clone();
     effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
 
     let executor_source = if session_meta.executor_config.is_some() {

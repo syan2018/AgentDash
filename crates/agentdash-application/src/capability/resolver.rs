@@ -196,11 +196,13 @@ impl CapabilityResolver {
         let tool_policy = compute_tool_policy(&reduction, &effective_caps);
 
         let mut state = CapabilityState {
-            capabilities: effective_caps.clone(),
-            tool_clusters,
-            tool_policy,
-            mcp_servers: resolved_mcp_servers,
-            vfs: None,
+            tool: agentdash_spi::ToolDimension {
+                capabilities: effective_caps.clone(),
+                tool_clusters,
+                tool_policy,
+                mcp_servers: resolved_mcp_servers,
+            },
+            ..Default::default()
         };
 
         if let Some(slice_mode) = input.companion_slice_mode {
@@ -348,7 +350,7 @@ mod tests {
     }
 
     fn state_has_mcp_url(output: &CapabilityResolverOutput, needle: &str) -> bool {
-        output.state.mcp_servers.iter().any(|server| {
+        output.state.tool.mcp_servers.iter().any(|server| {
             matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
@@ -362,6 +364,7 @@ mod tests {
     ) -> Option<&'a agentdash_spi::SessionMcpServer> {
         output
             .state
+            .tool
             .mcp_servers
             .iter()
             .find(|server| server.name == name)
@@ -394,7 +397,7 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert_eq!(output.state.mcp_servers.len(), 1);
+        assert_eq!(output.state.tool.mcp_servers.len(), 1);
         assert!(state_has_mcp_url(&output, "/mcp/relay"));
     }
 
@@ -489,7 +492,7 @@ mod tests {
         let input = base_input();
         let platform = PlatformConfig { mcp_base_url: None };
         let output = CapabilityResolver::resolve(&input, &platform);
-        assert!(output.state.mcp_servers.is_empty());
+        assert!(output.state.tool.mcp_servers.is_empty());
     }
 
     #[test]
@@ -509,6 +512,7 @@ mod tests {
         assert!(
             output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
@@ -525,6 +529,7 @@ mod tests {
         assert!(
             !output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("nonexistent"))
         );
@@ -561,6 +566,7 @@ mod tests {
         assert!(
             output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer")),
             "preset 命中后 capabilities 应包含 mcp:code_analyzer"
@@ -605,6 +611,7 @@ mod tests {
         assert_eq!(
             output
                 .state
+                .tool
                 .mcp_servers
                 .iter()
                 .filter(|server| server.name == "shared")
@@ -662,6 +669,7 @@ mod tests {
         assert!(
             output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
@@ -742,6 +750,7 @@ mod tests {
         assert!(
             output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::new("workflow_management")),
             "Plan 阶段仍需要 workflow_management 的只读工具"
@@ -791,6 +800,7 @@ mod tests {
         assert!(
             !output
                 .state
+                .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
@@ -849,6 +859,7 @@ mod tests {
 
         let relay = output
             .state
+            .tool
             .mcp_servers
             .iter()
             .find(|server| {
@@ -860,7 +871,7 @@ mod tests {
             .expect("project owner 应注入 relay MCP");
         assert_eq!(relay.name, "agentdash-relay-tools");
         assert!(
-            !output.state.mcp_servers.iter().any(|server| matches!(
+            !output.state.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/story/") || url.contains("/mcp/task/")
@@ -889,6 +900,7 @@ mod tests {
 
         let story = output
             .state
+            .tool
             .mcp_servers
             .iter()
             .find(|server| {
@@ -903,7 +915,7 @@ mod tests {
         };
         assert!(url.contains(&story_id.to_string()));
         assert!(
-            !output.state.mcp_servers.iter().any(|server| matches!(
+            !output.state.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
             )),
@@ -933,6 +945,7 @@ mod tests {
 
         let task = output
             .state
+            .tool
             .mcp_servers
             .iter()
             .find(|server| {

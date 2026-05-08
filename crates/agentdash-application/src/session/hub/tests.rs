@@ -204,7 +204,7 @@ async fn start_prompt_records_current_turn_state() {
         workspace.path().join("src")
     );
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
-    assert_eq!(turn.capability_state.tool_clusters, flow_caps.tool_clusters);
+    assert_eq!(turn.capability_state.tool.tool_clusters, flow_caps.tool.tool_clusters);
 }
 
 #[tokio::test]
@@ -245,21 +245,24 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
 
     let mut plan_state = CapabilityState::default();
     plan_state
+        .tool
         .capabilities
         .insert(agentdash_spi::ToolCapability::new("workflow_management"));
     plan_state
+        .tool
         .tool_policy
         .entry("workflow_management".to_string())
         .or_default()
         .exclude
         .insert("upsert_workflow_tool".to_string());
     plan_state
+        .tool
         .tool_policy
         .entry("workflow_management".to_string())
         .or_default()
         .exclude
         .insert("upsert_lifecycle_tool".to_string());
-    plan_state.mcp_servers = vec![workflow_server.clone()];
+    plan_state.tool.mcp_servers = vec![workflow_server.clone()];
 
     let plan_context = agentdash_spi::ExecutionContext {
         session: ExecutionSessionFrame {
@@ -297,9 +300,10 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
 
     let mut apply_state = CapabilityState::default();
     apply_state
+        .tool
         .capabilities
         .insert(agentdash_spi::ToolCapability::new("workflow_management"));
-    apply_state.mcp_servers = vec![workflow_server.clone()];
+    apply_state.tool.mcp_servers = vec![workflow_server.clone()];
     let apply_context = agentdash_spi::ExecutionContext {
         turn: agentdash_spi::ExecutionTurnFrame {
             capability_state: apply_state,
@@ -432,7 +436,7 @@ impl AgentConnector for CapturingConnector {
                 .iter()
                 .map(|server| server.name.clone())
                 .collect(),
-            tool_clusters: context.turn.capability_state.tool_clusters.clone(),
+            tool_clusters: context.turn.capability_state.tool.tool_clusters.clone(),
             mount_ids: vfs
                 .as_ref()
                 .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
@@ -484,6 +488,7 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     let mut target_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
     target_flow
+        .tool
         .tool_policy
         .entry("file_write".to_string())
         .or_default()
@@ -515,8 +520,8 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     };
 
     let mut target_state = target_flow.clone();
-    target_state.mcp_servers = vec![target_mcp.clone()];
-    target_state.vfs = Some(target_vfs.clone());
+    target_state.tool.mcp_servers = vec![target_mcp.clone()];
+    target_state.vfs.active = Some(target_vfs.clone());
 
     hub.replace_current_capability_state(&session.id, target_state.clone())
         .await
@@ -561,6 +566,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     let mut target_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
     target_flow
+        .tool
         .capabilities
         .insert(agentdash_spi::ToolCapability::new("file_write"));
     let target_mcp = agentdash_spi::SessionMcpServer {
@@ -597,8 +603,8 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
             state: {
-                target_flow.mcp_servers = vec![target_mcp];
-                target_flow.vfs = Some(pending_vfs);
+                target_flow.tool.mcp_servers = vec![target_mcp];
+                target_flow.vfs.active = Some(pending_vfs);
                 target_flow
             },
             created_at: 1,

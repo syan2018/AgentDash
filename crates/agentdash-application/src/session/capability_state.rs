@@ -108,9 +108,10 @@ impl<'a> RuntimeContextTransition<'a> {
         let state_changed = self
             .state_changed_override
             .unwrap_or(self.before_state != Some(self.after_state));
-        let after_vfs = self.after_state.vfs.as_ref();
+        let after_vfs = self.after_state.vfs.active.as_ref();
         let current_clusters = self
             .after_state
+            .tool
             .tool_clusters
             .iter()
             .map(|cluster| format!("{cluster:?}"))
@@ -127,6 +128,7 @@ impl<'a> RuntimeContextTransition<'a> {
             .collect::<Vec<_>>();
         let mcp_servers = self
             .after_state
+            .tool
             .mcp_servers
             .iter()
             .map(|server| server.name.clone())
@@ -150,7 +152,7 @@ impl<'a> RuntimeContextTransition<'a> {
                 "included_tool_paths": current_included_paths,
             },
             "mcp": {
-                "server_count": self.after_state.mcp_servers.len(),
+                "server_count": self.after_state.tool.mcp_servers.len(),
                 "servers": mcp_servers,
             },
             "vfs": {
@@ -220,6 +222,7 @@ pub fn compute_capability_state_delta(
     let before_clusters = before
         .map(|state| {
             state
+                .tool
                 .tool_clusters
                 .iter()
                 .map(|cluster| format!("{cluster:?}"))
@@ -227,6 +230,7 @@ pub fn compute_capability_state_delta(
         })
         .unwrap_or_default();
     let after_clusters = after
+        .tool
         .tool_clusters
         .iter()
         .map(|cluster| format!("{cluster:?}"))
@@ -245,14 +249,14 @@ pub fn compute_capability_state_delta(
         included_tool_paths: set_delta(&before_included_paths, &after.included_tool_paths()),
         mcp_servers: named_entity_delta(
             before
-                .map(|surface| surface.mcp_servers.as_slice())
+                .map(|surface| surface.tool.mcp_servers.as_slice())
                 .unwrap_or(&[]),
-            after.mcp_servers.as_slice(),
+            after.tool.mcp_servers.as_slice(),
             |server| server.name.clone(),
         ),
         vfs: vfs_surface_delta(
-            before.and_then(|surface| surface.vfs.as_ref()),
-            after.vfs.as_ref(),
+            before.and_then(|surface| surface.vfs.active.as_ref()),
+            after.vfs.active.as_ref(),
         ),
     }
 }
@@ -445,14 +449,15 @@ mod tests {
         let mut capability_keys = BTreeSet::new();
         capability_keys.insert("file_read".to_string());
         let after_state = CapabilityState {
-            mcp_servers: Vec::new(),
-            vfs: Some(Vfs {
-                mounts: vec![mount("workspace", "relay_fs")],
-                default_mount_id: Some("workspace".to_string()),
-                source_project_id: None,
-                source_story_id: None,
-                links: Vec::new(),
-            }),
+            vfs: agentdash_spi::VfsDimension {
+                active: Some(Vfs {
+                    mounts: vec![mount("workspace", "relay_fs")],
+                    default_mount_id: Some("workspace".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+            },
             ..Default::default()
         };
 

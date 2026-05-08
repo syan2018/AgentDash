@@ -10,7 +10,7 @@ pub struct SessionBaselineCapabilities {
     pub skills: Vec<SkillEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompanionAgentEntry {
     pub name: String,
     pub executor: String,

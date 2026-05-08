@@ -88,7 +88,7 @@ impl SessionHub {
             })?;
         let mut effective_vfs = base_effective_vfs.clone();
         if let Some(pending_surface) = pending_capability_state.as_ref()
-            && let Some(pending_vfs) = pending_surface.vfs.as_ref()
+            && let Some(pending_vfs) = pending_surface.vfs.active.as_ref()
         {
             effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
         }
@@ -211,7 +211,7 @@ impl SessionHub {
             req.mcp_servers.clone()
         };
         let mcp_servers = if let Some(pending_state) = pending_capability_state.as_ref() {
-            pending_state.mcp_servers.clone()
+            pending_state.tool.mcp_servers.clone()
         } else {
             base_mcp_servers.clone()
         };
@@ -224,8 +224,8 @@ impl SessionHub {
                     .map(|c| c.capability_state.clone())
             })
             .unwrap_or_default();
-        base_capability_state.mcp_servers = base_mcp_servers.clone();
-        base_capability_state.vfs = Some(base_effective_vfs.clone());
+        base_capability_state.tool.mcp_servers = base_mcp_servers.clone();
+        base_capability_state.vfs.active = Some(base_effective_vfs.clone());
         let capability_state = if let Some(pending_state) = pending_capability_state.as_ref() {
             pending_state.clone()
         } else {

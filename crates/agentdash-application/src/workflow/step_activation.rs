@@ -159,7 +159,7 @@ pub fn activate_step_with_platform(
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
     let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.state.mcp_servers.clone();
+        cap_output.state.tool.mcp_servers.clone();
     dedupe_session_mcp_servers(&mut mcp_servers);
 
     let capability_keys = cap_output.state.capability_keys();
@@ -358,13 +358,13 @@ pub fn build_capability_state_for_activation(
     base_surface: Option<&CapabilityState>,
 ) -> CapabilityState {
     let vfs = compose_vfs_with_overlay_and_directives(
-        base_surface.and_then(|surface| surface.vfs.as_ref()),
+        base_surface.and_then(|surface| surface.vfs.active.as_ref()),
         &activation.lifecycle_vfs,
         &activation.mount_directives,
     );
     let mut state = activation.capability_state.clone();
-    state.mcp_servers = activation.mcp_servers.clone();
-    state.vfs = Some(vfs);
+    state.tool.mcp_servers = activation.mcp_servers.clone();
+    state.vfs.active = Some(vfs);
     state
 }
 
@@ -672,8 +672,8 @@ mod tests {
         let activation = activate_step_with_platform(&input, &test_platform());
         let base_surface = {
             let mut state = activation.capability_state.clone();
-            state.mcp_servers = activation.mcp_servers.clone();
-            state.vfs = Some(Vfs {
+            state.tool.mcp_servers = activation.mcp_servers.clone();
+            state.vfs.active = Some(Vfs {
                 mounts: vec![mount("workspace", "relay_fs"), mount("secret", "inline_fs")],
                 default_mount_id: Some("workspace".to_string()),
                 source_project_id: None,
@@ -684,7 +684,7 @@ mod tests {
         };
 
         let target = build_capability_state_for_activation(&activation, Some(&base_surface));
-        let target_vfs = target.vfs.as_ref().expect("target vfs");
+        let target_vfs = target.vfs.active.as_ref().expect("target vfs");
         let mount_ids = target_vfs
             .mounts
             .iter()

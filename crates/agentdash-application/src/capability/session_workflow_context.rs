@@ -829,6 +829,7 @@ mod tests {
         assert!(
             output
                 .state
+                .tool
                 .capabilities
                 .iter()
                 .any(|cap| cap.key() == "workflow_management"),
@@ -837,7 +838,7 @@ mod tests {
 
         // 断言 CapabilityState 包含 Workflow scope MCP 注入
         assert!(
-            output.state.mcp_servers.iter().any(|server| matches!(
+            output.state.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/workflow/")

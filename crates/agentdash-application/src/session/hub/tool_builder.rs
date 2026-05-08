@@ -37,8 +37,8 @@ impl SessionHub {
             .and_then(|runtime| runtime.turn_state.active_turn())
             .map(|turn| {
                 let mut state = turn.capability_state.clone();
-                state.mcp_servers = turn.session_frame.mcp_servers.clone();
-                state.vfs = turn.session_frame.vfs.clone();
+                state.tool.mcp_servers = turn.session_frame.mcp_servers.clone();
+                state.vfs.active = turn.session_frame.vfs.clone();
                 state
             })
     }
@@ -49,14 +49,14 @@ impl SessionHub {
         let runtime = sessions.get(session_id)?;
         if let Some(turn) = runtime.turn_state.active_turn() {
             let mut state = turn.capability_state.clone();
-            state.mcp_servers = turn.session_frame.mcp_servers.clone();
-            state.vfs = turn.session_frame.vfs.clone();
+            state.tool.mcp_servers = turn.session_frame.mcp_servers.clone();
+            state.vfs.active = turn.session_frame.vfs.clone();
             return Some(state);
         }
         runtime.session_profile.as_ref().map(|profile| {
             let mut state = profile.capability_state.clone();
-            state.mcp_servers = profile.mcp_servers.clone();
-            state.vfs = Some(profile.vfs.clone());
+            state.tool.mcp_servers = profile.mcp_servers.clone();
+            state.vfs.active = Some(profile.vfs.clone());
             state
         })
     }
@@ -87,8 +87,8 @@ impl SessionHub {
 
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
-        session_frame.mcp_servers = state.mcp_servers.clone();
-        session_frame.vfs = state.vfs.clone();
+        session_frame.mcp_servers = state.tool.mcp_servers.clone();
+        session_frame.vfs = state.vfs.active.clone();
         let context = ExecutionContext {
             session: session_frame,
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -98,7 +98,7 @@ impl SessionHub {
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(session_id, &context, &state.mcp_servers)
+            .build_tools_for_execution_context(session_id, &context, &state.tool.mcp_servers)
             .await;
 
         self.connector
@@ -109,6 +109,7 @@ impl SessionHub {
         if let Some(runtime) = sessions.get_mut(session_id) {
             let profile_vfs = state
                 .vfs
+                .active
                 .clone()
                 .or_else(|| {
                     runtime
@@ -125,13 +126,13 @@ impl SessionHub {
             if let Some(vfs) = profile_vfs {
                 runtime.session_profile = Some(super::super::hub_support::SessionProfile {
                     vfs,
-                    mcp_servers: state.mcp_servers.clone(),
+                    mcp_servers: state.tool.mcp_servers.clone(),
                     capability_state: state.clone(),
                 });
             }
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                turn.session_frame.mcp_servers = state.mcp_servers.clone();
-                turn.session_frame.vfs = state.vfs.clone();
+                turn.session_frame.mcp_servers = state.tool.mcp_servers.clone();
+                turn.session_frame.vfs = state.vfs.active.clone();
                 turn.capability_state = state;
             }
         }

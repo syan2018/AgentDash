@@ -968,7 +968,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 4. MCP server 列表汇总(request + platform + custom + preset) ──
         let mut session_mcp_servers = spec.request_mcp_servers;
-        session_mcp_servers.extend(cap_output.state.mcp_servers.iter().cloned());
+        session_mcp_servers.extend(cap_output.state.tool.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
 
         // ── 5. Context markdown 生成 ──
@@ -1234,7 +1234,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 ),
             ]));
         }
-        let task_mcp_servers = session_mcp_servers_to_runtime(&capability_state.mcp_servers);
+        let task_mcp_servers = session_mcp_servers_to_runtime(&capability_state.tool.mcp_servers);
         if let (Some(wf), Some(bindings_out)) = (workflow.clone(), resolved_bindings.clone()) {
             contributions.push(contribute_workflow_binding(&wf, &bindings_out));
         }
@@ -1315,7 +1315,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
         let session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-            capability_state.mcp_servers.clone();
+            capability_state.tool.mcp_servers.clone();
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)

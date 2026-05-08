@@ -45,7 +45,7 @@ fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
 }
 
 fn state_has_mcp_url(output: &crate::capability::CapabilityResolverOutput, needle: &str) -> bool {
-    output.state.mcp_servers.iter().any(|server| {
+    output.state.tool.mcp_servers.iter().any(|server| {
         matches!(
             &server.transport,
             agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
@@ -94,6 +94,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     assert!(
         output
             .state
+            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "code_analyzer")
@@ -130,6 +131,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     assert!(
         output
             .state
+            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "external_analyzer")
@@ -149,6 +151,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     .collect();
     let effective_set: BTreeSet<String> = output
         .state
+        .tool
         .capabilities
         .iter()
         .map(|c| c.key().to_string())
@@ -188,6 +191,7 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
 
     let effective_set: BTreeSet<String> = output
         .state
+        .tool
         .capabilities
         .iter()
         .map(|c| c.key().to_string())
@@ -221,6 +225,7 @@ fn phase_node_invalid_directives_are_tolerated() {
     assert!(
         !output
             .state
+            .tool
             .mcp_servers
             .iter()
             .any(|server| server.name == "missing_server")
@@ -228,6 +233,7 @@ fn phase_node_invalid_directives_are_tolerated() {
     assert!(
         !output
             .state
+            .tool
             .capabilities
             .iter()
             .any(|cap| cap.key() == "mcp:missing_server")

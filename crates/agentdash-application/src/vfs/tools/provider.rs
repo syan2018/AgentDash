@@ -95,7 +95,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let identity = context.session.identity.clone();
 
         // 合并 session-type 默认簇 与 agent 级 tool_clusters 限制（交集）
-        let session_clusters = &context.turn.capability_state.tool_clusters;
+        let session_clusters = &context.turn.capability_state.tool.tool_clusters;
         let effective_clusters = if let Some(ref agent_clusters) =
             context.session.executor_config.tool_clusters
         {

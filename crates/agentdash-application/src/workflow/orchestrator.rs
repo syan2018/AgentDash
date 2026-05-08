@@ -627,7 +627,7 @@ impl LifecycleOrchestrator {
         for phase in phases {
             let agent_mcp_servers = base_surface
                 .as_ref()
-                .map(|surface| agent_mcp_entries_from_servers(&surface.mcp_servers))
+                .map(|surface| agent_mcp_entries_from_servers(&surface.tool.mcp_servers))
                 .unwrap_or_default();
             let activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {

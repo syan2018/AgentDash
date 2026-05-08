@@ -112,7 +112,7 @@ impl<'a> RuntimeContextTransition<'a> {
         let current_clusters = self
             .after_state
             .tool
-            .tool_clusters
+            .enabled_clusters
             .iter()
             .map(|cluster| format!("{cluster:?}"))
             .collect::<Vec<_>>();
@@ -223,7 +223,7 @@ pub fn compute_capability_state_delta(
         .map(|state| {
             state
                 .tool
-                .tool_clusters
+                .enabled_clusters
                 .iter()
                 .map(|cluster| format!("{cluster:?}"))
                 .collect::<BTreeSet<_>>()
@@ -231,7 +231,7 @@ pub fn compute_capability_state_delta(
         .unwrap_or_default();
     let after_clusters = after
         .tool
-        .tool_clusters
+        .enabled_clusters
         .iter()
         .map(|cluster| format!("{cluster:?}"))
         .collect::<BTreeSet<_>>();

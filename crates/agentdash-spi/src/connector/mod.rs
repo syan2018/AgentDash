@@ -208,8 +208,8 @@ impl ToolCapabilityFilter {
 pub struct ToolDimension {
     /// 最终生效的能力全集（well-known + custom MCP）。
     pub capabilities: BTreeSet<crate::ToolCapability>,
-    /// capability 展开后的本地工具簇。
-    pub tool_clusters: BTreeSet<ToolCluster>,
+    /// capability 展开后的运行态工具簇集合。
+    pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
     pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
     /// 平台 + 自定义 MCP server 完整列表。
@@ -250,7 +250,7 @@ impl CapabilityState {
     pub fn all() -> Self {
         Self {
             tool: ToolDimension {
-                tool_clusters: BTreeSet::from([
+                enabled_clusters: BTreeSet::from([
                     ToolCluster::Read,
                     ToolCluster::Write,
                     ToolCluster::Execute,
@@ -266,7 +266,7 @@ impl CapabilityState {
 
     /// 检查指定簇是否启用。
     pub fn has(&self, cluster: ToolCluster) -> bool {
-        self.tool.tool_clusters.contains(&cluster)
+        self.tool.enabled_clusters.contains(&cluster)
     }
 
     /// 检查指定工具是否可用（cluster 启用）。
@@ -345,7 +345,7 @@ impl CapabilityState {
     pub fn from_clusters(clusters: impl IntoIterator<Item = ToolCluster>) -> Self {
         Self {
             tool: ToolDimension {
-                tool_clusters: clusters.into_iter().collect(),
+                enabled_clusters: clusters.into_iter().collect(),
                 ..Default::default()
             },
             ..Default::default()
@@ -371,10 +371,10 @@ impl CapabilityState {
                     .intersection(&other.tool.capabilities)
                     .cloned()
                     .collect(),
-                tool_clusters: self
+                enabled_clusters: self
                     .tool
-                    .tool_clusters
-                    .intersection(&other.tool.tool_clusters)
+                    .enabled_clusters
+                    .intersection(&other.tool.enabled_clusters)
                     .copied()
                     .collect(),
                 tool_policy: merge_tool_policy_for_intersection(

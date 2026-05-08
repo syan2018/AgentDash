@@ -27,7 +27,7 @@ pub use resolver::{
     ToolContribution,
 };
 pub use session_workflow_context::{
-    SessionWorkflowContext, SessionWorkflowOwner, SessionWorkflowRepos,
-    resolve_session_workflow_context, tool_directives_from_active_workflow,
+    SessionWorkflowOwner, SessionWorkflowRepos, resolve_session_workflow_context,
+    tool_directives_from_active_workflow,
 };
 pub use tool_catalog::query_tool_catalog;

@@ -510,7 +510,7 @@ pub(crate) async fn build_story_session_context_response(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     // ── 解析 Story session 的 workflow 上下文 ──
-    let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
+    let workflow_tool = agentdash_application::capability::resolve_session_workflow_context(
         agentdash_application::capability::SessionWorkflowRepos {
             agent_link: state.repos.agent_link_repo.as_ref(),
             lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
@@ -524,12 +524,9 @@ pub(crate) async fn build_story_session_context_response(
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let mut contributions = Vec::new();
-    if workflow_ctx.has_active_workflow {
+    if let Some(wf_tool) = workflow_tool {
         contributions.push(agentdash_application::capability::ContextContributions {
-            tool: Some(agentdash_application::capability::ToolContribution {
-                directives: workflow_ctx.workflow_tool_directives.unwrap_or_default(),
-                has_active_workflow: true,
-            }),
+            tool: Some(wf_tool),
             companion: None,
         });
     }

@@ -245,7 +245,7 @@ pub(crate) async fn build_project_session_context_response(
         );
 
     // ── 解析 agent_link 绑定的 lifecycle 上下文（与实际 session 创建保持一致） ──
-    let workflow_ctx = if let Some(link) = agent_link.as_ref() {
+    let workflow_tool = if let Some(link) = agent_link.as_ref() {
         agentdash_application::capability::resolve_session_workflow_context(
             agentdash_application::capability::SessionWorkflowRepos {
                 agent_link: state.repos.agent_link_repo.as_ref(),
@@ -259,17 +259,14 @@ pub(crate) async fn build_project_session_context_response(
         )
         .await
     } else {
-        agentdash_application::capability::SessionWorkflowContext::NONE
+        None
     };
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let mut contributions = Vec::new();
-    if workflow_ctx.has_active_workflow {
+    if let Some(wf_tool) = workflow_tool {
         contributions.push(agentdash_application::capability::ContextContributions {
-            tool: Some(agentdash_application::capability::ToolContribution {
-                directives: workflow_ctx.workflow_tool_directives.unwrap_or_default(),
-                has_active_workflow: true,
-            }),
+            tool: Some(wf_tool),
             companion: None,
         });
     }

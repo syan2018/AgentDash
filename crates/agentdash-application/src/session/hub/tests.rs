@@ -204,7 +204,7 @@ async fn start_prompt_records_current_turn_state() {
         workspace.path().join("src")
     );
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
-    assert_eq!(turn.capability_state.tool.tool_clusters, flow_caps.tool.tool_clusters);
+    assert_eq!(turn.capability_state.tool.enabled_clusters, flow_caps.tool.enabled_clusters);
 }
 
 #[tokio::test]
@@ -436,7 +436,7 @@ impl AgentConnector for CapturingConnector {
                 .iter()
                 .map(|server| server.name.clone())
                 .collect(),
-            tool_clusters: context.turn.capability_state.tool.tool_clusters.clone(),
+            tool_clusters: context.turn.capability_state.tool.enabled_clusters.clone(),
             mount_ids: vfs
                 .as_ref()
                 .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())

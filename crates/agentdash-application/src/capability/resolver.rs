@@ -215,10 +215,10 @@ impl CapabilityResolver {
         }
 
         // ── effective_caps → ToolCluster / platform MCP scope ──
-        let mut tool_clusters = BTreeSet::<ToolCluster>::new();
+        let mut enabled_clusters = BTreeSet::<ToolCluster>::new();
         for cap in &effective_caps {
             for cluster in tool_capability::capability_to_tool_clusters(cap) {
-                tool_clusters.insert(cluster);
+                enabled_clusters.insert(cluster);
             }
             if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap) {
                 if let Some(config) =
@@ -243,7 +243,7 @@ impl CapabilityResolver {
         CapabilityState {
             tool: agentdash_spi::ToolDimension {
                 capabilities: effective_caps.clone(),
-                tool_clusters,
+                enabled_clusters,
                 tool_policy,
                 mcp_servers: resolved_mcp_servers,
             },

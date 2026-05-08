@@ -94,8 +94,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         let identity = context.session.identity.clone();
 
-        // capability_state.tool.tool_clusters 已由 Resolver 统一计算（含 agent directives）
-        let clusters = &context.turn.capability_state.tool.tool_clusters;
+        let clusters = &context.turn.capability_state.tool.enabled_clusters;
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
         let session_hub = self.session_hub_handle.get().await;

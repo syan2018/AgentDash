@@ -12,7 +12,7 @@
 //! 无需走 helper；那边直接用 `tool_directives_from_active_workflow` 做单步计算即可。
 //!
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
-//! [`SessionWorkflowContext::NONE`]，只记录 `tracing::warn!`，不中断 session 创建。
+//! `None`，只记录 `tracing::warn!`，不中断 session 创建。
 
 use uuid::Uuid;
 
@@ -22,20 +22,7 @@ use agentdash_domain::workflow::{
     ToolCapabilityDirective, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
-/// session bootstrap 阶段要注入 resolver 的 workflow 上下文。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionWorkflowContext {
-    pub has_active_workflow: bool,
-    pub workflow_tool_directives: Option<Vec<ToolCapabilityDirective>>,
-}
-
-impl SessionWorkflowContext {
-    /// 未绑定 / 无法解析时的中性返回值，保持与现状一致的默认行为。
-    pub const NONE: Self = Self {
-        has_active_workflow: false,
-        workflow_tool_directives: None,
-    };
-}
+use crate::capability::ToolContribution;
 
 /// session owner 描述符。
 #[derive(Debug, Clone, Copy)]
@@ -57,16 +44,16 @@ pub struct SessionWorkflowRepos<'a> {
     pub workflow_def: &'a dyn WorkflowDefinitionRepository,
 }
 
-/// 解析 session bootstrap workflow 上下文。
+/// 解析 session bootstrap workflow 上下文，直接返回 `Option<ToolContribution>`。
 ///
 /// 规则：
 /// - 成功解析到 lifecycle entry step → 对应 workflow → `contract.capability_config.tool_directives` →
-///   返回 `(true, Some(directives))`
-/// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 [`SessionWorkflowContext::NONE`]
+///   返回 `Some(ToolContribution { directives, has_active_workflow: true })`
+/// - 其余情况（未绑定 / 查询失败 / 配置缺失）→ 返回 `None`
 pub async fn resolve_session_workflow_context(
     repos: SessionWorkflowRepos<'_>,
     owner: SessionWorkflowOwner,
-) -> SessionWorkflowContext {
+) -> Option<ToolContribution> {
     match owner {
         SessionWorkflowOwner::Project {
             project_id,
@@ -80,19 +67,18 @@ pub async fn resolve_session_workflow_context(
     }
 }
 
-/// 从 (project_id, agent_id) 解析 → agent_link → lifecycle entry step → workflow capabilities。
 async fn resolve_for_project_agent(
     repos: SessionWorkflowRepos<'_>,
     project_id: Uuid,
     agent_id: Uuid,
-) -> SessionWorkflowContext {
+) -> Option<ToolContribution> {
     let link = match repos
         .agent_link
         .find_by_project_and_agent(project_id, agent_id)
         .await
     {
         Ok(Some(link)) => link,
-        Ok(None) => return SessionWorkflowContext::NONE,
+        Ok(None) => return None,
         Err(error) => {
             tracing::warn!(
                 project_id = %project_id,
@@ -100,12 +86,12 @@ async fn resolve_for_project_agent(
                 error = %error,
                 "resolve_session_workflow_context: 读取 agent_link 失败，回退到空 workflow 上下文"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
     };
 
     let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
-        return SessionWorkflowContext::NONE;
+        return None;
     };
 
     resolve_from_lifecycle_key(
@@ -117,11 +103,10 @@ async fn resolve_for_project_agent(
     .await
 }
 
-/// 从 project 内 `is_default_for_story=true` 的 agent_link 查 lifecycle。
 async fn resolve_for_story(
     repos: SessionWorkflowRepos<'_>,
     project_id: Uuid,
-) -> SessionWorkflowContext {
+) -> Option<ToolContribution> {
     let links = match repos.agent_link.list_by_project(project_id).await {
         Ok(links) => links,
         Err(error) => {
@@ -130,16 +115,16 @@ async fn resolve_for_story(
                 error = %error,
                 "resolve_session_workflow_context: Story - 读取 agent_link 列表失败"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
     };
 
     let Some(link) = links.iter().find(|l| l.is_default_for_story) else {
-        return SessionWorkflowContext::NONE;
+        return None;
     };
 
     let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
-        return SessionWorkflowContext::NONE;
+        return None;
     };
 
     resolve_from_lifecycle_key(
@@ -156,7 +141,7 @@ async fn resolve_from_lifecycle_key(
     workflow_def: &dyn WorkflowDefinitionRepository,
     project_id: Uuid,
     lifecycle_key: &str,
-) -> SessionWorkflowContext {
+) -> Option<ToolContribution> {
     let lifecycle = match lifecycle_def
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
@@ -168,7 +153,7 @@ async fn resolve_from_lifecycle_key(
                 lifecycle_key = %lifecycle_key,
                 "resolve_session_workflow_context: agent_link 绑定的 lifecycle 不存在"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
         Err(error) => {
             tracing::warn!(
@@ -177,7 +162,7 @@ async fn resolve_from_lifecycle_key(
                 error = %error,
                 "resolve_session_workflow_context: 读取 lifecycle 定义失败"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
     };
 
@@ -188,15 +173,14 @@ async fn resolve_from_lifecycle_key(
             entry_step_key = %lifecycle.entry_step_key,
             "resolve_session_workflow_context: lifecycle entry step 找不到对应的 step 定义"
         );
-        return SessionWorkflowContext::NONE;
+        return None;
     };
 
     let Some(workflow_key) = entry_step.effective_workflow_key() else {
-        // entry step 没有绑定 workflow，无法推断能力基线，但活跃标志仍成立。
-        return SessionWorkflowContext {
+        return Some(ToolContribution {
+            directives: Vec::new(),
             has_active_workflow: true,
-            workflow_tool_directives: Some(Vec::new()),
-        };
+        });
     };
 
     let workflow = match workflow_def
@@ -211,7 +195,7 @@ async fn resolve_from_lifecycle_key(
                 workflow_key = %workflow_key,
                 "resolve_session_workflow_context: entry step 引用的 workflow 不存在"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
         Err(error) => {
             tracing::warn!(
@@ -221,14 +205,14 @@ async fn resolve_from_lifecycle_key(
                 error = %error,
                 "resolve_session_workflow_context: 读取 workflow 定义失败"
             );
-            return SessionWorkflowContext::NONE;
+            return None;
         }
     };
 
-    SessionWorkflowContext {
+    Some(ToolContribution {
+        directives: tool_directives_from_active_workflow(&workflow),
         has_active_workflow: true,
-        workflow_tool_directives: Some(tool_directives_from_active_workflow(&workflow)),
-    }
+    })
 }
 
 fn find_entry_step(lifecycle: &LifecycleDefinition) -> Option<&LifecycleStepDefinition> {
@@ -634,8 +618,9 @@ mod tests {
         )
         .await;
 
+        let ctx = ctx.expect("should resolve to ToolContribution");
         assert!(ctx.has_active_workflow);
-        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
+        assert_eq!(ctx.directives, admin_plan_directives());
     }
 
     #[tokio::test]
@@ -664,7 +649,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ctx, SessionWorkflowContext::NONE);
+        assert!(ctx.is_none());
     }
 
     #[tokio::test]
@@ -694,7 +679,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ctx, SessionWorkflowContext::NONE);
+        assert!(ctx.is_none());
     }
 
     #[tokio::test]
@@ -719,7 +704,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ctx, SessionWorkflowContext::NONE);
+        assert!(ctx.is_none());
     }
 
     #[tokio::test]
@@ -757,7 +742,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ctx, SessionWorkflowContext::NONE);
+        assert!(ctx.is_none());
     }
 
     /// 端到端：helper → CapabilityResolver。验证 Project session 绑定
@@ -800,22 +785,20 @@ mod tests {
         )
         .await;
 
-        assert!(wf_ctx.has_active_workflow);
+        let wf_tool = wf_ctx.expect("should resolve to ToolContribution");
+        assert!(wf_tool.has_active_workflow);
         assert_eq!(
-            wf_ctx.workflow_tool_directives,
-            Some(admin_plan_directives()),
+            wf_tool.directives,
+            admin_plan_directives(),
             "bootstrap workflow 上下文必须携带 Plan 阶段工具级 remove，不能只授予 capability"
         );
 
-        // Step 2: 将解析结果喂给 CapabilityResolver
+        // Step 2: 将解析结果直接喂给 CapabilityResolver（无需中间类型转换）
         let platform = PlatformConfig {
             mcp_base_url: Some("http://localhost:3001".to_string()),
         };
         let contributions = vec![crate::capability::ContextContributions {
-            tool: Some(crate::capability::ToolContribution {
-                directives: wf_ctx.workflow_tool_directives.unwrap_or_default(),
-                has_active_workflow: wf_ctx.has_active_workflow,
-            }),
+            tool: Some(wf_tool),
             companion: None,
         }];
         let output = CapabilityResolver::resolve(
@@ -923,8 +906,9 @@ mod tests {
         )
         .await;
 
+        let ctx = ctx.expect("should resolve to ToolContribution");
         assert!(ctx.has_active_workflow);
-        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
+        assert_eq!(ctx.directives, admin_plan_directives());
     }
 
     #[tokio::test]
@@ -959,7 +943,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(ctx, SessionWorkflowContext::NONE);
+        assert!(ctx.is_none());
     }
 
     #[tokio::test]
@@ -995,8 +979,9 @@ mod tests {
         )
         .await;
 
+        let ctx = ctx.expect("should resolve to ToolContribution");
         assert!(ctx.has_active_workflow);
-        assert_eq!(ctx.workflow_tool_directives, Some(admin_plan_directives()));
+        assert_eq!(ctx.directives, admin_plan_directives());
     }
 
     #[test]

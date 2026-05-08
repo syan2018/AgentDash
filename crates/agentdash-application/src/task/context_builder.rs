@@ -98,7 +98,7 @@ pub async fn build_task_session_context(
         available_companions: Vec::new(),
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
-    let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.state.tool.mcp_servers.clone();
+    let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
 
     // ── 构建 VFS（cloud-native 场景）──
     let use_vfs = resolved_config

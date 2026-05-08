@@ -285,8 +285,6 @@ impl AppState {
             project_repo.clone(),
             story_repo.clone(),
             session_binding_repo.clone(),
-            agent_repo.clone(),
-            agent_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),
             workflow_repo.clone(),

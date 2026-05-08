@@ -1041,7 +1041,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 4. MCP server 列表汇总(request + platform + custom + preset) ──
         let mut session_mcp_servers = spec.request_mcp_servers;
-        session_mcp_servers.extend(cap_output.state.tool.mcp_servers.iter().cloned());
+        session_mcp_servers.extend(cap_output.tool.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
 
         // ── 5. Context markdown 生成 ──
@@ -1142,7 +1142,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_prompt_blocks(prompt_blocks)
             .with_executor_config(spec.executor_config)
             .with_mcp_servers(session_mcp_servers)
-            .with_resolved_capabilities(cap_output.state)
+            .with_resolved_capabilities(cap_output)
             .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
@@ -1262,7 +1262,7 @@ impl<'a> SessionRequestAssembler<'a> {
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
-        let capability_state = cap_output.state.clone();
+        let capability_state = cap_output.clone();
 
         // ── 6. 构造 task agent context（Bundle 路径） ──
         let (story_ref, project_ref, workspace_ref) = (spec.story, spec.project, spec.workspace);

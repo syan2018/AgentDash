@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -35,8 +34,6 @@ use super::{
 /// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
     pub(super) session_binding_repo: Arc<dyn SessionBindingRepository>,
-    pub(super) agent_repo: Arc<dyn AgentRepository>,
-    pub(super) agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     pub(super) inline_file_repo: Arc<dyn InlineFileRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
     pub(super) workflow_builder: WorkflowSnapshotBuilder,
@@ -48,8 +45,6 @@ impl AppExecutionHookProvider {
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
-        agent_repo: Arc<dyn AgentRepository>,
-        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -63,8 +58,6 @@ impl AppExecutionHookProvider {
         let wf_state = state_change_repo.clone();
         Self {
             session_binding_repo,
-            agent_repo,
-            agent_link_repo,
             inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo),
             workflow_builder: WorkflowSnapshotBuilder::new(

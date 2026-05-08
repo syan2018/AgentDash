@@ -829,7 +829,6 @@ mod tests {
         // 断言 capabilities 包含 workflow_management
         assert!(
             output
-                .state
                 .tool
                 .capabilities
                 .iter()
@@ -839,7 +838,7 @@ mod tests {
 
         // 断言 CapabilityState 包含 Workflow scope MCP 注入
         assert!(
-            output.state.tool.mcp_servers.iter().any(|server| matches!(
+            output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/workflow/")
@@ -848,7 +847,7 @@ mod tests {
         );
 
         assert!(
-            !output.state.is_capability_tool_enabled(
+            !output.is_capability_tool_enabled(
                 "workflow_management",
                 "upsert_workflow_tool",
                 None
@@ -856,7 +855,7 @@ mod tests {
             "Plan 初始化阶段不得暴露 upsert_workflow_tool schema"
         );
         assert!(
-            !output.state.is_capability_tool_enabled(
+            !output.is_capability_tool_enabled(
                 "workflow_management",
                 "upsert_lifecycle_tool",
                 None

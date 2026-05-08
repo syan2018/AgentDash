@@ -162,10 +162,10 @@ pub fn activate_step_with_platform(
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
     let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.state.tool.mcp_servers.clone();
+        cap_output.tool.mcp_servers.clone();
     dedupe_session_mcp_servers(&mut mcp_servers);
 
-    let capability_keys = cap_output.state.capability_keys();
+    let capability_keys = cap_output.capability_keys();
 
     // ── 4. lifecycle mount + Vfs ──
     let writable_port_keys: Vec<String> = input
@@ -193,7 +193,7 @@ pub fn activate_step_with_platform(
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
     StepActivation {
-        capability_state: cap_output.state,
+        capability_state: cap_output,
         mcp_servers,
         capability_keys,
         kickoff_prompt,

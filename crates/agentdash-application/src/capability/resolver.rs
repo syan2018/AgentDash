@@ -72,12 +72,8 @@ pub struct AgentMcpServerEntry {
     pub server: agentdash_spi::SessionMcpServer,
 }
 
-/// Resolver 输出 — session 的有效工具集
-#[derive(Debug, Clone)]
-pub struct CapabilityResolverOutput {
-    /// Resolver 唯一产出的运行态能力状态。
-    pub state: CapabilityState,
-}
+/// Resolver 输出 = CapabilityState（唯一运行态能力容器）。
+pub type CapabilityResolverOutput = CapabilityState;
 
 /// 统一工具能力解析器。
 ///
@@ -213,7 +209,7 @@ impl CapabilityResolver {
             state = apply_companion_slice(state, slice_mode);
         }
 
-        CapabilityResolverOutput { state }
+        state
     }
 }
 
@@ -355,7 +351,7 @@ mod tests {
     }
 
     fn state_has_mcp_url(output: &CapabilityResolverOutput, needle: &str) -> bool {
-        output.state.tool.mcp_servers.iter().any(|server| {
+        output.tool.mcp_servers.iter().any(|server| {
             matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
@@ -368,7 +364,6 @@ mod tests {
         name: &str,
     ) -> Option<&'a agentdash_spi::SessionMcpServer> {
         output
-            .state
             .tool
             .mcp_servers
             .iter()
@@ -381,20 +376,20 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         assert!(
-            output.state.has(ToolCluster::Read),
+            output.has(ToolCluster::Read),
             "file_read auto-granted"
         );
         assert!(
-            output.state.has(ToolCluster::Write),
+            output.has(ToolCluster::Write),
             "file_write auto-granted"
         );
         assert!(
-            output.state.has(ToolCluster::Execute),
+            output.has(ToolCluster::Execute),
             "shell_execute auto-granted"
         );
-        assert!(output.state.has(ToolCluster::Canvas));
-        assert!(output.state.has(ToolCluster::Collaboration));
-        assert!(!output.state.has(ToolCluster::Workflow));
+        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::Collaboration));
+        assert!(!output.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -402,7 +397,7 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert_eq!(output.state.tool.mcp_servers.len(), 1);
+        assert_eq!(output.tool.mcp_servers.len(), 1);
         assert!(state_has_mcp_url(&output, "/mcp/relay"));
     }
 
@@ -487,11 +482,11 @@ mod tests {
         let mut input = base_input();
         let platform = test_platform();
         let output_no_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(!output_no_workflow.state.has(ToolCluster::Workflow));
+        assert!(!output_no_workflow.has(ToolCluster::Workflow));
 
         input.workflow_ctx.has_active_workflow = true;
         let output_with_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(output_with_workflow.state.has(ToolCluster::Workflow));
+        assert!(output_with_workflow.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -499,7 +494,7 @@ mod tests {
         let input = base_input();
         let platform = PlatformConfig { mcp_base_url: None };
         let output = CapabilityResolver::resolve(&input, &platform);
-        assert!(output.state.tool.mcp_servers.is_empty());
+        assert!(output.tool.mcp_servers.is_empty());
     }
 
     #[test]
@@ -518,7 +513,6 @@ mod tests {
 
         assert!(
             output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
@@ -535,7 +529,6 @@ mod tests {
 
         assert!(
             !output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("nonexistent"))
@@ -572,7 +565,6 @@ mod tests {
 
         assert!(
             output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer")),
@@ -617,7 +609,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(
             output
-                .state
                 .tool
                 .mcp_servers
                 .iter()
@@ -643,7 +634,7 @@ mod tests {
             Some(vec![ToolCapabilityDirective::add_simple("workflow")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.state.has(ToolCluster::Workflow));
+        assert!(output.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -652,11 +643,11 @@ mod tests {
         input.workflow_ctx.workflow_tool_directives = Some(vec![]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.state.has(ToolCluster::Read));
-        assert!(output.state.has(ToolCluster::Write));
-        assert!(output.state.has(ToolCluster::Execute));
-        assert!(output.state.has(ToolCluster::Canvas));
-        assert!(output.state.has(ToolCluster::Collaboration));
+        assert!(output.has(ToolCluster::Read));
+        assert!(output.has(ToolCluster::Write));
+        assert!(output.has(ToolCluster::Execute));
+        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::Collaboration));
     }
 
     #[test]
@@ -675,7 +666,6 @@ mod tests {
         assert!(state_mcp_server(&output, "code_analyzer").is_some());
         assert!(
             output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
@@ -691,8 +681,8 @@ mod tests {
             )]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(!output.state.has(ToolCluster::Collaboration));
-        assert!(output.state.has(ToolCluster::Read));
+        assert!(!output.has(ToolCluster::Collaboration));
+        assert!(output.has(ToolCluster::Read));
     }
 
     #[test]
@@ -707,11 +697,11 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
-            !output.state.has(ToolCluster::Execute),
+            !output.has(ToolCluster::Execute),
             "Remove(shell_execute) 应屏蔽 Execute cluster"
         );
         assert!(
-            output.state.has(ToolCluster::Read),
+            output.has(ToolCluster::Read),
             "Read cluster 不应受影响"
         );
     }
@@ -728,11 +718,11 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
-            output.state.has(ToolCluster::Read),
+            output.has(ToolCluster::Read),
             "file_read 能力整体仍可见"
         );
         assert!(
-            output.state.is_tool_path_excluded("file_read", "fs_grep"),
+            output.is_tool_path_excluded("file_read", "fs_grep"),
             "fs_grep 应进入 file_read 的工具过滤策略"
         );
     }
@@ -756,7 +746,6 @@ mod tests {
 
         assert!(
             output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::new("workflow_management")),
@@ -766,23 +755,23 @@ mod tests {
             state_has_mcp_url(&output, "/mcp/workflow/"),
             "workflow_management capability 应继续注入 Workflow MCP server"
         );
-        assert!(output.state.is_capability_tool_enabled(
+        assert!(output.is_capability_tool_enabled(
             "workflow_management",
             "get_workflow",
             None
         ));
-        assert!(!output.state.is_capability_tool_enabled(
+        assert!(!output.is_capability_tool_enabled(
             "workflow_management",
             "upsert_workflow_tool",
             None
         ));
-        assert!(!output.state.is_capability_tool_enabled(
+        assert!(!output.is_capability_tool_enabled(
             "workflow_management",
             "upsert_lifecycle_tool",
             None
         ));
         assert_eq!(
-            output.state.excluded_tool_paths(),
+            output.excluded_tool_paths(),
             BTreeSet::from([
                 "workflow_management::upsert_lifecycle_tool".to_string(),
                 "workflow_management::upsert_workflow_tool".to_string(),
@@ -806,7 +795,6 @@ mod tests {
         assert!(state_mcp_server(&output, "code_analyzer").is_none());
         assert!(
             !output
-                .state
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
@@ -825,23 +813,23 @@ mod tests {
             )]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.state.has(ToolCluster::Read));
-        assert!(output.state.is_capability_tool_enabled(
+        assert!(output.has(ToolCluster::Read));
+        assert!(output.is_capability_tool_enabled(
             "file_read",
             "fs_read",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.state.is_capability_tool_enabled(
+        assert!(!output.is_capability_tool_enabled(
             "file_read",
             "fs_grep",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.state.is_capability_tool_enabled(
+        assert!(!output.is_capability_tool_enabled(
             "file_read",
             "fs_glob",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.state.is_capability_tool_enabled(
+        assert!(!output.is_capability_tool_enabled(
             "file_read",
             "mounts_list",
             Some(ToolCluster::Read)
@@ -866,7 +854,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let relay = output
-            .state
             .tool
             .mcp_servers
             .iter()
@@ -879,7 +866,7 @@ mod tests {
             .expect("project owner 应注入 relay MCP");
         assert_eq!(relay.name, "agentdash-relay-tools");
         assert!(
-            !output.state.tool.mcp_servers.iter().any(|server| matches!(
+            !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
                     if url.contains("/mcp/story/") || url.contains("/mcp/task/")
@@ -908,7 +895,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let story = output
-            .state
             .tool
             .mcp_servers
             .iter()
@@ -924,7 +910,7 @@ mod tests {
         };
         assert!(url.contains(&story_id.to_string()));
         assert!(
-            !output.state.tool.mcp_servers.iter().any(|server| matches!(
+            !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
             )),
@@ -954,7 +940,6 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let task = output
-            .state
             .tool
             .mcp_servers
             .iter()

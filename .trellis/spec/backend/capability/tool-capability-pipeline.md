@@ -224,6 +224,28 @@ MCP / 平台 MCP 工具没有 cluster 兜底，必须始终先命中
 不得被解释为 MCP 工具的兼容式全量放行；这条约束用于防止 session bootstrap 或
 agent preset 把 MCP server 透传进来时绕过 workflow step 的工具级策略。
 
+## 工具 schema 告知链路
+
+工具 schema 的可读告知必须与运行态工具集同源，禁止 system prompt 另行渲染
+`Available Tools` 或简化版参数摘要。PiAgent 侧有两层职责：
+
+- `BridgeRequest.tools` 是 provider function/tool calling 协议字段，只承载当前
+  `CapabilityState` 过滤后的真实 `ToolDefinition`，不得被当作上下文提示的并行
+  生成源。
+- 给 Agent 阅读的工具 schema 告知统一走 `HookTurnStartNotice`
+  (`RuntimeEventSource::RuntimeContextUpdate`)。初始化 owner bootstrap 时发送当前
+  `assembled_tools` 的完整 schema；workflow/capability 变化时用同一 formatter
+  发送切换后的完整当前 schema。
+
+因此一次 Plan → Apply 流转必须同时满足：
+
+- Plan 初始 `assembled_tools` / `BridgeRequest.tools` 不包含被 workflow step
+  remove 的 upsert 工具。
+- Plan 初始 system prompt 不包含 `## Available Tools`，也不包含工具 description /
+  参数 schema 的副本。
+- Apply 流转后 runtime notice 中展示切换后的完整工具 schema，且
+  `connector.update_session_tools(...)` 已把同一份工具集 replace 到 live PiAgent。
+
 ## CapabilityResolver
 
 ### 位置

@@ -20,9 +20,9 @@ use agentdash_spi::{DiscoveredGuideline, Mount, MountCapability, Vfs};
 
 /// `Project Context` 渲染的业务上下文 slot。
 ///
-/// VFS、工具、runtime policy、MCP server 等运行时表面由本文件后续的
-/// `Workspace` / `Available Tools` 章节统一渲染；这里排除这些 slot，避免同一
-/// mount/tool/MCP 能力在 system prompt 里重复出现。
+/// VFS、runtime policy、MCP server 等运行时表面由本文件后续章节或 runtime
+/// notice 统一渲染；这里排除这些 slot，避免同一 mount/tool/MCP 能力在 system
+/// prompt 里重复出现。
 const PROJECT_CONTEXT_SLOTS: &[&str] = &[
     "task",
     "story",
@@ -58,6 +58,8 @@ pub struct SystemPromptInput<'a> {
     pub session_capabilities: Option<&'a SessionBaselineCapabilities>,
     pub vfs: Option<&'a Vfs>,
     pub working_directory: &'a Path,
+    /// 当前工具列表仅用于派生 skill 提示中的工具名，不在 system prompt 中渲染
+    /// schema。完整工具 schema 统一由 runtime tool schema notice 注入。
     pub runtime_tools: &'a [DynAgentTool],
     pub mcp_servers: &'a [agentdash_spi::SessionMcpServer],
     pub hook_session: Option<&'a dyn HookSessionRuntimeAccess>,
@@ -132,25 +134,6 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
         sections.push("## Workspace\n\n（当前会话未配置 VFS。）".to_string());
     }
 
-    // ── 4. Available Tools ──
-    {
-        if !input.runtime_tools.is_empty() {
-            let mut tool_section =
-                String::from("## Available Tools\n\n以下工具已注入当前会话，可直接调用：\n\n");
-
-            let tool_lines = input
-                .runtime_tools
-                .iter()
-                .map(describe_builtin_tool)
-                .collect::<Vec<_>>()
-                .join("\n");
-            tool_section.push_str(&tool_lines);
-            tool_section.push_str("\n\n");
-            render_path_conventions(&mut tool_section, input.vfs, input.working_directory);
-            sections.push(tool_section);
-        }
-    }
-
     // ── 6. Hooks ──
     if let Some(hook_session) = input.hook_session {
         let hook_parts = build_hook_runtime_sections(hook_session);
@@ -204,67 +187,6 @@ fn describe_mount(mount: &Mount) -> String {
         "- {}: {}（provider={}, root_ref={}, capabilities=[{}]）",
         mount.id, mount.display_name, mount.provider, mount.root_ref, capabilities
     )
-}
-
-fn describe_builtin_tool(tool: &DynAgentTool) -> String {
-    let description = tool.description().trim();
-    let header = if description.is_empty() {
-        format!("- **{}**", tool.name())
-    } else {
-        format!("- **{}**: {}", tool.name(), description)
-    };
-    let params = format_parameters_brief(&tool.parameters_schema());
-    if params.is_empty() {
-        header
-    } else {
-        format!("{header}\n{params}")
-    }
-}
-
-fn format_parameters_brief(schema: &serde_json::Value) -> String {
-    let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) else {
-        return String::new();
-    };
-    if properties.is_empty() {
-        return String::new();
-    }
-    let required: std::collections::HashSet<&str> = schema
-        .get("required")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-
-    properties
-        .iter()
-        .map(|(name, spec)| {
-            let ty = extract_type_label(spec);
-            let marker = if required.contains(name.as_str()) {
-                ", required"
-            } else {
-                ""
-            };
-            let param_desc = spec
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            match param_desc {
-                Some(d) => format!("  - `{name}` ({ty}{marker}): {d}"),
-                None => format!("  - `{name}` ({ty}{marker})"),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn extract_type_label(spec: &serde_json::Value) -> String {
-    if let Some(ty) = spec.get("type").and_then(|v| v.as_str()) {
-        return ty.to_string();
-    }
-    if spec.get("oneOf").is_some() || spec.get("anyOf").is_some() {
-        return "union".to_string();
-    }
-    "any".to_string()
 }
 
 fn format_skills_from_capabilities(
@@ -330,10 +252,18 @@ fn build_hook_runtime_sections(hook_session: &dyn HookSessionRuntimeAccess) -> V
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use agentdash_agent_types::{
+        AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
+    };
     use agentdash_spi::{
         ContextFragment, McpTransportConfig, MergeStrategy, SessionContextBundle, SessionMcpServer,
     };
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use tokio_util::sync::CancellationToken;
 
     fn fragment(slot: &str, content: &str) -> ContextFragment {
         ContextFragment {
@@ -344,6 +274,42 @@ mod tests {
             scope: ContextFragment::default_scope(),
             source: "test".to_string(),
             content: content.to_string(),
+        }
+    }
+
+    struct StubTool;
+
+    #[async_trait]
+    impl AgentTool for StubTool {
+        fn name(&self) -> &str {
+            "mcp_agentdash_workflow_tools_upsert_workflow_tool"
+        }
+
+        fn description(&self) -> &str {
+            "创建或更新 Workflow 定义"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string" }
+                }
+            })
+        }
+
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _args: Value,
+            _cancel: CancellationToken,
+            _on_update: Option<ToolUpdateCallback>,
+        ) -> Result<AgentToolResult, AgentToolError> {
+            Ok(AgentToolResult {
+                content: vec![ContentPart::text("ok")],
+                is_error: false,
+                details: None,
+            })
         }
     }
 
@@ -399,29 +365,28 @@ mod tests {
         assert!(!rendered.contains("重复 runtime 策略"));
         assert!(!rendered.contains("重复 MCP 摘要"));
     }
-}
 
-fn render_path_conventions(tool_section: &mut String, vfs: Option<&Vfs>, working_directory: &Path) {
-    if vfs.is_some() {
-        tool_section.push_str(
-            "**Path convention**: paths MUST use `mount_id://relative/path` format (e.g., `main://src/lib.rs`). \
-            The mount prefix may be omitted when the session has exactly one mount. \
-            Never put backend_id or absolute paths into tool arguments. \
-            For shell_exec, `cwd` must also be relative to the mount root; use `main://.` for the current directory.\n\n",
-        );
-        tool_section.push_str(
-            "**fs_apply_patch format**: uses Codex apply_patch syntax (**not** unified diff). \
-            Starts with `*** Begin Patch`, ends with `*** End Patch`. \
-            Each file operation MUST begin with `*** Add File: path` / `*** Update File: path` / `*** Delete File: path`. \
-            For renaming, follow `Update File` with `*** Move to: new/path`. \
-            Each hunk starts with `@@` (optionally followed by a context-anchor line); \
-            lines within a hunk are prefixed with space (context) / `-` (remove) / `+` (add). \
-            Paths may use `mount_id://path` to target a specific mount; paths without a prefix use the default mount.",
-        );
-    } else {
-        let abs_hint = working_directory.display().to_string();
-        tool_section.push_str(&format!(
-            "**路径规范**：调用 read_file、list_directory、search、write_file、shell 等工作空间工具时，路径参数必须优先使用相对工作空间根目录的路径。如果要在当前目录执行 shell，请将 cwd 设为 `.`；如果要进入子目录，请传类似 `crates/agentdash-agent` 这样的相对路径；不要把 `{abs_hint}/...` 这类绝对路径直接写进工具参数。",
-        ));
+    #[test]
+    fn system_prompt_does_not_render_tool_schema_or_available_tools() {
+        let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
+
+        let prompt = assemble_system_prompt(&SystemPromptInput {
+            base_system_prompt: "base",
+            agent_system_prompt: None,
+            agent_system_prompt_mode: None,
+            user_preferences: &[],
+            discovered_guidelines: &[],
+            context_bundle: None,
+            session_capabilities: None,
+            vfs: None,
+            working_directory: Path::new("."),
+            runtime_tools: &tools,
+            mcp_servers: &[],
+            hook_session: None,
+        });
+
+        assert!(!prompt.contains("## Available Tools"));
+        assert!(!prompt.contains("mcp_agentdash_workflow_tools_upsert_workflow_tool"));
+        assert!(!prompt.contains("创建或更新 Workflow 定义"));
     }
 }

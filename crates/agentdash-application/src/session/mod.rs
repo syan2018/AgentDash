@@ -24,6 +24,7 @@ pub mod stall_detector;
 pub mod system_prompt_assembler;
 pub mod terminal_cache;
 pub mod title_generator;
+mod tool_schema_notice;
 pub mod turn_processor;
 pub mod types;
 

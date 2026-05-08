@@ -6,15 +6,15 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_agent_types::{DynAgentTool, ToolDefinition};
+use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
     CapabilityDelta, HookInjection, HookTurnStartNotice, RuntimeEventSource,
     SharedHookSessionRuntime,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 use super::super::hook_messages as msg;
+use super::super::tool_schema_notice::{ToolSchemaNoticeKind, build_tool_schema_notice};
 use super::SessionHub;
 use crate::capability::build_capability_delta_markdown;
 use crate::session::{
@@ -190,6 +190,7 @@ impl SessionHub {
         hook_session: Option<&SharedHookSessionRuntime>,
         before_state: CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
+        tools: &[DynAgentTool],
     ) {
         if transitions.is_empty() {
             return;
@@ -216,7 +217,6 @@ impl SessionHub {
                 steering_capability_delta: None,
             }
             .event_payload();
-            pending_event_before_state = pending.state.clone();
             let _ = self
                 .emit_capability_state_changed(session_id, Some(turn_id), payload.clone())
                 .await;
@@ -224,15 +224,40 @@ impl SessionHub {
             let injections = self
                 .collect_runtime_context_update_injections(session_id)
                 .await;
-            if !injections.is_empty()
-                && let Some(hook_session) = hook_session
-            {
+            if let Some(hook_session) = hook_session {
+                let state_delta = compute_capability_state_delta(
+                    Some(&pending_event_before_state),
+                    &pending.state,
+                    &pending.capability_keys,
+                );
+                let capability_delta = CapabilityDelta {
+                    added: state_delta.tool_capabilities.added.clone(),
+                    removed: state_delta.tool_capabilities.removed.clone(),
+                };
+                let mut sections = vec![build_capability_delta_markdown(
+                    &pending.phase_node,
+                    &capability_delta,
+                    &pending.capability_keys,
+                    Some(&state_delta),
+                )];
+                if let Some(tool_block) = build_tool_schema_notice(
+                    ToolSchemaNoticeKind::RuntimeUpdate {
+                        phase_node: &pending.phase_node,
+                    },
+                    tools,
+                ) {
+                    sections.push(tool_block);
+                }
+                if let Some(injection_block) = build_runtime_injection_block(&injections) {
+                    sections.push(injection_block);
+                }
                 enqueue_runtime_context_notice(
                     hook_session.as_ref(),
                     pending.phase_node.as_str(),
-                    build_context_only_notice(&pending.phase_node, &injections),
+                    sections.join("\n\n"),
                 );
             }
+            pending_event_before_state = pending.state.clone();
         }
     }
 
@@ -266,7 +291,12 @@ fn build_live_runtime_context_notice(
         &input.capability_keys,
         Some(state_delta),
     )];
-    if let Some(tool_block) = build_tool_definition_update_block(state_delta, tools) {
+    if let Some(tool_block) = build_tool_schema_notice(
+        ToolSchemaNoticeKind::RuntimeUpdate {
+            phase_node: &input.phase_node,
+        },
+        tools,
+    ) {
         sections.push(tool_block);
     }
     if let Some(injection_block) = build_runtime_injection_block(injections) {
@@ -309,101 +339,6 @@ fn build_runtime_injection_block(injections: &[HookInjection]) -> Option<String>
     )
 }
 
-fn build_tool_definition_update_block(
-    state_delta: &CapabilityStateDelta,
-    tools: &[DynAgentTool],
-) -> Option<String> {
-    let raw_tool_names = changed_raw_tool_names(state_delta);
-    if raw_tool_names.is_empty() {
-        return None;
-    }
-    let mut definitions = tools
-        .iter()
-        .filter_map(|tool| {
-            let name = tool.name();
-            raw_tool_names
-                .iter()
-                .any(|raw| name == raw || name.ends_with(&format!("_{raw}")))
-                .then(|| ToolDefinition::from_tool(tool.as_ref()))
-        })
-        .collect::<Vec<_>>();
-    definitions.sort_by(|left, right| left.name.cmp(&right.name));
-    definitions.dedup_by(|left, right| left.name == right.name);
-    if definitions.is_empty() {
-        return None;
-    }
-
-    let mut lines = vec![
-        "### Tool Definitions Updated".to_string(),
-        "以下工具已进入当前 provider request 的工具 schema，可直接调用：".to_string(),
-    ];
-    for definition in definitions {
-        lines.push(format_tool_definition(&definition));
-    }
-    Some(lines.join("\n"))
-}
-
-fn changed_raw_tool_names(state_delta: &CapabilityStateDelta) -> BTreeSet<String> {
-    state_delta
-        .excluded_tool_paths
-        .removed
-        .iter()
-        .chain(state_delta.included_tool_paths.added.iter())
-        .filter_map(|path| path.rsplit_once("::").map(|(_, tool)| tool.to_string()))
-        .collect()
-}
-
-fn format_tool_definition(definition: &ToolDefinition) -> String {
-    let mut lines = Vec::new();
-    let description = definition.description.trim();
-    if description.is_empty() {
-        lines.push(format!("- **{}**", definition.name));
-    } else {
-        lines.push(format!("- **{}**: {}", definition.name, description));
-    }
-    lines.extend(format_parameters_brief(&definition.parameters));
-    lines.join("\n")
-}
-
-fn format_parameters_brief(schema: &Value) -> Vec<String> {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    if properties.is_empty() {
-        return Vec::new();
-    }
-    let required = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-    properties
-        .iter()
-        .map(|(name, spec)| {
-            let ty = spec.get("type").and_then(Value::as_str).unwrap_or("any");
-            let marker = if required.contains(name.as_str()) {
-                ", required"
-            } else {
-                ""
-            };
-            let description = spec
-                .get("description")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            match description {
-                Some(description) => format!("  - `{name}` ({ty}{marker}): {description}"),
-                None => format!("  - `{name}` ({ty}{marker})"),
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -412,10 +347,10 @@ mod tests {
         AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
     };
     use async_trait::async_trait;
+    use serde_json::Value;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::session::SetDelta;
 
     struct StubTool;
 
@@ -458,22 +393,34 @@ mod tests {
     }
 
     #[test]
-    fn tool_definition_update_block_describes_unblocked_tools() {
-        let state_delta = CapabilityStateDelta {
-            excluded_tool_paths: SetDelta {
-                added: vec![],
-                removed: vec!["workflow_management::upsert_workflow_tool".to_string()],
-            },
-            ..Default::default()
+    fn live_runtime_context_notice_includes_full_current_tool_schema() {
+        let input = LiveRuntimeContextTransitionInput {
+            session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "apply".to_string(),
+            run_id: None,
+            lifecycle_key: None,
+            before_state: None,
+            after_state: CapabilityState::default(),
+            capability_keys: BTreeSet::from(["workflow_management".to_string()]),
+            key_delta: CapabilityDelta::default(),
+            apply_mode: "live",
         };
+        let state_delta = CapabilityStateDelta::default();
         let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
 
-        let block = build_tool_definition_update_block(&state_delta, &tools)
-            .expect("unblocked tool should render definition block");
+        let notice = build_live_runtime_context_notice(
+            &input,
+            &CapabilityDelta::default(),
+            &state_delta,
+            &tools,
+            &[],
+        );
 
-        assert!(block.contains("### Tool Definitions Updated"));
-        assert!(block.contains("mcp_agentdash_workflow_tools_upsert_workflow_tool"));
-        assert!(block.contains("创建或更新 Workflow 定义"));
-        assert!(block.contains("`key` (string, required): Workflow key"));
+        assert!(notice.contains("## Runtime Tool Schema — Step Transition: apply"));
+        assert!(notice.contains("mcp_agentdash_workflow_tools_upsert_workflow_tool"));
+        assert!(notice.contains("创建或更新 Workflow 定义"));
+        assert!(notice.contains("\"required\": ["));
+        assert!(notice.contains("\"description\": \"Workflow key\""));
     }
 }

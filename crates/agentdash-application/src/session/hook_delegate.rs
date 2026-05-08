@@ -965,9 +965,9 @@ mod tests {
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
         HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess, HookTrigger,
-        HookTraceTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
-        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess,
+        HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+        RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
         SessionSnapshotMetadata,
     };
 

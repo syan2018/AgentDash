@@ -20,6 +20,7 @@ use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::path_policy::resolve_working_dir;
+use super::tool_schema_notice::{ToolSchemaNoticeKind, enqueue_tool_schema_notice};
 pub use super::types::*;
 
 impl SessionHub {
@@ -316,6 +317,7 @@ impl SessionHub {
                 hook_session.as_ref(),
                 base_capability_state,
                 &pending_capability_transitions,
+                &context.turn.assembled_tools,
             )
             .await;
         }
@@ -400,6 +402,14 @@ impl SessionHub {
                     )
                     .await;
             }
+        }
+
+        if is_owner_bootstrap {
+            enqueue_tool_schema_notice(
+                hook_session.as_ref(),
+                ToolSchemaNoticeKind::Initial,
+                &context.turn.assembled_tools,
+            );
         }
 
         let mut stream = match self

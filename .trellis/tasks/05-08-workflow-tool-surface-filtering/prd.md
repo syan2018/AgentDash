@@ -29,6 +29,9 @@
 - Plan 阶段 `workflow_management::upsert_*` 的 remove 必须真正移除 Agent 可见工具。
 - Apply 阶段必须重新开放上述 upsert 工具。
 - 能力更新提示必须表达工具级变化，避免“工具 schema 已同步”但不说明具体变化。
+- system prompt 不再渲染 `Available Tools` 或工具参数摘要；可读工具 schema
+  告知统一走 runtime notice，并在初始化与能力更新时使用同一套完整 schema
+  formatter。
 - 前端会话流必须能展示 `capability_surface_changed` 的关键工具表面 diff。
 - 消除多份结构描述同一运行态工具表面的隐患：directive 只做输入，运行态只保留一个 canonical tool policy。
 
@@ -141,6 +144,14 @@ Capability Update Markdown 保留 capability 段落，同时从 canonical `tool_
   `workflow_management` 只读工具可见，`upsert_workflow_tool` /
   `upsert_lifecycle_tool` 在流转到 Apply 前不可见。
 - `Capability Update` Markdown 展示 tool path diff，不再输出无条件的“工具 schema 已同步更新”固定文案。
+- PiAgent 的 system prompt 已移除 `## Available Tools` 工具说明段落；工具名称仅
+  用于 skill 提示派生，不再作为工具 schema 的第二份上下文副本。
+- 新增 runtime tool schema notice：owner bootstrap 初始化时注入当前
+  `assembled_tools` 的完整 `ToolDefinition` schema；workflow/capability
+  transition 后用同一 formatter 注入切换后的完整当前 schema。
+- Provider request 的 `tools` 字段继续作为 tool/function calling 协议字段存在，
+  但可读告知不再从 system prompt 或 capability update 文案各自拼一份，避免
+  “文案显示解锁但模型早已见过 schema”的错觉。
 - `capability_surface_changed` 事件进入前端可见系统事件，并展示 capability / tool path /
   MCP server 的结构化变化。
 - Hook 生命周期触发点已收敛为 AgentLoop 核心节点；能力变化不再占用

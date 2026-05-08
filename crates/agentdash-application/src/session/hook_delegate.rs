@@ -20,8 +20,8 @@ use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
     ContextTokenStats, HookEvaluationQuery, HookInjection, HookPendingAction,
-    HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry, HookTrigger,
-    SessionHookRefreshQuery, SharedHookSessionRuntime,
+    HookPendingActionStatus, HookRuntimeNotice, HookSessionRuntimeSnapshot, HookTraceEntry,
+    HookTrigger, SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
 
 pub struct HookRuntimeDelegate {
@@ -470,6 +470,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             });
         }
 
+        let runtime_notices = collect_runtime_notice_messages(self.hook_session.as_ref());
         let pending_messages = collect_pending_hook_messages(
             self.hook_session.as_ref(),
             &evaluated.snapshot,
@@ -510,7 +511,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         }
 
         // 通用层不再把 hook injections 直接桥接为 inline user message；
-        // 仅保留显式 pending action 回流，避免“隐式注入刷屏”。
+        // 仅保留显式 runtime notice / pending action 回流，避免“隐式注入刷屏”。
+        messages.extend(runtime_notices);
         messages.extend(pending_messages.steering);
         messages.extend(pending_messages.follow_up);
 
@@ -866,6 +868,30 @@ fn collect_pending_hook_messages(
     messages
 }
 
+fn collect_runtime_notice_messages(
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+) -> Vec<AgentMessage> {
+    let notices = hook_session.collect_runtime_notices_for_injection();
+    if notices.is_empty() {
+        return Vec::new();
+    }
+    let body = notices
+        .iter()
+        .map(format_runtime_notice)
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    vec![AgentMessage::user(body)]
+}
+
+fn format_runtime_notice(notice: &HookRuntimeNotice) -> String {
+    format!(
+        "[运行时上下文更新]\nnotice_id: {}\nsource: {}\n\n{}",
+        notice.id,
+        notice.source_trigger.as_key(),
+        notice.content.trim()
+    )
+}
+
 fn build_pending_action_message(
     snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
     action: &HookPendingAction,
@@ -955,9 +981,9 @@ mod tests {
     use agentdash_spi::hooks::{
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
         HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookSessionRuntimeAccess, HookTrigger,
-        NoopExecutionHookProvider, SessionHookRefreshQuery, SessionHookSnapshot,
-        SessionHookSnapshotQuery, SessionSnapshotMetadata,
+        HookPendingActionResolutionKind, HookResolution, HookRuntimeNotice,
+        HookSessionRuntimeAccess, HookTrigger, NoopExecutionHookProvider, SessionHookRefreshQuery,
+        SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]
@@ -1536,6 +1562,75 @@ mod tests {
             "static companion injection should not produce duplicate trace events"
         );
         assert_eq!(submit_traces[0].decision, "context_injected");
+    }
+
+    #[tokio::test]
+    async fn transform_context_consumes_runtime_notices_once() {
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(NoopExecutionHookProvider),
+            SessionHookSnapshot {
+                session_id: "sess-hook".to_string(),
+                ..SessionHookSnapshot::default()
+            },
+        ));
+        hook_session.enqueue_runtime_notice(HookRuntimeNotice {
+            id: "notice-1".to_string(),
+            created_at_ms: 1,
+            source_trigger: HookTrigger::CapabilityChanged,
+            content: "## Capability Update\n- tool schema refreshed".to_string(),
+        });
+        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+        let input = agentdash_spi::TransformContextInput {
+            context: AgentContext {
+                system_prompt: "test".to_string(),
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![],
+            },
+        };
+
+        let first = delegate
+            .transform_context(input.clone(), CancellationToken::new())
+            .await
+            .expect("first transform_context should succeed");
+        let first_text = first
+            .steering_messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::User { content, .. } => Some(
+                    content
+                        .iter()
+                        .filter_map(|part| part.extract_text())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(first_text.contains("notice-1"));
+        assert!(first_text.contains("tool schema refreshed"));
+
+        let second = delegate
+            .transform_context(input, CancellationToken::new())
+            .await
+            .expect("second transform_context should succeed");
+        let second_text = second
+            .steering_messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::User { content, .. } => Some(
+                    content
+                        .iter()
+                        .filter_map(|part| part.extract_text())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!second_text.contains("notice-1"));
     }
 
     #[tokio::test]

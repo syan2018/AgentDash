@@ -5,7 +5,7 @@
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
-//!   `emit_capability_changed_hook` / `schedule_hook_auto_resume`。
+//!   `evaluate_capability_changed_hook` / `schedule_hook_auto_resume`。
 //!   （原 `session/event_bridge.rs` 已于 PR 6 迁入本模块并顺手删除 `_tx` 占位参数。）
 //! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。

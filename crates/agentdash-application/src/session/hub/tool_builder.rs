@@ -69,7 +69,7 @@ impl SessionHub {
         &self,
         session_id: &str,
         state: CapabilityState,
-    ) -> Result<(), ConnectorError> {
+    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
         let (turn_snapshot, hook_session) = {
             let sessions = self.sessions.lock().await;
             let runtime = sessions.get(session_id).ok_or_else(|| {
@@ -102,7 +102,7 @@ impl SessionHub {
             .await;
 
         self.connector
-            .update_session_tools(session_id, all_tools)
+            .update_session_tools(session_id, all_tools.clone())
             .await?;
 
         let mut sessions = self.sessions.lock().await;
@@ -135,7 +135,7 @@ impl SessionHub {
                 turn.capability_state = state;
             }
         }
-        Ok(())
+        Ok(all_tools)
     }
 
     pub(crate) async fn build_tools_for_execution_context(

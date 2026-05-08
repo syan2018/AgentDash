@@ -416,8 +416,8 @@ sequenceDiagram
   - `emit_hook_injection_fragments`（无 sink fallback）
 - `crates/agentdash-application/src/session/hub/hook_dispatch.rs`
   - `emit_session_hook_trigger`（hub 级 trigger 统一回灌）
-  - `emit_capability_changed_hook`（runtime context transition applier 内部 primitive；
-    结构化回灌后额外 live notification）
+  - `evaluate_capability_changed_hook`（runtime context transition applier 内部 primitive；
+    只负责 trace / turn_delta / audit，Agent 可见文本进入 runtime notice 队列）
 - `crates/agentdash-application/src/session/hub/runtime_context_transition.rs`
   - `apply_live_runtime_context_transition`
   - `enqueue_pending_runtime_context_transition`

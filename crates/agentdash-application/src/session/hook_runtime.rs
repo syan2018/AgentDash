@@ -7,8 +7,9 @@ use std::sync::{
 use agentdash_spi::hooks::{
     CapabilityDelta, ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
-    HookTraceEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionSnapshotMetadata,
+    HookPendingActionStatus, HookResolution, HookRuntimeNotice, HookSessionRuntimeAccess,
+    HookSessionRuntimeSnapshot, HookTraceEntry, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -22,6 +23,7 @@ pub struct HookSessionRuntime {
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
     trace: RwLock<Vec<HookTraceEntry>>,
     pending_actions: RwLock<Vec<HookPendingAction>>,
+    runtime_notices: RwLock<Vec<HookRuntimeNotice>>,
     token_stats: RwLock<ContextTokenStats>,
     capabilities: RwLock<BTreeSet<String>>,
     revision: AtomicU64,
@@ -56,6 +58,7 @@ impl HookSessionRuntime {
             diagnostics: RwLock::new(diagnostics),
             trace: RwLock::new(Vec::new()),
             pending_actions: RwLock::new(Vec::new()),
+            runtime_notices: RwLock::new(Vec::new()),
             token_stats: RwLock::new(ContextTokenStats::default()),
             capabilities: RwLock::new(BTreeSet::new()),
             revision: AtomicU64::new(1),
@@ -326,6 +329,39 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
             self.revision.fetch_add(1, Ordering::SeqCst);
         }
         injected
+    }
+
+    fn enqueue_runtime_notice(&self, notice: HookRuntimeNotice) {
+        if notice.content.trim().is_empty() {
+            return;
+        }
+        let mut guard = self
+            .runtime_notices
+            .write()
+            .expect("hook runtime notices write lock poisoned");
+        if guard.iter().any(|existing| existing.id == notice.id) {
+            return;
+        }
+        guard.push(notice);
+        if guard.len() > 64 {
+            let drain_count = guard.len() - 64;
+            guard.drain(0..drain_count);
+        }
+        self.revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn collect_runtime_notices_for_injection(&self) -> Vec<HookRuntimeNotice> {
+        let mut guard = self
+            .runtime_notices
+            .write()
+            .expect("hook runtime notices write lock poisoned");
+        if guard.is_empty() {
+            return Vec::new();
+        }
+        let notices = guard.clone();
+        guard.clear();
+        self.revision.fetch_add(1, Ordering::SeqCst);
+        notices
     }
 
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction> {

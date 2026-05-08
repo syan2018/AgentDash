@@ -83,19 +83,20 @@ pub trait ExecutionHookProvider: Send + Sync {
 - provider 先解释为 `HookContributionSet`，再 merge 进 snapshot
 - `HookPolicyView` 只是 runtime 观测面，不是第二套执行 authority
 - PhaseNode 激活后即使 tool/MCP capability surface 没有增减，只要 active workflow
-  step / effective contract 发生变化，也必须触发 `CapabilityChanged` hook。原因是
+  step / effective contract 发生变化，也必须产生 capability context update。原因是
   workflow guidance / context binding 属于动态上下文变化，不能依赖工具 surface
-  delta 才投递给当前 running Agent。
+  delta 才进入下一次 AgentLoop 边界。
 - PhaseNode 的 live apply、pending next turn、applied on next turn 三条路径必须
   通过同一份 runtime context transition 结构派生 `capability_state_changed`
   事件 payload 与 pending metadata；禁止各入口手写互不一致的事件 JSON。
 - 生产路径必须通过 `SessionHub` 的 runtime context transition applier 应用
   transition。`replace_current_capability_state`、`emit_capability_state_changed`、
-  `emit_capability_changed_hook`、pending transition 写入等低层方法只允许作为
+  `evaluate_capability_changed_hook`、pending transition 写入等低层方法只允许作为
   applier 内部 primitive 使用。
-- `CapabilityChanged` 的 live notification 必须通过顶层 connector 路由到真正持有
-  live session 的子 connector（例如 `CompositeConnector -> PiAgentConnector`）。
-  顶层 connector 返回 unsupported 会造成 trace 看得到但模型收不到。
+- `CapabilityChanged` 不应作为第二条即时 live notification 推给 Agent。transition
+  applier 应先更新 `CapabilityState` 与 tool set，再评估 capability context update，
+  将合并后的能力变化、工具定义摘要与 workflow 注入写入 Hook runtime notice 队列；
+  下一次 `transform_context` 边界统一消费。
 
 ### Ask / Approval
 

@@ -194,6 +194,15 @@ pub struct HookPendingAction {
     pub injections: Vec<HookInjection>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookRuntimeNotice {
+    pub id: String,
+    pub created_at_ms: i64,
+    pub source_trigger: HookTrigger,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HookPendingActionStatus {
@@ -274,6 +283,8 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn next_trace_sequence(&self) -> u64;
     fn enqueue_pending_action(&self, action: HookPendingAction);
     fn collect_pending_actions_for_injection(&self) -> Vec<HookPendingAction>;
+    fn enqueue_runtime_notice(&self, notice: HookRuntimeNotice);
+    fn collect_runtime_notices_for_injection(&self) -> Vec<HookRuntimeNotice>;
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction>;
     fn unresolved_blocking_actions(&self) -> Vec<HookPendingAction>;
     fn resolve_pending_action(

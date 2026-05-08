@@ -3,7 +3,7 @@
 //! 集中：
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
 //! - `ensure_hook_session_runtime`（按需懒重建 hook snapshot runtime）
-//! - `emit_capability_changed_hook`（PhaseNode 等动态能力更新）
+//! - `evaluate_capability_changed_hook`（PhaseNode 等动态能力更新）
 //! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 augmenter 后转 prompt）
 
 use std::sync::Arc;
@@ -40,7 +40,7 @@ pub(in crate::session) struct HookTriggerInput<'a> {
 /// `turn_delta` / audit，返回值仅用于调用点追加即时消费动作（如 live
 /// notification）。
 #[derive(Debug, Clone, Default)]
-pub(in crate::session) struct HookTriggerDispatchResult {
+pub(crate) struct HookTriggerDispatchResult {
     pub effects: Vec<HookEffect>,
     pub injections: Vec<HookInjection>,
 }
@@ -140,20 +140,24 @@ impl SessionHub {
         }
     }
 
-    /// 触发 `CapabilityChanged` hook（PhaseNode 等动态能力更新路径使用）。
-    pub(crate) async fn emit_capability_changed_hook(
+    /// 评估 `CapabilityChanged` hook（PhaseNode 等动态能力更新路径使用）。
+    ///
+    /// 这里只负责把 hook resolution 写入 trace / bundle turn_delta / audit。
+    /// Agent 可见的文本由 runtime context transition 入队，随后在 AgentLoop
+    /// `transform_context` 边界统一消费，避免同一次流转拆成多条即时注入。
+    pub(crate) async fn evaluate_capability_changed_hook(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
         payload: serde_json::Value,
-    ) {
+    ) -> HookTriggerDispatchResult {
         let hook_session = {
             let sessions = self.sessions.lock().await;
             let Some(runtime) = sessions.get(session_id) else {
-                return;
+                return HookTriggerDispatchResult::default();
             };
             let Some(hook_session) = runtime.hook_session.clone() else {
-                return;
+                return HookTriggerDispatchResult::default();
             };
             hook_session
         };
@@ -168,35 +172,18 @@ impl SessionHub {
             executor_id: None,
         };
 
-        let result = self
-            .emit_session_hook_trigger(
-                hook_session.as_ref(),
-                &HookTriggerInput {
-                    session_id,
-                    turn_id,
-                    trigger: HookTrigger::CapabilityChanged,
-                    payload: Some(payload),
-                    refresh_reason: "trigger:capability_changed",
-                    source,
-                },
-            )
-            .await;
-        if !result.injections.is_empty() {
-            let message = msg::runtime_hook_injection_notification(
-                "CapabilityChanged Hook 注入",
-                "Workflow capability surface 已更新。以下 Hook 注入需要立即作为当前运行约束/上下文处理：",
-                &result.injections,
-            );
-            if let Some(message) = message
-                && let Err(error) = self.push_session_notification(session_id, message).await
-            {
-                tracing::warn!(
-                    session_id = %session_id,
-                    error = %error,
-                    "CapabilityChanged hook 注入推送到 live agent 失败"
-                );
-            }
-        }
+        self.emit_session_hook_trigger(
+            hook_session.as_ref(),
+            &HookTriggerInput {
+                session_id,
+                turn_id,
+                trigger: HookTrigger::CapabilityChanged,
+                payload: Some(payload),
+                refresh_reason: "trigger:capability_changed",
+                source,
+            },
+        )
+        .await
     }
 
     pub async fn ensure_hook_session_runtime(

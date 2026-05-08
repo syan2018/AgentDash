@@ -686,7 +686,7 @@ impl AgentConnector for NotificationCapturingConnector {
 }
 
 #[tokio::test]
-async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
+async fn capability_changed_hook_injections_are_recorded_without_direct_notification() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));
     let injection = HookInjection {
@@ -738,8 +738,14 @@ async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
         ));
     }
 
-    hub.emit_capability_changed_hook(&session.id, Some("turn-cap"), json!({ "phase": "phase_b" }))
+    let result = hub
+        .evaluate_capability_changed_hook(
+            &session.id,
+            Some("turn-cap"),
+            json!({ "phase": "phase_b" }),
+        )
         .await;
+    assert_eq!(result.injections, vec![injection.clone()]);
 
     let recorded_queries = queries.lock().await;
     assert_eq!(recorded_queries.len(), 1);
@@ -747,18 +753,9 @@ async fn capability_changed_hook_injections_are_pushed_to_live_agent() {
     drop(recorded_queries);
 
     let captured = notifications.lock().await;
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].0, session.id);
-    assert!(captured[0].1.contains("CapabilityChanged Hook 注入"));
     assert!(
-        captured[0]
-            .1
-            .contains("[workflow_context] workflow:phase_b")
-    );
-    assert!(
-        captured[0]
-            .1
-            .contains("请使用 phase B 的工具约束继续推进。")
+        captured.is_empty(),
+        "CapabilityChanged 不应再直接推送第二条 live notification"
     );
     drop(captured);
 

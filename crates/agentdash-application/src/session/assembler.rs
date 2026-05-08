@@ -583,6 +583,74 @@ pub async fn load_available_presets(
     }
 }
 
+/// 查询当前 project 可用的 companion agent 候选列表。
+///
+/// 1. 拉取 project 下所有 agent_links
+/// 2. 读取每个 link 对应的 agent 信息(name / agent_type / display_name)
+/// 3. 如果 caller_agent_id 存在，按其 link config 中 `allowed_companions` 过滤
+async fn load_companion_candidates(
+    repos: &RepositorySet,
+    project_id: Uuid,
+    caller_agent_id: Option<Uuid>,
+) -> Vec<agentdash_spi::context::capability::CompanionAgentEntry> {
+    let links = match repos.agent_link_repo.list_by_project(project_id).await {
+        Ok(l) => l,
+        Err(_) => return Vec::new(),
+    };
+    if links.is_empty() {
+        return Vec::new();
+    }
+
+    // 解析 caller 的 allowed_companions 过滤列表
+    let caller_allowed: Option<Vec<String>> = if let Some(caller_id) = caller_agent_id {
+        let link = links.iter().find(|l| l.agent_id == caller_id);
+        if let Some(link) = link {
+            if let Ok(Some(agent)) = repos.agent_repo.get_by_id(caller_id).await {
+                let merged = link.merged_config(&agent.base_config);
+                merged
+                    .get("allowed_companions")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| !v.is_empty())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut entries = Vec::new();
+    for link in &links {
+        if let Ok(Some(agent)) = repos.agent_repo.get_by_id(link.agent_id).await {
+            if let Some(ref allowed) = caller_allowed {
+                if !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name)) {
+                    continue;
+                }
+            }
+            let display = link
+                .merged_config(&agent.base_config)
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| agent.name.clone());
+            entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
+                name: agent.name,
+                executor: agent.agent_type,
+                display_name: display,
+            });
+        }
+    }
+    entries
+}
+
 /// 从 agent-level `preset_mcp_servers` 抽出 `AgentMcpServerEntry`(供 resolver 解析 `mcp:<name>`)。
 pub fn extract_agent_mcp_entries(
     preset_mcp_servers: &[agentdash_spi::SessionMcpServer],
@@ -678,6 +746,8 @@ pub struct OwnerBootstrapSpec<'a> {
     ///
     /// 为 `None` 时跳过审计 emit（例如 session 尚未创建的 bootstrap 路径）。
     pub audit_session_key: Option<String>,
+    /// 调用方 agent 的 UUID — 用于从 agent_link config 中读取 allowed_companions 过滤。
+    pub caller_agent_id: Option<Uuid>,
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
@@ -955,7 +1025,11 @@ impl<'a> SessionRequestAssembler<'a> {
             }
         };
 
-        // ── 3. CapabilityResolver ──
+        // ── 3. Companion candidates 查询 ──
+        let available_companions =
+            load_companion_candidates(self.repos, project_id, spec.caller_agent_id).await;
+
+        // ── 4. CapabilityResolver ──
         let cap_input = CapabilityResolverInput {
             owner_ctx,
             agent_declared_capabilities: spec.agent_declared_capabilities,
@@ -963,6 +1037,7 @@ impl<'a> SessionRequestAssembler<'a> {
             agent_mcp_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
             available_presets: load_available_presets(self.repos, project_id).await,
             companion_slice_mode: None,
+            available_companions,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1185,6 +1260,7 @@ impl<'a> SessionRequestAssembler<'a> {
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(self.repos, spec.task.project_id).await,
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1402,6 +1478,7 @@ pub async fn compose_lifecycle_node_with_audit(
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: ready_port_keys.clone(),
+            available_companions: Vec::new(),
         },
         platform_config,
     );
@@ -1761,6 +1838,7 @@ pub async fn compose_companion_with_workflow(
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys,
+            available_companions: Vec::new(),
         },
         platform_config,
     );

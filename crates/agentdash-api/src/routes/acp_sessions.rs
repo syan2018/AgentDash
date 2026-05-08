@@ -551,17 +551,9 @@ pub struct SessionContextResponse {
 
 async fn try_build_session_capabilities(
     state: &AppState,
-    session_id: &str,
+    _session_id: &str,
     vfs: Option<&agentdash_spi::Vfs>,
 ) -> Option<agentdash_spi::SessionBaselineCapabilities> {
-    let hook_runtime = state
-        .services
-        .session_hub
-        .ensure_hook_session_runtime(session_id, None)
-        .await
-        .ok()
-        .flatten();
-
     let skills = if let Some(space) = vfs {
         let result =
             agentdash_application::skill::load_skills_from_vfs(&state.services.vfs_service, space)
@@ -573,9 +565,6 @@ async fn try_build_session_capabilities(
 
     let caps =
         agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities(
-            hook_runtime
-                .as_ref()
-                .map(|rt| rt.as_ref() as &dyn agentdash_spi::hooks::HookSessionRuntimeAccess),
             &skills,
         );
 
@@ -1216,6 +1205,7 @@ async fn build_story_owner_prompt_request(
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
+            caller_agent_id: None,
         })
         .await
         .map_err(ApiError::BadRequest)?;
@@ -1308,6 +1298,7 @@ async fn build_project_owner_prompt_request(
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
+            caller_agent_id: agent_id,
         })
         .await
         .map_err(ApiError::BadRequest)?;

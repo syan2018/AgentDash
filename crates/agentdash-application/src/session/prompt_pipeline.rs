@@ -197,8 +197,7 @@ impl SessionHub {
         };
 
         let discovered_skills = self.discover_skills(&effective_vfs).await;
-        let session_capabilities =
-            build_session_baseline_capabilities(hook_session.as_deref(), &discovered_skills);
+        let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
         let discovered_guidelines = self.discover_guidelines(&effective_vfs).await;
 
         // session 级配置：请求未提供时回退到 session_profile 缓存
@@ -765,41 +764,18 @@ fn enrich_hook_snapshot_runtime_metadata(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use agentdash_spi::{HookInjection, NoopExecutionHookProvider};
-
     use super::*;
 
     #[test]
-    fn baseline_capabilities_built_and_attached_to_context() {
-        let snapshot = SessionHookSnapshot {
-            session_id: "sess-pipeline".to_string(),
-            injections: vec![HookInjection {
-                slot: "companion_agents".to_string(),
-                content: "## Companion Agents\n\n- **agent** (executor: `PI_AGENT`): Agent"
-                    .to_string(),
-                source: "builtin:companion_agents".to_string(),
-            }],
-            ..SessionHookSnapshot::default()
-        };
-        let runtime = HookSessionRuntime::new(
-            "sess-pipeline".to_string(),
-            Arc::new(NoopExecutionHookProvider),
-            snapshot,
-        );
-        let caps = build_session_baseline_capabilities(
-            Some(&runtime as &dyn agentdash_spi::hooks::HookSessionRuntimeAccess),
-            &[agentdash_spi::SkillRef {
-                name: "my-skill".to_string(),
-                description: "test".to_string(),
-                file_path: "/ws/SKILL.md".into(),
-                base_dir: "/ws".into(),
-                disable_model_invocation: false,
-            }],
-        );
-        assert_eq!(caps.companion_agents.len(), 1);
+    fn baseline_capabilities_built_from_skills() {
+        let caps = build_session_baseline_capabilities(&[agentdash_spi::SkillRef {
+            name: "my-skill".to_string(),
+            description: "test".to_string(),
+            file_path: "/ws/SKILL.md".into(),
+            base_dir: "/ws".into(),
+            disable_model_invocation: false,
+        }]);
         assert_eq!(caps.skills.len(), 1);
-        assert_eq!(caps.companion_agents[0].name, "agent");
+        assert_eq!(caps.skills[0].name, "my-skill");
     }
 }

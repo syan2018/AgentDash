@@ -2,11 +2,10 @@ use serde::{Deserialize, Serialize};
 
 /// 会话级 baseline capability 数据契约。
 ///
-/// 统一承载"稳定能力描述"——companion agents 与 skills，
-/// 同时提供结构化（API/前端）和 Connector system prompt 两种输出形态。
+/// 承载"稳定能力描述"——skills 列表。
+/// Companion agents 已迁移至 `CapabilityState.companion` 维度。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionBaselineCapabilities {
-    pub companion_agents: Vec<CompanionAgentEntry>,
     pub skills: Vec<SkillEntry>,
 }
 
@@ -28,7 +27,7 @@ pub struct SkillEntry {
 
 impl SessionBaselineCapabilities {
     pub fn is_empty(&self) -> bool {
-        self.companion_agents.is_empty() && self.skills.is_empty()
+        self.skills.is_empty()
     }
 
     pub fn visible_skills(&self) -> Vec<&SkillEntry> {

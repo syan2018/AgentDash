@@ -195,7 +195,6 @@ export interface SkillEntry {
 }
 
 export interface SessionBaselineCapabilities {
-  companion_agents: CompanionAgentEntry[];
   skills: SkillEntry[];
 }
 

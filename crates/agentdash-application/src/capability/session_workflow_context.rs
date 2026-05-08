@@ -821,6 +821,7 @@ mod tests {
                 agent_mcp_servers: vec![],
                 available_presets: Default::default(),
                 companion_slice_mode: None,
+                available_companions: Vec::new(),
             },
             &platform,
         );

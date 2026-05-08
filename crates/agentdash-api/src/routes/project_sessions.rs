@@ -275,6 +275,7 @@ pub(crate) async fn build_project_session_context_response(
             agent_mcp_servers: agent_mcp_entries,
             available_presets: load_project_presets(state, project.id).await,
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         },
         &state.config.platform_config,
     );

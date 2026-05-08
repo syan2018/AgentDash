@@ -72,6 +72,8 @@ pub struct StepActivationInput<'a> {
     /// 已就绪的前驱 output port key 集合,kickoff prompt 标注状态时使用。
     /// 调用方提前通过 `load_port_output_map` 查好,activate_step 不做 IO。
     pub ready_port_keys: BTreeSet<String>,
+    /// Companion agent 候选列表（workflow/lifecycle 路径通常为空）。
+    pub available_companions: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,
 }
 
 /// kickoff prompt 的结构化片段 — 不组装成最终 prompt 文本,由 applier 决定拼接方式。
@@ -154,6 +156,7 @@ pub fn activate_step_with_platform(
         agent_mcp_servers: input.agent_mcp_servers.clone(),
         available_presets: input.available_presets.clone(),
         companion_slice_mode: input.companion_slice_mode,
+        available_companions: input.available_companions.clone(),
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform);
 
@@ -508,6 +511,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
@@ -543,6 +547,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
@@ -575,6 +580,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
@@ -613,6 +619,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
         let restricted_input = StepActivationInput {
             workflow: Some(&restricted_read_workflow),
@@ -668,6 +675,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
         let activation = activate_step_with_platform(&input, &test_platform());
         let base_surface = {
@@ -734,6 +742,7 @@ mod tests {
             ]),
             tool_directives: &[ToolCapabilityDirective::add_simple("workflow_management")],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
@@ -773,6 +782,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: BTreeSet::new(),
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
@@ -828,6 +838,7 @@ mod tests {
             baseline_override: None,
             tool_directives: &[],
             ready_port_keys: ready,
+            available_companions: Vec::new(),
         };
 
         let out = activate_step_with_platform(&input, &test_platform());

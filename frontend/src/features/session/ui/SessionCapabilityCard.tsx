@@ -2,12 +2,12 @@
  * Session Capabilities 交互卡片
  *
  * 解析 agentdash://session-capabilities/* 资源块，
- * 渲染 companion agents 与 skills 的快捷预览面板。
+ * 渲染 skills 的快捷预览面板。
  */
 
 import { useMemo, useState } from "react";
 import type { ContentBlock } from "../model/types";
-import type { SessionBaselineCapabilities, CompanionAgentEntry, SkillEntry } from "../../../types/context";
+import type { SessionBaselineCapabilities, SkillEntry } from "../../../types/context";
 
 const CAPABILITY_URI_PREFIX = "agentdash://session-capabilities/";
 
@@ -45,14 +45,12 @@ export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProp
 
   if (!caps) return null;
 
-  const companionCount = caps.companion_agents.length;
   const visibleSkills = caps.skills.filter((s) => !s.disable_model_invocation);
   const skillCount = visibleSkills.length;
 
-  if (companionCount === 0 && skillCount === 0) return null;
+  if (skillCount === 0) return null;
 
   const summaryParts: string[] = [];
-  if (companionCount > 0) summaryParts.push(`${companionCount} 个关联 Agent`);
   if (skillCount > 0) summaryParts.push(`${skillCount} 个可用 Skill`);
 
   return (
@@ -78,9 +76,6 @@ export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProp
 
       {expanded && (
         <div className="border-t border-border px-3 py-2.5 space-y-3">
-          {companionCount > 0 && (
-            <CompanionAgentsSection agents={caps.companion_agents} />
-          )}
           {skillCount > 0 && (
             <SkillsSection skills={visibleSkills} />
           )}
@@ -90,46 +85,6 @@ export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProp
   );
 }
 
-function CompanionAgentsSection({ agents }: { agents: CompanionAgentEntry[] }) {
-  return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
-        关联 Agents
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {agents.map((agent) => (
-          <AgentChip key={agent.name} agent={agent} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AgentChip({ agent }: { agent: CompanionAgentEntry }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(agent.name).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title={`点击复制 agent_key: ${agent.name}`}
-      className="group flex items-center gap-1.5 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-1.5 transition-colors hover:bg-secondary/70"
-    >
-      <span className="text-xs font-medium text-foreground">{agent.display_name}</span>
-      <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-        {agent.executor}
-      </span>
-      <span className="text-[10px] text-muted-foreground/50 opacity-0 group-hover:opacity-100 transition-opacity">
-        {copied ? "✓" : "copy"}
-      </span>
-    </button>
   );
 }
 

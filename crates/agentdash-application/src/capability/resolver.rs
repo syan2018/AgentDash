@@ -15,6 +15,8 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::platform::tool_capability::{
     self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
+use agentdash_spi::context::capability::CompanionAgentEntry;
+use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
 use agentdash_spi::{CapabilityState, ToolCapabilityFilter, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
@@ -57,6 +59,9 @@ pub struct CapabilityResolverInput {
     pub available_presets: AvailableMcpPresets,
     /// Companion sub-session 模式 — 设置时，对最终 CapabilityState 施加 slice 裁剪。
     pub companion_slice_mode: Option<CompanionSliceMode>,
+    /// 当前 project 中可供调用的 companion agent 候选列表。
+    /// Resolver 按 `CAP_COLLABORATION` 可见性决定是否写入 `state.companion.agents`。
+    pub available_companions: Vec<CompanionAgentEntry>,
 }
 
 /// Companion sub-session 的能力裁剪模式。
@@ -195,6 +200,14 @@ impl CapabilityResolver {
         // ── 编译工具级过滤策略（ToolWhitelist + Remove(tool) 合集）──
         let tool_policy = compute_tool_policy(&reduction, &effective_caps);
 
+        let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION)) {
+            agentdash_spi::CompanionDimension {
+                agents: input.available_companions.clone(),
+            }
+        } else {
+            agentdash_spi::CompanionDimension::default()
+        };
+
         let mut state = CapabilityState {
             tool: agentdash_spi::ToolDimension {
                 capabilities: effective_caps.clone(),
@@ -202,6 +215,7 @@ impl CapabilityResolver {
                 tool_policy,
                 mcp_servers: resolved_mcp_servers,
             },
+            companion,
             ..Default::default()
         };
 
@@ -346,6 +360,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         }
     }
 
@@ -441,6 +456,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -467,6 +483,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -853,6 +870,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -894,6 +912,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -939,6 +958,7 @@ mod tests {
             agent_mcp_servers: vec![],
             available_presets: Default::default(),
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

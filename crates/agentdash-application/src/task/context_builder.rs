@@ -95,6 +95,7 @@ pub async fn build_task_session_context(
         agent_mcp_servers: vec![],
         available_presets: load_available_presets(repos, task.project_id).await,
         companion_slice_mode: None,
+        available_companions: Vec::new(),
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
     let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.state.tool.mcp_servers.clone();

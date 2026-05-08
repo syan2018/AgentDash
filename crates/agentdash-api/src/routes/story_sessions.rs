@@ -534,6 +534,7 @@ pub(crate) async fn build_story_session_context_response(
             agent_mcp_servers: vec![],
             available_presets: load_story_project_presets(&state, story.project_id).await,
             companion_slice_mode: None,
+            available_companions: Vec::new(),
         },
         &state.config.platform_config,
     );

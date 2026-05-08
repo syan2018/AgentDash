@@ -509,6 +509,7 @@ impl RoutineExecutor {
                 active_workflow: None,
                 lifecycle,
                 audit_session_key: Some(session_id.to_string()),
+                caller_agent_id: Some(routine.agent_id),
             })
             .await?;
 

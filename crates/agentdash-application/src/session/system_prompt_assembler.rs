@@ -110,10 +110,8 @@ pub fn assemble_system_prompt(input: &SystemPromptInput) -> String {
 
     // ── 2. Project Context ──
     //
-    // Companion Agents 已在 PR 4（04-30-session-pipeline-architecture-refactor）
-    // 从 SP 独立 section 移除；由 Bundle 的 `companion_agents` slot 随 Project
-    // Context 一起渲染。`baseline_capabilities.companion_agents` 仍保留为
-    // `companion_request` 工具参数校验的结构化视图，但不再二次渲染进 SP。
+    // Companion agents 由 CapabilityState.companion 维度管理，Bundle 的
+    // `companion_agents` slot 仍可承载 hook 注入的 fragment（如有）。
     if let Some(section) = input.context_bundle.and_then(render_runtime_section) {
         sections.push(section);
     }

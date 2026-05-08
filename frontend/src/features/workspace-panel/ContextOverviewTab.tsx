@@ -518,42 +518,18 @@ function SessionCapabilitiesCard({
 }: {
   capabilities: SessionBaselineCapabilities;
 }) {
-  const companionCount = capabilities.companion_agents.length;
   const visibleSkills = capabilities.skills.filter((s) => !s.disable_model_invocation);
   const skillCount = visibleSkills.length;
 
-  if (companionCount === 0 && skillCount === 0) return null;
+  if (skillCount === 0) return null;
 
   return (
     <SurfaceCard
       eyebrow="Session 能力基线"
-      title={[
-        companionCount > 0 ? `${companionCount} 个关联 Agent` : "",
-        skillCount > 0 ? `${skillCount} 个可用 Skill` : "",
-      ].filter(Boolean).join(" · ")}
+      title={skillCount > 0 ? `${skillCount} 个可用 Skill` : ""}
     >
-      {companionCount > 0 && (
-        <div>
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Companion Agents
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {capabilities.companion_agents.map((agent) => (
-              <span
-                key={agent.name}
-                className="flex items-center gap-1.5 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-1.5"
-              >
-                <span className="text-xs font-medium text-foreground">{agent.display_name}</span>
-                <span className="rounded-[4px] bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-                  {agent.executor}
-                </span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
       {skillCount > 0 && (
-        <div className={companionCount > 0 ? "mt-3" : ""}>
+        <div>
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             Skills ({skillCount})
           </p>

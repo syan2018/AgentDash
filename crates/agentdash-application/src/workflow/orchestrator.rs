@@ -570,6 +570,7 @@ impl LifecycleOrchestrator {
                     baseline_override: None,
                     tool_directives: &[],
                     ready_port_keys,
+                    available_companions: Vec::new(),
                 },
                 &self.platform_config,
             );
@@ -644,6 +645,7 @@ impl LifecycleOrchestrator {
                     baseline_override: None,
                     tool_directives: &[],
                     ready_port_keys: std::collections::BTreeSet::new(),
+                    available_companions: Vec::new(),
                 },
                 &self.platform_config,
             );

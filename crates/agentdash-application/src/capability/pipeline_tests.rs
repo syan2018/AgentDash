@@ -74,6 +74,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         available_presets: Default::default(),
         companion_slice_mode: None,
+        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -122,6 +123,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         agent_mcp_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
         available_presets: Default::default(),
         companion_slice_mode: None,
+        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -181,6 +183,7 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
         agent_mcp_servers: vec![],
         available_presets: Default::default(),
         companion_slice_mode: None,
+        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -220,6 +223,7 @@ fn phase_node_invalid_directives_are_tolerated() {
         agent_mcp_servers: vec![],
         available_presets: Default::default(),
         companion_slice_mode: None,
+        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(

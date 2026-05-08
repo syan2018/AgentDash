@@ -2,7 +2,7 @@ pub mod assembler;
 pub mod augmenter;
 pub mod baseline_capabilities;
 pub mod bootstrap;
-pub mod capability_surface;
+pub mod capability_state;
 pub mod companion_wait;
 pub mod context;
 pub mod continuation;
@@ -36,9 +36,9 @@ pub use assembler::{
     load_available_presets,
 };
 pub use augmenter::{PromptRequestAugmenter, SharedPromptRequestAugmenter};
-pub use capability_surface::{
-    CapabilitySurfaceDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
-    compose_vfs_with_overlay_and_directives, compute_capability_surface_delta, merge_vfs_overlay,
+pub use capability_state::{
+    CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
+    compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
 };
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
@@ -58,8 +58,8 @@ pub use prompt_vfs::local_workspace_vfs;
 pub use title_generator::SessionTitleGenerator;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    CapabilitySurface, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,
-    PendingCapabilitySurfaceTransition, PromptSessionRequest, ResolvedPromptPayload,
+    CapabilityState, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,
+    PendingCapabilityStateTransition, PromptSessionRequest, ResolvedPromptPayload,
     SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
 };

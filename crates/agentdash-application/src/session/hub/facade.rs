@@ -91,7 +91,7 @@ impl SessionHub {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
         self.persistence.create_session(&meta).await?;
         Ok(meta)
@@ -267,11 +267,11 @@ impl SessionHub {
             .await
     }
 
-    /// 持久化一条结构化能力表面变更事件。
+    /// 持久化一条结构化能力状态变更事件。
     ///
     /// 这是 UI / 审计 / 回放的事实源；connector steering 消息只是 live agent 的
     /// 尽力投递通道。
-    pub(crate) async fn emit_capability_surface_changed(
+    pub(crate) async fn emit_capability_state_changed(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
@@ -288,7 +288,7 @@ impl SessionHub {
         };
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "capability_surface_changed".to_string(),
+                key: "capability_state_changed".to_string(),
                 value,
             }),
             session_id,
@@ -302,28 +302,28 @@ impl SessionHub {
         self.persist_notification(session_id, envelope).await
     }
 
-    pub(crate) async fn enqueue_pending_capability_surface_transition(
+    pub(crate) async fn enqueue_pending_capability_state_transition(
         &self,
         session_id: &str,
-        transition: PendingCapabilitySurfaceTransition,
+        transition: PendingCapabilityStateTransition,
     ) -> io::Result<Option<SessionMeta>> {
         let phase_node = transition.phase_node.clone();
         let updated = self
             .update_session_meta(session_id, move |meta| {
-                meta.pending_capability_surface_transitions
+                meta.pending_capability_state_transitions
                     .retain(|existing| existing.phase_node != phase_node);
-                meta.pending_capability_surface_transitions.push(transition);
+                meta.pending_capability_state_transitions.push(transition);
             })
             .await?;
         Ok(updated)
     }
 
-    pub async fn clear_pending_capability_surface_transitions(
+    pub async fn clear_pending_capability_state_transitions(
         &self,
         session_id: &str,
     ) -> io::Result<Option<SessionMeta>> {
         self.update_session_meta(session_id, |meta| {
-            meta.pending_capability_surface_transitions.clear();
+            meta.pending_capability_state_transitions.clear();
         })
         .await
     }

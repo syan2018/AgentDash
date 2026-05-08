@@ -6,7 +6,7 @@ use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     tools::sanitize_tool_schema,
 };
-use agentdash_spi::FlowCapabilities;
+use agentdash_spi::CapabilityState;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -102,7 +102,7 @@ impl AgentTool for RelayMcpToolAdapter {
 pub async fn discover_relay_mcp_tools(
     provider: Arc<dyn McpRelayProvider>,
     server_names: &[String],
-    flow_capabilities: &FlowCapabilities,
+    capability_state: &CapabilityState,
 ) -> Vec<DynAgentTool> {
     if server_names.is_empty() {
         return Vec::new();
@@ -112,7 +112,7 @@ pub async fn discover_relay_mcp_tools(
         .iter()
         .filter(|info| {
             let capability_key = capability_key_for_mcp_server_name(&info.server_name);
-            flow_capabilities.is_capability_tool_enabled(&capability_key, &info.tool_name, None)
+            capability_state.is_capability_tool_enabled(&capability_key, &info.tool_name, None)
         })
         .map(|info| {
             Arc::new(RelayMcpToolAdapter::from_info(info, provider.clone())) as DynAgentTool
@@ -181,10 +181,10 @@ mod tests {
                 },
             ],
         });
-        let mut flow = FlowCapabilities::default();
-        flow.effective_capabilities
+        let mut flow = CapabilityState::default();
+        flow.capabilities
             .insert(agentdash_spi::ToolCapability::new("workflow_management"));
-        flow.tool_filters.insert(
+        flow.tool_policy.insert(
             "workflow_management".to_string(),
             ToolCapabilityFilter {
                 include_only: Default::default(),

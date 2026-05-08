@@ -5,8 +5,7 @@
 //!
 //! - step ToolCapabilityDirective → workflow baseline + directive 运算 → effective key 集合
 //! - CapabilityDelta::compute → 前后差异
-//! - CapabilityResolver::resolve(workflow_tool_directives) → 实际 FlowCapabilities
-//!   + platform MCP configs + 自定义 mcp:* 注入
+//! - CapabilityResolver::resolve(workflow_tool_directives) → 实际 CapabilityState
 //! - build_capability_delta_markdown → 供 agent 直接消费的通知文本
 
 #![cfg(test)]
@@ -45,6 +44,15 @@ fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
     }
 }
 
+fn state_has_mcp_url(output: &crate::capability::CapabilityResolverOutput, needle: &str) -> bool {
+    output.state.mcp_servers.iter().any(|server| {
+        matches!(
+            &server.transport,
+            agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
+        )
+    })
+}
+
 /// agent_node 场景：workflow contract 直接给出一串 Add/Remove → Resolver 产出 session 工具集。
 #[test]
 fn agent_node_step_directives_produce_expected_session_tools() {
@@ -70,23 +78,26 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     let output = CapabilityResolver::resolve(&input, &platform());
 
     // file_read/write/shell_execute 由 auto_granted baseline 提供
-    assert!(output.flow_capabilities.has(ToolCluster::Read));
-    assert!(output.flow_capabilities.has(ToolCluster::Write));
-    assert!(output.flow_capabilities.has(ToolCluster::Execute));
+    assert!(output.state.has(ToolCluster::Read));
+    assert!(output.state.has(ToolCluster::Write));
+    assert!(output.state.has(ToolCluster::Execute));
     // collaboration 已被 Remove
-    assert!(!output.flow_capabilities.has(ToolCluster::Collaboration));
+    assert!(!output.state.has(ToolCluster::Collaboration));
 
     // workflow_management → 平台 Workflow MCP
     assert!(
-        output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/workflow/")),
+        state_has_mcp_url(&output, "/mcp/workflow/"),
         "应注入 WorkflowMcpServer"
     );
 
-    // mcp:code_analyzer → 自定义 MCP 出现在 custom_mcp_servers 中
-    assert_eq!(output.custom_mcp_servers.len(), 1);
+    // mcp:code_analyzer → 自定义 MCP 出现在统一 CapabilityState 中
+    assert!(
+        output
+            .state
+            .mcp_servers
+            .iter()
+            .any(|server| server.name == "code_analyzer")
+    );
 }
 
 /// phase_node 场景：directive 直接表达增删，resolver 产出一致的 effective 结果。
@@ -113,15 +124,16 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    assert!(!output.flow_capabilities.has(ToolCluster::Canvas));
-    assert!(output.flow_capabilities.has(ToolCluster::Read));
+    assert!(!output.state.has(ToolCluster::Canvas));
+    assert!(output.state.has(ToolCluster::Read));
+    assert!(state_has_mcp_url(&output, "/mcp/workflow/"));
     assert!(
         output
-            .platform_mcp_configs
+            .state
+            .mcp_servers
             .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/workflow/")),
+            .any(|server| server.name == "external_analyzer")
     );
-    assert_eq!(output.custom_mcp_servers.len(), 1);
 
     // 模拟 baseline → effective 差异，验证 delta markdown 渲染
     let baseline_set: BTreeSet<String> = [
@@ -136,7 +148,8 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     .map(|s| s.to_string())
     .collect();
     let effective_set: BTreeSet<String> = output
-        .effective_capabilities
+        .state
+        .capabilities
         .iter()
         .map(|c| c.key().to_string())
         .collect();
@@ -169,12 +182,13 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
     let output = CapabilityResolver::resolve(&input, &platform());
 
     // baseline 自带的能力
-    assert!(output.flow_capabilities.has(ToolCluster::Read));
-    assert!(output.flow_capabilities.has(ToolCluster::Write));
-    assert!(output.flow_capabilities.has(ToolCluster::Canvas));
+    assert!(output.state.has(ToolCluster::Read));
+    assert!(output.state.has(ToolCluster::Write));
+    assert!(output.state.has(ToolCluster::Canvas));
 
     let effective_set: BTreeSet<String> = output
-        .effective_capabilities
+        .state
+        .capabilities
         .iter()
         .map(|c| c.key().to_string())
         .collect();
@@ -204,10 +218,17 @@ fn phase_node_invalid_directives_are_tolerated() {
         companion_slice_mode: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
-    assert!(output.custom_mcp_servers.is_empty());
     assert!(
         !output
-            .effective_capabilities
+            .state
+            .mcp_servers
+            .iter()
+            .any(|server| server.name == "missing_server")
+    );
+    assert!(
+        !output
+            .state
+            .capabilities
             .iter()
             .any(|cap| cap.key() == "mcp:missing_server")
     );

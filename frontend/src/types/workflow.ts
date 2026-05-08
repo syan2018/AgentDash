@@ -246,7 +246,7 @@ export interface WorkflowContract {
    * - 短 path（能力级）：`"file_read"` / `"mcp:code_analyzer"`
    * - 长 path（工具级）：`"file_read::fs_grep"` / `"workflow_management::upsert_workflow_tool"`
    *
-   * 运行时 hook 可叠加 delta 指令；后端 `compute_effective_capabilities` 走同一条归约路径。
+   * 运行时 hook 可叠加 delta 指令；后端 `compute_capabilities` 走同一条归约路径。
    */
   capability_config: WorkflowCapabilityConfig;
   /** Output ports — 同时作为完成门禁（全部交付才可推进） */

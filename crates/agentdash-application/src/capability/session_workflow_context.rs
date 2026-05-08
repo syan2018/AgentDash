@@ -817,21 +817,23 @@ mod tests {
             &platform,
         );
 
-        // 断言 effective_capabilities 包含 workflow_management
+        // 断言 capabilities 包含 workflow_management
         assert!(
             output
-                .effective_capabilities
+                .state
+                .capabilities
                 .iter()
                 .any(|cap| cap.key() == "workflow_management"),
             "session 绑定 builtin_workflow_admin 后应获得 workflow_management 能力"
         );
 
-        // 断言 platform_mcp_configs 包含 Workflow scope MCP 注入
+        // 断言 CapabilityState 包含 Workflow scope MCP 注入
         assert!(
-            output
-                .platform_mcp_configs
-                .iter()
-                .any(|c| c.endpoint_url().contains("/mcp/workflow/")),
+            output.state.mcp_servers.iter().any(|server| matches!(
+                &server.transport,
+                agentdash_spi::McpTransportConfig::Http { url, .. }
+                    if url.contains("/mcp/workflow/")
+            )),
             "应注入 WorkflowMcpServer"
         );
     }

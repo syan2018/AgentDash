@@ -1,8 +1,7 @@
 //! CapabilityResolver 实现
 //!
 //! 负责把 workflow + agent baseline + `ToolCapabilityDirective` 序列归约为 session
-//! 的有效工具集：`FlowCapabilities`（cluster 级）+ `platform_mcp_configs`
-//! （Relay/Story/Task/Workflow scope）+ `custom_mcp_servers`（用户自定义 MCP）。
+//! 的有效能力状态：`CapabilityState`。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,7 +15,7 @@ use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::platform::tool_capability::{
     self, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
-use agentdash_spi::{FlowCapabilities, ToolCapabilityFilter, ToolCluster};
+use agentdash_spi::{CapabilityState, ToolCapabilityFilter, ToolCluster};
 
 use crate::capability::SessionWorkflowContext;
 use crate::platform_config::PlatformConfig;
@@ -56,7 +55,7 @@ pub struct CapabilityResolverInput {
     /// project 级 MCP Preset 预展开字典 — `mcp:<name>` 的首选查源。
     /// 由调用方在 builder 入口处从 `McpPresetRepository` 批量查出并展开。
     pub available_presets: AvailableMcpPresets,
-    /// Companion sub-session 模式 — 设置时，对最终 FlowCapabilities 施加 slice 裁剪。
+    /// Companion sub-session 模式 — 设置时，对最终 CapabilityState 施加 slice 裁剪。
     pub companion_slice_mode: Option<CompanionSliceMode>,
 }
 
@@ -81,14 +80,8 @@ pub struct AgentMcpServerEntry {
 /// Resolver 输出 — session 的有效工具集
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverOutput {
-    /// 内置工具簇（PiAgent 内部使用）
-    pub flow_capabilities: FlowCapabilities,
-    /// 需注入的平台 MCP server 列表
-    pub platform_mcp_configs: Vec<McpInjectionConfig>,
-    /// 需注入的自定义 MCP server 列表（由 `mcp:*` key 解析得到，relay 信息内嵌）
-    pub custom_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    /// 已解析通过的 capability key 集合（供调试 / 日志）
-    pub effective_capabilities: BTreeSet<ToolCapability>,
+    /// Resolver 唯一产出的运行态能力状态。
+    pub state: CapabilityState,
 }
 
 /// 统一工具能力解析器。
@@ -98,11 +91,11 @@ pub struct CapabilityResolverOutput {
 pub struct CapabilityResolver;
 
 impl CapabilityResolver {
-    /// Companion sub-session 的快捷方法 — 仅按 slice_mode 裁剪 FlowCapabilities。
+    /// Companion sub-session 的快捷方法 — 仅按 slice_mode 裁剪 CapabilityState。
     ///
     /// Companion 继承父 session 的 MCP/VFS，不需要独立解析平台 MCP。
-    pub fn resolve_companion_caps(slice_mode: CompanionSliceMode) -> FlowCapabilities {
-        apply_companion_slice(FlowCapabilities::all(), slice_mode)
+    pub fn resolve_companion_caps(slice_mode: CompanionSliceMode) -> CapabilityState {
+        apply_companion_slice(CapabilityState::all(), slice_mode)
     }
 
     /// 根据 session 上下文计算有效工具集。
@@ -112,7 +105,7 @@ impl CapabilityResolver {
     /// 2. 对 workflow_tool_directives 执行 slot 归约（FullCapability /
     ///    ToolWhitelist / Blocked），对 baseline 做覆盖
     /// 3. 解析自定义 MCP (`mcp:<server>`) —— 优先查 preset，回退 agent inline
-    /// 4. 映射到 cluster / platform MCP scope / capability-aware tool_filters
+    /// 4. 映射到 cluster / platform MCP scope / capability-aware tool_policy
     pub fn resolve(
         input: &CapabilityResolverInput,
         platform: &PlatformConfig,
@@ -125,7 +118,7 @@ impl CapabilityResolver {
         // baseline：只包含 well-known key 的 agent-level 能力
         let mut effective_caps = default_visible_capabilities(input, agent_declares_set.as_ref());
 
-        let mut custom_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
+        let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
@@ -155,7 +148,7 @@ impl CapabilityResolver {
                             if let Some(preset) = input.available_presets.get(&server_name) {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    custom_mcp_servers.push(
+                                    resolved_mcp_servers.push(
                                         crate::mcp_preset::preset_to_session_mcp_server(preset),
                                     );
                                 }
@@ -166,7 +159,7 @@ impl CapabilityResolver {
                             {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    custom_mcp_servers.push(agent_entry.server.clone());
+                                    resolved_mcp_servers.push(agent_entry.server.clone());
                                 }
                             } else {
                                 tracing::warn!(
@@ -186,7 +179,6 @@ impl CapabilityResolver {
 
         // ── 归约产出的 effective_caps 到 ToolCluster / platform MCP scope ──
         let mut tool_clusters = BTreeSet::<ToolCluster>::new();
-        let mut platform_mcp_configs = Vec::<McpInjectionConfig>::new();
         for cap in &effective_caps {
             for cluster in tool_capability::capability_to_tool_clusters(cap) {
                 tool_clusters.insert(cluster);
@@ -195,35 +187,32 @@ impl CapabilityResolver {
                 if let Some(config) =
                     build_platform_mcp_config(scope, platform.mcp_base_url.as_deref(), input)
                 {
-                    platform_mcp_configs.push(config);
+                    resolved_mcp_servers.push(config.to_session_mcp_server());
                 }
             }
         }
 
         // ── 编译工具级过滤策略（ToolWhitelist + Remove(tool) 合集）──
-        let tool_filters = compute_tool_filters(&reduction, &effective_caps);
+        let tool_policy = compute_tool_policy(&reduction, &effective_caps);
 
-        let mut flow_capabilities = FlowCapabilities {
-            enabled_clusters: tool_clusters,
-            tool_filters,
-            effective_capabilities: effective_caps.clone(),
+        let mut state = CapabilityState {
+            capabilities: effective_caps.clone(),
+            tool_clusters,
+            tool_policy,
+            mcp_servers: resolved_mcp_servers,
+            vfs: None,
         };
 
         if let Some(slice_mode) = input.companion_slice_mode {
-            flow_capabilities = apply_companion_slice(flow_capabilities, slice_mode);
+            state = apply_companion_slice(state, slice_mode);
         }
 
-        CapabilityResolverOutput {
-            flow_capabilities,
-            platform_mcp_configs,
-            custom_mcp_servers,
-            effective_capabilities: effective_caps,
-        }
+        CapabilityResolverOutput { state }
     }
 }
 
 /// 将 directive reduction 编译成运行态唯一工具过滤表。
-fn compute_tool_filters(
+fn compute_tool_policy(
     reduction: &ToolCapabilityReduction,
     effective_caps: &BTreeSet<ToolCapability>,
 ) -> BTreeMap<String, ToolCapabilityFilter> {
@@ -278,17 +267,17 @@ fn default_visible_capabilities(
     effective
 }
 
-/// Companion slice mode → FlowCapabilities 约束。
-fn apply_companion_slice(base: FlowCapabilities, mode: CompanionSliceMode) -> FlowCapabilities {
+/// Companion slice mode → CapabilityState 约束。
+fn apply_companion_slice(base: CapabilityState, mode: CompanionSliceMode) -> CapabilityState {
     match mode {
         CompanionSliceMode::Full => base,
-        CompanionSliceMode::Compact => base.intersect(&FlowCapabilities::from_clusters([
+        CompanionSliceMode::Compact => base.intersect(&CapabilityState::from_clusters([
             ToolCluster::Read,
             ToolCluster::Execute,
             ToolCluster::Collaboration,
         ])),
         CompanionSliceMode::WorkflowOnly | CompanionSliceMode::ConstraintsOnly => {
-            base.intersect(&FlowCapabilities::from_clusters([
+            base.intersect(&CapabilityState::from_clusters([
                 ToolCluster::Read,
                 ToolCluster::Collaboration,
             ]))
@@ -358,26 +347,46 @@ mod tests {
         }
     }
 
+    fn state_has_mcp_url(output: &CapabilityResolverOutput, needle: &str) -> bool {
+        output.state.mcp_servers.iter().any(|server| {
+            matches!(
+                &server.transport,
+                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains(needle)
+            )
+        })
+    }
+
+    fn state_mcp_server<'a>(
+        output: &'a CapabilityResolverOutput,
+        name: &str,
+    ) -> Option<&'a agentdash_spi::SessionMcpServer> {
+        output
+            .state
+            .mcp_servers
+            .iter()
+            .find(|server| server.name == name)
+    }
+
     #[test]
     fn project_session_gets_expected_clusters() {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         assert!(
-            output.flow_capabilities.has(ToolCluster::Read),
+            output.state.has(ToolCluster::Read),
             "file_read auto-granted"
         );
         assert!(
-            output.flow_capabilities.has(ToolCluster::Write),
+            output.state.has(ToolCluster::Write),
             "file_write auto-granted"
         );
         assert!(
-            output.flow_capabilities.has(ToolCluster::Execute),
+            output.state.has(ToolCluster::Execute),
             "shell_execute auto-granted"
         );
-        assert!(output.flow_capabilities.has(ToolCluster::Canvas));
-        assert!(output.flow_capabilities.has(ToolCluster::Collaboration));
-        assert!(!output.flow_capabilities.has(ToolCluster::Workflow));
+        assert!(output.state.has(ToolCluster::Canvas));
+        assert!(output.state.has(ToolCluster::Collaboration));
+        assert!(!output.state.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -385,12 +394,8 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert_eq!(output.platform_mcp_configs.len(), 1);
-        assert!(
-            output.platform_mcp_configs[0]
-                .endpoint_url()
-                .contains("/mcp/relay")
-        );
+        assert_eq!(output.state.mcp_servers.len(), 1);
+        assert!(state_has_mcp_url(&output, "/mcp/relay"));
     }
 
     #[test]
@@ -400,10 +405,7 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        let has_workflow_mcp = output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/workflow/"));
+        let has_workflow_mcp = state_has_mcp_url(&output, "/mcp/workflow/");
         assert!(has_workflow_mcp, "应注入 WorkflowMcpServer");
     }
 
@@ -412,10 +414,7 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        let has_workflow_mcp = output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/workflow/"));
+        let has_workflow_mcp = state_has_mcp_url(&output, "/mcp/workflow/");
         assert!(
             !has_workflow_mcp,
             "未声明 workflow_management 的 agent 不应有 WorkflowMcpServer"
@@ -443,16 +442,10 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        let has_task_mcp = output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/task/"));
+        let has_task_mcp = state_has_mcp_url(&output, "/mcp/task/");
         assert!(has_task_mcp, "task session 应注入 TaskMcpServer");
 
-        let has_relay_mcp = output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/relay"));
+        let has_relay_mcp = state_has_mcp_url(&output, "/mcp/relay");
         assert!(!has_relay_mcp, "task session 不应注入 RelayMcpServer");
     }
 
@@ -475,10 +468,7 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        let has_story_mcp = output
-            .platform_mcp_configs
-            .iter()
-            .any(|c| c.endpoint_url().contains("/mcp/story/"));
+        let has_story_mcp = state_has_mcp_url(&output, "/mcp/story/");
         assert!(has_story_mcp, "story session 应注入 StoryMcpServer");
     }
 
@@ -487,19 +477,11 @@ mod tests {
         let mut input = base_input();
         let platform = test_platform();
         let output_no_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(
-            !output_no_workflow
-                .flow_capabilities
-                .has(ToolCluster::Workflow)
-        );
+        assert!(!output_no_workflow.state.has(ToolCluster::Workflow));
 
         input.workflow_ctx.has_active_workflow = true;
         let output_with_workflow = CapabilityResolver::resolve(&input, &platform);
-        assert!(
-            output_with_workflow
-                .flow_capabilities
-                .has(ToolCluster::Workflow)
-        );
+        assert!(output_with_workflow.state.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -507,7 +489,7 @@ mod tests {
         let input = base_input();
         let platform = PlatformConfig { mcp_base_url: None };
         let output = CapabilityResolver::resolve(&input, &platform);
-        assert!(output.platform_mcp_configs.is_empty());
+        assert!(output.state.mcp_servers.is_empty());
     }
 
     #[test]
@@ -526,7 +508,8 @@ mod tests {
 
         assert!(
             output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
     }
@@ -541,7 +524,8 @@ mod tests {
 
         assert!(
             !output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("nonexistent"))
         );
     }
@@ -576,13 +560,13 @@ mod tests {
 
         assert!(
             output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer")),
-            "preset 命中后 effective_capabilities 应包含 mcp:code_analyzer"
+            "preset 命中后 capabilities 应包含 mcp:code_analyzer"
         );
-        assert_eq!(output.custom_mcp_servers.len(), 1);
-        assert_eq!(output.custom_mcp_servers[0].name, "code_analyzer");
-        match &output.custom_mcp_servers[0].transport {
+        let server = state_mcp_server(&output, "code_analyzer").expect("应注入 code_analyzer");
+        match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => {
                 assert_eq!(url, "http://external:8080/mcp");
             }
@@ -618,8 +602,18 @@ mod tests {
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert_eq!(output.custom_mcp_servers.len(), 1, "同名去重,只保留一条");
-        match &output.custom_mcp_servers[0].transport {
+        assert_eq!(
+            output
+                .state
+                .mcp_servers
+                .iter()
+                .filter(|server| server.name == "shared")
+                .count(),
+            1,
+            "同名去重,只保留一条"
+        );
+        let server = state_mcp_server(&output, "shared").expect("应注入 shared");
+        match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => {
                 assert_eq!(url, "http://preset/mcp", "应以 preset url 为准");
             }
@@ -635,7 +629,7 @@ mod tests {
             Some(vec![ToolCapabilityDirective::add_simple("workflow")]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.flow_capabilities.has(ToolCluster::Workflow));
+        assert!(output.state.has(ToolCluster::Workflow));
     }
 
     #[test]
@@ -644,11 +638,11 @@ mod tests {
         input.workflow_ctx.workflow_tool_directives = Some(vec![]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.flow_capabilities.has(ToolCluster::Read));
-        assert!(output.flow_capabilities.has(ToolCluster::Write));
-        assert!(output.flow_capabilities.has(ToolCluster::Execute));
-        assert!(output.flow_capabilities.has(ToolCluster::Canvas));
-        assert!(output.flow_capabilities.has(ToolCluster::Collaboration));
+        assert!(output.state.has(ToolCluster::Read));
+        assert!(output.state.has(ToolCluster::Write));
+        assert!(output.state.has(ToolCluster::Execute));
+        assert!(output.state.has(ToolCluster::Canvas));
+        assert!(output.state.has(ToolCluster::Collaboration));
     }
 
     #[test]
@@ -664,10 +658,11 @@ mod tests {
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert_eq!(output.custom_mcp_servers.len(), 1);
+        assert!(state_mcp_server(&output, "code_analyzer").is_some());
         assert!(
             output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
     }
@@ -681,8 +676,8 @@ mod tests {
             )]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(!output.flow_capabilities.has(ToolCluster::Collaboration));
-        assert!(output.flow_capabilities.has(ToolCluster::Read));
+        assert!(!output.state.has(ToolCluster::Collaboration));
+        assert!(output.state.has(ToolCluster::Read));
     }
 
     #[test]
@@ -697,11 +692,11 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
-            !output.flow_capabilities.has(ToolCluster::Execute),
+            !output.state.has(ToolCluster::Execute),
             "Remove(shell_execute) 应屏蔽 Execute cluster"
         );
         assert!(
-            output.flow_capabilities.has(ToolCluster::Read),
+            output.state.has(ToolCluster::Read),
             "Read cluster 不应受影响"
         );
     }
@@ -718,13 +713,11 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(
-            output.flow_capabilities.has(ToolCluster::Read),
+            output.state.has(ToolCluster::Read),
             "file_read 能力整体仍可见"
         );
         assert!(
-            output
-                .flow_capabilities
-                .is_tool_path_excluded("file_read", "fs_grep"),
+            output.state.is_tool_path_excluded("file_read", "fs_grep"),
             "fs_grep 应进入 file_read 的工具过滤策略"
         );
     }
@@ -748,34 +741,32 @@ mod tests {
 
         assert!(
             output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::new("workflow_management")),
             "Plan 阶段仍需要 workflow_management 的只读工具"
         );
         assert!(
-            output
-                .platform_mcp_configs
-                .iter()
-                .any(|config| config.endpoint_url().contains("/mcp/workflow/")),
+            state_has_mcp_url(&output, "/mcp/workflow/"),
             "workflow_management capability 应继续注入 Workflow MCP server"
         );
-        assert!(output.flow_capabilities.is_capability_tool_enabled(
+        assert!(output.state.is_capability_tool_enabled(
             "workflow_management",
             "get_workflow",
             None
         ));
-        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+        assert!(!output.state.is_capability_tool_enabled(
             "workflow_management",
             "upsert_workflow_tool",
             None
         ));
-        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+        assert!(!output.state.is_capability_tool_enabled(
             "workflow_management",
             "upsert_lifecycle_tool",
             None
         ));
         assert_eq!(
-            output.flow_capabilities.excluded_tool_paths(),
+            output.state.excluded_tool_paths(),
             BTreeSet::from([
                 "workflow_management::upsert_lifecycle_tool".to_string(),
                 "workflow_management::upsert_workflow_tool".to_string(),
@@ -796,10 +787,11 @@ mod tests {
         }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.custom_mcp_servers.is_empty());
+        assert!(state_mcp_server(&output, "code_analyzer").is_none());
         assert!(
             !output
-                .effective_capabilities
+                .state
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
     }
@@ -816,23 +808,23 @@ mod tests {
             )]);
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(output.flow_capabilities.has(ToolCluster::Read));
-        assert!(output.flow_capabilities.is_capability_tool_enabled(
+        assert!(output.state.has(ToolCluster::Read));
+        assert!(output.state.is_capability_tool_enabled(
             "file_read",
             "fs_read",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+        assert!(!output.state.is_capability_tool_enabled(
             "file_read",
             "fs_grep",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+        assert!(!output.state.is_capability_tool_enabled(
             "file_read",
             "fs_glob",
             Some(ToolCluster::Read)
         ));
-        assert!(!output.flow_capabilities.is_capability_tool_enabled(
+        assert!(!output.state.is_capability_tool_enabled(
             "file_read",
             "mounts_list",
             Some(ToolCluster::Read)
@@ -856,22 +848,23 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let relay = output
-            .platform_mcp_configs
+            .state
+            .mcp_servers
             .iter()
-            .find(|c| c.endpoint_url().contains("/mcp/relay"))
+            .find(|server| {
+                matches!(
+                    &server.transport,
+                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/relay")
+                )
+            })
             .expect("project owner 应注入 relay MCP");
-        assert_eq!(
-            relay.project_id, project_id,
-            "relay config 应透传 owner_ctx.project_id"
-        );
-        assert!(relay.story_id.is_none());
-        assert!(relay.task_id.is_none());
+        assert_eq!(relay.name, "agentdash-relay-tools");
         assert!(
-            !output
-                .platform_mcp_configs
-                .iter()
-                .any(|c| c.endpoint_url().contains("/mcp/story/")
-                    || c.endpoint_url().contains("/mcp/task/")),
+            !output.state.mcp_servers.iter().any(|server| matches!(
+                &server.transport,
+                agentdash_spi::McpTransportConfig::Http { url, .. }
+                    if url.contains("/mcp/story/") || url.contains("/mcp/task/")
+            )),
             "project owner 不应注入 story/task scope"
         );
     }
@@ -895,23 +888,25 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let story = output
-            .platform_mcp_configs
+            .state
+            .mcp_servers
             .iter()
-            .find(|c| c.endpoint_url().contains("/mcp/story/"))
+            .find(|server| {
+                matches!(
+                    &server.transport,
+                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/story/")
+                )
+            })
             .expect("story owner 应注入 story MCP");
-        assert_eq!(story.project_id, project_id);
-        assert_eq!(story.story_id, Some(story_id));
-        assert!(story.task_id.is_none());
+        let agentdash_spi::McpTransportConfig::Http { url, .. } = &story.transport else {
+            panic!("story MCP 应使用 HTTP transport");
+        };
+        assert!(url.contains(&story_id.to_string()));
         assert!(
-            story.endpoint_url().contains(&story_id.to_string()),
-            "story endpoint URL 应包含 story_id, 实际: {}",
-            story.endpoint_url()
-        );
-        assert!(
-            !output
-                .platform_mcp_configs
-                .iter()
-                .any(|c| c.endpoint_url().contains("/mcp/task/")),
+            !output.state.mcp_servers.iter().any(|server| matches!(
+                &server.transport,
+                agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
+            )),
             "story owner 不应注入 task scope"
         );
     }
@@ -937,17 +932,19 @@ mod tests {
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
         let task = output
-            .platform_mcp_configs
+            .state
+            .mcp_servers
             .iter()
-            .find(|c| c.endpoint_url().contains("/mcp/task/"))
+            .find(|server| {
+                matches!(
+                    &server.transport,
+                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
+                )
+            })
             .expect("task owner 应注入 task MCP");
-        assert_eq!(task.project_id, project_id);
-        assert_eq!(task.story_id, Some(story_id), "task config 应透传 story_id");
-        assert_eq!(task.task_id, Some(task_id), "task config 应透传 task_id");
-        assert!(
-            task.endpoint_url().contains(&task_id.to_string()),
-            "task endpoint URL 应包含 task_id, 实际: {}",
-            task.endpoint_url()
-        );
+        let agentdash_spi::McpTransportConfig::Http { url, .. } = &task.transport else {
+            panic!("task MCP 应使用 HTTP transport");
+        };
+        assert!(url.contains(&task_id.to_string()));
     }
 }

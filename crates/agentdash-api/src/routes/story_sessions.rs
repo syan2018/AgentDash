@@ -537,12 +537,8 @@ pub(crate) async fn build_story_session_context_response(
         },
         &state.config.platform_config,
     );
-    let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output
-        .platform_mcp_configs
-        .iter()
-        .map(|c| c.to_session_mcp_server())
-        .collect();
-    effective_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
+    let effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
+        cap_output.state.mcp_servers.clone();
 
     let executor_source = if session_meta.executor_config.is_some() {
         "session.meta.executor_config"

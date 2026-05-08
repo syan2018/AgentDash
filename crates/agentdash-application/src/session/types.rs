@@ -4,6 +4,7 @@ use agentdash_agent_protocol::ContentBlock;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
+pub use agentdash_spi::CapabilityState;
 use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
@@ -29,7 +30,7 @@ pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
-    pub flow_capabilities: Option<agentdash_spi::FlowCapabilities>,
+    pub capability_state: Option<agentdash_spi::CapabilityState>,
     /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
     /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
@@ -54,7 +55,7 @@ impl PromptSessionRequest {
             user_input: input,
             mcp_servers: Vec::new(),
             vfs: None,
-            flow_capabilities: None,
+            capability_state: None,
             context_bundle: None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,
@@ -63,32 +64,19 @@ impl PromptSessionRequest {
     }
 }
 
-/// 当前 session/turn 已解析后的能力表面。
-///
-/// `CapabilitySurface` 是能力模型在运行时的生效投影：工具簇裁剪、MCP server 列表
-/// 和 VFS/mount 表必须作为一个整体比较、持久化和应用，避免 key 集合没变但工具或
-/// mount 已经漂移。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CapabilitySurface {
-    pub flow_capabilities: agentdash_spi::FlowCapabilities,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-}
-
 /// PhaseNode 已激活但当前没有 live turn 可热更新时，暂存在 session meta 中的切换。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费这些 transition，把最后一个 surface
-/// 作为本轮生效 surface，并清空队列。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费这些 transition，把最后一个 state
+/// 作为本轮生效状态，并清空队列。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PendingCapabilitySurfaceTransition {
+pub struct PendingCapabilityStateTransition {
     pub id: String,
     pub run_id: Uuid,
     pub lifecycle_key: String,
     pub phase_node: String,
     pub capability_keys: BTreeSet<String>,
-    pub surface: CapabilitySurface,
+    pub state: CapabilityState,
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_turn_id: Option<String>,
@@ -303,7 +291,7 @@ pub struct SessionMeta {
     #[serde(default)]
     pub bootstrap_state: SessionBootstrapState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pending_capability_surface_transitions: Vec<PendingCapabilitySurfaceTransition>,
+    pub pending_capability_state_transitions: Vec<PendingCapabilityStateTransition>,
 }
 
 /// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。

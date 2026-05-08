@@ -29,9 +29,9 @@ pub use agentdash_domain::common::{
 // ─── connector ──────────────────────────────────────────────
 
 pub use connector::{
-    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
-    ExecutionTurnFrame, FlowCapabilities, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
+    AgentConnector, AgentInfo, CapabilityState, ConnectorCapabilities, ConnectorError,
+    ConnectorType, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
+    ExecutionTurnFrame, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
     RestoredSessionState, SessionMcpServer, ToolCapabilityFilter, ToolCluster,
     content_block_to_text, partition_session_mcp_servers, workspace_path_from_context,
 };

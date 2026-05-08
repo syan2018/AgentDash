@@ -1,0 +1,7 @@
+{"status": "passed", "check": "cargo fmt", "result": "通过"}
+{"status": "passed", "check": "cargo check -p agentdash-spi -p agentdash-application -p agentdash-executor -p agentdash-api", "result": "通过"}
+{"status": "passed", "check": "cargo test -p agentdash-spi", "result": "39 passed"}
+{"status": "passed", "check": "cargo test -p agentdash-application", "result": "323 passed"}
+{"status": "passed", "check": "cargo test -p agentdash-executor mcp::", "result": "4 passed"}
+{"status": "passed", "check": "pnpm --filter frontend exec tsc --noEmit", "result": "通过"}
+{"status": "passed", "check": "pnpm --filter frontend lint", "result": "通过"}

@@ -97,15 +97,7 @@ pub async fn build_task_session_context(
         companion_slice_mode: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
-    let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = {
-        let mut list: Vec<agentdash_spi::SessionMcpServer> = cap_output
-            .platform_mcp_configs
-            .iter()
-            .map(|c| c.to_session_mcp_server())
-            .collect();
-        list.extend(cap_output.custom_mcp_servers.iter().cloned());
-        list
-    };
+    let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.state.mcp_servers.clone();
 
     // ── 构建 VFS（cloud-native 场景）──
     let use_vfs = resolved_config

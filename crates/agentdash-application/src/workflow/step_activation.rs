@@ -24,7 +24,7 @@ use agentdash_domain::workflow::{
     WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
-use agentdash_spi::{FlowCapabilities, Vfs};
+use agentdash_spi::{CapabilityState, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
@@ -33,7 +33,7 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
-use crate::session::{CapabilitySurface, SessionHub, compose_vfs_with_overlay_and_directives};
+use crate::session::{SessionHub, compose_vfs_with_overlay_and_directives};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -100,7 +100,7 @@ impl KickoffPromptFragment {
 #[derive(Debug, Clone)]
 pub struct StepActivation {
     /// 内置工具簇(PiAgent 内部使用)。
-    pub flow_capabilities: FlowCapabilities,
+    pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
@@ -158,19 +158,11 @@ pub fn activate_step_with_platform(
     let cap_output = CapabilityResolver::resolve(&cap_input, platform);
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output
-        .platform_mcp_configs
-        .iter()
-        .map(|c| c.to_session_mcp_server())
-        .collect();
-    mcp_servers.extend(cap_output.custom_mcp_servers);
+    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
+        cap_output.state.mcp_servers.clone();
     dedupe_session_mcp_servers(&mut mcp_servers);
 
-    let capability_keys: BTreeSet<String> = cap_output
-        .effective_capabilities
-        .iter()
-        .map(|c| c.key().to_string())
-        .collect();
+    let capability_keys = cap_output.state.capability_keys();
 
     // ── 4. lifecycle mount + Vfs ──
     let writable_port_keys: Vec<String> = input
@@ -198,7 +190,7 @@ pub fn activate_step_with_platform(
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
     StepActivation {
-        flow_capabilities: cap_output.flow_capabilities,
+        capability_state: cap_output.state,
         mcp_servers,
         capability_keys,
         kickoff_prompt,
@@ -306,7 +298,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PromptSessionRequest`。
 ///
 /// 调用方负责提供 base `req`(携带 user input + executor_config 等);本函数只写
-/// `vfs / flow_capabilities / mcp_servers` 字段。
+/// `vfs / capability_state / mcp_servers` 字段。
 /// kickoff_prompt 由调用方按需调 `activation.kickoff_prompt.to_default_prompt()` 拼进 user input。
 pub fn apply_to_prompt_request(
     activation: &StepActivation,
@@ -317,7 +309,7 @@ pub fn apply_to_prompt_request(
         &activation.lifecycle_vfs,
         &activation.mount_directives,
     ));
-    req.flow_capabilities = Some(activation.flow_capabilities.clone());
+    req.capability_state = Some(activation.capability_state.clone());
     req.mcp_servers = activation.mcp_servers.clone();
 }
 
@@ -335,9 +327,9 @@ pub(crate) async fn apply_to_running_session(
     workflow_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
     let base_surface = session_hub
-        .get_current_capability_surface(hook_session.session_id())
+        .get_current_capability_state(hook_session.session_id())
         .await;
-    let target_surface = build_capability_surface_for_activation(activation, base_surface.as_ref());
+    let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
     let key_delta = CapabilityDelta::compute(
         &hook_session.current_capabilities(),
         &activation.capability_keys,
@@ -353,8 +345,8 @@ pub(crate) async fn apply_to_running_session(
                 run_id,
                 lifecycle_key: lifecycle_key.map(ToString::to_string),
                 workflow_key: workflow_key.map(ToString::to_string),
-                before_surface: base_surface,
-                after_surface: target_surface,
+                before_state: base_surface,
+                after_state: target_surface,
                 capability_keys: activation.capability_keys.clone(),
                 key_delta,
                 apply_mode: "live",
@@ -363,20 +355,19 @@ pub(crate) async fn apply_to_running_session(
         .await
 }
 
-pub fn build_capability_surface_for_activation(
+pub fn build_capability_state_for_activation(
     activation: &StepActivation,
-    base_surface: Option<&CapabilitySurface>,
-) -> CapabilitySurface {
+    base_surface: Option<&CapabilityState>,
+) -> CapabilityState {
     let vfs = compose_vfs_with_overlay_and_directives(
         base_surface.and_then(|surface| surface.vfs.as_ref()),
         &activation.lifecycle_vfs,
         &activation.mount_directives,
     );
-    CapabilitySurface {
-        flow_capabilities: activation.flow_capabilities.clone(),
-        mcp_servers: activation.mcp_servers.clone(),
-        vfs: Some(vfs),
-    }
+    let mut state = activation.capability_state.clone();
+    state.mcp_servers = activation.mcp_servers.clone();
+    state.vfs = Some(vfs);
+    state
 }
 
 /// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
@@ -599,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn same_capability_key_tool_directive_changes_tool_surface() {
+    fn same_capability_key_tool_directive_changes_tool_state() {
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
@@ -636,18 +627,18 @@ mod tests {
         assert_eq!(base.capability_keys, restricted.capability_keys);
         assert!(
             !base
-                .flow_capabilities
+                .capability_state
                 .is_tool_path_excluded("file_read", "fs_grep")
         );
         assert!(
             restricted
-                .flow_capabilities
+                .capability_state
                 .is_tool_path_excluded("file_read", "fs_grep")
         );
     }
 
     #[test]
-    fn step_mount_directives_change_capability_surface_vfs() {
+    fn step_mount_directives_change_capability_state_vfs() {
         let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
         let mut step = sample_step(vec![]);
         step.capability_config = CapabilityConfig {
@@ -681,19 +672,20 @@ mod tests {
             ready_port_keys: BTreeSet::new(),
         };
         let activation = activate_step_with_platform(&input, &test_platform());
-        let base_surface = CapabilitySurface {
-            flow_capabilities: activation.flow_capabilities.clone(),
-            mcp_servers: activation.mcp_servers.clone(),
-            vfs: Some(Vfs {
+        let base_surface = {
+            let mut state = activation.capability_state.clone();
+            state.mcp_servers = activation.mcp_servers.clone();
+            state.vfs = Some(Vfs {
                 mounts: vec![mount("workspace", "relay_fs"), mount("secret", "inline_fs")],
                 default_mount_id: Some("workspace".to_string()),
                 source_project_id: None,
                 source_story_id: None,
                 links: Vec::new(),
-            }),
+            });
+            state
         };
 
-        let target = build_capability_surface_for_activation(&activation, Some(&base_surface));
+        let target = build_capability_state_for_activation(&activation, Some(&base_surface));
         let target_vfs = target.vfs.as_ref().expect("target vfs");
         let mount_ids = target_vfs
             .mounts
@@ -708,7 +700,7 @@ mod tests {
         assert_eq!(target_vfs.default_mount_id.as_deref(), Some("review"));
         assert_ne!(base_surface, target);
 
-        let delta = crate::session::compute_capability_surface_delta(
+        let delta = crate::session::compute_capability_state_delta(
             Some(&base_surface),
             &target,
             &activation.capability_keys,

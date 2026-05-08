@@ -20,7 +20,7 @@ use super::types::PromptSessionRequest;
 #[async_trait]
 pub trait PromptRequestAugmenter: Send + Sync {
     /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
-    /// 补齐 `PromptSessionRequest` 的后端注入字段（mcp_servers / vfs / flow_capabilities
+    /// 补齐 `PromptSessionRequest` 的后端注入字段（mcp_servers / vfs / capability_state
     /// / context_bundle / hook_snapshot_reload 等）。
     async fn augment(
         &self,

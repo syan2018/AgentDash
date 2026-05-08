@@ -35,7 +35,7 @@ impl SqliteSessionRepository {
                 companion_context_json TEXT,
                 visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
                 bootstrap_state TEXT NOT NULL DEFAULT 'plain',
-                pending_capability_surface_transitions_json TEXT NOT NULL DEFAULT '[]'
+                pending_capability_state_transitions_json TEXT NOT NULL DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS session_events (
@@ -75,7 +75,7 @@ impl SqliteSessionRepository {
         .execute(&self.pool)
         .await;
         let _ = sqlx::query(
-            "ALTER TABLE sessions ADD COLUMN pending_capability_surface_transitions_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE sessions ADD COLUMN pending_capability_state_transitions_json TEXT NOT NULL DEFAULT '[]'",
         )
         .execute(&self.pool)
         .await;
@@ -126,14 +126,14 @@ impl SqliteSessionRepository {
                 row.get::<String, _>("bootstrap_state"),
                 "sessions.bootstrap_state",
             )?,
-            pending_capability_surface_transitions: parse_optional_json_column(
-                row.get::<Option<String>, _>("pending_capability_surface_transitions_json"),
-                "pending_capability_surface_transitions_json",
+            pending_capability_state_transitions: parse_optional_json_column(
+                row.get::<Option<String>, _>("pending_capability_state_transitions_json"),
+                "pending_capability_state_transitions_json",
             )?
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "缺少 pending_capability_surface_transitions_json",
+                    "缺少 pending_capability_state_transitions_json",
                 )
             })?,
         })
@@ -189,9 +189,9 @@ impl SessionPersistence for SqliteSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
-        let pending_capability_surface_transitions_json = json_string(
-            &meta.pending_capability_surface_transitions,
-            "pending_capability_surface_transitions_json",
+        let pending_capability_state_transitions_json = json_string(
+            &meta.pending_capability_state_transitions,
+            "pending_capability_state_transitions_json",
         )?;
         sqlx::query(
             r#"
@@ -199,7 +199,7 @@ impl SessionPersistence for SqliteSessionRepository {
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state, pending_capability_surface_transitions_json
+                bootstrap_state, pending_capability_state_transitions_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
@@ -217,7 +217,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
-        .bind(pending_capability_surface_transitions_json)
+        .bind(pending_capability_state_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -230,7 +230,7 @@ impl SessionPersistence for SqliteSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state, pending_capability_surface_transitions_json
+                   bootstrap_state, pending_capability_state_transitions_json
             FROM sessions
             WHERE id = ?
             "#,
@@ -248,7 +248,7 @@ impl SessionPersistence for SqliteSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state, pending_capability_surface_transitions_json
+                   bootstrap_state, pending_capability_state_transitions_json
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -269,9 +269,9 @@ impl SessionPersistence for SqliteSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
-        let pending_capability_surface_transitions_json = json_string(
-            &meta.pending_capability_surface_transitions,
-            "pending_capability_surface_transitions_json",
+        let pending_capability_state_transitions_json = json_string(
+            &meta.pending_capability_state_transitions,
+            "pending_capability_state_transitions_json",
         )?;
         sqlx::query(
             r#"
@@ -279,7 +279,7 @@ impl SessionPersistence for SqliteSessionRepository {
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state, pending_capability_surface_transitions_json
+                bootstrap_state, pending_capability_state_transitions_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -311,7 +311,7 @@ impl SessionPersistence for SqliteSessionRepository {
                         THEN sessions.bootstrap_state
                     ELSE excluded.bootstrap_state
                 END,
-                pending_capability_surface_transitions_json = excluded.pending_capability_surface_transitions_json
+                pending_capability_state_transitions_json = excluded.pending_capability_state_transitions_json
             "#,
         )
         .bind(&meta.id)
@@ -328,7 +328,7 @@ impl SessionPersistence for SqliteSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
-        .bind(pending_capability_surface_transitions_json)
+        .bind(pending_capability_state_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -862,7 +862,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -922,7 +922,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

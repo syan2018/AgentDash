@@ -436,7 +436,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Pending,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -462,7 +462,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -494,7 +494,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -520,7 +520,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -1109,7 +1109,7 @@ fn finalize_augmented_request(
     workspace: Option<&Workspace>,
     vfs: Option<agentdash_spi::Vfs>,
     effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    flow_capabilities: agentdash_spi::FlowCapabilities,
+    capability_state: agentdash_spi::CapabilityState,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
 ) {
     req.user_input.prompt_blocks = Some(prompt_blocks);
@@ -1121,7 +1121,7 @@ fn finalize_augmented_request(
         req.vfs = vfs;
     }
     req.mcp_servers = effective_mcp_servers;
-    req.flow_capabilities = Some(flow_capabilities);
+    req.capability_state = Some(capability_state);
 }
 
 fn apply_plain_lifecycle_request(
@@ -1547,8 +1547,8 @@ async fn build_task_owner_prompt_request(
         req.user_input.executor_config = Some(config);
     }
 
-    let flow_capabilities = prepared.flow_capabilities.take().ok_or_else(|| {
-        ApiError::Internal("Task session compose 未产出 flow_capabilities".to_string())
+    let capability_state = prepared.capability_state.take().ok_or_else(|| {
+        ApiError::Internal("Task session compose 未产出 capability_state".to_string())
     })?;
 
     finalize_augmented_request(
@@ -1558,7 +1558,7 @@ async fn build_task_owner_prompt_request(
         prepared.workspace_defaults.as_ref(),
         prepared.vfs,
         prepared.mcp_servers,
-        flow_capabilities,
+        capability_state,
         hook_snapshot_reload,
     );
 

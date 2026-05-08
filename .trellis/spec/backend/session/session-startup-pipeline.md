@@ -19,8 +19,8 @@
   `post_turn_handler` / `env` 等跨轴字段由 entry 通过 `with_identity` /
   `with_post_turn_handler` / `with_user_input` 注入，不再在 `finalize_request`
   之后手工 `req.identity = ...`。
-- `finalize_request` 的合并规则对称且显式：`mcp_servers` / `relay_mcp_server_names`
-  均整体替换；`vfs` 优先取 prepared，`apply_workspace_defaults` 先于覆盖；
+- `finalize_request` 的合并规则显式：`capability_state` 整体替换，`mcp_servers`
+  作为 state 的 wire 投影整体替换；`vfs` 优先取 prepared，`apply_workspace_defaults` 先于覆盖；
   `identity` / `post_turn_handler` 仅在 prepared 非空时覆盖 base。
 - 装配阶段是**单一写入节拍**：除了 `from_user_input` 与 `finalize_request`，
   业务代码不得直接写 `PromptSessionRequest` 的字段。
@@ -35,7 +35,7 @@ Session 启动输入按以下五条轴分组；每一轴有唯一权威承载字
 | **Who** | 发起人身份 / owner 归属 | `PromptSessionRequest.identity` | `AuthIdentity::system_routine(id)` 承载定时任务等系统身份 |
 | **Where** | 执行环境 | `PromptSessionRequest.user_input.working_dir` / `vfs` / `user_input.env` | workspace_defaults 用于兜底 VFS / working_dir |
 | **What** | 业务上下文 | `PromptSessionRequest.context_bundle`（`SessionContextBundle`） | 详见 `bundle-main-datasource.md` |
-| **How** | 能力 & 工具 | `flow_capabilities` / `effective_capability_keys` / `mcp_servers` / `relay_mcp_server_names` | compose 产出后 `finalize_request` 整体替换 |
+| **How** | 能力 & 工具 | `capability_state` / `mcp_servers` | `capability_state` 是唯一运行态能力状态；`mcp_servers` 是给 session frame / relay wire 使用的投影 |
 | **Trigger** | 本轮触发输入 | `user_input.prompt_blocks` + `hook_snapshot_reload: HookSnapshotReloadTrigger` + `post_turn_handler` | `HookSnapshotReloadTrigger` 仅表达"是否需要本轮重载 hook snapshot" |
 
 **禁令**：同一数据不得跨轴重复。典型反例：静态上下文（如 companion_agents）
@@ -71,10 +71,8 @@ pub struct UserPromptInput {
 pub struct PromptSessionRequest {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
-    pub relay_mcp_server_names: HashSet<String>,
     pub vfs: Option<Vfs>,
-    pub flow_capabilities: Option<FlowCapabilities>,
-    pub effective_capability_keys: Option<BTreeSet<String>>,
+    pub capability_state: Option<CapabilityState>,
     pub context_bundle: Option<SessionContextBundle>,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub identity: Option<AuthIdentity>,
@@ -177,19 +175,16 @@ base。**禁止**在入口代码中裸 `PromptSessionRequest { user_input: ..., 
 | `user_input.env` | `prepared.env` 非空整体替换；否则保留 base |
 | `user_input.working_dir` | 先执行 `apply_workspace_defaults(&mut working_dir, &mut vfs, workspace_defaults)`；随后 `prepared.working_dir` 非空覆盖 |
 | `vfs` | 先执行 `apply_workspace_defaults`；随后 `prepared.vfs` 非空覆盖 |
-| `mcp_servers` | **整体替换**为 `prepared.mcp_servers`（compose 内部已汇总请求 / platform / custom / preset） |
-| `relay_mcp_server_names` | **整体替换**为 `prepared.relay_mcp_server_names`（与 `mcp_servers` 对称） |
-| `flow_capabilities` | 整体替换 |
-| `effective_capability_keys` | 整体替换 |
+| `mcp_servers` | **整体替换**为 `prepared.mcp_servers`（由 `CapabilityState.mcp_servers` 与显式 request/preset 投影汇总） |
+| `capability_state` | 整体替换 |
 | `context_bundle` | 整体替换（Bundle 是主数据面，compose 外部不应再补丁） |
 | `hook_snapshot_reload` | 整体替换 |
 | `identity` | `prepared.identity` 非空覆盖；否则保留 base |
 | `post_turn_handler` | `prepared.post_turn_handler` 非空覆盖；否则保留 base |
 
-**对称化背景（D1 / PR 1 Phase 1a 落地）**：旧实现中 `mcp_servers` 用 `=`、
-`relay_mcp_server_names` 用 `.extend()`，语义不一致。收敛为两者都整体替换后，
-compose 内部负责把 base 侧请求值合并进 `effective_mcp_servers` /
-`relay_mcp_server_names` 再 builder 出去；finalize 阶段不再做增量合并。
+**能力状态收敛背景（2026-05-08）**：`CapabilityState` 是 How 轴唯一运行态状态。
+`mcp_servers` 继续存在只是给 `ExecutionSessionFrame` / relay wire 的投影；compose
+内部必须先汇总到 state，再投影到 request，finalize 阶段不再做增量合并。
 
 **`identity` / `post_turn_handler` 下沉（PR 1 Phase 1c）**：过去 routine /
 task 等路径都是 `finalize_request(base, prepared); req.identity = Some(id);`
@@ -268,8 +263,8 @@ sequenceDiagram
   与测试）；
 - `routine/executor.rs` 产出的 `PromptSessionRequest.identity` 在任何执行路径
   上都是 `Some(AuthIdentity::system_routine(...))`；
-- `finalize_request` 的 4 项对称性（mcp_servers / relay_mcp_server_names 替换
-  策略对称、vfs prefer_base、workspace_defaults 顺序、identity /
+- `finalize_request` 的 4 项关键规则（capability_state 整体替换、mcp_servers 投影替换、
+  vfs prefer_base、workspace_defaults 顺序、identity /
   post_turn_handler 在 base 非空时保留）有对应单测（PR 1 已覆盖）。
 
 ## 7. 相关 spec / PRD / code 锚点

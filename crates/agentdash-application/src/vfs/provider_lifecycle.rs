@@ -1012,7 +1012,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         }
     }
 

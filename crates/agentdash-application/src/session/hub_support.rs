@@ -4,7 +4,7 @@ use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_spi::{ExecutionSessionFrame, FlowCapabilities, SessionContextBundle, Vfs};
+use agentdash_spi::{CapabilityState, ExecutionSessionFrame, SessionContextBundle, Vfs};
 use tokio::sync::broadcast;
 
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
@@ -164,7 +164,7 @@ pub(super) fn build_session_runtime(
 pub(super) struct SessionProfile {
     pub vfs: Vfs,
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub flow_capabilities: FlowCapabilities,
+    pub capability_state: CapabilityState,
 }
 
 /// Session turn 的状态机。
@@ -204,7 +204,7 @@ impl TurnState {
 /// Session 级运行态（跨 turn 存活直到进程退出或 session 被删除）。
 ///
 /// Per-turn 字段（`turn_id` / `cancel_requested` / `processor_tx` / `session_frame`
-/// / `flow_capabilities`）统一下沉到
+/// / `capability_state`）统一下沉到
 /// [`TurnExecution`]；`SessionRuntime` 只持 session 级信息。
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
@@ -231,8 +231,8 @@ pub(super) struct TurnExecution {
     /// 拿到 turn 生效的 session frame 重建工具集。
     pub session_frame: ExecutionSessionFrame,
     /// Turn 级 capability 集合（per-prompt 下发）。
-    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.flow_capabilities`。
-    pub flow_capabilities: FlowCapabilities,
+    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.capability_state`。
+    pub capability_state: CapabilityState,
     /// 当前 turn 的 Bundle 主数据面。
     ///
     /// 运行期 hook injection 统一回灌到这里的 `turn_delta`，作为结构化审计与
@@ -251,13 +251,13 @@ impl TurnExecution {
     pub fn new(
         turn_id: String,
         session_frame: ExecutionSessionFrame,
-        flow_capabilities: FlowCapabilities,
+        capability_state: CapabilityState,
         context_bundle: Option<SessionContextBundle>,
     ) -> Self {
         Self {
             turn_id,
             session_frame,
-            flow_capabilities,
+            capability_state,
             context_bundle,
             cancel_requested: false,
             processor_tx: None,

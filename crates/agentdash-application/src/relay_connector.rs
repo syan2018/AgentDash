@@ -311,7 +311,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use agentdash_spi::{AgentConfig, FlowCapabilities, PromptPayload};
+    use agentdash_spi::{AgentConfig, CapabilityState, PromptPayload};
     use tokio::sync::Mutex;
 
     #[derive(Default)]
@@ -420,7 +420,7 @@ mod tests {
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
-                flow_capabilities: FlowCapabilities::default(),
+                capability_state: CapabilityState::default(),
                 ..Default::default()
             },
         };

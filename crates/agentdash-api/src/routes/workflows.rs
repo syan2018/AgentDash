@@ -273,7 +273,7 @@ pub async fn start_lifecycle_run(
                     run_id = %run.id,
                     project_id = %run.project_id,
                     warnings = ?warnings,
-                    "start_lifecycle_run 已创建 run，但首批 PhaseNode 能力表面应用存在 warning"
+                    "start_lifecycle_run 已创建 run，但首批 PhaseNode 能力状态应用存在 warning"
                 );
             }
         }

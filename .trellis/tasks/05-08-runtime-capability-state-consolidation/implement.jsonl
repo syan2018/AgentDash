@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "后续需要把 CapabilityState 作为能力运行态唯一事实源写入规范"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionTurnFrame/SessionProfile 当前持有 capability_state，需要迁移为 capability_state"}
+{"file": "crates/agentdash-spi/src/platform/tool_capability.rs", "reason": "现有 capability registry 散落在静态函数中，需要收拢为查询接口"}
+{"file": "crates/agentdash-spi/src/connector/mod.rs", "reason": "CapabilityState 当前定义在 connector SPI 中，需要替换或重命名为 CapabilityState"}
+{"file": "crates/agentdash-application/src/capability/resolver.rs", "reason": "CapabilityResolver 应唯一输出 CapabilityState"}
+{"file": "crates/agentdash-application/src/session/types.rs", "reason": "CapabilityState/PendingCapabilityStateTransition 需要与 CapabilityState 收敛，Surface 不再作为运行态状态容器"}
+{"file": "crates/agentdash-application/src/session/capability_state.rs", "reason": "当前 diff/event payload 逻辑应升级为 CapabilityStateDelta"}
+{"file": "crates/agentdash-application/src/session/hub/tool_builder.rs", "reason": "工具构建入口应只消费 CapabilityState"}
+{"file": "crates/agentdash-executor/src/mcp/direct.rs", "reason": "MCP direct discovery 应接收 runtime state 而非 CapabilityState"}
+{"file": "crates/agentdash-executor/src/mcp/relay.rs", "reason": "Relay MCP discovery 应接收 runtime state 而非 CapabilityState"}
+{"file": "crates/agentdash-infrastructure/migrations/0027_pending_capability_state_transitions.sql", "reason": "保留既有 0025 migration checksum，新建 0027 添加 pending_capability_state_transitions_json 字段"}
+{"file": "frontend/src/features/session/ui/SessionSystemEventCard.tsx", "reason": "前端 capability_state_changed 事件展示改为 state_changed / tool_state 字段"}

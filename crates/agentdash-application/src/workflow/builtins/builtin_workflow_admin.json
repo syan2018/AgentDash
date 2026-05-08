@@ -40,7 +40,7 @@
   "lifecycle": {
     "key": "builtin_workflow_admin",
     "name": "Builtin / Workflow Admin Lifecycle",
-    "description": "Plan → Apply：先由入口 AgentNode 创建会话，再由 Apply PhaseNode 在同一会话内切换能力表面并执行写入。",
+    "description": "Plan → Apply：先由入口 AgentNode 创建会话，再由 Apply PhaseNode 在同一会话内切换能力状态并执行写入。",
     "entry_step_key": "plan",
     "steps": [
       {

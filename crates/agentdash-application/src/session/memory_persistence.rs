@@ -232,8 +232,8 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_session_id = incoming.executor_session_id.clone();
     current.companion_context = incoming.companion_context.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
-    current.pending_capability_surface_transitions =
-        incoming.pending_capability_surface_transitions.clone();
+    current.pending_capability_state_transitions =
+        incoming.pending_capability_state_transitions.clone();
     if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
         current.bootstrap_state = incoming.bootstrap_state;
     }
@@ -335,7 +335,7 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_surface_transitions: Vec::new(),
+            pending_capability_state_transitions: Vec::new(),
         };
         persistence
             .create_session(&meta)

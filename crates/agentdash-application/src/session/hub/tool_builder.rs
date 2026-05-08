@@ -2,10 +2,10 @@
 //!
 //! 集中：
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
-//!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_current_capability_surface
+//!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_current_capability_state
 //!   在运行中热更时重构）。
-//! - `get_runtime_mcp_servers` / `get_current_capability_surface`：读取当前能力表面。
-//! - `replace_current_capability_surface`：底层热更 primitive，仅供
+//! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
+//! - `replace_current_capability_state`：底层热更 primitive，仅供
 //!   `runtime_context_transition` 统一 applier 调用。
 //!
 //! 注：本文件仍依赖 `agentdash_executor::mcp::discover_*`。该依赖早于 PR 6 存在
@@ -16,7 +16,7 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 
 use super::SessionHub;
-use crate::session::types::CapabilitySurface;
+use crate::session::types::CapabilityState;
 
 impl SessionHub {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
@@ -29,65 +29,57 @@ impl SessionHub {
             .unwrap_or_default()
     }
 
-    /// 读取 session 当前 turn 生效的能力表面。
-    pub async fn get_current_capability_surface(
-        &self,
-        session_id: &str,
-    ) -> Option<CapabilitySurface> {
+    /// 读取 session 当前 turn 生效的能力状态。
+    pub async fn get_current_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         let sessions = self.sessions.lock().await;
         sessions
             .get(session_id)
             .and_then(|runtime| runtime.turn_state.active_turn())
-            .map(|turn| CapabilitySurface {
-                flow_capabilities: turn.flow_capabilities.clone(),
-                mcp_servers: turn.session_frame.mcp_servers.clone(),
-                vfs: turn.session_frame.vfs.clone(),
+            .map(|turn| {
+                let mut state = turn.capability_state.clone();
+                state.mcp_servers = turn.session_frame.mcp_servers.clone();
+                state.vfs = turn.session_frame.vfs.clone();
+                state
             })
     }
 
     /// 读取当前 active turn；若没有 active turn，则回退到 session_profile 缓存的上一轮表面。
-    pub async fn get_latest_capability_surface(
-        &self,
-        session_id: &str,
-    ) -> Option<CapabilitySurface> {
+    pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         let sessions = self.sessions.lock().await;
         let runtime = sessions.get(session_id)?;
         if let Some(turn) = runtime.turn_state.active_turn() {
-            return Some(CapabilitySurface {
-                flow_capabilities: turn.flow_capabilities.clone(),
-                mcp_servers: turn.session_frame.mcp_servers.clone(),
-                vfs: turn.session_frame.vfs.clone(),
-            });
+            let mut state = turn.capability_state.clone();
+            state.mcp_servers = turn.session_frame.mcp_servers.clone();
+            state.vfs = turn.session_frame.vfs.clone();
+            return Some(state);
         }
-        runtime
-            .session_profile
-            .as_ref()
-            .map(|profile| CapabilitySurface {
-                flow_capabilities: profile.flow_capabilities.clone(),
-                mcp_servers: profile.mcp_servers.clone(),
-                vfs: Some(profile.vfs.clone()),
-            })
+        runtime.session_profile.as_ref().map(|profile| {
+            let mut state = profile.capability_state.clone();
+            state.mcp_servers = profile.mcp_servers.clone();
+            state.vfs = Some(profile.vfs.clone());
+            state
+        })
     }
 
-    /// 替换运行中 session 的能力表面并同步 connector。
+    /// 替换运行中 session 的能力状态并同步 connector。
     ///
     /// Hub 层自行完成 runtime tools + MCP 工具发现，将预构建好的完整工具集传给
     /// connector。
-    pub(crate) async fn replace_current_capability_surface(
+    pub(crate) async fn replace_current_capability_state(
         &self,
         session_id: &str,
-        surface: CapabilitySurface,
+        state: CapabilityState,
     ) -> Result<(), ConnectorError> {
         let (turn_snapshot, hook_session) = {
             let sessions = self.sessions.lock().await;
             let runtime = sessions.get(session_id).ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 当前没有运行态，无法热更新能力表面"
+                    "session `{session_id}` 当前没有运行态，无法热更新能力状态"
                 ))
             })?;
             let turn = runtime.turn_state.active_turn().cloned().ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 没有活跃 turn，无法热更新能力表面"
+                    "session `{session_id}` 没有活跃 turn，无法热更新能力状态"
                 ))
             })?;
             (turn, runtime.hook_session.clone())
@@ -95,18 +87,18 @@ impl SessionHub {
 
         let mut session_frame = turn_snapshot.session_frame.clone();
         session_frame.turn_id = turn_snapshot.turn_id.clone();
-        session_frame.mcp_servers = surface.mcp_servers.clone();
-        session_frame.vfs = surface.vfs.clone();
+        session_frame.mcp_servers = state.mcp_servers.clone();
+        session_frame.vfs = state.vfs.clone();
         let context = ExecutionContext {
             session: session_frame,
             turn: agentdash_spi::ExecutionTurnFrame {
                 hook_session,
-                flow_capabilities: surface.flow_capabilities.clone(),
+                capability_state: state.clone(),
                 ..Default::default()
             },
         };
         let all_tools = self
-            .build_tools_for_execution_context(session_id, &context, &surface.mcp_servers)
+            .build_tools_for_execution_context(session_id, &context, &state.mcp_servers)
             .await;
 
         self.connector
@@ -115,7 +107,7 @@ impl SessionHub {
 
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(session_id) {
-            let profile_vfs = surface
+            let profile_vfs = state
                 .vfs
                 .clone()
                 .or_else(|| {
@@ -133,14 +125,14 @@ impl SessionHub {
             if let Some(vfs) = profile_vfs {
                 runtime.session_profile = Some(super::super::hub_support::SessionProfile {
                     vfs,
-                    mcp_servers: surface.mcp_servers.clone(),
-                    flow_capabilities: surface.flow_capabilities.clone(),
+                    mcp_servers: state.mcp_servers.clone(),
+                    capability_state: state.clone(),
                 });
             }
             if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                turn.session_frame.mcp_servers = surface.mcp_servers;
-                turn.session_frame.vfs = surface.vfs;
-                turn.flow_capabilities = surface.flow_capabilities;
+                turn.session_frame.mcp_servers = state.mcp_servers.clone();
+                turn.session_frame.vfs = state.vfs.clone();
+                turn.capability_state = state;
             }
         }
         Ok(())
@@ -168,7 +160,7 @@ impl SessionHub {
 
         let (relay_names, direct_servers) =
             agentdash_spi::partition_session_mcp_servers(mcp_servers);
-        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.flow_capabilities)
+        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.capability_state)
             .await
         {
             Ok(tools) => all_tools.extend(tools),
@@ -182,7 +174,7 @@ impl SessionHub {
             let tools = mcp_discovery::discover_relay_mcp_tools(
                 relay.clone(),
                 &relay_names,
-                &context.turn.flow_capabilities,
+                &context.turn.capability_state,
             )
             .await;
             all_tools.extend(tools);

@@ -35,7 +35,7 @@ use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
     RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    build_capability_surface_for_activation, build_step_projector_from_repos, load_port_output_map,
+    build_capability_state_for_activation, build_step_projector_from_repos, load_port_output_map,
 };
 
 #[derive(Debug)]
@@ -156,7 +156,7 @@ impl LifecycleOrchestrator {
     /// 将已激活的 PhaseNode 应用到 lifecycle run 绑定的 root session。
     ///
     /// 适用于 start_run / terminal callback 等没有直接持有 live hook_session 的路径。
-    /// 若 root session 当前没有可热更的 live turn，会把解析后的 CapabilitySurface 暂存到
+    /// 若 root session 当前没有可热更的 live turn，会把解析后的 CapabilityState 暂存到
     /// session meta，下一轮 prompt 进入 pipeline 时再应用。
     pub async fn apply_activated_phase_nodes_for_run_session(
         &self,
@@ -170,7 +170,7 @@ impl LifecycleOrchestrator {
 
         if self
             .session_hub
-            .get_current_capability_surface(&run.session_id)
+            .get_current_capability_state(&run.session_id)
             .await
             .is_some()
         {
@@ -624,7 +624,7 @@ impl LifecycleOrchestrator {
             crate::session::load_available_presets(&self.repos, run.project_id).await;
         let mut base_surface = self
             .session_hub
-            .get_latest_capability_surface(&run.session_id)
+            .get_latest_capability_state(&run.session_id)
             .await;
         let mut warnings = Vec::new();
 
@@ -651,8 +651,7 @@ impl LifecycleOrchestrator {
                 },
                 &self.platform_config,
             );
-            let surface =
-                build_capability_surface_for_activation(&activation, base_surface.as_ref());
+            let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
             if let Err(error) = self
                 .session_hub
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
@@ -662,8 +661,8 @@ impl LifecycleOrchestrator {
                     phase_node: phase.node_key.clone(),
                     run_id: run.id,
                     lifecycle_key: phase.lifecycle_key.clone(),
-                    before_surface: base_surface.clone(),
-                    after_surface: surface.clone(),
+                    before_state: base_surface.clone(),
+                    after_state: surface.clone(),
                     capability_keys: activation.capability_keys.clone(),
                     source_turn_id: turn_id.map(ToString::to_string),
                     created_at: chrono::Utc::now().timestamp_millis(),

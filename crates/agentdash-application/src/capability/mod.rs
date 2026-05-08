@@ -1,12 +1,13 @@
 //! 工具能力解析器 — 统一计算 session 的有效工具集
 //!
 //! `CapabilityResolver` 根据 (session owner type, agent config, active workflow)
-//! 计算出 `FlowCapabilities`（内置工具簇）和 `Vec<McpInjectionConfig>`（平台 MCP 端点）。
+//! 计算出唯一运行态 `CapabilityState`，其中包含能力 key、本地工具簇、工具策略、
+//! MCP server 与 VFS 投影。
 //!
 //! 设计原则：
 //! - 所有平台 well-known 能力由 visibility rule 过滤
 //! - `mcp:*` 自定义能力优先从 project MCP preset 按 key 查找
-//! - 本模块取代各处散落的硬编码 FlowCapabilities 和 MCP injection 列表
+//! - 本模块取代各处散落的硬编码能力状态和 MCP injection 列表
 
 mod notification;
 mod resolver;

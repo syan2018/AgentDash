@@ -11,7 +11,7 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::capability_surface::merge_vfs_overlay;
+use super::capability_state::merge_vfs_overlay;
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
@@ -69,10 +69,10 @@ impl SessionHub {
             }
         };
         let pending_capability_transitions =
-            std::mem::take(&mut session_meta.pending_capability_surface_transitions);
-        let pending_capability_surface = pending_capability_transitions
+            std::mem::take(&mut session_meta.pending_capability_state_transitions);
+        let pending_capability_state = pending_capability_transitions
             .last()
-            .map(|transition| transition.surface.clone());
+            .map(|transition| transition.state.clone());
 
         // 三级 fallback：① 请求级（Init/Rehydrate 注入） → ② session 缓存（Continue 复用） → ③ hub 默认
         let base_effective_vfs = req
@@ -86,7 +86,7 @@ impl SessionHub {
                 )
             })?;
         let mut effective_vfs = base_effective_vfs.clone();
-        if let Some(pending_surface) = pending_capability_surface.as_ref()
+        if let Some(pending_surface) = pending_capability_state.as_ref()
             && let Some(pending_vfs) = pending_surface.vfs.as_ref()
         {
             effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
@@ -209,26 +209,28 @@ impl SessionHub {
         } else {
             req.mcp_servers.clone()
         };
-        let mcp_servers = if let Some(pending_surface) = pending_capability_surface.as_ref() {
-            pending_surface.mcp_servers.clone()
+        let mcp_servers = if let Some(pending_state) = pending_capability_state.as_ref() {
+            pending_state.mcp_servers.clone()
         } else {
             base_mcp_servers.clone()
         };
-        let base_flow_capabilities = req
-            .flow_capabilities
+        let mut base_capability_state = req
+            .capability_state
             .clone()
             .or_else(|| {
                 cached_continuation
                     .as_ref()
-                    .map(|c| c.flow_capabilities.clone())
+                    .map(|c| c.capability_state.clone())
             })
             .unwrap_or_default();
-        let flow_capabilities = if let Some(pending_surface) = pending_capability_surface.as_ref() {
-            pending_surface.flow_capabilities.clone()
+        base_capability_state.mcp_servers = base_mcp_servers.clone();
+        base_capability_state.vfs = Some(base_effective_vfs.clone());
+        let capability_state = if let Some(pending_state) = pending_capability_state.as_ref() {
+            pending_state.clone()
         } else {
-            base_flow_capabilities.clone()
+            base_capability_state.clone()
         };
-        let effective_capability_keys = flow_capabilities.effective_capability_keys();
+        let capability_keys = capability_state.capability_keys();
         let identity = req.identity.clone();
 
         let session_frame = ExecutionSessionFrame {
@@ -242,7 +244,7 @@ impl SessionHub {
         };
         let turn_frame = ExecutionTurnFrame {
             hook_session: hook_session.clone(),
-            flow_capabilities: flow_capabilities.clone(),
+            capability_state: capability_state.clone(),
             runtime_delegate,
             restored_session_state,
             context_bundle: req.context_bundle.clone(),
@@ -286,12 +288,12 @@ impl SessionHub {
                 runtime.session_profile = Some(super::hub_support::SessionProfile {
                     vfs: effective_vfs.clone(),
                     mcp_servers: mcp_servers.clone(),
-                    flow_capabilities: flow_capabilities.clone(),
+                    capability_state: capability_state.clone(),
                 });
                 runtime.turn_state = TurnState::Active(TurnExecution::new(
                     turn_id.clone(),
                     context.session.clone(),
-                    flow_capabilities.clone(),
+                    capability_state.clone(),
                     context.turn.context_bundle.clone(),
                 ));
             }
@@ -308,16 +310,11 @@ impl SessionHub {
         let _ = persistence.save_session_meta(&session_meta).await;
 
         if !pending_capability_transitions.is_empty() {
-            let pending_event_before_surface = CapabilitySurface {
-                flow_capabilities: base_flow_capabilities.clone(),
-                mcp_servers: base_mcp_servers.clone(),
-                vfs: Some(base_effective_vfs.clone()),
-            };
             self.apply_pending_runtime_context_transitions_on_turn(
                 &sid,
                 &turn_id,
                 hook_session.as_ref(),
-                pending_event_before_surface,
+                base_capability_state,
                 &pending_capability_transitions,
             )
             .await;
@@ -378,7 +375,7 @@ impl SessionHub {
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
-                let initial_caps = effective_capability_keys.clone();
+                let initial_caps = capability_keys.clone();
                 if !initial_caps.is_empty() {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }

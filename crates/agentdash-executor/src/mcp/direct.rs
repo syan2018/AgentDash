@@ -7,7 +7,7 @@ use agentdash_agent::{
 use agentdash_spi::platform::tool_capability::{
     CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
 };
-use agentdash_spi::{FlowCapabilities, McpTransportConfig, SessionMcpServer};
+use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
 use rmcp::{
     ServiceExt,
@@ -122,7 +122,7 @@ impl AgentTool for McpToolAdapter {
 
 pub async fn discover_mcp_tools(
     servers: &[SessionMcpServer],
-    flow_capabilities: &FlowCapabilities,
+    capability_state: &CapabilityState,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
     let mut tools: Vec<DynAgentTool> = Vec::new();
 
@@ -143,7 +143,7 @@ pub async fn discover_mcp_tools(
 
         let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
         for tool in listed {
-            if !flow_capabilities.is_capability_tool_enabled(
+            if !capability_state.is_capability_tool_enabled(
                 &capability_key,
                 tool.name.as_ref(),
                 None,

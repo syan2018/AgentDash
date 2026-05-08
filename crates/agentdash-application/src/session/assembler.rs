@@ -36,7 +36,7 @@ use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::platform::auth::AuthIdentity;
-use agentdash_spi::{FlowCapabilities, SessionContextBundle, Vfs};
+use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
@@ -49,15 +49,15 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     TaskExecutionPhase, build_declared_source_warning_fragment, build_session_context_bundle,
     contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
-    contribute_instruction, contribute_mcp, contribute_workflow_binding,
-    contribute_workspace_static_sources, emit_bundle_fragments, resolve_workspace_declared_sources,
+    contribute_instruction, contribute_workflow_binding, contribute_workspace_static_sources,
+    emit_bundle_fragments, resolve_workspace_declared_sources,
 };
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
-use crate::session::capability_surface::compose_vfs_with_overlay_and_directives;
+use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptSessionRequest, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
@@ -82,7 +82,7 @@ use crate::workspace::BackendAvailability;
 /// - **用户输入侧字段**（`env` / `working_dir` / `prompt_blocks` / `executor_config`）：
 ///   可由 entry 通过 `SessionAssemblyBuilder::with_user_input` 一次性注入，
 ///   也可由 compose 逐项覆盖。最终 `finalize_request` 按"prepared 非空则覆盖 base"语义合并。
-/// - **运行时注入字段**（`mcp_servers` / `vfs` / `flow_capabilities` 等）：compose 产出。
+/// - **运行时注入字段**（`mcp_servers` / `vfs` / `capability_state` 等）：compose 产出。
 /// - **身份与回调字段**（`identity` / `post_turn_handler`）：entry 通过 builder first-class
 ///   方法注入；`finalize_request` 合入 req。2026-04-30 PR 1 Phase 1c 起由 builder 承载，
 ///   不再由调用方在 `finalize_request` 之后手工 `req.xxx = ...` 赋值。
@@ -95,7 +95,7 @@ pub struct PreparedSessionInputs {
     pub executor_config: Option<AgentConfig>,
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     pub vfs: Option<Vfs>,
-    pub flow_capabilities: Option<FlowCapabilities>,
+    pub capability_state: Option<CapabilityState>,
     /// 结构化 session 上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
@@ -122,7 +122,7 @@ pub struct PreparedSessionInputs {
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `hook_snapshot_reload` / `flow_capabilities` | 整体替换为 prepared 值 |
+/// | `context_bundle` / `hook_snapshot_reload` / `capability_state` | 整体替换为 prepared 值 |
 /// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
@@ -166,7 +166,7 @@ pub fn finalize_request(
         req.vfs = prepared.vfs;
     }
     req.mcp_servers = prepared.mcp_servers;
-    req.flow_capabilities = prepared.flow_capabilities;
+    req.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
         req.user_input.env = prepared.env;
     }
@@ -202,7 +202,7 @@ pub struct SessionAssemblyBuilder {
     vfs: Option<Vfs>,
 
     // ── 能力层 ──
-    flow_capabilities: Option<FlowCapabilities>,
+    capability_state: Option<CapabilityState>,
 
     // ── MCP 层 ──
     mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -292,8 +292,8 @@ impl SessionAssemblyBuilder {
     // ── 能力层方法 ────────────────────────────────────────────────
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
-    pub fn with_resolved_capabilities(mut self, flow_capabilities: FlowCapabilities) -> Self {
-        self.flow_capabilities = Some(flow_capabilities);
+    pub fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
+        self.capability_state = Some(capability_state);
         self
     }
 
@@ -301,7 +301,7 @@ impl SessionAssemblyBuilder {
     pub fn with_companion_capabilities(mut self, mode: CompanionSliceMode) -> Self {
         let mapped = map_slice_mode(mode);
         let flow_caps = CapabilityResolver::resolve_companion_caps(mapped);
-        self.flow_capabilities = Some(flow_caps);
+        self.capability_state = Some(flow_caps);
         self
     }
 
@@ -481,7 +481,7 @@ impl SessionAssemblyBuilder {
 
         Self {
             vfs: slice.vfs,
-            flow_capabilities: Some(flow_caps),
+            capability_state: Some(flow_caps),
             mcp_servers: slice.mcp_servers,
             context_bundle: sliced_bundle,
             prompt_blocks: Some(prompt_blocks),
@@ -508,7 +508,7 @@ impl SessionAssemblyBuilder {
             &activation.lifecycle_vfs,
             &activation.mount_directives,
         ));
-        self.flow_capabilities = Some(activation.flow_capabilities.clone());
+        self.capability_state = Some(activation.capability_state.clone());
         self.mcp_servers = activation.mcp_servers.clone();
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
@@ -527,7 +527,7 @@ impl SessionAssemblyBuilder {
             executor_config: self.executor_config,
             mcp_servers: self.mcp_servers,
             vfs: self.vfs,
-            flow_capabilities: self.flow_capabilities,
+            capability_state: self.capability_state,
             context_bundle: self.context_bundle,
             hook_snapshot_reload: self.hook_snapshot_reload,
             workspace_defaults: self.workspace_defaults,
@@ -968,10 +968,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 4. MCP server 列表汇总(request + platform + custom + preset) ──
         let mut session_mcp_servers = spec.request_mcp_servers;
-        for config in &cap_output.platform_mcp_configs {
-            session_mcp_servers.push(config.to_session_mcp_server());
-        }
-        session_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
+        session_mcp_servers.extend(cap_output.state.mcp_servers.iter().cloned());
         session_mcp_servers.extend(spec.agent_mcp.preset_mcp_servers.iter().cloned());
 
         // ── 5. Context markdown 生成 ──
@@ -1072,7 +1069,7 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_prompt_blocks(prompt_blocks)
             .with_executor_config(spec.executor_config)
             .with_mcp_servers(session_mcp_servers)
-            .with_resolved_capabilities(cap_output.flow_capabilities)
+            .with_resolved_capabilities(cap_output.state)
             .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
@@ -1191,8 +1188,7 @@ impl<'a> SessionRequestAssembler<'a> {
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
-        let platform_mcp_configs = cap_output.platform_mcp_configs.clone();
-        let flow_capabilities = cap_output.flow_capabilities.clone();
+        let capability_state = cap_output.state.clone();
 
         // ── 6. 构造 task agent context（Bundle 路径） ──
         let (story_ref, project_ref, workspace_ref) = (spec.story, spec.project, spec.workspace);
@@ -1238,12 +1234,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 ),
             ]));
         }
-        let mut task_mcp_servers: Vec<crate::runtime::RuntimeMcpServer> = Vec::new();
-        for mcp_config in &platform_mcp_configs {
-            let contrib = contribute_mcp(mcp_config);
-            task_mcp_servers.extend(contrib.mcp_servers.iter().cloned());
-            contributions.push(contrib);
-        }
+        let task_mcp_servers = session_mcp_servers_to_runtime(&capability_state.mcp_servers);
         if let (Some(wf), Some(bindings_out)) = (workflow.clone(), resolved_bindings.clone()) {
             contributions.push(contribute_workflow_binding(&wf, &bindings_out));
         }
@@ -1323,19 +1314,13 @@ impl<'a> SessionRequestAssembler<'a> {
         let working_dir = workspace_ref.map(|_| ".".to_string());
 
         // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
-        let mut session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> = platform_mcp_configs
-            .iter()
-            .map(|c| c.to_session_mcp_server())
-            .collect();
-        session_mcp_servers.extend(cap_output.custom_mcp_servers.iter().cloned());
-        session_mcp_servers.extend(crate::runtime_bridge::runtime_mcp_servers_to_session(
-            &task_mcp_servers,
-        ));
+        let session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
+            capability_state.mcp_servers.clone();
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)
             .with_mcp_servers(session_mcp_servers)
-            .with_resolved_capabilities(flow_capabilities)
+            .with_resolved_capabilities(capability_state)
             .with_context_bundle(context_bundle)
             .with_working_dir(working_dir)
             .with_source_summary(source_summary)
@@ -1825,7 +1810,7 @@ pub async fn compose_companion_with_workflow(
 
     let prepared = SessionAssemblyBuilder::new()
         .with_vfs(vfs)
-        .with_resolved_capabilities(activation.flow_capabilities.clone())
+        .with_resolved_capabilities(activation.capability_state.clone())
         .with_mcp_servers(slice.mcp_servers)
         .append_mcp_servers(activation.mcp_servers.iter().cloned())
         .with_optional_context_bundle(merged_bundle)
@@ -2077,7 +2062,7 @@ mod tests {
         let lifecycle_mount =
             build_lifecycle_mount_with_ports(run_id, "test-lifecycle", &["report".to_string()]);
         crate::workflow::StepActivation {
-            flow_capabilities: Default::default(),
+            capability_state: Default::default(),
             mcp_servers: Vec::new(),
             capability_keys: BTreeSet::new(),
             kickoff_prompt: crate::workflow::KickoffPromptFragment {
@@ -2209,7 +2194,7 @@ mod tests {
             &["summary".into()],
         );
         let activation = crate::workflow::StepActivation {
-            flow_capabilities: Default::default(),
+            capability_state: Default::default(),
             mcp_servers: vec![],
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
             kickoff_prompt: crate::workflow::KickoffPromptFragment {

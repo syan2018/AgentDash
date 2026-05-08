@@ -299,7 +299,7 @@ impl SessionHub {
     /// the stream-processing spawn block (whose Future is not Send).
     ///
     /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 augmenter，
-    /// 否则 owner context / MCP / flow_capabilities / context_bundle 会漂移，
+    /// 否则 owner context / MCP / capability_state / context_bundle 会漂移，
     /// Agent 失去工作流背景 → 复读上一轮。因此这里固定走 strict launch：
     /// augmenter 缺失/失败时直接放弃本次 auto-resume，禁止裸请求降级。
     pub(crate) fn schedule_hook_auto_resume(&self, session_id: String) {

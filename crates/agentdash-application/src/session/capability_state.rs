@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::types::{CapabilitySurface, PendingCapabilitySurfaceTransition};
+use super::types::{CapabilityState, PendingCapabilityStateTransition};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,19 +60,19 @@ impl VfsSurfaceDelta {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CapabilitySurfaceDelta {
+pub struct CapabilityStateDelta {
     pub tool_capabilities: SetDelta,
-    pub enabled_clusters: SetDelta,
+    pub tool_clusters: SetDelta,
     pub excluded_tool_paths: SetDelta,
     pub included_tool_paths: SetDelta,
     pub mcp_servers: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
 }
 
-impl CapabilitySurfaceDelta {
+impl CapabilityStateDelta {
     pub fn is_empty(&self) -> bool {
         self.tool_capabilities.is_empty()
-            && self.enabled_clusters.is_empty()
+            && self.tool_clusters.is_empty()
             && self.excluded_tool_paths.is_empty()
             && self.included_tool_paths.is_empty()
             && self.mcp_servers.is_empty()
@@ -82,7 +82,7 @@ impl CapabilitySurfaceDelta {
 
 /// 一次 workflow/runtime 上下文切换的结构化描述。
 ///
-/// 它不是“又一个 surface”，而是把 phase 切换带来的 active workflow、能力表面、
+/// 它把 phase 切换带来的 active workflow、能力状态、
 /// hook/event payload 和 pending metadata 统一放进同一个事务值对象。live apply、
 /// pending next turn、next-turn apply 都应从这里派生事件，避免多个入口各自拼 JSON。
 pub struct RuntimeContextTransition<'a> {
@@ -90,46 +90,43 @@ pub struct RuntimeContextTransition<'a> {
     pub run_id: Option<Uuid>,
     pub lifecycle_key: Option<&'a str>,
     pub apply_mode: &'a str,
-    pub before_surface: Option<&'a CapabilitySurface>,
-    pub after_surface: &'a CapabilitySurface,
+    pub before_state: Option<&'a CapabilityState>,
+    pub after_state: &'a CapabilityState,
     pub capability_keys: &'a BTreeSet<String>,
     pub steering_delivery: Value,
-    pub surface_changed_override: Option<bool>,
+    pub state_changed_override: Option<bool>,
     pub steering_capability_delta: Option<&'a CapabilityDelta>,
 }
 
 impl<'a> RuntimeContextTransition<'a> {
     pub fn event_payload(&self) -> Value {
-        let delta = compute_capability_surface_delta(
-            self.before_surface,
-            self.after_surface,
+        let delta = compute_capability_state_delta(
+            self.before_state,
+            self.after_state,
             self.capability_keys,
         );
-        let surface_changed = self
-            .surface_changed_override
-            .unwrap_or(self.before_surface != Some(self.after_surface));
-        let after_vfs = self.after_surface.vfs.as_ref();
+        let state_changed = self
+            .state_changed_override
+            .unwrap_or(self.before_state != Some(self.after_state));
+        let after_vfs = self.after_state.vfs.as_ref();
         let current_clusters = self
-            .after_surface
-            .flow_capabilities
-            .enabled_clusters
+            .after_state
+            .tool_clusters
             .iter()
             .map(|cluster| format!("{cluster:?}"))
             .collect::<Vec<_>>();
         let current_excluded_paths = self
-            .after_surface
-            .flow_capabilities
+            .after_state
             .excluded_tool_paths()
             .into_iter()
             .collect::<Vec<_>>();
         let current_included_paths = self
-            .after_surface
-            .flow_capabilities
+            .after_state
             .included_tool_paths()
             .into_iter()
             .collect::<Vec<_>>();
         let mcp_servers = self
-            .after_surface
+            .after_state
             .mcp_servers
             .iter()
             .map(|server| server.name.clone())
@@ -142,18 +139,18 @@ impl<'a> RuntimeContextTransition<'a> {
             "run_id": self.run_id.map(|id| id.to_string()),
             "lifecycle_key": self.lifecycle_key,
             "apply_mode": self.apply_mode,
-            "surface_changed": surface_changed,
+            "state_changed": state_changed,
             "delta": delta,
             "tool_capabilities": {
                 "current": self.capability_keys.iter().cloned().collect::<Vec<_>>(),
             },
-            "tool_surface": {
-                "enabled_clusters": current_clusters,
+            "tool_state": {
+                "tool_clusters": current_clusters,
                 "excluded_tool_paths": current_excluded_paths,
                 "included_tool_paths": current_included_paths,
             },
             "mcp": {
-                "server_count": self.after_surface.mcp_servers.len(),
+                "server_count": self.after_state.mcp_servers.len(),
                 "servers": mcp_servers,
             },
             "vfs": {
@@ -177,19 +174,19 @@ impl<'a> RuntimeContextTransition<'a> {
         payload
     }
 
-    pub fn to_pending_capability_surface_transition(
+    pub fn to_pending_capability_state_transition(
         &self,
         id: String,
         source_turn_id: Option<String>,
         created_at: i64,
-    ) -> Option<PendingCapabilitySurfaceTransition> {
-        Some(PendingCapabilitySurfaceTransition {
+    ) -> Option<PendingCapabilityStateTransition> {
+        Some(PendingCapabilityStateTransition {
             id,
             run_id: self.run_id?,
             lifecycle_key: self.lifecycle_key?.to_string(),
             phase_node: self.phase_node.to_string(),
             capability_keys: self.capability_keys.clone(),
-            surface: self.after_surface.clone(),
+            state: self.after_state.clone(),
             created_at,
             source_turn_id,
         })
@@ -212,48 +209,40 @@ pub fn merge_vfs_overlay(mut base: Vfs, overlay: &Vfs) -> Vfs {
     base
 }
 
-pub fn compute_capability_surface_delta(
-    before: Option<&CapabilitySurface>,
-    after: &CapabilitySurface,
+pub fn compute_capability_state_delta(
+    before: Option<&CapabilityState>,
+    after: &CapabilityState,
     after_capability_keys: &BTreeSet<String>,
-) -> CapabilitySurfaceDelta {
+) -> CapabilityStateDelta {
     let before_capabilities = before
-        .map(|surface| surface.flow_capabilities.effective_capability_keys())
+        .map(|state| state.capability_keys())
         .unwrap_or_default();
     let before_clusters = before
-        .map(|surface| {
-            surface
-                .flow_capabilities
-                .enabled_clusters
+        .map(|state| {
+            state
+                .tool_clusters
                 .iter()
                 .map(|cluster| format!("{cluster:?}"))
                 .collect::<BTreeSet<_>>()
         })
         .unwrap_or_default();
     let after_clusters = after
-        .flow_capabilities
-        .enabled_clusters
+        .tool_clusters
         .iter()
         .map(|cluster| format!("{cluster:?}"))
         .collect::<BTreeSet<_>>();
     let before_excluded_paths = before
-        .map(|surface| surface.flow_capabilities.excluded_tool_paths())
+        .map(|state| state.excluded_tool_paths())
         .unwrap_or_default();
     let before_included_paths = before
-        .map(|surface| surface.flow_capabilities.included_tool_paths())
+        .map(|state| state.included_tool_paths())
         .unwrap_or_default();
 
-    CapabilitySurfaceDelta {
+    CapabilityStateDelta {
         tool_capabilities: set_delta(&before_capabilities, after_capability_keys),
-        enabled_clusters: set_delta(&before_clusters, &after_clusters),
-        excluded_tool_paths: set_delta(
-            &before_excluded_paths,
-            &after.flow_capabilities.excluded_tool_paths(),
-        ),
-        included_tool_paths: set_delta(
-            &before_included_paths,
-            &after.flow_capabilities.included_tool_paths(),
-        ),
+        tool_clusters: set_delta(&before_clusters, &after_clusters),
+        excluded_tool_paths: set_delta(&before_excluded_paths, &after.excluded_tool_paths()),
+        included_tool_paths: set_delta(&before_included_paths, &after.included_tool_paths()),
         mcp_servers: named_entity_delta(
             before
                 .map(|surface| surface.mcp_servers.as_slice())
@@ -390,7 +379,7 @@ fn link_key(link: &MountLink) -> String {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::FlowCapabilities;
+    use agentdash_spi::CapabilityState;
 
     fn mount(id: &str, provider: &str) -> Mount {
         Mount {
@@ -452,11 +441,10 @@ mod tests {
     }
 
     #[test]
-    fn event_payload_uses_structured_capability_surface_shape() {
+    fn event_payload_uses_structured_capability_state_shape() {
         let mut capability_keys = BTreeSet::new();
         capability_keys.insert("file_read".to_string());
-        let after_surface = CapabilitySurface {
-            flow_capabilities: FlowCapabilities::default(),
+        let after_state = CapabilityState {
             mcp_servers: Vec::new(),
             vfs: Some(Vfs {
                 mounts: vec![mount("workspace", "relay_fs")],
@@ -465,6 +453,7 @@ mod tests {
                 source_story_id: None,
                 links: Vec::new(),
             }),
+            ..Default::default()
         };
 
         let payload = RuntimeContextTransition {
@@ -472,17 +461,17 @@ mod tests {
             run_id: Some(Uuid::new_v4()),
             lifecycle_key: Some("lc"),
             apply_mode: "live",
-            before_surface: None,
-            after_surface: &after_surface,
+            before_state: None,
+            after_state: &after_state,
             capability_keys: &capability_keys,
             steering_delivery: serde_json::json!({"status": "not_required"}),
-            surface_changed_override: None,
+            state_changed_override: None,
             steering_capability_delta: None,
         }
         .event_payload();
 
         assert!(payload.get("tool_capabilities").is_some());
-        assert!(payload.get("tool_surface").is_some());
+        assert!(payload.get("tool_state").is_some());
         assert!(payload.get("mcp").is_some());
         assert!(payload.get("vfs").is_some());
         assert!(
@@ -495,7 +484,7 @@ mod tests {
         assert!(payload.get("added").is_none());
         assert!(payload.get("removed").is_none());
         assert!(payload.get("capabilities").is_none());
-        assert!(payload.get("enabled_clusters").is_none());
+        assert!(payload.get("tool_clusters").is_none());
         assert!(payload.get("mcp_servers").is_none());
         assert!(payload.get("mounts").is_none());
     }

@@ -420,7 +420,7 @@ impl AppState {
 
         // 注入 PromptRequestAugmenter：让 SessionHub 的 auto-resume 等内部 prompt
         // 路径与 HTTP 主通道共享同一条 `augment_prompt_request_for_owner`，
-        // 避免 owner / MCP / flow_capabilities / context_bundle 漂移。
+        // 避免 owner / MCP / capability_state / context_bundle 漂移。
         {
             let augmenter = Arc::new(
                 crate::bootstrap::prompt_augmenter::AppStatePromptAugmenter::new(state.clone()),

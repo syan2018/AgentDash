@@ -526,7 +526,7 @@ impl ToolCapabilityDirective {
 
 /// 工具能力归约状态机 slot —— 对单个 tool capability key 在一串 directive 后的最终状态。
 ///
-/// 状态转移表：见 `compute_effective_capabilities` 实现。
+/// 状态转移表：见 `compute_capabilities` 实现。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCapabilitySlotState {
     /// 未被任何 directive 命中（对 auto_granted 能力仍可见）。

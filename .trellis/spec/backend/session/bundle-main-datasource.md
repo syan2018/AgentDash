@@ -348,8 +348,8 @@ sequenceDiagram
   prompt 热更（详见 `execution-context-frames.md` §5）；未来切换到
   `bundle.render_section(FragmentScope::RuntimeAgent, RUNTIME_AGENT_CONTEXT_SLOTS)`
   自行渲染。
-- Relay / vibe_kanban：当前不消费 Bundle，走
-  `assembled_system_prompt` 过渡字符串（`execution-context-frames.md` §3.2）。
+- Relay / vibe_kanban：当前主要消费 `context_bundle.rendered_system_prompt`
+  过渡字符串（`execution-context-frames.md` §3.2）。
 
 ## 6. 不变式（DoD 级别）
 

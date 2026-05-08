@@ -13,8 +13,8 @@ use uuid::Uuid;
 use super::SessionHub;
 use crate::capability::build_capability_delta_markdown;
 use crate::session::{
-    CapabilitySurface, PendingCapabilitySurfaceTransition, RuntimeContextTransition,
-    compute_capability_surface_delta,
+    CapabilityState, PendingCapabilityStateTransition, RuntimeContextTransition,
+    compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -25,8 +25,8 @@ pub(crate) struct LiveRuntimeContextTransitionInput {
     pub run_id: Option<Uuid>,
     pub lifecycle_key: Option<String>,
     pub workflow_key: Option<String>,
-    pub before_surface: Option<CapabilitySurface>,
-    pub after_surface: CapabilitySurface,
+    pub before_state: Option<CapabilityState>,
+    pub after_state: CapabilityState,
     pub capability_keys: BTreeSet<String>,
     pub key_delta: CapabilityDelta,
     pub apply_mode: &'static str,
@@ -46,8 +46,8 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub phase_node: String,
     pub run_id: Uuid,
     pub lifecycle_key: String,
-    pub before_surface: Option<CapabilitySurface>,
-    pub after_surface: CapabilitySurface,
+    pub before_state: Option<CapabilityState>,
+    pub after_state: CapabilityState,
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
@@ -59,8 +59,8 @@ impl SessionHub {
         hook_session: &SharedHookSessionRuntime,
         input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
-        let surface_changed = input.before_surface.as_ref() != Some(&input.after_surface);
-        if input.key_delta.is_empty() && !surface_changed {
+        let state_changed = input.before_state.as_ref() != Some(&input.after_state);
+        if input.key_delta.is_empty() && !state_changed {
             self.emit_runtime_context_changed_hook(&input).await;
             return Ok(RuntimeContextTransitionOutcome {
                 capability_delta: None,
@@ -68,9 +68,9 @@ impl SessionHub {
             });
         }
 
-        self.replace_current_capability_surface(&input.session_id, input.after_surface.clone())
+        self.replace_current_capability_state(&input.session_id, input.after_state.clone())
             .await
-            .map_err(|error| format!("Phase node 能力表面热更新失败: {error}"))?;
+            .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
 
         let delta = hook_session.update_capabilities(input.capability_keys.clone());
         let notification_delta = delta.clone().unwrap_or_else(|| input.key_delta.clone());
@@ -83,22 +83,22 @@ impl SessionHub {
             run_id: input.run_id,
             lifecycle_key: input.lifecycle_key.as_deref(),
             apply_mode: input.apply_mode,
-            before_surface: input.before_surface.as_ref(),
-            after_surface: &input.after_surface,
+            before_state: input.before_state.as_ref(),
+            after_state: &input.after_state,
             capability_keys: &input.capability_keys,
             steering_delivery,
-            surface_changed_override: None,
+            state_changed_override: None,
             steering_capability_delta: Some(&notification_delta),
         }
         .event_payload();
 
-        self.emit_capability_surface_changed(
+        self.emit_capability_state_changed(
             &input.session_id,
             input.turn_id.as_deref(),
             event.clone(),
         )
         .await
-        .map_err(|error| format!("Phase node capability surface 事件持久化失败: {error}"))?;
+        .map_err(|error| format!("Phase node capability state 事件持久化失败: {error}"))?;
 
         self.emit_capability_changed_hook(&input.session_id, input.turn_id.as_deref(), event)
             .await;
@@ -113,22 +113,22 @@ impl SessionHub {
         &self,
         input: PendingRuntimeContextTransitionInput,
     ) -> Result<(), String> {
-        let surface_changed = input.before_surface.as_ref() != Some(&input.after_surface);
+        let state_changed = input.before_state.as_ref() != Some(&input.after_state);
         let transition = RuntimeContextTransition {
             phase_node: &input.phase_node,
             run_id: Some(input.run_id),
             lifecycle_key: Some(&input.lifecycle_key),
             apply_mode: "pending_next_turn",
-            before_surface: input.before_surface.as_ref(),
-            after_surface: &input.after_surface,
+            before_state: input.before_state.as_ref(),
+            after_state: &input.after_state,
             capability_keys: &input.capability_keys,
             steering_delivery: serde_json::json!({
                 "status": "deferred_until_next_turn"
             }),
-            surface_changed_override: Some(surface_changed),
+            state_changed_override: Some(state_changed),
             steering_capability_delta: None,
         };
-        let Some(pending_transition) = transition.to_pending_capability_surface_transition(
+        let Some(pending_transition) = transition.to_pending_capability_state_transition(
             input.transition_id,
             input.source_turn_id,
             input.created_at,
@@ -139,16 +139,16 @@ impl SessionHub {
             ));
         };
 
-        self.enqueue_pending_capability_surface_transition(&input.session_id, pending_transition)
+        self.enqueue_pending_capability_state_transition(&input.session_id, pending_transition)
             .await
             .map_err(|error| {
                 format!(
-                    "PhaseNode `{}` 能力表面 pending transition 写入失败: {error}",
+                    "PhaseNode `{}` 能力状态 pending transition 写入失败: {error}",
                     input.phase_node
                 )
             })?;
 
-        self.emit_capability_surface_changed(
+        self.emit_capability_state_changed(
             &input.session_id,
             input.turn_id.as_deref(),
             transition.event_payload(),
@@ -169,8 +169,8 @@ impl SessionHub {
         session_id: &str,
         turn_id: &str,
         hook_session: Option<&SharedHookSessionRuntime>,
-        before_surface: CapabilitySurface,
-        transitions: &[PendingCapabilitySurfaceTransition],
+        before_state: CapabilityState,
+        transitions: &[PendingCapabilityStateTransition],
     ) {
         if transitions.is_empty() {
             return;
@@ -182,24 +182,24 @@ impl SessionHub {
             let _ = hook_session.update_capabilities(last_transition.capability_keys.clone());
         }
 
-        let mut pending_event_before_surface = before_surface;
+        let mut pending_event_before_state = before_state;
         for pending in transitions {
             let payload = RuntimeContextTransition {
                 phase_node: &pending.phase_node,
                 run_id: Some(pending.run_id),
                 lifecycle_key: Some(&pending.lifecycle_key),
                 apply_mode: "applied_on_next_turn",
-                before_surface: Some(&pending_event_before_surface),
-                after_surface: &pending.surface,
+                before_state: Some(&pending_event_before_state),
+                after_state: &pending.state,
                 capability_keys: &pending.capability_keys,
                 steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
-                surface_changed_override: None,
+                state_changed_override: None,
                 steering_capability_delta: None,
             }
             .event_payload();
-            pending_event_before_surface = pending.surface.clone();
+            pending_event_before_state = pending.state.clone();
             let _ = self
-                .emit_capability_surface_changed(session_id, Some(turn_id), payload.clone())
+                .emit_capability_state_changed(session_id, Some(turn_id), payload.clone())
                 .await;
             self.emit_capability_changed_hook(session_id, Some(turn_id), payload)
                 .await;
@@ -215,9 +215,9 @@ impl SessionHub {
             &input.phase_node,
             notification_delta,
             &input.capability_keys,
-            Some(&compute_capability_surface_delta(
-                input.before_surface.as_ref(),
-                &input.after_surface,
+            Some(&compute_capability_state_delta(
+                input.before_state.as_ref(),
+                &input.after_state,
                 &input.capability_keys,
             )),
         );
@@ -253,7 +253,7 @@ impl SessionHub {
                 "lifecycle_key": input.lifecycle_key.as_deref(),
                 "workflow_key": input.workflow_key.as_deref(),
                 "apply_mode": input.apply_mode,
-                "capability_surface_changed": false,
+                "capability_state_changed": false,
                 "reason": "phase_node_context_changed"
             }),
         )

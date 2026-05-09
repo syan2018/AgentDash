@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Runtime tool schema 告知、CapabilityState/tool_policy 与能力 diff 的权威契约"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionTurnFrame、HookTurnStartNotice 与动态 steering 消费边界"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "Bundle 与 per-turn steering 三类语义分离契约"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "runtime_context_update、HookTurnStartNotice 与 HookTrace 的边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端事件 payload 直接 snake_case 映射与类型守卫约束"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Session 事件卡片组件实现规范"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨后端事件协议与前端绘制链路检查"}

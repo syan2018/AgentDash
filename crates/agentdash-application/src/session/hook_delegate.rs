@@ -1564,6 +1564,7 @@ mod tests {
             created_at_ms: 1,
             source: RuntimeEventSource::RuntimeContextUpdate,
             content: "## Capability Update\n- tool schema refreshed".to_string(),
+            runtime_context_notice: None,
         });
         let delegate = HookRuntimeDelegate::new(hook_session.clone());
         let input = agentdash_spi::TransformContextInput {

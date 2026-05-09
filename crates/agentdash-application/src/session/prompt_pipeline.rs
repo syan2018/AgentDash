@@ -419,11 +419,15 @@ impl SessionHub {
         }
 
         if is_owner_bootstrap {
-            enqueue_tool_schema_notice(
+            if let Some(notice) = enqueue_tool_schema_notice(
                 hook_session.as_ref(),
                 ToolSchemaNoticeKind::Initial,
                 &context.turn.assembled_tools,
-            );
+            ) {
+                let _ = self
+                    .emit_runtime_context_notice(&sid, Some(&turn_id), &notice)
+                    .await;
+            }
         }
 
         let mut stream = match self

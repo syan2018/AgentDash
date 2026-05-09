@@ -23,7 +23,7 @@ use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::{RuntimeContextNotice, SharedHookSessionRuntime};
 
 impl SessionHub {
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
@@ -289,6 +289,43 @@ impl SessionHub {
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                 key: "capability_state_changed".to_string(),
+                value,
+            }),
+            session_id,
+            source,
+        )
+        .with_trace(TraceInfo {
+            turn_id: turn_id.map(ToString::to_string),
+            entry_index: None,
+        });
+
+        self.persist_notification(session_id, envelope).await
+    }
+
+    pub(crate) async fn emit_runtime_context_notice(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        notice: &RuntimeContextNotice,
+    ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
+        let connector_type = match self.connector.connector_type() {
+            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
+            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: connector_type.to_string(),
+            executor_id: None,
+        };
+        let value = serde_json::to_value(notice).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("runtime context notice 序列化失败: {error}"),
+            )
+        })?;
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "runtime_context_notice".to_string(),
                 value,
             }),
             session_id,

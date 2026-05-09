@@ -210,12 +210,107 @@ impl RuntimeEventSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTurnStartNotice {
     pub id: String,
     pub created_at_ms: i64,
     pub source: RuntimeEventSource,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_context_notice: Option<RuntimeContextNotice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeContextNotice {
+    pub id: String,
+    pub source: RuntimeEventSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_mode: Option<String>,
+    pub delivery_status: String,
+    pub agent_visible_text: String,
+    #[serde(default)]
+    pub sections: Vec<RuntimeContextNoticeSection>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeContextNoticeSection {
+    CapabilityDelta {
+        #[serde(default)]
+        added_capabilities: Vec<String>,
+        #[serde(default)]
+        removed_capabilities: Vec<String>,
+        #[serde(default)]
+        effective_capabilities: Vec<String>,
+        #[serde(default)]
+        blocked_tool_paths: Vec<String>,
+        #[serde(default)]
+        unblocked_tool_paths: Vec<String>,
+        #[serde(default)]
+        whitelisted_tool_paths: Vec<String>,
+        #[serde(default)]
+        removed_whitelist_paths: Vec<String>,
+        #[serde(default)]
+        added_mcp_servers: Vec<String>,
+        #[serde(default)]
+        removed_mcp_servers: Vec<String>,
+        #[serde(default)]
+        changed_mcp_servers: Vec<String>,
+        #[serde(default)]
+        vfs_mounts_added: Vec<String>,
+        #[serde(default)]
+        vfs_mounts_removed: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_mount_before: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_mount_after: Option<String>,
+    },
+    ToolSchema {
+        #[serde(default)]
+        tools: Vec<RuntimeToolSchemaEntry>,
+    },
+    WorkflowContext {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        injections: Vec<RuntimeHookInjectionEntry>,
+    },
+    HookInjection {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        injections: Vec<RuntimeHookInjectionEntry>,
+    },
+    SystemNotice {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeToolSchemaEntry {
+    pub name: String,
+    pub description: String,
+    pub parameters_schema: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeHookInjectionEntry {
+    pub slot: String,
+    pub source: String,
     pub content: String,
 }
 

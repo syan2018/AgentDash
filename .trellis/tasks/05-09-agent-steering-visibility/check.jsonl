@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "验证 tool schema notice 与能力状态结构化展示没有偏离能力管线契约"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "验证 runtime steering 没有误入 system prompt 或 Bundle 静态路径"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "验证 runtime_context_notice 不被误建模为 HookTrace"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 typecheck/lint/test 和系统事件 UI 质量检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验证前端事件 payload 类型守卫与 snake_case 契约"}

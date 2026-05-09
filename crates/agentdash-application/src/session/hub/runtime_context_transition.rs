@@ -8,15 +8,16 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
-    CapabilityDelta, HookInjection, HookTurnStartNotice, RuntimeEventSource,
+    CapabilityDelta, HookInjection, HookTurnStartNotice, RuntimeContextNotice,
+    RuntimeContextNoticeSection, RuntimeEventSource, RuntimeHookInjectionEntry,
     SharedHookSessionRuntime,
 };
 use uuid::Uuid;
 
-use super::super::hook_messages as msg;
-use super::super::tool_schema_notice::{ToolSchemaNoticeKind, build_tool_schema_notice};
+use super::super::tool_schema_notice::{
+    ToolSchemaNoticeKind, build_tool_schema_notice, finalize_runtime_context_notice,
+};
 use super::SessionHub;
-use crate::capability::build_capability_delta_markdown;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
     RuntimeContextTransition, compute_capability_state_delta,
@@ -120,7 +121,10 @@ impl SessionHub {
             &tools,
             &injections,
         );
-        enqueue_runtime_context_notice(hook_session.as_ref(), input.phase_node.as_str(), notice);
+        self.emit_runtime_context_notice(&input.session_id, input.turn_id.as_deref(), &notice)
+            .await
+            .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
+        enqueue_runtime_context_notice(hook_session.as_ref(), notice);
 
         Ok(RuntimeContextTransitionOutcome {
             capability_delta: delta,
@@ -234,28 +238,20 @@ impl SessionHub {
                     added: state_delta.tool_capabilities.added.clone(),
                     removed: state_delta.tool_capabilities.removed.clone(),
                 };
-                let mut sections = vec![build_capability_delta_markdown(
+                let notice = build_runtime_context_notice(
                     &pending.phase_node,
+                    Some("applied_on_next_turn"),
+                    "applied_before_prompt",
                     &capability_delta,
                     &pending.capability_keys,
                     Some(&state_delta),
-                )];
-                if let Some(tool_block) = build_tool_schema_notice(
-                    ToolSchemaNoticeKind::RuntimeUpdate {
-                        phase_node: &pending.phase_node,
-                    },
                     tools,
-                ) {
-                    sections.push(tool_block);
-                }
-                if let Some(injection_block) = build_runtime_injection_block(&injections) {
-                    sections.push(injection_block);
-                }
-                enqueue_runtime_context_notice(
-                    hook_session.as_ref(),
-                    pending.phase_node.as_str(),
-                    sections.join("\n\n"),
+                    &injections,
                 );
+                let _ = self
+                    .emit_runtime_context_notice(session_id, Some(turn_id), &notice)
+                    .await;
+                enqueue_runtime_context_notice(hook_session.as_ref(), notice);
             }
             pending_event_before_state = pending.state.clone();
         }
@@ -266,13 +262,13 @@ impl SessionHub {
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
         if !injections.is_empty() {
-            let notice = build_context_only_notice(&input.phase_node, &injections);
+            let notice =
+                build_context_only_notice(&input.phase_node, input.apply_mode, &injections);
+            let _ = self
+                .emit_runtime_context_notice(&input.session_id, input.turn_id.as_deref(), &notice)
+                .await;
             if let Some(hook_session) = self.get_hook_session_runtime(&input.session_id).await {
-                enqueue_runtime_context_notice(
-                    hook_session.as_ref(),
-                    input.phase_node.as_str(),
-                    notice,
-                );
+                enqueue_runtime_context_notice(hook_session.as_ref(), notice);
             }
         }
     }
@@ -284,59 +280,150 @@ fn build_live_runtime_context_notice(
     state_delta: &CapabilityStateDelta,
     tools: &[DynAgentTool],
     injections: &[HookInjection],
-) -> String {
-    let mut sections = vec![build_capability_delta_markdown(
+) -> RuntimeContextNotice {
+    build_runtime_context_notice(
         &input.phase_node,
+        Some(input.apply_mode),
+        "queued_for_transform_context",
         notification_delta,
         &input.capability_keys,
         Some(state_delta),
-    )];
-    if let Some(tool_block) = build_tool_schema_notice(
-        ToolSchemaNoticeKind::RuntimeUpdate {
-            phase_node: &input.phase_node,
-        },
         tools,
-    ) {
-        sections.push(tool_block);
-    }
-    if let Some(injection_block) = build_runtime_injection_block(injections) {
-        sections.push(injection_block);
-    }
-    sections.join("\n\n")
+        injections,
+    )
 }
 
-fn build_context_only_notice(phase_node: &str, injections: &[HookInjection]) -> String {
-    let mut sections = vec![format!(
-        "## Runtime Context Update — Step Transition: {phase_node}"
+fn build_runtime_context_notice(
+    phase_node: &str,
+    apply_mode: Option<&str>,
+    delivery_status: &str,
+    capability_delta: &CapabilityDelta,
+    effective_capabilities: &BTreeSet<String>,
+    state_delta: Option<&CapabilityStateDelta>,
+    tools: &[DynAgentTool],
+    injections: &[HookInjection],
+) -> RuntimeContextNotice {
+    let mut sections = vec![build_capability_delta_section(
+        capability_delta,
+        effective_capabilities,
+        state_delta,
     )];
-    if let Some(injection_block) = build_runtime_injection_block(injections) {
-        sections.push(injection_block);
+    if let Some(tool_notice) =
+        build_tool_schema_notice(ToolSchemaNoticeKind::RuntimeUpdate { phase_node }, tools)
+    {
+        sections.extend(tool_notice.sections);
     }
-    sections.join("\n\n")
+    if let Some(injection_section) = build_runtime_injection_section(injections) {
+        sections.push(injection_section);
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    finalize_runtime_context_notice(RuntimeContextNotice {
+        id: format!("runtime-context-{phase_node}-{now}"),
+        source: RuntimeEventSource::RuntimeContextUpdate,
+        phase_node: Some(phase_node.to_string()),
+        apply_mode: apply_mode.map(ToString::to_string),
+        delivery_status: delivery_status.to_string(),
+        agent_visible_text: String::new(),
+        sections,
+        created_at_ms: now,
+    })
+}
+
+fn build_context_only_notice(
+    phase_node: &str,
+    apply_mode: &str,
+    injections: &[HookInjection],
+) -> RuntimeContextNotice {
+    let mut sections = Vec::new();
+    if let Some(injection_section) = build_runtime_injection_section(injections) {
+        sections.push(injection_section);
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    finalize_runtime_context_notice(RuntimeContextNotice {
+        id: format!("runtime-context-{phase_node}-{now}"),
+        source: RuntimeEventSource::RuntimeContextUpdate,
+        phase_node: Some(phase_node.to_string()),
+        apply_mode: Some(apply_mode.to_string()),
+        delivery_status: "queued_for_transform_context".to_string(),
+        agent_visible_text: String::new(),
+        sections,
+        created_at_ms: now,
+    })
 }
 
 fn enqueue_runtime_context_notice(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-    phase_node: &str,
-    content: String,
+    notice: RuntimeContextNotice,
 ) {
     hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
-        id: format!(
-            "runtime-context-{phase_node}-{}",
-            chrono::Utc::now().timestamp_millis()
-        ),
-        created_at_ms: chrono::Utc::now().timestamp_millis(),
+        id: notice.id.clone(),
+        created_at_ms: notice.created_at_ms,
         source: RuntimeEventSource::RuntimeContextUpdate,
-        content,
+        content: notice.agent_visible_text.clone(),
+        runtime_context_notice: Some(notice),
     });
 }
 
-fn build_runtime_injection_block(injections: &[HookInjection]) -> Option<String> {
-    msg::runtime_hook_injection_notification(
-        "Workflow Context Update",
-        "Workflow 运行上下文已更新。以下内容已在同一运行时边界生效：",
-        injections,
-    )
+fn build_capability_delta_section(
+    capability_delta: &CapabilityDelta,
+    effective_capabilities: &BTreeSet<String>,
+    state_delta: Option<&CapabilityStateDelta>,
+) -> RuntimeContextNoticeSection {
+    RuntimeContextNoticeSection::CapabilityDelta {
+        added_capabilities: capability_delta.added.clone(),
+        removed_capabilities: capability_delta.removed.clone(),
+        effective_capabilities: effective_capabilities.iter().cloned().collect(),
+        blocked_tool_paths: state_delta
+            .map(|delta| delta.excluded_tool_paths.added.clone())
+            .unwrap_or_default(),
+        unblocked_tool_paths: state_delta
+            .map(|delta| delta.excluded_tool_paths.removed.clone())
+            .unwrap_or_default(),
+        whitelisted_tool_paths: state_delta
+            .map(|delta| delta.included_tool_paths.added.clone())
+            .unwrap_or_default(),
+        removed_whitelist_paths: state_delta
+            .map(|delta| delta.included_tool_paths.removed.clone())
+            .unwrap_or_default(),
+        added_mcp_servers: state_delta
+            .map(|delta| delta.mcp_servers.added.clone())
+            .unwrap_or_default(),
+        removed_mcp_servers: state_delta
+            .map(|delta| delta.mcp_servers.removed.clone())
+            .unwrap_or_default(),
+        changed_mcp_servers: state_delta
+            .map(|delta| delta.mcp_servers.changed.clone())
+            .unwrap_or_default(),
+        vfs_mounts_added: state_delta
+            .map(|delta| delta.vfs.mounts.added.clone())
+            .unwrap_or_default(),
+        vfs_mounts_removed: state_delta
+            .map(|delta| delta.vfs.mounts.removed.clone())
+            .unwrap_or_default(),
+        default_mount_before: state_delta.and_then(|delta| delta.vfs.default_mount.before.clone()),
+        default_mount_after: state_delta.and_then(|delta| delta.vfs.default_mount.after.clone()),
+    }
+}
+
+fn build_runtime_injection_section(
+    injections: &[HookInjection],
+) -> Option<RuntimeContextNoticeSection> {
+    if injections.is_empty() {
+        return None;
+    }
+    Some(RuntimeContextNoticeSection::WorkflowContext {
+        title: "Workflow Context Update".to_string(),
+        summary: "Workflow 运行上下文已更新。以下内容已在同一运行时边界生效：".to_string(),
+        injections: injections
+            .iter()
+            .map(|injection| RuntimeHookInjectionEntry {
+                slot: injection.slot.clone(),
+                source: injection.source.clone(),
+                content: injection.content.clone(),
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -417,10 +504,34 @@ mod tests {
             &[],
         );
 
-        assert!(notice.contains("## Runtime Tool Schema — Step Transition: apply"));
-        assert!(notice.contains("mcp_agentdash_workflow_tools_upsert_workflow_tool"));
-        assert!(notice.contains("创建或更新 Workflow 定义"));
-        assert!(notice.contains("\"required\": ["));
-        assert!(notice.contains("\"description\": \"Workflow key\""));
+        assert_eq!(notice.phase_node.as_deref(), Some("apply"));
+        assert_eq!(notice.apply_mode.as_deref(), Some("live"));
+        assert!(
+            notice
+                .sections
+                .iter()
+                .any(|section| matches!(section, RuntimeContextNoticeSection::ToolSchema { .. }))
+        );
+        assert!(
+            notice
+                .agent_visible_text
+                .contains("## Runtime Tool Schema — Step Transition: apply")
+        );
+        assert!(
+            notice
+                .agent_visible_text
+                .contains("mcp_agentdash_workflow_tools_upsert_workflow_tool")
+        );
+        assert!(
+            notice
+                .agent_visible_text
+                .contains("创建或更新 Workflow 定义")
+        );
+        assert!(notice.agent_visible_text.contains("\"required\": ["));
+        assert!(
+            notice
+                .agent_visible_text
+                .contains("\"description\": \"Workflow key\"")
+        );
     }
 }

@@ -172,6 +172,25 @@ const directives: CapabilityDirective[] = [
 
 `CapabilityKey` 只用于前端内置能力选项、筛选与展示，不要用它收窄 workflow / agent config 中的 `capability_directives`。`AgentPresetConfig` 这类 API 配置对象需要保持可 JSON 扩展，应继承 `Record<string, unknown>`，再叠加已知字段。
 
+### RuntimeContextNotice 事件契约
+
+`SessionMetaUpdate { key: "runtime_context_notice" }` 的 `value` 是 Agent steering
+的结构化 frame。前端必须在 feature `model/` 层用运行时 parser 将
+`Record<string, unknown>` 映射为 typed object，再交给 UI 卡片渲染；组件文件只负责
+展示，不导出 parser 或非组件工具，避免 React refresh lint 误判。
+
+- 字段名直接沿用后端 snake_case：`agent_visible_text`、`delivery_status`、
+  `capability_key`、`parameters_schema`。
+- 未识别 section kind 应被忽略，而不是回退成“已注入动态上下文”。
+- `hook_trace context_injected` 仅作为普通 hook 事件展示；runtime steering 可视化
+  只能以 `runtime_context_notice` frame 为准。
+- `hook_trace` / `hook_event` 中只要 `injections` 非空，UI 必须直接展示每条
+  injection 的 `slot/source/content` 摘要，并提供完整文本展开。不能只显示
+  “已注入动态上下文”或“N 项注入”而让用户看不到 Agent 实际收到的上下文。
+- `context_injected` / `steering_injected` 若没有携带 `injections`、diagnostics、
+  completion 或 block reason，应视为空壳 trace 静默处理；对应的 runtime turn-start
+  文本应由 `runtime_context_notice` 卡片展示。
+
 ### 状态值归一化
 
 后端可能返回旧版状态名，前端映射函数负责归一化：

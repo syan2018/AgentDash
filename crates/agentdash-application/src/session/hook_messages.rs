@@ -88,18 +88,6 @@ pub(super) fn hook_injection_items_md(injections: &[HookInjection]) -> String {
         .join("\n")
 }
 
-pub(super) fn runtime_hook_injection_notification(
-    title: &str,
-    summary: &str,
-    injections: &[HookInjection],
-) -> Option<String> {
-    if injections.is_empty() {
-        return None;
-    }
-    let items = hook_injection_items_md(injections);
-    Some(format!("[{title}]\n\n{summary}\n\n{items}"))
-}
-
 // ── Auto-resume prompt ──────────────────────────────────────────────────
 
 // 刻意设计为不诱导 Agent 复述/总结上一轮：

@@ -26,6 +26,7 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "companion_review_request",
   "canvas_presented",
   "capability_state_changed",
+  "runtime_context_notice",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([
@@ -38,6 +39,8 @@ const SILENT_HOOK_DECISIONS = new Set<string>([
   "notified",
   "baseline_initialized",
   "baseline_refreshed",
+  "context_injected",
+  "steering_injected",
 ]);
 
 const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set<string>([
@@ -68,7 +71,12 @@ function extractHookDecision(code: string | null | undefined): string | null {
 function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
   if (!data) return true;
 
-  const code = typeof data.code === "string" ? data.code : null;
+  const code =
+    typeof data.code === "string"
+      ? data.code
+      : typeof data.event_type === "string"
+        ? data.event_type
+        : null;
   const decision = extractHookDecision(code);
   if (!decision) return true;
   if (!SILENT_HOOK_DECISIONS.has(decision)) return true;

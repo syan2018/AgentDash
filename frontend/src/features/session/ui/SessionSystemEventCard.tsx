@@ -15,6 +15,7 @@ import {
 } from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./SessionCompanionRequestCard";
+import { RuntimeContextNoticeCard } from "./RuntimeContextNoticeCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface AcpSystemEventCardProps {
@@ -90,6 +91,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
   capability_state_changed:      "能力状态已更新",
+  runtime_context_notice:          "Agent 行为上下文",
   hook_event:                      "流程事件",
   hook_trace:                      "流程事件",
 };
@@ -114,6 +116,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
   capability_state_changed:      "当前会话的工具与上下文能力状态已更新",
+  runtime_context_notice:          "Agent 行为上下文已更新",
   hook_event:                      "流程产生新事件",
   hook_trace:                      "流程产生新事件",
 };
@@ -124,7 +127,7 @@ const HIGH_PRIORITY_HOOK_DECISIONS = new Set(["deny", "ask", "rewrite", "continu
 
 const SUBSTANTIVE_DECISIONS = new Set([
   "deny", "ask", "rewrite", "continue",
-  "context_injected", "steering_injected", "step_advanced",
+  "step_advanced",
 ]);
 
 const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set([
@@ -191,6 +194,10 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
     return <AcpCompanionRequestCard event={event} sessionId={sessionId} />;
   }
 
+  if (eventType === "runtime_context_notice" && eventData) {
+    return <RuntimeContextNoticeCard data={eventData} />;
+  }
+
   // ── hook_trace / hook_event → hook 卡片逻辑 ──
   const isHook = eventType === "hook_event" || eventType === "hook_trace";
   const hookData = isHook ? extractHookEventData(event, eventData) : null;
@@ -212,6 +219,20 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
 
     const verboseWrapper = (node: ReactNode) =>
       hasSubstance ? node : <div className="opacity-50">{node}</div>;
+
+    if (hookData?.injections?.length) {
+      return verboseWrapper(
+        <HookInjectionEventCard
+          token={token}
+          badge={badge}
+          decision={decision}
+          hookData={hookData}
+          eventMessage={eventMessage}
+          completionLine={completionLine}
+          diagnosticsBody={diagBody}
+        />
+      );
+    }
 
     if (isHighPriorityHookEvent(hookData, decision)) {
       const detailLines: string[] = [];
@@ -287,10 +308,115 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
   );
 }
 
+function HookInjectionEventCard({
+  token,
+  badge,
+  decision,
+  hookData,
+  eventMessage,
+  completionLine,
+  diagnosticsBody,
+}: {
+  token: string;
+  badge: string;
+  decision: string | null;
+  hookData: HookEventData;
+  eventMessage: string | null;
+  completionLine: string | null;
+  diagnosticsBody: ReactNode;
+}) {
+  const injections = hookData.injections ?? [];
+  const detailLines = completionLine ? [completionLine] : [];
+
+  return (
+    <EventFullCard
+      badgeToken={token}
+      badgeClass={badge}
+      subtitle={eventMessage ?? resolveDecisionLabel(decision, hookData)}
+      message={resolveInjectionEventMessage(decision, injections.length)}
+      detailLines={detailLines}
+      bodyExtra={<HookInjectionBody injections={injections} />}
+      debugChips={buildHookDebugChips(hookData, null)}
+      debugLines={buildHookDebugMeta(hookData)}
+      debugBody={diagnosticsBody}
+    />
+  );
+}
+
+function HookInjectionBody({
+  injections,
+}: {
+  injections: NonNullable<HookEventData["injections"]>;
+}) {
+  return (
+    <div className="space-y-2">
+      {injections.map((injection, index) => {
+        const slot = injection.slot ?? "context";
+        const source = injection.source ?? "unknown";
+        const content = injection.content ?? "";
+        const lines = content.split("\n").filter((line) => line.trim().length > 0);
+        const preview = lines.slice(0, 2).join("\n");
+        const hiddenLineCount = Math.max(lines.length - 2, 0);
+
+        return (
+          <div
+            key={`${slot}:${source}:${index}`}
+            className="space-y-1.5 border-l-2 border-primary/20 pl-2.5"
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
+                {slot}
+              </span>
+              <span className="min-w-0 truncate rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
+                {source}
+              </span>
+            </div>
+            {preview ? (
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
+                {preview}
+                {hiddenLineCount > 0 ? `\n... 另 ${hiddenLineCount} 行` : ""}
+              </pre>
+            ) : (
+              <p className="text-xs leading-5 text-muted-foreground">空注入内容</p>
+            )}
+            {content && hiddenLineCount > 0 && (
+              <details className="group">
+                <summary className="cursor-pointer select-none text-[10px] text-muted-foreground/60">
+                  展开完整注入文本
+                </summary>
+                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-secondary/20 p-2 text-xs leading-relaxed text-foreground/75">
+                  {content}
+                </pre>
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function resolveInjectionEventMessage(decision: string | null, count: number): string {
+  switch (decision) {
+    case "baseline_initialized":
+      return `Agent baseline 已注入 ${count} 项上下文`;
+    case "baseline_refreshed":
+      return `Agent baseline 已刷新 ${count} 项上下文`;
+    case "context_injected":
+      return `Agent 收到 ${count} 项上下文注入`;
+    case "steering_injected":
+      return `Agent 收到 ${count} 项流程约束`;
+    default:
+      return `Agent 收到 ${count} 项 hook 注入`;
+  }
+}
+
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
 function resolveDecisionToken(decision: string | null | undefined): string {
   switch (decision) {
+    case "baseline_initialized":
+    case "baseline_refreshed": return "BASE";
     case "context_injected":  return "CTX";
     case "steering_injected": return "STEER";
     case "step_advanced":     return "STEP";

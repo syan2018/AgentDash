@@ -9,7 +9,8 @@ use agentdash_agent_protocol::{
 use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_spi::hooks::{
     ExecutionHookProvider, HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    HookTrigger, RuntimeContextNotice, RuntimeContextNoticeSection, RuntimeEventSource,
+    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionSessionFrame,
@@ -1190,6 +1191,57 @@ async fn emit_capability_state_changed_persists_structured_event() {
     match &event.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
             assert_eq!(value, &payload);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn emit_runtime_context_notice_persists_agent_visible_frame() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub
+        .create_session("runtime-context-notice")
+        .await
+        .expect("create session");
+
+    let notice = RuntimeContextNotice {
+        id: "runtime-context-apply-1".to_string(),
+        source: RuntimeEventSource::RuntimeContextUpdate,
+        phase_node: Some("apply".to_string()),
+        apply_mode: Some("live".to_string()),
+        delivery_status: "queued_for_transform_context".to_string(),
+        agent_visible_text: "## Runtime Tool Schema — Step Transition: apply".to_string(),
+        sections: vec![RuntimeContextNoticeSection::ToolSchema { tools: vec![] }],
+        created_at_ms: 1,
+    };
+
+    hub.emit_runtime_context_notice(&session.id, Some("turn-42"), &notice)
+        .await
+        .expect("emit runtime context notice");
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let event = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("runtime_context_notice")
+        })
+        .expect("runtime context notice event should exist");
+
+    assert_eq!(event.turn_id.as_deref(), Some("turn-42"));
+    match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            assert_eq!(value["agent_visible_text"], notice.agent_visible_text);
+            assert_eq!(value["phase_node"], "apply");
         }
         other => panic!("unexpected event: {other:?}"),
     }

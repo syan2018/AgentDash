@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentdash_application::backend_transport::BackendTransport;
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    WORKSPACE_DETECT_ACTION, WorkspaceDetectInput,
+    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WorkspaceDetectGitInput,
+    WorkspaceDetectGitOutput, WorkspaceDetectInput,
 };
 use agentdash_application::workspace::WorkspaceDetectionResult;
 use agentdash_domain::common::MountCapability;
@@ -94,14 +94,6 @@ pub struct DetectGitResponse {
     pub source_repo: Option<String>,
     pub branch: Option<String>,
     pub commit_hash: Option<String>,
-}
-
-#[derive(Debug)]
-pub(crate) struct GitDetectionResult {
-    pub(crate) is_git_repo: bool,
-    pub(crate) source_repo: Option<String>,
-    pub(crate) branch: Option<String>,
-    pub(crate) commit_hash: Option<String>,
 }
 
 pub async fn list_workspaces(
@@ -354,10 +346,10 @@ pub async fn detect_git(
     }
 
     let backend_id = require_backend_id(req.backend_id.as_deref())?;
-    let result = detect_git_via_backend(&state, backend_id, root_ref).await?;
+    let result = invoke_workspace_detect_git(&state, backend_id, root_ref).await?;
 
     Ok(Json(DetectGitResponse {
-        resolved_root_ref: root_ref.to_string(),
+        resolved_root_ref: result.resolved_root_ref,
         is_git_repo: result.is_git_repo,
         source_repo: result.source_repo,
         branch: result.branch,
@@ -541,21 +533,31 @@ fn require_backend_id(raw: Option<&str>) -> Result<&str, ApiError> {
         .ok_or_else(|| ApiError::BadRequest("detect_git 必须显式提供 backend_id".into()))
 }
 
-pub(crate) async fn detect_git_via_backend(
+async fn invoke_workspace_detect_git(
     state: &Arc<AppState>,
     backend_id: &str,
     root_ref: &str,
-) -> Result<GitDetectionResult, ApiError> {
-    let transport: &dyn BackendTransport = state.services.backend_registry.as_ref();
-    let info = transport
-        .detect_git_repo(backend_id, root_ref)
-        .await
-        .map_err(|e| ApiError::Internal(format!("detect_git 失败: {e}")))?;
-
-    Ok(GitDetectionResult {
-        is_git_repo: info.is_git_repo,
-        source_repo: info.source_repo,
-        branch: info.branch,
-        commit_hash: info.commit_hash,
+) -> Result<WorkspaceDetectGitOutput, ApiError> {
+    let input = serde_json::to_value(WorkspaceDetectGitInput {
+        backend_id: backend_id.to_string(),
+        root_ref: root_ref.to_string(),
+    })
+    .map_err(|error| ApiError::BadRequest(format!("workspace.detect_git 输入非法: {error}")))?;
+    let request = RuntimeInvocationRequest::new(
+        RuntimeActionKey::parse(WORKSPACE_DETECT_GIT_ACTION).map_err(|error| {
+            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
+        })?,
+        RuntimeActor::PlatformUser { user_id: None },
+        RuntimeContext::Setup {
+            project_id: None,
+            workspace_id: None,
+            backend_id: Some(backend_id.to_string()),
+            root_ref: Some(root_ref.to_string()),
+        },
+        input,
+    );
+    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    serde_json::from_value::<WorkspaceDetectGitOutput>(invocation.output.output).map_err(|error| {
+        ApiError::Internal(format!("workspace.detect_git 返回值解析失败: {error}"))
     })
 }

@@ -17,7 +17,8 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{
-    McpProbeTransportProvider, RuntimeGateway, WorkspaceDetectProvider,
+    McpProbeTransportProvider, RuntimeGateway, WorkspaceBrowseDirectoryProvider,
+    WorkspaceDetectGitProvider, WorkspaceDetectProvider,
 };
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
@@ -202,7 +203,7 @@ impl AppState {
 
         let backend_registry = BackendRegistry::new();
         let mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
-        let workspace_detect_transport: Arc<
+        let setup_action_transport: Arc<
             dyn agentdash_application::backend_transport::BackendTransport,
         > = backend_registry.clone();
         let runtime_gateway = Arc::new(
@@ -211,7 +212,13 @@ impl AppState {
                     mcp_probe_relay,
                 ))))
                 .with_provider(Arc::new(WorkspaceDetectProvider::new(
-                    workspace_detect_transport,
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
+                    setup_action_transport,
                 ))),
         );
         let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();

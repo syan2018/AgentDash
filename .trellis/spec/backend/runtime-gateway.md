@@ -50,7 +50,9 @@ pub struct ServiceSet {
 
 ```rust
 pub const MCP_PROBE_TRANSPORT_ACTION: &str = "mcp.probe_transport";
+pub const WORKSPACE_BROWSE_DIRECTORY_ACTION: &str = "workspace.browse_directory";
 pub const WORKSPACE_DETECT_ACTION: &str = "workspace.detect";
+pub const WORKSPACE_DETECT_GIT_ACTION: &str = "workspace.detect_git";
 ```
 
 ### 3. Contracts
@@ -90,6 +92,51 @@ pub struct WorkspaceDetectInput {
 WorkspaceDetectionResult
 ```
 
+`workspace.detect_git` 输入：
+
+```rust
+pub struct WorkspaceDetectGitInput {
+    pub backend_id: String,
+    pub root_ref: String,
+}
+```
+
+`workspace.detect_git` 输出：
+
+```rust
+pub struct WorkspaceDetectGitOutput {
+    pub resolved_root_ref: String,
+    pub is_git_repo: bool,
+    pub source_repo: Option<String>,
+    pub branch: Option<String>,
+    pub commit_hash: Option<String>,
+}
+```
+
+`workspace.browse_directory` 输入：
+
+```rust
+pub struct WorkspaceBrowseDirectoryInput {
+    pub backend_id: String,
+    pub path: Option<String>,
+}
+```
+
+`workspace.browse_directory` 输出：
+
+```rust
+pub struct WorkspaceBrowseDirectoryOutput {
+    pub current_path: String,
+    pub entries: Vec<WorkspaceBrowseDirectoryEntry>,
+}
+
+pub struct WorkspaceBrowseDirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+```
+
 HTTP route 保持原响应契约，不能让前端看到 Gateway 内部 envelope：
 
 ```rust
@@ -100,6 +147,14 @@ Response: ProbeResult
 POST /api/projects/{project_id}/workspaces/detect
 Request: DetectWorkspaceRequest
 Response: DetectWorkspaceResponse
+
+POST /api/workspaces/detect-git
+Request: DetectGitRequest
+Response: DetectGitResponse
+
+POST /api/backends/{backend_id}/browse
+Request: BrowseDirectoryRequest
+Response: BrowseDirectoryResponse
 ```
 
 ### 4. Validation & Error Matrix
@@ -123,6 +178,9 @@ Response: DetectWorkspaceResponse
 - Bad: route 直接调用 `probe_transport`、直接拼 relay command，或把 Setup Action 暴露给 Session Runtime Surface。
 - Good: `workspace.detect` provider 复用 `detect_workspace_from_backend` 与 `BackendTransport`，API route 只在 Gateway output 后做 matched workspace 计算和响应 DTO 映射。
 - Bad: `workspace.detect` route 直接依赖 `BackendRegistry` 拼 `workspace_detect` relay command，或在 route 中复制 identity 推断逻辑。
+- Good: `workspace.detect_git` provider 通过 `BackendTransport::detect_git_repo` 复用现有 workspace probe 事实，API route 只保持旧响应 DTO。
+- Good: `workspace.browse_directory` provider 通过 `BackendTransport::browse_directory` 复用现有 relay/local 目录浏览实现，API route 不再直接拼 `CommandBrowseDirectory`。
+- Bad: 目录浏览属于本机广域枚举能力，只能作为 Setup Action 暴露给 platform/environment actor；不得进入普通 Canvas/Agent/Workflow runtime surface。
 
 ### 6. Tests Required
 
@@ -130,6 +188,8 @@ Response: DetectWorkspaceResponse
 - Provider 单测：stdio probe 在无 relay 时返回 `ProbeResult::Error` payload，而不是 HTTP/Gateway 错误。
 - Provider 单测：`workspace.detect` 的空 `root_ref` 返回 `InvalidRequest`，backend 离线返回 `Conflict`。
 - Provider 单测：`workspace.detect` 成功返回 `WorkspaceDetectionResult` payload，至少覆盖 Git identity 推断。
+- Provider 单测：`workspace.detect_git` 的空 `root_ref` 返回 `InvalidRequest`，backend 离线返回 `Conflict`，成功时返回 Git probe payload。
+- Provider 单测：`workspace.browse_directory` 的 backend 离线返回 `Conflict`，成功时返回目录 entries payload。
 - Gateway 单测：Setup Action 拒绝 session actor。
 - API route 相关测试：原 route 响应类型保持 `ProbeResult`，`RuntimeInvocationError` 能映射到 `ApiError`。
 - Check：至少运行 `cargo test -p agentdash-application runtime_gateway`、相关 API route/rpc 测试，以及受影响 crate 的 `cargo check`。

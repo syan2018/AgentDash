@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_application::backend_transport::{
-    BackendTransport, GitRepoInfo, P4WorkspaceInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionEvent, RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
+    BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
+    RelayPromptRequest, RelayPromptTransport, RelaySessionEvent, RemoteExecutorInfo,
+    TransportError, WorkspaceProbeInfo,
 };
 pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
 use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{
-    AgentConfigRelay, CommandCancelPayload, CommandPromptPayload, CommandWorkspaceDetectPayload,
-    RelayMessage, ResponsePromptPayload,
+    AgentConfigRelay, CommandBrowseDirectoryPayload, CommandCancelPayload, CommandPromptPayload,
+    CommandWorkspaceDetectPayload, RelayMessage, ResponsePromptPayload,
 };
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -83,6 +84,53 @@ impl BackendTransport for BackendRegistry {
             ))),
             _ => Err(TransportError::OperationFailed(
                 "远程 workspace_detect 返回了意外响应".into(),
+            )),
+        }
+    }
+
+    async fn browse_directory(
+        &self,
+        backend_id: &str,
+        path: Option<&str>,
+    ) -> Result<DirectoryBrowseInfo, TransportError> {
+        if !self.is_online(backend_id).await {
+            return Err(TransportError::BackendOffline(backend_id.to_string()));
+        }
+        let cmd = RelayMessage::CommandBrowseDirectory {
+            id: RelayMessage::new_id("browse-dir"),
+            payload: CommandBrowseDirectoryPayload {
+                path: path.map(str::to_string),
+            },
+        };
+        let resp = self.send_command(backend_id, cmd).await.map_err(|e| {
+            TransportError::OperationFailed(format!("relay browse_directory 失败: {e}"))
+        })?;
+
+        match resp {
+            RelayMessage::ResponseBrowseDirectory {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(DirectoryBrowseInfo {
+                current_path: payload.current_path,
+                entries: payload
+                    .entries
+                    .into_iter()
+                    .map(|entry| DirectoryEntryInfo {
+                        name: entry.name,
+                        path: entry.path,
+                        is_dir: entry.is_dir,
+                    })
+                    .collect(),
+            }),
+            RelayMessage::ResponseBrowseDirectory {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程 browse_directory 错误: {}",
+                err.message
+            ))),
+            _ => Err(TransportError::OperationFailed(
+                "远程 browse_directory 返回了意外响应".into(),
             )),
         }
     }

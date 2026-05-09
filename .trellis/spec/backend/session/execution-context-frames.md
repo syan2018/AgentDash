@@ -105,16 +105,18 @@ pub struct ExecutionTurnFrame {
 
 ### 3.2 `rendered_system_prompt` 的过渡地位
 
-- **当前**：`prompt_pipeline` 调 `assemble_system_prompt(SystemPromptInput { context_bundle: req.context_bundle.as_ref(), ... })` 预渲染出字符串，塞进 `context_bundle.rendered_system_prompt`。
+- **当前**：`prompt_pipeline` 调 `assemble_system_prompt(SystemPromptInput { ... })`
+  只预渲染稳定 core identity 字符串，塞进 `context_bundle.rendered_system_prompt`。
+  Project Context、Workspace、Skills、Hook Runtime 等动态内容不得进入此字段。
 - **PiAgent** 仍在 is_new_agent 分支 / bundle_id 变化分支使用这段字符串调
-  `agent.set_system_prompt(...)`（见 `pi_agent/connector.rs:335-387`）；
-  理由：PiAgent 直接消费 Bundle 的 render 能力已就位，但让 connector 自行渲染
-  会把 `render_runtime_section` 的责任下沉到 executor 层，目前选择渐进路径 β
-  （见 PRD Out of Scope · Bundle α 化）。
+  `agent.set_system_prompt(...)`（见 `pi_agent/connector.rs`）；但它只承载稳定
+  身份/协议。动态上下文由独立 `ContextFrame` 经 turn-start delivery boundary
+  投递。
 - **Relay / vibe_kanban** 必须继续吃这段字符串，因为 Relay / vibe_kanban 尚未完整消费
-  结构化 `context_bundle`；vibe_kanban 做 prompt 前置。
-- **计划下线路径**：Relay 协议扩展 Bundle → 所有 connector 直读
-  `context_bundle` → 删除本字段（out of scope，独立任务）。
+  结构化 `context_bundle`；vibe_kanban 做 prompt 前置。但该字符串不再包含动态
+  session surface。
+- **计划下线路径**：Relay 协议扩展 ContextFrame/Bundle 直读 → 所有 connector 直读
+  frame list → 删除本字段（out of scope，独立任务）。
 
 ### 3.3 `hook_session` 的 Arc 共享
 

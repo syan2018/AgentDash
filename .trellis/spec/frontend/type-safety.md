@@ -186,6 +186,11 @@ const directives: CapabilityDirective[] = [
 - runtime 工具变化展示消费 `tool_schema_delta` section；主视图只展示本次 delta，
   不展示完整当前工具 schema。完整 tool list 是 provider request 的执行层事实，
   不是 context frame 主视图内容。
+- 启动期 surface 使用独立 frame/section：`workspace_surface` 展示工作目录、
+  default mount 与 mounts；`skill_surface` 展示可由模型按需加载的 skills 与
+  read tool；`hook_runtime_surface` 展示 Hook Runtime 启用状态与 pending action
+  数量。前端可以在 `useSessionFeed` 把相邻 `context_frame` 折叠为批量更新组，
+  但单张 `ContextFrameCard` 必须保留每个 frame 自己的 `kind` 与 section。
 - 相邻 `context_frame` event 应由 `useSessionFeed` 聚合成“Agent 上下文批量更新”
   组，默认展示 frame 数、section 数与 kind 摘要；展开后再渲染每个
   `ContextFrameCard`。不要在用户主视图中平铺一串 verbose frame。

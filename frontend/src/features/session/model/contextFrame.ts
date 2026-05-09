@@ -15,12 +15,30 @@ export interface ContextFrame {
 }
 
 export type ContextFrameSection =
+  | BootstrapContextSection
   | CapabilityDeltaSection
   | ToolSchemaSection
   | ToolSchemaDeltaSection
   | WorkflowContextSection
   | HookInjectionSection
-  | SystemNoticeSection;
+  | SystemNoticeSection
+  | WorkspaceSurfaceSection
+  | SkillSurfaceSection
+  | HookRuntimeSurfaceSection;
+
+export interface BootstrapContextSection {
+  kind: "bootstrap_context";
+  title: string;
+  summary: string;
+  fragments: RuntimeContextFragmentEntry[];
+}
+
+export interface RuntimeContextFragmentEntry {
+  slot: string;
+  label: string;
+  source: string;
+  content: string;
+}
 
 export interface CapabilityDeltaSection {
   kind: "capability_delta";
@@ -83,6 +101,45 @@ export interface SystemNoticeSection {
   body?: string;
 }
 
+export interface WorkspaceSurfaceSection {
+  kind: "workspace_surface";
+  title: string;
+  summary: string;
+  working_directory?: string;
+  default_mount?: string;
+  mounts: RuntimeWorkspaceMountEntry[];
+}
+
+export interface RuntimeWorkspaceMountEntry {
+  id: string;
+  display_name: string;
+  provider: string;
+  root_ref: string;
+  capabilities: string[];
+}
+
+export interface SkillSurfaceSection {
+  kind: "skill_surface";
+  title: string;
+  summary: string;
+  read_tool?: string;
+  skills: RuntimeSkillEntry[];
+}
+
+export interface RuntimeSkillEntry {
+  name: string;
+  description: string;
+  file_path: string;
+  disable_model_invocation: boolean;
+}
+
+export interface HookRuntimeSurfaceSection {
+  kind: "hook_runtime_surface";
+  title: string;
+  summary: string;
+  pending_action_count: number;
+}
+
 export interface RuntimeHookInjectionEntry {
   slot: string;
   source: string;
@@ -119,6 +176,15 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
 function parseSection(value: unknown): ContextFrameSection | null {
   if (!isRecord(value)) return null;
   const kind = readString(value.kind);
+  if (kind === "bootstrap_context") {
+    const fragments = Array.isArray(value.fragments) ? value.fragments : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Bootstrap Context",
+      summary: readString(value.summary) ?? "",
+      fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
+    };
+  }
   if (kind === "capability_delta") {
     return {
       kind,
@@ -174,7 +240,49 @@ function parseSection(value: unknown): ContextFrameSection | null {
       body: readString(value.body) ?? undefined,
     };
   }
+  if (kind === "workspace_surface") {
+    const mounts = Array.isArray(value.mounts) ? value.mounts : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Workspace Surface",
+      summary: readString(value.summary) ?? "",
+      working_directory: readString(value.working_directory) ?? undefined,
+      default_mount: readString(value.default_mount) ?? undefined,
+      mounts: mounts.map(parseWorkspaceMountEntry).filter((item): item is RuntimeWorkspaceMountEntry => item != null),
+    };
+  }
+  if (kind === "skill_surface") {
+    const skills = Array.isArray(value.skills) ? value.skills : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Skill Surface",
+      summary: readString(value.summary) ?? "",
+      read_tool: readString(value.read_tool) ?? undefined,
+      skills: skills.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
+    };
+  }
+  if (kind === "hook_runtime_surface") {
+    return {
+      kind,
+      title: readString(value.title) ?? "Hook Runtime Surface",
+      summary: readString(value.summary) ?? "",
+      pending_action_count: readNumber(value.pending_action_count) ?? 0,
+    };
+  }
   return null;
+}
+
+function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null {
+  if (!isRecord(value)) return null;
+  const slot = readString(value.slot);
+  const content = readString(value.content) ?? "";
+  if (!slot && !content) return null;
+  return {
+    slot: slot ?? "context",
+    label: readString(value.label) ?? slot ?? "context",
+    source: readString(value.source) ?? "unknown",
+    content,
+  };
 }
 
 function parseToolSchemaEntry(value: unknown): RuntimeToolSchemaEntry | null {
@@ -198,6 +306,31 @@ function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
     slot: readString(value.slot) ?? "context",
     source: readString(value.source) ?? "unknown",
     content: readString(value.content) ?? "",
+  };
+}
+
+function parseWorkspaceMountEntry(value: unknown): RuntimeWorkspaceMountEntry | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value.id);
+  if (!id) return null;
+  return {
+    id,
+    display_name: readString(value.display_name) ?? id,
+    provider: readString(value.provider) ?? "unknown",
+    root_ref: readString(value.root_ref) ?? "",
+    capabilities: readStringArray(value.capabilities),
+  };
+}
+
+function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
+  if (!isRecord(value)) return null;
+  const name = readString(value.name);
+  if (!name) return null;
+  return {
+    name,
+    description: readString(value.description) ?? "",
+    file_path: readString(value.file_path) ?? "",
+    disable_model_invocation: value.disable_model_invocation === true,
   };
 }
 

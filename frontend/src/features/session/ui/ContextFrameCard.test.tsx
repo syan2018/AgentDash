@@ -22,6 +22,40 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("工具 Schema 变化 1 项变化");
     expect(markup).not.toContain("工具 Schema 变化 2 项变化");
   });
+
+  it("解析 bootstrap_context section", () => {
+    const notice = parseContextFrame(sampleBootstrapNotice());
+
+    expect(notice?.kind).toBe("bootstrap_context");
+    expect(notice?.sections[0]?.kind).toBe("bootstrap_context");
+    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleBootstrapNotice()} />);
+
+    expect(markup).toContain("Bootstrap Context 2 个片段");
+    expect(markup).toContain("Agent 上下文已更新");
+  });
+
+  it("解析并渲染独立 surface frames", () => {
+    const workspace = parseContextFrame(sampleWorkspaceSurfaceNotice());
+    const skill = parseContextFrame(sampleSkillSurfaceNotice());
+    const hook = parseContextFrame(sampleHookRuntimeSurfaceNotice());
+
+    expect(workspace?.kind).toBe("workspace_surface");
+    expect(workspace?.sections[0]?.kind).toBe("workspace_surface");
+    expect(skill?.sections[0]?.kind).toBe("skill_surface");
+    expect(hook?.sections[0]?.kind).toBe("hook_runtime_surface");
+
+    const markup = renderToStaticMarkup(
+      <>
+        <ContextFrameCard data={sampleWorkspaceSurfaceNotice()} />
+        <ContextFrameCard data={sampleSkillSurfaceNotice()} />
+        <ContextFrameCard data={sampleHookRuntimeSurfaceNotice()} />
+      </>
+    );
+
+    expect(markup).toContain("Workspace Surface 1 个挂载");
+    expect(markup).toContain("Skill Surface 1 个 skill");
+    expect(markup).toContain("Hook Runtime Surface 2 个 pending action");
+  });
 });
 
 function sampleNotice(): Record<string, unknown> {
@@ -75,4 +109,120 @@ function sampleNotice(): Record<string, unknown> {
         },
       ],
     };
+}
+
+function sampleBootstrapNotice(): Record<string, unknown> {
+  return {
+    id: "bootstrap-context-task-1",
+    kind: "bootstrap_context",
+    source: "runtime_context_update",
+    phase_node: "task_start",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Bootstrap Context",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "bootstrap_context",
+        title: "Bootstrap Context",
+        summary: "Session 启动上下文已注入",
+        fragments: [
+          {
+            slot: "user_preferences",
+            label: "User Preferences",
+            source: "settings:user_preferences",
+            content: "- 中文交流",
+          },
+          {
+            slot: "task",
+            label: "Task",
+            source: "test",
+            content: "处理 ContextFrame",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleWorkspaceSurfaceNotice(): Record<string, unknown> {
+  return {
+    id: "workspace-surface-1",
+    kind: "workspace_surface",
+    source: "runtime_context_update",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Workspace Surface",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "workspace_surface",
+        title: "Workspace Surface",
+        summary: "当前工作目录与 1 个 VFS 挂载已作为独立上下文帧注入。",
+        working_directory: "/repo",
+        default_mount: "workspace",
+        mounts: [
+          {
+            id: "workspace",
+            display_name: "Workspace",
+            provider: "local",
+            root_ref: "/repo",
+            capabilities: ["read", "write"],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleSkillSurfaceNotice(): Record<string, unknown> {
+  return {
+    id: "skill-surface-1",
+    kind: "skill_surface",
+    source: "runtime_context_update",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Skill Surface",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "skill_surface",
+        title: "Skill Surface",
+        summary: "当前有 1 个可由模型按需加载的 skill。",
+        read_tool: "fs_read",
+        skills: [
+          {
+            name: "trellis-check",
+            description: "质量验证",
+            file_path: "/repo/.agents/skills/trellis-check/SKILL.md",
+            disable_model_invocation: false,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleHookRuntimeSurfaceNotice(): Record<string, unknown> {
+  return {
+    id: "hook-runtime-surface-1",
+    kind: "hook_runtime_surface",
+    source: "runtime_context_update",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Hook Runtime Surface",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "hook_runtime_surface",
+        title: "Hook Runtime Surface",
+        summary: "Hook Runtime 已启用",
+        pending_action_count: 2,
+      },
+    ],
+  };
 }

@@ -91,6 +91,11 @@ impl SessionHub {
                 let effects = resolution.effects.clone();
                 let injections = resolution.injections.clone();
                 if let Some(trace_trigger) = trigger.trace_trigger() {
+                    let trace_injections = if matches!(trigger, HookTrigger::SessionStart) {
+                        Vec::new()
+                    } else {
+                        resolution.injections.clone()
+                    };
                     let trace = HookTraceEntry {
                         sequence: hook_session.next_trace_sequence(),
                         timestamp_ms: chrono::Utc::now().timestamp_millis(),
@@ -105,7 +110,7 @@ impl SessionHub {
                         block_reason: resolution.block_reason,
                         completion: resolution.completion,
                         diagnostics: resolution.diagnostics,
-                        injections: resolution.injections,
+                        injections: trace_injections,
                     };
                     hook_session.append_trace(trace.clone());
                     // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx

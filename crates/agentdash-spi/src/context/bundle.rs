@@ -2,8 +2,8 @@
 //!
 //! Bundle 统一承载一个 session 在某个 phase / turn 下产出的所有 `ContextFragment`，
 //! 按 scope 过滤提供给下游消费者（PiAgent F1 / title generator / summarizer / bridge replay /
-//! audit bus）。Bundle 本身不做渲染决策；具体的系统 prompt 结构由 PiAgent connector
-//! 通过 `render_section(scope, &[slot])` 按 slot 白名单组装。
+//! audit bus）。Bundle 本身不做渲染决策；Agent 可见内容由 application 层的
+//! ContextFrame builder 按 slot 白名单组装。
 //!
 //! 设计意图详见
 //! `.trellis/tasks/04-29-session-context-builder-unification/prd.md`（"数据结构"章节）
@@ -34,10 +34,10 @@ pub struct SessionContextBundle {
     pub bootstrap_fragments: Vec<ContextFragment>,
     /// 运行期 per-turn 追加的 fragment（Hook bundle_delta 回灌 / 热更新注入）。
     pub turn_delta: Vec<ContextFragment>,
-    /// Application 层预渲染的完整 system prompt 文本。
+    /// Application 层预渲染的稳定 core system prompt 文本。
     ///
-    /// 由 `system_prompt_assembler::assemble_system_prompt` 在 prompt pipeline 中产出，
-    /// connector 通过此字段获取最终系统指令，无需自行组装。
+    /// 由 `system_prompt_assembler::assemble_system_prompt` 在 prompt pipeline 中产出。
+    /// 动态上下文不得塞回此字段，必须作为独立 ContextFrame 投递。
     pub rendered_system_prompt: Option<String>,
 }
 
@@ -149,8 +149,8 @@ impl SessionContextBundle {
     /// 3. 同一 slot 内部合并 bootstrap + turn_delta 全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
     /// 4. 空 content 的 fragment 跳过。
     ///
-    /// 调用方通常是 PiAgent connector 的 `build_runtime_system_prompt`，通过指定
-    /// `["task", "story", "project", ...]` 这样的 slot 白名单控制 section 内的排序。
+    /// 调用方通常是 ContextFrame builder，通过指定 `["task", "story", "project", ...]`
+    /// 这样的 slot 白名单控制 section 内的排序。
     pub fn render_section(&self, scope: FragmentScope, slots: &[&str]) -> String {
         let mut sections: Vec<String> = Vec::with_capacity(slots.len());
         for slot_name in slots {

@@ -243,6 +243,12 @@ pub struct ContextFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextFrameSection {
+    BootstrapContext {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        fragments: Vec<RuntimeContextFragmentEntry>,
+    },
     CapabilityDelta {
         #[serde(default)]
         added_capabilities: Vec<String>,
@@ -305,6 +311,29 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
+    WorkspaceSurface {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_directory: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default_mount: Option<String>,
+        #[serde(default)]
+        mounts: Vec<RuntimeWorkspaceMountEntry>,
+    },
+    SkillSurface {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_tool: Option<String>,
+        #[serde(default)]
+        skills: Vec<RuntimeSkillEntry>,
+    },
+    HookRuntimeSurface {
+        title: String,
+        summary: String,
+        pending_action_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -327,6 +356,36 @@ pub struct RuntimeHookInjectionEntry {
     pub slot: String,
     pub source: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeContextFragmentEntry {
+    pub slot: String,
+    pub label: String,
+    pub source: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeWorkspaceMountEntry {
+    pub id: String,
+    pub display_name: String,
+    pub provider: String,
+    pub root_ref: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSkillEntry {
+    pub name: String,
+    pub description: String,
+    pub file_path: String,
+    #[serde(default)]
+    pub disable_model_invocation: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

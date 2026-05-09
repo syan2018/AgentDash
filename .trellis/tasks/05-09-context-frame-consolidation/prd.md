@@ -287,12 +287,27 @@ core system prompt 保留：
 - 暂不能直接删除：`baseline_initialized` / `baseline_refreshed` 作为 SessionStart hook trace 决策名仍承担 bootstrap lifecycle audit；在 bootstrap/project guidelines/system prompt 瘦身完成前，直接删除会让启动期上下文链路更不可追踪。
 - 下一批必须迁移：bootstrap fragments、pending action、auto-resume、compaction summary 都应产出 `ContextFrame` subtype，并进入同一 turn-start/feed 汇聚点。完成后再删除 legacy hook trace injection 语义。
 
+## Implementation Progress
+
+- 2026-05-09：已将 `RuntimeContextNotice` / `runtime_context_notice` /
+  `agent_visible_text` 硬切为 `ContextFrame` / `context_frame` / `rendered_text`。
+- 2026-05-09：已新增 `bootstrap_context` frame，将用户偏好、项目规则与
+  `SessionContextBundle` 启动片段从 core system prompt 迁出。
+- 2026-05-09：已新增独立启动 surface frames：`workspace_surface`、
+  `skill_surface`、`hook_runtime_surface`。这些 frame 各自持有 typed metadata 与
+  renderer，不合并成单个“大 surface”；前端只在 feed 层把相邻 `context_frame`
+  折叠为批量更新卡片。
+- 2026-05-09：`system_prompt_assembler` 已瘦身为只渲染稳定 Identity；
+  Workspace / Hook Runtime / Skills / Project Context 不再由 core system prompt 拼接。
+- 仍待迁移：`pending_action`、`auto_resume`、`compaction_summary` 仍需专用
+  ContextFrame subtype；continuation 的 `render_system_context_markdown` 仍是后续清理点。
+
 ## Acceptance Criteria
 
 - [ ] 前端会话流中不再出现用户可见 `Agent baseline` / `BASE` / `已注入动态上下文` 作为新路径展示。
 - [ ] 所有 Agent-visible 动态上下文都持久化为 `context_frame` session meta event。
 - [ ] Agent 实际收到的 frame 文本与前端“Agent 实际收到的文本”展开区一致。
-- [ ] system prompt 不再直接拼入 Project Guidelines、Project Context、Workflow Context、Workspace、VFS、MCP、Skills、Hook Runtime 状态、compaction summary 等动态内容。
+- [ ] system prompt 不再直接拼入 Project Guidelines、Project Context、Workflow Context、Workspace、VFS、MCP、Skills、Hook Runtime 状态、compaction summary 等动态内容。（除 compaction summary 迁移仍待后续批次）
 - [ ] tool、VFS、MCP、skills 的提示全部由 capability state/registry 生成 `ContextFrameSection`，不是由 prompt assembler 或 legacy session plan markdown 生成。
 - [ ] pending action、auto-resume、compaction summary 均有专用 `ContextFrameSection`。
 - [ ] capability/tool surface runtime update 继续由 capability state delta 驱动，不退回 full schema dump。
@@ -337,10 +352,13 @@ core system prompt 保留：
 ## Technical Notes
 
 - 当前相关任务：`.trellis/tasks/05-09-agent-steering-visibility`。
-- 当前局部实现：`RuntimeContextNotice`、`RuntimeContextNoticeCard`。
+- 当前局部实现：`ContextFrame`、`ContextFrameCard`、相邻 `context_frame`
+  feed 聚合。
 - 主要后端入口：
   - `crates/agentdash-application/src/session/system_prompt_assembler.rs`
   - `crates/agentdash-application/src/session/prompt_pipeline.rs`
+  - `crates/agentdash-application/src/session/bootstrap_context_frame.rs`
+  - `crates/agentdash-application/src/session/surface_context_frames.rs`
   - `crates/agentdash-application/src/session/hook_delegate.rs`
   - `crates/agentdash-application/src/session/hub/runtime_context_transition.rs`
   - `crates/agentdash-application/src/session/tool_schema_notice.rs`
@@ -348,13 +366,13 @@ core system prompt 保留：
   - `crates/agentdash-spi/src/hooks/mod.rs`
 - 主要前端入口：
   - `frontend/src/features/session/ui/SessionSystemEventCard.tsx`
-  - `frontend/src/features/session/ui/RuntimeContextNoticeCard.tsx`
-- `frontend/src/features/session/model/runtimeContextNotice.ts`
+  - `frontend/src/features/session/ui/ContextFrameCard.tsx`
+- `frontend/src/features/session/model/contextFrame.ts`
 - `frontend/src/features/session/model/useSessionStream.ts`
 - 需要迁移/删除的 legacy 能力提示入口：
   - `crates/agentdash-application/src/session/plan.rs` 的 `legacy:session_plan` vfs/tools/runtime_policy fragments。
-  - `crates/agentdash-application/src/session/system_prompt_assembler.rs` 的 Workspace / Skills 拼接。
-  - `crates/agentdash-spi/src/platform/skill.rs` 中 connector 注入 skill 到 system prompt 的旧语义。
+  - `crates/agentdash-application/src/session/system_prompt_assembler.rs` 的 Workspace / Skills 拼接。（已迁出到独立 surface frames）
+  - `crates/agentdash-spi/src/platform/skill.rs` 中 connector 注入 skill 到 system prompt 的旧语义。（已改为 `skill_surface`）
   - `crates/agentdash-spi/src/platform/tool_capability.rs` 的 prompt formatter 旧语义。
 - compaction system prompt 路径：
   - `crates/agentdash-application/src/session/continuation.rs` 的 `render_system_context_markdown` 当前会把 `AgentMessage::CompactionSummary` 渲染为 `#### 历史摘要`。

@@ -11,6 +11,7 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
+use super::bootstrap_context_frame::enqueue_bootstrap_context_frame;
 use super::capability_state::merge_vfs_overlay;
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -20,6 +21,10 @@ use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::path_policy::resolve_working_dir;
+use super::surface_context_frames::{
+    enqueue_hook_runtime_surface_frame, enqueue_skill_surface_frame,
+    enqueue_workspace_surface_frame,
+};
 use super::tool_schema_notice::{ToolSchemaNoticeKind, enqueue_tool_schema_notice};
 pub use super::types::*;
 
@@ -277,21 +282,19 @@ impl SessionHub {
             )
             .await;
 
-        // pipeline 层预组装 system prompt → 写入 bundle.rendered_system_prompt
-        if !self.base_system_prompt.is_empty() {
+        // pipeline 层预组装 core system prompt → 写入 bundle.rendered_system_prompt。
+        // 动态上下文与能力面走独立 ContextFrame 投递。
+        let has_agent_system_prompt = context
+            .session
+            .executor_config
+            .system_prompt
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+        if !self.base_system_prompt.is_empty() || has_agent_system_prompt {
             let prompt_input = super::system_prompt_assembler::SystemPromptInput {
                 base_system_prompt: &self.base_system_prompt,
                 agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
                 agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-                user_preferences: &self.user_preferences,
-                discovered_guidelines: &discovered_guidelines,
-                context_bundle: req.context_bundle.as_ref(),
-                session_capabilities: Some(&session_capabilities),
-                vfs: Some(&effective_vfs),
-                working_directory: &context.session.working_directory,
-                runtime_tools: &context.turn.assembled_tools,
-                mcp_servers: &capability_state.tool.mcp_servers,
-                hook_session: hook_session.as_deref(),
             };
             let rendered = super::system_prompt_assembler::assemble_system_prompt(&prompt_input);
             if let Some(ref mut bundle) = context.turn.context_bundle {
@@ -372,9 +375,8 @@ impl SessionHub {
         };
 
         // PR 4（04-30-session-pipeline-architecture-refactor）删除 `session-capabilities://`
-        // resource block 注入路径：companion_agents 已改由 Bundle 渲染到 SP
-        // `## Project Context`；skills 由 `<available_skills>` XML 块承载；
-        // capabilities 结构本身如有持久化需求应走 SessionMeta，而非 user_blocks。
+        // resource block 注入路径。动态能力面由独立 ContextFrame 投递，不再混入
+        // user_blocks 或 core system prompt。
         let user_envelopes = build_user_message_envelopes(
             session_id,
             &source,
@@ -419,6 +421,35 @@ impl SessionHub {
         }
 
         if is_owner_bootstrap {
+            if let Some(frame) = enqueue_workspace_surface_frame(
+                hook_session.as_ref(),
+                &effective_vfs,
+                &context.session.working_directory,
+            ) {
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            }
+
+            if let Some(frame) = enqueue_skill_surface_frame(
+                hook_session.as_ref(),
+                &session_capabilities,
+                &context.turn.assembled_tools,
+            ) {
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            }
+
+            if let Some(frame) = enqueue_hook_runtime_surface_frame(hook_session.as_ref()) {
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            }
+
+            if let Some(frame) = enqueue_bootstrap_context_frame(
+                hook_session.as_ref(),
+                context.turn.context_bundle.as_ref(),
+                &self.user_preferences,
+                &discovered_guidelines,
+            ) {
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            }
+
             if let Some(notice) = enqueue_tool_schema_notice(
                 hook_session.as_ref(),
                 ToolSchemaNoticeKind::Initial,

@@ -89,6 +89,12 @@ pub trait ExecutionHookProvider: Send + Sync {
 - `HookTurnStartNotice` 与 `HookPendingAction` 的区别只在生命周期：前者一次性
   告知，消费即清；后者有 `pending/resolved`、`adopted/dismissed`、阻塞 stop 等
   状态语义。
+- 启动期的动态上下文不得重新塞回 core system prompt。Workspace、Skill、Hook
+  Runtime、Bootstrap Project Context、初始 Tool Schema 必须分别产出独立
+  `ContextFrame`（例如 `workspace_surface` / `skill_surface` /
+  `hook_runtime_surface` / `bootstrap_context` / `tool_surface`），再进入同一个
+  turn-start 队列。前端 feed 可以把相邻 frame 折叠成批量更新卡片，但不得把这些
+  frame 在后端语义上合并成一个含糊的 surface。
 
 ### Workflow -> Hook Policy
 
@@ -117,6 +123,10 @@ pub trait ExecutionHookProvider: Send + Sync {
   由所属模块的 typed metadata 构造为 `ContextFrame.sections` 与
   `ContextFrame.rendered_text`。禁止沉淀一个跨所有 section kind 的中心化 renderer，
   也禁止为事件流、Agent Markdown、前端摘要分别手写三份互不共享的数据。
+- 各 `ContextFrame.kind` 由所属模块内聚渲染：例如 workspace surface 只由
+  workspace/VFS metadata 渲染，skill surface 只由 skill capability metadata 渲染。
+  多个 frame 的汇聚点是 delivery boundary 与前端 feed 聚合，不是一个后端“大杂烩”
+  frame。
 - `HookTurnStartNotice.content` 必须等于对应 `ContextFrame.rendered_text`；若这次
   TurnStart 注入属于 runtime context，必须同时携带 `context_frame`。多个
   `HookTurnStartNotice` 可以在同一 turn-start delivery boundary 被 batch envelope

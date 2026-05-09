@@ -1,8 +1,7 @@
 /// Skill 引用 — 跨层共享的 skill 元数据值对象
 ///
 /// 由 Application 层扫描 SKILL.md 文件后构建，
-/// 通过 `ExecutionContext.skills` 传递给 Connector，
-/// Connector 将可见 skill 注入 system prompt 供模型按需加载。
+/// 再由 session 的 `skill_surface` ContextFrame 注入给模型按需加载。
 use std::path::PathBuf;
 
 /// 已发现并验证通过的 skill 引用（仅元数据，不含正文）
@@ -16,7 +15,7 @@ pub struct SkillRef {
     pub file_path: PathBuf,
     /// skill 所在目录（相对路径解析基准，即 SKILL.md 的父目录）
     pub base_dir: PathBuf,
-    /// 为 true 时不出现在 system prompt 的 available_skills 列表，
+    /// 为 true 时不出现在 `skill_surface` 的模型可见 skill 列表，
     /// 仅允许用户通过 /skill:name 显式触发
     pub disable_model_invocation: bool,
 }

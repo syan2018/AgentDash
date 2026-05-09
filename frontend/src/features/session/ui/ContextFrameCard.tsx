@@ -8,14 +8,21 @@ import { useState } from "react";
 import { BADGE } from "./EventCards";
 import {
   parseContextFrame,
+  type BootstrapContextSection,
   type CapabilityDeltaSection,
   type ContextFrame,
   type ContextFrameSection,
+  type HookRuntimeSurfaceSection,
+  type RuntimeContextFragmentEntry,
   type RuntimeHookInjectionEntry,
+  type RuntimeSkillEntry,
   type RuntimeToolSchemaEntry,
+  type RuntimeWorkspaceMountEntry,
+  type SkillSurfaceSection,
   type SystemNoticeSection,
   type ToolSchemaDeltaSection,
   type ToolSchemaSection,
+  type WorkspaceSurfaceSection,
 } from "../model/contextFrame";
 import { isRecord } from "../model/platformEvent";
 
@@ -114,6 +121,8 @@ function NoticeSection({ section }: { section: ContextFrameSection }) {
 
 function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
+    case "bootstrap_context":
+      return <BootstrapContextBody section={section} />;
     case "capability_delta":
       return <CapabilityDeltaBody section={section} />;
     case "tool_schema":
@@ -125,7 +134,41 @@ function renderSectionBody(section: ContextFrameSection) {
       return <InjectionBody title={section.title} summary={section.summary} injections={section.injections} />;
     case "system_notice":
       return <SystemNoticeBody section={section} />;
+    case "workspace_surface":
+      return <WorkspaceSurfaceBody section={section} />;
+    case "skill_surface":
+      return <SkillSurfaceBody section={section} />;
+    case "hook_runtime_surface":
+      return <HookRuntimeSurfaceBody section={section} />;
   }
+}
+
+function BootstrapContextBody({ section }: { section: BootstrapContextSection }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      {section.fragments.map((fragment, index) => (
+        <FragmentItem key={`${fragment.slot}:${fragment.source}:${index}`} fragment={fragment} />
+      ))}
+    </div>
+  );
+}
+
+function FragmentItem({ fragment }: { fragment: RuntimeContextFragmentEntry }) {
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={fragment.slot || "slot"} />
+        <Chip label={fragment.label || "context"} />
+        <Chip label={fragment.source || "unknown"} />
+      </div>
+      {fragment.content && (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
+          {fragment.content}
+        </pre>
+      )}
+    </div>
+  );
 }
 
 function CapabilityDeltaBody({ section }: { section: CapabilityDeltaSection }) {
@@ -276,6 +319,69 @@ function SystemNoticeBody({ section }: { section: SystemNoticeSection }) {
   );
 }
 
+function WorkspaceSurfaceBody({ section }: { section: WorkspaceSurfaceSection }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {section.working_directory && <Chip label={`cwd: ${section.working_directory}`} />}
+        {section.default_mount && <Chip label={`default: ${section.default_mount}`} />}
+      </div>
+      {section.mounts.map((mount) => (
+        <WorkspaceMountItem key={mount.id} mount={mount} />
+      ))}
+    </div>
+  );
+}
+
+function WorkspaceMountItem({ mount }: { mount: RuntimeWorkspaceMountEntry }) {
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={mount.id} />
+        <Chip label={mount.provider} />
+        {mount.capabilities.map((capability) => <Chip key={capability} label={capability} />)}
+      </div>
+      <p className="truncate text-xs text-foreground/75">{mount.display_name}</p>
+      {mount.root_ref && <p className="truncate font-mono text-[11px] text-muted-foreground">{mount.root_ref}</p>}
+    </div>
+  );
+}
+
+function SkillSurfaceBody({ section }: { section: SkillSurfaceSection }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      {section.read_tool && <Chip label={`read: ${section.read_tool}`} />}
+      {section.skills.map((skill) => (
+        <SkillItem key={skill.name} skill={skill} />
+      ))}
+    </div>
+  );
+}
+
+function SkillItem({ skill }: { skill: RuntimeSkillEntry }) {
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={skill.name} />
+        {skill.disable_model_invocation && <Chip label="manual only" />}
+      </div>
+      {skill.description && <p className="text-xs text-foreground/75">{skill.description}</p>}
+      {skill.file_path && <p className="truncate font-mono text-[11px] text-muted-foreground">{skill.file_path}</p>}
+    </div>
+  );
+}
+
+function HookRuntimeSurfaceBody({ section }: { section: HookRuntimeSurfaceSection }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      <Chip label={`pending actions: ${section.pending_action_count}`} />
+    </div>
+  );
+}
+
 function AgentVisibleText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -317,17 +423,22 @@ function ListLine({ label, values }: { label: string; values: string[] }) {
 
 function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
+    case "bootstrap_context": return section.title || "Bootstrap Context";
     case "capability_delta": return "能力与工具变化";
     case "tool_schema": return "初始工具 Schema";
     case "tool_schema_delta": return "工具 Schema 变化";
     case "workflow_context": return section.title || "Workflow Context";
     case "hook_injection": return section.title || "Hook Injection";
     case "system_notice": return section.title || "系统通知";
+    case "workspace_surface": return section.title || "Workspace Surface";
+    case "skill_surface": return section.title || "Skill Surface";
+    case "hook_runtime_surface": return section.title || "Hook Runtime Surface";
   }
 }
 
 function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
+    case "bootstrap_context": return `${section.fragments.length} 个片段`;
     case "capability_delta": {
       const count =
         section.added_capabilities.length +
@@ -346,6 +457,9 @@ function sectionHint(section: ContextFrameSection): string | null {
     case "workflow_context":
     case "hook_injection": return `${section.injections.length} 项注入`;
     case "system_notice": return null;
+    case "workspace_surface": return `${section.mounts.length} 个挂载`;
+    case "skill_surface": return `${section.skills.length} 个 skill`;
+    case "hook_runtime_surface": return `${section.pending_action_count} 个 pending action`;
   }
 }
 

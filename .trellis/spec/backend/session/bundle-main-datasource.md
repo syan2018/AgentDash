@@ -134,14 +134,15 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
   层触达 slot，同步更新 `fragment_bridge::HOOK_SLOT_ORDERS`。缺少任一步会导
   致"Bundle 有内容但 PiAgent 看不到"的漂移。
 - **禁令**：不要把"runtime 运行期动态 artifact"（例如 hook per-turn steering
-  指令）加入白名单；这类内容属于 `steering_messages`，应该绕过 Bundle 直接
-  进 agent context。
+  指令）加入 Bundle bootstrap 白名单；这类内容应作为独立 `ContextFrame` 或
+  pending action 进入 turn-start delivery boundary，而不是混回 core system prompt。
 
 ### 2.2 slot 归属
 
 - `companion_agents`：由 PR 4 从独立 SP section 收入 Bundle（`bundle-main-datasource`
-  路径），白名单纳入后自动进入 `## Project Context`；这是 `HOOK_USER_MESSAGE_SKIP_SLOTS`
-  废除的语义前置条件。
+  路径）。2026-05-09 ContextFrame 收束后，它随 bootstrap fragments 进入
+  `bootstrap_context` frame，不再自动渲染到 `## Project Context` system prompt。
+  这是 `HOOK_USER_MESSAGE_SKIP_SLOTS` 废除的语义前置条件。
 - `constraint` / `constraints`：`constraint`（单数）由 hook provider /
   companion tools 产出 per-item hook injection 使用；`constraints`（复数）是
   compose 期 contributor 使用。两者并存，都在白名单中。
@@ -155,8 +156,8 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
 
 | 类别 | 语义 | 承载通道 | 消费者 |
 |---|---|---|---|
-| ① **Bundle 改写** | 静态 / 半静态上下文变化（companion_agents / workflow / constraint 等） | Hook snapshot → `Contribution` → Bundle `bootstrap_fragments`；运行期经 `fragment_bridge` 回灌 `turn_delta` | 下一轮 prompt 的 system prompt 装配 / Inspector（经 ContextAuditBus）；不驱动当前 running turn 重设 system prompt |
-| ② **Per-turn steering** | 本轮 agent loop 的动态 user message 增量（rolling instruction、runtime steering） | `TransformContextOutput.steering_messages: Vec<AgentMessage>` | Agent loop（直接追加到 user messages 队列，不进 system prompt） |
+| ① **Bundle 改写** | 静态 / 半静态上下文变化（companion_agents / workflow / constraint 等） | Hook snapshot → `Contribution` → Bundle `bootstrap_fragments`；运行期经 `fragment_bridge` 回灌 `turn_delta` | `bootstrap_context` / `workflow_context` 等 ContextFrame builder 与 Inspector（经 ContextAuditBus）；不驱动当前 running turn 重设 system prompt |
+| ② **Per-turn steering** | 本轮 agent loop 的动态 user message 增量（rolling instruction、runtime steering） | `ContextFrame` → `HookTurnStartNotice` → `TransformContextOutput.steering_messages: Vec<AgentMessage>` | Agent loop（追加到 messages 队列，不进 system prompt） |
 | ③ **控制流副作用** | 阻断 / 拒绝 / 改写本轮请求或工具调用 | `TransformContextOutput.blocked: Option<String>` / `ToolCallDecision::Deny / Rewrite / Ask` / `StopDecision` | Agent loop（决定是否中止 / 改写 / 转询问） |
 
 ### 3.1 类别 ①：Bundle 改写
@@ -247,20 +248,19 @@ pub struct TransformContextOutput {
 - **语义**：旧实现在 `prompt_pipeline.rs:379-397` 向 `user_blocks` 首部注入
   `agentdash://session-capabilities/{session_id}` resource block，承载
   companion agents / skills / capabilities 摘要。
-- **废除理由**：companion_agents 已由 Bundle 渲染进 SP `## Project Context`；
-  skills 由 `<available_skills>` XML 块承载；capabilities 结构如需持久化应
-  写 `SessionMeta`，而非进 `user_blocks`。
+- **废除理由**：companion_agents / project context 已由 `bootstrap_context`
+  frame 承载；skills 由独立 `skill_surface` frame 承载；capabilities 结构如需
+  持久化应写 `SessionMeta` 或 `context_frame`，而非进 `user_blocks`。
 - **Acceptance 检查**：`grep -r "session-capabilities://" crates/` 零命中或
   仅测试；`prompt_pipeline.rs:397` 附近注释已明确该路径被删除。
 
 #### 3.4.3 Companion Agents 单源化
 
 - `companion_agents` slot 只经 Bundle 一条路径（`fragment_bridge` 产出的
-  `Contribution` 进 Bundle `bootstrap_fragments`），`system_prompt_assembler`
-  通过 `bundle.render_section(FragmentScope::RuntimeAgent, &["companion_agents", ...])`
-  渲染出 SP 节。
-- SP 里不再有独立的 `## Companion Agents` section 拼装逻辑；`## Project Context`
-  内部由 Bundle 产出。
+  `Contribution` 进 Bundle `bootstrap_fragments`），由 bootstrap ContextFrame
+  builder 按 slot 白名单渲染。
+- Core system prompt 里不再有独立的 `## Companion Agents` 或 `## Project Context`
+  section 拼装逻辑；Agent 可见业务上下文由 `bootstrap_context` frame 产出。
 
 ## 4. Audit Bus 与 Inspector 的关系
 

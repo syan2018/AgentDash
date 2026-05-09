@@ -64,9 +64,10 @@ pub use hooks::{
     HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
     HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
     HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-    NoopExecutionHookProvider, RuntimeEventSource, RuntimeHookInjectionEntry,
-    RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
+    NoopExecutionHookProvider, RuntimeContextFragmentEntry, RuntimeEventSource,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+    RuntimeWorkspaceMountEntry, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

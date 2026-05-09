@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use agentdash_domain::context_source::ContextSourceRef;
 use serde::Serialize;
 
-/// Runtime agent 渲染 `SessionContextBundle` 时允许进入主 system prompt 的 slot。
+/// Runtime agent 渲染 `SessionContextBundle` 时允许进入 bootstrap ContextFrame 的 slot。
 ///
-/// 这是云端 Agent 上下文主数据面的唯一白名单；application 组装侧和 connector
-/// 消费侧必须引用同一份定义，避免新增 slot 后出现“bundle 已产出但 PiAgent 看不到”
+/// 这是云端 Agent 上下文主数据面的白名单；application 组装侧与 ContextFrame
+/// builder 必须引用同一份定义，避免新增 slot 后出现“bundle 已产出但模型看不到”
 /// 的漂移。
 pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
     "task",
@@ -37,9 +37,8 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
     "instruction",
     "instruction_append",
     // companion_agents: PR 4（04-30-session-pipeline-architecture-refactor）把
-    // companion agents 渲染从 SP 独立 section 统一归入 Bundle 主数据面，白名单
-    // 纳入 companion_agents slot 后由 fragment_bridge 接入的 hook snapshot
-    // 产出的 companion agents 条目自动进入 `## Project Context`。
+    // companion agents 渲染从独立 section 统一归入 Bundle 主数据面；ContextFrame
+    // 收束后由 bootstrap_context frame 按白名单注入给 Agent。
     "companion_agents",
 ];
 
@@ -69,12 +68,12 @@ pub enum MergeStrategy {
 
 /// Context fragment 的可见性 scope。
 ///
-/// 一个 fragment 可以同时属于多个 scope（例如既参与 F1 system prompt，又记录到审计总线）。
+/// 一个 fragment 可以同时属于多个 scope（例如既参与 Agent 可见 ContextFrame，又记录到审计总线）。
 /// scope 决定了下游消费者（PiAgent connector / title generator / summarizer / bridge replay /
 /// audit bus）各自能看到哪些 fragment，从协议层加固 `bce0825` 之类的 scope 隔离问题。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FragmentScope {
-    /// 进入 F1 system prompt 主通道（默认）
+    /// 进入 Agent 可见 ContextFrame 主通道（默认）
     RuntimeAgent,
     /// title generator 可见
     TitleGen,

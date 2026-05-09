@@ -75,10 +75,9 @@ impl ContextFramePayload for ToolSurfaceContextFrame {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolSchemaDeltaMetadata {
+    /// 瘦身后仅保留真正新增的工具 schema；
+    /// 路径级的屏蔽 / 恢复 / 移除归口 `CapabilityDelta`，此处不再冗余。
     added_tools: Vec<RuntimeToolSchemaEntry>,
-    removed_tool_paths: Vec<String>,
-    restored_tool_paths: Vec<String>,
-    blocked_tool_paths: Vec<String>,
 }
 
 impl ToolSchemaDeltaMetadata {
@@ -121,36 +120,25 @@ impl ToolSchemaDeltaMetadata {
                         .is_some_and(|path| restored_paths.contains(path))
             })
             .collect::<Vec<_>>();
-        let removed_tool_paths = state_delta.included_tool_paths.removed.clone();
-        let blocked_tool_paths = state_delta.excluded_tool_paths.added.clone();
-        let restored_tool_paths = restored_paths.into_iter().collect::<Vec<_>>();
 
-        let metadata = Self {
-            added_tools,
-            removed_tool_paths,
-            restored_tool_paths,
-            blocked_tool_paths,
-        };
-        (!metadata.is_empty()).then_some(metadata)
+        if added_tools.is_empty() {
+            // 路径级变化全部归 CapabilityDelta 表达；没有真正新增 schema 时不发 TOOL section。
+            return None;
+        }
+        Some(Self { added_tools })
     }
 
     pub(crate) fn section(&self) -> ContextFrameSection {
         ContextFrameSection::ToolSchemaDelta {
             added_tools: self.added_tools.clone(),
-            removed_tool_paths: self.removed_tool_paths.clone(),
-            restored_tool_paths: self.restored_tool_paths.clone(),
-            blocked_tool_paths: self.blocked_tool_paths.clone(),
         }
     }
 
     pub(crate) fn render_text(&self, phase_node: Option<&str>) -> String {
         let mut lines = vec![
             tool_schema_delta_title(phase_node),
-            "以下只列出本次 capability state delta 影响到的工具；provider 的完整工具集合以实际 tool list 为准。".to_string(),
+            "以下只列出本次 capability state delta 真正新增给 Agent 的工具 schema；provider 的完整工具集合以实际 tool list 为准。".to_string(),
         ];
-        append_named_list(&mut lines, "Restored tool paths", &self.restored_tool_paths);
-        append_named_list(&mut lines, "Blocked tool paths", &self.blocked_tool_paths);
-        append_named_list(&mut lines, "Removed tool paths", &self.removed_tool_paths);
         if !self.added_tools.is_empty() {
             lines.push("### Added / Restored Tool Schemas".to_string());
             for tool in &self.added_tools {
@@ -158,13 +146,6 @@ impl ToolSchemaDeltaMetadata {
             }
         }
         lines.join("\n\n")
-    }
-
-    fn is_empty(&self) -> bool {
-        self.added_tools.is_empty()
-            && self.removed_tool_paths.is_empty()
-            && self.restored_tool_paths.is_empty()
-            && self.blocked_tool_paths.is_empty()
     }
 }
 
@@ -397,16 +378,6 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
         PlatformMcpScope::Story => "story",
         PlatformMcpScope::Task => "task",
         PlatformMcpScope::Workflow => "workflow",
-    }
-}
-
-fn append_named_list(lines: &mut Vec<String>, title: &str, values: &[String]) {
-    if values.is_empty() {
-        return;
-    }
-    lines.push(format!("### {title}"));
-    for value in values {
-        lines.push(format!("- `{value}`"));
     }
 }
 

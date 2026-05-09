@@ -284,14 +284,11 @@ pub enum ContextFrameSection {
         tools: Vec<RuntimeToolSchemaEntry>,
     },
     ToolSchemaDelta {
+        // 瘦身后只承载真正新增给 Agent 的工具 schema；
+        // 工具路径级的屏蔽 / 恢复 / 移除变化统一由 `CapabilityDelta` 表达，
+        // 避免同一份 `CapabilityStateDelta` 被双投影。
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
-        #[serde(default)]
-        removed_tool_paths: Vec<String>,
-        #[serde(default)]
-        restored_tool_paths: Vec<String>,
-        #[serde(default)]
-        blocked_tool_paths: Vec<String>,
     },
     WorkflowContext {
         title: String,

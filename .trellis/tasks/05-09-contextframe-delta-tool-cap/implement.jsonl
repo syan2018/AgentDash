@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/05-09-contextframe-delta-tool-cap/research/backend-capability-delta-schema.md", "reason": "后端 schema 定义、构造路径、消费者、风险评估的权威摸底报告；implement 的坐标来源"}
+{"file": ".trellis/tasks/05-09-contextframe-delta-tool-cap/research/section-kind-taxonomy.md", "reason": "section 拆分候选研究；方案 A 已作废但 workspace_surface bootstrap-only 和 MCP/tool 粒度分析仍是重要参考"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "tool capability pipeline 的契约基线，本任务要在此增补 frame 职责切分章节"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ContextFrame / Execution Context 架构约束；frame kind 拆分的上位规范"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "Bundle 主数据源契约，持久化与事件回放相关"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "HookTrace / ContextFrame / pending action 的传递契约"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "context_frame 通过 platform meta event 传递，ACP 消息通道约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 ContextFrame 类型守卫约定，ToolSchemaDelta 瘦身后 parser 需同步"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "前端组件修改遵循的 Props 与样式约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端代码标准（中文注释、禁止模式、不引入新依赖）"}

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "确认 frame 职责切分章节已增补，约束与代码实现一致"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "确认新拆出的 workflow_context frame 符合 ExecutionContext 架构约束"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "确认 ContextFrame emit 链路（单 frame → 多 frame）仍符合 hook runtime 契约"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "确认 Bundle 主数据源对 ContextFrame 结构变化仍然一致"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "确认 workflow_context 独立 frame 仍走 platform meta 通道"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认 ToolSchemaDelta 瘦身后 parseContextFrame 守卫完整、无 any 漂移"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "确认无禁止模式、中文注释、无新依赖"}

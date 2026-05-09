@@ -184,8 +184,8 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
         section.vfs_mounts_removed.length;
       changed += section.changed_mcp_servers.length;
     } else if (section.kind === "tool_schema_delta") {
-      added += section.restored_tool_paths.length + section.added_tools.length;
-      removed += section.blocked_tool_paths.length + section.removed_tool_paths.length;
+      // CAP 已经统计过工具路径级的增减;这里只统计 TOOL 真正新增的 schema,避免双计数。
+      added += section.added_tools.length;
     }
   }
   if (added + removed + changed === 0) return null;

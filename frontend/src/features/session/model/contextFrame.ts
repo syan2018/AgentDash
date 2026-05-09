@@ -67,10 +67,9 @@ export interface ToolSchemaSection {
 
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
+  // 瘦身后只承载真正新增给 Agent 的工具 schema；
+  // 工具路径级的屏蔽 / 恢复 / 移除统一归 `capability_delta`，避免双投影。
   added_tools: RuntimeToolSchemaEntry[];
-  removed_tool_paths: string[];
-  restored_tool_paths: string[];
-  blocked_tool_paths: string[];
 }
 
 export interface RuntimeToolSchemaEntry {
@@ -236,9 +235,6 @@ function parseSection(value: unknown): ContextFrameSection | null {
     return {
       kind,
       added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
-      removed_tool_paths: readStringArray(value.removed_tool_paths),
-      restored_tool_paths: readStringArray(value.restored_tool_paths),
-      blocked_tool_paths: readStringArray(value.blocked_tool_paths),
     };
   }
   if (kind === "workflow_context" || kind === "hook_injection") {

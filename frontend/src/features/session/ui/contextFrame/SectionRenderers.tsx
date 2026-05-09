@@ -111,7 +111,8 @@ function sectionHint(section: ContextFrameSection): string | null {
     case "tool_schema":
       return `${section.tools.length} 个工具`;
     case "tool_schema_delta": {
-      const count = toolSchemaDeltaAffectedCount(section);
+      // 路径级变化归 CAP；TOOL 只统计真正新增给 Agent 的工具 schema 数。
+      const count = section.added_tools.length;
       return count > 0 ? `${count} 项变化` : "无变化";
     }
     case "workflow_context":
@@ -316,36 +317,15 @@ function ToolSchemaBody({ section }: { section: ToolSchemaSection }) {
 }
 
 function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
-  const removed = section.removed_tool_paths;
-  const restored = section.restored_tool_paths;
-  const blocked = section.blocked_tool_paths;
-  const hasPathDiff = removed.length + restored.length + blocked.length > 0;
-
+  // 瘦身后 TOOL 只渲染 `added_tools`；工具路径级的屏蔽 / 恢复 / 移除由 CAP 承载。
+  if (section.added_tools.length === 0) {
+    return <p className="text-xs text-muted-foreground/60">无新增工具 schema</p>;
+  }
   return (
-    <div className="space-y-2">
-      {hasPathDiff && (
-        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
-          {restored.map((value) => (
-            <DiffLine key={`res-${value}`} symbol="+" label="恢复" value={value} />
-          ))}
-          {blocked.map((value) => (
-            <DiffLine key={`blk-${value}`} symbol="−" label="屏蔽" value={value} />
-          ))}
-          {removed.map((value) => (
-            <DiffLine key={`del-${value}`} symbol="−" label="移除" value={value} />
-          ))}
-        </div>
-      )}
-      {section.added_tools.length > 0 && (
-        <div className="max-h-96 overflow-auto space-y-1.5">
-          {section.added_tools.map((tool) => (
-            <ToolSchemaItem key={tool.name} tool={tool} />
-          ))}
-        </div>
-      )}
-      {!hasPathDiff && section.added_tools.length === 0 && (
-        <p className="text-xs text-muted-foreground/60">无工具 schema 变化</p>
-      )}
+    <div className="max-h-96 overflow-auto space-y-1.5">
+      {section.added_tools.map((tool) => (
+        <ToolSchemaItem key={tool.name} tool={tool} />
+      ))}
     </div>
   );
 }
@@ -580,17 +560,6 @@ export function Chip({ label }: { label: string }) {
       {label}
     </span>
   );
-}
-
-function toolSchemaDeltaAffectedCount(section: ToolSchemaDeltaSection): number {
-  const affected = new Set<string>();
-  for (const path of section.removed_tool_paths) affected.add(path);
-  for (const path of section.restored_tool_paths) affected.add(path);
-  for (const path of section.blocked_tool_paths) affected.add(path);
-  for (const tool of section.added_tools) {
-    affected.add(tool.tool_path ?? tool.name);
-  }
-  return affected.size;
 }
 
 function schemaFieldNames(schema: unknown): string[] {

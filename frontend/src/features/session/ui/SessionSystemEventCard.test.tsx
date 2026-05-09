@@ -27,9 +27,6 @@ describe("AcpSystemEventCard", () => {
             sections: [
               {
                 kind: "tool_schema_delta",
-                restored_tool_paths: ["workflow_management::upsert_workflow_tool"],
-                blocked_tool_paths: [],
-                removed_tool_paths: [],
                 added_tools: [
                   {
                     name: "mcp_agentdash_workflow_tools_upsert_workflow_tool",

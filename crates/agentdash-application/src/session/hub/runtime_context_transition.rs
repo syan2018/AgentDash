@@ -113,17 +113,28 @@ impl SessionHub {
             &input.after_state,
             &input.capability_keys,
         );
-        let notice = build_live_context_frame(
-            &input,
-            &notification_delta,
-            &state_delta,
-            &tools,
-            &injections,
-        );
+        let notice =
+            build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
         self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
             .await
             .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
         enqueue_context_frame(hook_session.as_ref(), notice);
+
+        // workflow_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
+        if let Some(workflow_frame) =
+            build_workflow_context_frame(&input.phase_node, input.apply_mode, &injections)
+        {
+            self.emit_context_frame(
+                &input.session_id,
+                input.turn_id.as_deref(),
+                &workflow_frame,
+            )
+            .await
+            .map_err(|error| {
+                format!("Phase node workflow context frame 持久化失败: {error}")
+            })?;
+            enqueue_context_frame(hook_session.as_ref(), workflow_frame);
+        }
 
         Ok(RuntimeContextTransitionOutcome {
             capability_delta: delta,
@@ -245,12 +256,23 @@ impl SessionHub {
                     &pending.capability_keys,
                     Some(&state_delta),
                     tools,
-                    &injections,
                 );
                 let _ = self
                     .emit_context_frame(session_id, Some(turn_id), &notice)
                     .await;
                 enqueue_context_frame(hook_session.as_ref(), notice);
+
+                // workflow_context 独立 frame,保持 frame 一职一责。
+                if let Some(workflow_frame) = build_workflow_context_frame(
+                    &pending.phase_node,
+                    "applied_on_next_turn",
+                    &injections,
+                ) {
+                    let _ = self
+                        .emit_context_frame(session_id, Some(turn_id), &workflow_frame)
+                        .await;
+                    enqueue_context_frame(hook_session.as_ref(), workflow_frame);
+                }
             }
             pending_event_before_state = pending.state.clone();
         }
@@ -260,9 +282,9 @@ impl SessionHub {
         let injections = self
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
-        if !injections.is_empty() {
-            let notice =
-                build_context_only_notice(&input.phase_node, input.apply_mode, &injections);
+        if let Some(notice) =
+            build_workflow_context_frame(&input.phase_node, input.apply_mode, &injections)
+        {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
                 .await;
@@ -278,7 +300,6 @@ fn build_live_context_frame(
     notification_delta: &CapabilityDelta,
     state_delta: &CapabilityStateDelta,
     tools: &[DynAgentTool],
-    injections: &[HookInjection],
 ) -> ContextFrame {
     let metadata = RuntimeContextUpdateFrame::new(
         &input.phase_node,
@@ -288,7 +309,6 @@ fn build_live_context_frame(
         &input.capability_keys,
         Some(state_delta),
         tools,
-        injections,
     );
     context_frame::build_context_frame(&metadata)
 }
@@ -301,7 +321,6 @@ fn build_context_frame(
     effective_capabilities: &BTreeSet<String>,
     state_delta: Option<&CapabilityStateDelta>,
     tools: &[DynAgentTool],
-    injections: &[HookInjection],
 ) -> ContextFrame {
     let metadata = RuntimeContextUpdateFrame::new(
         phase_node,
@@ -311,23 +330,26 @@ fn build_context_frame(
         effective_capabilities,
         state_delta,
         tools,
-        injections,
     );
     context_frame::build_context_frame(&metadata)
 }
 
-fn build_context_only_notice(
+/// 根据 hook injections 构造独立的 `workflow_context` frame。
+/// 已从 `runtime_context_update` 帧剥离，遵循 frame 一职一责。
+fn build_workflow_context_frame(
     phase_node: &str,
     apply_mode: &str,
     injections: &[HookInjection],
-) -> ContextFrame {
+) -> Option<ContextFrame> {
     let metadata = WorkflowContextFrame::new(
         phase_node,
         apply_mode,
         "queued_for_transform_context",
         injections,
     );
-    context_frame::build_context_frame(&metadata)
+    metadata
+        .has_content()
+        .then(|| context_frame::build_context_frame(&metadata))
 }
 
 fn enqueue_context_frame(
@@ -350,7 +372,6 @@ struct RuntimeContextUpdateFrame {
     delivery_status: String,
     capability_delta: CapabilityDeltaFrameMetadata,
     tool_schema_delta: Option<ToolSchemaDeltaMetadata>,
-    workflow_context: Option<WorkflowContextMetadata>,
 }
 
 impl RuntimeContextUpdateFrame {
@@ -362,7 +383,6 @@ impl RuntimeContextUpdateFrame {
         effective_capabilities: &BTreeSet<String>,
         state_delta: Option<&CapabilityStateDelta>,
         tools: &[DynAgentTool],
-        injections: &[HookInjection],
     ) -> Self {
         Self {
             phase_node: phase_node.to_string(),
@@ -376,7 +396,6 @@ impl RuntimeContextUpdateFrame {
             tool_schema_delta: state_delta.and_then(|delta| {
                 ToolSchemaDeltaMetadata::from_tools_and_state_delta(tools, delta)
             }),
-            workflow_context: WorkflowContextMetadata::from_hook_injections(injections),
         }
     }
 }
@@ -411,9 +430,6 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
         if let Some(tool_schema_delta) = &self.tool_schema_delta {
             sections.push(tool_schema_delta.section());
         }
-        if let Some(workflow_context) = &self.workflow_context {
-            sections.push(workflow_context.section());
-        }
         sections
     }
 
@@ -421,9 +437,6 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
         let mut blocks = vec![self.capability_delta.render_text(&self.phase_node)];
         if let Some(tool_schema_delta) = &self.tool_schema_delta {
             blocks.push(tool_schema_delta.render_text(Some(&self.phase_node)));
-        }
-        if let Some(workflow_context) = &self.workflow_context {
-            blocks.push(workflow_context.render_text());
         }
         blocks.join("\n\n")
     }
@@ -451,11 +464,16 @@ impl WorkflowContextFrame {
             workflow_context: WorkflowContextMetadata::from_hook_injections(injections),
         }
     }
+
+    fn has_content(&self) -> bool {
+        self.workflow_context.is_some()
+    }
 }
 
 impl ContextFramePayload for WorkflowContextFrame {
     fn id(&self, created_at_ms: i64) -> String {
-        format!("runtime-context-{}-{created_at_ms}", self.phase_node)
+        // 与 runtime_context_update 的 id 前缀区分，便于前端按 kind 独立聚合。
+        format!("workflow-context-{}-{created_at_ms}", self.phase_node)
     }
 
     fn kind(&self) -> &'static str {
@@ -854,28 +872,35 @@ mod tests {
         };
         let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
 
-        let notice = build_live_context_frame(
-            &input,
-            &CapabilityDelta::default(),
-            &state_delta,
-            &tools,
-            &[],
-        );
+        let notice =
+            build_live_context_frame(&input, &CapabilityDelta::default(), &state_delta, &tools);
 
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));
         assert_eq!(notice.apply_mode.as_deref(), Some("live"));
+        // TOOL section 只承载 added_tools;路径级变化全部归 CAP。
+        let tool_section = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::ToolSchemaDelta { added_tools } => Some(added_tools),
+                _ => None,
+            })
+            .expect("tool_schema_delta section should exist with added_tools");
+        assert_eq!(tool_section.len(), 1);
+        // workflow_context section 不再出现在 runtime_context_update frame 中。
         assert!(
-            notice
+            !notice
                 .sections
                 .iter()
-                .any(|section| matches!(section, ContextFrameSection::ToolSchemaDelta { .. }))
+                .any(|section| matches!(section, ContextFrameSection::WorkflowContext { .. }))
         );
         assert!(
             notice
                 .rendered_text
                 .contains("## Tool Schema Delta — Step Transition: apply")
         );
-        assert!(notice.rendered_text.contains("Restored tool paths"));
+        // Path-only 提示已归 CAP,TOOL 的 rendered_text 不应再包含 "Restored tool paths"。
+        assert!(!notice.rendered_text.contains("Restored tool paths"));
         assert!(
             notice
                 .rendered_text
@@ -888,5 +913,29 @@ mod tests {
                 .rendered_text
                 .contains("\"description\": \"Workflow key\"")
         );
+    }
+
+    #[test]
+    fn workflow_context_frame_is_emitted_independently() {
+        let injections = vec![HookInjection {
+            slot: "workflow".to_string(),
+            content: "Active workflow step: apply".to_string(),
+            source: "workflow:admin:apply".to_string(),
+        }];
+
+        let frame = build_workflow_context_frame("apply", "live", &injections)
+            .expect("workflow_context frame should be emitted when injections present");
+
+        assert_eq!(frame.kind, "workflow_context");
+        assert_eq!(frame.phase_node.as_deref(), Some("apply"));
+        assert_eq!(frame.apply_mode.as_deref(), Some("live"));
+        assert_eq!(frame.sections.len(), 1);
+        assert!(matches!(
+            frame.sections[0],
+            ContextFrameSection::WorkflowContext { .. }
+        ));
+
+        // 没有 injection 时不构造 frame。
+        assert!(build_workflow_context_frame("apply", "live", &[]).is_none());
     }
 }

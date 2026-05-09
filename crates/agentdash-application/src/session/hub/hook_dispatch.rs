@@ -16,6 +16,7 @@ use agentdash_spi::hooks::{
 };
 use tokio::sync::broadcast;
 
+use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_delegate::{
     RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
 };
@@ -296,6 +297,12 @@ impl SessionHub {
             let bare_req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(
                 msg::AUTO_RESUME_PROMPT,
             ));
+            if let Some(frame) = build_auto_resume_context_frame(
+                "hook_before_stop_continue",
+                msg::AUTO_RESUME_PROMPT,
+            ) {
+                let _ = hub.emit_context_frame(&session_id, None, &frame).await;
+            }
 
             if let Err(e) = hub
                 .launch_hook_auto_resume_prompt(&session_id, bare_req)

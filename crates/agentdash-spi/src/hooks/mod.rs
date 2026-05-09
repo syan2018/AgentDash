@@ -334,6 +334,12 @@ pub enum ContextFrameSection {
         summary: String,
         pending_action_count: usize,
     },
+    AutoResume {
+        title: String,
+        summary: String,
+        reason: String,
+        prompt: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

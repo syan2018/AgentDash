@@ -56,6 +56,17 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Skill Surface 1 个 skill");
     expect(markup).toContain("Hook Runtime Surface 2 个 pending action");
   });
+
+  it("解析并渲染 auto_resume frame", () => {
+    const notice = parseContextFrame(sampleAutoResumeNotice());
+
+    expect(notice?.kind).toBe("auto_resume");
+    expect(notice?.sections[0]?.kind).toBe("auto_resume");
+
+    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleAutoResumeNotice()} />);
+    expect(markup).toContain("Auto Resume hook_before_stop_continue");
+    expect(markup).toContain("Agent 上下文已更新");
+  });
 });
 
 function sampleNotice(): Record<string, unknown> {
@@ -222,6 +233,28 @@ function sampleHookRuntimeSurfaceNotice(): Record<string, unknown> {
         title: "Hook Runtime Surface",
         summary: "Hook Runtime 已启用",
         pending_action_count: 2,
+      },
+    ],
+  };
+}
+
+function sampleAutoResumeNotice(): Record<string, unknown> {
+  return {
+    id: "auto-resume-1",
+    kind: "auto_resume",
+    source: "runtime_context_update",
+    delivery_status: "queued_as_user_prompt",
+    delivery_channel: "user_prompt",
+    message_role: "user",
+    rendered_text: "继续执行当前流程。",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "auto_resume",
+        title: "Auto Resume",
+        summary: "系统根据 Hook stop gate 自动发起续跑提示。",
+        reason: "hook_before_stop_continue",
+        prompt: "继续执行当前流程。",
       },
     ],
   };

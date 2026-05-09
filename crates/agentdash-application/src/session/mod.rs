@@ -1,5 +1,6 @@
 pub mod assembler;
 pub mod augmenter;
+mod auto_resume_context_frame;
 pub mod baseline_capabilities;
 pub mod bootstrap;
 mod bootstrap_context_frame;

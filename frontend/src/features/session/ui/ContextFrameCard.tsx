@@ -8,6 +8,7 @@ import { useState } from "react";
 import { BADGE } from "./EventCards";
 import {
   parseContextFrame,
+  type AutoResumeSection,
   type BootstrapContextSection,
   type CapabilityDeltaSection,
   type ContextFrame,
@@ -140,6 +141,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <SkillSurfaceBody section={section} />;
     case "hook_runtime_surface":
       return <HookRuntimeSurfaceBody section={section} />;
+    case "auto_resume":
+      return <AutoResumeBody section={section} />;
   }
 }
 
@@ -382,6 +385,20 @@ function HookRuntimeSurfaceBody({ section }: { section: HookRuntimeSurfaceSectio
   );
 }
 
+function AutoResumeBody({ section }: { section: AutoResumeSection }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      {section.reason && <Chip label={`reason: ${section.reason}`} />}
+      {section.prompt && (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+          {section.prompt}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function AgentVisibleText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -433,6 +450,7 @@ function sectionTitle(section: ContextFrameSection): string {
     case "workspace_surface": return section.title || "Workspace Surface";
     case "skill_surface": return section.title || "Skill Surface";
     case "hook_runtime_surface": return section.title || "Hook Runtime Surface";
+    case "auto_resume": return section.title || "Auto Resume";
   }
 }
 
@@ -460,6 +478,7 @@ function sectionHint(section: ContextFrameSection): string | null {
     case "workspace_surface": return `${section.mounts.length} 个挂载`;
     case "skill_surface": return `${section.skills.length} 个 skill`;
     case "hook_runtime_surface": return `${section.pending_action_count} 个 pending action`;
+    case "auto_resume": return section.reason || "系统续跑";
   }
 }
 

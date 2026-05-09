@@ -95,6 +95,9 @@ pub trait ExecutionHookProvider: Send + Sync {
   `hook_runtime_surface` / `bootstrap_context` / `tool_surface`），再进入同一个
   turn-start 队列。前端 feed 可以把相邻 frame 折叠成批量更新卡片，但不得把这些
   frame 在后端语义上合并成一个含糊的 surface。
+- Hook auto-resume 必须生成独立 `ContextFrame(kind="auto_resume")`。该 frame 的
+  `delivery_channel` 是 `user_prompt`，`rendered_text` 必须等于系统实际发起的
+  auto-resume prompt；不要让系统续跑提示伪装成普通用户输入而缺少可审计 UI。
 
 ### Workflow -> Hook Policy
 

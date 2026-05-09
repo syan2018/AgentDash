@@ -24,7 +24,8 @@ export type ContextFrameSection =
   | SystemNoticeSection
   | WorkspaceSurfaceSection
   | SkillSurfaceSection
-  | HookRuntimeSurfaceSection;
+  | HookRuntimeSurfaceSection
+  | AutoResumeSection;
 
 export interface BootstrapContextSection {
   kind: "bootstrap_context";
@@ -138,6 +139,14 @@ export interface HookRuntimeSurfaceSection {
   title: string;
   summary: string;
   pending_action_count: number;
+}
+
+export interface AutoResumeSection {
+  kind: "auto_resume";
+  title: string;
+  summary: string;
+  reason: string;
+  prompt: string;
 }
 
 export interface RuntimeHookInjectionEntry {
@@ -267,6 +276,15 @@ function parseSection(value: unknown): ContextFrameSection | null {
       title: readString(value.title) ?? "Hook Runtime Surface",
       summary: readString(value.summary) ?? "",
       pending_action_count: readNumber(value.pending_action_count) ?? 0,
+    };
+  }
+  if (kind === "auto_resume") {
+    return {
+      kind,
+      title: readString(value.title) ?? "Auto Resume",
+      summary: readString(value.summary) ?? "",
+      reason: readString(value.reason) ?? "",
+      prompt: readString(value.prompt) ?? "",
     };
   }
   return null;

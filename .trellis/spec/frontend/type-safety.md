@@ -191,6 +191,8 @@ const directives: CapabilityDirective[] = [
   read tool；`hook_runtime_surface` 展示 Hook Runtime 启用状态与 pending action
   数量。前端可以在 `useSessionFeed` 把相邻 `context_frame` 折叠为批量更新组，
   但单张 `ContextFrameCard` 必须保留每个 frame 自己的 `kind` 与 section。
+- 系统发起的续跑提示使用 `auto_resume` section，展示 `reason` 与真实 `prompt`；
+  `delivery_channel=user_prompt` 时仍按 ContextFrame 渲染，不要把它隐藏成普通用户消息。
 - 相邻 `context_frame` event 应由 `useSessionFeed` 聚合成“Agent 上下文批量更新”
   组，默认展示 frame 数、section 数与 kind 摘要；展开后再渲染每个
   `ContextFrameCard`。不要在用户主视图中平铺一串 verbose frame。

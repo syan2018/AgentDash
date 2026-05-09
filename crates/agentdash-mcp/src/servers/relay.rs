@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
@@ -86,15 +86,11 @@ pub struct UpdateProjectContextConfigParams {
 #[derive(Clone)]
 pub struct RelayMcpServer {
     services: Arc<McpServices>,
-    tool_router: ToolRouter<Self>,
 }
 
 impl RelayMcpServer {
     pub fn new(services: Arc<McpServices>) -> Self {
-        Self {
-            services,
-            tool_router: Self::tool_router(),
-        }
+        Self { services }
     }
 
     fn parse_uuid(s: &str, field: &'static str) -> Result<Uuid, McpError> {

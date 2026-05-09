@@ -108,6 +108,45 @@ Runtime Client
 5. **Governance And Migration**：统一权限裁决、审计追踪、长任务 Operation、错误语义、文档与旧通路迁移验证。
    - 执行计划：[`plan-05-governance-migration.md`](plan-05-governance-migration.md)
 
+### Implementation Progress
+
+截至 2026-05-09，当前分支 `codex/runtime-gateway` 已完成以下落地：
+
+1. **Gateway Core Protocol 已完成首版实现**
+   - 已新增 application 层 `runtime_gateway` 模块。
+   - 已定义 `RuntimeActionKey`、`RuntimeActor`、`RuntimeContext`、`RuntimeTarget`、`RuntimePolicy`、`RuntimeTrace`、`RuntimeInvocationRequest`、`RuntimeInvocationResult`、`RuntimeInvocationOutput`、`RuntimeActionDescriptor`、`RuntimeSurface`、`RuntimeProvider`、`RuntimeGateway`、`RuntimeInvocationError`。
+   - Gateway 已具备 provider 注册、surface 枚举、setup/session runtime 请求校验、trace 回填与基础错误分类。
+
+2. **Setup Action Plane 已完成当前明确的短链路迁移**
+   - 已接入 `mcp.probe_transport`，并将 `POST /api/projects/{project_id}/mcp-presets/probe` 迁移为 Runtime Gateway thin route。
+   - 已接入 `workspace.detect`，并将 `POST /api/projects/{project_id}/workspaces/detect` 及创建 Workspace 时的自动探测迁移到 Runtime Gateway。
+   - 已接入 `workspace.detect_git`，并将 `POST /api/workspaces/detect-git` 迁移为 Runtime Gateway thin route。
+   - 已接入 `workspace.browse_directory`，并将 `POST /api/backends/{backend_id}/browse` 迁移为 Runtime Gateway thin route。
+   - API 层保留原 HTTP 路径与响应 DTO；业务执行收口到 application provider，provider 复用现有 relay/local handler，不重写本机实现。
+   - Setup Action 已统一限制为 `RuntimeContext::Setup`，actor 仅允许 `PlatformUser` / `EnvironmentSetup`，backend 离线统一映射为 `Conflict`。
+
+3. **契约与验证已补齐到当前实现边界**
+   - 已新增 `.trellis/spec/backend/runtime-gateway.md`，记录 Setup Action 的输入输出、错误矩阵、thin route 规则与测试要求。
+   - 已覆盖 Runtime Gateway/provider 单测：action key 校验、setup actor 限制、trace 回填、MCP probe、workspace detect、detect git、browse directory。
+   - 已运行并通过 targeted Rust 验证：`cargo test -p agentdash-application runtime_gateway`、`cargo test -p agentdash-api backends`、`cargo test -p agentdash-api workspaces`、`cargo test -p agentdash-api rpc`、`cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
+
+尚未完成的内容：
+
+1. **Session Runtime Plane 尚未落地**
+   - `mcp.call_tool` / `mcp.list_tools` 尚未通过 Runtime Gateway 暴露。
+   - Runtime Surface 与 `CapabilityState` / capability pipeline 的正式裁决尚未接入。
+   - `RuntimeActionToolAdapter` 尚未实现。
+
+2. **Runtime Consumers 尚未落地**
+   - Canvas Runtime Bridge SDK 尚未接入 Gateway。
+   - Agent tool adapter 与 Workflow node 直接调用 Runtime Action 尚未接入。
+   - 平台 UI 目前仍通过既有 HTTP route 间接触发 Setup Action，尚未有统一 Runtime Bridge client。
+
+3. **Governance / Operation / Audit 仍是后续主线**
+   - Invocation trace 已有基础 ID 与错误回填，但还未投影为统一审计事件或 session event。
+   - 长任务 Runtime Operation、统一超时/取消、HTTP provider allowlist 与凭据策略尚未实现。
+   - `environment.prepare`、`backend.probe`、terminal/bootstrap 类 action 仍待进一步迁移设计。
+
 ### Lifecycle Model
 
 - Runtime Gateway 服务本体跟随 API/AppState 生命周期，是常驻的无状态或弱状态调度入口。
@@ -128,16 +167,16 @@ Runtime Client
 
 ## Acceptance Criteria
 
-- [ ] 有明确的 Runtime Gateway / Action / Invocation / Provider / Surface / Actor 类型设计。
-- [ ] Canvas 不再是协议命名中心，只作为 Runtime Client 之一。
-- [ ] Relay 被定位为 provider/transport 内部实现，不直接暴露给上层 runtime。
+- [x] 有明确的 Runtime Gateway / Action / Invocation / Provider / Surface / Actor 类型设计。
+- [x] Canvas 不再是协议命名中心，只作为 Runtime Client 之一。
+- [x] Relay 被定位为 provider/transport 内部实现，不直接暴露给上层 runtime。
 - [ ] Gateway 调用经过 CapabilityState 或等价 policy 裁决。
 - [ ] 至少完成 `mcp.call_tool` 的端到端设计，明确 direct MCP 与 relay MCP 的路由方式。
-- [ ] 至少完成一个非 Canvas 调用方场景设计，例如 Agent tool adapter 或 environment/workspace prepare。
-- [ ] 明确 Runtime Scope 与 Gateway/Surface/Invocation/Provider 资源生命周期关系。
-- [ ] 明确 Session 是 Runtime Surface 的唯一一等宿主，Project / WorkspaceBinding / WorkflowRun / CanvasView 不形成平行运行时上下文。
-- [ ] 明确 Setup Action 纳入 Runtime Gateway 统一协议，但不暴露给普通 Canvas / Agent / Workflow runtime surface。
-- [ ] 现有 workspace detect、browse directory、MCP probe 等入口有明确迁移策略：API 层只保留 thin route，业务执行收口到 Gateway/provider。
+- [x] 至少完成一个非 Canvas 调用方场景设计，例如 Agent tool adapter 或 environment/workspace prepare。
+- [x] 明确 Runtime Scope 与 Gateway/Surface/Invocation/Provider 资源生命周期关系。
+- [x] 明确 Session 是 Runtime Surface 的唯一一等宿主，Project / WorkspaceBinding / WorkflowRun / CanvasView 不形成平行运行时上下文。
+- [x] 明确 Setup Action 纳入 Runtime Gateway 统一协议，但不暴露给普通 Canvas / Agent / Workflow runtime surface。
+- [x] 现有 workspace detect、browse directory、MCP probe 等入口有明确迁移策略：API 层只保留 thin route，业务执行收口到 Gateway/provider。
 - [ ] 明确 HTTP action 的边界、allowlist、凭据策略、超时和响应大小限制。
 - [ ] 所有 invocation 均具备 trace/audit 语义。
 

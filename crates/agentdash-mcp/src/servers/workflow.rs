@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
@@ -187,7 +187,6 @@ pub struct EdgeInput {
 pub struct WorkflowMcpServer {
     services: Arc<McpServices>,
     project_id: Uuid,
-    tool_router: ToolRouter<Self>,
 }
 
 impl WorkflowMcpServer {
@@ -195,7 +194,6 @@ impl WorkflowMcpServer {
         Self {
             services,
             project_id,
-            tool_router: Self::tool_router(),
         }
     }
 

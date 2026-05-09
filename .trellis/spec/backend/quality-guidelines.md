@@ -39,6 +39,39 @@
 
 ACP 协议对象、第三方 SDK 透传、明确标注为"桥接层"的响应对象允许保留外部字段风格。
 
+### RMCP Tool Router 宏约定
+
+使用 `rmcp` 的 `#[tool_router]` / `#[tool_handler]` 时，server struct 不需要持有 `ToolRouter<Self>` 字段；宏会生成 `Self::tool_router()` 关联方法，`#[tool_handler]` 会基于该生成路由完成工具注册与分发。
+
+```rust
+// ✅ Correct：只保留业务状态，测试或 schema 校验可直接调用 Self::tool_router()
+#[derive(Clone)]
+pub struct StoryMcpServer {
+    services: Arc<McpServices>,
+    story_id: Uuid,
+}
+
+#[tool_router]
+impl StoryMcpServer {
+    #[tool(description = "获取当前 Story 的完整上下文信息")]
+    async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        // ...
+    }
+}
+```
+
+```rust
+// ❌ Wrong：实例字段不会被业务代码读取，会触发 dead_code warning
+#[derive(Clone)]
+pub struct StoryMcpServer {
+    services: Arc<McpServices>,
+    story_id: Uuid,
+    tool_router: ToolRouter<Self>,
+}
+```
+
+测试工具注册或 schema 时应使用 `StoryMcpServer::tool_router().list_all()` 或 `get_tool()`，而不是在实例中缓存一份 router。
+
 ---
 
 ## Scenario: API JSON 字段命名统一

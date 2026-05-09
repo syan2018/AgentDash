@@ -7,7 +7,10 @@ mod types;
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use gateway::RuntimeGateway;
 pub use provider::RuntimeProvider;
-pub use setup_actions::{MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportProvider};
+pub use setup_actions::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportProvider, WORKSPACE_DETECT_ACTION,
+    WorkspaceDetectInput, WorkspaceDetectProvider,
+};
 pub use types::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKeyError, RuntimeActionKind,
     RuntimeActor, RuntimeContext, RuntimeInvocationOutput, RuntimeInvocationRequest,

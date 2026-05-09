@@ -16,7 +16,9 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{McpProbeTransportProvider, RuntimeGateway};
+use agentdash_application::runtime_gateway::{
+    McpProbeTransportProvider, RuntimeGateway, WorkspaceDetectProvider,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::StoryStepActivationService;
@@ -200,9 +202,18 @@ impl AppState {
 
         let backend_registry = BackendRegistry::new();
         let mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
-        let runtime_gateway = Arc::new(RuntimeGateway::new().with_provider(Arc::new(
-            McpProbeTransportProvider::new(Some(mcp_probe_relay)),
-        )));
+        let workspace_detect_transport: Arc<
+            dyn agentdash_application::backend_transport::BackendTransport,
+        > = backend_registry.clone();
+        let runtime_gateway = Arc::new(
+            RuntimeGateway::new()
+                .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
+                    mcp_probe_relay,
+                ))))
+                .with_provider(Arc::new(WorkspaceDetectProvider::new(
+                    workspace_detect_transport,
+                ))),
+        );
         let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
         let terminal_cache =
             agentdash_application::session::terminal_cache::SessionTerminalCache::new();

@@ -4,6 +4,7 @@ use super::types::{RuntimeActionKey, RuntimeTrace};
 pub enum RuntimeInvocationErrorKind {
     InvalidRequest,
     CapabilityDenied,
+    Conflict,
     ProviderUnavailable,
     ProviderFailed,
     Timeout,
@@ -20,6 +21,11 @@ pub enum RuntimeInvocationError {
     },
     #[error("runtime action 被拒绝: {message}")]
     CapabilityDenied {
+        message: String,
+        trace: Option<RuntimeTrace>,
+    },
+    #[error("runtime action 当前不可执行: {message}")]
+    Conflict {
         message: String,
         trace: Option<RuntimeTrace>,
     },
@@ -79,6 +85,13 @@ impl RuntimeInvocationError {
         }
     }
 
+    pub fn conflict(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
+        Self::Conflict {
+            message: message.into(),
+            trace,
+        }
+    }
+
     pub fn timeout(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
         Self::Timeout {
             message: message.into(),
@@ -94,6 +107,7 @@ impl RuntimeInvocationError {
             RuntimeInvocationError::CapabilityDenied { .. } => {
                 RuntimeInvocationErrorKind::CapabilityDenied
             }
+            RuntimeInvocationError::Conflict { .. } => RuntimeInvocationErrorKind::Conflict,
             RuntimeInvocationError::ProviderUnavailable { .. } => {
                 RuntimeInvocationErrorKind::ProviderUnavailable
             }
@@ -108,6 +122,7 @@ impl RuntimeInvocationError {
         match self {
             RuntimeInvocationError::InvalidRequest { trace, .. }
             | RuntimeInvocationError::CapabilityDenied { trace, .. }
+            | RuntimeInvocationError::Conflict { trace, .. }
             | RuntimeInvocationError::ProviderUnavailable { trace, .. }
             | RuntimeInvocationError::ProviderFailed { trace, .. }
             | RuntimeInvocationError::Timeout { trace, .. } => trace.as_ref(),
@@ -127,6 +142,12 @@ impl RuntimeInvocationError {
             },
             RuntimeInvocationError::CapabilityDenied { message, trace } => {
                 RuntimeInvocationError::CapabilityDenied {
+                    message,
+                    trace: trace.or(Some(fallback)),
+                }
+            }
+            RuntimeInvocationError::Conflict { message, trace } => {
+                RuntimeInvocationError::Conflict {
                     message,
                     trace: trace.or(Some(fallback)),
                 }

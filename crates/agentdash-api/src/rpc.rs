@@ -111,6 +111,7 @@ impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for Ap
         match err.kind() {
             RuntimeInvocationErrorKind::InvalidRequest => ApiError::BadRequest(message),
             RuntimeInvocationErrorKind::CapabilityDenied => ApiError::Forbidden(message),
+            RuntimeInvocationErrorKind::Conflict => ApiError::Conflict(message),
             RuntimeInvocationErrorKind::ProviderUnavailable => {
                 ApiError::ServiceUnavailable(message)
             }

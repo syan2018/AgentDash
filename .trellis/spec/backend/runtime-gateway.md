@@ -50,6 +50,7 @@ pub struct ServiceSet {
 
 ```rust
 pub const MCP_PROBE_TRANSPORT_ACTION: &str = "mcp.probe_transport";
+pub const WORKSPACE_DETECT_ACTION: &str = "workspace.detect";
 ```
 
 ### 3. Contracts
@@ -74,12 +75,31 @@ McpTransportConfig
 ProbeResult
 ```
 
+`workspace.detect` 输入：
+
+```rust
+pub struct WorkspaceDetectInput {
+    pub backend_id: String,
+    pub root_ref: String,
+}
+```
+
+`workspace.detect` 输出：
+
+```rust
+WorkspaceDetectionResult
+```
+
 HTTP route 保持原响应契约，不能让前端看到 Gateway 内部 envelope：
 
 ```rust
 POST /api/projects/{project_id}/mcp-presets/probe
 Request: McpTransportConfig
 Response: ProbeResult
+
+POST /api/projects/{project_id}/workspaces/detect
+Request: DetectWorkspaceRequest
+Response: DetectWorkspaceResponse
 ```
 
 ### 4. Validation & Error Matrix
@@ -90,6 +110,7 @@ Response: ProbeResult
 | Setup Action 使用 Session context | `InvalidRequest` | `400 Bad Request` |
 | Setup Action 使用 Agent/Canvas/Workflow actor | `CapabilityDenied` | `403 Forbidden` |
 | provider 输入 JSON 无法反序列化 | `InvalidRequest` | `400 Bad Request` |
+| action 目标当前状态不可用，例如 backend 离线 | `Conflict` | `409 Conflict` |
 | provider 内部执行失败 | `ProviderFailed` | `500 Internal Server Error` |
 | provider 超时 | `Timeout` | `503 Service Unavailable` |
 
@@ -100,11 +121,15 @@ Response: ProbeResult
 - Good: API route 已完成 project 权限校验后，使用 `RuntimeActor::PlatformUser { user_id }` + `RuntimeContext::Setup { project_id, ... }` 调用 Gateway。
 - Base: provider 将 `input` 反序列化为领域类型，调用已有 application 函数或 relay provider，不重写本机 handler。
 - Bad: route 直接调用 `probe_transport`、直接拼 relay command，或把 Setup Action 暴露给 Session Runtime Surface。
+- Good: `workspace.detect` provider 复用 `detect_workspace_from_backend` 与 `BackendTransport`，API route 只在 Gateway output 后做 matched workspace 计算和响应 DTO 映射。
+- Bad: `workspace.detect` route 直接依赖 `BackendRegistry` 拼 `workspace_detect` relay command，或在 route 中复制 identity 推断逻辑。
 
 ### 6. Tests Required
 
 - Provider 单测：非法 input shape 返回 `InvalidRequest`。
 - Provider 单测：stdio probe 在无 relay 时返回 `ProbeResult::Error` payload，而不是 HTTP/Gateway 错误。
+- Provider 单测：`workspace.detect` 的空 `root_ref` 返回 `InvalidRequest`，backend 离线返回 `Conflict`。
+- Provider 单测：`workspace.detect` 成功返回 `WorkspaceDetectionResult` payload，至少覆盖 Git identity 推断。
 - Gateway 单测：Setup Action 拒绝 session actor。
 - API route 相关测试：原 route 响应类型保持 `ProbeResult`，`RuntimeInvocationError` 能映射到 `ApiError`。
 - Check：至少运行 `cargo test -p agentdash-application runtime_gateway`、相关 API route/rpc 测试，以及受影响 crate 的 `cargo check`。

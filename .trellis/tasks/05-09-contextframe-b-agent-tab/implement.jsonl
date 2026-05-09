@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端总览：FSD 模块组织、设计约束、语言要求（中文注释与文档）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件模式、Props 与样式约定，新增 ContextFrameStream/ContextFrameBody 必须遵守"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "强类型解析守则：snake_case 直接映射、isRecord 守卫、禁 any；parseContextFrame 边界维护"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "代码标准与禁止模式（冗余注释、英文标识符、不必要依赖）"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useSessionFeed 的 AggregatedContextFrameGroup 归并契约；Stream shell 改造时不能破坏聚合规则"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "context_frame 走 platform meta event 通道，前端解析契约来源，不得伪装成 agent_message_chunk"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ContextFrame 数据契约与 12 种 section kind 完整列表；前端 token 映射表必须覆盖"}

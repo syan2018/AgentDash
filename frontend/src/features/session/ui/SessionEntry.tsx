@@ -15,6 +15,7 @@
  */
 
 import { memo, useState } from "react";
+import { ContextFrameStream } from "./ContextFrameStream";
 import {
   isAggregatedGroup,
   isAggregatedContextFrameGroup,
@@ -45,8 +46,6 @@ import { AcpTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { AcpSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
-import { ContextFrameCard } from "./ContextFrameCard";
-import { BADGE } from "./EventCards";
 
 export interface SessionEntryProps {
   item: AcpDisplayItem;
@@ -219,54 +218,17 @@ function AggregatedContextFrameGroupEntry({
 }: {
   group: AggregatedContextFrameGroup;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const frames = group.entries
     .map((entry) => extractPlatformEventData(entry.event))
     .filter((data): data is Record<string, unknown> => data != null)
-    .map((data) => ({ data, frame: parseContextFrame(data) }))
-    .filter((item): item is { data: Record<string, unknown>; frame: NonNullable<ReturnType<typeof parseContextFrame>> } => item.frame != null);
+    .map((data) => parseContextFrame(data))
+    .filter((frame): frame is NonNullable<ReturnType<typeof parseContextFrame>> => frame != null);
 
   if (frames.length === 0) {
     return null;
   }
 
-  const kindCounts = new Map<string, number>();
-  let sectionCount = 0;
-  for (const { frame } of frames) {
-    kindCounts.set(frame.kind, (kindCounts.get(frame.kind) ?? 0) + 1);
-    sectionCount += frame.sections.length;
-  }
-  const kindSummary = Array.from(kindCounts.entries())
-    .map(([kind, count]) => `${kind} ${count}`)
-    .join("，");
-
-  return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
-      >
-        <span className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE.neutral}`}>
-          CTX
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">Agent 上下文批量更新</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {frames.length} 个 frame，{sectionCount} 个 section{kindSummary ? ` · ${kindSummary}` : ""}
-          </p>
-        </div>
-        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
-      </button>
-      {expanded && (
-        <div className="space-y-2 border-t border-border px-3 py-2.5">
-          {frames.map(({ data, frame }) => (
-            <ContextFrameCard key={frame.id} data={data} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <ContextFrameStream frames={frames} />;
 }
 
 function AggregatedToolGroupEntry({

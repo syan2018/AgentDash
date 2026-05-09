@@ -13,24 +13,47 @@ describe("ContextFrameCard", () => {
     expect(notice?.sections[1]?.kind).toBe("tool_schema_delta");
   });
 
-  it("渲染 context_frame 专用卡片入口", () => {
+  it("默认折叠时仅渲染 header", () => {
     const markup = renderToStaticMarkup(<ContextFrameCard data={sampleNotice()} />);
 
     expect(markup).toContain("CTX");
     expect(markup).toContain("Agent 上下文已更新");
+    // 折叠态：阶段 / kind 汇总出现在 header 小字
     expect(markup).toContain("阶段 apply");
-    expect(markup).toContain("工具 Schema 变化 1 项变化");
-    expect(markup).not.toContain("工具 Schema 变化 2 项变化");
+    // 折叠态：不渲染内层 section body
+    expect(markup).not.toContain("能力与工具变化");
   });
 
-  it("解析 bootstrap_context section", () => {
-    const notice = parseContextFrame(sampleBootstrapNotice());
+  it("展开后按 sections[] 原顺序渲染单列长页", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleNotice()} defaultExpanded />,
+    );
 
+    // section header token + 标题 + hint
+    expect(markup).toContain("能力与工具变化");
+    expect(markup).toContain("工具 Schema 变化");
+    // tool_schema_delta 去重后仅 1 项变化（restored 与 added 同一 tool_path）
+    expect(markup).toContain("1 项变化");
+    // 确认 tab 条包含 BDL（runtime_context_update）
+    expect(markup).toContain("BDL");
+    // Agent 原文折叠块
+    expect(markup).toContain("Agent 实际原文");
+    // 调试信息折叠块
+    expect(markup).toContain("调试信息");
+  });
+
+  it("bootstrap_context 解析并渲染 BOOT token", () => {
+    const notice = parseContextFrame(sampleBootstrapNotice());
     expect(notice?.kind).toBe("bootstrap_context");
     expect(notice?.sections[0]?.kind).toBe("bootstrap_context");
-    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleBootstrapNotice()} />);
 
-    expect(markup).toContain("Bootstrap Context 2 个片段");
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleBootstrapNotice()} defaultExpanded />,
+    );
+    // frame tab 的 BOOT token + section block 标题
+    expect(markup).toContain("BOOT");
+    expect(markup).toContain("Bootstrap Context");
+    expect(markup).toContain("2 个片段");
     expect(markup).toContain("Agent 上下文已更新");
   });
 
@@ -46,15 +69,22 @@ describe("ContextFrameCard", () => {
 
     const markup = renderToStaticMarkup(
       <>
-        <ContextFrameCard data={sampleWorkspaceSurfaceNotice()} />
-        <ContextFrameCard data={sampleSkillSurfaceNotice()} />
-        <ContextFrameCard data={sampleHookRuntimeSurfaceNotice()} />
-      </>
+        <ContextFrameCard data={sampleWorkspaceSurfaceNotice()} defaultExpanded />
+        <ContextFrameCard data={sampleSkillSurfaceNotice()} defaultExpanded />
+        <ContextFrameCard data={sampleHookRuntimeSurfaceNotice()} defaultExpanded />
+      </>,
     );
 
-    expect(markup).toContain("Workspace Surface 1 个挂载");
-    expect(markup).toContain("Skill Surface 1 个 skill");
-    expect(markup).toContain("Hook Runtime Surface 2 个 pending action");
+    expect(markup).toContain("Workspace Surface");
+    expect(markup).toContain("1 个挂载");
+    expect(markup).toContain("Skill Surface");
+    expect(markup).toContain("1 个 skill");
+    expect(markup).toContain("Hook Runtime Surface");
+    expect(markup).toContain("2 个 pending action");
+    // frame tab token
+    expect(markup).toContain("WS");
+    expect(markup).toContain("SKL");
+    expect(markup).toContain("HOOK");
   });
 
   it("解析并渲染 auto_resume frame", () => {
@@ -63,9 +93,13 @@ describe("ContextFrameCard", () => {
     expect(notice?.kind).toBe("auto_resume");
     expect(notice?.sections[0]?.kind).toBe("auto_resume");
 
-    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleAutoResumeNotice()} />);
-    expect(markup).toContain("Auto Resume hook_before_stop_continue");
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleAutoResumeNotice()} defaultExpanded />,
+    );
+    expect(markup).toContain("Auto Resume");
+    expect(markup).toContain("hook_before_stop_continue");
     expect(markup).toContain("Agent 上下文已更新");
+    expect(markup).toContain("RES");
   });
 
   it("解析并渲染 compaction_summary frame", () => {
@@ -74,9 +108,13 @@ describe("ContextFrameCard", () => {
     expect(notice?.kind).toBe("compaction_summary");
     expect(notice?.sections[0]?.kind).toBe("compaction_summary");
 
-    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleCompactionNotice()} />);
-    expect(markup).toContain("Compaction Summary 12 条消息");
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleCompactionNotice()} defaultExpanded />,
+    );
+    expect(markup).toContain("Compaction Summary");
+    expect(markup).toContain("12 条消息");
     expect(markup).toContain("Agent 上下文已更新");
+    expect(markup).toContain("CMP");
   });
 });
 

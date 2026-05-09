@@ -19,8 +19,9 @@ describe("SessionEntry ContextFrame 聚合", () => {
     const html = renderToStaticMarkup(<SessionEntry item={group} />);
 
     expect(html).toContain("Agent 上下文批量更新");
-    expect(html).toContain("2 个 frame");
-    expect(html).toContain("2 个 section");
+    // header 汇总 "N 帧 · 最后阶段 X"，覆盖原 "N 个 frame"
+    expect(html).toContain("2 帧");
+    expect(html).toContain("最后阶段 apply");
     expect(html).not.toContain("已注入动态上下文");
   });
 });

@@ -388,3 +388,75 @@ function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map(readString).filter((item): item is string => item != null);
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Token / Variant 映射纯函数
+//
+// frame.kind → token：用于外层 frame tab 条上的徽标
+// section.kind → token：用于内层 section header 行的徽标
+//
+// 颜色 token 仅限项目既有 BADGE 五色中性集，保持 EventCards 的 "badge 是
+// 唯一染色点" 约束。
+// ──────────────────────────────────────────────────────────────────────────────
+
+export type ContextBadgeVariant = "neutral" | "primary" | "warning";
+
+export interface ContextTokenInfo {
+  token: string;
+  variant: ContextBadgeVariant;
+}
+
+/** 由 frame.kind 推导外层 tab 上的 token 与徽标颜色 */
+export function frameKindToToken(kind: string): ContextTokenInfo {
+  switch (kind) {
+    case "runtime_context_update":
+      return { token: "BDL", variant: "neutral" };
+    case "bootstrap_context":
+      return { token: "BOOT", variant: "primary" };
+    case "workspace_surface":
+      return { token: "WS", variant: "neutral" };
+    case "skill_surface":
+      return { token: "SKL", variant: "neutral" };
+    case "hook_runtime_surface":
+      return { token: "HOOK", variant: "neutral" };
+    case "auto_resume":
+      return { token: "RES", variant: "warning" };
+    case "compaction_summary":
+      return { token: "CMP", variant: "warning" };
+    default:
+      // 未知 kind：截取前 4 字母大写
+      return {
+        token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
+        variant: "neutral",
+      };
+  }
+}
+
+/** 由 section.kind 推导内层 section 行 token 与徽标颜色 */
+export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTokenInfo {
+  switch (kind) {
+    case "bootstrap_context":
+      return { token: "BOOT", variant: "primary" };
+    case "capability_delta":
+      return { token: "CAP", variant: "neutral" };
+    case "tool_schema":
+    case "tool_schema_delta":
+      return { token: "TOOL", variant: "neutral" };
+    case "workflow_context":
+      return { token: "WF", variant: "neutral" };
+    case "hook_injection":
+      return { token: "HOOK", variant: "neutral" };
+    case "system_notice":
+      return { token: "SYS", variant: "neutral" };
+    case "workspace_surface":
+      return { token: "WS", variant: "neutral" };
+    case "skill_surface":
+      return { token: "SKL", variant: "neutral" };
+    case "hook_runtime_surface":
+      return { token: "HOOK", variant: "neutral" };
+    case "auto_resume":
+      return { token: "RES", variant: "warning" };
+    case "compaction_summary":
+      return { token: "CMP", variant: "warning" };
+  }
+}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "确认新组件遵循 Props 与样式约定、复用 EventFullCard 原语"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认无 any 漂移、parseContextFrame 守卫边界完整、snake_case 映射保持"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "确认无禁止模式（冗余注释、英文标识符、未使用依赖）"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "确认 AggregatedContextFrameGroup 归并契约未被破坏"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "确认 context_frame 仍走 platform meta 通道，未被绕开"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "确认 12 种 section kind 渲染覆盖完整，无遗漏"}

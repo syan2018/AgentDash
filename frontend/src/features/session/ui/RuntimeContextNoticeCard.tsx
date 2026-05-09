@@ -337,17 +337,24 @@ function sectionHint(section: RuntimeContextNoticeSection): string | null {
     }
     case "tool_schema": return `${section.tools.length} 个工具`;
     case "tool_schema_delta": {
-      const count =
-        section.added_tools.length +
-        section.removed_tool_paths.length +
-        section.restored_tool_paths.length +
-        section.blocked_tool_paths.length;
+      const count = toolSchemaDeltaAffectedCount(section);
       return count > 0 ? `${count} 项变化` : "无变化";
     }
     case "workflow_context":
     case "hook_injection": return `${section.injections.length} 项注入`;
     case "system_notice": return null;
   }
+}
+
+function toolSchemaDeltaAffectedCount(section: ToolSchemaDeltaSection): number {
+  const affected = new Set<string>();
+  for (const path of section.removed_tool_paths) affected.add(path);
+  for (const path of section.restored_tool_paths) affected.add(path);
+  for (const path of section.blocked_tool_paths) affected.add(path);
+  for (const tool of section.added_tools) {
+    affected.add(tool.tool_path ?? tool.name);
+  }
+  return affected.size;
 }
 
 function summarizeNotice(notice: RuntimeContextNotice): string[] {

@@ -19,6 +19,8 @@ describe("RuntimeContextNoticeCard", () => {
     expect(markup).toContain("CTX");
     expect(markup).toContain("Agent 上下文已更新");
     expect(markup).toContain("阶段 apply");
+    expect(markup).toContain("工具 Schema 变化 1 项变化");
+    expect(markup).not.toContain("工具 Schema 变化 2 项变化");
   });
 });
 

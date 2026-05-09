@@ -3,7 +3,7 @@
   "name": "runtime-gateway",
   "title": "设计 Runtime Gateway 统一运行时能力网关",
   "description": "规划一套通用 Runtime Gateway / Runtime Action 协议，将 Canvas、Agent、Workflow、环境准备流程统一接入受控运行时能力调用层。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

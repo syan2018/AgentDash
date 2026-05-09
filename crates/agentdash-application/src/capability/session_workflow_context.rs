@@ -798,6 +798,7 @@ mod tests {
             mcp_base_url: Some("http://localhost:3001".to_string()),
         };
         let contributions = vec![crate::capability::ContextContributions {
+            source: crate::capability::ContextContributionSource::Workflow,
             tool: Some(wf_tool),
             companion: None,
         }];
@@ -833,11 +834,7 @@ mod tests {
         );
 
         assert!(
-            !output.is_capability_tool_enabled(
-                "workflow_management",
-                "upsert_workflow_tool",
-                None
-            ),
+            !output.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
             "Plan 初始化阶段不得暴露 upsert_workflow_tool schema"
         );
         assert!(

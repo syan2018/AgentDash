@@ -14,67 +14,70 @@
 
 UPDATE agents
 SET base_config = (
-    SELECT json_remove(
-        json_set(base_config, '$.capability_directives',
-            json_group_array(
-                json_object('add',
+    jsonb_set(
+        base_config::jsonb,
+        '{capability_directives}',
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'add',
                     CASE value
-                        WHEN 'read'          THEN 'file_read'
-                        WHEN 'write'         THEN 'file_write'
-                        WHEN 'execute'       THEN 'shell_execute'
-                        WHEN 'workflow'      THEN 'workflow'
+                        WHEN 'read' THEN 'file_read'
+                        WHEN 'write' THEN 'file_write'
+                        WHEN 'execute' THEN 'shell_execute'
+                        WHEN 'workflow' THEN 'workflow'
                         WHEN 'collaboration' THEN 'collaboration'
-                        WHEN 'canvas'        THEN 'canvas'
+                        WHEN 'canvas' THEN 'canvas'
                         ELSE value
                     END
                 )
             )
+            FROM jsonb_array_elements_text(base_config::jsonb -> 'tool_clusters') AS tool_cluster(value)
         ),
-        '$.tool_clusters'
-    )
-    FROM json_each(json_extract(base_config, '$.tool_clusters'))
-)
-WHERE json_extract(base_config, '$.tool_clusters') IS NOT NULL
-  AND json_type(json_extract(base_config, '$.tool_clusters')) = 'array';
+        true
+    ) - 'tool_clusters'
+)::text
+WHERE jsonb_typeof(base_config::jsonb -> 'tool_clusters') = 'array'
+  AND jsonb_array_length(base_config::jsonb -> 'tool_clusters') > 0;
 
 -- agents 中仅有 tool_clusters 键但值为空数组的行：仅删除键
 UPDATE agents
-SET base_config = json_remove(base_config, '$.tool_clusters')
-WHERE json_extract(base_config, '$.tool_clusters') IS NOT NULL
-  AND json_type(json_extract(base_config, '$.tool_clusters')) = 'array'
-  AND json_array_length(json_extract(base_config, '$.tool_clusters')) = 0;
+SET base_config = ((base_config::jsonb) - 'tool_clusters')::text
+WHERE jsonb_typeof(base_config::jsonb -> 'tool_clusters') = 'array'
+  AND jsonb_array_length(base_config::jsonb -> 'tool_clusters') = 0;
 
 -- project_agent_links.config_override 同理
 UPDATE project_agent_links
 SET config_override = (
-    SELECT json_remove(
-        json_set(config_override, '$.capability_directives',
-            json_group_array(
-                json_object('add',
+    jsonb_set(
+        config_override::jsonb,
+        '{capability_directives}',
+        (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'add',
                     CASE value
-                        WHEN 'read'          THEN 'file_read'
-                        WHEN 'write'         THEN 'file_write'
-                        WHEN 'execute'       THEN 'shell_execute'
-                        WHEN 'workflow'      THEN 'workflow'
+                        WHEN 'read' THEN 'file_read'
+                        WHEN 'write' THEN 'file_write'
+                        WHEN 'execute' THEN 'shell_execute'
+                        WHEN 'workflow' THEN 'workflow'
                         WHEN 'collaboration' THEN 'collaboration'
-                        WHEN 'canvas'        THEN 'canvas'
+                        WHEN 'canvas' THEN 'canvas'
                         ELSE value
                     END
                 )
             )
+            FROM jsonb_array_elements_text(config_override::jsonb -> 'tool_clusters') AS tool_cluster(value)
         ),
-        '$.tool_clusters'
-    )
-    FROM json_each(json_extract(config_override, '$.tool_clusters'))
-)
+        true
+    ) - 'tool_clusters'
+)::text
 WHERE config_override IS NOT NULL
-  AND json_extract(config_override, '$.tool_clusters') IS NOT NULL
-  AND json_type(json_extract(config_override, '$.tool_clusters')) = 'array'
-  AND json_array_length(json_extract(config_override, '$.tool_clusters')) > 0;
+  AND jsonb_typeof(config_override::jsonb -> 'tool_clusters') = 'array'
+  AND jsonb_array_length(config_override::jsonb -> 'tool_clusters') > 0;
 
 UPDATE project_agent_links
-SET config_override = json_remove(config_override, '$.tool_clusters')
+SET config_override = ((config_override::jsonb) - 'tool_clusters')::text
 WHERE config_override IS NOT NULL
-  AND json_extract(config_override, '$.tool_clusters') IS NOT NULL
-  AND json_type(json_extract(config_override, '$.tool_clusters')) = 'array'
-  AND json_array_length(json_extract(config_override, '$.tool_clusters')) = 0;
+  AND jsonb_typeof(config_override::jsonb -> 'tool_clusters') = 'array'
+  AND jsonb_array_length(config_override::jsonb -> 'tool_clusters') = 0;

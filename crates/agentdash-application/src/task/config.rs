@@ -89,7 +89,8 @@ pub fn executor_config_from_preset(
         TaskExecutionError::BadRequest(format!("Preset `{}` 缺少有效 agent_type", preset.name))
     })?;
 
-    let preset_config = AgentPresetConfig::from_json(&preset.config);
+    let preset_config = AgentPresetConfig::from_json(&preset.config)
+        .map_err(|error| TaskExecutionError::BadRequest(error.to_string()))?;
     Ok(preset_config.to_agent_config(&agent_type))
 }
 

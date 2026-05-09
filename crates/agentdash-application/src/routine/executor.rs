@@ -6,6 +6,7 @@ use uuid::Uuid;
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
 
@@ -48,6 +49,7 @@ struct RoutineAgentContext {
     project: Project,
     workspace: Option<Workspace>,
     executor_config: AgentConfig,
+    agent_tool_directives: Vec<ToolCapabilityDirective>,
     display_name: String,
     preset_name: Option<String>,
     preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -244,8 +246,14 @@ impl RoutineExecutor {
                 )
             })?;
 
-        let preset_config = link.merged_preset_config(&agent);
+        let preset_config = link
+            .merged_preset_config(&agent)
+            .map_err(|error| error.to_string())?;
         let executor_config = preset_config.to_agent_config(&agent.agent_type);
+        let agent_tool_directives = preset_config
+            .capability_directives
+            .clone()
+            .unwrap_or_default();
         let display_name = preset_config
             .display_name
             .as_deref()
@@ -265,6 +273,7 @@ impl RoutineExecutor {
             project,
             workspace,
             executor_config,
+            agent_tool_directives,
             display_name,
             preset_name: Some(agent.name.clone()),
             preset_mcp_servers,
@@ -496,6 +505,7 @@ impl RoutineExecutor {
                 agent_mcp: AgentLevelMcp {
                     preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
                 },
+                agent_tool_directives: agent_context.agent_tool_directives.clone(),
                 request_mcp_servers: Vec::new(),
                 existing_vfs: None,
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
@@ -530,7 +540,6 @@ async fn resolve_project_workspace(
         None => Ok(None),
     }
 }
-
 
 fn project_agent_session_label(agent_id: Uuid) -> String {
     format!("project_agent:{}", agent_id)

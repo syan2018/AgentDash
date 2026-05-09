@@ -19,8 +19,8 @@ use agentdash_spi::hooks::CapabilityDelta;
 use uuid::Uuid;
 
 use crate::capability::{
-    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, ContextContributions,
-    McpCandidates, ToolContribution, build_capability_delta_markdown,
+    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution, build_capability_delta_markdown,
 };
 use crate::platform_config::PlatformConfig;
 
@@ -67,6 +67,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives: directives.clone(),
                 has_active_workflow: true,
@@ -116,6 +117,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives: directives.clone(),
                 has_active_workflow: true,
@@ -211,6 +213,7 @@ fn phase_node_invalid_directives_are_tolerated() {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives: directives.clone(),
                 has_active_workflow: true,

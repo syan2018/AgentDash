@@ -193,6 +193,22 @@ export interface AgentPreset {
   config: Record<string, unknown>;
 }
 
+export interface AgentPresetConfig {
+  executor?: string;
+  provider_id?: string;
+  model_id?: string;
+  agent_id?: string;
+  thinking_level?: ThinkingLevel;
+  permission_policy?: string;
+  system_prompt?: string;
+  system_prompt_mode?: SystemPromptMode;
+  display_name?: string;
+  description?: string;
+  capability_directives?: CapabilityDirective[];
+  mcp_preset_keys?: string[];
+  allowed_companions?: string[];
+}
+
 // ─── Agent 独立实体（新模型）───
 
 export interface AgentEntity {
@@ -210,7 +226,7 @@ export interface ProjectAgentLink {
   agent_id: string;
   agent_name: string;
   agent_type: string;
-  merged_config: Record<string, unknown>;
+  merged_config: AgentPresetConfig;
   config_override: Record<string, unknown> | null;
   default_lifecycle_key: string | null;
   is_default_for_story: boolean;

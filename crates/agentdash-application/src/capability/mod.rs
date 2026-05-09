@@ -17,14 +17,14 @@ pub mod tool_catalog;
 #[cfg(test)]
 mod pipeline_tests;
 
+pub use agentdash_spi::CompanionSliceMode;
 pub use notification::{
     build_capability_delta_markdown, capability_description, is_known_capability_key,
 };
-pub use agentdash_spi::CompanionSliceMode;
 pub use resolver::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CapabilityResolverOutput, CompanionContribution, ContextContributions, McpCandidates,
-    ToolContribution,
+    CapabilityResolverOutput, CompanionContribution, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution,
 };
 pub use session_workflow_context::{
     SessionWorkflowOwner, SessionWorkflowRepos, resolve_session_workflow_context,

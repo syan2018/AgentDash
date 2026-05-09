@@ -1011,7 +1011,9 @@ impl CompanionRequestTool {
         for link in &links {
             if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
                 if agent.name.eq_ignore_ascii_case(agent_name) {
-                    let preset = link.merged_preset_config(&agent);
+                    let preset = link
+                        .merged_preset_config(&agent)
+                        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
                     return Ok(preset.to_agent_config(&agent.agent_type));
                 }
             }
@@ -2062,7 +2064,6 @@ pub fn build_companion_execution_slice(
         }
     }
 }
-
 
 fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vfs {
     let Some(vfs) = vfs else {

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::common::error::DomainError;
 use crate::workflow::ToolCapabilityDirective;
 
 /// Agent 级 System Prompt 注入模式。
@@ -57,6 +58,8 @@ pub struct AgentPresetConfig {
     pub system_prompt_mode: Option<SystemPromptMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 
     /// Agent 级能力指令。替代旧 `tool_clusters: Option<Vec<String>>`。
     /// 前端 → API → 存储 → Resolver 全链路使用相同的 `ToolCapabilityDirective` 表示。
@@ -83,7 +86,8 @@ impl AgentPresetConfig {
     /// 字段级合并：`self`（override）非 None 的字段优先于 `base`。
     pub fn merge_over(&self, base: &AgentPresetConfig) -> AgentPresetConfig {
         merge_field!(
-            self, base,
+            self,
+            base,
             executor,
             provider_id,
             model_id,
@@ -93,6 +97,7 @@ impl AgentPresetConfig {
             system_prompt,
             system_prompt_mode,
             display_name,
+            description,
             capability_directives,
             mcp_preset_keys,
             allowed_companions,
@@ -118,9 +123,9 @@ impl AgentPresetConfig {
         }
     }
 
-    /// 从旧格式 `serde_json::Value` 反序列化（用于 DB 读取的过渡期）。
-    pub fn from_json(value: &serde_json::Value) -> Self {
-        serde_json::from_value(value.clone()).unwrap_or_default()
+    /// 从 DB JSON 反序列化为权威配置结构。
+    pub fn from_json(value: &serde_json::Value) -> Result<Self, DomainError> {
+        serde_json::from_value(value.clone()).map_err(DomainError::Serialization)
     }
 }
 
@@ -176,5 +181,33 @@ impl AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self::new("CLAUDE_CODE")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_config_roundtrips_description_and_capability_directives() {
+        let config = AgentPresetConfig::from_json(&serde_json::json!({
+            "display_name": "Reviewer",
+            "description": "检查代码结构",
+            "capability_directives": [{ "add": "workflow_management" }]
+        }))
+        .expect("valid preset config");
+
+        assert_eq!(config.display_name.as_deref(), Some("Reviewer"));
+        assert_eq!(config.description.as_deref(), Some("检查代码结构"));
+        assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn preset_config_rejects_invalid_typed_payload() {
+        let result = AgentPresetConfig::from_json(&serde_json::json!({
+            "thinking_level": "not_a_level"
+        }));
+
+        assert!(result.is_err());
     }
 }

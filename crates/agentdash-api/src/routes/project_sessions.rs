@@ -264,8 +264,21 @@ pub(crate) async fn build_project_session_context_response(
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
     let mut contributions = Vec::new();
+    if let Some(directives) = project_agent.preset_config.capability_directives.clone()
+        && !directives.is_empty()
+    {
+        contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Agent,
+            tool: Some(agentdash_application::capability::ToolContribution {
+                directives,
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+    }
     if let Some(wf_tool) = workflow_tool {
         contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Workflow,
             tool: Some(wf_tool),
             companion: None,
         });
@@ -413,7 +426,9 @@ pub async fn list_project_sessions(
         let mut map = HashMap::new();
         for link in &links {
             if let Ok(Some(agent)) = state.repos.agent_repo.get_by_id(link.agent_id).await {
-                let preset = link.merged_preset_config(&agent);
+                let preset = link
+                    .merged_preset_config(&agent)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
                 let name = preset
                     .display_name
                     .as_deref()

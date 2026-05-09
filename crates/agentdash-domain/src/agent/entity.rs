@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::common::AgentPresetConfig;
+use crate::common::{AgentPresetConfig, error::DomainError};
 
 /// Agent — 独立的 Agent 实体
 ///
@@ -36,7 +36,7 @@ impl Agent {
     }
 
     /// 将 base_config JSON 反序列化为类型安全的 `AgentPresetConfig`。
-    pub fn preset_config(&self) -> AgentPresetConfig {
+    pub fn preset_config(&self) -> Result<AgentPresetConfig, DomainError> {
         AgentPresetConfig::from_json(&self.base_config)
     }
 }
@@ -93,14 +93,14 @@ impl ProjectAgentLink {
 
     /// 将 Agent.base_config 与 link.config_override 合并为类型安全的 `AgentPresetConfig`。
     /// override 字段级优先于 base。
-    pub fn merged_preset_config(&self, agent: &Agent) -> AgentPresetConfig {
-        let base = agent.preset_config();
+    pub fn merged_preset_config(&self, agent: &Agent) -> Result<AgentPresetConfig, DomainError> {
+        let base = agent.preset_config()?;
         match &self.config_override {
             Some(over_json) => {
-                let over = AgentPresetConfig::from_json(over_json);
-                over.merge_over(&base)
+                let over = AgentPresetConfig::from_json(over_json)?;
+                Ok(over.merge_over(&base))
             }
-            None => base,
+            None => Ok(base),
         }
     }
 }

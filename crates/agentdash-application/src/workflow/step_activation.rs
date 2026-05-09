@@ -29,8 +29,8 @@ use uuid::Uuid;
 
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CompanionContribution, CompanionSliceMode, ContextContributions, McpCandidates,
-    ToolContribution,
+    CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
+    McpCandidates, ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
@@ -142,6 +142,7 @@ pub fn activate_step_with_platform(
     // ── 2. 调 Resolver ──
     let mut contributions = Vec::new();
     contributions.push(ContextContributions {
+        source: ContextContributionSource::Workflow,
         tool: Some(ToolContribution {
             directives: combined_directives,
             has_active_workflow,
@@ -168,8 +169,7 @@ pub fn activate_step_with_platform(
     }
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.tool.mcp_servers.clone();
+    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
     dedupe_session_mcp_servers(&mut mcp_servers);
 
     let capability_keys = cap_output.capability_keys();

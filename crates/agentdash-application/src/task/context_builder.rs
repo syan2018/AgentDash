@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
-    CapabilityResolver, CapabilityResolverInput, ContextContributions, McpCandidates,
-    ToolContribution, tool_directives_from_active_workflow,
+    CapabilityResolver, CapabilityResolverInput, ContextContributionSource, ContextContributions,
+    McpCandidates, ToolContribution, tool_directives_from_active_workflow,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -84,6 +84,7 @@ pub async fn build_task_session_context(
     let mut contributions = Vec::new();
     if let Some(directives) = workflow_directives {
         contributions.push(ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives,
                 has_active_workflow: true,

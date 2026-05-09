@@ -14,7 +14,7 @@ use agentdash_domain::workflow::{
 use agentdash_mcp::injection::McpInjectionConfig;
 use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::platform::tool_capability::{
-    self, CAP_COLLABORATION, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
+    self, CAP_COLLABORATION, CAP_WORKFLOW, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
 use agentdash_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
 
@@ -50,9 +50,18 @@ pub struct CompanionContribution {
     pub available: Vec<CompanionAgentEntry>,
 }
 
+/// contribution 的来源，用于区分 agent 声明、workflow 声明与资源候选。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextContributionSource {
+    Agent,
+    Workflow,
+    Resource,
+}
+
 /// 各来源对各维度的贡献汇总。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ContextContributions {
+    pub source: ContextContributionSource,
     pub tool: Option<ToolContribution>,
     pub companion: Option<CompanionContribution>,
 }
@@ -62,7 +71,7 @@ pub struct ContextContributions {
 pub struct CapabilityResolverInput {
     /// session 归属上下文（决定 visibility 基线 + platform MCP scope）。
     pub owner_ctx: SessionOwnerCtx,
-    /// 各来源按固定优先级排列的 contributions。
+    /// 各来源按 directive 应用顺序排列的 contributions；授权语义由 `source` 显式决定。
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
@@ -81,6 +90,8 @@ pub struct AgentMcpServerEntry {
 struct MergedToolInput {
     /// 从 agent 来源的 Add directives 提取的 key 集合（用于 visibility 判定）。
     agent_declared_keys: BTreeSet<String>,
+    /// 按 directive 顺序归约后，仍由合法 source 授权启用的 well-known key。
+    source_grantable_keys: BTreeSet<String>,
     /// 合并后的全部 directives（按 contributions 顺序 concat）。
     directives: Vec<ToolCapabilityDirective>,
     /// 任一来源标记了 has_active_workflow。
@@ -88,24 +99,49 @@ struct MergedToolInput {
 }
 
 /// 从 contributions 合并产出 MergedToolInput。
-///
-/// contributions 的排列顺序约定：Agent → Workflow（index 0 为 agent 来源）。
-fn merge_contributions(contributions: &[ContextContributions]) -> MergedToolInput {
+fn merge_contributions(
+    owner_ctx: &SessionOwnerCtx,
+    contributions: &[ContextContributions],
+) -> MergedToolInput {
     let mut agent_declared_keys = BTreeSet::new();
+    let mut source_grantable_keys = BTreeSet::new();
     let mut directives = Vec::new();
     let mut has_active_workflow = false;
 
-    for (idx, contrib) in contributions.iter().enumerate() {
+    for contrib in contributions {
         if let Some(tool) = &contrib.tool {
             if tool.has_active_workflow {
                 has_active_workflow = true;
             }
-            // index 0 = agent 来源，提取 Add directives 作为 agent_declared_keys
-            if idx == 0 {
-                for d in &tool.directives {
-                    if let ToolCapabilityDirective::Add(path) = d {
+            for d in &tool.directives {
+                if let ToolCapabilityDirective::Add(path) = d {
+                    if contrib.source == ContextContributionSource::Agent {
                         agent_declared_keys.insert(path.capability.clone());
                     }
+                    let source_can_enable = source_can_enable_capability(
+                        owner_ctx,
+                        contrib.source,
+                        tool.has_active_workflow,
+                        path.capability.as_str(),
+                    );
+                    match &path.tool {
+                        None => {
+                            if source_can_enable {
+                                source_grantable_keys.insert(path.capability.clone());
+                            } else {
+                                source_grantable_keys.remove(path.capability.as_str());
+                            }
+                        }
+                        Some(_) => {
+                            if source_can_enable {
+                                source_grantable_keys.insert(path.capability.clone());
+                            }
+                        }
+                    }
+                } else if let ToolCapabilityDirective::Remove(path) = d
+                    && path.tool.is_none()
+                {
+                    source_grantable_keys.remove(path.capability.as_str());
                 }
             }
             directives.extend(tool.directives.iter().cloned());
@@ -114,6 +150,7 @@ fn merge_contributions(contributions: &[ContextContributions]) -> MergedToolInpu
 
     MergedToolInput {
         agent_declared_keys,
+        source_grantable_keys,
         directives,
         has_active_workflow,
     }
@@ -154,11 +191,10 @@ impl CapabilityResolver {
         input: &CapabilityResolverInput,
         platform: &PlatformConfig,
     ) -> CapabilityResolverOutput {
-        let merged = merge_contributions(&input.contributions);
+        let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let mut effective_caps =
-            default_visible_capabilities(&input.owner_ctx, &merged);
+        let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
 
         let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
@@ -177,13 +213,15 @@ impl CapabilityResolver {
                 ToolCapabilitySlotState::FullCapability
                 | ToolCapabilitySlotState::ToolWhitelist(_) => {
                     if cap.is_well_known() {
-                        effective_caps.insert(cap);
+                        if can_enable_well_known_capability(&cap, &input.owner_ctx, &merged) {
+                            effective_caps.insert(cap);
+                        } else {
+                            effective_caps.remove(&cap);
+                        }
                     } else if cap.is_custom_mcp() {
                         if let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
                         {
-                            if let Some(preset) =
-                                input.mcp_candidates.presets.get(&server_name)
-                            {
+                            if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
                                 effective_caps.insert(cap.clone());
                                 if seen_custom_mcp_names.insert(server_name.clone()) {
                                     resolved_mcp_servers.push(
@@ -221,9 +259,11 @@ impl CapabilityResolver {
                 enabled_clusters.insert(cluster);
             }
             if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap) {
-                if let Some(config) =
-                    build_platform_mcp_config(scope, platform.mcp_base_url.as_deref(), &input.owner_ctx)
-                {
+                if let Some(config) = build_platform_mcp_config(
+                    scope,
+                    platform.mcp_base_url.as_deref(),
+                    &input.owner_ctx,
+                ) {
                     resolved_mcp_servers.push(config.to_session_mcp_server());
                 }
             }
@@ -308,16 +348,55 @@ fn default_visible_capabilities(
     for &key in WELL_KNOWN_KEYS {
         let cap = ToolCapability::new(key);
         let agent_declares_this = merged.agent_declared_keys.contains(key);
+        let workflow_declares_this = key == CAP_WORKFLOW && merged.has_active_workflow;
         if tool_capability::is_capability_visible(
             &cap,
             owner_ctx.owner_type(),
             agent_declares_this,
-            merged.has_active_workflow,
+            workflow_declares_this,
         ) {
             effective.insert(cap);
         }
     }
     effective
+}
+
+fn can_enable_well_known_capability(
+    cap: &ToolCapability,
+    owner_ctx: &SessionOwnerCtx,
+    merged: &MergedToolInput,
+) -> bool {
+    let workflow_declares_this = cap.key() == CAP_WORKFLOW && merged.has_active_workflow;
+    tool_capability::is_capability_visible(
+        cap,
+        owner_ctx.owner_type(),
+        false,
+        workflow_declares_this,
+    ) || merged.source_grantable_keys.contains(cap.key())
+}
+
+fn source_can_enable_capability(
+    owner_ctx: &SessionOwnerCtx,
+    source: ContextContributionSource,
+    has_active_workflow: bool,
+    capability_key: &str,
+) -> bool {
+    let cap = ToolCapability::new(capability_key);
+    if !cap.is_well_known() {
+        return true;
+    }
+    match source {
+        ContextContributionSource::Agent => {
+            tool_capability::is_capability_visible(&cap, owner_ctx.owner_type(), true, false)
+        }
+        ContextContributionSource::Workflow => tool_capability::is_capability_visible(
+            &cap,
+            owner_ctx.owner_type(),
+            false,
+            has_active_workflow,
+        ),
+        ContextContributionSource::Resource => false,
+    }
 }
 
 /// Companion slice mode → CapabilityState 约束。
@@ -346,9 +425,7 @@ fn build_platform_mcp_config(
     let base_url = mcp_base_url?;
 
     Some(match scope {
-        PlatformMcpScope::Relay => {
-            McpInjectionConfig::for_relay(base_url, owner_ctx.project_id())
-        }
+        PlatformMcpScope::Relay => McpInjectionConfig::for_relay(base_url, owner_ctx.project_id()),
         PlatformMcpScope::Story => {
             let story_id = owner_ctx.story_id()?;
             McpInjectionConfig::for_story(base_url, owner_ctx.project_id(), story_id)
@@ -403,6 +480,7 @@ mod tests {
         has_active_workflow: bool,
     ) {
         input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives,
                 has_active_workflow,
@@ -436,14 +514,8 @@ mod tests {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
-        assert!(
-            output.has(ToolCluster::Read),
-            "file_read auto-granted"
-        );
-        assert!(
-            output.has(ToolCluster::Write),
-            "file_write auto-granted"
-        );
+        assert!(output.has(ToolCluster::Read), "file_read auto-granted");
+        assert!(output.has(ToolCluster::Write), "file_write auto-granted");
         assert!(
             output.has(ToolCluster::Execute),
             "shell_execute auto-granted"
@@ -466,6 +538,7 @@ mod tests {
     fn project_session_with_workflow_management() {
         let mut input = base_input();
         input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
             tool: Some(ToolContribution {
                 directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
                 has_active_workflow: false,
@@ -547,6 +620,49 @@ mod tests {
         with_workflow_directives(&mut input_with, vec![], true);
         let output_with_workflow = CapabilityResolver::resolve(&input_with, &platform);
         assert!(output_with_workflow.has(ToolCluster::Workflow));
+    }
+
+    #[test]
+    fn active_workflow_without_management_directive_does_not_inject_workflow_mcp() {
+        let mut input = base_input();
+        with_workflow_directives(&mut input, vec![], true);
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "active workflow 本身只授予 workflow 运行能力，不应隐式授予 workflow_management"
+        );
+        assert!(
+            !state_has_mcp_url(&output, "/mcp/workflow/"),
+            "缺少 workflow_management directive 时不应注入 Workflow MCP"
+        );
+    }
+
+    #[test]
+    fn resource_contribution_cannot_grant_well_known_capability() {
+        let mut input = base_input();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Resource,
+            tool: Some(ToolContribution {
+                directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "Resource 来源只提供候选资源，不能授权 well-known capability"
+        );
     }
 
     #[test]
@@ -695,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_well_known_can_override_visibility() {
+    fn workflow_well_known_respects_source_visibility() {
         let mut input = base_input();
         with_workflow_directives(
             &mut input,
@@ -703,6 +819,15 @@ mod tests {
             false,
         );
 
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+        assert!(!output.has(ToolCluster::Workflow));
+
+        let mut input = base_input();
+        with_workflow_directives(
+            &mut input,
+            vec![ToolCapabilityDirective::add_simple("workflow")],
+            true,
+        );
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.has(ToolCluster::Workflow));
     }
@@ -773,10 +898,7 @@ mod tests {
             !output.has(ToolCluster::Execute),
             "Remove(shell_execute) 应屏蔽 Execute cluster"
         );
-        assert!(
-            output.has(ToolCluster::Read),
-            "Read cluster 不应受影响"
-        );
+        assert!(output.has(ToolCluster::Read), "Read cluster 不应受影响");
     }
 
     #[test]
@@ -790,10 +912,7 @@ mod tests {
         );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
-        assert!(
-            output.has(ToolCluster::Read),
-            "file_read 能力整体仍可见"
-        );
+        assert!(output.has(ToolCluster::Read), "file_read 能力整体仍可见");
         assert!(
             output.is_tool_path_excluded("file_read", "fs_grep"),
             "fs_grep 应进入 file_read 的工具过滤策略"
@@ -804,10 +923,14 @@ mod tests {
     fn workflow_management_plan_keeps_mcp_but_blocks_upsert_tools() {
         let mut input = base_input();
         input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Workflow,
             tool: Some(ToolContribution {
                 directives: vec![
                     ToolCapabilityDirective::add_simple("workflow_management"),
-                    ToolCapabilityDirective::remove_tool("workflow_management", "upsert_workflow_tool"),
+                    ToolCapabilityDirective::remove_tool(
+                        "workflow_management",
+                        "upsert_workflow_tool",
+                    ),
                     ToolCapabilityDirective::remove_tool(
                         "workflow_management",
                         "upsert_lifecycle_tool",
@@ -831,11 +954,7 @@ mod tests {
             state_has_mcp_url(&output, "/mcp/workflow/"),
             "workflow_management capability 应继续注入 Workflow MCP server"
         );
-        assert!(output.is_capability_tool_enabled(
-            "workflow_management",
-            "get_workflow",
-            None
-        ));
+        assert!(output.is_capability_tool_enabled("workflow_management", "get_workflow", None));
         assert!(!output.is_capability_tool_enabled(
             "workflow_management",
             "upsert_workflow_tool",
@@ -894,11 +1013,7 @@ mod tests {
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(output.has(ToolCluster::Read));
-        assert!(output.is_capability_tool_enabled(
-            "file_read",
-            "fs_read",
-            Some(ToolCluster::Read)
-        ));
+        assert!(output.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
         assert!(!output.is_capability_tool_enabled(
             "file_read",
             "fs_grep",

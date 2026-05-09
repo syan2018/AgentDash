@@ -42,8 +42,8 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CompanionContribution, ContextContributions, McpCandidates, ToolContribution,
-    tool_directives_from_active_workflow,
+    CompanionContribution, ContextContributionSource, ContextContributions, McpCandidates,
+    ToolContribution, tool_directives_from_active_workflow,
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
@@ -591,13 +591,13 @@ async fn load_companion_candidates(
     repos: &RepositorySet,
     project_id: Uuid,
     caller_agent_id: Option<Uuid>,
-) -> Vec<agentdash_spi::context::capability::CompanionAgentEntry> {
+) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
     let links = match repos.agent_link_repo.list_by_project(project_id).await {
         Ok(l) => l,
-        Err(_) => return Vec::new(),
+        Err(_) => return Ok(Vec::new()),
     };
     if links.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // 解析 caller 的 allowed_companions 过滤列表
@@ -605,10 +605,10 @@ async fn load_companion_candidates(
         let link = links.iter().find(|l| l.agent_id == caller_id);
         if let Some(link) = link {
             if let Ok(Some(agent)) = repos.agent_repo.get_by_id(caller_id).await {
-                let preset = link.merged_preset_config(&agent);
-                preset
-                    .allowed_companions
-                    .filter(|v| !v.is_empty())
+                let preset = link
+                    .merged_preset_config(&agent)
+                    .map_err(|error| error.to_string())?;
+                preset.allowed_companions.filter(|v| !v.is_empty())
             } else {
                 None
             }
@@ -627,7 +627,9 @@ async fn load_companion_candidates(
                     continue;
                 }
             }
-            let preset = link.merged_preset_config(&agent);
+            let preset = link
+                .merged_preset_config(&agent)
+                .map_err(|error| error.to_string())?;
             let display = preset
                 .display_name
                 .as_deref()
@@ -642,7 +644,7 @@ async fn load_companion_candidates(
             });
         }
     }
-    entries
+    Ok(entries)
 }
 
 /// 从 agent-level `preset_mcp_servers` 抽出 `AgentMcpServerEntry`(供 resolver 解析 `mcp:<name>`)。
@@ -725,6 +727,8 @@ pub struct OwnerBootstrapSpec<'a> {
     /// user 层 prompt blocks(外部传入或 Routine 模板)。
     pub user_prompt_blocks: Vec<serde_json::Value>,
     pub agent_mcp: AgentLevelMcp,
+    /// Agent preset 中声明的能力指令，作为 agent 来源 contribution 输入 resolver。
+    pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     /// 前端/request 已携带的 MCP server(透传)。
     pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
@@ -1019,11 +1023,22 @@ impl<'a> SessionRequestAssembler<'a> {
 
         // ── 3. Companion candidates 查询 ──
         let available_companions =
-            load_companion_candidates(self.repos, project_id, spec.caller_agent_id).await;
+            load_companion_candidates(self.repos, project_id, spec.caller_agent_id).await?;
 
         // ── 4. CapabilityResolver ──
         let mut contributions = Vec::new();
+        if !spec.agent_tool_directives.is_empty() {
+            contributions.push(ContextContributions {
+                source: ContextContributionSource::Agent,
+                tool: Some(ToolContribution {
+                    directives: spec.agent_tool_directives,
+                    has_active_workflow: false,
+                }),
+                companion: None,
+            });
+        }
         contributions.push(ContextContributions {
+            source: ContextContributionSource::Resource,
             tool: None,
             companion: Some(CompanionContribution {
                 available: available_companions,
@@ -1031,6 +1046,7 @@ impl<'a> SessionRequestAssembler<'a> {
         });
         if let Some(wf_tool) = workflow_tool {
             contributions.push(ContextContributions {
+                source: ContextContributionSource::Workflow,
                 tool: Some(wf_tool),
                 companion: None,
             });
@@ -1253,6 +1269,7 @@ impl<'a> SessionRequestAssembler<'a> {
         let mut contributions = Vec::new();
         if let Some(directives) = workflow_directives {
             contributions.push(ContextContributions {
+                source: ContextContributionSource::Workflow,
                 tool: Some(ToolContribution {
                     directives,
                     has_active_workflow: true,
@@ -1661,7 +1678,6 @@ pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
         )
         .build()
 }
-
 
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
 ///

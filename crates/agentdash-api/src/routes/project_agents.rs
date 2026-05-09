@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
+    common::AgentPresetConfig,
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
     workspace::Workspace,
@@ -27,6 +28,7 @@ pub(crate) struct ProjectAgentBridge {
     pub display_name: String,
     pub description: String,
     pub executor_config: AgentConfig,
+    pub preset_config: AgentPresetConfig,
     pub preset_name: Option<String>,
     pub source: String,
     /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
@@ -523,14 +525,19 @@ pub struct ProjectAgentLinkResponse {
     pub updated_at: String,
 }
 
-fn build_link_response(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentLinkResponse {
-    ProjectAgentLinkResponse {
+fn build_link_response(
+    agent: &Agent,
+    link: &ProjectAgentLink,
+) -> Result<ProjectAgentLinkResponse, ApiError> {
+    Ok(ProjectAgentLinkResponse {
         id: link.id.to_string(),
         project_id: link.project_id.to_string(),
         agent_id: link.agent_id.to_string(),
         agent_name: agent.name.clone(),
         agent_type: agent.agent_type.clone(),
-        merged_config: link.merged_preset_config(agent),
+        merged_config: link
+            .merged_preset_config(agent)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
         config_override: link.config_override.clone(),
         default_lifecycle_key: link.default_lifecycle_key.clone(),
         is_default_for_story: link.is_default_for_story,
@@ -539,7 +546,7 @@ fn build_link_response(agent: &Agent, link: &ProjectAgentLink) -> ProjectAgentLi
         project_container_ids: link.project_container_ids.clone(),
         created_at: link.created_at.to_rfc3339(),
         updated_at: link.updated_at.to_rfc3339(),
-    }
+    })
 }
 
 /// GET /projects/{id}/agent-links — 列出项目关联的所有 Agent（新模型）
@@ -578,7 +585,7 @@ pub async fn list_project_agent_links(
                     link.id, link.agent_id
                 ))
             })?;
-        response.push(build_link_response(&agent, link));
+        response.push(build_link_response(&agent, link)?);
     }
     Ok(Json(response))
 }
@@ -654,7 +661,7 @@ pub async fn create_project_agent_link(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    Ok(Json(build_link_response(&agent, &link)))
+    Ok(Json(build_link_response(&agent, &link)?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -741,7 +748,7 @@ pub async fn update_project_agent_link(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    Ok(Json(build_link_response(&agent, &link)))
+    Ok(Json(build_link_response(&agent, &link)?))
 }
 
 /// DELETE /projects/{id}/agent-links/{agent_id} — 解除项目-Agent 关联
@@ -859,7 +866,9 @@ pub(crate) async fn build_agent_bridge(
     agent: &Agent,
     link: &ProjectAgentLink,
 ) -> Result<ProjectAgentBridge, ApiError> {
-    let preset = link.merged_preset_config(agent);
+    let preset = link
+        .merged_preset_config(agent)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let executor_config = preset.to_agent_config(&agent.agent_type);
 
     let display_name = preset
@@ -870,7 +879,13 @@ pub(crate) async fn build_agent_bridge(
         .unwrap_or(&agent.name)
         .to_string();
 
-    let description = format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type);
+    let description = preset
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
 
     let preset_mcp_servers = agentdash_application::mcp_preset::resolve_preset_mcp_refs(
         state.repos.mcp_preset_repo.as_ref(),
@@ -890,6 +905,7 @@ pub(crate) async fn build_agent_bridge(
         display_name,
         description,
         executor_config,
+        preset_config: preset,
         preset_name: Some(agent.name.clone()),
         source: format!("agents[{}]", agent.id),
         preset_mcp_servers,

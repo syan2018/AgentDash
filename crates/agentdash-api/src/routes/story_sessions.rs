@@ -526,6 +526,7 @@ pub(crate) async fn build_story_session_context_response(
     let mut contributions = Vec::new();
     if let Some(wf_tool) = workflow_tool {
         contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Workflow,
             tool: Some(wf_tool),
             companion: None,
         });

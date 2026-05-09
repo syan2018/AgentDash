@@ -132,6 +132,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 类型化盘点和迁移路线 | ✅ 已创建 |
 | [质量规范](./quality-guidelines.md) | 代码标准、DTO 命名契约、Session 状态持久化 | ✅ 已更新 |
 | [日志规范](./logging-guidelines.md) | 结构化日志、级别约定 | ✅ 已更新 |
+| [Runtime Gateway](./runtime-gateway.md) | Runtime Action / Provider / Setup Action 跨层调用契约 | ✅ 已创建 |
 | [Relay Protocol](../../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
 
 ### 模块专属契约

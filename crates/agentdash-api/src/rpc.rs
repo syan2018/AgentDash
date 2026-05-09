@@ -101,6 +101,28 @@ impl From<agentdash_application::mcp_preset::McpPresetApplicationError> for ApiE
     }
 }
 
+impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for ApiError {
+    fn from(err: agentdash_application::runtime_gateway::RuntimeInvocationError) -> Self {
+        use agentdash_application::runtime_gateway::{
+            RuntimeInvocationError as E, RuntimeInvocationErrorKind,
+        };
+
+        let message = err.to_string();
+        match err.kind() {
+            RuntimeInvocationErrorKind::InvalidRequest => ApiError::BadRequest(message),
+            RuntimeInvocationErrorKind::CapabilityDenied => ApiError::Forbidden(message),
+            RuntimeInvocationErrorKind::ProviderUnavailable => {
+                ApiError::ServiceUnavailable(message)
+            }
+            RuntimeInvocationErrorKind::ProviderFailed => match err {
+                E::ProviderFailed { message, .. } => ApiError::Internal(message),
+                _ => ApiError::Internal(message),
+            },
+            RuntimeInvocationErrorKind::Timeout => ApiError::ServiceUnavailable(message),
+        }
+    }
+}
+
 /// 判断底层错误消息是否指向 `mcp_presets` 表的 unique 约束违反。
 ///
 /// 严格约束作用域为 mcp_presets 表本身，避免误伤其他表的 unique 违反：

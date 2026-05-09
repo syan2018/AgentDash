@@ -172,27 +172,31 @@ const directives: CapabilityDirective[] = [
 
 `CapabilityKey` 只用于前端内置能力选项、筛选与展示，不要用它收窄 workflow / agent config 中的 `capability_directives`。`AgentPresetConfig` 这类 API 配置对象需要保持可 JSON 扩展，应继承 `Record<string, unknown>`，再叠加已知字段。
 
-### RuntimeContextNotice 事件契约
+### ContextFrame 事件契约
 
-`SessionMetaUpdate { key: "runtime_context_notice" }` 的 `value` 是 Agent steering
-的结构化 frame。前端必须在 feature `model/` 层用运行时 parser 将
+`SessionMetaUpdate { key: "context_frame" }` 的 `value` 是 Agent 可见上下文的
+结构化 frame。前端必须在 feature `model/` 层用运行时 parser 将
 `Record<string, unknown>` 映射为 typed object，再交给 UI 卡片渲染；组件文件只负责
 展示，不导出 parser 或非组件工具，避免 React refresh lint 误判。
 
-- 字段名直接沿用后端 snake_case：`agent_visible_text`、`delivery_status`、
+- 字段名直接沿用后端 snake_case：`rendered_text`、`delivery_status`、
+  `delivery_channel`、`message_role`、`kind`、`phase_node`、
   `capability_key`、`parameters_schema`、`tool_path`。
 - 未识别 section kind 应被忽略，而不是回退成“已注入动态上下文”。
 - runtime 工具变化展示消费 `tool_schema_delta` section；主视图只展示本次 delta，
   不展示完整当前工具 schema。完整 tool list 是 provider request 的执行层事实，
-  不是 runtime context notice 的主视图内容。
-- `hook_trace context_injected` 仅作为普通 hook 事件展示；runtime steering 可视化
-  只能以 `runtime_context_notice` frame 为准。
-- `hook_trace` / `hook_event` 中只要 `injections` 非空，UI 必须直接展示每条
-  injection 的 `slot/source/content` 摘要，并提供完整文本展开。不能只显示
-  “已注入动态上下文”或“N 项注入”而让用户看不到 Agent 实际收到的上下文。
+  不是 context frame 主视图内容。
+- 相邻 `context_frame` event 应由 `useSessionFeed` 聚合成“Agent 上下文批量更新”
+  组，默认展示 frame 数、section 数与 kind 摘要；展开后再渲染每个
+  `ContextFrameCard`。不要在用户主视图中平铺一串 verbose frame。
+- `hook_trace context_injected` 仅作为普通 hook audit 展示；runtime context 可视化
+  只能以 `context_frame` frame 为准。
+- 普通视图不得把 `hook_trace` / `hook_event` 中的 legacy
+  `baseline_initialized`、`context_injected`、`steering_injected` 冒充为 Agent-visible
+  context card；这些 trace 只应在 debug/verbose 或后续迁移为 `ContextFrame` 后展示。
 - `context_injected` / `steering_injected` 若没有携带 `injections`、diagnostics、
   completion 或 block reason，应视为空壳 trace 静默处理；对应的 runtime turn-start
-  文本应由 `runtime_context_notice` 卡片展示。
+  文本应由 `context_frame` 卡片展示。
 
 ### 状态值归一化
 

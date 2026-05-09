@@ -10,9 +10,11 @@ import { useSessionStream } from "./useSessionStream";
 import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 import {
   isAggregatedGroup as isAggregatedGroupItem,
+  isAggregatedContextFrameGroup as isAggregatedContextFrameGroupItem,
   isAggregatedThinkingGroup as isAggregatedThinkingGroupItem,
 } from "./types";
 import type {
+  AggregatedContextFrameGroup,
   AcpDisplayEntry,
   AcpDisplayItem,
   AggregatedEntryGroup,
@@ -93,6 +95,14 @@ function isFileEditEvent(event: BackboneEvent): boolean {
   return item?.type === "fileChange";
 }
 
+function isContextFrameEvent(event: BackboneEvent): boolean {
+  return (
+    event.type === "platform" &&
+    event.payload.kind === "session_meta_update" &&
+    event.payload.data.key === "context_frame"
+  );
+}
+
 function getFilePathFromEvent(event: BackboneEvent): string | null {
   const item = extractThreadItem(event);
   if (item?.type === "fileChange" && item.changes.length > 0) {
@@ -118,6 +128,7 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   let currentToolGroup: AggregatedEntryGroup | null = null;
   let currentThinkingGroup: AggregatedThinkingGroup | null = null;
   let currentDiffGroup: AggregatedEntryGroup | null = null;
+  let currentContextFrameGroup: AggregatedContextFrameGroup | null = null;
 
   const flushGroups = () => {
     if (currentToolGroup) {
@@ -132,10 +143,29 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
       result.push(currentDiffGroup);
       currentDiffGroup = null;
     }
+    if (currentContextFrameGroup) {
+      result.push(currentContextFrameGroup);
+      currentContextFrameGroup = null;
+    }
   };
 
   for (const entry of entries) {
     const event = entry.event;
+
+    if (isContextFrameEvent(event)) {
+      if (currentContextFrameGroup) {
+        currentContextFrameGroup.entries.push(entry);
+      } else {
+        flushGroups();
+        currentContextFrameGroup = {
+          type: "aggregated_context_frames",
+          entries: [entry],
+          id: entry.id,
+          groupKey: `context-frame-${entry.id}`,
+        };
+      }
+      continue;
+    }
 
     if (isNonAggregatableEvent(event)) {
       flushGroups();
@@ -214,6 +244,12 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
     ) {
       return (item as AggregatedThinkingGroup).entries[0]!;
     }
+    if (
+      (item as AggregatedContextFrameGroup).type === "aggregated_context_frames" &&
+      (item as AggregatedContextFrameGroup).entries.length === 1
+    ) {
+      return (item as AggregatedContextFrameGroup).entries[0]!;
+    }
     return item;
   });
 }
@@ -238,6 +274,10 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
   const bIsThink = isAggregatedThinkingGroupItem(b);
   if (aIsThink !== bIsThink) return false;
 
+  const aIsContextFrame = isAggregatedContextFrameGroupItem(a);
+  const bIsContextFrame = isAggregatedContextFrameGroupItem(b);
+  if (aIsContextFrame !== bIsContextFrame) return false;
+
   if (aIsGroup && bIsGroup) {
     const ga = a as AggregatedEntryGroup;
     const gb = b as AggregatedEntryGroup;
@@ -258,6 +298,17 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
     if (ta.entries.length !== tb.entries.length) return false;
     for (let i = 0; i < ta.entries.length; i += 1) {
       if (!entryShallowEqual(ta.entries[i]!, tb.entries[i]!)) return false;
+    }
+    return true;
+  }
+
+  if (aIsContextFrame && bIsContextFrame) {
+    const ca = a as AggregatedContextFrameGroup;
+    const cb = b as AggregatedContextFrameGroup;
+    if (ca.groupKey !== cb.groupKey) return false;
+    if (ca.entries.length !== cb.entries.length) return false;
+    for (let i = 0; i < ca.entries.length; i += 1) {
+      if (!entryShallowEqual(ca.entries[i]!, cb.entries[i]!)) return false;
     }
     return true;
   }

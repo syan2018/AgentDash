@@ -58,13 +58,14 @@ pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
 
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
-    ActiveWorkflowMeta, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
-    HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry, HookEffect, HookError,
-    HookEvaluationQuery, HookEvaluationTrigger, HookInjection, HookOwnerSummary, HookPendingAction,
-    HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
-    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
-    HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-    RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
+    ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
+    HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
+    HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
+    HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
+    NoopExecutionHookProvider, RuntimeEventSource, RuntimeHookInjectionEntry,
+    RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
 

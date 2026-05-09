@@ -26,7 +26,7 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "companion_review_request",
   "canvas_presented",
   "capability_state_changed",
-  "runtime_context_notice",
+  "context_frame",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([
@@ -37,6 +37,13 @@ const SILENT_HOOK_DECISIONS = new Set<string>([
   "effects_applied",
   "noop",
   "notified",
+  "baseline_initialized",
+  "baseline_refreshed",
+  "context_injected",
+  "steering_injected",
+]);
+
+const LEGACY_CONTEXT_INJECTION_DECISIONS = new Set<string>([
   "baseline_initialized",
   "baseline_refreshed",
   "context_injected",
@@ -83,7 +90,13 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
 
   if (typeof data.block_reason === "string" && (data.block_reason as string).trim().length > 0) return true;
   if (data.completion != null) return true;
-  if (Array.isArray(data.injections) && data.injections.length > 0) return true;
+  if (
+    !LEGACY_CONTEXT_INJECTION_DECISIONS.has(decision) &&
+    Array.isArray(data.injections) &&
+    data.injections.length > 0
+  ) {
+    return true;
+  }
   if (Array.isArray(data.diagnostics) && data.diagnostics.some(hasMeaningfulHookDiagnostic)) {
     return true;
   }

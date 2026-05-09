@@ -1,14 +1,14 @@
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
 use agentdash_spi::hooks::{
-    HookTurnStartNotice, RuntimeContextNotice, RuntimeContextNoticeSection, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeToolSchemaEntry, SharedHookSessionRuntime,
+    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource,
+    RuntimeToolSchemaEntry, SharedHookSessionRuntime,
 };
 use agentdash_spi::platform::tool_capability::{
     PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
 };
 
-use crate::capability::capability_description;
-use crate::session::CapabilityStateDelta;
+use crate::session::context_frame::ContextFramePayload;
+use crate::session::{CapabilityStateDelta, context_frame};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ToolSchemaNoticeKind {
@@ -29,11 +29,150 @@ impl ToolSchemaNoticeKind {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ToolSurfaceContextFrame {
+    kind: ToolSchemaNoticeKind,
+    tools: Vec<RuntimeToolSchemaEntry>,
+}
+
+impl ToolSurfaceContextFrame {
+    fn new(kind: ToolSchemaNoticeKind, tools: Vec<RuntimeToolSchemaEntry>) -> Self {
+        Self { kind, tools }
+    }
+}
+
+impl ContextFramePayload for ToolSurfaceContextFrame {
+    fn id(&self, created_at_ms: i64) -> String {
+        format!("{}-{created_at_ms}", self.kind.notice_id_prefix())
+    }
+
+    fn kind(&self) -> &'static str {
+        "tool_surface"
+    }
+
+    fn source(&self) -> RuntimeEventSource {
+        RuntimeEventSource::RuntimeContextUpdate
+    }
+
+    fn phase_node(&self) -> Option<String> {
+        self.kind.phase_node()
+    }
+
+    fn delivery_status(&self) -> String {
+        "queued_for_transform_context".to_string()
+    }
+
+    fn sections(&self) -> Vec<ContextFrameSection> {
+        vec![ContextFrameSection::ToolSchema {
+            tools: self.tools.clone(),
+        }]
+    }
+
+    fn rendered_text(&self) -> String {
+        render_tool_surface_text(self.kind, &self.tools)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ToolSchemaDeltaMetadata {
+    added_tools: Vec<RuntimeToolSchemaEntry>,
+    removed_tool_paths: Vec<String>,
+    restored_tool_paths: Vec<String>,
+    blocked_tool_paths: Vec<String>,
+}
+
+impl ToolSchemaDeltaMetadata {
+    pub(crate) fn from_tools_and_state_delta(
+        tools: &[DynAgentTool],
+        state_delta: &CapabilityStateDelta,
+    ) -> Option<Self> {
+        let mut definitions = tools
+            .iter()
+            .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
+            .collect::<Vec<_>>();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions.dedup_by(|left, right| left.name == right.name);
+
+        let entries = runtime_tool_schema_entries(definitions);
+        let restored_paths = state_delta
+            .excluded_tool_paths
+            .removed
+            .iter()
+            .chain(state_delta.included_tool_paths.added.iter())
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let added_capabilities = state_delta
+            .tool_capabilities
+            .added
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let added_tools = entries
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .capability_key
+                    .as_ref()
+                    .is_some_and(|capability| added_capabilities.contains(capability))
+                    || entry
+                        .tool_path
+                        .as_ref()
+                        .is_some_and(|path| restored_paths.contains(path))
+            })
+            .collect::<Vec<_>>();
+        let removed_tool_paths = state_delta.included_tool_paths.removed.clone();
+        let blocked_tool_paths = state_delta.excluded_tool_paths.added.clone();
+        let restored_tool_paths = restored_paths.into_iter().collect::<Vec<_>>();
+
+        let metadata = Self {
+            added_tools,
+            removed_tool_paths,
+            restored_tool_paths,
+            blocked_tool_paths,
+        };
+        (!metadata.is_empty()).then_some(metadata)
+    }
+
+    pub(crate) fn section(&self) -> ContextFrameSection {
+        ContextFrameSection::ToolSchemaDelta {
+            added_tools: self.added_tools.clone(),
+            removed_tool_paths: self.removed_tool_paths.clone(),
+            restored_tool_paths: self.restored_tool_paths.clone(),
+            blocked_tool_paths: self.blocked_tool_paths.clone(),
+        }
+    }
+
+    pub(crate) fn render_text(&self, phase_node: Option<&str>) -> String {
+        let mut lines = vec![
+            tool_schema_delta_title(phase_node),
+            "以下只列出本次 capability state delta 影响到的工具；provider 的完整工具集合以实际 tool list 为准。".to_string(),
+        ];
+        append_named_list(&mut lines, "Restored tool paths", &self.restored_tool_paths);
+        append_named_list(&mut lines, "Blocked tool paths", &self.blocked_tool_paths);
+        append_named_list(&mut lines, "Removed tool paths", &self.removed_tool_paths);
+        if !self.added_tools.is_empty() {
+            lines.push("### Added / Restored Tool Schemas".to_string());
+            for tool in &self.added_tools {
+                lines.push(format_tool_schema_entry(tool));
+            }
+        }
+        lines.join("\n\n")
+    }
+
+    fn is_empty(&self) -> bool {
+        self.added_tools.is_empty()
+            && self.removed_tool_paths.is_empty()
+            && self.restored_tool_paths.is_empty()
+            && self.blocked_tool_paths.is_empty()
+    }
+}
+
 pub(crate) fn enqueue_tool_schema_notice(
     hook_session: Option<&SharedHookSessionRuntime>,
     kind: ToolSchemaNoticeKind,
     tools: &[DynAgentTool],
-) -> Option<RuntimeContextNotice> {
+) -> Option<ContextFrame> {
     let Some(hook_session) = hook_session else {
         return None;
     };
@@ -44,8 +183,8 @@ pub(crate) fn enqueue_tool_schema_notice(
         id: notice.id.clone(),
         created_at_ms: notice.created_at_ms,
         source: RuntimeEventSource::RuntimeContextUpdate,
-        content: notice.agent_visible_text.clone(),
-        runtime_context_notice: Some(notice.clone()),
+        content: notice.rendered_text.clone(),
+        context_frame: Some(notice.clone()),
     });
     Some(notice)
 }
@@ -53,7 +192,7 @@ pub(crate) fn enqueue_tool_schema_notice(
 pub(crate) fn build_tool_schema_notice(
     kind: ToolSchemaNoticeKind,
     tools: &[DynAgentTool],
-) -> Option<RuntimeContextNotice> {
+) -> Option<ContextFrame> {
     if tools.is_empty() {
         return None;
     }
@@ -66,217 +205,37 @@ pub(crate) fn build_tool_schema_notice(
     definitions.dedup_by(|left, right| left.name == right.name);
     let entries = runtime_tool_schema_entries(definitions);
 
-    let now = chrono::Utc::now().timestamp_millis();
-    let sections = vec![RuntimeContextNoticeSection::ToolSchema { tools: entries }];
-    Some(finalize_runtime_context_notice(RuntimeContextNotice {
-        id: format!("{}-{now}", kind.notice_id_prefix()),
-        source: RuntimeEventSource::RuntimeContextUpdate,
-        phase_node: kind.phase_node(),
-        apply_mode: None,
-        delivery_status: "queued_for_transform_context".to_string(),
-        agent_visible_text: String::new(),
-        sections,
-        created_at_ms: now,
-    }))
+    let metadata = ToolSurfaceContextFrame::new(kind, entries);
+    Some(context_frame::build_context_frame(&metadata))
 }
 
-pub(crate) fn build_tool_schema_delta_section(
-    tools: &[DynAgentTool],
-    state_delta: &CapabilityStateDelta,
-) -> Option<RuntimeContextNoticeSection> {
-    let mut definitions = tools
-        .iter()
-        .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
-        .collect::<Vec<_>>();
-    definitions.sort_by(|left, right| left.name.cmp(&right.name));
-    definitions.dedup_by(|left, right| left.name == right.name);
-
-    let entries = runtime_tool_schema_entries(definitions);
-    let restored_paths = state_delta
-        .excluded_tool_paths
-        .removed
-        .iter()
-        .chain(state_delta.included_tool_paths.added.iter())
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    let added_capabilities = state_delta
-        .tool_capabilities
-        .added
-        .iter()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-
-    let added_tools = entries
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .capability_key
-                .as_ref()
-                .is_some_and(|capability| added_capabilities.contains(capability))
-                || entry
-                    .tool_path
-                    .as_ref()
-                    .is_some_and(|path| restored_paths.contains(path))
-        })
-        .collect::<Vec<_>>();
-    let removed_tool_paths = state_delta.included_tool_paths.removed.clone();
-    let blocked_tool_paths = state_delta.excluded_tool_paths.added.clone();
-    let restored_tool_paths = restored_paths.into_iter().collect::<Vec<_>>();
-
-    if added_tools.is_empty()
-        && removed_tool_paths.is_empty()
-        && restored_tool_paths.is_empty()
-        && blocked_tool_paths.is_empty()
-    {
-        return None;
+fn render_tool_surface_text(
+    kind: ToolSchemaNoticeKind,
+    tools: &[RuntimeToolSchemaEntry],
+) -> String {
+    if tools.is_empty() {
+        return String::new();
     }
-
-    Some(RuntimeContextNoticeSection::ToolSchemaDelta {
-        added_tools,
-        removed_tool_paths,
-        restored_tool_paths,
-        blocked_tool_paths,
-    })
-}
-
-pub(crate) fn finalize_runtime_context_notice(
-    mut notice: RuntimeContextNotice,
-) -> RuntimeContextNotice {
-    notice.agent_visible_text = render_runtime_context_notice(&notice);
-    notice
-}
-
-pub(crate) fn render_runtime_context_notice(notice: &RuntimeContextNotice) -> String {
-    let mut blocks = Vec::new();
-    for section in &notice.sections {
-        if let Some(block) = render_notice_section(notice, section) {
-            blocks.push(block);
-        }
+    let mut lines = vec![
+        tool_schema_title(kind.phase_node().as_deref()),
+        "以下是当前 provider request 生效的完整工具 schema。只有这里列出的工具可被本轮模型调用："
+            .to_string(),
+    ];
+    for tool in tools {
+        lines.push(format_tool_schema_entry(tool));
     }
-    blocks.join("\n\n")
+    lines.join("\n\n")
 }
 
-fn render_notice_section(
-    notice: &RuntimeContextNotice,
-    section: &RuntimeContextNoticeSection,
-) -> Option<String> {
-    match section {
-        RuntimeContextNoticeSection::CapabilityDelta {
-            added_capabilities,
-            removed_capabilities,
-            effective_capabilities,
-            blocked_tool_paths,
-            unblocked_tool_paths,
-            whitelisted_tool_paths,
-            removed_whitelist_paths,
-            added_mcp_servers,
-            removed_mcp_servers,
-            changed_mcp_servers,
-            vfs_mounts_added,
-            vfs_mounts_removed,
-            default_mount_before,
-            default_mount_after,
-        } => Some(render_capability_delta_section(
-            notice,
-            added_capabilities,
-            removed_capabilities,
-            effective_capabilities,
-            blocked_tool_paths,
-            unblocked_tool_paths,
-            whitelisted_tool_paths,
-            removed_whitelist_paths,
-            added_mcp_servers,
-            removed_mcp_servers,
-            changed_mcp_servers,
-            vfs_mounts_added,
-            vfs_mounts_removed,
-            default_mount_before,
-            default_mount_after,
-        )),
-        RuntimeContextNoticeSection::ToolSchema { tools } => {
-            if tools.is_empty() {
-                return None;
-            }
-            let mut lines = vec![
-                tool_schema_title(notice),
-                "以下是当前 provider request 生效的完整工具 schema。只有这里列出的工具可被本轮模型调用："
-                    .to_string(),
-            ];
-            for tool in tools {
-                lines.push(format_tool_schema_entry(tool));
-            }
-            Some(lines.join("\n\n"))
-        }
-        RuntimeContextNoticeSection::ToolSchemaDelta {
-            added_tools,
-            removed_tool_paths,
-            restored_tool_paths,
-            blocked_tool_paths,
-        } => {
-            if added_tools.is_empty()
-                && removed_tool_paths.is_empty()
-                && restored_tool_paths.is_empty()
-                && blocked_tool_paths.is_empty()
-            {
-                return None;
-            }
-            let mut lines = vec![
-                tool_schema_delta_title(notice),
-                "以下只列出本次 capability state delta 影响到的工具；provider 的完整工具集合以实际 tool list 为准。".to_string(),
-            ];
-            append_named_list(&mut lines, "Restored tool paths", restored_tool_paths);
-            append_named_list(&mut lines, "Blocked tool paths", blocked_tool_paths);
-            append_named_list(&mut lines, "Removed tool paths", removed_tool_paths);
-            if !added_tools.is_empty() {
-                lines.push("### Added / Restored Tool Schemas".to_string());
-                for tool in added_tools {
-                    lines.push(format_tool_schema_entry(tool));
-                }
-            }
-            Some(lines.join("\n\n"))
-        }
-        RuntimeContextNoticeSection::WorkflowContext {
-            title,
-            summary,
-            injections,
-        }
-        | RuntimeContextNoticeSection::HookInjection {
-            title,
-            summary,
-            injections,
-        } => {
-            if injections.is_empty() {
-                return None;
-            }
-            let mut lines = vec![format!("[{title}]"), summary.clone()];
-            lines.push(format_injection_items(injections));
-            Some(lines.join("\n\n"))
-        }
-        RuntimeContextNoticeSection::SystemNotice {
-            title,
-            summary,
-            body,
-        } => {
-            let mut lines = vec![format!("[{title}]"), summary.clone()];
-            if let Some(body) = body.as_deref()
-                && !body.trim().is_empty()
-            {
-                lines.push(body.trim().to_string());
-            }
-            Some(lines.join("\n\n"))
-        }
-    }
-}
-
-fn tool_schema_title(notice: &RuntimeContextNotice) -> String {
-    match notice.phase_node.as_deref() {
+fn tool_schema_title(phase_node: Option<&str>) -> String {
+    match phase_node {
         Some(phase_node) => format!("## Runtime Tool Schema — Step Transition: {phase_node}"),
         None => "## Runtime Tool Schema — Initial".to_string(),
     }
 }
 
-fn tool_schema_delta_title(notice: &RuntimeContextNotice) -> String {
-    match notice.phase_node.as_deref() {
+fn tool_schema_delta_title(phase_node: Option<&str>) -> String {
+    match phase_node {
         Some(phase_node) => format!("## Tool Schema Delta — Step Transition: {phase_node}"),
         None => "## Tool Schema Delta".to_string(),
     }
@@ -441,159 +400,6 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
     }
 }
 
-fn render_capability_delta_section(
-    notice: &RuntimeContextNotice,
-    added_capabilities: &[String],
-    removed_capabilities: &[String],
-    effective_capabilities: &[String],
-    blocked_tool_paths: &[String],
-    unblocked_tool_paths: &[String],
-    whitelisted_tool_paths: &[String],
-    removed_whitelist_paths: &[String],
-    added_mcp_servers: &[String],
-    removed_mcp_servers: &[String],
-    changed_mcp_servers: &[String],
-    vfs_mounts_added: &[String],
-    vfs_mounts_removed: &[String],
-    default_mount_before: &Option<String>,
-    default_mount_after: &Option<String>,
-) -> String {
-    let phase = notice.phase_node.as_deref().unwrap_or("unknown");
-    let mut sections = vec![format!("## Capability Update — Step Transition: {phase}")];
-
-    if !added_capabilities.is_empty() {
-        let mut block = vec!["### Added Capabilities".to_string()];
-        append_capability_lines(&mut block, added_capabilities, false);
-        sections.push(block.join("\n"));
-    }
-    if !removed_capabilities.is_empty() {
-        let mut block = vec!["### Removed Capabilities".to_string()];
-        append_capability_lines(&mut block, removed_capabilities, true);
-        sections.push(block.join("\n"));
-    }
-
-    let caps_block = if effective_capabilities.is_empty() {
-        "- （无）".to_string()
-    } else {
-        effective_capabilities
-            .iter()
-            .map(|key| format!("- `{key}`"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    sections.push(format!("### Effective Capabilities\n{caps_block}"));
-
-    let mut tool_lines = vec!["### Tool State Changes".to_string()];
-    append_path_lines(
-        &mut tool_lines,
-        "Blocked tool paths",
-        blocked_tool_paths,
-        "不再暴露",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Unblocked tool paths",
-        unblocked_tool_paths,
-        "重新暴露",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Whitelisted tool paths",
-        whitelisted_tool_paths,
-        "进入白名单",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Removed whitelist paths",
-        removed_whitelist_paths,
-        "移出白名单",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Added MCP servers",
-        added_mcp_servers,
-        "已注入",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Removed MCP servers",
-        removed_mcp_servers,
-        "已移除",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Changed MCP servers",
-        changed_mcp_servers,
-        "已变更",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Added VFS mounts",
-        vfs_mounts_added,
-        "已挂载",
-    );
-    append_path_lines(
-        &mut tool_lines,
-        "Removed VFS mounts",
-        vfs_mounts_removed,
-        "已移除",
-    );
-    if default_mount_before != default_mount_after {
-        tool_lines.push(format!(
-            "- Default VFS mount: `{}` → `{}`",
-            default_mount_before.as_deref().unwrap_or("none"),
-            default_mount_after.as_deref().unwrap_or("none"),
-        ));
-    }
-    if tool_lines.len() > 1 {
-        sections.push(tool_lines.join("\n"));
-    }
-
-    let has_delta = !added_capabilities.is_empty()
-        || !removed_capabilities.is_empty()
-        || !blocked_tool_paths.is_empty()
-        || !unblocked_tool_paths.is_empty()
-        || !whitelisted_tool_paths.is_empty()
-        || !removed_whitelist_paths.is_empty()
-        || !added_mcp_servers.is_empty()
-        || !removed_mcp_servers.is_empty()
-        || !changed_mcp_servers.is_empty()
-        || !vfs_mounts_added.is_empty()
-        || !vfs_mounts_removed.is_empty()
-        || default_mount_before != default_mount_after;
-    if has_delta {
-        sections.push(
-            "> 工具状态已按上述 capability 与 tool path 更新；历史对话未被改写。".to_string(),
-        );
-    } else {
-        sections.push("> 本次没有 capability key 或工具级状态变化；历史对话未被改写。".to_string());
-    }
-    sections.join("\n\n")
-}
-
-fn append_capability_lines(lines: &mut Vec<String>, values: &[String], removed: bool) {
-    for key in values {
-        let desc = capability_description(key);
-        if desc.is_empty() {
-            lines.push(format!("- **{key}**"));
-        } else if removed {
-            lines.push(format!("- **{key}**: {desc}（不再可用）"));
-        } else {
-            lines.push(format!("- **{key}**: {desc}"));
-        }
-    }
-}
-
-fn append_path_lines(lines: &mut Vec<String>, title: &str, values: &[String], suffix: &str) {
-    if values.is_empty() {
-        return;
-    }
-    lines.push(format!("- {title}:"));
-    for value in values {
-        lines.push(format!("  - `{value}` — {suffix}"));
-    }
-}
-
 fn append_named_list(lines: &mut Vec<String>, title: &str, values: &[String]) {
     if values.is_empty() {
         return;
@@ -602,26 +408,6 @@ fn append_named_list(lines: &mut Vec<String>, title: &str, values: &[String]) {
     for value in values {
         lines.push(format!("- `{value}`"));
     }
-}
-
-fn format_injection_items(injections: &[RuntimeHookInjectionEntry]) -> String {
-    injections
-        .iter()
-        .map(|injection| {
-            let source = if injection.source.trim().is_empty() {
-                "unknown"
-            } else {
-                injection.source.trim()
-            };
-            let content = injection.content.trim();
-            if content.is_empty() {
-                format!("- [{}] {source}", injection.slot)
-            } else {
-                format!("- [{}] {source}: {content}", injection.slot)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]
@@ -687,39 +473,35 @@ mod tests {
         assert_eq!(notice.sections.len(), 1);
         assert!(
             notice
-                .agent_visible_text
+                .rendered_text
                 .contains("## Runtime Tool Schema — Initial")
         );
         assert!(
             notice
-                .agent_visible_text
+                .rendered_text
                 .contains("mcp_agentdash_workflow_tools_upsert_workflow_tool")
         );
         assert!(
             notice
-                .agent_visible_text
+                .rendered_text
                 .contains("capability: `workflow_management`")
         );
         assert!(
             notice
-                .agent_visible_text
+                .rendered_text
                 .contains("source: `platform_mcp:workflow`")
         );
         assert!(
             notice
-                .agent_visible_text
+                .rendered_text
                 .contains("path: `workflow_management::upsert_workflow_tool`")
         );
+        assert!(notice.rendered_text.contains("创建或更新 Workflow 定义"));
+        assert!(notice.rendered_text.contains("\"required\": ["));
+        assert!(notice.rendered_text.contains("\"key\""));
         assert!(
             notice
-                .agent_visible_text
-                .contains("创建或更新 Workflow 定义")
-        );
-        assert!(notice.agent_visible_text.contains("\"required\": ["));
-        assert!(notice.agent_visible_text.contains("\"key\""));
-        assert!(
-            notice
-                .agent_visible_text
+                .rendered_text
                 .contains("\"description\": \"Workflow key\"")
         );
     }

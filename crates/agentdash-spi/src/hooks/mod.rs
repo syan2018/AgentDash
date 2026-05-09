@@ -218,28 +218,31 @@ pub struct HookTurnStartNotice {
     pub source: RuntimeEventSource,
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_context_notice: Option<RuntimeContextNotice>,
+    pub context_frame: Option<ContextFrame>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct RuntimeContextNotice {
+pub struct ContextFrame {
     pub id: String,
+    pub kind: String,
     pub source: RuntimeEventSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_node: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apply_mode: Option<String>,
     pub delivery_status: String,
-    pub agent_visible_text: String,
+    pub delivery_channel: String,
+    pub message_role: String,
+    pub rendered_text: String,
     #[serde(default)]
-    pub sections: Vec<RuntimeContextNoticeSection>,
+    pub sections: Vec<ContextFrameSection>,
     pub created_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RuntimeContextNoticeSection {
+pub enum ContextFrameSection {
     CapabilityDelta {
         #[serde(default)]
         added_capabilities: Vec<String>,

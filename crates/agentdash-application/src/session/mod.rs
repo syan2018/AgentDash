@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod capability_state;
 pub mod companion_wait;
 pub mod context;
+mod context_frame;
 pub mod continuation;
 pub mod hook_delegate;
 pub mod hook_events;

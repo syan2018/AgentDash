@@ -424,9 +424,7 @@ impl SessionHub {
                 ToolSchemaNoticeKind::Initial,
                 &context.turn.assembled_tools,
             ) {
-                let _ = self
-                    .emit_runtime_context_notice(&sid, Some(&turn_id), &notice)
-                    .await;
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), &notice).await;
             }
         }
 

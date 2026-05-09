@@ -112,19 +112,22 @@ pub trait ExecutionHookProvider: Send + Sync {
   workflow/context 注入，将合并后的能力变化、工具定义摘要与 workflow 注入写入
   `HookTurnStartNotice` 队列；
   下一次 `transform_context` 边界统一消费。
-- runtime steering 的一等展示结构是 `RuntimeContextNotice`。所有 runtime capability
+- runtime steering 的一等展示结构是 `ContextFrame`。所有 runtime capability
   delta、tool schema、workflow context、普通 hook injection、system notice 都必须先
-  组装为 `RuntimeContextNotice.sections`，再由同一对象渲染
-  `agent_visible_text`。禁止为事件流、Agent Markdown、前端摘要分别手写三份互不
-  共享的数据。
-- `HookTurnStartNotice.content` 必须等于对应 `RuntimeContextNotice.agent_visible_text`；
-  若这次 TurnStart 注入属于 runtime steering，必须同时携带
-  `runtime_context_notice` frame。前端的 Agent 行为可视化以
-  `SessionMetaUpdate { key: "runtime_context_notice" }` 为准；`hook_trace`
-  `context_injected` 只表示普通 hook 注入观测，不得冒充 steering 的完整可视化。
-- 但凡 `HookTraceEntry.injections` 非空，前端必须把这些注入作为 Agent 可见上下文
-  渲染出来，至少展示每条注入的 `slot/source/content` 摘要并允许展开完整文本。禁止
-  仅显示“已注入动态上下文”这类泛化文案而隐藏实际注入内容。
+  由所属模块的 typed metadata 构造为 `ContextFrame.sections` 与
+  `ContextFrame.rendered_text`。禁止沉淀一个跨所有 section kind 的中心化 renderer，
+  也禁止为事件流、Agent Markdown、前端摘要分别手写三份互不共享的数据。
+- `HookTurnStartNotice.content` 必须等于对应 `ContextFrame.rendered_text`；若这次
+  TurnStart 注入属于 runtime context，必须同时携带 `context_frame`。多个
+  `HookTurnStartNotice` 可以在同一 turn-start delivery boundary 被 batch envelope
+  汇聚后投递给 Agent，但每个 frame 仍保持独立 metadata、sections 与 rendered_text。
+  前端的 Agent 行为可视化以 `SessionMetaUpdate { key: "context_frame" }` 为准；
+  相邻 frame 应在 feed 层聚合展示，`hook_trace context_injected` 不得冒充 context
+  frame 的完整可视化。
+- `baseline_initialized`、`context_injected`、`steering_injected` 等 legacy hook trace
+  决策只可作为 lifecycle/audit 事件存在；普通视图不得把它们展示成 Agent-visible
+  context card。真正注入给 Agent 的上下文必须进入 `ContextFrame` 或明确标记为
+  待迁移 legacy。
 
 ### Ask / Approval
 

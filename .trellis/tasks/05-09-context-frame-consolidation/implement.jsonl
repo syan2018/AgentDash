@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "启动期 owner/bootstrap、SessionStart 与 system prompt 装配规则会被 ContextFrame 收束影响"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "SessionContextBundle 与 HookTurnStartNotice/pending action 的主数据源关系需要重定义"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "已有 execution context frame 约束是命名与架构收束的重要参考"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "HookTrace、HookPendingAction、turn-start injection 需要从内容展示转为 frame/audit 分层"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "capability/tool surface delta 必须继续由 CapabilityStateDelta 驱动"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端需要强类型解析 context_frame 并避免 any/legacy 展示漂移"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "系统/上下文事件不能伪装成 agent_message_chunk，需沿 platform meta event 传递"}

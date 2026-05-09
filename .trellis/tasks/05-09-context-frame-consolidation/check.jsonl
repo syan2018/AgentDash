@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "确认 bootstrap/system prompt 瘦身不破坏启动节拍"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "确认 Bundle、turn_delta、pending action 的数据归属一致"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "确认 ContextFrame 与现有 frame 语义不冲突"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "确认 hook trace 只做 audit，Agent-visible 内容进入 ContextFrame"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "确认工具变化仍按 delta 展示与注入"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认前端 ContextFrame 类型守卫、卡片和 legacy 隐藏逻辑"}
+{"file": ".trellis/spec/cross-layer/acp-meta-warp.md", "reason": "确认跨层事件仍走 platform/session meta 而非普通消息伪装"}

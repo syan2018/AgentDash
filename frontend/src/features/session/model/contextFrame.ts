@@ -1,17 +1,20 @@
 import { isRecord } from "./platformEvent";
 
-export interface RuntimeContextNotice {
+export interface ContextFrame {
   id: string;
+  kind: string;
   source: string;
   phase_node?: string;
   apply_mode?: string;
   delivery_status: string;
-  agent_visible_text: string;
-  sections: RuntimeContextNoticeSection[];
+  delivery_channel: string;
+  message_role: string;
+  rendered_text: string;
+  sections: ContextFrameSection[];
   created_at_ms: number;
 }
 
-export type RuntimeContextNoticeSection =
+export type ContextFrameSection =
   | CapabilityDeltaSection
   | ToolSchemaSection
   | ToolSchemaDeltaSection
@@ -86,28 +89,34 @@ export interface RuntimeHookInjectionEntry {
   content: string;
 }
 
-export function parseRuntimeContextNotice(value: Record<string, unknown>): RuntimeContextNotice | null {
+export function parseContextFrame(value: Record<string, unknown>): ContextFrame | null {
   const id = readString(value.id);
+  const kind = readString(value.kind);
   const source = readString(value.source);
   const delivery = readString(value.delivery_status);
-  const agentText = readString(value.agent_visible_text);
+  const deliveryChannel = readString(value.delivery_channel);
+  const messageRole = readString(value.message_role);
+  const agentText = readString(value.rendered_text);
   const createdAt = readNumber(value.created_at_ms);
   const rawSections = Array.isArray(value.sections) ? value.sections : [];
-  if (!id || !source || !delivery || !agentText || createdAt == null) return null;
+  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || !agentText || createdAt == null) return null;
 
   return {
     id,
+    kind,
     source,
     phase_node: readString(value.phase_node) ?? undefined,
     apply_mode: readString(value.apply_mode) ?? undefined,
     delivery_status: delivery,
-    agent_visible_text: agentText,
-    sections: rawSections.map(parseSection).filter((item): item is RuntimeContextNoticeSection => item != null),
+    delivery_channel: deliveryChannel,
+    message_role: messageRole,
+    rendered_text: agentText,
+    sections: rawSections.map(parseSection).filter((item): item is ContextFrameSection => item != null),
     created_at_ms: createdAt,
   };
 }
 
-function parseSection(value: unknown): RuntimeContextNoticeSection | null {
+function parseSection(value: unknown): ContextFrameSection | null {
   if (!isRecord(value)) return null;
   const kind = readString(value.kind);
   if (kind === "capability_delta") {

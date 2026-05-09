@@ -1,30 +1,30 @@
 /**
- * Runtime Context Notice 卡片
+ * ContextFrame 卡片
  *
- * 展示后端实际注入给 Agent 的 runtime steering 结构，并保留 Agent 可见原文。
+ * 展示后端实际注入给 Agent 的上下文帧，并保留 Agent 可见原文。
  */
 
 import { useState } from "react";
 import { BADGE } from "./EventCards";
 import {
-  parseRuntimeContextNotice,
+  parseContextFrame,
   type CapabilityDeltaSection,
-  type RuntimeContextNotice,
-  type RuntimeContextNoticeSection,
+  type ContextFrame,
+  type ContextFrameSection,
   type RuntimeHookInjectionEntry,
   type RuntimeToolSchemaEntry,
   type SystemNoticeSection,
   type ToolSchemaDeltaSection,
   type ToolSchemaSection,
-} from "../model/runtimeContextNotice";
+} from "../model/contextFrame";
 import { isRecord } from "../model/platformEvent";
 
-export interface RuntimeContextNoticeCardProps {
+export interface ContextFrameCardProps {
   data: Record<string, unknown>;
 }
 
-export function RuntimeContextNoticeCard({ data }: RuntimeContextNoticeCardProps) {
-  const notice = parseRuntimeContextNotice(data);
+export function ContextFrameCard({ data }: ContextFrameCardProps) {
+  const notice = parseContextFrame(data);
   const [expanded, setExpanded] = useState(false);
 
   if (!notice) {
@@ -68,21 +68,24 @@ export function RuntimeContextNoticeCard({ data }: RuntimeContextNoticeCardProps
       {expanded && (
         <div className="border-t border-border px-3 py-2.5 space-y-2.5">
           <div className="flex flex-wrap gap-1.5">
+            <Chip label={`kind: ${notice.kind}`} />
             <Chip label={`source: ${notice.source}`} />
+            <Chip label={`channel: ${notice.delivery_channel}`} />
+            <Chip label={`role: ${notice.message_role}`} />
             <Chip label={`delivery: ${notice.delivery_status}`} />
             <Chip label={`sections: ${notice.sections.length}`} />
           </div>
           {notice.sections.map((section, index) => (
             <NoticeSection key={`${section.kind}:${index}`} section={section} />
           ))}
-          <AgentVisibleText text={notice.agent_visible_text} />
+          <AgentVisibleText text={notice.rendered_text} />
         </div>
       )}
     </div>
   );
 }
 
-function NoticeSection({ section }: { section: RuntimeContextNoticeSection }) {
+function NoticeSection({ section }: { section: ContextFrameSection }) {
   const [open, setOpen] = useState(false);
   const title = sectionTitle(section);
   const hint = sectionHint(section);
@@ -109,7 +112,7 @@ function NoticeSection({ section }: { section: RuntimeContextNoticeSection }) {
   );
 }
 
-function renderSectionBody(section: RuntimeContextNoticeSection) {
+function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
     case "capability_delta":
       return <CapabilityDeltaBody section={section} />;
@@ -312,7 +315,7 @@ function ListLine({ label, values }: { label: string; values: string[] }) {
   );
 }
 
-function sectionTitle(section: RuntimeContextNoticeSection): string {
+function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
     case "capability_delta": return "能力与工具变化";
     case "tool_schema": return "初始工具 Schema";
@@ -323,7 +326,7 @@ function sectionTitle(section: RuntimeContextNoticeSection): string {
   }
 }
 
-function sectionHint(section: RuntimeContextNoticeSection): string | null {
+function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
     case "capability_delta": {
       const count =
@@ -357,7 +360,7 @@ function toolSchemaDeltaAffectedCount(section: ToolSchemaDeltaSection): number {
   return affected.size;
 }
 
-function summarizeNotice(notice: RuntimeContextNotice): string[] {
+function summarizeNotice(notice: ContextFrame): string[] {
   const parts: string[] = [];
   for (const section of notice.sections) {
     const hint = sectionHint(section);
@@ -381,4 +384,4 @@ function formatJson(value: unknown): string {
   }
 }
 
-export default RuntimeContextNoticeCard;
+export default ContextFrameCard;

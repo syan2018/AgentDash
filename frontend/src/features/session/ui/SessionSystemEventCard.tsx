@@ -15,7 +15,7 @@ import {
 } from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { AcpCompanionRequestCard } from "./SessionCompanionRequestCard";
-import { RuntimeContextNoticeCard } from "./RuntimeContextNoticeCard";
+import { ContextFrameCard } from "./ContextFrameCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface AcpSystemEventCardProps {
@@ -91,7 +91,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
   capability_state_changed:      "能力状态已更新",
-  runtime_context_notice:          "Agent 上下文",
+  context_frame:          "Agent 上下文",
   hook_event:                      "流程事件",
   hook_trace:                      "流程事件",
 };
@@ -116,7 +116,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
   capability_state_changed:      "当前会话的工具与上下文能力状态已更新",
-  runtime_context_notice:          "Agent 上下文已更新",
+  context_frame:          "Agent 上下文已更新",
   hook_event:                      "流程产生新事件",
   hook_trace:                      "流程产生新事件",
 };
@@ -128,6 +128,13 @@ const HIGH_PRIORITY_HOOK_DECISIONS = new Set(["deny", "ask", "rewrite", "continu
 const SUBSTANTIVE_DECISIONS = new Set([
   "deny", "ask", "rewrite", "continue",
   "step_advanced",
+]);
+
+const LEGACY_CONTEXT_INJECTION_DECISIONS = new Set([
+  "baseline_initialized",
+  "baseline_refreshed",
+  "context_injected",
+  "steering_injected",
 ]);
 
 const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set([
@@ -162,7 +169,12 @@ function isHookEventSubstantive(
   if (hookData?.block_reason) return true;
   if (hookData?.completion) return true;
   if ((hookData?.diagnostics ?? []).some(isSubstantiveDiagnostic)) return true;
-  if (hookData?.injections?.length) return true;
+  if (
+    hookData?.injections?.length &&
+    !LEGACY_CONTEXT_INJECTION_DECISIONS.has(decision ?? "")
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -194,8 +206,8 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
     return <AcpCompanionRequestCard event={event} sessionId={sessionId} />;
   }
 
-  if (eventType === "runtime_context_notice" && eventData) {
-    return <RuntimeContextNoticeCard data={eventData} />;
+  if (eventType === "context_frame" && eventData) {
+    return <ContextFrameCard data={eventData} />;
   }
 
   // ── hook_trace / hook_event → hook 卡片逻辑 ──
@@ -399,13 +411,13 @@ function HookInjectionBody({
 function resolveInjectionEventMessage(decision: string | null, count: number): string {
   switch (decision) {
     case "baseline_initialized":
-      return `Agent baseline 已注入 ${count} 项上下文`;
+      return `Agent 收到 ${count} 项启动上下文`;
     case "baseline_refreshed":
-      return `Agent baseline 已刷新 ${count} 项上下文`;
+      return `Agent 收到 ${count} 项刷新上下文`;
     case "context_injected":
       return `Agent 收到 ${count} 项上下文注入`;
     case "steering_injected":
-      return `Agent 收到 ${count} 项流程约束`;
+      return `Agent 收到 ${count} 项上下文约束`;
     default:
       return `Agent 收到 ${count} 项 hook 注入`;
   }
@@ -416,7 +428,7 @@ function resolveInjectionEventMessage(decision: string | null, count: number): s
 function resolveDecisionToken(decision: string | null | undefined): string {
   switch (decision) {
     case "baseline_initialized":
-    case "baseline_refreshed": return "BASE";
+    case "baseline_refreshed": return "CTX";
     case "context_injected":  return "CTX";
     case "steering_injected": return "CTX";
     case "step_advanced":     return "STEP";
@@ -456,10 +468,10 @@ function resolveStripLabel(
       if (ruleCount > 0) parts.push(`${ruleCount} 条规则`);
       if (injCount > 0) parts.push(`${injCount} 项注入`);
       return parts.length > 0
-        ? `已注入动态上下文（${parts.join("，")}）`
-        : "已注入动态上下文";
+        ? `上下文注入记录（${parts.join("，")}）`
+        : "上下文注入记录";
     }
-    case "steering_injected": return "已追加流程约束（steering）";
+    case "steering_injected": return "上下文约束注入记录";
     case "step_advanced":     return "Workflow Step 已推进";
     default:
       return hookData?.completion

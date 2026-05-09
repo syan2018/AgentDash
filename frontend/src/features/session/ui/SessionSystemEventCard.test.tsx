@@ -6,20 +6,23 @@ import { AcpSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 
 describe("AcpSystemEventCard", () => {
-  it("放行并渲染 runtime_context_notice 事件", () => {
+  it("放行并渲染 context_frame 事件", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
         data: {
-          key: "runtime_context_notice",
+          key: "context_frame",
           value: {
             id: "runtime-context-1",
+            kind: "runtime_context_update",
             source: "runtime_context_update",
             phase_node: "apply",
             apply_mode: "live",
             delivery_status: "queued_for_transform_context",
-            agent_visible_text: "## Tool Schema Delta — Step Transition: apply",
+            delivery_channel: "turn_start",
+            message_role: "user",
+            rendered_text: "## Tool Schema Delta — Step Transition: apply",
             created_at_ms: 1,
             sections: [
               {
@@ -55,7 +58,7 @@ describe("AcpSystemEventCard", () => {
     expect(html).toContain("Agent 上下文已更新");
   });
 
-  it("带 injections 的 hook_trace 直接展示注入内容", () => {
+  it("legacy context injection 不再冒充用户可见上下文卡", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
@@ -90,12 +93,8 @@ describe("AcpSystemEventCard", () => {
       },
     };
 
-    const html = renderToStaticMarkup(<AcpSystemEventCard event={event} />);
-
-    expect(html).toContain("Agent 收到 1 项上下文注入");
-    expect(html).toContain("workflow:admin:plan");
-    expect(html).toContain("Active Workflow Step: Plan");
-    expect(html).not.toContain("已注入动态上下文（1 项注入）");
+    expect(isRenderableSystemEventUpdate(event)).toBe(false);
+    expect(renderToStaticMarkup(<AcpSystemEventCard event={event} />)).toBe("");
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {

@@ -809,7 +809,7 @@ fn should_trace_user_prompt_context_injection(
     pending_consumed: usize,
 ) -> bool {
     if pending_consumed > 0 {
-        return true;
+        return false;
     }
     if injections.is_empty() {
         return false;
@@ -859,20 +859,52 @@ fn collect_turn_start_notice_messages(
     if notices.is_empty() {
         return Vec::new();
     }
-    let body = notices
-        .iter()
-        .map(format_turn_start_notice)
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
+    let frames = notices
+        .into_iter()
+        .filter_map(|notice| {
+            let content = notice
+                .context_frame
+                .as_ref()
+                .map(|frame| frame.rendered_text.as_str())
+                .unwrap_or(notice.content.as_str())
+                .trim()
+                .to_string();
+            (!content.is_empty()).then(|| format_turn_start_notice_frame(&notice, &content))
+        })
+        .collect::<Vec<_>>();
+    if frames.is_empty() {
+        return Vec::new();
+    }
+    let body = if frames.len() == 1 {
+        frames.into_iter().next().unwrap_or_default()
+    } else {
+        format!(
+            "[CTX Frame Batch]\nframe_count: {}\n\n{}",
+            frames.len(),
+            frames.join("\n\n---\n\n")
+        )
+    };
     vec![AgentMessage::user(body)]
 }
 
-fn format_turn_start_notice(notice: &HookTurnStartNotice) -> String {
+fn format_turn_start_notice_frame(notice: &HookTurnStartNotice, content: &str) -> String {
+    if let Some(frame) = notice.context_frame.as_ref() {
+        return format!(
+            "[CTX Frame]\nframe_id: {}\nkind: {}\nsource: {}\ndelivery: {}\nchannel: {}\nrole: {}\n\n{}",
+            frame.id,
+            frame.kind,
+            frame.source.as_key(),
+            frame.delivery_status,
+            frame.delivery_channel,
+            frame.message_role,
+            content
+        );
+    }
     format!(
-        "[运行时上下文更新]\nnotice_id: {}\nsource: {}\n\n{}",
+        "[CTX Legacy Notice]\nnotice_id: {}\nsource: {}\n\n{}",
         notice.id,
         notice.source.as_key(),
-        notice.content.trim()
+        content
     )
 }
 
@@ -1564,7 +1596,7 @@ mod tests {
             created_at_ms: 1,
             source: RuntimeEventSource::RuntimeContextUpdate,
             content: "## Capability Update\n- tool schema refreshed".to_string(),
-            runtime_context_notice: None,
+            context_frame: None,
         });
         let delegate = HookRuntimeDelegate::new(hook_session.clone());
         let input = agentdash_spi::TransformContextInput {

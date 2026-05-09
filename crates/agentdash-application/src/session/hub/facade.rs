@@ -23,7 +23,7 @@ use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::{RuntimeContextNotice, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
 
 impl SessionHub {
     /// 启动时调用：将上次进程异常退出时残留的 `running` 状态修正为 `interrupted`。
@@ -302,11 +302,11 @@ impl SessionHub {
         self.persist_notification(session_id, envelope).await
     }
 
-    pub(crate) async fn emit_runtime_context_notice(
+    pub(crate) async fn emit_context_frame(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
-        notice: &RuntimeContextNotice,
+        notice: &ContextFrame,
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
         let connector_type = match self.connector.connector_type() {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
@@ -325,7 +325,7 @@ impl SessionHub {
         })?;
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "runtime_context_notice".to_string(),
+                key: "context_frame".to_string(),
                 value,
             }),
             session_id,

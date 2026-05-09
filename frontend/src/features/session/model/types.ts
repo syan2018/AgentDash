@@ -288,11 +288,20 @@ export interface AggregatedThinkingGroup {
   groupKey: string;
 }
 
+/** 相邻 ContextFrame 的用户侧聚合组 */
+export interface AggregatedContextFrameGroup {
+  type: "aggregated_context_frames";
+  entries: AcpDisplayEntry[];
+  id: string;
+  groupKey: string;
+}
+
 /** 显示条目（单个或聚合） */
 export type AcpDisplayItem =
   | AcpDisplayEntry
   | AggregatedEntryGroup
-  | AggregatedThinkingGroup;
+  | AggregatedThinkingGroup
+  | AggregatedContextFrameGroup;
 
 /** 条目更新回调 */
 export type OnEntriesUpdated = (
@@ -322,6 +331,12 @@ export function isAggregatedThinkingGroup(
   entry: AcpDisplayItem,
 ): entry is AggregatedThinkingGroup {
   return (entry as AggregatedThinkingGroup).type === "aggregated_thinking";
+}
+
+export function isAggregatedContextFrameGroup(
+  entry: AcpDisplayItem,
+): entry is AggregatedContextFrameGroup {
+  return (entry as AggregatedContextFrameGroup).type === "aggregated_context_frames";
 }
 
 export function isAggregatedDiffGroup(

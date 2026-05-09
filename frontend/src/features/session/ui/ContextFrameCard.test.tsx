@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parseRuntimeContextNotice } from "../model/runtimeContextNotice";
-import { RuntimeContextNoticeCard } from "./RuntimeContextNoticeCard";
+import { parseContextFrame } from "../model/contextFrame";
+import { ContextFrameCard } from "./ContextFrameCard";
 
-describe("RuntimeContextNoticeCard", () => {
-  it("解析 runtime_context_notice 的结构化 sections 与 Agent 可见文本", () => {
-    const notice = parseRuntimeContextNotice(sampleNotice());
+describe("ContextFrameCard", () => {
+  it("解析 context_frame 的结构化 sections 与 Agent 可见文本", () => {
+    const notice = parseContextFrame(sampleNotice());
 
     expect(notice?.phase_node).toBe("apply");
-    expect(notice?.agent_visible_text).toContain("Tool Schema Delta");
+    expect(notice?.rendered_text).toContain("Tool Schema Delta");
     expect(notice?.sections).toHaveLength(2);
     expect(notice?.sections[1]?.kind).toBe("tool_schema_delta");
   });
 
-  it("渲染 runtime_context_notice 专用卡片入口", () => {
-    const markup = renderToStaticMarkup(<RuntimeContextNoticeCard data={sampleNotice()} />);
+  it("渲染 context_frame 专用卡片入口", () => {
+    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleNotice()} />);
 
     expect(markup).toContain("CTX");
     expect(markup).toContain("Agent 上下文已更新");
@@ -27,11 +27,14 @@ describe("RuntimeContextNoticeCard", () => {
 function sampleNotice(): Record<string, unknown> {
   return {
       id: "runtime-context-apply-1",
+      kind: "runtime_context_update",
       source: "runtime_context_update",
       phase_node: "apply",
       apply_mode: "live",
       delivery_status: "queued_for_transform_context",
-      agent_visible_text: "## Tool Schema Delta — Step Transition: apply",
+      delivery_channel: "turn_start",
+      message_role: "user",
+      rendered_text: "## Tool Schema Delta — Step Transition: apply",
       created_at_ms: 1,
       sections: [
         {

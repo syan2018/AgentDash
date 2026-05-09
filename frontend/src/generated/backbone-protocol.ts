@@ -12,7 +12,15 @@
  */
 export type AbsolutePathBuf = string;
 
-export type AdditionalFileSystemPermissions = { read: Array<AbsolutePathBuf> | null, write: Array<AbsolutePathBuf> | null, };
+export type AdditionalFileSystemPermissions = {
+/**
+ * This will be removed in favor of `entries`.
+ */
+read: Array<AbsolutePathBuf> | null,
+/**
+ * This will be removed in favor of `entries`.
+ */
+write: Array<AbsolutePathBuf> | null, globScanMaxDepth?: number, entries?: Array<FileSystemSandboxEntry>, };
 
 export type AdditionalNetworkPermissions = { enabled: boolean | null, };
 
@@ -49,7 +57,7 @@ export type ByteRange = { start: number, end: number, };
  * When an upstream HTTP status is available (for example, from the Responses API or a provider),
  * it is forwarded in `httpStatusCode` on the relevant `codexErrorInfo` variant.
  */
-export type CodexErrorInfo = "contextWindowExceeded" | "usageLimitExceeded" | "serverOverloaded" | { "httpConnectionFailed": { httpStatusCode: number | null, } } | { "responseStreamConnectionFailed": { httpStatusCode: number | null, } } | "internalServerError" | "unauthorized" | "badRequest" | "threadRollbackFailed" | "sandboxError" | { "responseStreamDisconnected": { httpStatusCode: number | null, } } | { "responseTooManyFailedAttempts": { httpStatusCode: number | null, } } | { "activeTurnNotSteerable": { turnKind: NonSteerableTurnKind, } } | "other";
+export type CodexErrorInfo = "contextWindowExceeded" | "usageLimitExceeded" | "serverOverloaded" | "cyberPolicy" | { "httpConnectionFailed": { httpStatusCode: number | null, } } | { "responseStreamConnectionFailed": { httpStatusCode: number | null, } } | "internalServerError" | "unauthorized" | "badRequest" | "threadRollbackFailed" | "sandboxError" | { "responseStreamDisconnected": { httpStatusCode: number | null, } } | { "responseTooManyFailedAttempts": { httpStatusCode: number | null, } } | { "activeTurnNotSteerable": { turnKind: NonSteerableTurnKind, } } | "other";
 
 export type CollabAgentState = { status: CollabAgentStatus, message: string | null, };
 
@@ -65,7 +73,7 @@ export type CommandExecutionApprovalDecision = "accept" | "acceptForSession" | {
 
 export type CommandExecutionOutputDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, };
 
-export type CommandExecutionRequestApprovalParams = { threadId: string, turnId: string, itemId: string, 
+export type CommandExecutionRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
 /**
  * Unique identifier for this specific approval callback.
  *
@@ -75,39 +83,39 @@ export type CommandExecutionRequestApprovalParams = { threadId: string, turnId: 
  * one parent `itemId`, so `approvalId` is a distinct opaque callback id
  * (a UUID) used to disambiguate routing.
  */
-approvalId?: string | null, 
+approvalId?: string | null,
 /**
  * Optional explanatory reason (e.g. request for network access).
  */
-reason?: string | null, 
+reason?: string | null,
 /**
  * Optional context for a managed-network approval prompt.
  */
-networkApprovalContext?: NetworkApprovalContext | null, 
+networkApprovalContext?: NetworkApprovalContext | null,
 /**
  * The command to be executed.
  */
-command?: string | null, 
+command?: string | null,
 /**
  * The command's working directory.
  */
-cwd?: AbsolutePathBuf | null, 
+cwd?: AbsolutePathBuf | null,
 /**
  * Best-effort parsed command actions for friendly display.
  */
-commandActions?: Array<CommandAction> | null, 
+commandActions?: Array<CommandAction> | null,
 /**
  * Optional additional permissions requested for this command.
  */
-additionalPermissions?: AdditionalPermissionProfile | null, 
+additionalPermissions?: AdditionalPermissionProfile | null,
 /**
  * Optional proposed execpolicy amendment to allow similar commands without prompting.
  */
-proposedExecpolicyAmendment?: ExecPolicyAmendment | null, 
+proposedExecpolicyAmendment?: ExecPolicyAmendment | null,
 /**
  * Optional proposed network policy amendments (allow/deny host) for future requests.
  */
-proposedNetworkPolicyAmendments?: Array<NetworkPolicyAmendment> | null, 
+proposedNetworkPolicyAmendments?: Array<NetworkPolicyAmendment> | null,
 /**
  * Ordered list of decisions the client may present for this prompt.
  */
@@ -132,16 +140,24 @@ export type ExecPolicyAmendment = Array<string>;
 
 export type FileChangeOutputDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, };
 
-export type FileChangeRequestApprovalParams = { threadId: string, turnId: string, itemId: string, 
+export type FileChangeRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
 /**
  * Optional explanatory reason (e.g. request for extra write access).
  */
-reason?: string | null, 
+reason?: string | null,
 /**
  * [UNSTABLE] When set, the agent is asking the user to allow writes under this root
  * for the remainder of the session (unclear if this is honored today).
  */
 grantRoot?: string | null, };
+
+export type FileSystemAccessMode = "read" | "write" | "none";
+
+export type FileSystemPath = { "type": "path", path: AbsolutePathBuf, } | { "type": "glob_pattern", pattern: string, } | { "type": "special", value: FileSystemSpecialPath, };
+
+export type FileSystemSandboxEntry = { path: FileSystemPath, access: FileSystemAccessMode, };
+
+export type FileSystemSpecialPath = { "kind": "root" } | { "kind": "minimal" } | { "kind": "current_working_directory" } | { "kind": "project_roots", subpath: string | null, } | { "kind": "tmpdir" } | { "kind": "slash_tmp" } | { "kind": "unknown", path: string, subpath: string | null, };
 
 export type FileUpdateChange = { path: string, kind: PatchChangeKind, diff: string, };
 
@@ -207,7 +223,7 @@ export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined
 
 export type PatchChangeKind = { "type": "add" } | { "type": "delete" } | { "type": "update", move_path: string | null, };
 
-export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string, reason: string | null, permissions: RequestPermissionProfile, };
+export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string, cwd: AbsolutePathBuf, reason: string | null, permissions: RequestPermissionProfile, };
 
 /**
  * EXPERIMENTAL - proposed plan streaming deltas for plan items. Clients should
@@ -218,7 +234,7 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
@@ -238,11 +254,11 @@ export type RequestPermissionProfile = { network: AdditionalNetworkPermissions |
  */
 export type SourceInfo = { connectorId: string, connectorType: string, executorId: string | null, };
 
-export type TextElement = { 
+export type TextElement = {
 /**
  * Byte range in the parent `text` buffer that this element occupies.
  */
-byteRange: ByteRange, 
+byteRange: ByteRange,
 /**
  * Optional human-readable placeholder for the element, displayed in the UI.
  */
@@ -250,78 +266,78 @@ placeholder: string | null, };
 
 export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
-export type ThreadItem = { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string, 
+export type ThreadItem = { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
 /**
  * The command to be executed.
  */
-command: string, 
+command: string,
 /**
  * The command's working directory.
  */
-cwd: AbsolutePathBuf, 
+cwd: AbsolutePathBuf,
 /**
  * Identifier for the underlying PTY process (when available).
  */
-processId: string | null, source: CommandExecutionSource, status: CommandExecutionStatus, 
+processId: string | null, source: CommandExecutionSource, status: CommandExecutionStatus,
 /**
  * A best-effort parsing of the command to understand the action(s) it will perform.
  * This returns a list of CommandAction objects because a single shell command may
  * be composed of many commands piped together.
  */
-commandActions: Array<CommandAction>, 
+commandActions: Array<CommandAction>,
 /**
  * The command's output, aggregated from stdout and stderr.
  */
-aggregatedOutput: string | null, 
+aggregatedOutput: string | null,
 /**
  * The command's exit code.
  */
-exitCode: number | null, 
+exitCode: number | null,
 /**
  * The duration of the command execution in milliseconds.
  */
-durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, result: McpToolCallResult | null, error: McpToolCallError | null, 
+durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, result: McpToolCallResult | null, error: McpToolCallError | null,
 /**
  * The duration of the MCP tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "dynamicToolCall", id: string, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, 
+durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespace: string | null, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null,
 /**
  * The duration of the dynamic tool call in milliseconds.
  */
-durationMs: number | null, } | { "type": "collabAgentToolCall", 
+durationMs: number | null, } | { "type": "collabAgentToolCall",
 /**
  * Unique identifier for this collab tool call.
  */
-id: string, 
+id: string,
 /**
  * Name of the collab tool that was invoked.
  */
-tool: CollabAgentTool, 
+tool: CollabAgentTool,
 /**
  * Current status of the collab tool call.
  */
-status: CollabAgentToolCallStatus, 
+status: CollabAgentToolCallStatus,
 /**
  * Thread ID of the agent issuing the collab request.
  */
-senderThreadId: string, 
+senderThreadId: string,
 /**
  * Thread ID of the receiving agent, when applicable. In case of spawn operation,
  * this corresponds to the newly spawned agent.
  */
-receiverThreadIds: Array<string>, 
+receiverThreadIds: Array<string>,
 /**
  * Prompt text sent as part of the collab tool call, when available.
  */
-prompt: string | null, 
+prompt: string | null,
 /**
  * Model requested for the spawned agent, when applicable.
  */
-model: string | null, 
+model: string | null,
 /**
  * Reasoning effort requested for the spawned agent, when applicable.
  */
-reasoningEffort: ReasoningEffort | null, 
+reasoningEffort: ReasoningEffort | null,
 /**
  * Last known status of the target agents, when available.
  */
@@ -357,25 +373,25 @@ export type ToolRequestUserInputQuestion = { id: string, header: string, questio
  */
 export type TraceInfo = { turnId: string | null, entryIndex: number | null, };
 
-export type Turn = { id: string, 
+export type Turn = { id: string,
 /**
  * Only populated on a `thread/resume` or `thread/fork` response.
  * For all other responses and notifications returning a Turn,
  * the items field will be an empty list.
  */
-items: Array<ThreadItem>, status: TurnStatus, 
+items: Array<ThreadItem>, status: TurnStatus,
 /**
  * Only populated when the Turn's status is failed.
  */
-error: TurnError | null, 
+error: TurnError | null,
 /**
  * Unix timestamp (in seconds) when the turn started.
  */
-startedAt: number | null, 
+startedAt: number | null,
 /**
  * Unix timestamp (in seconds) when the turn completed.
  */
-completedAt: number | null, 
+completedAt: number | null,
 /**
  * Duration between turn start and completion in milliseconds, if known.
  */
@@ -401,7 +417,7 @@ export type TurnStartedNotification = { threadId: string, turn: Turn, };
 
 export type TurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
 
-export type UserInput = { "type": "text", text: string, 
+export type UserInput = { "type": "text", text: string,
 /**
  * UI-defined spans within `text` used to render or persist special elements.
  */

@@ -6,7 +6,6 @@ use ts_rs::TS;
 ///
 /// 保留 `request_id` 用于回传决策结果，payload 直接复用 Codex 类型。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ApprovalRequest {
     CommandExecution {

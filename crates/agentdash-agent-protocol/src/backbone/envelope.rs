@@ -6,7 +6,6 @@ use crate::backbone::event::BackboneEvent;
 
 /// 事件来源标识。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceInfo {
     pub connector_id: String,
@@ -17,7 +16,6 @@ pub struct SourceInfo {
 
 /// 追踪信息（与 turn / entry 关联）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct TraceInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,7 +26,6 @@ pub struct TraceInfo {
 
 /// 平台 envelope — 包裹每条 BackboneEvent，取代原 AgentDashMetaV1 的 source/trace 注入角色。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct BackboneEnvelope {
     pub event: BackboneEvent,

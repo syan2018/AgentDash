@@ -3,7 +3,6 @@ use ts_rs::TS;
 
 /// 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlatformEvent {
     /// Connector 绑定了底层执行器 session（用于 follow-up / resume）。
@@ -34,7 +33,6 @@ pub enum PlatformEvent {
 
 /// Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct HookTracePayload {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,7 +45,6 @@ pub struct HookTracePayload {
 
 /// Hook trace 的结构化数据体。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceData {
     pub trigger: HookTraceTrigger,
@@ -78,7 +75,6 @@ pub struct HookTraceData {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum HookTraceTrigger {
     SessionStart,
@@ -96,7 +92,6 @@ pub enum HookTraceTrigger {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum HookTraceSeverity {
     Error,
@@ -138,7 +133,6 @@ impl HookTraceSeverity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceCompletion {
     pub mode: String,
@@ -148,7 +142,6 @@ pub struct HookTraceCompletion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceDiagnostic {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,7 +151,6 @@ pub struct HookTraceDiagnostic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub struct HookTraceInjection {
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Hook runtime delivery boundary、ContextFrame、TurnStart/PendingAction 契约。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 context_frame parser 与 ContextFrameCard section 渲染契约。"}
+{"file": ".trellis/tasks/05-09-context-frame-consolidation/prd.md", "reason": "父任务中已完成的 ContextFrame 主线、剩余 pending_action 范围与验收口径。"}

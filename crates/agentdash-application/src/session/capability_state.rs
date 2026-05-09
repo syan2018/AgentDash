@@ -67,6 +67,7 @@ pub struct CapabilityStateDelta {
     pub included_tool_paths: SetDelta,
     pub mcp_servers: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
+    pub skills: NamedEntityDelta,
 }
 
 impl CapabilityStateDelta {
@@ -77,6 +78,7 @@ impl CapabilityStateDelta {
             && self.included_tool_paths.is_empty()
             && self.mcp_servers.is_empty()
             && self.vfs.is_empty()
+            && self.skills.is_empty()
     }
 }
 
@@ -133,6 +135,13 @@ impl<'a> RuntimeContextTransition<'a> {
             .iter()
             .map(|server| server.name.clone())
             .collect::<Vec<_>>();
+        let skill_names = self
+            .after_state
+            .skill
+            .skills
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect::<Vec<_>>();
         let mount_ids: Vec<String> = after_vfs
             .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
             .unwrap_or_default();
@@ -154,6 +163,10 @@ impl<'a> RuntimeContextTransition<'a> {
             "mcp": {
                 "server_count": self.after_state.tool.mcp_servers.len(),
                 "servers": mcp_servers,
+            },
+            "skills": {
+                "count": self.after_state.skill.skills.len(),
+                "items": skill_names,
             },
             "vfs": {
                 "mounts": mount_ids,
@@ -257,6 +270,13 @@ pub fn compute_capability_state_delta(
         vfs: vfs_surface_delta(
             before.and_then(|surface| surface.vfs.active.as_ref()),
             after.vfs.active.as_ref(),
+        ),
+        skills: named_entity_delta(
+            before
+                .map(|surface| surface.skill.skills.as_slice())
+                .unwrap_or(&[]),
+            after.skill.skills.as_slice(),
+            |skill| skill.name.clone(),
         ),
     }
 }

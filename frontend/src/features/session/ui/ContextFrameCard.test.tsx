@@ -34,7 +34,7 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("工具 Schema 变化");
     // tool_schema_delta 去重后仅 1 项变化（restored 与 added 同一 tool_path）
     expect(markup).toContain("1 项变化");
-    // 确认 tab 条包含 BDL（runtime_context_update）
+    // 确认 tab 条包含 BDL（capability_state_update）
     expect(markup).toContain("BDL");
     // Agent 原文折叠块
     expect(markup).toContain("Agent 实际原文");
@@ -42,49 +42,32 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("调试信息");
   });
 
-  it("bootstrap_context 解析并渲染 BOOT token", () => {
-    const notice = parseContextFrame(sampleBootstrapNotice());
-    expect(notice?.kind).toBe("bootstrap_context");
-    expect(notice?.sections[0]?.kind).toBe("bootstrap_context");
+  it("mission_context 解析并渲染 MIS token", () => {
+    const notice = parseContextFrame(sampleMissionNotice());
+    expect(notice?.kind).toBe("mission_context");
+    expect(notice?.sections[0]?.kind).toBe("mission_context");
 
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleBootstrapNotice()} defaultExpanded />,
+      <ContextFrameCard data={sampleMissionNotice()} defaultExpanded />,
     );
-    // frame tab 的 BOOT token + section block 标题
-    expect(markup).toContain("BOOT");
-    expect(markup).toContain("Bootstrap Context");
+    // frame tab 的 MIS token + section block 标题
+    expect(markup).toContain("MIS");
+    expect(markup).toContain("Mission Context");
     expect(markup).toContain("2 个片段");
     expect(markup).toContain("Agent 上下文已更新");
   });
 
-  it("解析并渲染独立 surface frames", () => {
-    const workspace = parseContextFrame(sampleWorkspaceSurfaceNotice());
-    const skill = parseContextFrame(sampleSkillSurfaceNotice());
-    const hook = parseContextFrame(sampleHookRuntimeSurfaceNotice());
-
-    expect(workspace?.kind).toBe("workspace_surface");
-    expect(workspace?.sections[0]?.kind).toBe("workspace_surface");
-    expect(skill?.sections[0]?.kind).toBe("skill_surface");
-    expect(hook?.sections[0]?.kind).toBe("hook_runtime_surface");
+  it("解析并渲染 pending_action frame", () => {
+    const notice = parseContextFrame(samplePendingActionNotice());
+    expect(notice?.kind).toBe("pending_action");
+    expect(notice?.sections[0]?.kind).toBe("pending_action");
 
     const markup = renderToStaticMarkup(
-      <>
-        <ContextFrameCard data={sampleWorkspaceSurfaceNotice()} defaultExpanded />
-        <ContextFrameCard data={sampleSkillSurfaceNotice()} defaultExpanded />
-        <ContextFrameCard data={sampleHookRuntimeSurfaceNotice()} defaultExpanded />
-      </>,
+      <ContextFrameCard data={samplePendingActionNotice()} defaultExpanded />,
     );
-
-    expect(markup).toContain("Workspace Surface");
-    expect(markup).toContain("1 个挂载");
-    expect(markup).toContain("Skill Surface");
-    expect(markup).toContain("1 个 skill");
-    expect(markup).toContain("Hook Runtime Surface");
-    expect(markup).toContain("2 个 pending action");
-    // frame tab token
-    expect(markup).toContain("WS");
-    expect(markup).toContain("SKL");
-    expect(markup).toContain("HOOK");
+    expect(markup).toContain("Pending Action");
+    expect(markup).toContain("follow_up_required");
+    expect(markup).toContain("ACT");
   });
 
   it("解析并渲染 auto_resume frame", () => {
@@ -121,7 +104,7 @@ describe("ContextFrameCard", () => {
 function sampleNotice(): Record<string, unknown> {
   return {
       id: "runtime-context-apply-1",
-      kind: "runtime_context_update",
+      kind: "capability_state_update",
       source: "runtime_context_update",
       phase_node: "apply",
       apply_mode: "live",
@@ -168,21 +151,21 @@ function sampleNotice(): Record<string, unknown> {
     };
 }
 
-function sampleBootstrapNotice(): Record<string, unknown> {
+function sampleMissionNotice(): Record<string, unknown> {
   return {
     id: "bootstrap-context-task-1",
-    kind: "bootstrap_context",
+    kind: "mission_context",
     source: "runtime_context_update",
     phase_node: "task_start",
     delivery_status: "queued_for_transform_context",
     delivery_channel: "turn_start",
     message_role: "user",
-    rendered_text: "## Bootstrap Context",
+    rendered_text: "## Mission Context",
     created_at_ms: 1,
     sections: [
       {
-        kind: "bootstrap_context",
-        title: "Bootstrap Context",
+        kind: "mission_context",
+        title: "Mission Context",
         summary: "Session 启动上下文已注入",
         fragments: [
           {
@@ -203,82 +186,34 @@ function sampleBootstrapNotice(): Record<string, unknown> {
   };
 }
 
-function sampleWorkspaceSurfaceNotice(): Record<string, unknown> {
+function samplePendingActionNotice(): Record<string, unknown> {
   return {
-    id: "workspace-surface-1",
-    kind: "workspace_surface",
-    source: "runtime_context_update",
+    id: "pending-action-1",
+    kind: "pending_action",
+    source: "companion_result",
     delivery_status: "queued_for_transform_context",
     delivery_channel: "turn_start",
     message_role: "user",
-    rendered_text: "## Workspace Surface",
+    rendered_text: "## Pending Action",
     created_at_ms: 1,
     sections: [
       {
-        kind: "workspace_surface",
-        title: "Workspace Surface",
-        summary: "当前工作目录与 1 个 VFS 挂载已作为独立上下文帧注入。",
-        working_directory: "/repo",
-        default_mount: "workspace",
-        mounts: [
+        kind: "pending_action",
+        title: "Pending Action",
+        summary: "补充 follow-up",
+        action_id: "follow-up-1",
+        action_type: "follow_up_required",
+        status: "pending",
+        revision: 3,
+        turn_id: "turn-1",
+        instructions: ["请补充 follow-up 说明。"],
+        injections: [
           {
-            id: "workspace",
-            display_name: "Workspace",
-            provider: "local",
-            root_ref: "/repo",
-            capabilities: ["read", "write"],
+            slot: "workflow",
+            source: "follow_up",
+            content: "继续落实下一步",
           },
         ],
-      },
-    ],
-  };
-}
-
-function sampleSkillSurfaceNotice(): Record<string, unknown> {
-  return {
-    id: "skill-surface-1",
-    kind: "skill_surface",
-    source: "runtime_context_update",
-    delivery_status: "queued_for_transform_context",
-    delivery_channel: "turn_start",
-    message_role: "user",
-    rendered_text: "## Skill Surface",
-    created_at_ms: 1,
-    sections: [
-      {
-        kind: "skill_surface",
-        title: "Skill Surface",
-        summary: "当前有 1 个可由模型按需加载的 skill。",
-        read_tool: "fs_read",
-        skills: [
-          {
-            name: "trellis-check",
-            description: "质量验证",
-            file_path: "/repo/.agents/skills/trellis-check/SKILL.md",
-            disable_model_invocation: false,
-          },
-        ],
-      },
-    ],
-  };
-}
-
-function sampleHookRuntimeSurfaceNotice(): Record<string, unknown> {
-  return {
-    id: "hook-runtime-surface-1",
-    kind: "hook_runtime_surface",
-    source: "runtime_context_update",
-    delivery_status: "queued_for_transform_context",
-    delivery_channel: "turn_start",
-    message_role: "user",
-    rendered_text: "## Hook Runtime Surface",
-    created_at_ms: 1,
-    sections: [
-      {
-        kind: "hook_runtime_surface",
-        title: "Hook Runtime Surface",
-        summary: "Hook Runtime 已启用",
-        pending_action_count: 2,
       },
     ],
   };

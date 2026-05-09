@@ -33,7 +33,7 @@ pub struct CompanionAgentEntry {
     pub display_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillEntry {
     pub name: String,
     pub description: String,

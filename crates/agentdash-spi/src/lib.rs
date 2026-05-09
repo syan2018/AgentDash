@@ -33,17 +33,17 @@ pub use connector::{
     AgentConnector, AgentInfo, CapabilityState, CompanionDimension, ConnectorCapabilities,
     ConnectorError, ConnectorType, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame,
     ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
-    RestoredSessionState, SessionMcpServer, ToolCapabilityFilter, ToolCluster, ToolDimension,
-    VfsDimension, content_block_to_text, partition_session_mcp_servers,
+    RestoredSessionState, SessionMcpServer, SkillDimension, ToolCapabilityFilter, ToolCluster,
+    ToolDimension, VfsDimension, content_block_to_text, partition_session_mcp_servers,
     workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────
 
 pub use context::injection::{
-    ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MergeStrategy,
-    RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest, SelectorHint,
-    SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
+    ContextFragment, FragmentScope, FragmentScopeSet, InjectionError, MISSION_CONTEXT_SLOTS,
+    MergeStrategy, RUNTIME_AGENT_CONTEXT_SLOTS, ResolveSourcesOutput, ResolveSourcesRequest,
+    SelectorHint, SourceResolver, VfsContext, VfsDescriptor, VfsDiscoveryProvider,
 };
 
 // ─── context bundle & capabilities ──────────────────────────
@@ -65,9 +65,9 @@ pub use hooks::{
     HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
     HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
     NoopExecutionHookProvider, RuntimeContextFragmentEntry, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
-    RuntimeWorkspaceMountEntry, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
+    SharedHookSessionRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

@@ -375,6 +375,11 @@ pub fn build_capability_state_for_activation(
     let mut state = activation.capability_state.clone();
     state.tool.mcp_servers = activation.mcp_servers.clone();
     state.vfs.active = Some(vfs);
+    if state.skill.skills.is_empty() {
+        state.skill = base_surface
+            .map(|surface| surface.skill.clone())
+            .unwrap_or_default();
+    }
     state
 }
 

@@ -243,7 +243,7 @@ pub struct ContextFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextFrameSection {
-    BootstrapContext {
+    MissionContext {
         title: String,
         summary: String,
         #[serde(default)]
@@ -290,11 +290,13 @@ pub enum ContextFrameSection {
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
     },
-    WorkflowContext {
-        title: String,
-        summary: String,
+    SkillDelta {
         #[serde(default)]
-        injections: Vec<RuntimeHookInjectionEntry>,
+        added_skills: Vec<RuntimeSkillEntry>,
+        #[serde(default)]
+        removed_skills: Vec<RuntimeSkillEntry>,
+        #[serde(default)]
+        changed_skills: Vec<RuntimeSkillEntry>,
     },
     HookInjection {
         title: String,
@@ -308,28 +310,19 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
-    WorkspaceSurface {
+    PendingAction {
         title: String,
         summary: String,
+        action_id: String,
+        action_type: String,
+        status: String,
+        revision: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        working_directory: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        default_mount: Option<String>,
+        turn_id: Option<String>,
         #[serde(default)]
-        mounts: Vec<RuntimeWorkspaceMountEntry>,
-    },
-    SkillSurface {
-        title: String,
-        summary: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        read_tool: Option<String>,
+        instructions: Vec<String>,
         #[serde(default)]
-        skills: Vec<RuntimeSkillEntry>,
-    },
-    HookRuntimeSurface {
-        title: String,
-        summary: String,
-        pending_action_count: usize,
+        injections: Vec<RuntimeHookInjectionEntry>,
     },
     AutoResume {
         title: String,
@@ -378,17 +371,6 @@ pub struct RuntimeContextFragmentEntry {
     pub label: String,
     pub source: String,
     pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct RuntimeWorkspaceMountEntry {
-    pub id: String,
-    pub display_name: String,
-    pub provider: String,
-    pub root_ref: String,
-    #[serde(default)]
-    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

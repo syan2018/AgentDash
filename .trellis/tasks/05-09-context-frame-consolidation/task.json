@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "05-09-pending-action-context-frame"
+    "05-09-pending-action-context-frame",
+    "05-09-contextframe-injection-path-consolidation"
   ],
   "parent": null,
   "relatedFiles": [],

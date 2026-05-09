@@ -1,44 +1,20 @@
 use agentdash_spi::context::bundle::SessionContextBundle;
 use agentdash_spi::context::injection::FragmentScope;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeContextFragmentEntry,
-    RuntimeEventSource, SharedHookSessionRuntime,
+    ContextFrame, ContextFrameSection, RuntimeContextFragmentEntry, RuntimeEventSource,
+    SharedHookSessionRuntime,
 };
-use agentdash_spi::{ContextFragment, DiscoveredGuideline};
+use agentdash_spi::{ContextFragment, DiscoveredGuideline, MISSION_CONTEXT_SLOTS};
 
 use crate::session::context_frame::{self, ContextFramePayload};
 
-const BOOTSTRAP_CONTEXT_SLOTS: &[&str] = &[
-    "task",
-    "story",
-    "project",
-    "workspace",
-    "initial_context",
-    "persona",
-    "required_context",
-    "workflow",
-    "workflow_context",
-    "story_context",
-    "declared_source",
-    "static_fragment",
-    "requirements",
-    "constraints",
-    "constraint",
-    "codebase",
-    "references",
-    "project_guidelines",
-    "instruction",
-    "instruction_append",
-    "companion_agents",
-];
-
 #[derive(Debug, Clone)]
-struct BootstrapContextFrame {
+struct MissionContextFrame {
     phase_tag: String,
     fragments: Vec<RuntimeContextFragmentEntry>,
 }
 
-impl BootstrapContextFrame {
+impl MissionContextFrame {
     fn from_parts(
         bundle: Option<&SessionContextBundle>,
         user_preferences: &[String],
@@ -85,13 +61,13 @@ impl BootstrapContextFrame {
     }
 }
 
-impl ContextFramePayload for BootstrapContextFrame {
+impl ContextFramePayload for MissionContextFrame {
     fn id(&self, created_at_ms: i64) -> String {
-        format!("bootstrap-context-{}-{created_at_ms}", self.phase_tag)
+        format!("mission-context-{}-{created_at_ms}", self.phase_tag)
     }
 
     fn kind(&self) -> &'static str {
-        "bootstrap_context"
+        "mission_context"
     }
 
     fn source(&self) -> RuntimeEventSource {
@@ -107,10 +83,10 @@ impl ContextFramePayload for BootstrapContextFrame {
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
-        vec![ContextFrameSection::BootstrapContext {
-            title: "Bootstrap Context".to_string(),
+        vec![ContextFrameSection::MissionContext {
+            title: "Mission Context".to_string(),
             summary: format!(
-                "Session 启动上下文已注入，本 frame 汇聚 {} 个上下文片段。",
+                "当前任务上下文已注入，本 frame 汇聚 {} 个上下文片段。",
                 self.fragments.len()
             ),
             fragments: self.fragments.clone(),
@@ -118,11 +94,11 @@ impl ContextFramePayload for BootstrapContextFrame {
     }
 
     fn rendered_text(&self) -> String {
-        render_bootstrap_context_text(&self.fragments)
+        render_mission_context_text(&self.fragments)
     }
 }
 
-pub(crate) fn enqueue_bootstrap_context_frame(
+pub(crate) fn enqueue_mission_context_frame(
     hook_session: Option<&SharedHookSessionRuntime>,
     bundle: Option<&SessionContextBundle>,
     user_preferences: &[String],
@@ -130,22 +106,14 @@ pub(crate) fn enqueue_bootstrap_context_frame(
 ) -> Option<ContextFrame> {
     let hook_session = hook_session?;
     let metadata =
-        BootstrapContextFrame::from_parts(bundle, user_preferences, discovered_guidelines)?;
-    let frame = context_frame::build_context_frame(&metadata);
-    hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
-        id: frame.id.clone(),
-        created_at_ms: frame.created_at_ms,
-        source: RuntimeEventSource::RuntimeContextUpdate,
-        content: frame.rendered_text.clone(),
-        context_frame: Some(frame.clone()),
-    });
-    Some(frame)
+        MissionContextFrame::from_parts(bundle, user_preferences, discovered_guidelines)?;
+    context_frame::build_and_enqueue_context_frame(hook_session, &metadata)
 }
 
 fn bundle_runtime_fragments(bundle: &SessionContextBundle) -> Vec<RuntimeContextFragmentEntry> {
     let mut fragments = bundle
         .filter_for(FragmentScope::RuntimeAgent)
-        .filter(|fragment| BOOTSTRAP_CONTEXT_SLOTS.contains(&fragment.slot.as_str()))
+        .filter(|fragment| MISSION_CONTEXT_SLOTS.contains(&fragment.slot.as_str()))
         .filter(|fragment| !fragment.content.trim().is_empty())
         .collect::<Vec<_>>();
     fragments.sort_by_key(|fragment| fragment.order);
@@ -161,10 +129,10 @@ fn fragment_entry(fragment: &ContextFragment) -> RuntimeContextFragmentEntry {
     }
 }
 
-fn render_bootstrap_context_text(fragments: &[RuntimeContextFragmentEntry]) -> String {
+fn render_mission_context_text(fragments: &[RuntimeContextFragmentEntry]) -> String {
     let mut lines = vec![
-        "## Bootstrap Context".to_string(),
-        "以下上下文片段已在本轮对话开始前注入，用于建立任务、流程、项目规则与用户偏好。"
+        "## Mission Context".to_string(),
+        "以下上下文片段已在本轮对话开始前注入，用于约束任务目标、工作流要求与项目规则。"
             .to_string(),
     ];
     for fragment in fragments {
@@ -203,17 +171,16 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_frame_filters_runtime_surface_slots() {
+    fn mission_context_frame_filters_runtime_slots() {
         let mut bundle = SessionContextBundle::new(uuid::Uuid::new_v4(), "task_start");
         bundle.merge([
             fragment("task", "## Task\n处理上下文可视化"),
-            fragment("vfs", "不应进入 bootstrap frame"),
-            fragment("tools", "不应进入 bootstrap frame"),
+            fragment("vfs", "不应进入 mission context frame"),
+            fragment("tools", "不应进入 mission context frame"),
         ]);
 
-        let frame =
-            BootstrapContextFrame::from_parts(Some(&bundle), &["中文交流".to_string()], &[])
-                .expect("frame metadata");
+        let frame = MissionContextFrame::from_parts(Some(&bundle), &["中文交流".to_string()], &[])
+            .expect("frame metadata");
 
         assert_eq!(frame.fragments.len(), 2);
         assert!(frame.fragments.iter().any(|entry| entry.slot == "task"));
@@ -224,6 +191,6 @@ mod tests {
                 .any(|entry| entry.slot == "user_preferences")
         );
         assert!(!frame.fragments.iter().any(|entry| entry.slot == "vfs"));
-        assert!(frame.rendered_text().contains("Bootstrap Context"));
+        assert!(frame.rendered_text().contains("Mission Context"));
     }
 }

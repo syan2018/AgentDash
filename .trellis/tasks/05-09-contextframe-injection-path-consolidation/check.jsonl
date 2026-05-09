@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/05-09-contextframe-injection-path-consolidation/prd.md", "reason": "检查交付范围、验收与 out-of-scope 是否一致。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门禁与测试要求。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门禁与测试要求。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核跨层数据流一致性和边界清晰度。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "复核 ContextFrame 语义与投递路径是否一致。"}

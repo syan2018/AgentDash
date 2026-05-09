@@ -3,26 +3,22 @@ use std::path::PathBuf;
 use agentdash_domain::context_source::ContextSourceRef;
 use serde::Serialize;
 
-/// Runtime agent 渲染 `SessionContextBundle` 时允许进入 bootstrap ContextFrame 的 slot。
+/// Mission Context 渲染白名单（任务语义面）。
 ///
-/// 这是云端 Agent 上下文主数据面的白名单；application 组装侧与 ContextFrame
-/// builder 必须引用同一份定义，避免新增 slot 后出现“bundle 已产出但模型看不到”
-/// 的漂移。
-pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
+/// 仅包含“该做什么”的上下文片段：task/story/project/workflow/约束/指导等。
+/// 能力语义（tools/vfs/mcp/runtime policy）统一由 `CapabilityState` delta 维度表达，
+/// 不再通过 slot 白名单渲染到 mission context。
+pub const MISSION_CONTEXT_SLOTS: &[&str] = &[
     "task",
     "story",
     "project",
     "workspace",
     "initial_context",
-    "vfs",
-    "tools",
     "persona",
     "required_context",
     "workflow",
     "workflow_context",
     "story_context",
-    "runtime_policy",
-    "mcp_config",
     "declared_source",
     "static_fragment",
     "requirements",
@@ -38,9 +34,12 @@ pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = &[
     "instruction_append",
     // companion_agents: PR 4（04-30-session-pipeline-architecture-refactor）把
     // companion agents 渲染从独立 section 统一归入 Bundle 主数据面；ContextFrame
-    // 收束后由 bootstrap_context frame 按白名单注入给 Agent。
+    // 收束后由 mission_context frame 按白名单注入给 Agent。
     "companion_agents",
 ];
+
+/// 兼容旧调用点的别名：当前 runtime agent 的主通道等同于 mission context。
+pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = MISSION_CONTEXT_SLOTS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {

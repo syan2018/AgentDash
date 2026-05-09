@@ -11,21 +11,16 @@ use agentdash_spi::{
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::bootstrap_context_frame::enqueue_bootstrap_context_frame;
 use super::capability_state::merge_vfs_overlay;
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
 use super::hook_runtime::HookSessionRuntime;
-use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
+use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
+use super::mission_context_frame::enqueue_mission_context_frame;
 use super::path_policy::resolve_working_dir;
-use super::surface_context_frames::{
-    enqueue_hook_runtime_surface_frame, enqueue_skill_surface_frame,
-    enqueue_workspace_surface_frame,
-};
-use super::tool_schema_notice::{ToolSchemaNoticeKind, enqueue_tool_schema_notice};
 pub use super::types::*;
 
 impl SessionHub {
@@ -236,6 +231,7 @@ impl SessionHub {
                 .unwrap_or_default();
             state.tool.mcp_servers = base_mcp_servers.clone();
             state.vfs.active = Some(base_effective_vfs.clone());
+            state.skill.skills = session_capabilities.skills.clone();
             state
         };
         // 最终 capability state: 若有 pending transition 则使用其状态（补全 MCP/VFS）
@@ -243,6 +239,7 @@ impl SessionHub {
             let mut state = pending_state.clone();
             state.tool.mcp_servers = mcp_servers.clone();
             state.vfs.active = Some(effective_vfs.clone());
+            state.skill.skills = session_capabilities.skills.clone();
             state
         } else {
             base_capability_state.clone()
@@ -421,41 +418,23 @@ impl SessionHub {
         }
 
         if is_owner_bootstrap {
-            if let Some(frame) = enqueue_workspace_surface_frame(
-                hook_session.as_ref(),
-                &effective_vfs,
-                &context.session.working_directory,
-            ) {
+            if let Some(hook_session) = hook_session.as_ref() {
+                let frame = build_initial_capability_state_frame(
+                    &capability_state,
+                    &capability_keys,
+                    &context.turn.assembled_tools,
+                );
                 let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+                let _ = super::context_frame::enqueue_context_frame(hook_session, &frame);
             }
 
-            if let Some(frame) = enqueue_skill_surface_frame(
-                hook_session.as_ref(),
-                &session_capabilities,
-                &context.turn.assembled_tools,
-            ) {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
-            }
-
-            if let Some(frame) = enqueue_hook_runtime_surface_frame(hook_session.as_ref()) {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
-            }
-
-            if let Some(frame) = enqueue_bootstrap_context_frame(
+            if let Some(frame) = enqueue_mission_context_frame(
                 hook_session.as_ref(),
                 context.turn.context_bundle.as_ref(),
                 &self.user_preferences,
                 &discovered_guidelines,
             ) {
                 let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
-            }
-
-            if let Some(notice) = enqueue_tool_schema_notice(
-                hook_session.as_ref(),
-                ToolSchemaNoticeKind::Initial,
-                &context.turn.assembled_tools,
-            ) {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &notice).await;
             }
         }
 

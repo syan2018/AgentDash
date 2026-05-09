@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
-    CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, HookTurnStartNotice,
-    RuntimeEventSource, RuntimeHookInjectionEntry, SharedHookSessionRuntime,
+    CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, RuntimeContextFragmentEntry,
+    RuntimeEventSource, RuntimeSkillEntry, SharedHookSessionRuntime,
 };
 use uuid::Uuid;
 
@@ -55,6 +55,27 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
+}
+
+pub(crate) fn build_initial_capability_state_frame(
+    capability_state: &CapabilityState,
+    capability_keys: &BTreeSet<String>,
+    tools: &[DynAgentTool],
+) -> ContextFrame {
+    let initial_delta = CapabilityDelta {
+        added: capability_keys.iter().cloned().collect(),
+        removed: Vec::new(),
+    };
+    let state_delta = compute_capability_state_delta(None, capability_state, capability_keys);
+    build_context_frame(
+        "bootstrap",
+        Some("initial"),
+        "queued_for_transform_context",
+        &initial_delta,
+        capability_keys,
+        Some(&state_delta),
+        tools,
+    )
 }
 
 impl SessionHub {
@@ -113,27 +134,20 @@ impl SessionHub {
             &input.after_state,
             &input.capability_keys,
         );
-        let notice =
-            build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
+        let notice = build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
         self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
             .await
             .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
-        enqueue_context_frame(hook_session.as_ref(), notice);
+        let _ = context_frame::enqueue_context_frame(hook_session, &notice);
 
-        // workflow_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
+        // mission_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) =
-            build_workflow_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
-            self.emit_context_frame(
-                &input.session_id,
-                input.turn_id.as_deref(),
-                &workflow_frame,
-            )
-            .await
-            .map_err(|error| {
-                format!("Phase node workflow context frame 持久化失败: {error}")
-            })?;
-            enqueue_context_frame(hook_session.as_ref(), workflow_frame);
+            self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
+                .await
+                .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
+            let _ = context_frame::enqueue_context_frame(hook_session, &workflow_frame);
         }
 
         Ok(RuntimeContextTransitionOutcome {
@@ -260,10 +274,10 @@ impl SessionHub {
                 let _ = self
                     .emit_context_frame(session_id, Some(turn_id), &notice)
                     .await;
-                enqueue_context_frame(hook_session.as_ref(), notice);
+                let _ = context_frame::enqueue_context_frame(hook_session, &notice);
 
-                // workflow_context 独立 frame,保持 frame 一职一责。
-                if let Some(workflow_frame) = build_workflow_context_frame(
+                // mission_context 独立 frame，保持 frame 一职一责。
+                if let Some(workflow_frame) = build_mission_context_frame(
                     &pending.phase_node,
                     "applied_on_next_turn",
                     &injections,
@@ -271,7 +285,7 @@ impl SessionHub {
                     let _ = self
                         .emit_context_frame(session_id, Some(turn_id), &workflow_frame)
                         .await;
-                    enqueue_context_frame(hook_session.as_ref(), workflow_frame);
+                    let _ = context_frame::enqueue_context_frame(hook_session, &workflow_frame);
                 }
             }
             pending_event_before_state = pending.state.clone();
@@ -283,13 +297,13 @@ impl SessionHub {
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
         if let Some(notice) =
-            build_workflow_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
                 .await;
             if let Some(hook_session) = self.get_hook_session_runtime(&input.session_id).await {
-                enqueue_context_frame(hook_session.as_ref(), notice);
+                let _ = context_frame::enqueue_context_frame(&hook_session, &notice);
             }
         }
     }
@@ -334,14 +348,14 @@ fn build_context_frame(
     context_frame::build_context_frame(&metadata)
 }
 
-/// 根据 hook injections 构造独立的 `workflow_context` frame。
-/// 已从 `runtime_context_update` 帧剥离，遵循 frame 一职一责。
-fn build_workflow_context_frame(
+/// 根据 hook injections 构造独立的 `mission_context` frame。
+/// 已从能力更新帧剥离，遵循 frame 一职一责。
+fn build_mission_context_frame(
     phase_node: &str,
     apply_mode: &str,
     injections: &[HookInjection],
 ) -> Option<ContextFrame> {
-    let metadata = WorkflowContextFrame::new(
+    let metadata = MissionContextFrame::new(
         phase_node,
         apply_mode,
         "queued_for_transform_context",
@@ -352,25 +366,13 @@ fn build_workflow_context_frame(
         .then(|| context_frame::build_context_frame(&metadata))
 }
 
-fn enqueue_context_frame(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-    frame: ContextFrame,
-) {
-    hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
-        id: frame.id.clone(),
-        created_at_ms: frame.created_at_ms,
-        source: RuntimeEventSource::RuntimeContextUpdate,
-        content: frame.rendered_text.clone(),
-        context_frame: Some(frame),
-    });
-}
-
 #[derive(Debug, Clone)]
 struct RuntimeContextUpdateFrame {
     phase_node: String,
     apply_mode: Option<String>,
     delivery_status: String,
     capability_delta: CapabilityDeltaFrameMetadata,
+    skill_delta: Option<SkillDeltaMetadata>,
     tool_schema_delta: Option<ToolSchemaDeltaMetadata>,
 }
 
@@ -393,6 +395,7 @@ impl RuntimeContextUpdateFrame {
                 effective_capabilities,
                 state_delta,
             ),
+            skill_delta: state_delta.and_then(SkillDeltaMetadata::from_state_delta),
             tool_schema_delta: state_delta.and_then(|delta| {
                 ToolSchemaDeltaMetadata::from_tools_and_state_delta(tools, delta)
             }),
@@ -406,7 +409,7 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
     }
 
     fn kind(&self) -> &'static str {
-        "runtime_context_update"
+        "capability_state_update"
     }
 
     fn source(&self) -> RuntimeEventSource {
@@ -427,6 +430,9 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
 
     fn sections(&self) -> Vec<ContextFrameSection> {
         let mut sections = vec![self.capability_delta.section()];
+        if let Some(skill_delta) = &self.skill_delta {
+            sections.push(skill_delta.section());
+        }
         if let Some(tool_schema_delta) = &self.tool_schema_delta {
             sections.push(tool_schema_delta.section());
         }
@@ -435,6 +441,9 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
 
     fn rendered_text(&self) -> String {
         let mut blocks = vec![self.capability_delta.render_text(&self.phase_node)];
+        if let Some(skill_delta) = &self.skill_delta {
+            blocks.push(skill_delta.render_text(Some(&self.phase_node)));
+        }
         if let Some(tool_schema_delta) = &self.tool_schema_delta {
             blocks.push(tool_schema_delta.render_text(Some(&self.phase_node)));
         }
@@ -443,14 +452,14 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowContextFrame {
+struct MissionContextFrame {
     phase_node: String,
     apply_mode: String,
     delivery_status: String,
-    workflow_context: Option<WorkflowContextMetadata>,
+    mission_context: Option<MissionContextMetadata>,
 }
 
-impl WorkflowContextFrame {
+impl MissionContextFrame {
     fn new(
         phase_node: &str,
         apply_mode: &str,
@@ -461,23 +470,22 @@ impl WorkflowContextFrame {
             phase_node: phase_node.to_string(),
             apply_mode: apply_mode.to_string(),
             delivery_status: delivery_status.to_string(),
-            workflow_context: WorkflowContextMetadata::from_hook_injections(injections),
+            mission_context: MissionContextMetadata::from_hook_injections(injections),
         }
     }
 
     fn has_content(&self) -> bool {
-        self.workflow_context.is_some()
+        self.mission_context.is_some()
     }
 }
 
-impl ContextFramePayload for WorkflowContextFrame {
+impl ContextFramePayload for MissionContextFrame {
     fn id(&self, created_at_ms: i64) -> String {
-        // 与 runtime_context_update 的 id 前缀区分，便于前端按 kind 独立聚合。
-        format!("workflow-context-{}-{created_at_ms}", self.phase_node)
+        format!("mission-context-{}-{created_at_ms}", self.phase_node)
     }
 
     fn kind(&self) -> &'static str {
-        "workflow_context"
+        "mission_context"
     }
 
     fn source(&self) -> RuntimeEventSource {
@@ -497,16 +505,16 @@ impl ContextFramePayload for WorkflowContextFrame {
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
-        self.workflow_context
+        self.mission_context
             .as_ref()
             .map(|metadata| vec![metadata.section()])
             .unwrap_or_default()
     }
 
     fn rendered_text(&self) -> String {
-        self.workflow_context
+        self.mission_context
             .as_ref()
-            .map(WorkflowContextMetadata::render_text)
+            .map(MissionContextMetadata::render_text)
             .unwrap_or_default()
     }
 }
@@ -594,7 +602,7 @@ impl CapabilityDeltaFrameMetadata {
 
     fn render_text(&self, phase_node: &str) -> String {
         let mut sections = vec![format!(
-            "## Capability Update — Step Transition: {phase_node}"
+            "## Capability State Update — Step Transition: {phase_node}"
         )];
 
         if !self.added_capabilities.is_empty() {
@@ -713,24 +721,84 @@ impl CapabilityDeltaFrameMetadata {
 }
 
 #[derive(Debug, Clone)]
-struct WorkflowContextMetadata {
-    title: String,
-    summary: String,
-    injections: Vec<RuntimeHookInjectionEntry>,
+struct SkillDeltaMetadata {
+    added_skills: Vec<RuntimeSkillEntry>,
+    removed_skills: Vec<RuntimeSkillEntry>,
+    changed_skills: Vec<RuntimeSkillEntry>,
 }
 
-impl WorkflowContextMetadata {
+impl SkillDeltaMetadata {
+    fn from_state_delta(state_delta: &CapabilityStateDelta) -> Option<Self> {
+        if state_delta.skills.is_empty() {
+            return None;
+        }
+        Some(Self {
+            added_skills: state_delta
+                .skills
+                .added
+                .iter()
+                .map(|name| runtime_skill_entry(name))
+                .collect(),
+            removed_skills: state_delta
+                .skills
+                .removed
+                .iter()
+                .map(|name| runtime_skill_entry(name))
+                .collect(),
+            changed_skills: state_delta
+                .skills
+                .changed
+                .iter()
+                .map(|name| runtime_skill_entry(name))
+                .collect(),
+        })
+    }
+
+    fn section(&self) -> ContextFrameSection {
+        ContextFrameSection::SkillDelta {
+            added_skills: self.added_skills.clone(),
+            removed_skills: self.removed_skills.clone(),
+            changed_skills: self.changed_skills.clone(),
+        }
+    }
+
+    fn render_text(&self, phase_node: Option<&str>) -> String {
+        let mut lines = vec![match phase_node {
+            Some(node) => format!("## Skill Delta — Step Transition: {node}"),
+            None => "## Skill Delta".to_string(),
+        }];
+        append_skill_lines(&mut lines, "Added Skills", &self.added_skills, "已加入");
+        append_skill_lines(&mut lines, "Removed Skills", &self.removed_skills, "已移除");
+        append_skill_lines(
+            &mut lines,
+            "Changed Skills",
+            &self.changed_skills,
+            "定义已变更",
+        );
+        lines.join("\n")
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MissionContextMetadata {
+    title: String,
+    summary: String,
+    fragments: Vec<RuntimeContextFragmentEntry>,
+}
+
+impl MissionContextMetadata {
     fn from_hook_injections(injections: &[HookInjection]) -> Option<Self> {
         if injections.is_empty() {
             return None;
         }
         Some(Self {
-            title: "Workflow Context Update".to_string(),
-            summary: "Workflow 运行上下文已更新。以下内容已在同一运行时边界生效：".to_string(),
-            injections: injections
+            title: "Mission Context Update".to_string(),
+            summary: "Workflow 运行上下文已更新。以下任务约束会在下一次边界注入。".to_string(),
+            fragments: injections
                 .iter()
-                .map(|injection| RuntimeHookInjectionEntry {
+                .map(|injection| RuntimeContextFragmentEntry {
                     slot: injection.slot.clone(),
+                    label: injection.slot.clone(),
                     source: injection.source.clone(),
                     content: injection.content.clone(),
                 })
@@ -739,16 +807,16 @@ impl WorkflowContextMetadata {
     }
 
     fn section(&self) -> ContextFrameSection {
-        ContextFrameSection::WorkflowContext {
+        ContextFrameSection::MissionContext {
             title: self.title.clone(),
             summary: self.summary.clone(),
-            injections: self.injections.clone(),
+            fragments: self.fragments.clone(),
         }
     }
 
     fn render_text(&self) -> String {
         let mut lines = vec![format!("[{}]", self.title), self.summary.clone()];
-        lines.push(format_injection_items(&self.injections));
+        lines.push(format_injection_items(&self.fragments));
         lines.join("\n\n")
     }
 }
@@ -776,7 +844,31 @@ fn append_path_lines(lines: &mut Vec<String>, title: &str, values: &[String], su
     }
 }
 
-fn format_injection_items(injections: &[RuntimeHookInjectionEntry]) -> String {
+fn runtime_skill_entry(name: &str) -> RuntimeSkillEntry {
+    RuntimeSkillEntry {
+        name: name.to_string(),
+        description: String::new(),
+        file_path: String::new(),
+        disable_model_invocation: false,
+    }
+}
+
+fn append_skill_lines(
+    lines: &mut Vec<String>,
+    title: &str,
+    values: &[RuntimeSkillEntry],
+    suffix: &str,
+) {
+    if values.is_empty() {
+        return;
+    }
+    lines.push(format!("### {title}"));
+    for skill in values {
+        lines.push(format!("- `{}` — {suffix}", skill.name));
+    }
+}
+
+fn format_injection_items(injections: &[RuntimeContextFragmentEntry]) -> String {
     injections
         .iter()
         .map(|injection| {
@@ -875,6 +967,7 @@ mod tests {
         let notice =
             build_live_context_frame(&input, &CapabilityDelta::default(), &state_delta, &tools);
 
+        assert_eq!(notice.kind, "capability_state_update");
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));
         assert_eq!(notice.apply_mode.as_deref(), Some("live"));
         // TOOL section 只承载 added_tools;路径级变化全部归 CAP。
@@ -887,12 +980,12 @@ mod tests {
             })
             .expect("tool_schema_delta section should exist with added_tools");
         assert_eq!(tool_section.len(), 1);
-        // workflow_context section 不再出现在 runtime_context_update frame 中。
+        // mission_context section 不应混入 capability_state_update frame。
         assert!(
             !notice
                 .sections
                 .iter()
-                .any(|section| matches!(section, ContextFrameSection::WorkflowContext { .. }))
+                .any(|section| matches!(section, ContextFrameSection::MissionContext { .. }))
         );
         assert!(
             notice
@@ -916,26 +1009,26 @@ mod tests {
     }
 
     #[test]
-    fn workflow_context_frame_is_emitted_independently() {
+    fn mission_context_frame_is_emitted_independently() {
         let injections = vec![HookInjection {
             slot: "workflow".to_string(),
             content: "Active workflow step: apply".to_string(),
             source: "workflow:admin:apply".to_string(),
         }];
 
-        let frame = build_workflow_context_frame("apply", "live", &injections)
-            .expect("workflow_context frame should be emitted when injections present");
+        let frame = build_mission_context_frame("apply", "live", &injections)
+            .expect("mission_context frame should be emitted when injections present");
 
-        assert_eq!(frame.kind, "workflow_context");
+        assert_eq!(frame.kind, "mission_context");
         assert_eq!(frame.phase_node.as_deref(), Some("apply"));
         assert_eq!(frame.apply_mode.as_deref(), Some("live"));
         assert_eq!(frame.sections.len(), 1);
         assert!(matches!(
             frame.sections[0],
-            ContextFrameSection::WorkflowContext { .. }
+            ContextFrameSection::MissionContext { .. }
         ));
 
         // 没有 injection 时不构造 frame。
-        assert!(build_workflow_context_frame("apply", "live", &[]).is_none());
+        assert!(build_mission_context_frame("apply", "live", &[]).is_none());
     }
 }

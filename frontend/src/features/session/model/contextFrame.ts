@@ -15,21 +15,19 @@ export interface ContextFrame {
 }
 
 export type ContextFrameSection =
-  | BootstrapContextSection
+  | MissionContextSection
   | CapabilityDeltaSection
   | ToolSchemaSection
   | ToolSchemaDeltaSection
-  | WorkflowContextSection
+  | SkillDeltaSection
   | HookInjectionSection
   | SystemNoticeSection
-  | WorkspaceSurfaceSection
-  | SkillSurfaceSection
-  | HookRuntimeSurfaceSection
+  | PendingActionSection
   | AutoResumeSection
   | CompactionSummarySection;
 
-export interface BootstrapContextSection {
-  kind: "bootstrap_context";
+export interface MissionContextSection {
+  kind: "mission_context";
   title: string;
   summary: string;
   fragments: RuntimeContextFragmentEntry[];
@@ -81,13 +79,6 @@ export interface RuntimeToolSchemaEntry {
   tool_path?: string;
 }
 
-export interface WorkflowContextSection {
-  kind: "workflow_context";
-  title: string;
-  summary: string;
-  injections: RuntimeHookInjectionEntry[];
-}
-
 export interface HookInjectionSection {
   kind: "hook_injection";
   title: string;
@@ -102,31 +93,6 @@ export interface SystemNoticeSection {
   body?: string;
 }
 
-export interface WorkspaceSurfaceSection {
-  kind: "workspace_surface";
-  title: string;
-  summary: string;
-  working_directory?: string;
-  default_mount?: string;
-  mounts: RuntimeWorkspaceMountEntry[];
-}
-
-export interface RuntimeWorkspaceMountEntry {
-  id: string;
-  display_name: string;
-  provider: string;
-  root_ref: string;
-  capabilities: string[];
-}
-
-export interface SkillSurfaceSection {
-  kind: "skill_surface";
-  title: string;
-  summary: string;
-  read_tool?: string;
-  skills: RuntimeSkillEntry[];
-}
-
 export interface RuntimeSkillEntry {
   name: string;
   description: string;
@@ -134,11 +100,24 @@ export interface RuntimeSkillEntry {
   disable_model_invocation: boolean;
 }
 
-export interface HookRuntimeSurfaceSection {
-  kind: "hook_runtime_surface";
+export interface SkillDeltaSection {
+  kind: "skill_delta";
+  added_skills: RuntimeSkillEntry[];
+  removed_skills: RuntimeSkillEntry[];
+  changed_skills: RuntimeSkillEntry[];
+}
+
+export interface PendingActionSection {
+  kind: "pending_action";
   title: string;
   summary: string;
-  pending_action_count: number;
+  action_id: string;
+  action_type: string;
+  status: string;
+  revision: number;
+  turn_id?: string;
+  instructions: string[];
+  injections: RuntimeHookInjectionEntry[];
 }
 
 export interface AutoResumeSection {
@@ -195,11 +174,11 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
 function parseSection(value: unknown): ContextFrameSection | null {
   if (!isRecord(value)) return null;
   const kind = readString(value.kind);
-  if (kind === "bootstrap_context") {
+  if (kind === "mission_context") {
     const fragments = Array.isArray(value.fragments) ? value.fragments : [];
     return {
       kind,
-      title: readString(value.title) ?? "Bootstrap Context",
+      title: readString(value.title) ?? "Mission Context",
       summary: readString(value.summary) ?? "",
       fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
     };
@@ -237,8 +216,19 @@ function parseSection(value: unknown): ContextFrameSection | null {
       added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
     };
   }
-  if (kind === "workflow_context" || kind === "hook_injection") {
-    const title = readString(value.title) ?? (kind === "workflow_context" ? "Workflow Context" : "Hook Injection");
+  if (kind === "skill_delta") {
+    const added = Array.isArray(value.added_skills) ? value.added_skills : [];
+    const removed = Array.isArray(value.removed_skills) ? value.removed_skills : [];
+    const changed = Array.isArray(value.changed_skills) ? value.changed_skills : [];
+    return {
+      kind,
+      added_skills: added.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
+      removed_skills: removed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
+      changed_skills: changed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
+    };
+  }
+  if (kind === "hook_injection") {
+    const title = readString(value.title) ?? "Hook Injection";
     const summary = readString(value.summary) ?? "";
     const injections = Array.isArray(value.injections) ? value.injections : [];
     return {
@@ -256,33 +246,20 @@ function parseSection(value: unknown): ContextFrameSection | null {
       body: readString(value.body) ?? undefined,
     };
   }
-  if (kind === "workspace_surface") {
-    const mounts = Array.isArray(value.mounts) ? value.mounts : [];
+  if (kind === "pending_action") {
+    const instructions = Array.isArray(value.instructions) ? value.instructions : [];
+    const injections = Array.isArray(value.injections) ? value.injections : [];
     return {
       kind,
-      title: readString(value.title) ?? "Workspace Surface",
+      title: readString(value.title) ?? "Pending Action",
       summary: readString(value.summary) ?? "",
-      working_directory: readString(value.working_directory) ?? undefined,
-      default_mount: readString(value.default_mount) ?? undefined,
-      mounts: mounts.map(parseWorkspaceMountEntry).filter((item): item is RuntimeWorkspaceMountEntry => item != null),
-    };
-  }
-  if (kind === "skill_surface") {
-    const skills = Array.isArray(value.skills) ? value.skills : [];
-    return {
-      kind,
-      title: readString(value.title) ?? "Skill Surface",
-      summary: readString(value.summary) ?? "",
-      read_tool: readString(value.read_tool) ?? undefined,
-      skills: skills.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
-    };
-  }
-  if (kind === "hook_runtime_surface") {
-    return {
-      kind,
-      title: readString(value.title) ?? "Hook Runtime Surface",
-      summary: readString(value.summary) ?? "",
-      pending_action_count: readNumber(value.pending_action_count) ?? 0,
+      action_id: readString(value.action_id) ?? "",
+      action_type: readString(value.action_type) ?? "",
+      status: readString(value.status) ?? "pending",
+      revision: readNumber(value.revision) ?? 0,
+      turn_id: readString(value.turn_id) ?? undefined,
+      instructions: instructions.map(readString).filter((item): item is string => item != null),
+      injections: injections.map(parseInjectionEntry).filter((item): item is RuntimeHookInjectionEntry => item != null),
     };
   }
   if (kind === "auto_resume") {
@@ -345,19 +322,6 @@ function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
   };
 }
 
-function parseWorkspaceMountEntry(value: unknown): RuntimeWorkspaceMountEntry | null {
-  if (!isRecord(value)) return null;
-  const id = readString(value.id);
-  if (!id) return null;
-  return {
-    id,
-    display_name: readString(value.display_name) ?? id,
-    provider: readString(value.provider) ?? "unknown",
-    root_ref: readString(value.root_ref) ?? "",
-    capabilities: readStringArray(value.capabilities),
-  };
-}
-
 function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
   if (!isRecord(value)) return null;
   const name = readString(value.name);
@@ -405,16 +369,12 @@ export interface ContextTokenInfo {
 /** 由 frame.kind 推导外层 tab 上的 token 与徽标颜色 */
 export function frameKindToToken(kind: string): ContextTokenInfo {
   switch (kind) {
-    case "runtime_context_update":
+    case "capability_state_update":
       return { token: "BDL", variant: "neutral" };
-    case "bootstrap_context":
-      return { token: "BOOT", variant: "primary" };
-    case "workspace_surface":
-      return { token: "WS", variant: "neutral" };
-    case "skill_surface":
-      return { token: "SKL", variant: "neutral" };
-    case "hook_runtime_surface":
-      return { token: "HOOK", variant: "neutral" };
+    case "mission_context":
+      return { token: "MIS", variant: "primary" };
+    case "pending_action":
+      return { token: "ACT", variant: "warning" };
     case "auto_resume":
       return { token: "RES", variant: "warning" };
     case "compaction_summary":
@@ -431,25 +391,21 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
 /** 由 section.kind 推导内层 section 行 token 与徽标颜色 */
 export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTokenInfo {
   switch (kind) {
-    case "bootstrap_context":
-      return { token: "BOOT", variant: "primary" };
+    case "mission_context":
+      return { token: "MIS", variant: "primary" };
     case "capability_delta":
       return { token: "CAP", variant: "neutral" };
     case "tool_schema":
     case "tool_schema_delta":
       return { token: "TOOL", variant: "neutral" };
-    case "workflow_context":
-      return { token: "WF", variant: "neutral" };
+    case "skill_delta":
+      return { token: "SKL", variant: "neutral" };
     case "hook_injection":
       return { token: "HOOK", variant: "neutral" };
     case "system_notice":
       return { token: "SYS", variant: "neutral" };
-    case "workspace_surface":
-      return { token: "WS", variant: "neutral" };
-    case "skill_surface":
-      return { token: "SKL", variant: "neutral" };
-    case "hook_runtime_surface":
-      return { token: "HOOK", variant: "neutral" };
+    case "pending_action":
+      return { token: "ACT", variant: "warning" };
     case "auto_resume":
       return { token: "RES", variant: "warning" };
     case "compaction_summary":

@@ -11,8 +11,8 @@ describe("SessionEntry ContextFrame 聚合", () => {
       id: "ctx-1",
       groupKey: "context-frame-ctx-1",
       entries: [
-        contextFrameEntry("ctx-1", "runtime_context_update"),
-        contextFrameEntry("ctx-2", "tool_surface"),
+        contextFrameEntry("ctx-1", "capability_state_update"),
+        contextFrameEntry("ctx-2", "mission_context"),
       ],
     };
 

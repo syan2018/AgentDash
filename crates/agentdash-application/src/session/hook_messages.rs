@@ -4,8 +4,6 @@
 //! Structural markdown tokens (`###`, `-` list markers) remain inline
 //! in the builder functions since they are formatting, not prose.
 
-use agentdash_spi::hooks::HookInjection;
-
 // ── StopDecision::Continue reason (consumed by tracing / tests) ─────────
 
 pub(super) const REASON_PENDING_COMPANION_CONSUMED: &str =
@@ -55,38 +53,8 @@ pub(super) fn pending_action_instruction(action_type: &str) -> &'static str {
     }
 }
 
-pub(super) fn context_fragments_label(sources: &str) -> String {
-    format!("已挂载上下文片段：{sources}")
-}
-
-pub(super) fn pending_action_injections_section(items_md: &str) -> String {
-    format!("关联注入片段：\n{items_md}")
-}
-
 pub(super) const PENDING_ACTION_FOOTER: &str = "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。\
      处理时尽量避免重复总结，聚焦完成剩余动作。";
-
-// ── Runtime hook injection messages ────────────────────────────────────
-
-pub(super) fn hook_injection_items_md(injections: &[HookInjection]) -> String {
-    injections
-        .iter()
-        .map(|injection| {
-            let source = if injection.source.trim().is_empty() {
-                "unknown"
-            } else {
-                injection.source.trim()
-            };
-            let content = injection.content.trim();
-            if content.is_empty() {
-                format!("- [{}] {}", injection.slot, source)
-            } else {
-                format!("- [{}] {}: {}", injection.slot, source, content)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 // ── Auto-resume prompt ──────────────────────────────────────────────────
 

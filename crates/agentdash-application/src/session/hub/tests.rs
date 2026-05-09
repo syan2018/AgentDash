@@ -1207,14 +1207,14 @@ async fn emit_context_frame_persists_agent_visible_frame() {
 
     let notice = ContextFrame {
         id: "runtime-context-apply-1".to_string(),
-        kind: "tool_surface".to_string(),
+        kind: "capability_state_update".to_string(),
         source: RuntimeEventSource::RuntimeContextUpdate,
         phase_node: Some("apply".to_string()),
         apply_mode: Some("live".to_string()),
         delivery_status: "queued_for_transform_context".to_string(),
         delivery_channel: "turn_start".to_string(),
         message_role: "user".to_string(),
-        rendered_text: "## Runtime Tool Schema — Step Transition: apply".to_string(),
+        rendered_text: "## Capability State Update — Step Transition: apply".to_string(),
         sections: vec![ContextFrameSection::ToolSchema { tools: vec![] }],
         created_at_ms: 1,
     };

@@ -40,7 +40,7 @@ mod tests;
 pub(super) use hook_dispatch::HookTriggerInput;
 pub(crate) use runtime_context_transition::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput,
-    RuntimeContextTransitionOutcome,
+    RuntimeContextTransitionOutcome, build_initial_capability_state_frame,
 };
 
 #[derive(Clone)]

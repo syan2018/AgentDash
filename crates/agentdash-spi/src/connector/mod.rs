@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::context::bundle::SessionContextBundle;
+use crate::context::capability::SkillEntry;
 use crate::hooks::HookSessionRuntimeAccess;
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
@@ -230,6 +231,13 @@ pub struct VfsDimension {
     pub active: Option<Vfs>,
 }
 
+/// Skill 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillDimension {
+    /// 当前 session 可见的 skills（由 workspace 发现链路产出）。
+    pub skills: Vec<SkillEntry>,
+}
+
 /// 解析后的能力运行态。
 ///
 /// 维度化唯一状态容器 = Resolver 最终产出 = 运行时唯一真相 = delta 基准。
@@ -243,6 +251,9 @@ pub struct CapabilityState {
     pub companion: CompanionDimension,
     /// VFS 维度。
     pub vfs: VfsDimension,
+    /// Skill 维度。
+    #[serde(default)]
+    pub skill: SkillDimension,
 }
 
 impl CapabilityState {
@@ -385,6 +396,8 @@ impl CapabilityState {
             },
             companion: self.companion.clone(),
             vfs: self.vfs.clone(),
+            // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
+            skill: self.skill.clone(),
         }
     }
 }

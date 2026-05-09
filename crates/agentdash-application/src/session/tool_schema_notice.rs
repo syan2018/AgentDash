@@ -1,77 +1,10 @@
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
-use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource,
-    RuntimeToolSchemaEntry, SharedHookSessionRuntime,
-};
+use agentdash_spi::hooks::{ContextFrameSection, RuntimeToolSchemaEntry};
 use agentdash_spi::platform::tool_capability::{
     PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
 };
 
-use crate::session::context_frame::ContextFramePayload;
-use crate::session::{CapabilityStateDelta, context_frame};
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ToolSchemaNoticeKind {
-    Initial,
-}
-
-impl ToolSchemaNoticeKind {
-    fn notice_id_prefix(&self) -> String {
-        match self {
-            Self::Initial => "runtime-tool-schema-initial".to_string(),
-        }
-    }
-
-    fn phase_node(&self) -> Option<String> {
-        match self {
-            Self::Initial => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ToolSurfaceContextFrame {
-    kind: ToolSchemaNoticeKind,
-    tools: Vec<RuntimeToolSchemaEntry>,
-}
-
-impl ToolSurfaceContextFrame {
-    fn new(kind: ToolSchemaNoticeKind, tools: Vec<RuntimeToolSchemaEntry>) -> Self {
-        Self { kind, tools }
-    }
-}
-
-impl ContextFramePayload for ToolSurfaceContextFrame {
-    fn id(&self, created_at_ms: i64) -> String {
-        format!("{}-{created_at_ms}", self.kind.notice_id_prefix())
-    }
-
-    fn kind(&self) -> &'static str {
-        "tool_surface"
-    }
-
-    fn source(&self) -> RuntimeEventSource {
-        RuntimeEventSource::RuntimeContextUpdate
-    }
-
-    fn phase_node(&self) -> Option<String> {
-        self.kind.phase_node()
-    }
-
-    fn delivery_status(&self) -> String {
-        "queued_for_transform_context".to_string()
-    }
-
-    fn sections(&self) -> Vec<ContextFrameSection> {
-        vec![ContextFrameSection::ToolSchema {
-            tools: self.tools.clone(),
-        }]
-    }
-
-    fn rendered_text(&self) -> String {
-        render_tool_surface_text(self.kind, &self.tools)
-    }
-}
+use crate::session::CapabilityStateDelta;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolSchemaDeltaMetadata {
@@ -85,14 +18,7 @@ impl ToolSchemaDeltaMetadata {
         tools: &[DynAgentTool],
         state_delta: &CapabilityStateDelta,
     ) -> Option<Self> {
-        let mut definitions = tools
-            .iter()
-            .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
-            .collect::<Vec<_>>();
-        definitions.sort_by(|left, right| left.name.cmp(&right.name));
-        definitions.dedup_by(|left, right| left.name == right.name);
-
-        let entries = runtime_tool_schema_entries(definitions);
+        let entries = runtime_tool_schema_entries_from_tools(tools);
         let restored_paths = state_delta
             .excluded_tool_paths
             .removed
@@ -149,70 +75,19 @@ impl ToolSchemaDeltaMetadata {
     }
 }
 
-pub(crate) fn enqueue_tool_schema_notice(
-    hook_session: Option<&SharedHookSessionRuntime>,
-    kind: ToolSchemaNoticeKind,
+pub(crate) fn runtime_tool_schema_entries_from_tools(
     tools: &[DynAgentTool],
-) -> Option<ContextFrame> {
-    let Some(hook_session) = hook_session else {
-        return None;
-    };
-    let Some(notice) = build_tool_schema_notice(kind, tools) else {
-        return None;
-    };
-    hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
-        id: notice.id.clone(),
-        created_at_ms: notice.created_at_ms,
-        source: RuntimeEventSource::RuntimeContextUpdate,
-        content: notice.rendered_text.clone(),
-        context_frame: Some(notice.clone()),
-    });
-    Some(notice)
-}
-
-pub(crate) fn build_tool_schema_notice(
-    kind: ToolSchemaNoticeKind,
-    tools: &[DynAgentTool],
-) -> Option<ContextFrame> {
+) -> Vec<RuntimeToolSchemaEntry> {
     if tools.is_empty() {
-        return None;
+        return Vec::new();
     }
-
     let mut definitions = tools
         .iter()
         .map(|tool| ToolDefinition::from_tool(tool.as_ref()))
         .collect::<Vec<_>>();
     definitions.sort_by(|left, right| left.name.cmp(&right.name));
     definitions.dedup_by(|left, right| left.name == right.name);
-    let entries = runtime_tool_schema_entries(definitions);
-
-    let metadata = ToolSurfaceContextFrame::new(kind, entries);
-    Some(context_frame::build_context_frame(&metadata))
-}
-
-fn render_tool_surface_text(
-    kind: ToolSchemaNoticeKind,
-    tools: &[RuntimeToolSchemaEntry],
-) -> String {
-    if tools.is_empty() {
-        return String::new();
-    }
-    let mut lines = vec![
-        tool_schema_title(kind.phase_node().as_deref()),
-        "以下是当前 provider request 生效的完整工具 schema。只有这里列出的工具可被本轮模型调用："
-            .to_string(),
-    ];
-    for tool in tools {
-        lines.push(format_tool_schema_entry(tool));
-    }
-    lines.join("\n\n")
-}
-
-fn tool_schema_title(phase_node: Option<&str>) -> String {
-    match phase_node {
-        Some(phase_node) => format!("## Runtime Tool Schema — Step Transition: {phase_node}"),
-        None => "## Runtime Tool Schema — Initial".to_string(),
-    }
+    runtime_tool_schema_entries(definitions)
 }
 
 fn tool_schema_delta_title(phase_node: Option<&str>) -> String {
@@ -378,102 +253,5 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
         PlatformMcpScope::Story => "story",
         PlatformMcpScope::Task => "task",
         PlatformMcpScope::Workflow => "workflow",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use agentdash_agent_types::{
-        AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
-    };
-    use async_trait::async_trait;
-    use serde_json::Value;
-    use tokio_util::sync::CancellationToken;
-
-    use super::*;
-
-    struct StubTool;
-
-    #[async_trait]
-    impl AgentTool for StubTool {
-        fn name(&self) -> &str {
-            "mcp_agentdash_workflow_tools_upsert_workflow_tool"
-        }
-
-        fn description(&self) -> &str {
-            "创建或更新 Workflow 定义"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Workflow key"
-                    }
-                },
-                "required": ["key"]
-            })
-        }
-
-        async fn execute(
-            &self,
-            _tool_call_id: &str,
-            _args: Value,
-            _cancel: CancellationToken,
-            _on_update: Option<ToolUpdateCallback>,
-        ) -> Result<AgentToolResult, AgentToolError> {
-            Ok(AgentToolResult {
-                content: vec![ContentPart::text("ok")],
-                is_error: false,
-                details: None,
-            })
-        }
-    }
-
-    #[test]
-    fn tool_schema_notice_includes_full_parameter_schema() {
-        let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
-
-        let notice = build_tool_schema_notice(ToolSchemaNoticeKind::Initial, &tools)
-            .expect("notice should be built");
-
-        assert_eq!(notice.sections.len(), 1);
-        assert!(
-            notice
-                .rendered_text
-                .contains("## Runtime Tool Schema — Initial")
-        );
-        assert!(
-            notice
-                .rendered_text
-                .contains("mcp_agentdash_workflow_tools_upsert_workflow_tool")
-        );
-        assert!(
-            notice
-                .rendered_text
-                .contains("capability: `workflow_management`")
-        );
-        assert!(
-            notice
-                .rendered_text
-                .contains("source: `platform_mcp:workflow`")
-        );
-        assert!(
-            notice
-                .rendered_text
-                .contains("path: `workflow_management::upsert_workflow_tool`")
-        );
-        assert!(notice.rendered_text.contains("创建或更新 Workflow 定义"));
-        assert!(notice.rendered_text.contains("\"required\": ["));
-        assert!(notice.rendered_text.contains("\"key\""));
-        assert!(
-            notice
-                .rendered_text
-                .contains("\"description\": \"Workflow key\"")
-        );
     }
 }

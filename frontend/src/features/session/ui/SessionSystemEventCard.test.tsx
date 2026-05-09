@@ -15,7 +15,7 @@ describe("AcpSystemEventCard", () => {
           key: "context_frame",
           value: {
             id: "runtime-context-1",
-            kind: "runtime_context_update",
+            kind: "capability_state_update",
             source: "runtime_context_update",
             phase_node: "apply",
             apply_mode: "live",

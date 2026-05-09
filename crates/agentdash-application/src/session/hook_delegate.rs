@@ -14,14 +14,15 @@ use uuid::Uuid;
 
 use super::hook_messages as msg;
 use super::hub_support::SessionRuntime;
+use super::pending_action_context_frame::build_pending_action_context_frame;
 
 use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, HookEvaluationQuery, HookInjection, HookPendingAction,
-    HookPendingActionStatus, HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
-    HookTrigger, HookTurnStartNotice, SessionHookRefreshQuery, SharedHookSessionRuntime,
+    ContextTokenStats, HookEvaluationQuery, HookInjection, HookSessionRuntimeSnapshot,
+    HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, SessionHookRefreshQuery,
+    SharedHookSessionRuntime,
 };
 
 pub struct HookRuntimeDelegate {
@@ -840,9 +841,20 @@ fn collect_turn_start_injection_messages(
     let actions = hook_session.collect_pending_actions_for_injection();
     messages.consumed += actions.len();
     for action in actions {
-        let Some(message) = build_pending_action_message(snapshot, &action, runtime) else {
+        let Some(frame) = build_pending_action_context_frame(snapshot, &action, runtime) else {
             continue;
         };
+        let notice = HookTurnStartNotice {
+            id: frame.id.clone(),
+            created_at_ms: frame.created_at_ms,
+            source: frame.source.clone(),
+            content: frame.rendered_text.clone(),
+            context_frame: Some(frame.clone()),
+        };
+        let message = AgentMessage::user(format_turn_start_notice_frame(
+            &notice,
+            &frame.rendered_text,
+        ));
         if action.is_follow_up() {
             messages.follow_up.push(message);
         } else {
@@ -908,76 +920,8 @@ fn format_turn_start_notice_frame(notice: &HookTurnStartNotice, content: &str) -
     )
 }
 
-fn build_pending_action_message(
-    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
-    action: &HookPendingAction,
-    runtime: &HookSessionRuntimeSnapshot,
-) -> Option<AgentMessage> {
-    if action.summary.trim().is_empty() && action.injections.is_empty() {
-        return None;
-    }
-
-    let mut sections = vec![msg::pending_action_header(
-        &action.title,
-        &action.action_type,
-        pending_action_status_label(action.status),
-        runtime.revision,
-    )];
-    sections.push(msg::pending_action_id_line(&action.id));
-    if !action.summary.trim().is_empty() {
-        sections.push(action.summary.trim().to_string());
-    }
-    if let Some(turn_id) = action.turn_id.as_deref() {
-        sections.push(msg::pending_action_turn_line(turn_id));
-    }
-    sections.push(msg::pending_action_instruction(action.action_type.as_str()).to_string());
-    if !snapshot.owners.is_empty() {
-        sections.push(msg::owners_section(&format_owners(&snapshot.owners)));
-    }
-    if !action.injections.is_empty() {
-        let sources = action
-            .injections
-            .iter()
-            .map(|injection| injection.source.trim())
-            .filter(|source| !source.is_empty())
-            .collect::<Vec<_>>();
-        if !sources.is_empty() {
-            sections.push(msg::context_fragments_label(&sources.join("，")));
-        }
-        let details = msg::hook_injection_items_md(&action.injections);
-        if !details.is_empty() {
-            sections.push(msg::pending_action_injections_section(&details));
-        }
-    }
-    sections.push(msg::PENDING_ACTION_FOOTER.to_string());
-
-    Some(AgentMessage::user(sections.join("\n\n")))
-}
-
-fn format_owners(owners: &[agentdash_spi::hooks::HookOwnerSummary]) -> String {
-    owners
-        .iter()
-        .map(|o| {
-            format!(
-                "- {}: {} {}",
-                o.owner_type,
-                o.label.as_deref().unwrap_or("??"),
-                o.owner_id
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn map_runtime_error(error: agentdash_spi::hooks::HookError) -> AgentRuntimeError {
     AgentRuntimeError::Runtime(error.to_string())
-}
-
-fn pending_action_status_label(status: HookPendingActionStatus) -> &'static str {
-    match status {
-        HookPendingActionStatus::Pending => "pending",
-        HookPendingActionStatus::Resolved => "resolved",
-    }
 }
 
 #[cfg(test)]
@@ -1813,16 +1757,16 @@ mod tests {
             }],
         };
 
-        let message = super::build_pending_action_message(&snapshot, &action, &runtime)
-            .expect("应该生成 pending action 消息");
-        let text = match message {
-            agentdash_spi::AgentMessage::User { content, .. } => content
-                .iter()
-                .filter_map(|part| part.extract_text())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            other => panic!("期望 User 消息，实际为 {other:?}"),
+        let frame = super::build_pending_action_context_frame(&snapshot, &action, &runtime)
+            .expect("应该生成 pending action context frame");
+        let notice = HookTurnStartNotice {
+            id: frame.id.clone(),
+            created_at_ms: frame.created_at_ms,
+            source: frame.source.clone(),
+            content: frame.rendered_text.clone(),
+            context_frame: Some(frame.clone()),
         };
+        let text = super::format_turn_start_notice_frame(&notice, &frame.rendered_text);
 
         // 指令文本中不应引用具体工具名 — 工具名是实现细节，由调用方上下文提供
         assert!(
@@ -1836,6 +1780,10 @@ mod tests {
         assert!(
             text.contains("status=pending"),
             "消息应包含状态标识: {text}"
+        );
+        assert!(
+            text.contains("kind: pending_action"),
+            "消息应包含 pending_action kind"
         );
     }
 }

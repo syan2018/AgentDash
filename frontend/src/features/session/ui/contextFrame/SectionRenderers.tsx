@@ -13,22 +13,20 @@ import { useState } from "react";
 import { BADGE } from "../EventCards";
 import type {
   AutoResumeSection,
-  BootstrapContextSection,
   CapabilityDeltaSection,
   CompactionSummarySection,
   ContextFrameSection,
   ContextTokenInfo,
-  HookRuntimeSurfaceSection,
+  MissionContextSection,
+  PendingActionSection,
   RuntimeContextFragmentEntry,
   RuntimeHookInjectionEntry,
   RuntimeSkillEntry,
+  SkillDeltaSection,
   RuntimeToolSchemaEntry,
-  RuntimeWorkspaceMountEntry,
-  SkillSurfaceSection,
   SystemNoticeSection,
   ToolSchemaDeltaSection,
   ToolSchemaSection,
-  WorkspaceSurfaceSection,
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
 import { isRecord } from "../../model/platformEvent";
@@ -59,26 +57,22 @@ export function SectionBlock({ section }: { section: ContextFrameSection }) {
 
 function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
-    case "bootstrap_context":
-      return section.title || "Bootstrap Context";
+    case "mission_context":
+      return section.title || "Mission Context";
     case "capability_delta":
       return "能力与工具变化";
     case "tool_schema":
       return "初始工具 Schema";
     case "tool_schema_delta":
       return "工具 Schema 变化";
-    case "workflow_context":
-      return section.title || "Workflow Context";
+    case "skill_delta":
+      return "Skill 变化";
     case "hook_injection":
       return section.title || "Hook Injection";
     case "system_notice":
       return section.title || "系统通知";
-    case "workspace_surface":
-      return section.title || "Workspace Surface";
-    case "skill_surface":
-      return section.title || "Skill Surface";
-    case "hook_runtime_surface":
-      return section.title || "Hook Runtime Surface";
+    case "pending_action":
+      return section.title || "Pending Action";
     case "auto_resume":
       return section.title || "Auto Resume";
     case "compaction_summary":
@@ -88,7 +82,7 @@ function sectionTitle(section: ContextFrameSection): string {
 
 function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
-    case "bootstrap_context":
+    case "mission_context":
       return `${section.fragments.length} 个片段`;
     case "capability_delta": {
       const added =
@@ -115,17 +109,19 @@ function sectionHint(section: ContextFrameSection): string | null {
       const count = section.added_tools.length;
       return count > 0 ? `${count} 项变化` : "无变化";
     }
-    case "workflow_context":
+    case "skill_delta": {
+      const added = section.added_skills.length;
+      const removed = section.removed_skills.length;
+      const changed = section.changed_skills.length;
+      if (added + removed + changed === 0) return "无变化";
+      return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
+    }
     case "hook_injection":
       return `${section.injections.length} 项注入`;
     case "system_notice":
       return null;
-    case "workspace_surface":
-      return `${section.mounts.length} 个挂载`;
-    case "skill_surface":
-      return `${section.skills.length} 个 skill`;
-    case "hook_runtime_surface":
-      return `${section.pending_action_count} 个 pending action`;
+    case "pending_action":
+      return section.status || "pending";
     case "auto_resume":
       return section.reason || "系统续跑";
     case "compaction_summary":
@@ -135,26 +131,22 @@ function sectionHint(section: ContextFrameSection): string | null {
 
 function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
-    case "bootstrap_context":
-      return <BootstrapContextBody section={section} />;
+    case "mission_context":
+      return <MissionContextBody section={section} />;
     case "capability_delta":
       return <CapabilityDeltaBody section={section} />;
     case "tool_schema":
       return <ToolSchemaBody section={section} />;
     case "tool_schema_delta":
       return <ToolSchemaDeltaBody section={section} />;
-    case "workflow_context":
-      return <InjectionBody injections={section.injections} />;
+    case "skill_delta":
+      return <SkillDeltaBody section={section} />;
     case "hook_injection":
       return <InjectionBody injections={section.injections} />;
     case "system_notice":
       return <SystemNoticeBody section={section} />;
-    case "workspace_surface":
-      return <WorkspaceSurfaceBody section={section} />;
-    case "skill_surface":
-      return <SkillSurfaceBody section={section} />;
-    case "hook_runtime_surface":
-      return <HookRuntimeSurfaceBody section={section} />;
+    case "pending_action":
+      return <PendingActionBody section={section} />;
     case "auto_resume":
       return <AutoResumeBody section={section} />;
     case "compaction_summary":
@@ -164,7 +156,7 @@ function renderSectionBody(section: ContextFrameSection) {
 
 // ─── 各 section body ─────────────────────────────────────────────────────────
 
-function BootstrapContextBody({ section }: { section: BootstrapContextSection }) {
+function MissionContextBody({ section }: { section: MissionContextSection }) {
   if (section.fragments.length === 0) {
     return <p className="text-xs text-muted-foreground/60">暂无片段</p>;
   }
@@ -376,6 +368,36 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
   );
 }
 
+function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
+  const render = (items: RuntimeSkillEntry[], symbol: string, label: string) =>
+    items.map((skill, index) => (
+      <DiffLine
+        key={`${label}-${skill.name}-${index}`}
+        symbol={symbol}
+        label={label}
+        value={skill.name}
+      />
+    ));
+
+  const hasDelta =
+    section.added_skills.length +
+      section.removed_skills.length +
+      section.changed_skills.length >
+    0;
+
+  if (!hasDelta) {
+    return <p className="text-xs text-muted-foreground/60">本次无 skill 变化</p>;
+  }
+
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      {render(section.added_skills, "+", "skill")}
+      {render(section.removed_skills, "−", "skill")}
+      {render(section.changed_skills, "↻", "skill")}
+    </div>
+  );
+}
+
 function InjectionBody({ injections }: { injections: RuntimeHookInjectionEntry[] }) {
   if (injections.length === 0) {
     return <p className="text-xs text-muted-foreground/60">无注入内容</p>;
@@ -388,6 +410,36 @@ function InjectionBody({ injections }: { injections: RuntimeHookInjectionEntry[]
           injection={injection}
         />
       ))}
+    </div>
+  );
+}
+
+function PendingActionBody({ section }: { section: PendingActionSection }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={`id: ${section.action_id}`} />
+        <Chip label={`type: ${section.action_type}`} />
+        <Chip label={`status: ${section.status}`} />
+        <Chip label={`rev: ${section.revision}`} />
+        {section.turn_id && <Chip label={`turn: ${section.turn_id}`} />}
+      </div>
+      {section.summary && (
+        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
+      )}
+      {section.instructions.length > 0 && (
+        <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+          {section.instructions.map((line, index) => (
+            <pre
+              key={`${section.action_id}-inst-${index}`}
+              className="whitespace-pre-wrap text-xs leading-relaxed text-foreground/75"
+            >
+              {line}
+            </pre>
+          ))}
+        </div>
+      )}
+      {section.injections.length > 0 && <InjectionBody injections={section.injections} />}
     </div>
   );
 }
@@ -416,78 +468,6 @@ function SystemNoticeBody({ section }: { section: SystemNoticeSection }) {
     <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
       {section.body}
     </pre>
-  );
-}
-
-function WorkspaceSurfaceBody({ section }: { section: WorkspaceSurfaceSection }) {
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        {section.working_directory && <Chip label={`cwd: ${section.working_directory}`} />}
-        {section.default_mount && <Chip label={`default: ${section.default_mount}`} />}
-      </div>
-      {section.mounts.map((mount) => (
-        <WorkspaceMountItem key={mount.id} mount={mount} />
-      ))}
-    </div>
-  );
-}
-
-function WorkspaceMountItem({ mount }: { mount: RuntimeWorkspaceMountEntry }) {
-  return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip label={mount.id} />
-        <Chip label={mount.provider} />
-        {mount.capabilities.map((capability) => (
-          <Chip key={capability} label={capability} />
-        ))}
-      </div>
-      <p className="truncate text-xs text-foreground/80">{mount.display_name}</p>
-      {mount.root_ref && (
-        <p className="truncate font-mono text-[11px] text-muted-foreground">
-          {mount.root_ref}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function SkillSurfaceBody({ section }: { section: SkillSurfaceSection }) {
-  return (
-    <div className="space-y-2">
-      {section.read_tool && <Chip label={`read: ${section.read_tool}`} />}
-      {section.skills.length === 0 ? (
-        <p className="text-xs text-muted-foreground/60">未注册任何 skill</p>
-      ) : (
-        section.skills.map((skill) => <SkillItem key={skill.name} skill={skill} />)
-      )}
-    </div>
-  );
-}
-
-function SkillItem({ skill }: { skill: RuntimeSkillEntry }) {
-  return (
-    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip label={skill.name} />
-        {skill.disable_model_invocation && <Chip label="manual only" />}
-      </div>
-      {skill.description && <p className="text-xs text-foreground/80">{skill.description}</p>}
-      {skill.file_path && (
-        <p className="truncate font-mono text-[11px] text-muted-foreground">
-          {skill.file_path}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function HookRuntimeSurfaceBody({ section }: { section: HookRuntimeSurfaceSection }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      <Chip label={`pending actions: ${section.pending_action_count}`} />
-    </div>
   );
 }
 

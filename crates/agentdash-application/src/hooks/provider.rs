@@ -73,7 +73,6 @@ impl AppExecutionHookProvider {
         }
     }
 
-
     /// 验证 Rhai 脚本语法是否合法，不执行脚本。
     pub fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
         self.script_engine.validate_script(script)

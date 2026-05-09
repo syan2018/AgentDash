@@ -24,7 +24,7 @@ fn main() {
     lines.push("// Do not edit manually.".to_string());
     lines.push(String::new());
 
-    for (_, decl) in &declarations {
+    for decl in declarations.values() {
         lines.push(decl.clone());
         lines.push(String::new());
     }

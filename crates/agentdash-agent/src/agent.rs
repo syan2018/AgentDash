@@ -46,6 +46,7 @@ pub enum QueueMode {
 // ─── AgentConfig ────────────────────────────────────────────
 
 /// Agent 配置 — 对齐 Pi `AgentOptions`
+#[derive(Default)]
 pub struct AgentConfig {
     pub system_prompt: String,
 
@@ -72,22 +73,6 @@ pub struct AgentConfig {
 
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            system_prompt: String::new(),
-            thinking_level: ThinkingLevel::default(),
-            transform_context: None,
-            steering_mode: QueueMode::default(),
-            follow_up_mode: QueueMode::default(),
-            tool_execution: ToolExecutionMode::default(),
-            before_tool_call: None,
-            after_tool_call: None,
-            runtime_delegate: None,
-        }
-    }
 }
 
 // ─── Agent ──────────────────────────────────────────────────

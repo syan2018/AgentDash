@@ -5,45 +5,30 @@ use serde_json::Value;
 
 use super::WorkspaceIdentityKind;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GitWorkspaceMatchMode {
+    #[default]
     RepoOnly,
     RepoBranch,
     RepoCommit,
 }
 
-impl Default for GitWorkspaceMatchMode {
-    fn default() -> Self {
-        Self::RepoOnly
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum P4WorkspaceMatchMode {
+    #[default]
     ServerStream,
     ServerClient,
     ServerStreamClient,
     PathKey,
 }
 
-impl Default for P4WorkspaceMatchMode {
-    fn default() -> Self {
-        Self::ServerStream
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalDirMatchMode {
+    #[default]
     PathKey,
-}
-
-impl Default for LocalDirMatchMode {
-    fn default() -> Self {
-        Self::PathKey
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -281,7 +266,7 @@ pub fn identity_payload_from_detected_facts(
     match kind {
         WorkspaceIdentityKind::GitRepo => {
             let git = detected_facts.get("git")?;
-            if git.get("is_repo").and_then(Value::as_bool).unwrap_or(false) == false {
+            if !git.get("is_repo").and_then(Value::as_bool).unwrap_or(false) {
                 return None;
             }
 
@@ -317,11 +302,10 @@ pub fn identity_payload_from_detected_facts(
         }
         WorkspaceIdentityKind::P4Workspace => {
             let p4 = detected_facts.get("p4")?;
-            if p4
+            if !p4
                 .get("is_workspace")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-                == false
             {
                 return None;
             }

@@ -90,9 +90,7 @@ async fn resolve_for_project_agent(
         }
     };
 
-    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
-        return None;
-    };
+    let lifecycle_key = normalize_lifecycle_key(link.default_lifecycle_key.as_deref())?;
 
     resolve_from_lifecycle_key(
         repos.lifecycle_def,
@@ -119,13 +117,9 @@ async fn resolve_for_story(
         }
     };
 
-    let Some(link) = links.iter().find(|l| l.is_default_for_story) else {
-        return None;
-    };
+    let link = links.iter().find(|l| l.is_default_for_story)?;
 
-    let Some(lifecycle_key) = normalize_lifecycle_key(link.default_lifecycle_key.as_deref()) else {
-        return None;
-    };
+    let lifecycle_key = normalize_lifecycle_key(link.default_lifecycle_key.as_deref())?;
 
     resolve_from_lifecycle_key(
         repos.lifecycle_def,

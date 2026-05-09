@@ -176,7 +176,7 @@ pub(super) enum TurnState {
     #[default]
     Idle,
     Claimed,
-    Active(TurnExecution),
+    Active(Box<TurnExecution>),
 }
 
 impl TurnState {
@@ -186,14 +186,14 @@ impl TurnState {
 
     pub fn active_turn(&self) -> Option<&TurnExecution> {
         match self {
-            Self::Active(turn) => Some(turn),
+            Self::Active(turn) => Some(turn.as_ref()),
             _ => None,
         }
     }
 
     pub fn active_turn_mut(&mut self) -> Option<&mut TurnExecution> {
         match self {
-            Self::Active(turn) => Some(turn),
+            Self::Active(turn) => Some(turn.as_mut()),
             _ => None,
         }
     }

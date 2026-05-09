@@ -206,9 +206,9 @@ impl LifecycleRun {
         let step_states = steps
             .iter()
             .map(|step| {
-                let status = if step.key == entry_step_key {
-                    LifecycleStepExecutionStatus::Ready
-                } else if has_edges && !node_deps.contains_key(step.key.as_str()) {
+                let status = if step.key == entry_step_key
+                    || (has_edges && !node_deps.contains_key(step.key.as_str()))
+                {
                     LifecycleStepExecutionStatus::Ready
                 } else {
                     LifecycleStepExecutionStatus::Pending

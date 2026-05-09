@@ -113,15 +113,9 @@ impl PayloadTypeRegistry {
 
     /// 校验 request payload。返回 None 表示校验通过，Some(error) 表示校验失败。
     pub fn validate_request(&self, payload: &serde_json::Value) -> Option<String> {
-        let type_name = match payload.get("type").and_then(|v| v.as_str()) {
-            Some(name) => name,
-            None => return None, // 无 type 字段时跳过校验（向前兼容）
-        };
+        let type_name = payload.get("type").and_then(|v| v.as_str())?;
 
-        let definition = match self.types.get(type_name) {
-            Some(def) => def,
-            None => return None, // 未知 type 静默跳过（向前兼容）
-        };
+        let definition = self.types.get(type_name)?;
 
         if !definition.is_request {
             return Some(format!(
@@ -149,15 +143,9 @@ impl PayloadTypeRegistry {
         payload: &serde_json::Value,
         request_type: Option<&str>,
     ) -> Option<String> {
-        let type_name = match payload.get("type").and_then(|v| v.as_str()) {
-            Some(name) => name,
-            None => return None, // 无 type 字段时跳过校验
-        };
+        let type_name = payload.get("type").and_then(|v| v.as_str())?;
 
-        let definition = match self.types.get(type_name) {
-            Some(def) => def,
-            None => return None, // 未知 type 静默跳过
-        };
+        let definition = self.types.get(type_name)?;
 
         if !definition.is_response {
             return Some(format!(

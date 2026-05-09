@@ -35,7 +35,7 @@ pub fn build_hook_trace_envelope(
         reason: status.reason.clone(),
     });
     let data = HookTraceData {
-        trigger: entry.trigger.clone(),
+        trigger: entry.trigger,
         decision: entry.decision.clone(),
         sequence: entry.sequence,
         revision: entry.revision,
@@ -67,7 +67,7 @@ pub fn build_hook_trace_envelope(
     };
 
     BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::HookTrace(payload)),
+        BackboneEvent::Platform(PlatformEvent::HookTrace(Box::new(payload))),
         session_id,
         source,
     )

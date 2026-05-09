@@ -139,7 +139,7 @@ pub async fn list_workflows(
     if let Some(binding_kind) = query.binding_kind {
         definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
-    Ok(Json(definitions.into_iter().map(Into::into).collect()))
+    Ok(Json(definitions))
 }
 
 pub async fn list_lifecycles(
@@ -165,7 +165,7 @@ pub async fn list_lifecycles(
     if let Some(binding_kind) = query.binding_kind {
         definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
-    Ok(Json(definitions.into_iter().map(Into::into).collect()))
+    Ok(Json(definitions))
 }
 
 pub async fn create_lifecycle_definition(
@@ -190,17 +190,13 @@ pub async fn create_lifecycle_definition(
         state.repos.lifecycle_definition_repo.as_ref(),
     );
     let saved = service.upsert_lifecycle_definition(definition).await?;
-    Ok(Json(saved.into()))
+    Ok(Json(saved))
 }
 
 pub async fn list_workflow_templates() -> Result<Json<Vec<BuiltinWorkflowTemplateBundle>>, ApiError>
 {
     Ok(Json(
-        list_builtin_workflow_templates()
-            .map_err(ApiError::BadRequest)?
-            .into_iter()
-            .map(Into::into)
-            .collect(),
+        list_builtin_workflow_templates().map_err(ApiError::BadRequest)?,
     ))
 }
 
@@ -222,7 +218,7 @@ pub async fn bootstrap_workflow_template(
     let bundle =
         build_builtin_workflow_bundle(project_id, &builtin_key).map_err(ApiError::BadRequest)?;
     let saved = service.upsert_bundle(bundle).await?;
-    Ok(Json(saved.lifecycle.into()))
+    Ok(Json(saved.lifecycle))
 }
 
 pub async fn start_lifecycle_run(
@@ -294,7 +290,7 @@ pub async fn start_lifecycle_run(
         .get_by_id(run.id)
         .await?
         .unwrap_or(run);
-    Ok(Json(latest_run.into()))
+    Ok(Json(latest_run))
 }
 
 pub async fn get_lifecycle_run(
@@ -311,7 +307,7 @@ pub async fn get_lifecycle_run(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(run.into()))
+    Ok(Json(run))
 }
 
 /// 按 session_id 查询关联的 lifecycle runs。
@@ -337,7 +333,7 @@ pub async fn list_lifecycle_runs_by_session(
             .await?;
         }
     }
-    Ok(Json(runs.into_iter().map(Into::into).collect()))
+    Ok(Json(runs))
 }
 
 pub async fn activate_workflow_step(
@@ -362,7 +358,7 @@ pub async fn activate_workflow_step(
     let run = service
         .activate_step(ActivateLifecycleStepCommand { run_id, step_key })
         .await?;
-    Ok(Json(run.into()))
+    Ok(Json(run))
 }
 
 pub async fn complete_workflow_step(
@@ -392,7 +388,7 @@ pub async fn complete_workflow_step(
             summary: req.summary.and_then(normalize_string),
         })
         .await?;
-    Ok(Json(run.into()))
+    Ok(Json(run))
 }
 
 pub async fn create_workflow_definition(
@@ -415,7 +411,7 @@ pub async fn create_workflow_definition(
         state.repos.lifecycle_definition_repo.as_ref(),
     );
     let saved = service.upsert_workflow_definition(definition).await?;
-    Ok(Json(saved.into()))
+    Ok(Json(saved))
 }
 
 pub async fn get_workflow_definition(
@@ -429,7 +425,7 @@ pub async fn get_workflow_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
-    Ok(Json(definition.into()))
+    Ok(Json(definition))
 }
 
 pub async fn get_lifecycle_definition(
@@ -443,7 +439,7 @@ pub async fn get_lifecycle_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_definition 不存在: {id}")))?;
-    Ok(Json(definition.into()))
+    Ok(Json(definition))
 }
 
 pub async fn update_workflow_definition(
@@ -491,7 +487,7 @@ pub async fn update_workflow_definition(
         state.repos.lifecycle_definition_repo.as_ref(),
     );
     let saved = service.upsert_workflow_definition(definition).await?;
-    Ok(Json(saved.into()))
+    Ok(Json(saved))
 }
 
 pub async fn update_lifecycle_definition(
@@ -530,7 +526,7 @@ pub async fn update_lifecycle_definition(
         state.repos.lifecycle_definition_repo.as_ref(),
     );
     let saved = service.upsert_lifecycle_definition(definition).await?;
-    Ok(Json(saved.into()))
+    Ok(Json(saved))
 }
 
 pub async fn validate_workflow_definition(
@@ -700,7 +696,7 @@ fn group_presets_by_trigger(
     use std::collections::BTreeMap;
     let mut groups: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     for preset in presets {
-        let trigger_key = serde_json::to_value(&preset.trigger)
+        let trigger_key = serde_json::to_value(preset.trigger)
             .map_err(|error| {
                 ApiError::Internal(format!(
                     "序列化 hook preset trigger 失败: key={}, error={error}",

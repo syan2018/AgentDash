@@ -80,10 +80,11 @@ pub enum RoutineTriggerConfig {
 }
 
 /// Session 生命周期策略
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum SessionStrategy {
     /// 每次触发新建独立 session
+    #[default]
     Fresh,
     /// 复用 Project Agent 现有 session（follow-up prompt）
     Reuse,
@@ -92,12 +93,6 @@ pub enum SessionStrategy {
         /// payload 中用于提取 entity key 的 JSON path
         entity_key_path: String,
     },
-}
-
-impl Default for SessionStrategy {
-    fn default() -> Self {
-        Self::Fresh
-    }
 }
 
 /// 每次触发产生的执行记录

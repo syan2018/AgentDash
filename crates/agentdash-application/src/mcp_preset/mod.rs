@@ -10,9 +10,7 @@ pub use definition::{
 };
 pub use error::McpPresetApplicationError;
 pub use probe::{ProbeResult, ProbeTool, probe_transport};
-pub use runtime::{
-    preset_to_session_mcp_server, preset_uses_relay, resolve_preset_mcp_refs,
-};
+pub use runtime::{preset_to_session_mcp_server, preset_uses_relay, resolve_preset_mcp_refs};
 pub use service::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetService, UpdateMcpPresetInput,
 };

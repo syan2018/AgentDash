@@ -579,9 +579,11 @@ mod tests {
     #[test]
     fn capability_tool_filter_excludes_and_whitelists_by_capability_key() {
         let mut flow = CapabilityState::from_clusters([ToolCluster::Read]);
-        flow.tool.capabilities
+        flow.tool
+            .capabilities
             .insert(crate::ToolCapability::new("file_read"));
-        flow.tool.tool_policy
+        flow.tool
+            .tool_policy
             .entry("file_read".to_string())
             .or_default()
             .exclude
@@ -590,7 +592,11 @@ mod tests {
         assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
         assert!(!flow.is_capability_tool_enabled("file_read", "fs_grep", Some(ToolCluster::Read)));
 
-        let filter = flow.tool.tool_policy.entry("file_read".to_string()).or_default();
+        let filter = flow
+            .tool
+            .tool_policy
+            .entry("file_read".to_string())
+            .or_default();
         filter.include_only.insert("fs_read".to_string());
 
         assert!(flow.is_capability_tool_enabled("file_read", "fs_read", Some(ToolCluster::Read)));
@@ -604,7 +610,8 @@ mod tests {
     #[test]
     fn capability_tool_filter_respects_capabilities_when_present() {
         let mut flow = CapabilityState::default();
-        flow.tool.capabilities
+        flow.tool
+            .capabilities
             .insert(crate::ToolCapability::new("workflow_management"));
 
         assert!(flow.is_capability_tool_enabled("workflow_management", "get_workflow", None));

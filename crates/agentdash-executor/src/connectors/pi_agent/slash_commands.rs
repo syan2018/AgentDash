@@ -18,7 +18,7 @@ pub(crate) fn discover_skill_slash_commands(mount_root: &Path) -> Vec<serde_json
         };
 
         for entry in entries.flatten() {
-            if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
+            if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
                 continue;
             }
 

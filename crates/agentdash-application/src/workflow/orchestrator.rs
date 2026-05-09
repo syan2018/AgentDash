@@ -856,9 +856,7 @@ impl LifecycleOrchestrator {
         step_def: &LifecycleStepDefinition,
         project_id: Uuid,
     ) -> Option<WorkflowDefinition> {
-        let Some(workflow_key) = step_def.effective_workflow_key() else {
-            return None;
-        };
+        let workflow_key = step_def.effective_workflow_key()?;
         match self
             .repos
             .workflow_definition_repo

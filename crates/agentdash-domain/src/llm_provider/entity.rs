@@ -25,13 +25,17 @@ impl WireProtocol {
             Self::OpenaiCompatible => "openai_compatible",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for WireProtocol {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "anthropic" => Some(Self::Anthropic),
-            "gemini" => Some(Self::Gemini),
-            "openai_compatible" => Some(Self::OpenaiCompatible),
-            _ => None,
+            "anthropic" => Ok(Self::Anthropic),
+            "gemini" => Ok(Self::Gemini),
+            "openai_compatible" => Ok(Self::OpenaiCompatible),
+            _ => Err(()),
         }
     }
 }

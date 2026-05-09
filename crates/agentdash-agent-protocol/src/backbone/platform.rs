@@ -10,7 +10,7 @@ pub enum PlatformEvent {
     ExecutorSessionBound { executor_session_id: String },
 
     /// Hook 运行时追踪条目。
-    HookTrace(HookTracePayload),
+    HookTrace(Box<HookTracePayload>),
 
     /// 平台元信息更新（系统消息、能力变更等）。
     SessionMetaUpdate {

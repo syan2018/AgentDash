@@ -134,7 +134,7 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
         .filter(|v| {
             v.get("v")
                 .and_then(Value::as_u64)
-                .map_or(false, |v| v == u64::from(AGENTDASH_META_VERSION))
+                .is_some_and(|v| v == u64::from(AGENTDASH_META_VERSION))
         });
 
     let source = agentdash_meta
@@ -266,7 +266,7 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                             message: None,
                             data: None,
                         });
-                    BackboneEvent::Platform(PlatformEvent::HookTrace(payload))
+                    BackboneEvent::Platform(PlatformEvent::HookTrace(Box::new(payload)))
                 }
                 _ => {
                     let key = event_type.unwrap_or("unknown").to_string();

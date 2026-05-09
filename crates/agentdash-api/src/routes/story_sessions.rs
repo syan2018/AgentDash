@@ -539,7 +539,7 @@ pub(crate) async fn build_story_session_context_response(
             },
             contributions,
             mcp_candidates: agentdash_application::capability::McpCandidates {
-                presets: load_story_project_presets(&state, story.project_id).await,
+                presets: load_story_project_presets(state, story.project_id).await,
                 agent_servers: vec![],
             },
         },

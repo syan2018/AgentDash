@@ -67,7 +67,7 @@ impl SessionHub {
         match hook_session
             .evaluate(HookEvaluationQuery {
                 session_id: session_id.to_string(),
-                trigger: trigger.clone(),
+                trigger: *trigger,
                 turn_id: turn_id.map(ToString::to_string),
                 tool_name: None,
                 tool_call_id: None,
@@ -124,7 +124,7 @@ impl SessionHub {
                     );
                     sink.emit_injections(
                         session_id,
-                        RuntimeInjectionSource::Hook(trigger.clone()),
+                        RuntimeInjectionSource::Hook(*trigger),
                         &injections,
                     )
                     .await;

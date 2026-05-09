@@ -167,7 +167,7 @@ impl AgentConnector for RelayAgentConnector {
 
         let stream: ExecutionStream = Box::pin(futures::stream::unfold(rx, |mut rx| async {
             match rx.recv().await {
-                Some(RelaySessionEvent::Notification(n)) => Some((Ok(n), rx)),
+                Some(RelaySessionEvent::Notification(n)) => Some((Ok(*n), rx)),
                 Some(RelaySessionEvent::Terminal {
                     kind: RelayTerminalKind::Failed,
                     message,

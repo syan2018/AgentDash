@@ -85,11 +85,9 @@ impl StoryStepActivationService {
     }
 
     pub async fn cancel_task(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
-        let result = self
-            .lock_map
+        self.lock_map
             .with_lock(task_id, || async { self.cancel_task_inner(task_id).await })
-            .await;
-        result
+            .await
     }
 
     /// 统一激活 Story session 下某个 lifecycle step（M5 facade 入口）。

@@ -117,15 +117,6 @@ impl McpClientManager {
         Ok(())
     }
 
-    /// 关闭所有 client（relay 断连时调用）
-    pub async fn close_all(&self) {
-        let mut clients = self.clients.write().await;
-        for (name, client) in clients.drain() {
-            let _ = client.cancel().await;
-            tracing::info!(server = %name, "MCP client 已关闭");
-        }
-    }
-
     /// 惰性连接——如果 client 不存在则创建
     async fn ensure_connected(&self, server_name: &str) -> Result<(), anyhow::Error> {
         // 快路径：已连接

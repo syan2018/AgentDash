@@ -1081,11 +1081,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 md,
             )
         });
-        return Ok(apply_plain_lifecycle_request(
+        return apply_plain_lifecycle_request(
             req,
             continuation_bundle,
             HookSnapshotReloadTrigger::None,
-        )?);
+        );
     }
 
     Ok(req)

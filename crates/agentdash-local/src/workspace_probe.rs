@@ -120,9 +120,7 @@ fn strip_remote_name(short_name: &str) -> &str {
 }
 
 fn detect_p4_workspace(path: &Path, warnings: &mut Vec<String>) -> Option<WorkspaceP4ProbePayload> {
-    let Some(p4_executable) = detect_p4_executable() else {
-        return None;
-    };
+    let p4_executable = detect_p4_executable()?;
 
     let workspace_probe = build_p4_path_probe(path);
     let where_result = run_p4_tagged(&p4_executable, path, &["where", &workspace_probe]);

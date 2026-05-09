@@ -33,6 +33,12 @@ impl CronSchedulerHandle {
     }
 }
 
+impl Default for CronSchedulerHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct CronEntry {
     routine_id: Uuid,
     /// 原始 cron 表达式，用于 reload 时比对是否变更

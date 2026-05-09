@@ -182,7 +182,8 @@ mod tests {
             ],
         });
         let mut flow = CapabilityState::default();
-        flow.tool.capabilities
+        flow.tool
+            .capabilities
             .insert(agentdash_spi::ToolCapability::new("workflow_management"));
         flow.tool.tool_policy.insert(
             "workflow_management".to_string(),

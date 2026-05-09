@@ -1668,7 +1668,7 @@ async fn evaluate_subagent_hook(
     let resolution = hook_session
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
-            trigger: trigger.clone(),
+            trigger,
             turn_id: turn_id.clone(),
             tool_name: None,
             tool_call_id: None,

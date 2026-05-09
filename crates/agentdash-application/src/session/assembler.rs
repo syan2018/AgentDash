@@ -1130,7 +1130,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 prebuilt_continuation_bundle,
                 include_owner_bundle,
             } => {
-                let chosen_bundle = prebuilt_continuation_bundle.or_else(|| {
+                let chosen_bundle = prebuilt_continuation_bundle.or({
                     if include_owner_bundle {
                         Some(context_bundle)
                     } else {

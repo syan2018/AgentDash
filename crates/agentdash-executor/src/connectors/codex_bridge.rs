@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicI64, Ordering},
@@ -113,7 +113,7 @@ fn build_prompt_text(
 
 fn build_thread_start_params(
     codex_config: &executors::profile::ExecutorConfig,
-    working_directory: &PathBuf,
+    working_directory: &Path,
 ) -> ThreadStartParams {
     let mut config_overrides = HashMap::new();
     if let Some(reasoning_id) = codex_config.reasoning_id.as_deref() {
@@ -162,10 +162,10 @@ fn build_thread_fork_params(
         thread_id,
         model: thread_start.model.clone(),
         model_provider: thread_start.model_provider.clone(),
-        service_tier: thread_start.service_tier.clone(),
+        service_tier: thread_start.service_tier,
         cwd: thread_start.cwd.clone(),
-        approval_policy: thread_start.approval_policy.clone(),
-        sandbox: thread_start.sandbox.clone(),
+        approval_policy: thread_start.approval_policy,
+        sandbox: thread_start.sandbox,
         config: thread_start.config.clone(),
         base_instructions: thread_start.base_instructions.clone(),
         developer_instructions: thread_start.developer_instructions.clone(),

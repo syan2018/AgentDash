@@ -85,9 +85,6 @@ export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProp
   );
 }
 
-  );
-}
-
 function SkillsSection({ skills }: { skills: SkillEntry[] }) {
   const [showAll, setShowAll] = useState(false);
   const INITIAL_SHOW = 5;

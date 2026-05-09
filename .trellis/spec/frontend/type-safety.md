@@ -155,6 +155,23 @@ const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
 
 当 mapper 开始出现 `fooBar ?? foo_bar` 时，应回到后端 DTO 修复，而不是继续扩写前端兼容层。
 
+### CapabilityDirective 类型契约
+
+`CapabilityDirective` 对齐后端 `ToolCapabilityDirective`，`add` / `remove` 携带的是 qualified path 字符串，不是仅限 `CapabilityKey` 的枚举值。
+
+```ts
+// 正确：能力级、工具级、MCP 能力都通过字符串 path 表达
+type CapabilityDirective = { add: string } | { remove: string };
+
+const directives: CapabilityDirective[] = [
+  { add: "workflow_management" },
+  { remove: "workflow_management::upsert_workflow_tool" },
+  { add: "mcp:code_analyzer" },
+];
+```
+
+`CapabilityKey` 只用于前端内置能力选项、筛选与展示，不要用它收窄 workflow / agent config 中的 `capability_directives`。`AgentPresetConfig` 这类 API 配置对象需要保持可 JSON 扩展，应继承 `Record<string, unknown>`，再叠加已知字段。
+
 ### 状态值归一化
 
 后端可能返回旧版状态名，前端映射函数负责归一化：

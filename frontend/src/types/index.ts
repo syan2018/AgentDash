@@ -67,7 +67,7 @@ export type CapabilityKey =
   | "collaboration"
   | "canvas";
 
-export type CapabilityDirective = { add: CapabilityKey } | { remove: CapabilityKey };
+export type CapabilityDirective = { add: string } | { remove: string };
 
 export type CapabilityGroup = "basic" | "extended";
 
@@ -193,7 +193,7 @@ export interface AgentPreset {
   config: Record<string, unknown>;
 }
 
-export interface AgentPresetConfig {
+export interface AgentPresetConfig extends Record<string, unknown> {
   executor?: string;
   provider_id?: string;
   model_id?: string;

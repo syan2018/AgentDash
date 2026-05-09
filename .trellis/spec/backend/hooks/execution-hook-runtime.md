@@ -98,6 +98,10 @@ pub trait ExecutionHookProvider: Send + Sync {
 - Hook auto-resume 必须生成独立 `ContextFrame(kind="auto_resume")`。该 frame 的
   `delivery_channel` 是 `user_prompt`，`rendered_text` 必须等于系统实际发起的
   auto-resume prompt；不要让系统续跑提示伪装成普通用户输入而缺少可审计 UI。
+- `context_compacted` 事件必须伴随生成独立
+  `ContextFrame(kind="compaction_summary")`。该 frame 的 `delivery_channel` 是
+  `continuation`，section 至少包含 summary、tokens_before、messages_compacted、
+  compacted_until_ref 与 timestamp_ms，让用户能看到后续上下文受哪份压缩摘要影响。
 
 ### Workflow -> Hook Policy
 

@@ -340,6 +340,16 @@ pub enum ContextFrameSection {
         reason: String,
         prompt: String,
     },
+    CompactionSummary {
+        title: String,
+        summary: String,
+        tokens_before: u64,
+        messages_compacted: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compacted_until_ref: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

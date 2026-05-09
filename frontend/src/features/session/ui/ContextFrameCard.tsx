@@ -11,6 +11,7 @@ import {
   type AutoResumeSection,
   type BootstrapContextSection,
   type CapabilityDeltaSection,
+  type CompactionSummarySection,
   type ContextFrame,
   type ContextFrameSection,
   type HookRuntimeSurfaceSection,
@@ -143,6 +144,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <HookRuntimeSurfaceBody section={section} />;
     case "auto_resume":
       return <AutoResumeBody section={section} />;
+    case "compaction_summary":
+      return <CompactionSummaryBody section={section} />;
   }
 }
 
@@ -399,6 +402,24 @@ function AutoResumeBody({ section }: { section: AutoResumeSection }) {
   );
 }
 
+function CompactionSummaryBody({ section }: { section: CompactionSummarySection }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs leading-5 text-muted-foreground">{section.title}：{section.summary}</p>
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={`messages: ${section.messages_compacted}`} />
+        <Chip label={`tokens: ${section.tokens_before}`} />
+        {section.timestamp_ms != null && <Chip label={`time: ${section.timestamp_ms}`} />}
+      </div>
+      {section.compacted_until_ref != null && (
+        <pre className="max-h-24 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+          {formatJson(section.compacted_until_ref)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function AgentVisibleText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -451,6 +472,7 @@ function sectionTitle(section: ContextFrameSection): string {
     case "skill_surface": return section.title || "Skill Surface";
     case "hook_runtime_surface": return section.title || "Hook Runtime Surface";
     case "auto_resume": return section.title || "Auto Resume";
+    case "compaction_summary": return section.title || "Compaction Summary";
   }
 }
 
@@ -479,6 +501,7 @@ function sectionHint(section: ContextFrameSection): string | null {
     case "skill_surface": return `${section.skills.length} 个 skill`;
     case "hook_runtime_surface": return `${section.pending_action_count} 个 pending action`;
     case "auto_resume": return section.reason || "系统续跑";
+    case "compaction_summary": return `${section.messages_compacted} 条消息`;
   }
 }
 

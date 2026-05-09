@@ -25,7 +25,8 @@ export type ContextFrameSection =
   | WorkspaceSurfaceSection
   | SkillSurfaceSection
   | HookRuntimeSurfaceSection
-  | AutoResumeSection;
+  | AutoResumeSection
+  | CompactionSummarySection;
 
 export interface BootstrapContextSection {
   kind: "bootstrap_context";
@@ -147,6 +148,16 @@ export interface AutoResumeSection {
   summary: string;
   reason: string;
   prompt: string;
+}
+
+export interface CompactionSummarySection {
+  kind: "compaction_summary";
+  title: string;
+  summary: string;
+  tokens_before: number;
+  messages_compacted: number;
+  compacted_until_ref?: unknown;
+  timestamp_ms?: number;
 }
 
 export interface RuntimeHookInjectionEntry {
@@ -285,6 +296,17 @@ function parseSection(value: unknown): ContextFrameSection | null {
       summary: readString(value.summary) ?? "",
       reason: readString(value.reason) ?? "",
       prompt: readString(value.prompt) ?? "",
+    };
+  }
+  if (kind === "compaction_summary") {
+    return {
+      kind,
+      title: readString(value.title) ?? "Compaction Summary",
+      summary: readString(value.summary) ?? "",
+      tokens_before: readNumber(value.tokens_before) ?? 0,
+      messages_compacted: readNumber(value.messages_compacted) ?? 0,
+      compacted_until_ref: value.compacted_until_ref,
+      timestamp_ms: readNumber(value.timestamp_ms) ?? undefined,
     };
   }
   return null;

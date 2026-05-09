@@ -301,8 +301,10 @@ core system prompt 保留：
   Workspace / Hook Runtime / Skills / Project Context 不再由 core system prompt 拼接。
 - 2026-05-09：已新增 `auto_resume` frame，系统续跑提示的真实文本会以
   `delivery_channel=user_prompt` 持久化并展示。
-- 仍待迁移：`pending_action`、`compaction_summary` 仍需专用
-  ContextFrame subtype；continuation 的 `render_system_context_markdown` 仍是后续清理点。
+- 2026-05-09：已新增 `compaction_summary` frame，`context_compacted` 会伴随持久化
+  可见的摘要、token、消息数与 compacted boundary。
+- 仍待迁移：`pending_action` 仍需专用 ContextFrame subtype；continuation 的
+  `render_system_context_markdown` 命名与 bootstrap 包装仍是后续清理点。
 
 ## Acceptance Criteria
 
@@ -311,7 +313,7 @@ core system prompt 保留：
 - [ ] Agent 实际收到的 frame 文本与前端“Agent 实际收到的文本”展开区一致。
 - [ ] system prompt 不再直接拼入 Project Guidelines、Project Context、Workflow Context、Workspace、VFS、MCP、Skills、Hook Runtime 状态、compaction summary 等动态内容。（除 compaction summary 迁移仍待后续批次）
 - [ ] tool、VFS、MCP、skills 的提示全部由 capability state/registry 生成 `ContextFrameSection`，不是由 prompt assembler 或 legacy session plan markdown 生成。
-- [ ] pending action、auto-resume、compaction summary 均有专用 `ContextFrameSection`。（auto-resume 已完成）
+- [ ] pending action、auto-resume、compaction summary 均有专用 `ContextFrameSection`。（auto-resume / compaction summary 已完成）
 - [ ] capability/tool surface runtime update 继续由 capability state delta 驱动，不退回 full schema dump。
 - [ ] `legacy:session_plan` 中的 `vfs`、`tools`、`runtime_policy` 不再进入 Agent-visible prompt。
 - [ ] hook trace 只表达 lifecycle/audit，不作为 Agent-visible context card 的数据源。

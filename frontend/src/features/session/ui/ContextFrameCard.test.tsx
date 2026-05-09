@@ -67,6 +67,17 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Auto Resume hook_before_stop_continue");
     expect(markup).toContain("Agent 上下文已更新");
   });
+
+  it("解析并渲染 compaction_summary frame", () => {
+    const notice = parseContextFrame(sampleCompactionNotice());
+
+    expect(notice?.kind).toBe("compaction_summary");
+    expect(notice?.sections[0]?.kind).toBe("compaction_summary");
+
+    const markup = renderToStaticMarkup(<ContextFrameCard data={sampleCompactionNotice()} />);
+    expect(markup).toContain("Compaction Summary 12 条消息");
+    expect(markup).toContain("Agent 上下文已更新");
+  });
 });
 
 function sampleNotice(): Record<string, unknown> {
@@ -255,6 +266,30 @@ function sampleAutoResumeNotice(): Record<string, unknown> {
         summary: "系统根据 Hook stop gate 自动发起续跑提示。",
         reason: "hook_before_stop_continue",
         prompt: "继续执行当前流程。",
+      },
+    ],
+  };
+}
+
+function sampleCompactionNotice(): Record<string, unknown> {
+  return {
+    id: "compaction-summary-1",
+    kind: "compaction_summary",
+    source: "runtime_context_update",
+    delivery_status: "applied_to_compacted_context",
+    delivery_channel: "continuation",
+    message_role: "system",
+    rendered_text: "## Compaction Summary\n压缩后的历史摘要",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "compaction_summary",
+        title: "Compaction Summary",
+        summary: "压缩后的历史摘要",
+        tokens_before: 48000,
+        messages_compacted: 12,
+        compacted_until_ref: { turn_id: "turn-1", entry_index: 3 },
+        timestamp_ms: 1710000000000,
       },
     ],
   };

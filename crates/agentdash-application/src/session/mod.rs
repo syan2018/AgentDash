@@ -5,6 +5,7 @@ pub mod baseline_capabilities;
 pub mod bootstrap;
 mod bootstrap_context_frame;
 pub mod capability_state;
+mod compaction_context_frame;
 pub mod companion_wait;
 pub mod context;
 mod context_frame;

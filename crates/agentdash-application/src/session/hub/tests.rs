@@ -1630,6 +1630,28 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
     .await
     .expect("inject compaction checkpoint");
 
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let compaction_frame = events
+        .iter()
+        .find_map(|event| match &event.notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                if key == "context_frame" && value["kind"] == "compaction_summary" =>
+            {
+                Some(value)
+            }
+            _ => None,
+        })
+        .expect("compaction should persist a context_frame");
+    assert_eq!(compaction_frame["delivery_channel"], "continuation");
+    assert_eq!(
+        compaction_frame["sections"][0]["messages_compacted"],
+        serde_json::json!(2)
+    );
+
     let transcript = hub
         .build_projected_transcript(&session.id)
         .await

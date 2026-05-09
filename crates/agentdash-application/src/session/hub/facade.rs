@@ -14,6 +14,7 @@ use agentdash_agent_protocol::{
 };
 use tokio::sync::broadcast;
 
+use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch_intent::{
@@ -611,6 +612,63 @@ impl SessionHub {
         let envelope = self
             .maybe_enrich_compaction_notification(session_id, envelope)
             .await?;
+        let persisted = self.persistence.append_event(session_id, &envelope).await?;
+        let tx = {
+            let mut sessions = self.sessions.lock().await;
+            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
+                let (tx, _rx) = broadcast::channel(1024);
+                build_session_runtime(tx)
+            });
+            runtime.last_activity_at = chrono::Utc::now().timestamp_millis();
+            runtime.tx.clone()
+        };
+        let _ = tx.send(persisted.clone());
+        if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
+            &persisted.notification.event
+            && key == "context_compacted"
+            && let Some(frame) = build_compaction_context_frame(value)
+        {
+            let _ = self
+                .persist_context_frame_direct(session_id, persisted.turn_id.as_deref(), &frame)
+                .await;
+        }
+        Ok(persisted)
+    }
+
+    async fn persist_context_frame_direct(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        frame: &ContextFrame,
+    ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
+        let connector_type = match self.connector.connector_type() {
+            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
+            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
+        };
+        let source = SourceInfo {
+            connector_id: self.connector.connector_id().to_string(),
+            connector_type: connector_type.to_string(),
+            executor_id: None,
+        };
+        let value = serde_json::to_value(frame).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("context frame 序列化失败: {error}"),
+            )
+        })?;
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "context_frame".to_string(),
+                value,
+            }),
+            session_id,
+            source,
+        )
+        .with_trace(TraceInfo {
+            turn_id: turn_id.map(ToString::to_string),
+            entry_index: None,
+        });
+
         let persisted = self.persistence.append_event(session_id, &envelope).await?;
         let tx = {
             let mut sessions = self.sessions.lock().await;

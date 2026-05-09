@@ -70,7 +70,7 @@ fn prepare_git_workspace(
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| runtime_config.git.default_remote.as_deref())
+        .or(runtime_config.git.default_remote.as_deref())
         .unwrap_or("origin");
 
     match contract.match_mode {

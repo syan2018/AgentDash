@@ -11,7 +11,6 @@ use crate::backbone::platform::PlatformEvent;
 /// 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
 /// 不设"通用退化变体"。Codex 原生协议没有覆盖的语义通过 `Platform` 扩展。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum BackboneEvent {
     // ── 文本 / 推理流 ──

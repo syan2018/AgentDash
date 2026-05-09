@@ -42,7 +42,8 @@ use uuid::Uuid;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    SessionWorkflowContext, tool_directives_from_active_workflow,
+    CompanionContribution, ContextContributionSource, ContextContributions, McpCandidates,
+    ToolContribution, tool_directives_from_active_workflow,
 };
 use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
@@ -590,13 +591,13 @@ async fn load_companion_candidates(
     repos: &RepositorySet,
     project_id: Uuid,
     caller_agent_id: Option<Uuid>,
-) -> Vec<agentdash_spi::context::capability::CompanionAgentEntry> {
+) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
     let links = match repos.agent_link_repo.list_by_project(project_id).await {
         Ok(l) => l,
-        Err(_) => return Vec::new(),
+        Err(_) => return Ok(Vec::new()),
     };
     if links.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // 解析 caller 的 allowed_companions 过滤列表
@@ -604,16 +605,10 @@ async fn load_companion_candidates(
         let link = links.iter().find(|l| l.agent_id == caller_id);
         if let Some(link) = link {
             if let Ok(Some(agent)) = repos.agent_repo.get_by_id(caller_id).await {
-                let merged = link.merged_config(&agent.base_config);
-                merged
-                    .get("allowed_companions")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|v| !v.is_empty())
+                let preset = link
+                    .merged_preset_config(&agent)
+                    .map_err(|error| error.to_string())?;
+                preset.allowed_companions.filter(|v| !v.is_empty())
             } else {
                 None
             }
@@ -632,11 +627,14 @@ async fn load_companion_candidates(
                     continue;
                 }
             }
-            let display = link
-                .merged_config(&agent.base_config)
-                .get("display_name")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
+            let preset = link
+                .merged_preset_config(&agent)
+                .map_err(|error| error.to_string())?;
+            let display = preset
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .map(String::from)
                 .unwrap_or_else(|| agent.name.clone());
             entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
@@ -646,7 +644,7 @@ async fn load_companion_candidates(
             });
         }
     }
-    entries
+    Ok(entries)
 }
 
 /// 从 agent-level `preset_mcp_servers` 抽出 `AgentMcpServerEntry`(供 resolver 解析 `mcp:<name>`)。
@@ -729,12 +727,13 @@ pub struct OwnerBootstrapSpec<'a> {
     /// user 层 prompt blocks(外部传入或 Routine 模板)。
     pub user_prompt_blocks: Vec<serde_json::Value>,
     pub agent_mcp: AgentLevelMcp,
+    /// Agent preset 中声明的能力指令，作为 agent 来源 contribution 输入 resolver。
+    pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     /// 前端/request 已携带的 MCP server(透传)。
     pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
-    pub agent_declared_capabilities: Option<Vec<String>>,
     /// 当前 session 已绑定的活跃 workflow run。Project/Story owner session 在
     /// bootstrap 或续跑时可通过它获得 lifecycle VFS 与 workflow 能力基线。
     pub active_workflow: Option<ActiveWorkflowProjection>,
@@ -1001,41 +1000,65 @@ impl<'a> SessionRequestAssembler<'a> {
             .map_err(|e| e.to_string())?;
         }
 
-        // ── 2. workflow 上下文解析 → 能力集 ──
-        let workflow_ctx = if let Some(workflow) = active_workflow.as_ref() {
-            SessionWorkflowContext {
-                has_active_workflow: true,
-                workflow_tool_directives: workflow
+        // ── 2. workflow 上下文解析 → ToolContribution ──
+        let workflow_tool: Option<ToolContribution> =
+            if let Some(workflow) = active_workflow.as_ref() {
+                let directives = workflow
                     .primary_workflow
                     .as_ref()
                     .map(tool_directives_from_active_workflow)
-                    .or_else(|| Some(Vec::new())),
-            }
-        } else {
-            let workflow_directives =
-                resolve_owner_workflow_tool_directives(self.repos, &spec.owner).await;
-            match workflow_directives {
-                Some(directives) => SessionWorkflowContext {
+                    .unwrap_or_default();
+                Some(ToolContribution {
+                    directives,
                     has_active_workflow: true,
-                    workflow_tool_directives: Some(directives),
-                },
-                None => SessionWorkflowContext::NONE,
-            }
-        };
+                })
+            } else {
+                let workflow_directives =
+                    resolve_owner_workflow_tool_directives(self.repos, &spec.owner).await;
+                workflow_directives.map(|directives| ToolContribution {
+                    directives,
+                    has_active_workflow: true,
+                })
+            };
 
         // ── 3. Companion candidates 查询 ──
         let available_companions =
-            load_companion_candidates(self.repos, project_id, spec.caller_agent_id).await;
+            load_companion_candidates(self.repos, project_id, spec.caller_agent_id).await?;
 
         // ── 4. CapabilityResolver ──
+        let mut contributions = Vec::new();
+        if !spec.agent_tool_directives.is_empty() {
+            contributions.push(ContextContributions {
+                source: ContextContributionSource::Agent,
+                tool: Some(ToolContribution {
+                    directives: spec.agent_tool_directives,
+                    has_active_workflow: false,
+                }),
+                companion: None,
+            });
+        }
+        contributions.push(ContextContributions {
+            source: ContextContributionSource::Resource,
+            tool: None,
+            companion: Some(CompanionContribution {
+                available: available_companions,
+            }),
+        });
+        if let Some(wf_tool) = workflow_tool {
+            contributions.push(ContextContributions {
+                source: ContextContributionSource::Workflow,
+                tool: Some(wf_tool),
+                companion: None,
+            });
+        }
+
         let cap_input = CapabilityResolverInput {
             owner_ctx,
-            agent_declared_capabilities: spec.agent_declared_capabilities,
-            workflow_ctx,
-            agent_mcp_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
-            available_presets: load_available_presets(self.repos, project_id).await,
-            companion_slice_mode: None,
-            available_companions,
+            contributions,
+            mcp_candidates: McpCandidates {
+                presets: load_available_presets(self.repos, project_id).await,
+                agent_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
+            },
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1107,7 +1130,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 prebuilt_continuation_bundle,
                 include_owner_bundle,
             } => {
-                let chosen_bundle = prebuilt_continuation_bundle.or_else(|| {
+                let chosen_bundle = prebuilt_continuation_bundle.or({
                     if include_owner_bundle {
                         Some(context_bundle)
                     } else {
@@ -1243,22 +1266,28 @@ impl<'a> SessionRequestAssembler<'a> {
                 .as_ref()
                 .map(tool_directives_from_active_workflow)
         });
-        let workflow_ctx = SessionWorkflowContext {
-            has_active_workflow: workflow.is_some(),
-            workflow_tool_directives: workflow_directives,
-        };
+        let mut contributions = Vec::new();
+        if let Some(directives) = workflow_directives {
+            contributions.push(ContextContributions {
+                source: ContextContributionSource::Workflow,
+                tool: Some(ToolContribution {
+                    directives,
+                    has_active_workflow: true,
+                }),
+                companion: None,
+            });
+        }
         let cap_input = CapabilityResolverInput {
             owner_ctx: SessionOwnerCtx::Task {
                 project_id: spec.task.project_id,
                 story_id: spec.task.story_id,
                 task_id: spec.task.id,
             },
-            agent_declared_capabilities: None,
-            workflow_ctx,
-            agent_mcp_servers: vec![],
-            available_presets: load_available_presets(self.repos, spec.task.project_id).await,
-            companion_slice_mode: None,
-            available_companions: Vec::new(),
+            contributions,
+            mcp_candidates: McpCandidates {
+                presets: load_available_presets(self.repos, spec.task.project_id).await,
+                agent_servers: vec![],
+            },
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1469,7 +1498,6 @@ pub async fn compose_lifecycle_node_with_audit(
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
             edges: &spec.lifecycle.edges,
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
@@ -1651,7 +1679,6 @@ pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
         .build()
 }
 
-
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
 ///
 /// PR 5 前 companion 子 session 直接继承父 `SessionContextBundle` 的全部 fragment，
@@ -1815,7 +1842,6 @@ pub async fn compose_companion_with_workflow(
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
             edges: &spec.lifecycle.edges,
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(comp.slice_mode),

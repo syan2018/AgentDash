@@ -122,7 +122,7 @@ pub struct RemoteExecutorInfo {
 /// relay session 事件 — 由 WebSocket handler 投递到 connector stream。
 #[derive(Debug)]
 pub enum RelaySessionEvent {
-    Notification(BackboneEnvelope),
+    Notification(Box<BackboneEnvelope>),
     Terminal {
         kind: RelayTerminalKind,
         message: Option<String>,

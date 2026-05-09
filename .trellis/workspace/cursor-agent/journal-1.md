@@ -483,3 +483,40 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Capability 管道全链路重构 (AgentPresetConfig + ContextContributions + 命名统一)
+
+**Date**: 2026-05-09
+**Task**: Capability 管道全链路重构 (AgentPresetConfig + ContextContributions + 命名统一)
+**Branch**: `main`
+
+### Summary
+
+完成 Capability 管道四阶段重构: Phase A 引入 AgentPresetConfig 消灭无类型 JSON; Phase B 前端 tool_clusters 到 capability_directives 全链路对齐; Phase C Resolver 输入侧 ContextContributions 化 (消灭 agent_declared_capabilities / SessionWorkflowContext / companion_slice_mode 错放); Phase D 命名统一 (enabled_clusters) + SessionWorkflowContext 消融. 全部验收标准通过.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `35ff5ac` | (see git log) |
+| `106aca9` | (see git log) |
+| `f067940` | (see git log) |
+| `04bd5d2` | (see git log) |
+| `bbe3dfd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

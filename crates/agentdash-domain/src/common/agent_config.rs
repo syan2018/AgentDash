@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::common::error::DomainError;
+use crate::workflow::ToolCapabilityDirective;
+
 /// Agent 级 System Prompt 注入模式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,11 +29,112 @@ pub enum ThinkingLevel {
     Xhigh,
 }
 
-/// AgentDash 统一执行器配置。
+// ── AgentPresetConfig ─────────────────────────────────────────────────
+
+/// Agent 配置存储层的权威类型。
 ///
-/// `executor` 字段使用原始字符串，既能表示 vibe-kanban 的 `BaseCodingAgent`
-/// （如 `"CLAUDE_CODE"`），也能表示 AgentDash 自有 agent（如 `"PI_AGENT"`）。
-/// 路由到具体连接器时由 adapter 层按需转换。
+/// 统一 `Agent.base_config` / `ProjectAgentLink.config_override` / `AgentPreset.config`
+/// 三处 JSON blob，所有字段均为 Option 以支持字段级合并（override 覆盖 base）。
+///
+/// 消费方通过 `to_agent_config()` 提取运行态执行器配置 [`AgentConfig`]。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPresetConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt_mode: Option<SystemPromptMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Agent 级能力指令。替代旧 `tool_clusters: Option<Vec<String>>`。
+    /// 前端 → API → 存储 → Resolver 全链路使用相同的 `ToolCapabilityDirective` 表示。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_directives: Option<Vec<ToolCapabilityDirective>>,
+    /// MCP Preset key 引用列表（如 `["github", "jira"]`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_preset_keys: Option<Vec<String>>,
+    /// 允许此 Agent 调用的 companion agent 名称白名单。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_companions: Option<Vec<String>>,
+}
+
+/// 用于字段级合并的 helper macro — 消除逐字段重复代码。
+macro_rules! merge_field {
+    ($over:expr, $base:expr, $($field:ident),+ $(,)?) => {
+        Self {
+            $( $field: $over.$field.clone().or_else(|| $base.$field.clone()), )+
+        }
+    };
+}
+
+impl AgentPresetConfig {
+    /// 字段级合并：`self`（override）非 None 的字段优先于 `base`。
+    pub fn merge_over(&self, base: &AgentPresetConfig) -> AgentPresetConfig {
+        merge_field!(
+            self,
+            base,
+            executor,
+            provider_id,
+            model_id,
+            agent_id,
+            thinking_level,
+            permission_policy,
+            system_prompt,
+            system_prompt_mode,
+            display_name,
+            description,
+            capability_directives,
+            mcp_preset_keys,
+            allowed_companions,
+        )
+    }
+
+    /// 提取运行态执行器配置 [`AgentConfig`]。
+    ///
+    /// `fallback_executor` 在 `self.executor` 为 None 时使用（通常来自 `Agent.agent_type`）。
+    pub fn to_agent_config(&self, fallback_executor: &str) -> AgentConfig {
+        AgentConfig {
+            executor: self
+                .executor
+                .clone()
+                .unwrap_or_else(|| fallback_executor.to_string()),
+            provider_id: self.provider_id.clone(),
+            model_id: self.model_id.clone(),
+            agent_id: self.agent_id.clone(),
+            thinking_level: self.thinking_level,
+            permission_policy: self.permission_policy.clone(),
+            system_prompt: self.system_prompt.clone(),
+            system_prompt_mode: self.system_prompt_mode,
+        }
+    }
+
+    /// 从 DB JSON 反序列化为权威配置结构。
+    pub fn from_json(value: &serde_json::Value) -> Result<Self, DomainError> {
+        serde_json::from_value(value.clone()).map_err(DomainError::Serialization)
+    }
+}
+
+// ── AgentConfig（运行态执行器配置）──────────────────────────────────────
+
+/// AgentDash 统一执行器配置 — connector 层的运行态接口类型。
+///
+/// 只包含执行器运行所需的参数（executor / model / prompt 等），
+/// 不包含 capability / companion / MCP 等配置（由 `AgentPresetConfig` 承载）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub executor: String,
@@ -44,19 +148,12 @@ pub struct AgentConfig {
     pub thinking_level: Option<ThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_policy: Option<String>,
-    /// Agent 级工具簇限制。None = 不限制（使用会话类型默认全量）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_clusters: Option<Vec<String>>,
-    /// Agent 级 system prompt（追加或覆盖全局 prompt）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    /// system_prompt 注入模式。None 时默认 Append。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
-/// 已注册的云端原生 Agent executor ID 列表。
-/// 这些 Agent 在云端进程内运行，不通过本机后端中继。
 const CLOUD_NATIVE_EXECUTORS: &[&str] = &["PI_AGENT"];
 
 impl AgentConfig {
@@ -68,7 +165,6 @@ impl AgentConfig {
             agent_id: None,
             thinking_level: None,
             permission_policy: None,
-            tool_clusters: None,
             system_prompt: None,
             system_prompt_mode: None,
         }
@@ -85,5 +181,33 @@ impl AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self::new("CLAUDE_CODE")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_config_roundtrips_description_and_capability_directives() {
+        let config = AgentPresetConfig::from_json(&serde_json::json!({
+            "display_name": "Reviewer",
+            "description": "检查代码结构",
+            "capability_directives": [{ "add": "workflow_management" }]
+        }))
+        .expect("valid preset config");
+
+        assert_eq!(config.display_name.as_deref(), Some("Reviewer"));
+        assert_eq!(config.description.as_deref(), Some("检查代码结构"));
+        assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn preset_config_rejects_invalid_typed_payload() {
+        let result = AgentPresetConfig::from_json(&serde_json::json!({
+            "thinking_level": "not_a_level"
+        }));
+
+        assert!(result.is_err());
     }
 }

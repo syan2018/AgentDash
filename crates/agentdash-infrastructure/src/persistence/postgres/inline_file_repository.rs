@@ -54,7 +54,7 @@ impl TryFrom<InlineFileRow> for InlineFile {
     type Error = DomainError;
 
     fn try_from(row: InlineFileRow) -> Result<Self, Self::Error> {
-        let owner_kind = InlineFileOwnerKind::from_str(&row.owner_kind).ok_or_else(|| {
+        let owner_kind = row.owner_kind.parse::<InlineFileOwnerKind>().map_err(|_| {
             DomainError::InvalidConfig(format!(
                 "inline_fs_files.owner_kind 值无效: {}",
                 row.owner_kind

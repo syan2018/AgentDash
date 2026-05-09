@@ -170,7 +170,7 @@ pub async fn create_provider(
     {
         return Err(ApiError::BadRequest("slug 仅允许字母、数字、- 和 _".into()));
     }
-    let protocol = WireProtocol::from_str(&req.protocol).ok_or_else(|| {
+    let protocol = req.protocol.parse::<WireProtocol>().map_err(|_| {
         ApiError::BadRequest(format!(
             "无效的 protocol: {}（支持: anthropic, gemini, openai_compatible）",
             req.protocol
@@ -267,8 +267,9 @@ pub async fn update_provider(
         provider.name = trimmed;
     }
     if let Some(protocol_str) = req.protocol {
-        let protocol = WireProtocol::from_str(&protocol_str)
-            .ok_or_else(|| ApiError::BadRequest(format!("无效的 protocol: {protocol_str}")))?;
+        let protocol = protocol_str
+            .parse::<WireProtocol>()
+            .map_err(|_| ApiError::BadRequest(format!("无效的 protocol: {protocol_str}")))?;
         provider.protocol = protocol;
     }
     if let Some(api_key) = req.api_key {
@@ -384,8 +385,10 @@ pub async fn probe_models(
 > {
     require_system_access(&current_user)?;
 
-    let protocol = WireProtocol::from_str(&req.protocol)
-        .ok_or_else(|| ApiError::BadRequest(format!("无效的 protocol: {}", req.protocol)))?;
+    let protocol = req
+        .protocol
+        .parse::<WireProtocol>()
+        .map_err(|_| ApiError::BadRequest(format!("无效的 protocol: {}", req.protocol)))?;
 
     let api_key = resolve_probe_api_key(&req, &state).await;
 

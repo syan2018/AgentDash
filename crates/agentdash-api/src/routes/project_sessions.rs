@@ -245,7 +245,7 @@ pub(crate) async fn build_project_session_context_response(
         );
 
     // ── 解析 agent_link 绑定的 lifecycle 上下文（与实际 session 创建保持一致） ──
-    let workflow_ctx = if let Some(link) = agent_link.as_ref() {
+    let workflow_tool = if let Some(link) = agent_link.as_ref() {
         agentdash_application::capability::resolve_session_workflow_context(
             agentdash_application::capability::SessionWorkflowRepos {
                 agent_link: state.repos.agent_link_repo.as_ref(),
@@ -259,23 +259,40 @@ pub(crate) async fn build_project_session_context_response(
         )
         .await
     } else {
-        agentdash_application::capability::SessionWorkflowContext::NONE
+        None
     };
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
+    let mut contributions = Vec::new();
+    if let Some(directives) = project_agent.preset_config.capability_directives.clone()
+        && !directives.is_empty()
+    {
+        contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Agent,
+            tool: Some(agentdash_application::capability::ToolContribution {
+                directives,
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+    }
+    if let Some(wf_tool) = workflow_tool {
+        contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Workflow,
+            tool: Some(wf_tool),
+            companion: None,
+        });
+    }
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
             owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
                 project_id: project.id,
             },
-            agent_declared_capabilities: resolved_config
-                .as_ref()
-                .and_then(|config| config.tool_clusters.clone()),
-            workflow_ctx,
-            agent_mcp_servers: agent_mcp_entries,
-            available_presets: load_project_presets(state, project.id).await,
-            companion_slice_mode: None,
-            available_companions: Vec::new(),
+            contributions,
+            mcp_candidates: agentdash_application::capability::McpCandidates {
+                presets: load_project_presets(state, project.id).await,
+                agent_servers: agent_mcp_entries,
+            },
         },
         &state.config.platform_config,
     );
@@ -409,10 +426,12 @@ pub async fn list_project_sessions(
         let mut map = HashMap::new();
         for link in &links {
             if let Ok(Some(agent)) = state.repos.agent_repo.get_by_id(link.agent_id).await {
-                let merged = link.merged_config(&agent.base_config);
-                let name = merged
-                    .get("display_name")
-                    .and_then(|v| v.as_str())
+                let preset = link
+                    .merged_preset_config(&agent)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+                let name = preset
+                    .display_name
+                    .as_deref()
                     .map(str::trim)
                     .filter(|v| !v.is_empty())
                     .unwrap_or(&agent.name)

@@ -19,8 +19,8 @@ use agentdash_spi::hooks::CapabilityDelta;
 use uuid::Uuid;
 
 use crate::capability::{
-    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, SessionWorkflowContext,
-    build_capability_delta_markdown,
+    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    ContextContributions, McpCandidates, ToolContribution, build_capability_delta_markdown,
 };
 use crate::platform_config::PlatformConfig;
 
@@ -66,19 +66,21 @@ fn agent_node_step_directives_produce_expected_session_tools() {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
         },
-        agent_declared_capabilities: None,
-        workflow_ctx: SessionWorkflowContext {
-            has_active_workflow: true,
-            workflow_tool_directives: Some(directives.clone()),
+        contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
+            tool: Some(ToolContribution {
+                directives: directives.clone(),
+                has_active_workflow: true,
+            }),
+            companion: None,
+        }],
+        mcp_candidates: McpCandidates {
+            presets: Default::default(),
+            agent_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         },
-        agent_mcp_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
-        available_presets: Default::default(),
-        companion_slice_mode: None,
-        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    // file_read/write/shell_execute 由 auto_granted baseline 提供
     assert!(output.has(ToolCluster::Read));
     assert!(output.has(ToolCluster::Write));
     assert!(output.has(ToolCluster::Execute));
@@ -114,15 +116,18 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
         },
-        agent_declared_capabilities: None,
-        workflow_ctx: SessionWorkflowContext {
-            has_active_workflow: true,
-            workflow_tool_directives: Some(directives.clone()),
+        contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
+            tool: Some(ToolContribution {
+                directives: directives.clone(),
+                has_active_workflow: true,
+            }),
+            companion: None,
+        }],
+        mcp_candidates: McpCandidates {
+            presets: Default::default(),
+            agent_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
         },
-        agent_mcp_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
-        available_presets: Default::default(),
-        companion_slice_mode: None,
-        available_companions: Vec::new(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -175,12 +180,8 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
         },
-        agent_declared_capabilities: None,
-        workflow_ctx: SessionWorkflowContext::NONE,
-        agent_mcp_servers: vec![],
-        available_presets: Default::default(),
-        companion_slice_mode: None,
-        available_companions: Vec::new(),
+        contributions: Vec::new(),
+        mcp_candidates: McpCandidates::default(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -211,15 +212,15 @@ fn phase_node_invalid_directives_are_tolerated() {
         owner_ctx: SessionOwnerCtx::Project {
             project_id: Uuid::new_v4(),
         },
-        agent_declared_capabilities: None,
-        workflow_ctx: SessionWorkflowContext {
-            has_active_workflow: true,
-            workflow_tool_directives: Some(directives.clone()),
-        },
-        agent_mcp_servers: vec![],
-        available_presets: Default::default(),
-        companion_slice_mode: None,
-        available_companions: Vec::new(),
+        contributions: vec![ContextContributions {
+            source: ContextContributionSource::Workflow,
+            tool: Some(ToolContribution {
+                directives: directives.clone(),
+                has_active_workflow: true,
+            }),
+            companion: None,
+        }],
+        mcp_candidates: McpCandidates::default(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(

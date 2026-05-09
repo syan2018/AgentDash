@@ -2,14 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type {
   AgentPreset,
+  CapabilityDirective,
+  CapabilityKey,
   Project,
   ProjectAgentLink,
   ProjectAgentSession,
   ProjectAgentSummary,
   SessionNavigationState,
-  ToolCluster,
 } from "../../types";
-import { TOOL_CLUSTER_OPTIONS, THINKING_LEVEL_OPTIONS } from "../../types";
+import { CAPABILITY_OPTIONS, THINKING_LEVEL_OPTIONS } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import {
@@ -705,9 +706,12 @@ export function ProjectAgentView({
               const activity = getActivityLevel(agent.session?.last_activity);
               const link = findLinkForAgent(agent);
               const mergedConfig = link?.merged_config ?? {};
-              const toolClusters = Array.isArray(mergedConfig.tool_clusters)
-                ? (mergedConfig.tool_clusters as ToolCluster[])
+              const rawDirectives = Array.isArray(mergedConfig.capability_directives)
+                ? (mergedConfig.capability_directives as CapabilityDirective[])
                 : [];
+              const toolClusters: CapabilityKey[] = rawDirectives
+                .filter((d): d is { add: CapabilityKey } => "add" in d)
+                .map((d) => d.add);
               const allowedCompanions = Array.isArray(mergedConfig.allowed_companions)
                 ? (mergedConfig.allowed_companions as string[])
                 : [];
@@ -886,17 +890,17 @@ export function ProjectAgentView({
                             Companion
                           </span>
                         )}
-                        {toolClusters.length > 0 ? toolClusters.map((cluster) => {
-                          const opt = TOOL_CLUSTER_OPTIONS.find((o) => o.value === cluster);
+                        {toolClusters.length > 0 ? toolClusters.map((capKey) => {
+                          const opt = CAPABILITY_OPTIONS.find((o) => o.value === capKey);
                           if (!opt) return null;
                           const colorCls =
-                            cluster === "read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
-                            : cluster === "write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
-                            : cluster === "execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
-                            : cluster === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
+                            capKey === "file_read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
+                            : capKey === "file_write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
+                            : capKey === "shell_execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
+                            : capKey === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
                             : "border-border bg-secondary/40 text-muted-foreground";
                           return (
-                            <span key={cluster} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
+                            <span key={capKey} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
                               {opt.label}
                             </span>
                           );

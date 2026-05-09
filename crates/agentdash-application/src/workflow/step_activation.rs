@@ -29,7 +29,8 @@ use uuid::Uuid;
 
 use crate::capability::{
     AgentMcpServerEntry, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
-    CompanionSliceMode, SessionWorkflowContext,
+    CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
+    McpCandidates, ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
@@ -55,13 +56,11 @@ pub struct StepActivationInput<'a> {
     pub lifecycle_key: &'a str,
     /// lifecycle 全部 edges,kickoff prompt 生成前驱 port 引用时用。
     pub edges: &'a [LifecycleEdge],
-    /// agent config 中显式声明的 capability key 列表(非 workflow 路径才生效)。
-    pub agent_declared_capabilities: Option<Vec<String>>,
     /// agent config 内联 MCP server(向前兼容 `mcp:<name>` 解析)。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
     /// project 级 MCP Preset 预展开字典。
     pub available_presets: AvailableMcpPresets,
-    /// Companion 子 session 的 slice 裁剪模式。
+    /// Companion 子 session 的 slice 裁剪模式（resolve 后应用，不混入 resolver 输入）。
     pub companion_slice_mode: Option<CompanionSliceMode>,
     /// capability baseline 覆盖:PhaseNode 热更新时传入当前 hook runtime 的能力指令序列,
     /// 会取代 `workflow.contract.capability_config.tool_directives`。
@@ -139,30 +138,38 @@ pub fn activate_step_with_platform(
     combined_directives.extend(input.tool_directives.iter().cloned());
 
     let has_active_workflow = input.workflow.is_some();
-    let workflow_ctx = if has_active_workflow {
-        SessionWorkflowContext {
-            has_active_workflow: true,
-            workflow_tool_directives: Some(combined_directives),
-        }
-    } else {
-        SessionWorkflowContext::NONE
-    };
 
     // ── 2. 调 Resolver ──
+    let mut contributions = Vec::new();
+    contributions.push(ContextContributions {
+        source: ContextContributionSource::Workflow,
+        tool: Some(ToolContribution {
+            directives: combined_directives,
+            has_active_workflow,
+        }),
+        companion: if !input.available_companions.is_empty() {
+            Some(CompanionContribution {
+                available: input.available_companions.clone(),
+            })
+        } else {
+            None
+        },
+    });
     let cap_input = CapabilityResolverInput {
         owner_ctx: input.owner_ctx,
-        agent_declared_capabilities: input.agent_declared_capabilities.clone(),
-        workflow_ctx,
-        agent_mcp_servers: input.agent_mcp_servers.clone(),
-        available_presets: input.available_presets.clone(),
-        companion_slice_mode: input.companion_slice_mode,
-        available_companions: input.available_companions.clone(),
+        contributions,
+        mcp_candidates: McpCandidates {
+            presets: input.available_presets.clone(),
+            agent_servers: input.agent_mcp_servers.clone(),
+        },
     };
-    let cap_output = CapabilityResolver::resolve(&cap_input, platform);
+    let mut cap_output = CapabilityResolver::resolve(&cap_input, platform);
+    if let Some(slice_mode) = input.companion_slice_mode {
+        cap_output = CapabilityResolver::apply_companion_slice(cap_output, slice_mode);
+    }
 
     // ── 3. 汇总 MCP server 列表(platform + custom),去重 ──
-    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.tool.mcp_servers.clone();
+    let mut mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
     dedupe_session_mcp_servers(&mut mcp_servers);
 
     let capability_keys = cap_output.capability_keys();
@@ -504,7 +511,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "trellis_dev_task",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -540,7 +546,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_admin",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -573,7 +578,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -612,7 +616,6 @@ mod tests {
             run_id,
             lifecycle_key: "lc_phase",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -668,7 +671,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -730,7 +732,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -775,7 +776,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
             edges: &[],
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -831,7 +831,6 @@ mod tests {
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
             edges: &edges,
-            agent_declared_capabilities: None,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,

@@ -158,7 +158,7 @@ pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgent
             mount
                 .metadata
                 .get("agentdash_context_owner_kind")
-                .map_or(true, |kind| kind != "project")
+                .is_none_or(|kind| kind != "project")
         });
     } else {
         let allowed: BTreeSet<&str> = link
@@ -170,7 +170,7 @@ pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgent
             let is_project_container = mount
                 .metadata
                 .get("agentdash_context_owner_kind")
-                .map_or(false, |kind| kind == "project");
+                .is_some_and(|kind| kind == "project");
             if !is_project_container {
                 return true;
             }
@@ -179,7 +179,7 @@ pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgent
                 .metadata
                 .get(CONTEXT_CONTAINER_ID_METADATA_KEY)
                 .and_then(|v| v.as_str())
-                .map_or(false, |cid| allowed.contains(cid))
+                .is_some_and(|cid| allowed.contains(cid))
         });
     }
 }
@@ -405,8 +405,9 @@ pub fn parse_inline_mount_owner(
                 mount.id, CONTEXT_OWNER_KIND_METADATA_KEY
             )
         })?;
-    let owner_kind = InlineFileOwnerKind::from_str(owner_kind_str)
-        .ok_or_else(|| format!("mount {} 的 owner_kind 无效: {}", mount.id, owner_kind_str))?;
+    let owner_kind = owner_kind_str
+        .parse::<InlineFileOwnerKind>()
+        .map_err(|_| format!("mount {} 的 owner_kind 无效: {}", mount.id, owner_kind_str))?;
     let owner_id_str = mount
         .metadata
         .get(CONTEXT_OWNER_ID_METADATA_KEY)

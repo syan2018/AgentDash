@@ -510,7 +510,7 @@ pub(crate) async fn build_story_session_context_response(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     }
     // ── 解析 Story session 的 workflow 上下文 ──
-    let workflow_ctx = agentdash_application::capability::resolve_session_workflow_context(
+    let workflow_tool = agentdash_application::capability::resolve_session_workflow_context(
         agentdash_application::capability::SessionWorkflowRepos {
             agent_link: state.repos.agent_link_repo.as_ref(),
             lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
@@ -523,18 +523,25 @@ pub(crate) async fn build_story_session_context_response(
     .await;
 
     // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
+    let mut contributions = Vec::new();
+    if let Some(wf_tool) = workflow_tool {
+        contributions.push(agentdash_application::capability::ContextContributions {
+            source: agentdash_application::capability::ContextContributionSource::Workflow,
+            tool: Some(wf_tool),
+            companion: None,
+        });
+    }
     let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
         &agentdash_application::capability::CapabilityResolverInput {
             owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Story {
                 project_id: story.project_id,
                 story_id: story.id,
             },
-            agent_declared_capabilities: None,
-            workflow_ctx,
-            agent_mcp_servers: vec![],
-            available_presets: load_story_project_presets(&state, story.project_id).await,
-            companion_slice_mode: None,
-            available_companions: Vec::new(),
+            contributions,
+            mcp_candidates: agentdash_application::capability::McpCandidates {
+                presets: load_story_project_presets(state, story.project_id).await,
+                agent_servers: vec![],
+            },
         },
         &state.config.platform_config,
     );

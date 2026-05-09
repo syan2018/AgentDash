@@ -223,7 +223,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
 
     if incoming_event_seq >= current_event_seq {
-        current.last_execution_status = incoming.last_execution_status.clone();
+        current.last_execution_status = incoming.last_execution_status;
         current.last_turn_id = incoming.last_turn_id.clone();
         current.last_terminal_message = incoming.last_terminal_message.clone();
     }

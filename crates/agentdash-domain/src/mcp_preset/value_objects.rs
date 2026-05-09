@@ -49,21 +49,16 @@ impl McpTransportConfig {
 }
 
 /// 应用层路由策略——不属于 transport 连接定义。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpRoutePolicy {
     /// 按 transport 默认策略决定：stdio 走 relay，http/sse 走直连。
+    #[default]
     Auto,
     /// 强制通过本机 relay 路径访问。
     Relay,
     /// 强制直连。
     Direct,
-}
-
-impl Default for McpRoutePolicy {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl McpRoutePolicy {

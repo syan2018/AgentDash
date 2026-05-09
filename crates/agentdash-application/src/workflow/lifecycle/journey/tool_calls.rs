@@ -363,9 +363,9 @@ fn tool_snapshot_from_item(item: &codex::ThreadItem) -> Option<ToolSnapshot> {
 fn dynamic_content_items_text(items: &[codex::DynamicToolCallOutputContentItem]) -> String {
     items
         .iter()
-        .filter_map(|item| match item {
-            codex::DynamicToolCallOutputContentItem::InputText { text } => Some(text.as_str()),
-            codex::DynamicToolCallOutputContentItem::InputImage { .. } => Some("[image output]"),
+        .map(|item| match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => text.as_str(),
+            codex::DynamicToolCallOutputContentItem::InputImage { .. } => "[image output]",
         })
         .collect::<Vec<_>>()
         .join("\n")

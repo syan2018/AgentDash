@@ -68,14 +68,18 @@ impl InlineFileOwnerKind {
             Self::ProjectAgentLink => "project_agent_link",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for InlineFileOwnerKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "project" => Some(Self::Project),
-            "story" => Some(Self::Story),
-            "lifecycle_run" => Some(Self::LifecycleRun),
-            "project_agent_link" => Some(Self::ProjectAgentLink),
-            _ => None,
+            "project" => Ok(Self::Project),
+            "story" => Ok(Self::Story),
+            "lifecycle_run" => Ok(Self::LifecycleRun),
+            "project_agent_link" => Ok(Self::ProjectAgentLink),
+            _ => Err(()),
         }
     }
 }

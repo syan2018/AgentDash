@@ -12,7 +12,7 @@ pub struct LocalBackendConfigFile {
     pub workspace_contract: WorkspaceContractRuntimeConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct WorkspaceContractRuntimeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -24,18 +24,7 @@ pub struct WorkspaceContractRuntimeConfig {
     pub p4: P4WorkspaceRuntimeConfig,
 }
 
-impl Default for WorkspaceContractRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            prepare_on_first_prompt: false,
-            git: Default::default(),
-            p4: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct GitWorkspaceRuntimeConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -47,32 +36,12 @@ pub struct GitWorkspaceRuntimeConfig {
     pub default_remote: Option<String>,
 }
 
-impl Default for GitWorkspaceRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            allow_branch_sync: false,
-            allow_commit_reset: false,
-            default_remote: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct P4WorkspaceRuntimeConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub force_sync: bool,
-}
-
-impl Default for P4WorkspaceRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            force_sync: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

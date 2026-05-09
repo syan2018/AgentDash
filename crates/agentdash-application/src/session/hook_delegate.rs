@@ -183,7 +183,7 @@ impl HookRuntimeDelegate {
             .hook_session
             .evaluate(HookEvaluationQuery {
                 session_id: self.hook_session.session_id().to_string(),
-                trigger: trigger.clone(),
+                trigger,
                 turn_id: None,
                 tool_name,
                 tool_call_id,
@@ -205,7 +205,7 @@ impl HookRuntimeDelegate {
                 .await
                 .map_err(map_runtime_error)?;
         }
-        self.emit_runtime_hook_injections(trigger.clone(), &resolution.injections)
+        self.emit_runtime_hook_injections(trigger, &resolution.injections)
             .await;
 
         Ok(EvaluatedResolution {

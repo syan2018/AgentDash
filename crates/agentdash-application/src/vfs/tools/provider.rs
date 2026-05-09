@@ -94,25 +94,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
         let identity = context.session.identity.clone();
 
-        // 合并 session-type 默认簇 与 agent 级 tool_clusters 限制（交集）
-        let session_clusters = &context.turn.capability_state.tool.tool_clusters;
-        let effective_clusters = if let Some(ref agent_clusters) =
-            context.session.executor_config.tool_clusters
-        {
-            let agent_set: std::collections::BTreeSet<ToolCluster> = agent_clusters
-                .iter()
-                .filter_map(|s| {
-                    serde_json::from_value::<ToolCluster>(serde_json::Value::String(s.clone())).ok()
-                })
-                .collect();
-            session_clusters
-                .intersection(&agent_set)
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>()
-        } else {
-            session_clusters.clone()
-        };
-        let clusters = &effective_clusters;
+        let clusters = &context.turn.capability_state.tool.enabled_clusters;
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
         let session_hub = self.session_hub_handle.get().await;

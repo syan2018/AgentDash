@@ -1081,11 +1081,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 md,
             )
         });
-        return Ok(apply_plain_lifecycle_request(
+        return apply_plain_lifecycle_request(
             req,
             continuation_bundle,
             HookSnapshotReloadTrigger::None,
-        )?);
+        );
     }
 
     Ok(req)
@@ -1198,10 +1198,10 @@ async fn build_story_owner_prompt_request(
             executor_config: effective_executor_config,
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp::default(),
+            agent_tool_directives: Vec::new(),
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            agent_declared_capabilities: None,
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),
@@ -1237,17 +1237,12 @@ async fn build_project_owner_prompt_request(
 
     let effective_executor_config = match req.user_input.executor_config.clone() {
         Some(mut user_ec) => {
-            // 前端传入的 executor_config 可能只包含 model 选择等字段，
-            // 需要从 preset 补全 agent 级配置（system_prompt, tool_clusters 等）
             let preset_ec = &project_agent.executor_config;
             if user_ec.system_prompt.is_none() {
                 user_ec.system_prompt = preset_ec.system_prompt.clone();
             }
             if user_ec.system_prompt_mode.is_none() {
                 user_ec.system_prompt_mode = preset_ec.system_prompt_mode;
-            }
-            if user_ec.tool_clusters.is_none() {
-                user_ec.tool_clusters = preset_ec.tool_clusters.clone();
             }
             user_ec
         }
@@ -1261,10 +1256,14 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let agent_id = uuid::Uuid::parse_str(agent_key).ok();
-    let agent_declared_capabilities = effective_executor_config.tool_clusters.as_ref().cloned();
     let agent_display_name = project_agent.display_name.clone();
     let preset_name = project_agent.preset_name.clone();
     let preset_mcp_servers = project_agent.preset_mcp_servers.clone();
+    let agent_tool_directives = project_agent
+        .preset_config
+        .capability_directives
+        .clone()
+        .unwrap_or_default();
 
     let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
     let lifecycle = resolve_continuation_system_context(state, session_id, lifecycle).await?;
@@ -1291,10 +1290,10 @@ async fn build_project_owner_prompt_request(
             executor_config: effective_executor_config,
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp { preset_mcp_servers },
+            agent_tool_directives,
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            agent_declared_capabilities,
             active_workflow,
             lifecycle,
             audit_session_key: Some(session_id.to_string()),

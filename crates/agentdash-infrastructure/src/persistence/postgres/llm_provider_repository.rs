@@ -72,7 +72,7 @@ impl TryFrom<LlmProviderRow> for LlmProvider {
     type Error = DomainError;
 
     fn try_from(row: LlmProviderRow) -> Result<Self, Self::Error> {
-        let protocol = WireProtocol::from_str(&row.protocol).ok_or_else(|| {
+        let protocol = row.protocol.parse::<WireProtocol>().map_err(|_| {
             DomainError::InvalidConfig(format!(
                 "llm_providers.protocol: 未知协议 '{}'",
                 row.protocol

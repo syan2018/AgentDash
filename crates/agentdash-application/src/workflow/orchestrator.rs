@@ -563,7 +563,6 @@ impl LifecycleOrchestrator {
                     run_id: run.id,
                     lifecycle_key: &phase.lifecycle_key,
                     edges: &phase.lifecycle_edges,
-                    agent_declared_capabilities: None,
                     agent_mcp_servers,
                     available_presets: available_presets.clone(),
                     companion_slice_mode: None,
@@ -638,7 +637,6 @@ impl LifecycleOrchestrator {
                     run_id: run.id,
                     lifecycle_key: &phase.lifecycle_key,
                     edges: &phase.lifecycle_edges,
-                    agent_declared_capabilities: None,
                     agent_mcp_servers,
                     available_presets: available_presets.clone(),
                     companion_slice_mode: None,
@@ -858,9 +856,7 @@ impl LifecycleOrchestrator {
         step_def: &LifecycleStepDefinition,
         project_id: Uuid,
     ) -> Option<WorkflowDefinition> {
-        let Some(workflow_key) = step_def.effective_workflow_key() else {
-            return None;
-        };
+        let workflow_key = step_def.effective_workflow_key()?;
         match self
             .repos
             .workflow_definition_repo

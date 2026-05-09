@@ -646,7 +646,7 @@ impl SessionHub {
         let turn_id = resolved
             .as_ref()
             .map(|result| result.turn_id.as_str())
-            .or_else(|| fallback_turn_id.as_deref());
+            .or(fallback_turn_id.as_deref());
 
         let request_type = resolved
             .as_ref()

@@ -234,9 +234,7 @@ impl SessionHub {
             state
         };
         // 最终 capability state: 若有 pending transition 则使用其状态（补全 MCP/VFS）
-        let capability_state = if let Some(pending_state) =
-            pending_capability_state.as_ref()
-        {
+        let capability_state = if let Some(pending_state) = pending_capability_state.as_ref() {
             let mut state = pending_state.clone();
             state.tool.mcp_servers = mcp_servers.clone();
             state.vfs.active = Some(effective_vfs.clone());
@@ -307,12 +305,12 @@ impl SessionHub {
                 runtime.session_profile = Some(super::hub_support::SessionProfile {
                     capability_state: capability_state.clone(),
                 });
-                runtime.turn_state = TurnState::Active(TurnExecution::new(
+                runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
                     turn_id.clone(),
                     context.session.clone(),
                     capability_state.clone(),
                     context.turn.context_bundle.clone(),
-                ));
+                )));
             }
         }
 
@@ -511,8 +509,9 @@ impl SessionHub {
             while let Some(next) = stream.next().await {
                 match next {
                     Ok(notification) => {
-                        let _ = processor_tx
-                            .send(super::turn_processor::TurnEvent::Notification(notification));
+                        let _ = processor_tx.send(super::turn_processor::TurnEvent::Notification(
+                            Box::new(notification),
+                        ));
                     }
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);

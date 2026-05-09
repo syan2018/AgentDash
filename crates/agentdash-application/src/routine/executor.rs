@@ -6,6 +6,7 @@ use uuid::Uuid;
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
 
@@ -48,6 +49,7 @@ struct RoutineAgentContext {
     project: Project,
     workspace: Option<Workspace>,
     executor_config: AgentConfig,
+    agent_tool_directives: Vec<ToolCapabilityDirective>,
     display_name: String,
     preset_name: Option<String>,
     preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -244,19 +246,25 @@ impl RoutineExecutor {
                 )
             })?;
 
-        let merged_config = link.merged_config(&agent.base_config);
-        let executor_config = build_agent_config_from_merged(&agent.agent_type, &merged_config);
-        let display_name = merged_config
-            .get("display_name")
-            .and_then(|v| v.as_str())
+        let preset_config = link
+            .merged_preset_config(&agent)
+            .map_err(|error| error.to_string())?;
+        let executor_config = preset_config.to_agent_config(&agent.agent_type);
+        let agent_tool_directives = preset_config
+            .capability_directives
+            .clone()
+            .unwrap_or_default();
+        let display_name = preset_config
+            .display_name
+            .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or(agent.name.as_str())
             .to_string();
-        let preset_mcp_servers = crate::mcp_preset::resolve_config_mcp_preset_refs(
+        let preset_mcp_servers = crate::mcp_preset::resolve_preset_mcp_refs(
             self.repos.mcp_preset_repo.as_ref(),
             project.id,
-            &merged_config,
+            preset_config.mcp_preset_keys.as_deref().unwrap_or_default(),
         )
         .await
         .map_err(|err| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {err}", agent.id))?;
@@ -265,6 +273,7 @@ impl RoutineExecutor {
             project,
             workspace,
             executor_config,
+            agent_tool_directives,
             display_name,
             preset_name: Some(agent.name.clone()),
             preset_mcp_servers,
@@ -481,12 +490,6 @@ impl RoutineExecutor {
             assembler = assembler.with_audit_bus(bus.clone());
         }
 
-        let agent_declared_capabilities = agent_context
-            .executor_config
-            .tool_clusters
-            .as_ref()
-            .cloned();
-
         let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
         let mut prepared = assembler
             .compose_owner_bootstrap(OwnerBootstrapSpec {
@@ -502,10 +505,10 @@ impl RoutineExecutor {
                 agent_mcp: AgentLevelMcp {
                     preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
                 },
+                agent_tool_directives: agent_context.agent_tool_directives.clone(),
                 request_mcp_servers: Vec::new(),
                 existing_vfs: None,
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
-                agent_declared_capabilities,
                 active_workflow: None,
                 lifecycle,
                 audit_session_key: Some(session_id.to_string()),
@@ -536,50 +539,6 @@ async fn resolve_project_workspace(
             .map_err(|e| format!("查询默认 Workspace 失败: {e}")),
         None => Ok(None),
     }
-}
-
-fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
-    let mut executor_config = AgentConfig::new(agent_type.to_string());
-    if let Some(value) = config.get("provider_id").and_then(|v| v.as_str()) {
-        executor_config.provider_id = Some(value.to_string());
-    }
-    if let Some(value) = config.get("model_id").and_then(|v| v.as_str()) {
-        executor_config.model_id = Some(value.to_string());
-    }
-    if let Some(value) = config.get("agent_id").and_then(|v| v.as_str()) {
-        executor_config.agent_id = Some(value.to_string());
-    }
-    if let Some(value) = config.get("permission_policy").and_then(|v| v.as_str()) {
-        executor_config.permission_policy = Some(value.to_string());
-    }
-    if let Some(value) = config
-        .get("thinking_level")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::ThinkingLevel>(v.clone()).ok())
-    {
-        executor_config.thinking_level = Some(value);
-    }
-    if let Some(arr) = config.get("tool_clusters").and_then(|v| v.as_array()) {
-        let clusters = arr
-            .iter()
-            .filter_map(|value| value.as_str().map(String::from))
-            .collect::<Vec<_>>();
-        if !clusters.is_empty() {
-            executor_config.tool_clusters = Some(clusters);
-        }
-    }
-    if let Some(value) = config.get("system_prompt").and_then(|v| v.as_str()) {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            executor_config.system_prompt = Some(trimmed.to_string());
-        }
-    }
-    if let Some(value) = config
-        .get("system_prompt_mode")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::SystemPromptMode>(v.clone()).ok())
-    {
-        executor_config.system_prompt_mode = Some(value);
-    }
-    executor_config
 }
 
 fn project_agent_session_label(agent_id: Uuid) -> String {

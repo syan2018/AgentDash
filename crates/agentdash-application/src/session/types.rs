@@ -108,21 +108,16 @@ pub enum TitleSource {
     User,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionBootstrapState {
     /// 普通 session，不需要 owner 首轮 bootstrap。
+    #[default]
     Plain,
     /// 已绑定 owner，但首轮上下文还未正式注入 session 历史。
     Pending,
     /// owner 首轮 bootstrap 已完成；后续仅允许正常续跑或冷启动 rehydrate。
     Bootstrapped,
-}
-
-impl Default for SessionBootstrapState {
-    fn default() -> Self {
-        Self::Plain
-    }
 }
 
 /// Session 恢复时的上下文重建策略。

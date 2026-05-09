@@ -30,10 +30,7 @@ impl SseParser {
         self.buffer.push_str(chunk);
         let mut events = Vec::new();
 
-        loop {
-            let Some(line_end) = self.find_line_end() else {
-                break;
-            };
+        while let Some(line_end) = self.find_line_end() {
             let line = self.buffer[..line_end].trim_end_matches('\r').to_string();
             let skip = if self.buffer.as_bytes().get(line_end) == Some(&b'\r')
                 && self.buffer.as_bytes().get(line_end + 1) == Some(&b'\n')

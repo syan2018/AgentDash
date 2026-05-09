@@ -202,22 +202,17 @@ pub enum MountDirective {
 ///
 /// Lifecycle 内运行时由 edge wire 自动满足；standalone（如主 agent 给子 agent
 /// 分配 workflow）时由此字段指示调用方如何提供输入。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StandaloneFulfillment {
     /// 调用方必须在启动前通过 `lifecycle://artifacts/{key}` 写入
+    #[default]
     Required,
     /// 可选输入，未提供时使用 default_value
     Optional {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_value: Option<String>,
     },
-}
-
-impl Default for StandaloneFulfillment {
-    fn default() -> Self {
-        Self::Required
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -399,51 +394,36 @@ pub enum WorkflowSessionTerminalState {
 }
 
 /// Lifecycle node 类型：Agent Node 创建独立 session，Phase Node 在前一个 session 内切换 contract
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleNodeType {
     /// 创建独立 agent session 执行工作
+    #[default]
     AgentNode,
     /// 不创建新 session，在前一个 session 内切换 workflow contract
     PhaseNode,
 }
 
-impl Default for LifecycleNodeType {
-    fn default() -> Self {
-        Self::AgentNode
-    }
-}
-
 /// 门禁策略：定义 output port 交付检查的严格程度。
 /// 实际检查逻辑由对应的 Rhai Hook Preset 实现。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GateStrategy {
+    #[default]
     Existence,
     Schema,
     LlmJudge,
 }
 
-impl Default for GateStrategy {
-    fn default() -> Self {
-        Self::Existence
-    }
-}
-
 /// Input port 上下文构建策略：控制前驱 output artifact 如何注入后继 session。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextStrategy {
+    #[default]
     Full,
     Summary,
     MetadataOnly,
     Custom,
-}
-
-impl Default for ContextStrategy {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

@@ -1011,8 +1011,10 @@ impl CompanionRequestTool {
         for link in &links {
             if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
                 if agent.name.eq_ignore_ascii_case(agent_name) {
-                    let merged = link.merged_config(&agent.base_config);
-                    return Ok(build_agent_config_from_merged(&agent.agent_type, &merged));
+                    let preset = link
+                        .merged_preset_config(&agent)
+                        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+                    return Ok(preset.to_agent_config(&agent.agent_type));
                 }
             }
         }
@@ -1666,7 +1668,7 @@ async fn evaluate_subagent_hook(
     let resolution = hook_session
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
-            trigger: trigger.clone(),
+            trigger,
             turn_id: turn_id.clone(),
             tool_name: None,
             tool_call_id: None,
@@ -2061,50 +2063,6 @@ pub fn build_companion_execution_slice(
             }
         }
     }
-}
-
-fn build_agent_config_from_merged(agent_type: &str, config: &serde_json::Value) -> AgentConfig {
-    let mut ec = AgentConfig::new(agent_type.to_string());
-    if let Some(v) = config.get("provider_id").and_then(|v| v.as_str()) {
-        ec.provider_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("model_id").and_then(|v| v.as_str()) {
-        ec.model_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("agent_id").and_then(|v| v.as_str()) {
-        ec.agent_id = Some(v.to_string());
-    }
-    if let Some(v) = config.get("permission_policy").and_then(|v| v.as_str()) {
-        ec.permission_policy = Some(v.to_string());
-    }
-    if let Some(v) = config
-        .get("thinking_level")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::ThinkingLevel>(v.clone()).ok())
-    {
-        ec.thinking_level = Some(v);
-    }
-    if let Some(arr) = config.get("tool_clusters").and_then(|v| v.as_array()) {
-        let clusters: Vec<String> = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-        if !clusters.is_empty() {
-            ec.tool_clusters = Some(clusters);
-        }
-    }
-    if let Some(v) = config.get("system_prompt").and_then(|v| v.as_str()) {
-        let trimmed = v.trim();
-        if !trimmed.is_empty() {
-            ec.system_prompt = Some(trimmed.to_string());
-        }
-    }
-    if let Some(v) = config
-        .get("system_prompt_mode")
-        .and_then(|v| serde_json::from_value::<agentdash_spi::SystemPromptMode>(v.clone()).ok())
-    {
-        ec.system_prompt_mode = Some(v);
-    }
-    ec
 }
 
 fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vfs {

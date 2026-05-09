@@ -804,7 +804,7 @@ fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<Extrac
                 raw_output: None,
                 content_parts,
                 is_terminal,
-                is_error: exit_code.map_or(false, |code| code != 0)
+                is_error: exit_code.is_some_and(|code| code != 0)
                     || matches!(status, codex::CommandExecutionStatus::Failed),
             })
         }

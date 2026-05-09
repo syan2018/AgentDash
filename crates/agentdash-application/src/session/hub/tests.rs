@@ -204,7 +204,10 @@ async fn start_prompt_records_current_turn_state() {
         workspace.path().join("src")
     );
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
-    assert_eq!(turn.capability_state.tool.tool_clusters, flow_caps.tool.tool_clusters);
+    assert_eq!(
+        turn.capability_state.tool.enabled_clusters,
+        flow_caps.tool.enabled_clusters
+    );
 }
 
 #[tokio::test]
@@ -436,7 +439,7 @@ impl AgentConnector for CapturingConnector {
                 .iter()
                 .map(|server| server.name.clone())
                 .collect(),
-            tool_clusters: context.turn.capability_state.tool.tool_clusters.clone(),
+            tool_clusters: context.turn.capability_state.tool.enabled_clusters.clone(),
             mount_ids: vfs
                 .as_ref()
                 .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
@@ -879,7 +882,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         let runtime = sessions
             .get_mut(&session.id)
             .expect("session runtime should exist");
-        runtime.turn_state = TurnState::Active(TurnExecution::new(
+        runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
             "turn-cap".to_string(),
             ExecutionSessionFrame {
                 turn_id: "turn-cap".to_string(),
@@ -895,7 +898,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
                 bundle_session_uuid,
                 "runtime_context_update_test",
             )),
-        ));
+        )));
     }
 
     let hook_session = hub

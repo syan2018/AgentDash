@@ -19,8 +19,7 @@ pub fn query_tool_catalog(capability_keys: &[String]) -> Vec<ToolDescriptor> {
         if is_known_key(key) {
             let tools = tool_capability::platform_tools_for_capability(key);
             result.extend(tools);
-        } else if key.starts_with("mcp:") {
-            let server_name = &key[4..];
+        } else if let Some(server_name) = key.strip_prefix("mcp:") {
             result.push(ToolDescriptor {
                 name: format!("mcp:{server_name}"),
                 display_name: format!("MCP: {server_name}"),

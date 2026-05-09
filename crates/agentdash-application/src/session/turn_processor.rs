@@ -18,7 +18,7 @@ use super::post_turn_handler::DynPostTurnHandler;
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
     /// 一条 BackboneEnvelope（来自 connector stream 或 relay 注入）。
-    Notification(BackboneEnvelope),
+    Notification(Box<BackboneEnvelope>),
     /// Turn 已结束（来自 connector stream 关闭或 relay event.session_state_changed）。
     Terminal {
         kind: TurnTerminalKind,

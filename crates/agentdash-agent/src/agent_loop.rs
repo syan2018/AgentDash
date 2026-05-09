@@ -92,6 +92,7 @@ pub type AgentEventSink =
 // ─── AgentLoopConfig ────────────────────────────────────────
 
 /// Agent Loop 配置 — 对齐 Pi `AgentLoopConfig`
+#[derive(Default)]
 pub struct AgentLoopConfig {
     /// 上下文变换管线（每次 LLM 调用前执行）
     /// 对齐 Pi `transformContext`：用于上下文裁剪、外部信息注入等。
@@ -123,22 +124,6 @@ pub struct AgentLoopConfig {
 
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
-}
-
-impl Default for AgentLoopConfig {
-    fn default() -> Self {
-        Self {
-            transform_context: None,
-            get_steering_messages: None,
-            get_follow_up_messages: None,
-            get_tools: None,
-            tool_execution: ToolExecutionMode::default(),
-            before_tool_call: None,
-            after_tool_call: None,
-            await_tool_approval: None,
-            runtime_delegate: None,
-        }
-    }
 }
 
 // ─── 入口函数 ───────────────────────────────────────────────

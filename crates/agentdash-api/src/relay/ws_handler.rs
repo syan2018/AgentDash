@@ -229,7 +229,7 @@ async fn handle_backend_connection(
             );
             state.services.backend_registry.feed_session_event(
                 &term_state.session_id,
-                RelaySessionEvent::Notification(envelope),
+                RelaySessionEvent::Notification(Box::new(envelope)),
             );
         }
     }
@@ -286,7 +286,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 Ok(envelope) => {
                     if !state.services.backend_registry.feed_session_event(
                         &payload.session_id,
-                        RelaySessionEvent::Notification(envelope),
+                        RelaySessionEvent::Notification(Box::new(envelope)),
                     ) {
                         tracing::debug!(
                             backend_id = %backend_id,

@@ -610,7 +610,7 @@ pub struct CapabilityVisibilityRule {
     pub auto_granted: bool,
     /// agent config 显式声明即授予
     pub agent_can_grant: bool,
-    /// 当前 session 绑定的 workflow 声明即授予
+    /// 当前 workflow 声明即授予
     pub workflow_can_grant: bool,
 }
 
@@ -700,12 +700,12 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
 /// 2. 未登记的 well-known key 不可见。
 /// 3. 屏蔽（AND）：`owner_type` 不在 `allowed_owner_types` 列表内 → 不可见。
 /// 4. 授予（OR）：`auto_granted` 或（`agent_can_grant && agent_declares`）或
-///    （`workflow_can_grant && has_active_workflow`）任一为真即可见。
+///    （`workflow_can_grant && workflow_declares`）任一为真即可见。
 pub fn is_capability_visible(
     cap: &ToolCapability,
     owner_type: SessionOwnerType,
     agent_declares: bool,
-    has_active_workflow: bool,
+    workflow_declares: bool,
 ) -> bool {
     if cap.is_custom_mcp() {
         return true;
@@ -723,7 +723,7 @@ pub fn is_capability_visible(
 
     rule.auto_granted
         || (rule.agent_can_grant && agent_declares)
-        || (rule.workflow_can_grant && has_active_workflow)
+        || (rule.workflow_can_grant && workflow_declares)
 }
 
 #[cfg(test)]
@@ -848,7 +848,7 @@ mod tests {
     }
 
     #[test]
-    fn visibility_workflow_requires_active_workflow() {
+    fn visibility_workflow_requires_workflow_declaration() {
         let cap = ToolCapability::new(CAP_WORKFLOW);
         assert!(!is_capability_visible(
             &cap,
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn visibility_workflow_management_workflow_grant_path() {
-        // OR 语义：workflow 激活即可授予 workflow_management，
+        // OR 语义：workflow contract 显式声明即可授予 workflow_management，
         // 无需 agent config 显式声明，匹配 builtin_workflow_admin 使用场景。
         let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
         assert!(is_capability_visible(

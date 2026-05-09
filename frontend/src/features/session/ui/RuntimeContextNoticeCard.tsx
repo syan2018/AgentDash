@@ -14,6 +14,7 @@ import {
   type RuntimeHookInjectionEntry,
   type RuntimeToolSchemaEntry,
   type SystemNoticeSection,
+  type ToolSchemaDeltaSection,
   type ToolSchemaSection,
 } from "../model/runtimeContextNotice";
 import { isRecord } from "../model/platformEvent";
@@ -43,11 +44,11 @@ export function RuntimeContextNoticeCard({ data }: RuntimeContextNoticeCardProps
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-secondary/35"
       >
-        <span className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE.primary}`}>
-          STEER
+        <span className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE.neutral}`}>
+          CTX
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-foreground/80">
-          Agent 行为上下文已更新
+          Agent 上下文已更新
         </span>
         {summary.length > 0 && (
           <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground/60 md:block">
@@ -114,6 +115,8 @@ function renderSectionBody(section: RuntimeContextNoticeSection) {
       return <CapabilityDeltaBody section={section} />;
     case "tool_schema":
       return <ToolSchemaBody section={section} />;
+    case "tool_schema_delta":
+      return <ToolSchemaDeltaBody section={section} />;
     case "workflow_context":
     case "hook_injection":
       return <InjectionBody title={section.title} summary={section.summary} injections={section.injections} />;
@@ -165,6 +168,30 @@ function ToolSchemaBody({ section }: { section: ToolSchemaSection }) {
   );
 }
 
+function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
+  const rows: Array<[string, string[]]> = [
+    ["恢复工具", section.restored_tool_paths],
+    ["屏蔽工具", section.blocked_tool_paths],
+    ["移除工具", section.removed_tool_paths],
+  ];
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1.5">
+        {rows.map(([label, values]) =>
+          values.length > 0 ? <ListLine key={label} label={label} values={values} /> : null
+        )}
+      </div>
+      {section.added_tools.length > 0 && (
+        <div className="space-y-2">
+          {section.added_tools.map((tool) => (
+            <ToolSchemaItem key={tool.name} tool={tool} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
   const [open, setOpen] = useState(false);
   const fieldNames = schemaFieldNames(tool.parameters_schema);
@@ -184,6 +211,7 @@ function ToolSchemaItem({ tool }: { tool: RuntimeToolSchemaEntry }) {
             <span className="mt-1 flex flex-wrap gap-1">
               {tool.capability_key && <Chip label={tool.capability_key} />}
               {tool.source && <Chip label={tool.source} />}
+              {tool.tool_path && <Chip label={tool.tool_path} />}
             </span>
           )}
         </span>
@@ -287,7 +315,8 @@ function ListLine({ label, values }: { label: string; values: string[] }) {
 function sectionTitle(section: RuntimeContextNoticeSection): string {
   switch (section.kind) {
     case "capability_delta": return "能力与工具变化";
-    case "tool_schema": return "当前工具 Schema";
+    case "tool_schema": return "初始工具 Schema";
+    case "tool_schema_delta": return "工具 Schema 变化";
     case "workflow_context": return section.title || "Workflow Context";
     case "hook_injection": return section.title || "Hook Injection";
     case "system_notice": return section.title || "系统通知";
@@ -307,6 +336,14 @@ function sectionHint(section: RuntimeContextNoticeSection): string | null {
       return count > 0 ? `${count} 项变化` : "无变化";
     }
     case "tool_schema": return `${section.tools.length} 个工具`;
+    case "tool_schema_delta": {
+      const count =
+        section.added_tools.length +
+        section.removed_tool_paths.length +
+        section.restored_tool_paths.length +
+        section.blocked_tool_paths.length;
+      return count > 0 ? `${count} 项变化` : "无变化";
+    }
     case "workflow_context":
     case "hook_injection": return `${section.injections.length} 项注入`;
     case "system_notice": return null;

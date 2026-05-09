@@ -14,6 +14,7 @@ export interface RuntimeContextNotice {
 export type RuntimeContextNoticeSection =
   | CapabilityDeltaSection
   | ToolSchemaSection
+  | ToolSchemaDeltaSection
   | WorkflowContextSection
   | HookInjectionSection
   | SystemNoticeSection;
@@ -41,12 +42,21 @@ export interface ToolSchemaSection {
   tools: RuntimeToolSchemaEntry[];
 }
 
+export interface ToolSchemaDeltaSection {
+  kind: "tool_schema_delta";
+  added_tools: RuntimeToolSchemaEntry[];
+  removed_tool_paths: string[];
+  restored_tool_paths: string[];
+  blocked_tool_paths: string[];
+}
+
 export interface RuntimeToolSchemaEntry {
   name: string;
   description: string;
   parameters_schema: unknown;
   capability_key?: string;
   source?: string;
+  tool_path?: string;
 }
 
 export interface WorkflowContextSection {
@@ -126,6 +136,16 @@ function parseSection(value: unknown): RuntimeContextNoticeSection | null {
       tools: tools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
     };
   }
+  if (kind === "tool_schema_delta") {
+    const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
+    return {
+      kind,
+      added_tools: addedTools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
+      removed_tool_paths: readStringArray(value.removed_tool_paths),
+      restored_tool_paths: readStringArray(value.restored_tool_paths),
+      blocked_tool_paths: readStringArray(value.blocked_tool_paths),
+    };
+  }
   if (kind === "workflow_context" || kind === "hook_injection") {
     const title = readString(value.title) ?? (kind === "workflow_context" ? "Workflow Context" : "Hook Injection");
     const summary = readString(value.summary) ?? "";
@@ -159,6 +179,7 @@ function parseToolSchemaEntry(value: unknown): RuntimeToolSchemaEntry | null {
     parameters_schema: value.parameters_schema,
     capability_key: readString(value.capability_key) ?? undefined,
     source: readString(value.source) ?? undefined,
+    tool_path: readString(value.tool_path) ?? undefined,
   };
 }
 

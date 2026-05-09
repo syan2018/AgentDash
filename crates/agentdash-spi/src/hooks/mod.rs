@@ -274,6 +274,16 @@ pub enum RuntimeContextNoticeSection {
         #[serde(default)]
         tools: Vec<RuntimeToolSchemaEntry>,
     },
+    ToolSchemaDelta {
+        #[serde(default)]
+        added_tools: Vec<RuntimeToolSchemaEntry>,
+        #[serde(default)]
+        removed_tool_paths: Vec<String>,
+        #[serde(default)]
+        restored_tool_paths: Vec<String>,
+        #[serde(default)]
+        blocked_tool_paths: Vec<String>,
+    },
     WorkflowContext {
         title: String,
         summary: String,
@@ -304,6 +314,8 @@ pub struct RuntimeToolSchemaEntry {
     pub capability_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -31,7 +31,8 @@
 `sections` 支持：
 
 - `capability_delta`：capability added/removed/effective、tool path blocked/unblocked/whitelisted、MCP/VFS diff。
-- `tool_schema`：当前 provider request 生效的工具列表，含 name、description、parameters_schema、capability_key/source。
+- `tool_schema`：初始化 provider request 生效的工具列表，含 name、description、parameters_schema、capability_key/source/tool_path。
+- `tool_schema_delta`：runtime capability state delta 影响到的工具变化，只列出本次新增/恢复/屏蔽/移除的工具 path 与新增/恢复工具 schema。
 - `workflow_context`：active workflow step、guidance、context binding 摘要。
 - `hook_injection`：普通 hook 注入，保留 slot/source/content，但带 title/summary。
 - `system_notice`：turn-start system info queue / pending action 等系统级告知。
@@ -40,7 +41,7 @@
 
 1. 后端新增 runtime notice 类型与 renderer。
 2. `HookTurnStartNotice` 保留 `content`，新增 `runtime_context_notice` 可选字段；`content` 必须由 notice 渲染而来。
-3. runtime context transition 与 initial tool schema notice 都改为创建 `RuntimeContextNotice`，同时入队 turn-start notice。
+3. runtime context transition 与 initial tool schema notice 都改为创建 `RuntimeContextNotice`，同时入队 turn-start notice；运行时工具通知只发送 delta，不发送完整当前工具 schema。
 4. session 事件流新增 `SessionMetaUpdate { key: "runtime_context_notice", value }`。
 5. 前端新增 `RuntimeContextNoticeCard`，接入系统事件渲染。
 6. 原 `CTX 已注入动态上下文` 仅作为无结构化 frame 的 legacy/debug 展示。

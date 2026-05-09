@@ -180,8 +180,11 @@ const directives: CapabilityDirective[] = [
 展示，不导出 parser 或非组件工具，避免 React refresh lint 误判。
 
 - 字段名直接沿用后端 snake_case：`agent_visible_text`、`delivery_status`、
-  `capability_key`、`parameters_schema`。
+  `capability_key`、`parameters_schema`、`tool_path`。
 - 未识别 section kind 应被忽略，而不是回退成“已注入动态上下文”。
+- runtime 工具变化展示消费 `tool_schema_delta` section；主视图只展示本次 delta，
+  不展示完整当前工具 schema。完整 tool list 是 provider request 的执行层事实，
+  不是 runtime context notice 的主视图内容。
 - `hook_trace context_injected` 仅作为普通 hook 事件展示；runtime steering 可视化
   只能以 `runtime_context_notice` frame 为准。
 - `hook_trace` / `hook_event` 中只要 `injections` 非空，UI 必须直接展示每条

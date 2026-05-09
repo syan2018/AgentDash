@@ -15,7 +15,7 @@ use agentdash_spi::hooks::{
 use uuid::Uuid;
 
 use super::super::tool_schema_notice::{
-    ToolSchemaNoticeKind, build_tool_schema_notice, finalize_runtime_context_notice,
+    build_tool_schema_delta_section, finalize_runtime_context_notice,
 };
 use super::SessionHub;
 use crate::session::{
@@ -308,10 +308,10 @@ fn build_runtime_context_notice(
         effective_capabilities,
         state_delta,
     )];
-    if let Some(tool_notice) =
-        build_tool_schema_notice(ToolSchemaNoticeKind::RuntimeUpdate { phase_node }, tools)
+    if let Some(state_delta) = state_delta
+        && let Some(tool_schema_delta) = build_tool_schema_delta_section(tools, state_delta)
     {
-        sections.extend(tool_notice.sections);
+        sections.push(tool_schema_delta);
     }
     if let Some(injection_section) = build_runtime_injection_section(injections) {
         sections.push(injection_section);
@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn live_runtime_context_notice_includes_full_current_tool_schema() {
+    fn live_runtime_context_notice_includes_tool_schema_delta_only() {
         let input = LiveRuntimeContextTransitionInput {
             session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
@@ -493,7 +493,13 @@ mod tests {
             key_delta: CapabilityDelta::default(),
             apply_mode: "live",
         };
-        let state_delta = CapabilityStateDelta::default();
+        let state_delta = CapabilityStateDelta {
+            excluded_tool_paths: crate::session::SetDelta {
+                added: Vec::new(),
+                removed: vec!["workflow_management::upsert_workflow_tool".to_string()],
+            },
+            ..Default::default()
+        };
         let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
 
         let notice = build_live_runtime_context_notice(
@@ -507,16 +513,17 @@ mod tests {
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));
         assert_eq!(notice.apply_mode.as_deref(), Some("live"));
         assert!(
-            notice
-                .sections
-                .iter()
-                .any(|section| matches!(section, RuntimeContextNoticeSection::ToolSchema { .. }))
+            notice.sections.iter().any(|section| matches!(
+                section,
+                RuntimeContextNoticeSection::ToolSchemaDelta { .. }
+            ))
         );
         assert!(
             notice
                 .agent_visible_text
-                .contains("## Runtime Tool Schema — Step Transition: apply")
+                .contains("## Tool Schema Delta — Step Transition: apply")
         );
+        assert!(notice.agent_visible_text.contains("Restored tool paths"));
         assert!(
             notice
                 .agent_visible_text

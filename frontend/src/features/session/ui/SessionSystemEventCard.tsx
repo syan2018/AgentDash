@@ -91,7 +91,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_review_request:        "协作 Agent 提审",
   canvas_presented:                "Canvas 已展示",
   capability_state_changed:      "能力状态已更新",
-  runtime_context_notice:          "Agent 行为上下文",
+  runtime_context_notice:          "Agent 上下文",
   hook_event:                      "流程事件",
   hook_trace:                      "流程事件",
 };
@@ -116,7 +116,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_review_request:        "协作 Agent 请求审阅",
   canvas_presented:                "已请求打开 Canvas 面板",
   capability_state_changed:      "当前会话的工具与上下文能力状态已更新",
-  runtime_context_notice:          "Agent 行为上下文已更新",
+  runtime_context_notice:          "Agent 上下文已更新",
   hook_event:                      "流程产生新事件",
   hook_trace:                      "流程产生新事件",
 };
@@ -418,7 +418,7 @@ function resolveDecisionToken(decision: string | null | undefined): string {
     case "baseline_initialized":
     case "baseline_refreshed": return "BASE";
     case "context_injected":  return "CTX";
-    case "steering_injected": return "STEER";
+    case "steering_injected": return "CTX";
     case "step_advanced":     return "STEP";
     case "continue":          return "HOLD";
     case "deny":              return "DENY";

@@ -243,3 +243,36 @@ started: 2026-04-30
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: ContextFrame 卡片重构：双层 shell + WYSIWYG 单列
+
+**Date**: 2026-05-09
+**Task**: ContextFrame 卡片重构：双层 shell + WYSIWYG 单列
+**Branch**: `main`
+
+### Summary
+
+Review GPT 实现的 ContextFrame 卡片信息架构后开任务落地方案 B。Brainstorm 收敛 5 个决策（严格 badge-only / 双层 shell / 单列 WYSIWYG / Agent 原文默认折叠 / max-h 限高），dispatch trellis-implement 完成 3 文件新增 + 5 文件改造（净 -446 行），trellis-check 13 项硬约束 0 违规通过，pnpm lint/typecheck/88 tests 全绿。Agent 原文从第 3 层折叠提到 ≤2 次点击可达；section 渲染严格按 frame.sections[] 原顺序。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ed736414` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

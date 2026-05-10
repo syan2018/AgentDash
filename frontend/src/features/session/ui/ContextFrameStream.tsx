@@ -132,13 +132,13 @@ function summarizeFrames(frames: ContextFrame[]): string {
 }
 
 const FRAME_KIND_LABELS: Record<string, string> = {
-  identity: "身份与偏好",
-  assignment_context: "任务分派",
-  capability_state_update: "能力状态",
-  continuation_context: "会话续跑",
-  pending_action: "待执行动作",
-  auto_resume: "自动续跑",
-  compaction_summary: "上下文压缩",
+  identity: "IDENTITY",
+  assignment_context: "ASSIGNMENT",
+  capability_state_update: "CAPABILITY",
+  continuation_context: "CONTINUATION",
+  pending_action: "ACTION",
+  auto_resume: "RESUME",
+  compaction_summary: "COMPACTION",
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {

@@ -52,7 +52,7 @@ describe("AcpSystemEventCard", () => {
     const html = renderToStaticMarkup(<AcpSystemEventCard event={event} />);
 
     expect(html).toContain("CTX");
-    expect(html).toContain("能力状态");
+    expect(html).toContain("CAPABILITY");
   });
 
   it("有 injections 的 context_injected 应展示注入卡片", () => {

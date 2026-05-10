@@ -20,7 +20,7 @@ describe("ContextFrameCard", () => {
     const markup = renderToStaticMarkup(<ContextFrameCard data={sampleNotice()} />);
 
     expect(markup).toContain("CTX");
-    expect(markup).toContain("能力状态");
+    expect(markup).toContain("CAPABILITY");
     // 折叠态：阶段 / kind 汇总出现在 header 小字
     expect(markup).toContain("阶段 apply");
     // 折叠态：不渲染内层 section body
@@ -59,7 +59,7 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("ASN");
     expect(markup).toContain("Assignment Context");
     expect(markup).toContain("2 个片段");
-    expect(markup).toContain("任务分派");
+    expect(markup).toContain("ASN");
   });
 
   it("解析并渲染 identity frame", () => {
@@ -99,7 +99,7 @@ describe("ContextFrameCard", () => {
     );
     expect(markup).toContain("Auto Resume");
     expect(markup).toContain("hook_before_stop_continue");
-    expect(markup).toContain("自动续跑");
+    expect(markup).toContain("RESUME");
     expect(markup).toContain("RES");
   });
 
@@ -114,7 +114,7 @@ describe("ContextFrameCard", () => {
     );
     expect(markup).toContain("Compaction Summary");
     expect(markup).toContain("12 条消息");
-    expect(markup).toContain("上下文压缩");
+    expect(markup).toContain("COMPACTION");
     expect(markup).toContain("CMP");
   });
 

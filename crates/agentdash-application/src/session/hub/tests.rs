@@ -14,7 +14,7 @@ use agentdash_spi::hooks::{
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionSessionFrame,
-    PromptPayload, SessionContextBundle, StopReason,
+    PromptPayload, StopReason,
 };
 use futures::stream;
 use serde_json::json;
@@ -895,10 +895,8 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
                 identity: None,
             },
             CapabilityState::default(),
-            Some(SessionContextBundle::new(
-                bundle_session_uuid,
-                "runtime_context_update_test",
-            )),
+            uuid::Uuid::new_v4(),
+            bundle_session_uuid,
         )));
     }
 
@@ -940,15 +938,14 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .get(&session.id)
         .and_then(|runtime| runtime.turn_state.active_turn())
         .expect("active turn should remain available");
-    let bundle = turn
-        .context_bundle
-        .as_ref()
-        .expect("active turn should retain context bundle");
-    assert_eq!(bundle.turn_delta.len(), 1);
-    assert_eq!(bundle.turn_delta[0].slot, "workflow_context");
-    assert_eq!(bundle.turn_delta[0].source, "workflow:phase_b");
+    assert_eq!(turn.runtime_injection_fragments.len(), 1);
+    assert_eq!(turn.runtime_injection_fragments[0].slot, "workflow_context");
     assert_eq!(
-        bundle.turn_delta[0].content,
+        turn.runtime_injection_fragments[0].source,
+        "workflow:phase_b"
+    );
+    assert_eq!(
+        turn.runtime_injection_fragments[0].content,
         "请使用 phase B 的工具约束继续推进。"
     );
 }

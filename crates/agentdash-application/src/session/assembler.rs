@@ -1692,8 +1692,7 @@ pub fn compose_companion(spec: CompanionSpec<'_>) -> PreparedSessionInputs {
 /// - `WorkflowOnly`：只保留 `workflow` / `workflow_context` slot。
 /// - `ConstraintsOnly`：只保留 `constraint` / `constraints` slot。
 ///
-/// `turn_delta` 维持原样（hook 产出的 per-turn 增量不做裁剪），子 session 自己的
-/// turn_delta 由其 hook delegate 独立管理。
+/// 运行期 Hook 注入不在 Bundle 中传递，子 session 由自己的 hook delegate 独立管理。
 fn slice_companion_bundle(
     parent: &SessionContextBundle,
     mode: CompanionSliceMode,
@@ -1718,8 +1717,6 @@ fn slice_companion_bundle(
     sliced
         .bootstrap_fragments
         .retain(|fragment| keep_slot(fragment.slot.as_str()));
-    // turn_delta 不做裁剪 —— hook 产出的 per-turn 增量按 hook 语义自洽；
-    // companion 子 session 如果需要，可以用独立的 hook delegate 重置。
     sliced
 }
 
@@ -2320,7 +2317,7 @@ mod tests {
         );
         let rendered = bundle.render_section(
             agentdash_spi::FragmentScope::RuntimeAgent,
-            agentdash_spi::RUNTIME_AGENT_CONTEXT_SLOTS,
+            &["workflow_context", "runtime_policy"],
         );
 
         assert!(rendered.contains("## Lifecycle Node"));

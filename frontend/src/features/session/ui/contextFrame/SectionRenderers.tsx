@@ -17,6 +17,7 @@ import type {
   CompactionSummarySection,
   ContextFrameSection,
   ContextTokenInfo,
+  IdentitySection,
   MissionContextSection,
   PendingActionSection,
   RuntimeContextFragmentEntry,
@@ -57,6 +58,8 @@ export function SectionBlock({ section }: { section: ContextFrameSection }) {
 
 function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
+    case "identity":
+      return section.title || "Identity";
     case "mission_context":
       return section.title || "Mission Context";
     case "capability_delta":
@@ -82,6 +85,8 @@ function sectionTitle(section: ContextFrameSection): string {
 
 function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
+    case "identity":
+      return section.mode || "append";
     case "mission_context":
       return `${section.fragments.length} 个片段`;
     case "capability_delta": {
@@ -131,6 +136,8 @@ function sectionHint(section: ContextFrameSection): string | null {
 
 function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
+    case "identity":
+      return <IdentityBody section={section} />;
     case "mission_context":
       return <MissionContextBody section={section} />;
     case "capability_delta":
@@ -155,6 +162,22 @@ function renderSectionBody(section: ContextFrameSection) {
 }
 
 // ─── 各 section body ─────────────────────────────────────────────────────────
+
+function IdentityBody({ section }: { section: IdentitySection }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Chip label={`mode: ${section.mode || "append"}`} />
+      </div>
+      {section.summary && (
+        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
+      )}
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+        {section.effective_prompt || section.base_prompt}
+      </pre>
+    </div>
+  );
+}
 
 function MissionContextBody({ section }: { section: MissionContextSection }) {
   if (section.fragments.length === 0) {

@@ -14,9 +14,8 @@ use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::context::bundle::SessionContextBundle;
 use crate::context::capability::SkillEntry;
-use crate::hooks::HookSessionRuntimeAccess;
+use crate::hooks::{ContextFrame, HookSessionRuntimeAccess};
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
 /// 连接器类型
@@ -81,12 +80,12 @@ pub struct ExecutionTurnFrame {
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
-    /// 业务上下文 Bundle — connector 侧消费此主数据面。
+    /// 本轮可见的 ContextFrame 列表（含 identity / mission / capability / pending_action...）。
     ///
-    /// Bundle 携带结构化 fragment 以及预渲染的 `rendered_system_prompt`。
-    /// connector 可通过 `bundle.rendered_system_prompt` 获取完整系统指令，
-    /// 或通过 `bundle_id` 跨 turn 差异判断是否需要热更新。
-    pub context_bundle: Option<SessionContextBundle>,
+    /// connector 需要自行决定消费策略：
+    /// - in-process connector 可按 frame kind 分类消费（如 identity 走 set_system_prompt）。
+    /// - generic connector 可把 frames 渲染成文本后与用户输入拼接。
+    pub context_frames: Vec<ContextFrame>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有
@@ -135,6 +134,7 @@ impl std::fmt::Debug for ExecutionContext {
                     .as_ref()
                     .map(|state| state.messages.len()),
             )
+            .field("context_frames", &self.turn.context_frames.len())
             .finish_non_exhaustive()
     }
 }
@@ -758,19 +758,4 @@ pub trait AgentConnector: Send + Sync {
         )))
     }
 
-    /// 向活跃 session 热更新业务上下文 Bundle（out-of-band，不等下轮 prompt）。
-    ///
-    /// 场景：application 层在非 prompt 边界检测到 context 变化（MCP 热更、
-    /// hook snapshot 刷新等）时调用。内嵌 connector 可据此重新渲染 system prompt
-    /// 并 `set_system_prompt`；Relay / 远程 connector 保持 no-op（由下一次 prompt
-    /// 的 Bundle 透传完成刷新）。
-    ///
-    /// 默认 no-op —— 仅对结构化消费 Bundle 的 connector（如 PiAgent）实现。
-    async fn update_session_context_bundle(
-        &self,
-        _session_id: &str,
-        _bundle: SessionContextBundle,
-    ) -> Result<(), ConnectorError> {
-        Ok(())
-    }
 }

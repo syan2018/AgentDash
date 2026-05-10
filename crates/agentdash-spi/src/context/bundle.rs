@@ -8,7 +8,7 @@
 //! 设计意图详见
 //! `.trellis/tasks/04-29-session-context-builder-unification/prd.md`（"数据结构"章节）
 //! 和 `.trellis/tasks/04-30-session-pipeline-architecture-refactor/target-architecture.md`
-//! §C4（bootstrap/turn_delta 双字段）。
+//! §C4（Bundle 主数据面）。
 
 use uuid::Uuid;
 
@@ -20,8 +20,6 @@ use crate::context::injection::{ContextFragment, FragmentScope, MergeStrategy};
 /// - `phase_tag` 是对 application 层 `ContextBuildPhase` 的弱引用（SPI 不依赖 application 类型）。
 /// - `bootstrap_fragments` 在组装期（`build_session_context_bundle`）产出，整个 session
 ///   生命周期内基本不变；已按 slot 去重合并。
-/// - `turn_delta` 每轮 prompt 重建，承载运行期 Hook 注入的 per-turn 增量。Inspector
-///   可同时看到 bootstrap 与 turn_delta 两类 fragment，便于审计"静态上下文 vs 动态补充"。
 #[derive(Debug, Clone)]
 pub struct SessionContextBundle {
     pub bundle_id: Uuid,
@@ -32,17 +30,10 @@ pub struct SessionContextBundle {
     pub created_at_ms: u64,
     /// 组装期产出的 fragment（语义相对稳定，跨 turn 复用）。
     pub bootstrap_fragments: Vec<ContextFragment>,
-    /// 运行期 per-turn 追加的 fragment（Hook bundle_delta 回灌 / 热更新注入）。
-    pub turn_delta: Vec<ContextFragment>,
-    /// Application 层预渲染的稳定 core system prompt 文本。
-    ///
-    /// 由 `system_prompt_assembler::assemble_system_prompt` 在 prompt pipeline 中产出。
-    /// 动态上下文不得塞回此字段，必须作为独立 ContextFrame 投递。
-    pub rendered_system_prompt: Option<String>,
 }
 
 impl SessionContextBundle {
-    /// 新建一个空 Bundle（bootstrap_fragments + turn_delta 均为空）。
+    /// 新建一个空 Bundle（仅包含 bootstrap_fragments）。
     pub fn new(session_id: Uuid, phase_tag: impl Into<String>) -> Self {
         Self {
             bundle_id: Uuid::new_v4(),
@@ -50,22 +41,15 @@ impl SessionContextBundle {
             phase_tag: phase_tag.into(),
             created_at_ms: now_millis_u64(),
             bootstrap_fragments: Vec::new(),
-            turn_delta: Vec::new(),
-            rendered_system_prompt: None,
         }
     }
 
-    /// 返回 bootstrap + turn_delta 合并后的 fragment 迭代器。
-    ///
-    /// bootstrap 在前、turn_delta 在后，便于调用方按物理位置识别来源。
-    /// 需要区分来源时请直接访问 `bootstrap_fragments` / `turn_delta` 字段。
+    /// 返回 bootstrap fragment 迭代器。
     pub fn iter_fragments(&self) -> impl Iterator<Item = &ContextFragment> {
-        self.bootstrap_fragments
-            .iter()
-            .chain(self.turn_delta.iter())
+        self.bootstrap_fragments.iter()
     }
 
-    /// 按 scope 过滤 fragment 迭代器（bootstrap + turn_delta，不消耗 Bundle）。
+    /// 按 scope 过滤 fragment 迭代器。
     pub fn filter_for(&self, scope: FragmentScope) -> impl Iterator<Item = &ContextFragment> {
         self.iter_fragments()
             .filter(move |fragment| fragment.scope.contains(scope))
@@ -83,7 +67,7 @@ impl SessionContextBundle {
     /// 承接去重语义。如果调用方需要严格 append 语义（例如 `workflow_context` 多个 binding），
     /// 应使用不同 order 的独立 slot 或 `push_raw` 接口保留多个条目。
     ///
-    /// 运行期 per-turn 增量请使用 `push_turn_delta` / `extend_turn_delta`。
+    /// 运行期 Hook 注入审计不再挂在 Bundle；请使用 session runtime 的独立注入存储。
     pub fn upsert_by_slot(&mut self, fragment: ContextFragment) {
         if let Some(existing) = self
             .bootstrap_fragments
@@ -127,26 +111,12 @@ impl SessionContextBundle {
         self.bootstrap_fragments.push(fragment);
     }
 
-    /// 向 `turn_delta` 追加一个 per-turn 增量 fragment。
-    ///
-    /// 与 `upsert_by_slot` 的 bootstrap 去重语义不同，`turn_delta` 保留多条同 slot 条目，
-    /// 渲染时由 `render_section` 按 order 合并。设计意图：让 Hook 在同一轮内多次
-    /// 回灌同一 slot（例如连续追加 `workflow_context` 提示）时不互相覆盖。
-    pub fn push_turn_delta(&mut self, fragment: ContextFragment) {
-        self.turn_delta.push(fragment);
-    }
-
-    /// 批量追加 per-turn 增量 fragment。
-    pub fn extend_turn_delta(&mut self, fragments: impl IntoIterator<Item = ContextFragment>) {
-        self.turn_delta.extend(fragments);
-    }
-
     /// 按 scope 过滤、按 `slots` 白名单拼接 Markdown section。
     ///
     /// 规则：
-    /// 1. 先按 scope 过滤（bootstrap + turn_delta 同规则处理）；
+    /// 1. 先按 scope 过滤；
     /// 2. 再按 `slots` 白名单保留（保留顺序按 `slots` 参数的顺序，而不是 fragment 的 order）；
-    /// 3. 同一 slot 内部合并 bootstrap + turn_delta 全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
+    /// 3. 同一 slot 内部合并全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
     /// 4. 空 content 的 fragment 跳过。
     ///
     /// 调用方通常是 ContextFrame builder，通过指定 `["task", "story", "project", ...]`
@@ -227,34 +197,16 @@ mod tests {
     }
 
     #[test]
-    fn turn_delta_appended_and_rendered_after_bootstrap() {
+    fn render_section_orders_fragments_by_order() {
         let session = Uuid::new_v4();
         let mut bundle = SessionContextBundle::new(session, "task_start");
+        bundle.push_raw(frag("task", 50, "runtime-task"));
         bundle.push_raw(frag("task", 10, "bootstrap-task"));
-        bundle.push_turn_delta(frag("task", 50, "runtime-task"));
 
-        assert_eq!(bundle.bootstrap_fragments.len(), 1);
-        assert_eq!(bundle.turn_delta.len(), 1);
-
-        // render_section 按 order 合并两路 fragment：bootstrap(10) 在前、turn_delta(50) 在后
         let rendered = bundle.render_section(FragmentScope::RuntimeAgent, &["task"]);
         let bootstrap_pos = rendered.find("bootstrap-task").unwrap();
         let runtime_pos = rendered.find("runtime-task").unwrap();
         assert!(bootstrap_pos < runtime_pos);
-    }
-
-    #[test]
-    fn turn_delta_extends_batch() {
-        let session = Uuid::new_v4();
-        let mut bundle = SessionContextBundle::new(session, "task_start");
-        bundle.extend_turn_delta([
-            frag("workflow_context", 100, "step-1"),
-            frag("workflow_context", 110, "step-2"),
-        ]);
-
-        assert_eq!(bundle.turn_delta.len(), 2);
-        // Bootstrap 保持空，turn_delta 按插入顺序保留（允许同 slot 多条）
-        assert!(bundle.bootstrap_fragments.is_empty());
     }
 
     #[test]
@@ -293,11 +245,11 @@ mod tests {
     }
 
     #[test]
-    fn filter_for_includes_turn_delta() {
+    fn filter_for_reads_bootstrap_fragments() {
         let session = Uuid::new_v4();
         let mut bundle = SessionContextBundle::new(session, "per_turn");
         bundle.push_raw(frag("task", 10, "bootstrap"));
-        bundle.push_turn_delta(frag("task", 50, "runtime"));
+        bundle.push_raw(frag("task", 50, "runtime"));
 
         let all: Vec<_> = bundle.filter_for(FragmentScope::RuntimeAgent).collect();
         assert_eq!(all.len(), 2);

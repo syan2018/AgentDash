@@ -40,7 +40,7 @@ pub(in crate::session) struct HookTriggerInput<'a> {
 /// Hook trigger 调度结果。
 ///
 /// `effects` 仍交由原调用点处理；`injections` 已由统一调度路径回灌
-/// `turn_delta` / audit，返回值仅用于调用点执行 hook effect。
+/// runtime 注入存储 / audit，返回值仅用于调用点执行 hook effect。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HookTriggerDispatchResult {
     pub effects: Vec<HookEffect>,

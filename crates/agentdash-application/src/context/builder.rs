@@ -226,7 +226,6 @@ mod bundle_tests {
         };
         let bundle = build_session_context_bundle(config, vec![]);
         assert!(bundle.bootstrap_fragments.is_empty());
-        assert!(bundle.turn_delta.is_empty());
         assert_eq!(bundle.phase_tag, "task_start");
     }
 

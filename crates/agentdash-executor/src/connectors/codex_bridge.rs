@@ -38,6 +38,7 @@ use tokio_util::sync::CancellationToken;
 use workspace_utils::command_ext::GroupSpawnNoWindowExt;
 
 use crate::adapters::codex_config::to_codex_config;
+use crate::connectors::context_frame_render::compose_prompt_text;
 
 const CODEX_EXECUTOR_ID: &str = "CODEX";
 
@@ -92,17 +93,7 @@ fn build_prompt_text(
     prompt: &PromptPayload,
 ) -> Result<String, ConnectorError> {
     let user_text = prompt.to_fallback_text();
-    let prompt_text = if let Some(sys_prompt) = context
-        .turn
-        .context_bundle
-        .as_ref()
-        .and_then(|b| b.rendered_system_prompt.as_ref())
-    {
-        format!("{sys_prompt}\n\n{user_text}")
-    } else {
-        user_text
-    };
-    let prompt_text = prompt_text.trim().to_string();
+    let prompt_text = compose_prompt_text(&user_text, &context.turn.context_frames);
     if prompt_text.is_empty() {
         return Err(ConnectorError::InvalidConfig(
             "prompt payload 解析后为空".to_string(),

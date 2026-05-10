@@ -243,6 +243,15 @@ pub struct ContextFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextFrameSection {
+    Identity {
+        title: String,
+        summary: String,
+        base_prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_prompt: Option<String>,
+        mode: String,
+        effective_prompt: String,
+    },
     MissionContext {
         title: String,
         summary: String,

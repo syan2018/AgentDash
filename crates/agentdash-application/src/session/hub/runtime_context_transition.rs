@@ -219,9 +219,10 @@ impl SessionHub {
         before_state: CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
         tools: &[DynAgentTool],
-    ) {
+    ) -> Vec<ContextFrame> {
+        let mut produced_frames = Vec::new();
         if transitions.is_empty() {
-            return;
+            return produced_frames;
         }
 
         if let Some(hook_session) = hook_session
@@ -252,7 +253,7 @@ impl SessionHub {
             let injections = self
                 .collect_runtime_context_update_injections(session_id)
                 .await;
-            if let Some(hook_session) = hook_session {
+            if let Some(_hook_session) = hook_session {
                 let state_delta = compute_capability_state_delta(
                     Some(&pending_event_before_state),
                     &pending.state,
@@ -274,7 +275,7 @@ impl SessionHub {
                 let _ = self
                     .emit_context_frame(session_id, Some(turn_id), &notice)
                     .await;
-                let _ = context_frame::enqueue_context_frame(hook_session, &notice);
+                produced_frames.push(notice.clone());
 
                 // mission_context 独立 frame，保持 frame 一职一责。
                 if let Some(workflow_frame) = build_mission_context_frame(
@@ -285,11 +286,12 @@ impl SessionHub {
                     let _ = self
                         .emit_context_frame(session_id, Some(turn_id), &workflow_frame)
                         .await;
-                    let _ = context_frame::enqueue_context_frame(hook_session, &workflow_frame);
+                    produced_frames.push(workflow_frame);
                 }
             }
             pending_event_before_state = pending.state.clone();
         }
+        produced_frames
     }
 
     async fn emit_runtime_context_changed_notice(&self, input: &LiveRuntimeContextTransitionInput) {

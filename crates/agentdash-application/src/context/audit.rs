@@ -196,8 +196,7 @@ pub fn emit_bundle_fragments(
     trigger: AuditTrigger,
 ) {
     let at_ms = now_millis_u64();
-    // 审计总线同时消费 bootstrap fragment 与 turn_delta —— Inspector 能分别看到
-    // "组装期静态上下文" 和 "运行期增量"；此处迭代两路。
+    // 审计总线消费 compose 期片段；运行期注入由 hook sink 通过 `emit_fragment` 补发。
     for fragment in bundle.iter_fragments() {
         let content_hash = hash_content(&fragment.content);
         bus.emit(ContextAuditEvent {

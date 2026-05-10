@@ -95,14 +95,13 @@ impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
             .collect::<Vec<_>>();
         let (bundle_id, bundle_session_uuid) = {
             let mut sessions = self.sessions.lock().await;
-            if let Some(bundle) = sessions
+            if let Some(turn) = sessions
                 .get_mut(session_id)
                 .and_then(|runtime| runtime.turn_state.active_turn_mut())
-                .and_then(|turn| turn.context_bundle.as_mut())
             {
-                let bundle_id = bundle.bundle_id;
-                let bundle_session_uuid = bundle.session_id;
-                bundle.extend_turn_delta(fragments.clone());
+                let bundle_id = turn.context_audit_bundle_id;
+                let bundle_session_uuid = turn.context_audit_session_id;
+                turn.runtime_injection_fragments.extend(fragments.clone());
                 (bundle_id, bundle_session_uuid)
             } else {
                 (Uuid::new_v4(), Uuid::new_v4())

@@ -4,8 +4,9 @@ use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_spi::{CapabilityState, ExecutionSessionFrame, SessionContextBundle};
+use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
 
@@ -231,11 +232,12 @@ pub(super) struct TurnExecution {
     /// Turn 级 capability 集合（per-prompt 下发）。
     /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.capability_state`。
     pub capability_state: CapabilityState,
-    /// 当前 turn 的 Bundle 主数据面。
-    ///
-    /// 运行期 hook injection 统一回灌到这里的 `turn_delta`，作为结构化审计与
-    /// 下一轮 prompt 装配输入；即时模型消费仍走动态 steering/notification。
-    pub context_bundle: Option<SessionContextBundle>,
+    /// 运行期 Hook 注入的增量片段（审计路径）。
+    pub runtime_injection_fragments: Vec<ContextFragment>,
+    /// 当前 turn 审计片段所属的上下文批次标识。
+    pub context_audit_bundle_id: Uuid,
+    /// 当前 turn 审计片段所属 session UUID。
+    pub context_audit_session_id: Uuid,
     /// 取消请求标记。hub.cancel 置 true；processor / adapter 读它决定发
     /// `Interrupted` 还是 `Completed/Failed` 终态。
     pub cancel_requested: bool,
@@ -250,13 +252,16 @@ impl TurnExecution {
         turn_id: String,
         session_frame: ExecutionSessionFrame,
         capability_state: CapabilityState,
-        context_bundle: Option<SessionContextBundle>,
+        context_audit_bundle_id: Uuid,
+        context_audit_session_id: Uuid,
     ) -> Self {
         Self {
             turn_id,
             session_frame,
             capability_state,
-            context_bundle,
+            runtime_injection_fragments: Vec::new(),
+            context_audit_bundle_id,
+            context_audit_session_id,
             cancel_requested: false,
             processor_tx: None,
         }

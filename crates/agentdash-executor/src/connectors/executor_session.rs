@@ -20,6 +20,7 @@ use tokio_util::io::ReaderStream;
 use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
 use crate::adapters::normalized_to_backbone::NormalizedToBackboneConverter;
+use crate::connectors::context_frame_render::compose_prompt_text;
 
 fn connector_type_label(connector_type: ConnectorType) -> &'static str {
     match connector_type {
@@ -40,17 +41,7 @@ pub(crate) async fn spawn_executor_session(
     context: ExecutionContext,
 ) -> Result<ExecutionStream, ConnectorError> {
     let user_text = prompt.to_fallback_text();
-    let prompt_text = if let Some(sys_prompt) = context
-        .turn
-        .context_bundle
-        .as_ref()
-        .and_then(|b| b.rendered_system_prompt.as_ref())
-    {
-        format!("{sys_prompt}\n\n{user_text}")
-    } else {
-        user_text
-    };
-    let prompt_text = prompt_text.trim().to_string();
+    let prompt_text = compose_prompt_text(&user_text, &context.turn.context_frames);
     if prompt_text.is_empty() {
         return Err(ConnectorError::InvalidConfig(
             "prompt payload 解析后为空".to_string(),

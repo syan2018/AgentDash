@@ -1,8 +1,6 @@
-use agentdash_spi::context::bundle::SessionContextBundle;
 use agentdash_spi::context::injection::FragmentScope;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, RuntimeContextFragmentEntry, RuntimeEventSource,
-    SharedHookSessionRuntime,
 };
 use agentdash_spi::{ContextFragment, DiscoveredGuideline, MISSION_CONTEXT_SLOTS};
 
@@ -16,7 +14,8 @@ struct MissionContextFrame {
 
 impl MissionContextFrame {
     fn from_parts(
-        bundle: Option<&SessionContextBundle>,
+        phase_tag: Option<&str>,
+        runtime_fragments: &[ContextFragment],
         user_preferences: &[String],
         discovered_guidelines: &[DiscoveredGuideline],
     ) -> Option<Self> {
@@ -47,12 +46,8 @@ impl MissionContextFrame {
             });
         }
 
-        let phase_tag = bundle
-            .map(|bundle| bundle.phase_tag.clone())
-            .unwrap_or_else(|| "bootstrap".to_string());
-        if let Some(bundle) = bundle {
-            fragments.extend(bundle_runtime_fragments(bundle));
-        }
+        let phase_tag = phase_tag.unwrap_or("bootstrap").to_string();
+        fragments.extend(mission_runtime_fragments(runtime_fragments));
 
         (!fragments.is_empty()).then_some(Self {
             phase_tag,
@@ -98,21 +93,25 @@ impl ContextFramePayload for MissionContextFrame {
     }
 }
 
-pub(crate) fn enqueue_mission_context_frame(
-    hook_session: Option<&SharedHookSessionRuntime>,
-    bundle: Option<&SessionContextBundle>,
+pub(crate) fn build_mission_context_frame(
+    phase_tag: Option<&str>,
+    runtime_fragments: &[ContextFragment],
     user_preferences: &[String],
     discovered_guidelines: &[DiscoveredGuideline],
 ) -> Option<ContextFrame> {
-    let hook_session = hook_session?;
-    let metadata =
-        MissionContextFrame::from_parts(bundle, user_preferences, discovered_guidelines)?;
-    context_frame::build_and_enqueue_context_frame(hook_session, &metadata)
+    let metadata = MissionContextFrame::from_parts(
+        phase_tag,
+        runtime_fragments,
+        user_preferences,
+        discovered_guidelines,
+    )?;
+    Some(context_frame::build_context_frame(&metadata))
 }
 
-fn bundle_runtime_fragments(bundle: &SessionContextBundle) -> Vec<RuntimeContextFragmentEntry> {
-    let mut fragments = bundle
-        .filter_for(FragmentScope::RuntimeAgent)
+fn mission_runtime_fragments(fragments: &[ContextFragment]) -> Vec<RuntimeContextFragmentEntry> {
+    let mut fragments = fragments
+        .iter()
+        .filter(|fragment| fragment.scope.contains(FragmentScope::RuntimeAgent))
         .filter(|fragment| MISSION_CONTEXT_SLOTS.contains(&fragment.slot.as_str()))
         .filter(|fragment| !fragment.content.trim().is_empty())
         .collect::<Vec<_>>();
@@ -154,7 +153,7 @@ fn render_mission_context_text(fragments: &[RuntimeContextFragmentEntry]) -> Str
 
 #[cfg(test)]
 mod tests {
-    use agentdash_spi::{ContextFragment, MergeStrategy, SessionContextBundle};
+    use agentdash_spi::{ContextFragment, MergeStrategy};
 
     use super::*;
 
@@ -172,15 +171,19 @@ mod tests {
 
     #[test]
     fn mission_context_frame_filters_runtime_slots() {
-        let mut bundle = SessionContextBundle::new(uuid::Uuid::new_v4(), "task_start");
-        bundle.merge([
+        let runtime_fragments = vec![
             fragment("task", "## Task\n处理上下文可视化"),
             fragment("vfs", "不应进入 mission context frame"),
             fragment("tools", "不应进入 mission context frame"),
-        ]);
+        ];
 
-        let frame = MissionContextFrame::from_parts(Some(&bundle), &["中文交流".to_string()], &[])
-            .expect("frame metadata");
+        let frame = MissionContextFrame::from_parts(
+            Some("task_start"),
+            &runtime_fragments,
+            &["中文交流".to_string()],
+            &[],
+        )
+        .expect("frame metadata");
 
         assert_eq!(frame.fragments.len(), 2);
         assert!(frame.fragments.iter().any(|entry| entry.slot == "task"));

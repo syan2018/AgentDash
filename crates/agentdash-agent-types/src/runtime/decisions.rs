@@ -17,7 +17,7 @@ pub struct TransformContextInput {
 /// （`.trellis/tasks/04-30-session-pipeline-architecture-refactor/target-architecture.md`
 /// §C11）：
 ///
-/// 1. **Bundle 改写** — 此处**不**承载，通过 Bundle 的 `turn_delta` 字段与
+/// 1. **Bundle 改写** — 此处**不**承载，通过 session runtime 的注入片段存储与
 ///    `ContextAuditBus` 以独立数据面传递（保留 SPI crate 边界，不让
 ///    `agentdash-agent-types` 反向依赖 `agentdash-spi`）。
 /// 2. **Per-turn steering** — `steering_messages`，只承每轮 agent loop 之间的

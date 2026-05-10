@@ -441,26 +441,20 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
     assert_eq!(start_envelopes.len(), 1);
     match &start_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
+            let item = serde_json::to_value(&n.item).expect("thread item should serialize");
+            assert_eq!(
+                item.get("type").and_then(|value| value.as_str()),
+                Some("commandExecution")
+            );
+            assert_eq!(
+                item.get("command").and_then(|value| value.as_str()),
+                Some("echo he")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert_eq!(delta_envelopes.len(), 1);
-    match &delta_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "shell_exec" && *arguments == serde_json::json!({ "command": "echo hello" }))
-            );
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
-    assert_eq!(end_envelopes.len(), 1);
-    match &end_envelopes[0].event {
-        BackboneEvent::ItemStarted(_) | BackboneEvent::ItemCompleted(_) => {}
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
+    assert!(delta_envelopes.is_empty());
+    assert!(end_envelopes.is_empty());
 }
 
 #[test]
@@ -503,15 +497,8 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
         &mut tool_call_states,
     );
 
-    assert_eq!(envelopes.len(), 1);
-    match &envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "fs_apply_patch")
-            );
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
+    assert!(envelopes.is_empty());
+    assert!(tool_call_states.contains_key("tool-fs-apply-patch-1"));
 }
 
 #[test]
@@ -611,8 +598,14 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
+            let item = serde_json::to_value(&n.item).expect("thread item should serialize");
+            assert_eq!(
+                item.get("type").and_then(|value| value.as_str()),
+                Some("commandExecution")
+            );
+            assert_eq!(
+                item.get("command").and_then(|value| value.as_str()),
+                Some("cargo test")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -708,16 +701,8 @@ fn pending_approval_event_maps_to_tool_call_update() {
         &mut tool_call_states,
     );
 
-    assert_eq!(envelopes.len(), 2);
+    assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "shell_exec")
-            );
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
-    match &envelopes[1].event {
         BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
             key,
             ..
@@ -980,8 +965,8 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
     assert_eq!(entry_index, 1);
 }
 
-// NOTE: prompt 渲染测试（system prompt + tool parameters）已迁移至
-// application 层 system_prompt_assembler 模块。
+// NOTE: prompt 渲染测试（identity frame + context_frames 拼接）已迁移至
+// application/executor 的 ContextFrame 组装链路测试。
 
 #[tokio::test]
 async fn discovery_reflects_provider_added_to_db_without_restart() {
@@ -1149,24 +1134,38 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
 }
 
 #[tokio::test]
-async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
-    use agentdash_spi::context::bundle::SessionContextBundle;
-
+async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     let bridge = Arc::new(RecordingBridge::default());
     let connector = PiAgentConnector::new(bridge.clone(), "系统提示");
 
-    let session_id = "session-bundle-refresh";
-    let session_uuid = uuid::Uuid::new_v4();
+    let session_id = "session-identity-refresh";
 
-    let make_context = |turn_id: &str,
-                        mut bundle: Option<SessionContextBundle>,
-                        rendered_sp: Option<&str>|
-     -> ExecutionContext {
-        if let (Some(b), Some(sp)) = (&mut bundle, rendered_sp) {
-            b.rendered_system_prompt = Some(sp.to_string());
-        }
+    let make_context = |turn_id: &str, identity_prompt: Option<&str>| -> ExecutionContext {
         let turn_frame = agentdash_spi::ExecutionTurnFrame {
-            context_bundle: bundle,
+            context_frames: identity_prompt
+                .map(|prompt| {
+                    vec![agentdash_spi::hooks::ContextFrame {
+                        id: format!("identity-{turn_id}"),
+                        kind: "identity".to_string(),
+                        source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
+                        phase_node: None,
+                        apply_mode: None,
+                        delivery_status: "prepared_for_connector".to_string(),
+                        delivery_channel: "connector_context".to_string(),
+                        message_role: "system".to_string(),
+                        rendered_text: format!("## Identity\n\n{prompt}"),
+                        sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
+                            title: "Identity".to_string(),
+                            summary: "test".to_string(),
+                            base_prompt: "".to_string(),
+                            agent_prompt: None,
+                            mode: "override".to_string(),
+                            effective_prompt: prompt.to_string(),
+                        }],
+                        created_at_ms: 1,
+                    }]
+                })
+                .unwrap_or_default(),
             ..Default::default()
         };
         ExecutionContext {
@@ -1183,18 +1182,13 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
         }
     };
 
-    let bundle_a = SessionContextBundle::new(session_uuid, "turn-a");
-    let bundle_b = SessionContextBundle::new(session_uuid, "turn-b");
-    assert_ne!(bundle_a.bundle_id, bundle_b.bundle_id);
-    let bundle_b_id = bundle_b.bundle_id;
-
     // Turn 1: 首轮 — 应走 is_new_agent 分支并把 "SP_A" 写入 agent
     let mut stream = connector
         .prompt(
             session_id,
             None,
             &PromptPayload::Text("msg-a".to_string()),
-            make_context("turn-a", Some(bundle_a), Some("SP_A")),
+            make_context("turn-a", Some("SP_A")),
         )
         .await
         .expect("turn 1 should start");
@@ -1202,14 +1196,14 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
         next.expect("stream item should succeed");
     }
 
-    // Turn 2: 同 session，bundle_id 变化 — 期望 set_system_prompt 再次被调用，
+    // Turn 2: 同 session，identity prompt 变化 — 期望 set_system_prompt 再次被调用，
     //         第 2 个 BridgeRequest 的 system_prompt = "SP_B"
     let mut stream = connector
         .prompt(
             session_id,
             None,
             &PromptPayload::Text("msg-b".to_string()),
-            make_context("turn-b", Some(bundle_b), Some("SP_B")),
+            make_context("turn-b", Some("SP_B")),
         )
         .await
         .expect("turn 2 should start");
@@ -1217,26 +1211,13 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
         next.expect("stream item should succeed");
     }
 
-    // Turn 3: bundle_id 不变 — rendered_system_prompt 即便换成 "SP_STALE"，
-    //         也不会生效，agent 仍用 turn 2 时 set 的 "SP_B"
+    // Turn 3: identity prompt 不变 — agent 仍用 turn 2 时 set 的 "SP_B"
     let mut stream = connector
         .prompt(
             session_id,
             None,
             &PromptPayload::Text("msg-c".to_string()),
-            make_context(
-                "turn-c",
-                Some(SessionContextBundle {
-                    bundle_id: bundle_b_id,
-                    session_id: session_uuid,
-                    phase_tag: "turn-c".to_string(),
-                    created_at_ms: 0,
-                    bootstrap_fragments: Vec::new(),
-                    turn_delta: Vec::new(),
-                    rendered_system_prompt: None,
-                }),
-                Some("SP_STALE"),
-            ),
+            make_context("turn-c", Some("SP_B")),
         )
         .await
         .expect("turn 3 should start");
@@ -1257,19 +1238,19 @@ async fn prompt_refreshes_system_prompt_when_bundle_id_changes() {
     assert_eq!(
         requests[1].system_prompt.as_deref(),
         Some("SP_B"),
-        "bundle_id 变化后 turn 2 应切到 SP_B"
+        "identity prompt 变化后 turn 2 应切到 SP_B"
     );
     assert_eq!(
         requests[2].system_prompt.as_deref(),
         Some("SP_B"),
-        "bundle_id 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
+        "identity prompt 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
     );
 
     let agents = connector.agents.lock().await;
     let runtime = agents
         .get(session_id)
         .expect("session runtime should be retained");
-    assert_eq!(runtime.last_bundle_id, Some(bundle_b_id));
+    assert_eq!(runtime.last_identity_prompt.as_deref(), Some("SP_B"));
 }
 
 #[tokio::test]
@@ -1290,7 +1271,7 @@ async fn update_session_tools_replaces_all_tools() {
         PiAgentSessionRuntime {
             agent,
             tools: vec![old_tool],
-            last_bundle_id: None,
+            last_identity_prompt: None,
         },
     );
 

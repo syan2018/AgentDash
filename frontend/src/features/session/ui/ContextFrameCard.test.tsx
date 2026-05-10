@@ -57,6 +57,19 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Agent 上下文已更新");
   });
 
+  it("解析并渲染 identity frame", () => {
+    const notice = parseContextFrame(sampleIdentityNotice());
+    expect(notice?.kind).toBe("identity");
+    expect(notice?.sections[0]?.kind).toBe("identity");
+
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleIdentityNotice()} defaultExpanded />,
+    );
+    expect(markup).toContain("IDN");
+    expect(markup).toContain("Identity");
+    expect(markup).toContain("override");
+  });
+
   it("解析并渲染 pending_action frame", () => {
     const notice = parseContextFrame(samplePendingActionNotice());
     expect(notice?.kind).toBe("pending_action");
@@ -181,6 +194,29 @@ function sampleMissionNotice(): Record<string, unknown> {
             content: "处理 ContextFrame",
           },
         ],
+      },
+    ],
+  };
+}
+
+function sampleIdentityNotice(): Record<string, unknown> {
+  return {
+    id: "identity-1",
+    kind: "identity",
+    source: "runtime_context_update",
+    delivery_status: "prepared_for_connector",
+    delivery_channel: "connector_context",
+    message_role: "system",
+    rendered_text: "## Identity\n\n你是 AgentDash 内置编码助手。",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "identity",
+        title: "Identity",
+        summary: "Connector 启动时使用的稳定 system identity。",
+        base_prompt: "base",
+        mode: "override",
+        effective_prompt: "你是 AgentDash 内置编码助手。",
       },
     ],
   };

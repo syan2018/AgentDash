@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::{
-    HookTrigger, SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
 use agentdash_spi::{
-    ConnectorError, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
-    RestoredSessionState,
+    ConnectorError, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
@@ -19,7 +19,9 @@ use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
-use super::mission_context_frame::enqueue_mission_context_frame;
+use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
+use super::mission_context_frame::build_mission_context_frame;
+use super::pending_action_context_frame::build_pending_action_context_frame;
 use super::path_policy::resolve_working_dir;
 pub use super::types::*;
 
@@ -146,17 +148,17 @@ impl SessionHub {
             }
         };
 
-        // 把 hook snapshot 里的 injection 合并到 Bundle 的 bootstrap_fragments —
-        // 这是 PR 4（04-30-session-pipeline-architecture-refactor）的核心动作：
-        // companion_agents / workflow / constraint 等 hook 注入不再通过 SP 独立
-        // section 或 user_message 渲染，而是由 Bundle `render_section` 统一产出。
-        // `From<&SessionHookSnapshot> for Contribution` 封装了 slot → order 映射。
-        if let Some(ref hs) = hook_session
-            && let Some(bundle) = req.context_bundle.as_mut()
-        {
+        // 把 hook snapshot 里的 injection 合并到 compose 期 fragment 集合。
+        // Bundle 仍可作为 compose 中间载体，但 connector 不再直接消费 Bundle。
+        let hook_snapshot_contribution = hook_session.as_ref().map(|hs| {
             let snapshot = hs.snapshot();
             let contribution: crate::context::Contribution = (&snapshot).into();
-            bundle.merge(contribution.fragments);
+            contribution.fragments
+        });
+        if let Some(bundle) = req.context_bundle.as_mut()
+            && let Some(fragments) = hook_snapshot_contribution.as_ref()
+        {
+            bundle.merge(fragments.clone());
         }
 
         let context_audit_bus = self.current_context_audit_bus().await;
@@ -262,7 +264,7 @@ impl SessionHub {
             capability_state: capability_state.clone(),
             runtime_delegate,
             restored_session_state,
-            context_bundle: req.context_bundle.clone(),
+            context_frames: Vec::new(),
             assembled_tools: Vec::new(),
         };
         let mut context = ExecutionContext {
@@ -279,25 +281,32 @@ impl SessionHub {
             )
             .await;
 
-        // pipeline 层预组装 core system prompt → 写入 bundle.rendered_system_prompt。
-        // 动态上下文与能力面走独立 ContextFrame 投递。
-        let has_agent_system_prompt = context
-            .session
-            .executor_config
-            .system_prompt
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-        if !self.base_system_prompt.is_empty() || has_agent_system_prompt {
-            let prompt_input = super::system_prompt_assembler::SystemPromptInput {
-                base_system_prompt: &self.base_system_prompt,
-                agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
-                agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-            };
-            let rendered = super::system_prompt_assembler::assemble_system_prompt(&prompt_input);
-            if let Some(ref mut bundle) = context.turn.context_bundle {
-                bundle.rendered_system_prompt = Some(rendered);
-            }
-        }
+        let identity_frame = build_identity_context_frame(&IdentityFrameInput {
+            base_system_prompt: &self.base_system_prompt,
+            agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
+            agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
+        });
+
+        let compose_fragments = req
+            .context_bundle
+            .as_ref()
+            .map(|bundle| bundle.bootstrap_fragments.clone())
+            .or_else(|| hook_snapshot_contribution.clone())
+            .unwrap_or_default();
+        let (audit_bundle_id, audit_session_id) = req
+            .context_bundle
+            .as_ref()
+            .map(|bundle| (bundle.bundle_id, bundle.session_id))
+            .unwrap_or_else(|| {
+                let session_uuid = uuid::Uuid::parse_str(session_id).unwrap_or_else(|_| {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        "session_id 不是 UUID，使用临时审计 session_id"
+                    );
+                    uuid::Uuid::new_v4()
+                });
+                (uuid::Uuid::new_v4(), session_uuid)
+            });
 
         {
             let mut sessions = self.sessions.lock().await;
@@ -309,7 +318,8 @@ impl SessionHub {
                     turn_id.clone(),
                     context.session.clone(),
                     capability_state.clone(),
-                    context.turn.context_bundle.clone(),
+                    audit_bundle_id,
+                    audit_session_id,
                 )));
             }
         }
@@ -324,7 +334,7 @@ impl SessionHub {
         );
         let _ = persistence.save_session_meta(&session_meta).await;
 
-        if !pending_capability_transitions.is_empty() {
+        let pending_transition_frames = if !pending_capability_transitions.is_empty() {
             self.apply_pending_runtime_context_transitions_on_turn(
                 &sid,
                 &turn_id,
@@ -333,8 +343,10 @@ impl SessionHub {
                 &pending_capability_transitions,
                 &context.turn.assembled_tools,
             )
-            .await;
-        }
+            .await
+        } else {
+            Vec::new()
+        };
 
         // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成
         let is_first_turn = session_meta.last_event_seq <= 1;
@@ -417,26 +429,55 @@ impl SessionHub {
             }
         }
 
+        let mut owner_bootstrap_frames = Vec::new();
         if is_owner_bootstrap {
-            if let Some(hook_session) = hook_session.as_ref() {
-                let frame = build_initial_capability_state_frame(
-                    &capability_state,
-                    &capability_keys,
-                    &context.turn.assembled_tools,
-                );
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
-                let _ = super::context_frame::enqueue_context_frame(hook_session, &frame);
-            }
+            let frame = build_initial_capability_state_frame(
+                &capability_state,
+                &capability_keys,
+                &context.turn.assembled_tools,
+            );
+            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            owner_bootstrap_frames.push(frame);
 
-            if let Some(frame) = enqueue_mission_context_frame(
-                hook_session.as_ref(),
-                context.turn.context_bundle.as_ref(),
+            if let Some(frame) = build_mission_context_frame(
+                req.context_bundle.as_ref().map(|bundle| bundle.phase_tag.as_str()),
+                &compose_fragments,
                 &self.user_preferences,
                 &discovered_guidelines,
             ) {
                 let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+                owner_bootstrap_frames.push(frame);
             }
         }
+
+        let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
+        if let Some(frame) = identity_frame {
+            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            turn_context_frames.push(frame);
+        }
+        turn_context_frames.extend(owner_bootstrap_frames);
+        turn_context_frames.extend(pending_transition_frames);
+
+        if let Some(hook_session_runtime) = hook_session.as_ref() {
+            turn_context_frames.extend(collect_queued_turn_start_frames(
+                hook_session_runtime.as_ref(),
+            ));
+
+            let snapshot = hook_session_runtime.snapshot();
+            let runtime = hook_session_runtime.runtime_snapshot();
+            let pending_action_frames = hook_session_runtime
+                .unresolved_pending_actions()
+                .into_iter()
+                .filter_map(|action| {
+                    build_pending_action_context_frame(&snapshot, &action, &runtime)
+                })
+                .collect::<Vec<_>>();
+            for frame in &pending_action_frames {
+                let _ = self.emit_context_frame(&sid, Some(&turn_id), frame).await;
+            }
+            turn_context_frames.extend(pending_action_frames);
+        }
+        context.turn.context_frames = dedupe_context_frames(turn_context_frames);
 
         let mut stream = match self
             .connector
@@ -788,6 +829,57 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.executor = Some(executor.to_string());
     metadata.permission_policy = permission_policy.map(ToString::to_string);
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
+}
+
+fn collect_queued_turn_start_frames(
+    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+) -> Vec<ContextFrame> {
+    hook_session
+        .collect_turn_start_notices_for_injection()
+        .into_iter()
+        .filter_map(notice_to_context_frame)
+        .collect()
+}
+
+fn notice_to_context_frame(notice: HookTurnStartNotice) -> Option<ContextFrame> {
+    if let Some(frame) = notice.context_frame {
+        return Some(frame);
+    }
+    let content = notice.content.trim();
+    if content.is_empty() {
+        return None;
+    }
+    Some(ContextFrame {
+        id: notice.id,
+        kind: "system_notice".to_string(),
+        source: notice.source,
+        phase_node: None,
+        apply_mode: None,
+        delivery_status: "queued_for_transform_context".to_string(),
+        delivery_channel: "turn_start".to_string(),
+        message_role: "user".to_string(),
+        rendered_text: content.to_string(),
+        sections: vec![ContextFrameSection::SystemNotice {
+            title: "Legacy TurnStart Notice".to_string(),
+            summary: "历史 notice 已桥接为 ContextFrame。".to_string(),
+            body: Some(content.to_string()),
+        }],
+        created_at_ms: notice.created_at_ms,
+    })
+}
+
+fn dedupe_context_frames(frames: Vec<ContextFrame>) -> Vec<ContextFrame> {
+    let mut ids = std::collections::HashSet::new();
+    let mut deduped = Vec::new();
+    for frame in frames {
+        if frame.rendered_text.trim().is_empty() {
+            continue;
+        }
+        if ids.insert(frame.id.clone()) {
+            deduped.push(frame);
+        }
+    }
+    deduped
 }
 
 #[cfg(test)]

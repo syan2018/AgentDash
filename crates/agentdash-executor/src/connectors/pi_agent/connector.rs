@@ -24,6 +24,7 @@ use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, HookTurnStartNotice};
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -45,10 +46,8 @@ struct PiAgentSessionRuntime {
     agent: Agent,
     /// 当前生效的完整工具列表（由 application 层预构建）。
     tools: Vec<DynAgentTool>,
-    /// 上一次应用到 agent 的 Bundle 标识；用于跨 turn 判断业务上下文是否变化。
-    /// 当本轮 `TurnFrame.context_bundle.bundle_id` 与缓存值不同时触发
-    /// `set_system_prompt` 热更新。`None` 表示尚未拿到过 Bundle（首次创建或纯 fallback）。
-    last_bundle_id: Option<uuid::Uuid>,
+    /// 上一次应用到 agent 的 identity prompt（用于跨 turn 判断是否需要热更新）。
+    last_identity_prompt: Option<String>,
 }
 
 struct ProviderRuntimeState {
@@ -333,8 +332,10 @@ impl AgentConnector for PiAgentConnector {
         };
 
         let is_new_agent = existing_runtime.is_none();
-        let incoming_bundle_id = context.turn.context_bundle.as_ref().map(|b| b.bundle_id);
-        let mut cached_bundle_id = existing_runtime.as_ref().and_then(|rt| rt.last_bundle_id);
+        let incoming_identity_prompt = extract_identity_prompt(&context.turn.context_frames);
+        let mut cached_identity_prompt = existing_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.last_identity_prompt.clone());
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
             current_tools = runtime.tools;
@@ -357,34 +358,28 @@ impl AgentConnector for PiAgentConnector {
             self.create_agent_with_bridge(bridge)
         };
 
-        // 只有新创建的 agent 才需要 build tools 和 system prompt。
-        // 已存在的 agent（后续 turn）复用上次的 tools 和 system prompt，
-        // 只更新 runtime delegate（hook session 每轮刷新）。
-        let system_prompt_opt = context
-            .turn
-            .context_bundle
-            .as_ref()
-            .and_then(|b| b.rendered_system_prompt.as_ref());
         if is_new_agent {
             current_tools = context.turn.assembled_tools.clone();
 
-            if let Some(system_prompt) = system_prompt_opt {
+            if let Some(system_prompt) = incoming_identity_prompt.as_ref() {
                 agent.set_system_prompt(system_prompt.clone());
+                cached_identity_prompt = Some(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
             if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
                 agent.replace_messages(messages).await;
             }
-            cached_bundle_id = incoming_bundle_id;
-        } else if let Some(new_bundle_id) = incoming_bundle_id {
-            // 已存在 agent + 新 Bundle：若 bundle_id 发生变化则热更新 system prompt。
-            if cached_bundle_id != Some(new_bundle_id) {
-                if let Some(system_prompt) = system_prompt_opt {
-                    agent.set_system_prompt(system_prompt.clone());
-                }
-                cached_bundle_id = Some(new_bundle_id);
+        } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref() {
+            if let Some(system_prompt) = incoming_identity_prompt.as_ref() {
+                agent.set_system_prompt(system_prompt.clone());
+                cached_identity_prompt = Some(system_prompt.clone());
             }
         }
+
+        enqueue_context_frames_for_transform_context(
+            context.turn.hook_session.as_ref(),
+            &context.turn.context_frames,
+        );
         let hook_trace_rx = context
             .turn
             .hook_session
@@ -406,7 +401,7 @@ impl AgentConnector for PiAgentConnector {
             PiAgentSessionRuntime {
                 agent,
                 tools: current_tools,
-                last_bundle_id: cached_bundle_id,
+                last_identity_prompt: cached_identity_prompt,
             },
         );
 
@@ -607,6 +602,47 @@ impl AgentConnector for PiAgentConnector {
         })?;
         runtime.agent.steer(AgentMessage::user(message)).await;
         Ok(())
+    }
+}
+
+fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
+    let identity_frame = frames.iter().find(|frame| frame.kind == "identity")?;
+    if let Some(prompt) = identity_frame.sections.iter().find_map(|section| match section {
+        ContextFrameSection::Identity {
+            effective_prompt, ..
+        } => {
+            let prompt = effective_prompt.trim();
+            (!prompt.is_empty()).then(|| prompt.to_string())
+        }
+        _ => None,
+    }) {
+        return Some(prompt);
+    }
+    let rendered = identity_frame.rendered_text.trim();
+    (!rendered.is_empty()).then(|| rendered.to_string())
+}
+
+fn enqueue_context_frames_for_transform_context(
+    hook_session: Option<&Arc<dyn agentdash_spi::hooks::HookSessionRuntimeAccess>>,
+    frames: &[ContextFrame],
+) {
+    let Some(hook_session) = hook_session else {
+        return;
+    };
+    for frame in frames {
+        if frame.kind == "identity" || frame.kind == "pending_action" {
+            continue;
+        }
+        if frame.rendered_text.trim().is_empty() {
+            continue;
+        }
+        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
+            id: frame.id.clone(),
+            created_at_ms: frame.created_at_ms,
+            source: frame.source.clone(),
+            content: frame.rendered_text.clone(),
+            context_frame: Some(frame.clone()),
+        });
     }
 }
 

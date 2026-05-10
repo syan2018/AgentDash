@@ -15,6 +15,7 @@ export interface ContextFrame {
 }
 
 export type ContextFrameSection =
+  | IdentitySection
   | MissionContextSection
   | CapabilityDeltaSection
   | ToolSchemaSection
@@ -31,6 +32,16 @@ export interface MissionContextSection {
   title: string;
   summary: string;
   fragments: RuntimeContextFragmentEntry[];
+}
+
+export interface IdentitySection {
+  kind: "identity";
+  title: string;
+  summary: string;
+  base_prompt: string;
+  agent_prompt?: string;
+  mode: string;
+  effective_prompt: string;
 }
 
 export interface RuntimeContextFragmentEntry {
@@ -181,6 +192,17 @@ function parseSection(value: unknown): ContextFrameSection | null {
       title: readString(value.title) ?? "Mission Context",
       summary: readString(value.summary) ?? "",
       fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
+    };
+  }
+  if (kind === "identity") {
+    return {
+      kind,
+      title: readString(value.title) ?? "Identity",
+      summary: readString(value.summary) ?? "",
+      base_prompt: readString(value.base_prompt) ?? "",
+      agent_prompt: readString(value.agent_prompt) ?? undefined,
+      mode: readString(value.mode) ?? "append",
+      effective_prompt: readString(value.effective_prompt) ?? "",
     };
   }
   if (kind === "capability_delta") {
@@ -369,6 +391,8 @@ export interface ContextTokenInfo {
 /** 由 frame.kind 推导外层 tab 上的 token 与徽标颜色 */
 export function frameKindToToken(kind: string): ContextTokenInfo {
   switch (kind) {
+    case "identity":
+      return { token: "IDN", variant: "primary" };
     case "capability_state_update":
       return { token: "BDL", variant: "neutral" };
     case "mission_context":
@@ -391,6 +415,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
 /** 由 section.kind 推导内层 section 行 token 与徽标颜色 */
 export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTokenInfo {
   switch (kind) {
+    case "identity":
+      return { token: "IDN", variant: "primary" };
     case "mission_context":
       return { token: "MIS", variant: "primary" };
     case "capability_delta":

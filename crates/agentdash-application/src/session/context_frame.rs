@@ -62,10 +62,3 @@ pub(crate) fn enqueue_context_frame(
     true
 }
 
-pub(crate) fn build_and_enqueue_context_frame(
-    hook_session: &SharedHookSessionRuntime,
-    payload: &impl ContextFramePayload,
-) -> Option<ContextFrame> {
-    let frame = build_context_frame(payload);
-    enqueue_context_frame(hook_session, &frame).then_some(frame)
-}

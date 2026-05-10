@@ -64,7 +64,7 @@ export function ContextFrameStream({
           CTX
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-wide text-foreground/85">
-          上下文更新 {describeFrameSet(frames)}
+          上下文已更新 {describeFrameSet(frames)}
         </span>
         <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{summary}</span>
         <span className="shrink-0 text-[10px] text-muted-foreground/40">
@@ -142,10 +142,6 @@ const FRAME_KIND_LABELS: Record<string, string> = {
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {
-  if (frames.length === 1) {
-    const frame = frames[0]!;
-    return FRAME_KIND_LABELS[frame.kind] ?? "CTX_UPDATE";
-  }
   const kindSet = new Set(frames.map((f) => f.kind));
   const labels = [...kindSet]
     .map((kind) => FRAME_KIND_LABELS[kind] ?? kind.toUpperCase())

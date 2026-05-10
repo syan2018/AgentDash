@@ -64,7 +64,7 @@ export function ContextFrameStream({
           CTX
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">
-          Agent 上下文{frames.length > 1 ? "批量更新" : "已更新"}
+          {describeFrameSet(frames)}
         </span>
         <span className="shrink-0 text-[10px] text-muted-foreground/60">{summary}</span>
         <span className="shrink-0 text-[10px] text-muted-foreground/40">
@@ -126,9 +126,31 @@ function summarizeFrames(frames: ContextFrame[]): string {
   const last = frames[frames.length - 1]!;
   const phase = last.phase_node ? `最后阶段 ${last.phase_node}` : last.kind;
   if (frames.length === 1) {
-    return `1 帧 · ${last.phase_node ? `阶段 ${last.phase_node}` : last.kind}`;
+    return last.phase_node ? `阶段 ${last.phase_node}` : last.kind;
   }
   return `${frames.length} 帧 · ${phase}`;
+}
+
+const FRAME_KIND_LABELS: Record<string, string> = {
+  identity: "身份与偏好",
+  assignment_context: "任务分派",
+  capability_state_update: "能力状态",
+  continuation_context: "会话续跑",
+  pending_action: "待执行动作",
+  auto_resume: "自动续跑",
+  compaction_summary: "上下文压缩",
+};
+
+function describeFrameSet(frames: ContextFrame[]): string {
+  if (frames.length === 1) {
+    const frame = frames[0]!;
+    return FRAME_KIND_LABELS[frame.kind] ?? "上下文已更新";
+  }
+  const kindSet = new Set(frames.map((f) => f.kind));
+  const labels = [...kindSet]
+    .map((kind) => FRAME_KIND_LABELS[kind] ?? kind)
+    .slice(0, 3);
+  return labels.join(" + ");
 }
 
 /**

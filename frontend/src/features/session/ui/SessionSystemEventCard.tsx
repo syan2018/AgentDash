@@ -333,6 +333,9 @@ function HookInjectionEventCard({
   const injections = hookData.injections ?? [];
   const detailLines = completionLine ? [completionLine] : [];
 
+  const slotSummary = summarizeInjectionSlots(injections);
+  if (slotSummary) detailLines.push(slotSummary);
+
   return (
     <EventFullCard
       badgeToken={token}
@@ -340,7 +343,6 @@ function HookInjectionEventCard({
       subtitle={eventMessage ?? resolveDecisionLabel(decision, hookData)}
       message={resolveInjectionEventMessage(decision, injections.length)}
       detailLines={detailLines}
-      bodyExtra={<HookInjectionBody injections={injections} />}
       debugChips={buildHookDebugChips(hookData, null)}
       debugLines={buildHookDebugMeta(hookData)}
       debugBody={diagnosticsBody}
@@ -348,57 +350,19 @@ function HookInjectionEventCard({
   );
 }
 
-function HookInjectionBody({
-  injections,
-}: {
-  injections: NonNullable<HookEventData["injections"]>;
-}) {
-  return (
-    <div className="space-y-2">
-      {injections.map((injection, index) => {
-        const slot = injection.slot ?? "context";
-        const source = injection.source ?? "unknown";
-        const content = injection.content ?? "";
-        const lines = content.split("\n").filter((line) => line.trim().length > 0);
-        const preview = lines.slice(0, 2).join("\n");
-        const hiddenLineCount = Math.max(lines.length - 2, 0);
-
-        return (
-          <div
-            key={`${slot}:${source}:${index}`}
-            className="space-y-1.5 border-l-2 border-primary/20 pl-2.5"
-          >
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
-                {slot}
-              </span>
-              <span className="min-w-0 truncate rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
-                {source}
-              </span>
-            </div>
-            {preview ? (
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
-                {preview}
-                {hiddenLineCount > 0 ? `\n... 另 ${hiddenLineCount} 行` : ""}
-              </pre>
-            ) : (
-              <p className="text-xs leading-5 text-muted-foreground">空注入内容</p>
-            )}
-            {content && hiddenLineCount > 0 && (
-              <details className="group">
-                <summary className="cursor-pointer select-none text-[10px] text-muted-foreground/60">
-                  展开完整注入文本
-                </summary>
-                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-secondary/20 p-2 text-xs leading-relaxed text-foreground/75">
-                  {content}
-                </pre>
-              </details>
-            )}
-          </div>
-        );
-      })}
-    </div>
+function summarizeInjectionSlots(
+  injections: NonNullable<HookEventData["injections"]>,
+): string | null {
+  if (injections.length === 0) return null;
+  const slotCounts = new Map<string, number>();
+  for (const inj of injections) {
+    const slot = inj.slot ?? "context";
+    slotCounts.set(slot, (slotCounts.get(slot) ?? 0) + 1);
+  }
+  const parts = [...slotCounts.entries()].map(([slot, count]) =>
+    count > 1 ? `${slot} ×${count}` : slot,
   );
+  return `注入 slot: ${parts.join(", ")}`;
 }
 
 function resolveInjectionEventMessage(decision: string | null, count: number): string {

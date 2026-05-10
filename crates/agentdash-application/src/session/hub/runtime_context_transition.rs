@@ -77,6 +77,7 @@ pub(crate) fn build_initial_capability_state_frame(
         capability_keys,
         Some(&state_delta),
         tools,
+        &capability_state.skill.skills,
     )
 }
 
@@ -273,6 +274,7 @@ impl SessionHub {
                     &pending.capability_keys,
                     Some(&state_delta),
                     tools,
+                    &pending.state.skill.skills,
                 );
                 let _ = self
                     .emit_context_frame(session_id, Some(turn_id), &notice)
@@ -327,6 +329,7 @@ fn build_live_context_frame(
         &input.capability_keys,
         Some(state_delta),
         tools,
+        &input.after_state.skill.skills,
     );
     context_frame::build_context_frame(&metadata)
 }
@@ -339,6 +342,7 @@ fn build_context_frame(
     effective_capabilities: &BTreeSet<String>,
     state_delta: Option<&CapabilityStateDelta>,
     tools: &[DynAgentTool],
+    skill_entries: &[agentdash_spi::context::capability::SkillEntry],
 ) -> ContextFrame {
     let metadata = RuntimeContextUpdateFrame::new(
         phase_node,
@@ -348,6 +352,7 @@ fn build_context_frame(
         effective_capabilities,
         state_delta,
         tools,
+        skill_entries,
     );
     context_frame::build_context_frame(&metadata)
 }
@@ -392,6 +397,7 @@ impl RuntimeContextUpdateFrame {
         effective_capabilities: &BTreeSet<String>,
         state_delta: Option<&CapabilityStateDelta>,
         tools: &[DynAgentTool],
+        skill_entries: &[agentdash_spi::context::capability::SkillEntry],
     ) -> Self {
         Self {
             phase_node: phase_node.to_string(),
@@ -402,7 +408,8 @@ impl RuntimeContextUpdateFrame {
                 effective_capabilities,
                 state_delta,
             ),
-            skill_delta: state_delta.and_then(SkillDeltaMetadata::from_state_delta),
+            skill_delta: state_delta
+                .and_then(|delta| SkillDeltaMetadata::from_state_delta(delta, skill_entries)),
             tool_schema_delta: state_delta.and_then(|delta| {
                 ToolSchemaDeltaMetadata::from_tools_and_state_delta(tools, delta)
             }),
@@ -668,29 +675,34 @@ struct SkillDeltaMetadata {
 }
 
 impl SkillDeltaMetadata {
-    fn from_state_delta(state_delta: &CapabilityStateDelta) -> Option<Self> {
+    fn from_state_delta(
+        state_delta: &CapabilityStateDelta,
+        skill_entries: &[agentdash_spi::context::capability::SkillEntry],
+    ) -> Option<Self> {
         if state_delta.skills.is_empty() {
             return None;
         }
+        let lookup = |name: &str| -> RuntimeSkillEntry {
+            if let Some(entry) = skill_entries.iter().find(|e| e.name == name) {
+                RuntimeSkillEntry {
+                    name: entry.name.clone(),
+                    description: entry.description.clone(),
+                    file_path: entry.file_path.clone(),
+                    disable_model_invocation: entry.disable_model_invocation,
+                }
+            } else {
+                RuntimeSkillEntry {
+                    name: name.to_string(),
+                    description: String::new(),
+                    file_path: String::new(),
+                    disable_model_invocation: false,
+                }
+            }
+        };
         Some(Self {
-            added_skills: state_delta
-                .skills
-                .added
-                .iter()
-                .map(|name| runtime_skill_entry(name))
-                .collect(),
-            removed_skills: state_delta
-                .skills
-                .removed
-                .iter()
-                .map(|name| runtime_skill_entry(name))
-                .collect(),
-            changed_skills: state_delta
-                .skills
-                .changed
-                .iter()
-                .map(|name| runtime_skill_entry(name))
-                .collect(),
+            added_skills: state_delta.skills.added.iter().map(|n| lookup(n)).collect(),
+            removed_skills: state_delta.skills.removed.iter().map(|n| lookup(n)).collect(),
+            changed_skills: state_delta.skills.changed.iter().map(|n| lookup(n)).collect(),
         })
     }
 
@@ -743,14 +755,6 @@ fn append_path_lines(lines: &mut Vec<String>, title: &str, values: &[String], su
     }
 }
 
-fn runtime_skill_entry(name: &str) -> RuntimeSkillEntry {
-    RuntimeSkillEntry {
-        name: name.to_string(),
-        description: String::new(),
-        file_path: String::new(),
-        disable_model_invocation: false,
-    }
-}
 
 fn append_skill_lines(
     lines: &mut Vec<String>,
@@ -763,7 +767,14 @@ fn append_skill_lines(
     }
     lines.push(format!("### {title}"));
     for skill in values {
-        lines.push(format!("- `{}` — {suffix}", skill.name));
+        if skill.description.is_empty() {
+            lines.push(format!("- `{}` — {suffix}", skill.name));
+        } else {
+            lines.push(format!(
+                "- `{}`: {} (path: `{}`) — {suffix}",
+                skill.name, skill.description, skill.file_path
+            ));
+        }
     }
 }
 

@@ -119,8 +119,10 @@ impl SessionContextBundle {
     /// 3. 同一 slot 内部合并全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
     /// 4. 空 content 的 fragment 跳过。
     ///
-    /// 调用方通常是 ContextFrame builder，通过指定 `["task", "story", "project", ...]`
-    /// 这样的 slot 白名单控制 section 内的排序。
+    /// **Deprecated**: 渲染决策已由 ContextFrame builder（`mission_context_frame.rs`）承担。
+    /// Bundle 的职责收束为纯合并容器；请直接使用 `iter_fragments()` / `filter_for()` 取得
+    /// fragment 后交由 Frame builder 渲染。
+    #[deprecated(note = "渲染逻辑已迁移到 ContextFrame builder，请使用 iter_fragments/filter_for")]
     pub fn render_section(&self, scope: FragmentScope, slots: &[&str]) -> String {
         let mut sections: Vec<String> = Vec::with_capacity(slots.len());
         for slot_name in slots {
@@ -197,6 +199,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn render_section_orders_fragments_by_order() {
         let session = Uuid::new_v4();
         let mut bundle = SessionContextBundle::new(session, "task_start");
@@ -210,6 +213,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn render_section_orders_within_slot_by_order_field() {
         let session = Uuid::new_v4();
         let mut bundle = SessionContextBundle::new(session, "story_owner");

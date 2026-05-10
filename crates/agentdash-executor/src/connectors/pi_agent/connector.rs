@@ -24,7 +24,7 @@ use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, HookTurnStartNotice};
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -376,10 +376,6 @@ impl AgentConnector for PiAgentConnector {
             }
         }
 
-        enqueue_context_frames_for_transform_context(
-            context.turn.hook_session.as_ref(),
-            &context.turn.context_frames,
-        );
         let hook_trace_rx = context
             .turn
             .hook_session
@@ -622,29 +618,6 @@ fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
     (!rendered.is_empty()).then(|| rendered.to_string())
 }
 
-fn enqueue_context_frames_for_transform_context(
-    hook_session: Option<&Arc<dyn agentdash_spi::hooks::HookSessionRuntimeAccess>>,
-    frames: &[ContextFrame],
-) {
-    let Some(hook_session) = hook_session else {
-        return;
-    };
-    for frame in frames {
-        if frame.kind == "identity" || frame.kind == "pending_action" {
-            continue;
-        }
-        if frame.rendered_text.trim().is_empty() {
-            continue;
-        }
-        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
-            id: frame.id.clone(),
-            created_at_ms: frame.created_at_ms,
-            source: frame.source.clone(),
-            content: frame.rendered_text.clone(),
-            context_frame: Some(frame.clone()),
-        });
-    }
-}
 
 async fn emit_pending_hook_trace_envelopes(
     hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_spi::HookTraceEntry>>,

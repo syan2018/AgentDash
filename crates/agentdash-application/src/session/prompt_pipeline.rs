@@ -484,6 +484,11 @@ impl SessionHub {
         }
         context.turn.context_frames = dedupe_context_frames(turn_context_frames);
 
+        enqueue_context_frames_for_transform_context(
+            hook_session.as_ref(),
+            &context.turn.context_frames,
+        );
+
         let mut stream = match self
             .connector
             .prompt(
@@ -885,6 +890,35 @@ fn dedupe_context_frames(frames: Vec<ContextFrame>) -> Vec<ContextFrame> {
         }
     }
     deduped
+}
+
+/// 统一将已组装的 ContextFrame 投递到 Hook session transform_context 队列。
+///
+/// 排除规则（与原 executor 层行为一致）：
+/// - `identity` frame 走 connector 的 set_system_prompt，不进入 transform_context；
+/// - `pending_action` frame 不参与 transform_context（由独立通道投递）。
+fn enqueue_context_frames_for_transform_context(
+    hook_session: Option<&SharedHookSessionRuntime>,
+    frames: &[ContextFrame],
+) {
+    let Some(hook_session) = hook_session else {
+        return;
+    };
+    for frame in frames {
+        if frame.kind == "identity" || frame.kind == "pending_action" {
+            continue;
+        }
+        if frame.rendered_text.trim().is_empty() {
+            continue;
+        }
+        hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
+            id: frame.id.clone(),
+            created_at_ms: frame.created_at_ms,
+            source: frame.source.clone(),
+            content: frame.rendered_text.clone(),
+            context_frame: Some(frame.clone()),
+        });
+    }
 }
 
 #[cfg(test)]

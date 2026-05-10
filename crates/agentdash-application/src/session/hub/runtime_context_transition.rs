@@ -8,15 +8,17 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
-    CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, RuntimeContextFragmentEntry,
-    RuntimeEventSource, RuntimeSkillEntry, SharedHookSessionRuntime,
+    CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource,
+    RuntimeSkillEntry, SharedHookSessionRuntime,
 };
 use uuid::Uuid;
 
 use super::super::context_frame::{self, ContextFramePayload};
+use super::super::mission_context_frame::build_runtime_mission_context_frame;
 use super::super::tool_schema_notice::ToolSchemaDeltaMetadata;
 use super::SessionHub;
 use crate::capability::capability_description;
+use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
     RuntimeContextTransition, compute_capability_state_delta,
@@ -142,7 +144,7 @@ impl SessionHub {
 
         // mission_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) =
-            build_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_workflow_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
             self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
                 .await
@@ -278,7 +280,7 @@ impl SessionHub {
                 produced_frames.push(notice.clone());
 
                 // mission_context 独立 frame，保持 frame 一职一责。
-                if let Some(workflow_frame) = build_mission_context_frame(
+                if let Some(workflow_frame) = build_workflow_mission_context_frame(
                     &pending.phase_node,
                     "applied_on_next_turn",
                     &injections,
@@ -299,7 +301,7 @@ impl SessionHub {
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
         if let Some(notice) =
-            build_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_workflow_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
@@ -352,20 +354,23 @@ fn build_context_frame(
 
 /// 根据 hook injections 构造独立的 `mission_context` frame。
 /// 已从能力更新帧剥离，遵循 frame 一职一责。
-fn build_mission_context_frame(
+///
+/// 统一走 HookInjection → ContextFragment → MissionContextFrame 单一路径，
+/// 复用 `mission_context_frame.rs` 的渲染逻辑。
+fn build_workflow_mission_context_frame(
     phase_node: &str,
     apply_mode: &str,
     injections: &[HookInjection],
 ) -> Option<ContextFrame> {
-    let metadata = MissionContextFrame::new(
-        phase_node,
-        apply_mode,
-        "queued_for_transform_context",
-        injections,
-    );
-    metadata
-        .has_content()
-        .then(|| context_frame::build_context_frame(&metadata))
+    if injections.is_empty() {
+        return None;
+    }
+    let fragments: Vec<_> = injections
+        .iter()
+        .cloned()
+        .map(hook_injection_to_fragment)
+        .collect();
+    build_runtime_mission_context_frame(phase_node, Some(apply_mode), &fragments)
 }
 
 #[derive(Debug, Clone)]
@@ -453,73 +458,6 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MissionContextFrame {
-    phase_node: String,
-    apply_mode: String,
-    delivery_status: String,
-    mission_context: Option<MissionContextMetadata>,
-}
-
-impl MissionContextFrame {
-    fn new(
-        phase_node: &str,
-        apply_mode: &str,
-        delivery_status: &str,
-        injections: &[HookInjection],
-    ) -> Self {
-        Self {
-            phase_node: phase_node.to_string(),
-            apply_mode: apply_mode.to_string(),
-            delivery_status: delivery_status.to_string(),
-            mission_context: MissionContextMetadata::from_hook_injections(injections),
-        }
-    }
-
-    fn has_content(&self) -> bool {
-        self.mission_context.is_some()
-    }
-}
-
-impl ContextFramePayload for MissionContextFrame {
-    fn id(&self, created_at_ms: i64) -> String {
-        format!("mission-context-{}-{created_at_ms}", self.phase_node)
-    }
-
-    fn kind(&self) -> &'static str {
-        "mission_context"
-    }
-
-    fn source(&self) -> RuntimeEventSource {
-        RuntimeEventSource::RuntimeContextUpdate
-    }
-
-    fn phase_node(&self) -> Option<String> {
-        Some(self.phase_node.clone())
-    }
-
-    fn apply_mode(&self) -> Option<String> {
-        Some(self.apply_mode.clone())
-    }
-
-    fn delivery_status(&self) -> String {
-        self.delivery_status.clone()
-    }
-
-    fn sections(&self) -> Vec<ContextFrameSection> {
-        self.mission_context
-            .as_ref()
-            .map(|metadata| vec![metadata.section()])
-            .unwrap_or_default()
-    }
-
-    fn rendered_text(&self) -> String {
-        self.mission_context
-            .as_ref()
-            .map(MissionContextMetadata::render_text)
-            .unwrap_or_default()
-    }
-}
 
 #[derive(Debug, Clone)]
 struct CapabilityDeltaFrameMetadata {
@@ -781,47 +719,6 @@ impl SkillDeltaMetadata {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MissionContextMetadata {
-    title: String,
-    summary: String,
-    fragments: Vec<RuntimeContextFragmentEntry>,
-}
-
-impl MissionContextMetadata {
-    fn from_hook_injections(injections: &[HookInjection]) -> Option<Self> {
-        if injections.is_empty() {
-            return None;
-        }
-        Some(Self {
-            title: "Mission Context Update".to_string(),
-            summary: "Workflow 运行上下文已更新。以下任务约束会在下一次边界注入。".to_string(),
-            fragments: injections
-                .iter()
-                .map(|injection| RuntimeContextFragmentEntry {
-                    slot: injection.slot.clone(),
-                    label: injection.slot.clone(),
-                    source: injection.source.clone(),
-                    content: injection.content.clone(),
-                })
-                .collect(),
-        })
-    }
-
-    fn section(&self) -> ContextFrameSection {
-        ContextFrameSection::MissionContext {
-            title: self.title.clone(),
-            summary: self.summary.clone(),
-            fragments: self.fragments.clone(),
-        }
-    }
-
-    fn render_text(&self) -> String {
-        let mut lines = vec![format!("[{}]", self.title), self.summary.clone()];
-        lines.push(format_injection_items(&self.fragments));
-        lines.join("\n\n")
-    }
-}
 
 fn append_capability_lines(lines: &mut Vec<String>, values: &[String], removed: bool) {
     for key in values {
@@ -870,25 +767,6 @@ fn append_skill_lines(
     }
 }
 
-fn format_injection_items(injections: &[RuntimeContextFragmentEntry]) -> String {
-    injections
-        .iter()
-        .map(|injection| {
-            let source = if injection.source.trim().is_empty() {
-                "unknown"
-            } else {
-                injection.source.trim()
-            };
-            let content = injection.content.trim();
-            if content.is_empty() {
-                format!("- [{}] {source}", injection.slot)
-            } else {
-                format!("- [{}] {source}: {content}", injection.slot)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 #[cfg(test)]
 mod tests {
@@ -1018,7 +896,7 @@ mod tests {
             source: "workflow:admin:apply".to_string(),
         }];
 
-        let frame = build_mission_context_frame("apply", "live", &injections)
+        let frame = build_workflow_mission_context_frame("apply", "live", &injections)
             .expect("mission_context frame should be emitted when injections present");
 
         assert_eq!(frame.kind, "mission_context");
@@ -1031,6 +909,6 @@ mod tests {
         ));
 
         // 没有 injection 时不构造 frame。
-        assert!(build_mission_context_frame("apply", "live", &[]).is_none());
+        assert!(build_workflow_mission_context_frame("apply", "live", &[]).is_none());
     }
 }

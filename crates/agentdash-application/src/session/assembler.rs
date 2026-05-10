@@ -2315,15 +2315,17 @@ mod tests {
             },
             vec![contribution],
         );
-        let rendered = bundle.render_section(
-            agentdash_spi::FragmentScope::RuntimeAgent,
-            &["workflow_context", "runtime_policy"],
-        );
+        let relevant_content: String = bundle
+            .filter_for(agentdash_spi::FragmentScope::RuntimeAgent)
+            .filter(|f| f.slot == "workflow_context" || f.slot == "runtime_policy")
+            .map(|f| f.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
 
-        assert!(rendered.contains("## Lifecycle Node"));
-        assert!(rendered.contains("交付可验证实现"));
-        assert!(rendered.contains("complete_lifecycle_node"));
-        assert!(rendered.contains("workflow_management"));
+        assert!(relevant_content.contains("## Lifecycle Node"));
+        assert!(relevant_content.contains("交付可验证实现"));
+        assert!(relevant_content.contains("complete_lifecycle_node"));
+        assert!(relevant_content.contains("workflow_management"));
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -9,6 +9,7 @@ use crate::session::context_frame::{self, ContextFramePayload};
 #[derive(Debug, Clone)]
 struct MissionContextFrame {
     phase_tag: String,
+    apply_mode_override: Option<String>,
     fragments: Vec<RuntimeContextFragmentEntry>,
 }
 
@@ -51,6 +52,7 @@ impl MissionContextFrame {
 
         (!fragments.is_empty()).then_some(Self {
             phase_tag,
+            apply_mode_override: None,
             fragments,
         })
     }
@@ -71,6 +73,10 @@ impl ContextFramePayload for MissionContextFrame {
 
     fn phase_node(&self) -> Option<String> {
         Some(self.phase_tag.clone())
+    }
+
+    fn apply_mode(&self) -> Option<String> {
+        self.apply_mode_override.clone()
     }
 
     fn delivery_status(&self) -> String {
@@ -105,6 +111,28 @@ pub(crate) fn build_mission_context_frame(
         user_preferences,
         discovered_guidelines,
     )?;
+    Some(context_frame::build_context_frame(&metadata))
+}
+
+/// Runtime transition 路径的 mission context frame 构建入口。
+///
+/// 与 `build_mission_context_frame` 共享同一个 `MissionContextFrame` payload 和渲染逻辑，
+/// 但不需要 user_preferences / discovered_guidelines（它们在 bootstrap 时已注入过）。
+/// 此函数接收已桥接为 `ContextFragment` 的数据，保证整个链路走 Fragment → Frame 单一路径。
+pub(crate) fn build_runtime_mission_context_frame(
+    phase_tag: &str,
+    apply_mode: Option<&str>,
+    runtime_fragments: &[ContextFragment],
+) -> Option<ContextFrame> {
+    let fragments = mission_runtime_fragments(runtime_fragments);
+    if fragments.is_empty() {
+        return None;
+    }
+    let metadata = MissionContextFrame {
+        phase_tag: phase_tag.to_string(),
+        apply_mode_override: apply_mode.map(ToString::to_string),
+        fragments,
+    };
     Some(context_frame::build_context_frame(&metadata))
 }
 

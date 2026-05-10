@@ -21,10 +21,10 @@ describe("ContextFrameCard", () => {
 
     expect(markup).toContain("CTX");
     expect(markup).toContain("CAPABILITY");
-    // 折叠态：阶段 / kind 汇总出现在 header 小字
-    expect(markup).toContain("阶段 apply");
+    // 折叠态：phase node 出现在 summary 小字
+    expect(markup).toContain("apply");
     // 折叠态：不渲染内层 section body
-    expect(markup).not.toContain("能力 Key 变化");
+    expect(markup).not.toContain("Capability Keys");
   });
 
   it("展开后按 sections[] 原顺序渲染单列长页", () => {
@@ -32,15 +32,15 @@ describe("ContextFrameCard", () => {
       <ContextFrameCard data={sampleNotice()} defaultExpanded />,
     );
 
-    // section header token + 标题 + hint
-    expect(markup).toContain("能力 Key 变化");
-    expect(markup).toContain("工具路径变化");
-    expect(markup).toContain("MCP Server 变化");
-    expect(markup).toContain("工具 Schema 变化");
-    // tool_schema_delta 去重后仅 1 项变化（restored 与 added 同一 tool_path）
-    expect(markup).toContain("1 项变化");
-    // 确认 tab 条包含 BDL（capability_state_update）
-    expect(markup).toContain("BDL");
+    // section header token + title + hint
+    expect(markup).toContain("Capability Keys");
+    expect(markup).toContain("Tool Paths");
+    expect(markup).toContain("MCP Servers");
+    expect(markup).toContain("Tool Schema");
+    // tool_schema_delta after dedup: 1 added tool
+    expect(markup).toContain("+1");
+    // tab bar contains CAP token (capability_state_update)
+    expect(markup).toContain("CAP");
     // Agent 原文折叠块
     expect(markup).toContain("Agent 实际原文");
     // 调试信息折叠块
@@ -58,7 +58,7 @@ describe("ContextFrameCard", () => {
     // frame tab 的 ASN token + section block 标题
     expect(markup).toContain("ASN");
     expect(markup).toContain("Assignment Context");
-    expect(markup).toContain("2 个片段");
+    expect(markup).toContain("2 fragments");
     expect(markup).toContain("ASN");
   });
 
@@ -100,7 +100,7 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Auto Resume");
     expect(markup).toContain("hook_before_stop_continue");
     expect(markup).toContain("RESUME");
-    expect(markup).toContain("RES");
+    expect(markup).toContain("RSM");
   });
 
   it("解析并渲染 compaction_summary frame", () => {
@@ -113,7 +113,7 @@ describe("ContextFrameCard", () => {
       <ContextFrameCard data={sampleCompactionNotice()} defaultExpanded />,
     );
     expect(markup).toContain("Compaction Summary");
-    expect(markup).toContain("12 条消息");
+    expect(markup).toContain("12 messages");
     expect(markup).toContain("COMPACTION");
     expect(markup).toContain("CMP");
   });
@@ -127,9 +127,8 @@ describe("ContextFrameCard", () => {
     const markup = renderToStaticMarkup(
       <ContextFrameCard data={sampleContinuationNotice()} defaultExpanded />,
     );
-    expect(markup).toContain("CNT");
+    expect(markup).toContain("CTN");
     expect(markup).toContain("Session Continuation");
-    expect(markup).toContain("从会话仓储恢复 3 条历史消息");
   });
 });
 

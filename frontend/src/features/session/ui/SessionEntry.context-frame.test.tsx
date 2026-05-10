@@ -20,8 +20,8 @@ describe("SessionEntry ContextFrame 聚合", () => {
 
     expect(html).toContain("CAPABILITY");
     expect(html).toContain("ASSIGNMENT");
-    expect(html).toContain("2 帧");
-    expect(html).toContain("最后阶段 apply");
+    expect(html).toContain("2x");
+    expect(html).toContain("apply");
     expect(html).not.toContain("已注入动态上下文");
   });
 });

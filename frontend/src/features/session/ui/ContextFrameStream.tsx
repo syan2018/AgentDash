@@ -63,10 +63,10 @@ export function ContextFrameStream({
         >
           CTX
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">
-          {describeFrameSet(frames)}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-wide text-foreground/85">
+          上下文更新 {describeFrameSet(frames)}
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/60">{summary}</span>
+        <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{summary}</span>
         <span className="shrink-0 text-[10px] text-muted-foreground/40">
           {expanded ? "▲" : "▼"}
         </span>
@@ -107,14 +107,14 @@ function FrameTabBar({
             key={frame.id}
             type="button"
             onClick={() => onSelect(frame.id)}
-            className={`inline-flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-[11px] transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-[11px] font-mono transition-colors ${
               active
                 ? "border-border bg-secondary/50 text-foreground"
                 : "border-border/70 bg-background text-muted-foreground hover:bg-secondary/35"
             }`}
           >
             <TokenBadge token={token} />
-            <span className="truncate max-w-[18rem]">{frameTabLabel(frame)}</span>
+            <span className="truncate max-w-[18rem] tracking-tight">{frameTabLabel(frame)}</span>
           </button>
         );
       })}
@@ -124,18 +124,18 @@ function FrameTabBar({
 
 function summarizeFrames(frames: ContextFrame[]): string {
   const last = frames[frames.length - 1]!;
-  const phase = last.phase_node ? `最后阶段 ${last.phase_node}` : last.kind;
+  const phase = last.phase_node ?? last.kind;
   if (frames.length === 1) {
-    return last.phase_node ? `阶段 ${last.phase_node}` : last.kind;
+    return last.phase_node ?? "";
   }
-  return `${frames.length} 帧 · ${phase}`;
+  return `${frames.length}x · ${phase}`;
 }
 
 const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
-  assignment_context: "ASSIGNMENT",
-  capability_state_update: "CAPABILITY",
   continuation_context: "CONTINUATION",
+  capability_state_update: "CAPABILITY",
+  assignment_context: "ASSIGNMENT",
   pending_action: "ACTION",
   auto_resume: "RESUME",
   compaction_summary: "COMPACTION",
@@ -144,13 +144,13 @@ const FRAME_KIND_LABELS: Record<string, string> = {
 function describeFrameSet(frames: ContextFrame[]): string {
   if (frames.length === 1) {
     const frame = frames[0]!;
-    return FRAME_KIND_LABELS[frame.kind] ?? "上下文已更新";
+    return FRAME_KIND_LABELS[frame.kind] ?? "CTX_UPDATE";
   }
   const kindSet = new Set(frames.map((f) => f.kind));
   const labels = [...kindSet]
-    .map((kind) => FRAME_KIND_LABELS[kind] ?? kind)
-    .slice(0, 3);
-  return labels.join(" + ");
+    .map((kind) => FRAME_KIND_LABELS[kind] ?? kind.toUpperCase())
+    .slice(0, 4);
+  return labels.join(" / ");
 }
 
 /**
@@ -179,7 +179,7 @@ function frameTabLabel(frame: ContextFrame): string {
       (section) => section.kind === "compaction_summary",
     );
     if (compaction && compaction.kind === "compaction_summary") {
-      parts.push(`${compaction.messages_compacted} 条`);
+      parts.push(`${compaction.messages_compacted} msg`);
     }
   }
 

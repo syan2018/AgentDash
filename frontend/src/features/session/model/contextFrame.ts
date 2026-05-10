@@ -440,19 +440,18 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
     case "identity":
       return { token: "IDN", variant: "primary" };
     case "capability_state_update":
-      return { token: "BDL", variant: "neutral" };
+      return { token: "CAP", variant: "neutral" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
     case "continuation_context":
-      return { token: "CNT", variant: "warning" };
+      return { token: "CTN", variant: "warning" };
     case "pending_action":
       return { token: "ACT", variant: "warning" };
     case "auto_resume":
-      return { token: "RES", variant: "warning" };
+      return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
     default:
-      // 未知 kind：截取前 4 字母大写
       return {
         token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
         variant: "neutral",
@@ -468,7 +467,7 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
     case "continuation_context":
-      return { token: "CNT", variant: "warning" };
+      return { token: "CTN", variant: "warning" };
     case "capability_key_delta":
       return { token: "CAP", variant: "neutral" };
     case "tool_path_delta":
@@ -489,7 +488,7 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
     case "pending_action":
       return { token: "ACT", variant: "warning" };
     case "auto_resume":
-      return { token: "RES", variant: "warning" };
+      return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
   }

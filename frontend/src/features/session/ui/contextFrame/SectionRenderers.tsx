@@ -48,11 +48,11 @@ export function SectionBlock({ section }: { section: ContextFrameSection }) {
     <section className="space-y-2 rounded-[8px] border border-border/70 bg-secondary/15 px-3 py-2.5">
       <header className="flex items-center gap-2">
         <TokenBadge token={token} />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/85">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-tight text-foreground/85">
           {title}
         </span>
         {hint && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/60">{hint}</span>
+          <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{hint}</span>
         )}
       </header>
       <div className="space-y-2">{renderSectionBody(section)}</div>
@@ -69,23 +69,23 @@ function sectionTitle(section: ContextFrameSection): string {
     case "continuation_context":
       return section.title || "Session Continuation";
     case "capability_key_delta":
-      return "能力 Key 变化";
+      return "Capability Keys";
     case "tool_path_delta":
-      return "工具路径变化";
+      return "Tool Paths";
     case "mcp_server_delta":
-      return "MCP Server 变化";
+      return "MCP Servers";
     case "vfs_delta":
-      return "VFS 挂载变化";
+      return "VFS Mounts";
     case "tool_schema":
-      return "初始工具 Schema";
+      return "Tool Schema (init)";
     case "tool_schema_delta":
-      return "工具 Schema 变化";
+      return "Tool Schema";
     case "skill_delta":
-      return "Skill 变化";
+      return "Skills";
     case "hook_injection":
       return section.title || "Hook Injection";
     case "system_notice":
-      return section.title || "系统通知";
+      return section.title || "System Notice";
     case "pending_action":
       return section.title || "Pending Action";
     case "auto_resume":
@@ -100,58 +100,58 @@ function sectionHint(section: ContextFrameSection): string | null {
     case "identity":
       return section.mode || "append";
     case "assignment_context":
-      return `${section.fragments.length} 个片段`;
+      return `${section.fragments.length} fragments`;
     case "continuation_context":
       return section.summary || null;
     case "capability_key_delta": {
       const added = section.added_capabilities.length;
       const removed = section.removed_capabilities.length;
-      if (added + removed === 0) return "无变化";
+      if (added + removed === 0) return "no change";
       return `+${added} −${removed}`;
     }
     case "tool_path_delta": {
       const added = section.unblocked_tool_paths.length + section.whitelisted_tool_paths.length;
       const removed = section.blocked_tool_paths.length + section.removed_whitelist_paths.length;
-      if (added + removed === 0) return "无变化";
+      if (added + removed === 0) return "no change";
       return `+${added} −${removed}`;
     }
     case "mcp_server_delta": {
       const added = section.added_mcp_servers.length;
       const removed = section.removed_mcp_servers.length;
       const changed = section.changed_mcp_servers.length;
-      if (added + removed + changed === 0) return "无变化";
+      if (added + removed + changed === 0) return "no change";
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
     case "vfs_delta": {
       const added = section.vfs_mounts_added.length;
       const removed = section.vfs_mounts_removed.length;
       const mountChanged = (section.default_mount_before ?? null) !== (section.default_mount_after ?? null);
-      if (added + removed === 0 && !mountChanged) return "无变化";
+      if (added + removed === 0 && !mountChanged) return "no change";
       return `+${added} −${removed}${mountChanged ? " ↻default" : ""}`;
     }
     case "tool_schema":
-      return `${section.tools.length} 个工具`;
+      return `${section.tools.length} tools`;
     case "tool_schema_delta": {
       const count = section.added_tools.length;
-      return count > 0 ? `${count} 项变化` : "无变化";
+      return count > 0 ? `+${count}` : "no change";
     }
     case "skill_delta": {
       const added = section.added_skills.length;
       const removed = section.removed_skills.length;
       const changed = section.changed_skills.length;
-      if (added + removed + changed === 0) return "无变化";
+      if (added + removed + changed === 0) return "no change";
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
     case "hook_injection":
-      return `${section.injections.length} 项注入`;
+      return `${section.injections.length} injected`;
     case "system_notice":
       return null;
     case "pending_action":
       return section.status || "pending";
     case "auto_resume":
-      return section.reason || "系统续跑";
+      return section.reason || "auto";
     case "compaction_summary":
-      return `${section.messages_compacted} 条消息`;
+      return `${section.messages_compacted} messages`;
   }
 }
 

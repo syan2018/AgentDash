@@ -119,7 +119,7 @@ impl SessionContextBundle {
     /// 3. 同一 slot 内部合并全部 fragment，按 `order` 升序、用 `\n\n` 拼接；
     /// 4. 空 content 的 fragment 跳过。
     ///
-    /// **Deprecated**: 渲染决策已由 ContextFrame builder（`mission_context_frame.rs`）承担。
+    /// **Deprecated**: 渲染决策已由 ContextFrame builder（`assignment_context_frame.rs`）承担。
     /// Bundle 的职责收束为纯合并容器；请直接使用 `iter_fragments()` / `filter_for()` 取得
     /// fragment 后交由 Frame builder 渲染。
     #[deprecated(note = "渲染逻辑已迁移到 ContextFrame builder，请使用 iter_fragments/filter_for")]

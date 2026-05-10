@@ -252,7 +252,7 @@ pub enum ContextFrameSection {
         mode: String,
         effective_prompt: String,
     },
-    MissionContext {
+    AssignmentContext {
         title: String,
         summary: String,
         #[serde(default)]

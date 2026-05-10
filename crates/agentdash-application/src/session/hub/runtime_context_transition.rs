@@ -14,7 +14,7 @@ use agentdash_spi::hooks::{
 use uuid::Uuid;
 
 use super::super::context_frame::{self, ContextFramePayload};
-use super::super::mission_context_frame::build_runtime_mission_context_frame;
+use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
 use super::super::tool_schema_notice::ToolSchemaDeltaMetadata;
 use super::SessionHub;
 use crate::capability::capability_description;
@@ -142,9 +142,9 @@ impl SessionHub {
             .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
         let _ = context_frame::enqueue_context_frame(hook_session, &notice);
 
-        // mission_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
+        // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) =
-            build_workflow_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
             self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
                 .await
@@ -279,8 +279,8 @@ impl SessionHub {
                     .await;
                 produced_frames.push(notice.clone());
 
-                // mission_context 独立 frame，保持 frame 一职一责。
-                if let Some(workflow_frame) = build_workflow_mission_context_frame(
+                // assignment_context 独立 frame，保持 frame 一职一责。
+                if let Some(workflow_frame) = build_workflow_assignment_context_frame(
                     &pending.phase_node,
                     "applied_on_next_turn",
                     &injections,
@@ -301,7 +301,7 @@ impl SessionHub {
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
         if let Some(notice) =
-            build_workflow_mission_context_frame(&input.phase_node, input.apply_mode, &injections)
+            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
         {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
@@ -352,12 +352,12 @@ fn build_context_frame(
     context_frame::build_context_frame(&metadata)
 }
 
-/// 根据 hook injections 构造独立的 `mission_context` frame。
+/// 根据 hook injections 构造独立的 `assignment_context` frame。
 /// 已从能力更新帧剥离，遵循 frame 一职一责。
 ///
-/// 统一走 HookInjection → ContextFragment → MissionContextFrame 单一路径，
-/// 复用 `mission_context_frame.rs` 的渲染逻辑。
-fn build_workflow_mission_context_frame(
+/// 统一走 HookInjection → ContextFragment → AssignmentContextFrame 单一路径，
+/// 复用 `assignment_context_frame.rs` 的渲染逻辑。
+fn build_workflow_assignment_context_frame(
     phase_node: &str,
     apply_mode: &str,
     injections: &[HookInjection],
@@ -370,7 +370,7 @@ fn build_workflow_mission_context_frame(
         .cloned()
         .map(hook_injection_to_fragment)
         .collect();
-    build_runtime_mission_context_frame(phase_node, Some(apply_mode), &fragments)
+    build_runtime_assignment_context_frame(phase_node, Some(apply_mode), &fragments)
 }
 
 #[derive(Debug, Clone)]
@@ -860,12 +860,12 @@ mod tests {
             })
             .expect("tool_schema_delta section should exist with added_tools");
         assert_eq!(tool_section.len(), 1);
-        // mission_context section 不应混入 capability_state_update frame。
+        // assignment_context section 不应混入 capability_state_update frame。
         assert!(
             !notice
                 .sections
                 .iter()
-                .any(|section| matches!(section, ContextFrameSection::MissionContext { .. }))
+                .any(|section| matches!(section, ContextFrameSection::AssignmentContext { .. }))
         );
         assert!(
             notice
@@ -889,26 +889,26 @@ mod tests {
     }
 
     #[test]
-    fn mission_context_frame_is_emitted_independently() {
+    fn assignment_context_frame_is_emitted_independently() {
         let injections = vec![HookInjection {
             slot: "workflow".to_string(),
             content: "Active workflow step: apply".to_string(),
             source: "workflow:admin:apply".to_string(),
         }];
 
-        let frame = build_workflow_mission_context_frame("apply", "live", &injections)
-            .expect("mission_context frame should be emitted when injections present");
+        let frame = build_workflow_assignment_context_frame("apply", "live", &injections)
+            .expect("assignment_context frame should be emitted when injections present");
 
-        assert_eq!(frame.kind, "mission_context");
+        assert_eq!(frame.kind, "assignment_context");
         assert_eq!(frame.phase_node.as_deref(), Some("apply"));
         assert_eq!(frame.apply_mode.as_deref(), Some("live"));
         assert_eq!(frame.sections.len(), 1);
         assert!(matches!(
             frame.sections[0],
-            ContextFrameSection::MissionContext { .. }
+            ContextFrameSection::AssignmentContext { .. }
         ));
 
         // 没有 injection 时不构造 frame。
-        assert!(build_workflow_mission_context_frame("apply", "live", &[]).is_none());
+        assert!(build_workflow_assignment_context_frame("apply", "live", &[]).is_none());
     }
 }

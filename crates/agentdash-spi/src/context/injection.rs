@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use agentdash_domain::context_source::ContextSourceRef;
 use serde::Serialize;
 
-/// Mission Context 渲染白名单（任务语义面）。
+/// Assignment Context 渲染白名单（任务语义面）。
 ///
 /// 仅包含“该做什么”的上下文片段：task/story/project/workflow/约束/指导等。
 /// 能力语义（tools/vfs/mcp/runtime policy）统一由 `CapabilityState` delta 维度表达，
-/// 不再通过 slot 白名单渲染到 mission context。
-pub const MISSION_CONTEXT_SLOTS: &[&str] = &[
+/// 不再通过 slot 白名单渲染到 assignment context。
+pub const ASSIGNMENT_CONTEXT_SLOTS: &[&str] = &[
     "task",
     "story",
     "project",
@@ -32,14 +32,13 @@ pub const MISSION_CONTEXT_SLOTS: &[&str] = &[
     "project_guidelines",
     "instruction",
     "instruction_append",
-    // companion_agents: PR 4（04-30-session-pipeline-architecture-refactor）把
-    // companion agents 渲染从独立 section 统一归入 Bundle 主数据面；ContextFrame
-    // 收束后由 mission_context frame 按白名单注入给 Agent。
+    // companion_agents: 从独立 section 统一归入 Bundle 主数据面；
+    // ContextFrame 收束后由 assignment_context frame 按白名单注入给 Agent。
     "companion_agents",
 ];
 
-/// 兼容旧调用点的别名：当前 runtime agent 的主通道等同于 mission context。
-pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = MISSION_CONTEXT_SLOTS;
+/// 兼容旧调用点的别名。
+pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = ASSIGNMENT_CONTEXT_SLOTS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {

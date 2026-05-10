@@ -19,7 +19,7 @@ import type {
   ContextFrameSection,
   ContextTokenInfo,
   IdentitySection,
-  MissionContextSection,
+  AssignmentContextSection,
   PendingActionSection,
   RuntimeContextFragmentEntry,
   RuntimeHookInjectionEntry,
@@ -61,8 +61,8 @@ function sectionTitle(section: ContextFrameSection): string {
   switch (section.kind) {
     case "identity":
       return section.title || "Identity";
-    case "mission_context":
-      return section.title || "Mission Context";
+    case "assignment_context":
+      return section.title || "Assignment Context";
     case "continuation_context":
       return section.title || "Session Continuation";
     case "capability_delta":
@@ -90,7 +90,7 @@ function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
     case "identity":
       return section.mode || "append";
-    case "mission_context":
+    case "assignment_context":
       return `${section.fragments.length} 个片段`;
     case "continuation_context":
       return section.summary || null;
@@ -143,8 +143,8 @@ function renderSectionBody(section: ContextFrameSection) {
   switch (section.kind) {
     case "identity":
       return <IdentityBody section={section} />;
-    case "mission_context":
-      return <MissionContextBody section={section} />;
+    case "assignment_context":
+      return <AssignmentContextBody section={section} />;
     case "continuation_context":
       return <ContinuationContextBody section={section} />;
     case "capability_delta":
@@ -186,7 +186,7 @@ function IdentityBody({ section }: { section: IdentitySection }) {
   );
 }
 
-function MissionContextBody({ section }: { section: MissionContextSection }) {
+function AssignmentContextBody({ section }: { section: AssignmentContextSection }) {
   if (section.fragments.length === 0) {
     return <p className="text-xs text-muted-foreground/60">暂无片段</p>;
   }

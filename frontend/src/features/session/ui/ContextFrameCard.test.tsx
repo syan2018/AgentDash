@@ -42,17 +42,17 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("调试信息");
   });
 
-  it("mission_context 解析并渲染 MIS token", () => {
-    const notice = parseContextFrame(sampleMissionNotice());
-    expect(notice?.kind).toBe("mission_context");
-    expect(notice?.sections[0]?.kind).toBe("mission_context");
+  it("assignment_context 解析并渲染 ASN token", () => {
+    const notice = parseContextFrame(sampleAssignmentNotice());
+    expect(notice?.kind).toBe("assignment_context");
+    expect(notice?.sections[0]?.kind).toBe("assignment_context");
 
     const markup = renderToStaticMarkup(
-      <ContextFrameCard data={sampleMissionNotice()} defaultExpanded />,
+      <ContextFrameCard data={sampleAssignmentNotice()} defaultExpanded />,
     );
-    // frame tab 的 MIS token + section block 标题
-    expect(markup).toContain("MIS");
-    expect(markup).toContain("Mission Context");
+    // frame tab 的 ASN token + section block 标题
+    expect(markup).toContain("ASN");
+    expect(markup).toContain("Assignment Context");
     expect(markup).toContain("2 个片段");
     expect(markup).toContain("Agent 上下文已更新");
   });
@@ -178,21 +178,21 @@ function sampleNotice(): Record<string, unknown> {
     };
 }
 
-function sampleMissionNotice(): Record<string, unknown> {
+function sampleAssignmentNotice(): Record<string, unknown> {
   return {
     id: "bootstrap-context-task-1",
-    kind: "mission_context",
+    kind: "assignment_context",
     source: "runtime_context_update",
     phase_node: "task_start",
     delivery_status: "queued_for_transform_context",
     delivery_channel: "turn_start",
     message_role: "user",
-    rendered_text: "## Mission Context",
+    rendered_text: "## Assignment Context",
     created_at_ms: 1,
     sections: [
       {
-        kind: "mission_context",
-        title: "Mission Context",
+        kind: "assignment_context",
+        title: "Assignment Context",
         summary: "Session 启动上下文已注入",
         fragments: [
           {

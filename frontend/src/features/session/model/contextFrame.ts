@@ -16,7 +16,7 @@ export interface ContextFrame {
 
 export type ContextFrameSection =
   | IdentitySection
-  | MissionContextSection
+  | AssignmentContextSection
   | ContinuationContextSection
   | CapabilityDeltaSection
   | ToolSchemaSection
@@ -28,8 +28,8 @@ export type ContextFrameSection =
   | AutoResumeSection
   | CompactionSummarySection;
 
-export interface MissionContextSection {
-  kind: "mission_context";
+export interface AssignmentContextSection {
+  kind: "assignment_context";
   title: string;
   summary: string;
   fragments: RuntimeContextFragmentEntry[];
@@ -194,11 +194,11 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
 function parseSection(value: unknown): ContextFrameSection | null {
   if (!isRecord(value)) return null;
   const kind = readString(value.kind);
-  if (kind === "mission_context") {
+  if (kind === "assignment_context") {
     const fragments = Array.isArray(value.fragments) ? value.fragments : [];
     return {
       kind,
-      title: readString(value.title) ?? "Mission Context",
+      title: readString(value.title) ?? "Assignment Context",
       summary: readString(value.summary) ?? "",
       fragments: fragments.map(parseFragmentEntry).filter((item): item is RuntimeContextFragmentEntry => item != null),
     };
@@ -413,8 +413,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "IDN", variant: "primary" };
     case "capability_state_update":
       return { token: "BDL", variant: "neutral" };
-    case "mission_context":
-      return { token: "MIS", variant: "primary" };
+    case "assignment_context":
+      return { token: "ASN", variant: "primary" };
     case "continuation_context":
       return { token: "CNT", variant: "warning" };
     case "pending_action":
@@ -437,8 +437,8 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
   switch (kind) {
     case "identity":
       return { token: "IDN", variant: "primary" };
-    case "mission_context":
-      return { token: "MIS", variant: "primary" };
+    case "assignment_context":
+      return { token: "ASN", variant: "primary" };
     case "continuation_context":
       return { token: "CNT", variant: "warning" };
     case "capability_delta":

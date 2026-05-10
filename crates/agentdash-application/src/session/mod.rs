@@ -18,7 +18,7 @@ mod hub_support;
 mod identity_context_frame;
 pub mod launch_intent;
 mod memory_persistence;
-mod mission_context_frame;
+mod assignment_context_frame;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;
 pub mod persistence;

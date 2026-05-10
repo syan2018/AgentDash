@@ -20,7 +20,7 @@ use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
-use super::mission_context_frame::build_mission_context_frame;
+use super::assignment_context_frame::build_assignment_context_frame;
 use super::pending_action_context_frame::build_pending_action_context_frame;
 use super::path_policy::resolve_working_dir;
 pub use super::types::*;
@@ -285,6 +285,8 @@ impl SessionHub {
             base_system_prompt: &self.base_system_prompt,
             agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
             agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
+            user_preferences: &self.user_preferences,
+            discovered_guidelines: &discovered_guidelines,
         });
 
         let compose_fragments = req
@@ -439,11 +441,9 @@ impl SessionHub {
             let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             owner_bootstrap_frames.push(frame);
 
-            if let Some(frame) = build_mission_context_frame(
+            if let Some(frame) = build_assignment_context_frame(
                 req.context_bundle.as_ref().map(|bundle| bundle.phase_tag.as_str()),
                 &compose_fragments,
-                &self.user_preferences,
-                &discovered_guidelines,
             ) {
                 let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
                 owner_bootstrap_frames.push(frame);

@@ -383,12 +383,13 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 story_id TEXT NOT NULL,
-                session_id TEXT,
+                title TEXT,
                 updated_at TEXT
             );
             CREATE TABLE stories (
                 id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL
+                project_id TEXT NOT NULL,
+                title TEXT
             );
             "#,
         )

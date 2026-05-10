@@ -1,23 +1,27 @@
+//! 工具 Schema 维度 — 追踪真正新增给 Agent 的工具 schema。
+//!
+//! 路径级的屏蔽 / 恢复 / 移除归 `ToolPathDelta`，此处不冗余。
+
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeToolSchemaEntry};
 use agentdash_spi::platform::tool_capability::{
     PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
 };
 
+use super::DimensionDelta;
 use crate::session::CapabilityStateDelta;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ToolSchemaDeltaMetadata {
-    /// 瘦身后仅保留真正新增的工具 schema；
-    /// 路径级的屏蔽 / 恢复 / 移除归口 `CapabilityDelta`，此处不再冗余。
-    added_tools: Vec<RuntimeToolSchemaEntry>,
+pub(crate) struct ToolSchemaDimensionDelta {
+    pub added_tools: Vec<RuntimeToolSchemaEntry>,
 }
 
-impl ToolSchemaDeltaMetadata {
-    pub(crate) fn from_tools_and_state_delta(
+impl ToolSchemaDimensionDelta {
+    pub fn from_tools_and_state_delta(
         tools: &[DynAgentTool],
-        state_delta: &CapabilityStateDelta,
-    ) -> Option<Self> {
+        state_delta: Option<&CapabilityStateDelta>,
+    ) -> Option<Box<dyn DimensionDelta>> {
+        let state_delta = state_delta?;
         let entries = runtime_tool_schema_entries_from_tools(tools);
         let restored_paths = state_delta
             .excluded_tool_paths
@@ -48,21 +52,29 @@ impl ToolSchemaDeltaMetadata {
             .collect::<Vec<_>>();
 
         if added_tools.is_empty() {
-            // 路径级变化全部归 CapabilityDelta 表达；没有真正新增 schema 时不发 TOOL section。
             return None;
         }
-        Some(Self { added_tools })
+        Some(Box::new(Self { added_tools }))
+    }
+}
+
+impl DimensionDelta for ToolSchemaDimensionDelta {
+    fn has_changes(&self) -> bool {
+        !self.added_tools.is_empty()
     }
 
-    pub(crate) fn section(&self) -> ContextFrameSection {
+    fn to_section(&self) -> ContextFrameSection {
         ContextFrameSection::ToolSchemaDelta {
             added_tools: self.added_tools.clone(),
         }
     }
 
-    pub(crate) fn render_text(&self, phase_node: Option<&str>) -> String {
+    fn render_text(&self, phase_node: Option<&str>) -> String {
         let mut lines = vec![
-            tool_schema_delta_title(phase_node),
+            match phase_node {
+                Some(node) => format!("## Tool Schema Delta — Step Transition: {node}"),
+                None => "## Tool Schema Delta".to_string(),
+            },
             "以下只列出本次 capability state delta 真正新增给 Agent 的工具 schema；provider 的完整工具集合以实际 tool list 为准。".to_string(),
         ];
         if !self.added_tools.is_empty() {
@@ -74,6 +86,8 @@ impl ToolSchemaDeltaMetadata {
         lines.join("\n\n")
     }
 }
+
+// ── 工具 schema 构造辅助 ──────────────────────────────────────────────────────
 
 pub(crate) fn runtime_tool_schema_entries_from_tools(
     tools: &[DynAgentTool],
@@ -88,13 +102,6 @@ pub(crate) fn runtime_tool_schema_entries_from_tools(
     definitions.sort_by(|left, right| left.name.cmp(&right.name));
     definitions.dedup_by(|left, right| left.name == right.name);
     runtime_tool_schema_entries(definitions)
-}
-
-fn tool_schema_delta_title(phase_node: Option<&str>) -> String {
-    match phase_node {
-        Some(phase_node) => format!("## Tool Schema Delta — Step Transition: {phase_node}"),
-        None => "## Tool Schema Delta".to_string(),
-    }
 }
 
 fn format_tool_schema_entry(entry: &RuntimeToolSchemaEntry) -> String {

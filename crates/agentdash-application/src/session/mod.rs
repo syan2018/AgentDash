@@ -8,6 +8,7 @@ mod compaction_context_frame;
 pub mod companion_wait;
 pub mod context;
 mod context_frame;
+pub(crate) mod dimension;
 pub mod continuation;
 pub mod hook_delegate;
 pub mod hook_events;
@@ -29,7 +30,6 @@ mod prompt_vfs;
 pub mod stall_detector;
 pub mod terminal_cache;
 pub mod title_generator;
-mod tool_schema_notice;
 pub mod turn_processor;
 pub mod types;
 

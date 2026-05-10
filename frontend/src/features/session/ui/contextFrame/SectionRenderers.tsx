@@ -13,12 +13,13 @@ import { useState } from "react";
 import { BADGE } from "../EventCards";
 import type {
   AutoResumeSection,
-  CapabilityDeltaSection,
+  CapabilityKeyDeltaSection,
   CompactionSummarySection,
   ContinuationContextSection,
   ContextFrameSection,
   ContextTokenInfo,
   IdentitySection,
+  McpServerDeltaSection,
   AssignmentContextSection,
   PendingActionSection,
   RuntimeContextFragmentEntry,
@@ -27,8 +28,10 @@ import type {
   SkillDeltaSection,
   RuntimeToolSchemaEntry,
   SystemNoticeSection,
+  ToolPathDeltaSection,
   ToolSchemaDeltaSection,
   ToolSchemaSection,
+  VfsDeltaSection,
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
 import { isRecord } from "../../model/platformEvent";
@@ -65,8 +68,14 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "Assignment Context";
     case "continuation_context":
       return section.title || "Session Continuation";
-    case "capability_delta":
-      return "能力与工具变化";
+    case "capability_key_delta":
+      return "能力 Key 变化";
+    case "tool_path_delta":
+      return "工具路径变化";
+    case "mcp_server_delta":
+      return "MCP Server 变化";
+    case "vfs_delta":
+      return "VFS 挂载变化";
     case "tool_schema":
       return "初始工具 Schema";
     case "tool_schema_delta":
@@ -94,28 +103,35 @@ function sectionHint(section: ContextFrameSection): string | null {
       return `${section.fragments.length} 个片段`;
     case "continuation_context":
       return section.summary || null;
-    case "capability_delta": {
-      const added =
-        section.added_capabilities.length +
-        section.unblocked_tool_paths.length +
-        section.whitelisted_tool_paths.length +
-        section.added_mcp_servers.length +
-        section.vfs_mounts_added.length;
-      const removed =
-        section.removed_capabilities.length +
-        section.blocked_tool_paths.length +
-        section.removed_whitelist_paths.length +
-        section.removed_mcp_servers.length +
-        section.vfs_mounts_removed.length;
+    case "capability_key_delta": {
+      const added = section.added_capabilities.length;
+      const removed = section.removed_capabilities.length;
+      if (added + removed === 0) return "无变化";
+      return `+${added} −${removed}`;
+    }
+    case "tool_path_delta": {
+      const added = section.unblocked_tool_paths.length + section.whitelisted_tool_paths.length;
+      const removed = section.blocked_tool_paths.length + section.removed_whitelist_paths.length;
+      if (added + removed === 0) return "无变化";
+      return `+${added} −${removed}`;
+    }
+    case "mcp_server_delta": {
+      const added = section.added_mcp_servers.length;
+      const removed = section.removed_mcp_servers.length;
       const changed = section.changed_mcp_servers.length;
-      const total = added + removed + changed;
-      if (total === 0) return "无变化";
+      if (added + removed + changed === 0) return "无变化";
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
+    }
+    case "vfs_delta": {
+      const added = section.vfs_mounts_added.length;
+      const removed = section.vfs_mounts_removed.length;
+      const mountChanged = (section.default_mount_before ?? null) !== (section.default_mount_after ?? null);
+      if (added + removed === 0 && !mountChanged) return "无变化";
+      return `+${added} −${removed}${mountChanged ? " ↻default" : ""}`;
     }
     case "tool_schema":
       return `${section.tools.length} 个工具`;
     case "tool_schema_delta": {
-      // 路径级变化归 CAP；TOOL 只统计真正新增给 Agent 的工具 schema 数。
       const count = section.added_tools.length;
       return count > 0 ? `${count} 项变化` : "无变化";
     }
@@ -147,8 +163,14 @@ function renderSectionBody(section: ContextFrameSection) {
       return <AssignmentContextBody section={section} />;
     case "continuation_context":
       return <ContinuationContextBody section={section} />;
-    case "capability_delta":
-      return <CapabilityDeltaBody section={section} />;
+    case "capability_key_delta":
+      return <CapabilityKeyDeltaBody section={section} />;
+    case "tool_path_delta":
+      return <ToolPathDeltaBody section={section} />;
+    case "mcp_server_delta":
+      return <McpServerDeltaBody section={section} />;
+    case "vfs_delta":
+      return <VfsDeltaBody section={section} />;
     case "tool_schema":
       return <ToolSchemaBody section={section} />;
     case "tool_schema_delta":
@@ -241,30 +263,10 @@ function FragmentItem({ fragment }: { fragment: RuntimeContextFragmentEntry }) {
   );
 }
 
-function CapabilityDeltaBody({ section }: { section: CapabilityDeltaSection }) {
-  // 顺序：增 → 减 → 变更
-  const added: Array<{ label: string; value: string }> = [
-    ...section.added_capabilities.map((value) => ({ label: "能力", value })),
-    ...section.unblocked_tool_paths.map((value) => ({ label: "工具解除屏蔽", value })),
-    ...section.whitelisted_tool_paths.map((value) => ({ label: "工具加入白名单", value })),
-    ...section.added_mcp_servers.map((value) => ({ label: "MCP", value })),
-    ...section.vfs_mounts_added.map((value) => ({ label: "挂载", value })),
-  ];
-  const removed: Array<{ label: string; value: string }> = [
-    ...section.removed_capabilities.map((value) => ({ label: "能力", value })),
-    ...section.blocked_tool_paths.map((value) => ({ label: "工具屏蔽", value })),
-    ...section.removed_whitelist_paths.map((value) => ({ label: "工具移出白名单", value })),
-    ...section.removed_mcp_servers.map((value) => ({ label: "MCP", value })),
-    ...section.vfs_mounts_removed.map((value) => ({ label: "挂载", value })),
-  ];
-  const changed: Array<{ label: string; value: string }> = [
-    ...section.changed_mcp_servers.map((value) => ({ label: "MCP", value })),
-  ];
-
-  const defaultMountChanged =
-    (section.default_mount_before ?? null) !== (section.default_mount_after ?? null);
-
-  const hasDiff = added.length + removed.length + changed.length > 0 || defaultMountChanged;
+function CapabilityKeyDeltaBody({ section }: { section: CapabilityKeyDeltaSection }) {
+  const added = section.added_capabilities.map((value) => ({ label: "能力", value }));
+  const removed = section.removed_capabilities.map((value) => ({ label: "能力", value }));
+  const hasDiff = added.length + removed.length > 0;
 
   return (
     <div className="space-y-2">
@@ -276,22 +278,91 @@ function CapabilityDeltaBody({ section }: { section: CapabilityDeltaSection }) {
           {removed.map((row, index) => (
             <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
           ))}
-          {changed.map((row, index) => (
-            <DiffLine key={`ch-${index}`} symbol="↻" label={row.label} value={row.value} />
-          ))}
-          {defaultMountChanged && (
-            <DiffLine
-              symbol="↻"
-              label="默认挂载"
-              value={`${section.default_mount_before ?? "none"} → ${section.default_mount_after ?? "none"}`}
-            />
-          )}
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground/60">本次无能力/工具变更</p>
+        <p className="text-xs text-muted-foreground/60">本次无能力 key 变更</p>
       )}
       {section.effective_capabilities.length > 0 && (
         <EffectiveCapabilitiesBlock capabilities={section.effective_capabilities} />
+      )}
+    </div>
+  );
+}
+
+function ToolPathDeltaBody({ section }: { section: ToolPathDeltaSection }) {
+  const added: Array<{ label: string; value: string }> = [
+    ...section.unblocked_tool_paths.map((value) => ({ label: "解除屏蔽", value })),
+    ...section.whitelisted_tool_paths.map((value) => ({ label: "加入白名单", value })),
+  ];
+  const removed: Array<{ label: string; value: string }> = [
+    ...section.blocked_tool_paths.map((value) => ({ label: "屏蔽", value })),
+    ...section.removed_whitelist_paths.map((value) => ({ label: "移出白名单", value })),
+  ];
+  const hasDiff = added.length + removed.length > 0;
+
+  if (!hasDiff) {
+    return <p className="text-xs text-muted-foreground/60">本次无工具路径变更</p>;
+  }
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      {added.map((row, index) => (
+        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+      ))}
+      {removed.map((row, index) => (
+        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+      ))}
+    </div>
+  );
+}
+
+function McpServerDeltaBody({ section }: { section: McpServerDeltaSection }) {
+  const added = section.added_mcp_servers.map((value) => ({ label: "MCP", value }));
+  const removed = section.removed_mcp_servers.map((value) => ({ label: "MCP", value }));
+  const changed = section.changed_mcp_servers.map((value) => ({ label: "MCP", value }));
+  const hasDiff = added.length + removed.length + changed.length > 0;
+
+  if (!hasDiff) {
+    return <p className="text-xs text-muted-foreground/60">本次无 MCP 变更</p>;
+  }
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      {added.map((row, index) => (
+        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+      ))}
+      {removed.map((row, index) => (
+        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+      ))}
+      {changed.map((row, index) => (
+        <DiffLine key={`ch-${index}`} symbol="↻" label={row.label} value={row.value} />
+      ))}
+    </div>
+  );
+}
+
+function VfsDeltaBody({ section }: { section: VfsDeltaSection }) {
+  const added = section.vfs_mounts_added.map((value) => ({ label: "挂载", value }));
+  const removed = section.vfs_mounts_removed.map((value) => ({ label: "挂载", value }));
+  const defaultMountChanged =
+    (section.default_mount_before ?? null) !== (section.default_mount_after ?? null);
+  const hasDiff = added.length + removed.length > 0 || defaultMountChanged;
+
+  if (!hasDiff) {
+    return <p className="text-xs text-muted-foreground/60">本次无 VFS 变更</p>;
+  }
+  return (
+    <div className="space-y-1 rounded-[6px] border border-border/70 bg-background px-2.5 py-2">
+      {added.map((row, index) => (
+        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+      ))}
+      {removed.map((row, index) => (
+        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+      ))}
+      {defaultMountChanged && (
+        <DiffLine
+          symbol="↻"
+          label="默认挂载"
+          value={`${section.default_mount_before ?? "none"} → ${section.default_mount_after ?? "none"}`}
+        />
       )}
     </div>
   );
@@ -361,7 +432,6 @@ function ToolSchemaBody({ section }: { section: ToolSchemaSection }) {
 }
 
 function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
-  // 瘦身后 TOOL 只渲染 `added_tools`；工具路径级的屏蔽 / 恢复 / 移除由 CAP 承载。
   if (section.added_tools.length === 0) {
     return <p className="text-xs text-muted-foreground/60">无新增工具 schema</p>;
   }

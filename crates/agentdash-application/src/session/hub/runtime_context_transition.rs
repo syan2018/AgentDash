@@ -9,15 +9,14 @@ use std::collections::BTreeSet;
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
     CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource,
-    RuntimeSkillEntry, SharedHookSessionRuntime,
+    SharedHookSessionRuntime,
 };
 use uuid::Uuid;
 
 use super::super::context_frame::{self, ContextFramePayload};
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
-use super::super::tool_schema_notice::ToolSchemaDeltaMetadata;
+use super::super::dimension::{self, DimensionDelta};
 use super::SessionHub;
-use crate::capability::capability_description;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
@@ -378,14 +377,11 @@ fn build_workflow_assignment_context_frame(
     build_runtime_assignment_context_frame(phase_node, Some(apply_mode), &fragments)
 }
 
-#[derive(Debug, Clone)]
 struct RuntimeContextUpdateFrame {
     phase_node: String,
     apply_mode: Option<String>,
     delivery_status: String,
-    capability_delta: CapabilityDeltaFrameMetadata,
-    skill_delta: Option<SkillDeltaMetadata>,
-    tool_schema_delta: Option<ToolSchemaDeltaMetadata>,
+    dimensions: Vec<Box<dyn DimensionDelta>>,
 }
 
 impl RuntimeContextUpdateFrame {
@@ -399,20 +395,36 @@ impl RuntimeContextUpdateFrame {
         tools: &[DynAgentTool],
         skill_entries: &[agentdash_spi::context::capability::SkillEntry],
     ) -> Self {
+        let mut dimensions: Vec<Box<dyn DimensionDelta>> = Vec::new();
+
+        if let Some(d) = dimension::capability_key::CapabilityKeyDimensionDelta::from_delta(
+            capability_delta,
+            effective_capabilities,
+            state_delta,
+        ) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(state_delta) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(tools, state_delta) {
+            dimensions.push(d);
+        }
+
         Self {
             phase_node: phase_node.to_string(),
             apply_mode: apply_mode.map(ToString::to_string),
             delivery_status: delivery_status.to_string(),
-            capability_delta: CapabilityDeltaFrameMetadata::from_delta(
-                capability_delta,
-                effective_capabilities,
-                state_delta,
-            ),
-            skill_delta: state_delta
-                .and_then(|delta| SkillDeltaMetadata::from_state_delta(delta, skill_entries)),
-            tool_schema_delta: state_delta.and_then(|delta| {
-                ToolSchemaDeltaMetadata::from_tools_and_state_delta(tools, delta)
-            }),
+            dimensions,
         }
     }
 }
@@ -443,338 +455,16 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
-        let mut sections = vec![self.capability_delta.section()];
-        if let Some(skill_delta) = &self.skill_delta {
-            sections.push(skill_delta.section());
-        }
-        if let Some(tool_schema_delta) = &self.tool_schema_delta {
-            sections.push(tool_schema_delta.section());
-        }
-        sections
+        self.dimensions.iter().map(|d| d.to_section()).collect()
     }
 
     fn rendered_text(&self) -> String {
-        let mut blocks = vec![self.capability_delta.render_text(&self.phase_node)];
-        if let Some(skill_delta) = &self.skill_delta {
-            blocks.push(skill_delta.render_text(Some(&self.phase_node)));
-        }
-        if let Some(tool_schema_delta) = &self.tool_schema_delta {
-            blocks.push(tool_schema_delta.render_text(Some(&self.phase_node)));
-        }
-        blocks.join("\n\n")
-    }
-}
-
-
-#[derive(Debug, Clone)]
-struct CapabilityDeltaFrameMetadata {
-    added_capabilities: Vec<String>,
-    removed_capabilities: Vec<String>,
-    effective_capabilities: Vec<String>,
-    blocked_tool_paths: Vec<String>,
-    unblocked_tool_paths: Vec<String>,
-    whitelisted_tool_paths: Vec<String>,
-    removed_whitelist_paths: Vec<String>,
-    added_mcp_servers: Vec<String>,
-    removed_mcp_servers: Vec<String>,
-    changed_mcp_servers: Vec<String>,
-    vfs_mounts_added: Vec<String>,
-    vfs_mounts_removed: Vec<String>,
-    default_mount_before: Option<String>,
-    default_mount_after: Option<String>,
-}
-
-impl CapabilityDeltaFrameMetadata {
-    fn from_delta(
-        capability_delta: &CapabilityDelta,
-        effective_capabilities: &BTreeSet<String>,
-        state_delta: Option<&CapabilityStateDelta>,
-    ) -> Self {
-        Self {
-            added_capabilities: capability_delta.added.clone(),
-            removed_capabilities: capability_delta.removed.clone(),
-            effective_capabilities: effective_capabilities.iter().cloned().collect(),
-            blocked_tool_paths: state_delta
-                .map(|delta| delta.excluded_tool_paths.added.clone())
-                .unwrap_or_default(),
-            unblocked_tool_paths: state_delta
-                .map(|delta| delta.excluded_tool_paths.removed.clone())
-                .unwrap_or_default(),
-            whitelisted_tool_paths: state_delta
-                .map(|delta| delta.included_tool_paths.added.clone())
-                .unwrap_or_default(),
-            removed_whitelist_paths: state_delta
-                .map(|delta| delta.included_tool_paths.removed.clone())
-                .unwrap_or_default(),
-            added_mcp_servers: state_delta
-                .map(|delta| delta.mcp_servers.added.clone())
-                .unwrap_or_default(),
-            removed_mcp_servers: state_delta
-                .map(|delta| delta.mcp_servers.removed.clone())
-                .unwrap_or_default(),
-            changed_mcp_servers: state_delta
-                .map(|delta| delta.mcp_servers.changed.clone())
-                .unwrap_or_default(),
-            vfs_mounts_added: state_delta
-                .map(|delta| delta.vfs.mounts.added.clone())
-                .unwrap_or_default(),
-            vfs_mounts_removed: state_delta
-                .map(|delta| delta.vfs.mounts.removed.clone())
-                .unwrap_or_default(),
-            default_mount_before: state_delta
-                .and_then(|delta| delta.vfs.default_mount.before.clone()),
-            default_mount_after: state_delta
-                .and_then(|delta| delta.vfs.default_mount.after.clone()),
-        }
-    }
-
-    fn section(&self) -> ContextFrameSection {
-        ContextFrameSection::CapabilityDelta {
-            added_capabilities: self.added_capabilities.clone(),
-            removed_capabilities: self.removed_capabilities.clone(),
-            effective_capabilities: self.effective_capabilities.clone(),
-            blocked_tool_paths: self.blocked_tool_paths.clone(),
-            unblocked_tool_paths: self.unblocked_tool_paths.clone(),
-            whitelisted_tool_paths: self.whitelisted_tool_paths.clone(),
-            removed_whitelist_paths: self.removed_whitelist_paths.clone(),
-            added_mcp_servers: self.added_mcp_servers.clone(),
-            removed_mcp_servers: self.removed_mcp_servers.clone(),
-            changed_mcp_servers: self.changed_mcp_servers.clone(),
-            vfs_mounts_added: self.vfs_mounts_added.clone(),
-            vfs_mounts_removed: self.vfs_mounts_removed.clone(),
-            default_mount_before: self.default_mount_before.clone(),
-            default_mount_after: self.default_mount_after.clone(),
-        }
-    }
-
-    fn render_text(&self, phase_node: &str) -> String {
-        let mut sections = vec![format!(
-            "## Capability State Update — Step Transition: {phase_node}"
-        )];
-
-        if !self.added_capabilities.is_empty() {
-            let mut block = vec!["### Added Capabilities".to_string()];
-            append_capability_lines(&mut block, &self.added_capabilities, false);
-            sections.push(block.join("\n"));
-        }
-        if !self.removed_capabilities.is_empty() {
-            let mut block = vec!["### Removed Capabilities".to_string()];
-            append_capability_lines(&mut block, &self.removed_capabilities, true);
-            sections.push(block.join("\n"));
-        }
-
-        let caps_block = if self.effective_capabilities.is_empty() {
-            "- （无）".to_string()
-        } else {
-            self.effective_capabilities
-                .iter()
-                .map(|key| format!("- `{key}`"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        sections.push(format!("### Effective Capabilities\n{caps_block}"));
-
-        let mut tool_lines = vec!["### Tool State Changes".to_string()];
-        append_path_lines(
-            &mut tool_lines,
-            "Blocked tool paths",
-            &self.blocked_tool_paths,
-            "不再暴露",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Unblocked tool paths",
-            &self.unblocked_tool_paths,
-            "重新暴露",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Whitelisted tool paths",
-            &self.whitelisted_tool_paths,
-            "进入白名单",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Removed whitelist paths",
-            &self.removed_whitelist_paths,
-            "移出白名单",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Added MCP servers",
-            &self.added_mcp_servers,
-            "已注入",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Removed MCP servers",
-            &self.removed_mcp_servers,
-            "已移除",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Changed MCP servers",
-            &self.changed_mcp_servers,
-            "已变更",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Added VFS mounts",
-            &self.vfs_mounts_added,
-            "已挂载",
-        );
-        append_path_lines(
-            &mut tool_lines,
-            "Removed VFS mounts",
-            &self.vfs_mounts_removed,
-            "已移除",
-        );
-        if self.default_mount_before != self.default_mount_after {
-            tool_lines.push(format!(
-                "- Default VFS mount: `{}` -> `{}`",
-                self.default_mount_before.as_deref().unwrap_or("none"),
-                self.default_mount_after.as_deref().unwrap_or("none"),
-            ));
-        }
-        if tool_lines.len() > 1 {
-            sections.push(tool_lines.join("\n"));
-        }
-
-        if self.has_delta() {
-            sections.push(
-                "> 工具状态已按上述 capability 与 tool path 更新；历史对话未被改写。".to_string(),
-            );
-        } else {
-            sections
-                .push("> 本次没有 capability key 或工具级状态变化；历史对话未被改写。".to_string());
-        }
-        sections.join("\n\n")
-    }
-
-    fn has_delta(&self) -> bool {
-        !self.added_capabilities.is_empty()
-            || !self.removed_capabilities.is_empty()
-            || !self.blocked_tool_paths.is_empty()
-            || !self.unblocked_tool_paths.is_empty()
-            || !self.whitelisted_tool_paths.is_empty()
-            || !self.removed_whitelist_paths.is_empty()
-            || !self.added_mcp_servers.is_empty()
-            || !self.removed_mcp_servers.is_empty()
-            || !self.changed_mcp_servers.is_empty()
-            || !self.vfs_mounts_added.is_empty()
-            || !self.vfs_mounts_removed.is_empty()
-            || self.default_mount_before != self.default_mount_after
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SkillDeltaMetadata {
-    added_skills: Vec<RuntimeSkillEntry>,
-    removed_skills: Vec<RuntimeSkillEntry>,
-    changed_skills: Vec<RuntimeSkillEntry>,
-}
-
-impl SkillDeltaMetadata {
-    fn from_state_delta(
-        state_delta: &CapabilityStateDelta,
-        skill_entries: &[agentdash_spi::context::capability::SkillEntry],
-    ) -> Option<Self> {
-        if state_delta.skills.is_empty() {
-            return None;
-        }
-        let lookup = |name: &str| -> RuntimeSkillEntry {
-            if let Some(entry) = skill_entries.iter().find(|e| e.name == name) {
-                RuntimeSkillEntry {
-                    name: entry.name.clone(),
-                    description: entry.description.clone(),
-                    file_path: entry.file_path.clone(),
-                    disable_model_invocation: entry.disable_model_invocation,
-                }
-            } else {
-                RuntimeSkillEntry {
-                    name: name.to_string(),
-                    description: String::new(),
-                    file_path: String::new(),
-                    disable_model_invocation: false,
-                }
-            }
-        };
-        Some(Self {
-            added_skills: state_delta.skills.added.iter().map(|n| lookup(n)).collect(),
-            removed_skills: state_delta.skills.removed.iter().map(|n| lookup(n)).collect(),
-            changed_skills: state_delta.skills.changed.iter().map(|n| lookup(n)).collect(),
-        })
-    }
-
-    fn section(&self) -> ContextFrameSection {
-        ContextFrameSection::SkillDelta {
-            added_skills: self.added_skills.clone(),
-            removed_skills: self.removed_skills.clone(),
-            changed_skills: self.changed_skills.clone(),
-        }
-    }
-
-    fn render_text(&self, phase_node: Option<&str>) -> String {
-        let mut lines = vec![match phase_node {
-            Some(node) => format!("## Skill Delta — Step Transition: {node}"),
-            None => "## Skill Delta".to_string(),
-        }];
-        append_skill_lines(&mut lines, "Added Skills", &self.added_skills, "已加入");
-        append_skill_lines(&mut lines, "Removed Skills", &self.removed_skills, "已移除");
-        append_skill_lines(
-            &mut lines,
-            "Changed Skills",
-            &self.changed_skills,
-            "定义已变更",
-        );
-        lines.join("\n")
-    }
-}
-
-
-fn append_capability_lines(lines: &mut Vec<String>, values: &[String], removed: bool) {
-    for key in values {
-        let desc = capability_description(key);
-        if desc.is_empty() {
-            lines.push(format!("- **{key}**"));
-        } else if removed {
-            lines.push(format!("- **{key}**: {desc}（不再可用）"));
-        } else {
-            lines.push(format!("- **{key}**: {desc}"));
-        }
-    }
-}
-
-fn append_path_lines(lines: &mut Vec<String>, title: &str, values: &[String], suffix: &str) {
-    if values.is_empty() {
-        return;
-    }
-    lines.push(format!("- {title}:"));
-    for value in values {
-        lines.push(format!("  - `{value}` — {suffix}"));
-    }
-}
-
-
-fn append_skill_lines(
-    lines: &mut Vec<String>,
-    title: &str,
-    values: &[RuntimeSkillEntry],
-    suffix: &str,
-) {
-    if values.is_empty() {
-        return;
-    }
-    lines.push(format!("### {title}"));
-    for skill in values {
-        if skill.description.is_empty() {
-            lines.push(format!("- `{}` — {suffix}", skill.name));
-        } else {
-            lines.push(format!(
-                "- `{}`: {} (path: `{}`) — {suffix}",
-                skill.name, skill.description, skill.file_path
-            ));
-        }
+        let phase = Some(self.phase_node.as_str());
+        self.dimensions
+            .iter()
+            .map(|d| d.render_text(phase))
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 }
 

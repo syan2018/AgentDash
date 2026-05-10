@@ -9,8 +9,11 @@ describe("ContextFrameCard", () => {
 
     expect(notice?.phase_node).toBe("apply");
     expect(notice?.rendered_text).toContain("Tool Schema Delta");
-    expect(notice?.sections).toHaveLength(2);
-    expect(notice?.sections[1]?.kind).toBe("tool_schema_delta");
+    expect(notice?.sections).toHaveLength(4);
+    expect(notice?.sections[0]?.kind).toBe("capability_key_delta");
+    expect(notice?.sections[1]?.kind).toBe("tool_path_delta");
+    expect(notice?.sections[2]?.kind).toBe("mcp_server_delta");
+    expect(notice?.sections[3]?.kind).toBe("tool_schema_delta");
   });
 
   it("默认折叠时仅渲染 header", () => {
@@ -21,7 +24,7 @@ describe("ContextFrameCard", () => {
     // 折叠态：阶段 / kind 汇总出现在 header 小字
     expect(markup).toContain("阶段 apply");
     // 折叠态：不渲染内层 section body
-    expect(markup).not.toContain("能力与工具变化");
+    expect(markup).not.toContain("能力 Key 变化");
   });
 
   it("展开后按 sections[] 原顺序渲染单列长页", () => {
@@ -30,7 +33,9 @@ describe("ContextFrameCard", () => {
     );
 
     // section header token + 标题 + hint
-    expect(markup).toContain("能力与工具变化");
+    expect(markup).toContain("能力 Key 变化");
+    expect(markup).toContain("工具路径变化");
+    expect(markup).toContain("MCP Server 变化");
     expect(markup).toContain("工具 Schema 变化");
     // tool_schema_delta 去重后仅 1 项变化（restored 与 added 同一 tool_path）
     expect(markup).toContain("1 项变化");
@@ -142,19 +147,23 @@ function sampleNotice(): Record<string, unknown> {
       created_at_ms: 1,
       sections: [
         {
-          kind: "capability_delta",
+          kind: "capability_key_delta",
           added_capabilities: [],
           removed_capabilities: [],
           effective_capabilities: ["workflow_management"],
+        },
+        {
+          kind: "tool_path_delta",
           blocked_tool_paths: [],
           unblocked_tool_paths: ["workflow_management::upsert_workflow_tool"],
           whitelisted_tool_paths: [],
           removed_whitelist_paths: [],
+        },
+        {
+          kind: "mcp_server_delta",
           added_mcp_servers: ["agentdash-workflow-tools"],
           removed_mcp_servers: [],
           changed_mcp_servers: [],
-          vfs_mounts_added: [],
-          vfs_mounts_removed: [],
         },
         {
           kind: "tool_schema_delta",

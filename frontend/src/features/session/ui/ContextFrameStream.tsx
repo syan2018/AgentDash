@@ -191,22 +191,20 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
   let removed = 0;
   let changed = 0;
   for (const section of frame.sections) {
-    if (section.kind === "capability_delta") {
-      added +=
-        section.added_capabilities.length +
-        section.unblocked_tool_paths.length +
-        section.whitelisted_tool_paths.length +
-        section.added_mcp_servers.length +
-        section.vfs_mounts_added.length;
-      removed +=
-        section.removed_capabilities.length +
-        section.blocked_tool_paths.length +
-        section.removed_whitelist_paths.length +
-        section.removed_mcp_servers.length +
-        section.vfs_mounts_removed.length;
+    if (section.kind === "capability_key_delta") {
+      added += section.added_capabilities.length;
+      removed += section.removed_capabilities.length;
+    } else if (section.kind === "tool_path_delta") {
+      added += section.unblocked_tool_paths.length + section.whitelisted_tool_paths.length;
+      removed += section.blocked_tool_paths.length + section.removed_whitelist_paths.length;
+    } else if (section.kind === "mcp_server_delta") {
+      added += section.added_mcp_servers.length;
+      removed += section.removed_mcp_servers.length;
       changed += section.changed_mcp_servers.length;
+    } else if (section.kind === "vfs_delta") {
+      added += section.vfs_mounts_added.length;
+      removed += section.vfs_mounts_removed.length;
     } else if (section.kind === "tool_schema_delta") {
-      // CAP 已经统计过工具路径级的增减;这里只统计 TOOL 真正新增的 schema,避免双计数。
       added += section.added_tools.length;
     }
   }

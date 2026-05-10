@@ -265,13 +265,15 @@ pub enum ContextFrameSection {
         owner_context: Option<String>,
         transcript_markdown: String,
     },
-    CapabilityDelta {
+    CapabilityKeyDelta {
         #[serde(default)]
         added_capabilities: Vec<String>,
         #[serde(default)]
         removed_capabilities: Vec<String>,
         #[serde(default)]
         effective_capabilities: Vec<String>,
+    },
+    ToolPathDelta {
         #[serde(default)]
         blocked_tool_paths: Vec<String>,
         #[serde(default)]
@@ -280,12 +282,16 @@ pub enum ContextFrameSection {
         whitelisted_tool_paths: Vec<String>,
         #[serde(default)]
         removed_whitelist_paths: Vec<String>,
+    },
+    McpServerDelta {
         #[serde(default)]
         added_mcp_servers: Vec<String>,
         #[serde(default)]
         removed_mcp_servers: Vec<String>,
         #[serde(default)]
         changed_mcp_servers: Vec<String>,
+    },
+    VfsDelta {
         #[serde(default)]
         vfs_mounts_added: Vec<String>,
         #[serde(default)]
@@ -300,9 +306,6 @@ pub enum ContextFrameSection {
         tools: Vec<RuntimeToolSchemaEntry>,
     },
     ToolSchemaDelta {
-        // 瘦身后只承载真正新增给 Agent 的工具 schema；
-        // 工具路径级的屏蔽 / 恢复 / 移除变化统一由 `CapabilityDelta` 表达，
-        // 避免同一份 `CapabilityStateDelta` 被双投影。
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
     },

@@ -18,7 +18,10 @@ export type ContextFrameSection =
   | IdentitySection
   | AssignmentContextSection
   | ContinuationContextSection
-  | CapabilityDeltaSection
+  | CapabilityKeyDeltaSection
+  | ToolPathDeltaSection
+  | McpServerDeltaSection
+  | VfsDeltaSection
   | ToolSchemaSection
   | ToolSchemaDeltaSection
   | SkillDeltaSection
@@ -60,18 +63,30 @@ export interface RuntimeContextFragmentEntry {
   content: string;
 }
 
-export interface CapabilityDeltaSection {
-  kind: "capability_delta";
+export interface CapabilityKeyDeltaSection {
+  kind: "capability_key_delta";
   added_capabilities: string[];
   removed_capabilities: string[];
   effective_capabilities: string[];
+}
+
+export interface ToolPathDeltaSection {
+  kind: "tool_path_delta";
   blocked_tool_paths: string[];
   unblocked_tool_paths: string[];
   whitelisted_tool_paths: string[];
   removed_whitelist_paths: string[];
+}
+
+export interface McpServerDeltaSection {
+  kind: "mcp_server_delta";
   added_mcp_servers: string[];
   removed_mcp_servers: string[];
   changed_mcp_servers: string[];
+}
+
+export interface VfsDeltaSection {
+  kind: "vfs_delta";
   vfs_mounts_added: string[];
   vfs_mounts_removed: string[];
   default_mount_before?: string;
@@ -85,8 +100,6 @@ export interface ToolSchemaSection {
 
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
-  // 瘦身后只承载真正新增给 Agent 的工具 schema；
-  // 工具路径级的屏蔽 / 恢复 / 移除统一归 `capability_delta`，避免双投影。
   added_tools: RuntimeToolSchemaEntry[];
 }
 
@@ -223,19 +236,34 @@ function parseSection(value: unknown): ContextFrameSection | null {
       transcript_markdown: readString(value.transcript_markdown) ?? "",
     };
   }
-  if (kind === "capability_delta") {
+  if (kind === "capability_key_delta") {
     return {
       kind,
       added_capabilities: readStringArray(value.added_capabilities),
       removed_capabilities: readStringArray(value.removed_capabilities),
       effective_capabilities: readStringArray(value.effective_capabilities),
+    };
+  }
+  if (kind === "tool_path_delta") {
+    return {
+      kind,
       blocked_tool_paths: readStringArray(value.blocked_tool_paths),
       unblocked_tool_paths: readStringArray(value.unblocked_tool_paths),
       whitelisted_tool_paths: readStringArray(value.whitelisted_tool_paths),
       removed_whitelist_paths: readStringArray(value.removed_whitelist_paths),
+    };
+  }
+  if (kind === "mcp_server_delta") {
+    return {
+      kind,
       added_mcp_servers: readStringArray(value.added_mcp_servers),
       removed_mcp_servers: readStringArray(value.removed_mcp_servers),
       changed_mcp_servers: readStringArray(value.changed_mcp_servers),
+    };
+  }
+  if (kind === "vfs_delta") {
+    return {
+      kind,
       vfs_mounts_added: readStringArray(value.vfs_mounts_added),
       vfs_mounts_removed: readStringArray(value.vfs_mounts_removed),
       default_mount_before: readString(value.default_mount_before) ?? undefined,
@@ -441,8 +469,14 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "ASN", variant: "primary" };
     case "continuation_context":
       return { token: "CNT", variant: "warning" };
-    case "capability_delta":
+    case "capability_key_delta":
       return { token: "CAP", variant: "neutral" };
+    case "tool_path_delta":
+      return { token: "PATH", variant: "neutral" };
+    case "mcp_server_delta":
+      return { token: "MCP", variant: "neutral" };
+    case "vfs_delta":
+      return { token: "VFS", variant: "neutral" };
     case "tool_schema":
     case "tool_schema_delta":
       return { token: "TOOL", variant: "neutral" };

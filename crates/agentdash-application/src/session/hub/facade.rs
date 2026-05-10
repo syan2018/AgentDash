@@ -383,7 +383,7 @@ impl SessionHub {
     ///
     /// 消费者自选渲染方式：
     /// - `.into_messages()` → 执行器原生 session restore
-    /// - `render_system_context_markdown(&transcript, owner)` → system prompt 注入
+    /// - `build_continuation_context_frame(&transcript, owner)` → continuation frame 注入
     pub async fn build_projected_transcript(
         &self,
         session_id: &str,

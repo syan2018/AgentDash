@@ -6,6 +6,7 @@ use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 use agentdash_spi::content_block_to_text;
 
 use super::persistence::PersistedSessionEvent;
@@ -15,7 +16,7 @@ use super::persistence::PersistedSessionEvent;
 // 唯一公共入口：`build_projected_transcript_from_events`
 //   → 返回 `ProjectedTranscript`，消费者自选渲染方式：
 //     - `.into_messages()` → 执行器原生恢复（prompt_pipeline ExecutorState 分支）
-//     - `render_system_context_markdown(&transcript, owner_context)` → system prompt 注入
+//     - `build_continuation_context_frame(&transcript, owner_context)` → ContextFrame 注入
 //       （acp_sessions route、routine executor）
 
 #[derive(Debug, Clone)]
@@ -27,24 +28,58 @@ struct CompactionCheckpoint {
     timestamp_ms: Option<u64>,
 }
 
-/// 将 `ProjectedTranscript` 渲染为 Markdown，用于 system prompt 注入。
-pub fn render_system_context_markdown(
+/// 把 `ProjectedTranscript` 组装为 `ContextFrame(kind=continuation_context)`。
+pub fn build_continuation_context_frame(
     transcript: &ProjectedTranscript,
     owner_context: Option<&str>,
-) -> Option<String> {
-    if transcript.is_empty() {
-        return owner_context
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
-    }
-
-    let mut sections = Vec::new();
-    if let Some(owner) = owner_context
+) -> Option<ContextFrame> {
+    let owner_context = owner_context
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        sections.push(format!("## Owner Context\n\n{owner}"));
+        .map(ToString::to_string);
+    let transcript_markdown = build_continuation_transcript_markdown(transcript);
+    if transcript_markdown.is_none() && owner_context.is_none() {
+        return None;
+    }
+
+    let mut rendered_sections = Vec::new();
+    if let Some(owner) = owner_context.as_deref() {
+        rendered_sections.push(format!("## Owner Context\n\n{owner}"));
+    }
+    if let Some(transcript_body) = transcript_markdown.as_deref() {
+        rendered_sections.push(format!("## Session Continuation\n\n{transcript_body}"));
+    }
+
+    let created_at_ms = chrono::Utc::now().timestamp_millis();
+    let summary = if transcript.is_empty() {
+        "当前会话暂无可恢复的历史事件，已保留 owner 上下文。".to_string()
+    } else {
+        format!("从会话仓储恢复 {} 条历史消息。", transcript.entries.len())
+    };
+
+    Some(ContextFrame {
+        id: format!("continuation-context-{created_at_ms}"),
+        kind: "continuation_context".to_string(),
+        source: RuntimeEventSource::RuntimeContextUpdate,
+        phase_node: None,
+        apply_mode: None,
+        delivery_status: "prepared_for_connector".to_string(),
+        delivery_channel: "connector_context".to_string(),
+        message_role: "system".to_string(),
+        rendered_text: rendered_sections.join("\n\n"),
+        sections: vec![ContextFrameSection::ContinuationContext {
+            title: "Session Continuation".to_string(),
+            summary,
+            owner_context,
+            transcript_markdown: transcript_markdown.unwrap_or_default(),
+        }],
+        created_at_ms,
+    })
+}
+
+fn build_continuation_transcript_markdown(transcript: &ProjectedTranscript) -> Option<String> {
+    if transcript.is_empty() {
+        return None;
     }
 
     let mut history_lines = Vec::new();
@@ -132,11 +167,7 @@ pub fn render_system_context_markdown(
         history_lines.push(String::new());
     }
 
-    sections.push(format!(
-        "## Session Continuation\n\n{}",
-        history_lines.join("\n")
-    ));
-    Some(sections.join("\n\n"))
+    Some(history_lines.join("\n"))
 }
 
 // ─── Restored session messages ─────────────────────────────
@@ -202,7 +233,7 @@ enum RestoredMessageEnvelope {
 ///
 /// 消费者根据需要自选渲染方式：
 /// - `.into_messages()` → 执行器原生 session restore
-/// - `render_system_context_markdown(&transcript, owner_context)` → system prompt 注入
+/// - `build_continuation_context_frame(&transcript, owner_context)` → continuation frame 注入
 pub(super) fn build_projected_transcript_from_events(
     events: &[PersistedSessionEvent],
 ) -> ProjectedTranscript {

@@ -1,6 +1,6 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_spi::{ContextFragment, MergeStrategy};
+use agentdash_spi::{ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
 use serde::Serialize;
 
 use crate::runtime::{Mount, MountCapability, RuntimeMcpServer, Vfs};
@@ -100,7 +100,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
             label: "vfs_summary".to_string(),
             order: 35,
             strategy: MergeStrategy::Append,
-            scope: ContextFragment::default_scope(),
+            scope: FragmentScopeSet::only(FragmentScope::Audit),
             source: "legacy:session_plan".to_string(),
             content: summary.markdown,
         });
@@ -117,7 +117,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         label: "tool_visibility_summary".to_string(),
         order: 36,
         strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
+        scope: FragmentScopeSet::only(FragmentScope::Audit),
         source: "legacy:session_plan".to_string(),
         content: tool_visibility.markdown,
     });
@@ -171,7 +171,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         label: "runtime_policy_summary".to_string(),
         order: 49,
         strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
+        scope: FragmentScopeSet::only(FragmentScope::Audit),
         source: "legacy:session_plan".to_string(),
         content: runtime_policy.markdown,
     });
@@ -762,6 +762,57 @@ mod tests {
         assert!(merged.contains("先读取项目容器摘要"));
         assert!(merged.contains("## Runtime Policy"));
         assert!(merged.contains("workspace_attached: yes"));
+    }
+
+    #[test]
+    fn capability_surface_fragments_are_audit_only() {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-a".to_string(),
+                root_ref: "/workspace/repo".to_string(),
+                capabilities: vec![MountCapability::Read],
+                default_write: false,
+                display_name: "主工作空间".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            ..Default::default()
+        };
+
+        let built = build_session_plan_fragments(SessionPlanInput {
+            owner_ctx: SessionOwnerCtx::Project {
+                project_id: uuid::Uuid::new_v4(),
+            },
+            phase: SessionPlanPhase::ProjectAgent,
+            vfs: Some(&vfs),
+            mcp_servers: &[],
+            session_composition: None,
+            agent_type: Some("PI_AGENT"),
+            preset_name: Some("default"),
+            has_custom_prompt_template: false,
+            has_initial_context: false,
+            workspace_attached: true,
+        });
+
+        let capability_slots = ["vfs", "tools", "runtime_policy"];
+        let capability_fragments = built
+            .fragments
+            .iter()
+            .filter(|fragment| capability_slots.contains(&fragment.slot.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(capability_fragments.len(), 3);
+        assert!(
+            capability_fragments
+                .iter()
+                .all(|fragment| fragment.scope.contains(FragmentScope::Audit))
+        );
+        assert!(
+            capability_fragments
+                .iter()
+                .all(|fragment| !fragment.scope.contains(FragmentScope::RuntimeAgent))
+        );
     }
 
     #[test]

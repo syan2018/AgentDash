@@ -130,13 +130,6 @@ const SUBSTANTIVE_DECISIONS = new Set([
   "step_advanced",
 ]);
 
-const LEGACY_CONTEXT_INJECTION_DECISIONS = new Set([
-  "baseline_initialized",
-  "baseline_refreshed",
-  "context_injected",
-  "steering_injected",
-]);
-
 const NON_SUBSTANTIVE_DIAGNOSTIC_CODES = new Set([
   "session_binding_found",
   "active_workflow_resolved",
@@ -165,14 +158,14 @@ function isHookEventSubstantive(
   decision: string | null | undefined,
   hookData: HookEventData | null,
 ): boolean {
+  if (decision === "context_injected" || decision === "steering_injected") {
+    return (hookData?.injections?.length ?? 0) > 0;
+  }
   if (decision && SUBSTANTIVE_DECISIONS.has(decision)) return true;
   if (hookData?.block_reason) return true;
   if (hookData?.completion) return true;
   if ((hookData?.diagnostics ?? []).some(isSubstantiveDiagnostic)) return true;
-  if (
-    hookData?.injections?.length &&
-    !LEGACY_CONTEXT_INJECTION_DECISIONS.has(decision ?? "")
-  ) {
+  if (hookData?.injections?.length) {
     return true;
   }
   return false;
@@ -410,10 +403,6 @@ function HookInjectionBody({
 
 function resolveInjectionEventMessage(decision: string | null, count: number): string {
   switch (decision) {
-    case "baseline_initialized":
-      return `Agent 收到 ${count} 项启动上下文`;
-    case "baseline_refreshed":
-      return `Agent 收到 ${count} 项刷新上下文`;
     case "context_injected":
       return `Agent 收到 ${count} 项上下文注入`;
     case "steering_injected":
@@ -427,8 +416,6 @@ function resolveInjectionEventMessage(decision: string | null, count: number): s
 
 function resolveDecisionToken(decision: string | null | undefined): string {
   switch (decision) {
-    case "baseline_initialized":
-    case "baseline_refreshed": return "CTX";
     case "context_injected":  return "CTX";
     case "steering_injected": return "CTX";
     case "step_advanced":     return "STEP";

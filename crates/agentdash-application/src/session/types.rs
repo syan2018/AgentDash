@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
@@ -33,6 +34,8 @@ pub struct PromptSessionRequest {
     pub capability_state: Option<agentdash_spi::CapabilityState>,
     /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
     pub context_bundle: Option<SessionContextBundle>,
+    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
+    pub continuation_context_frame: Option<ContextFrame>,
     /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
     ///
     /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
@@ -57,6 +60,7 @@ impl PromptSessionRequest {
             vfs: None,
             capability_state: None,
             context_bundle: None,
+            continuation_context_frame: None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,
             post_turn_handler: None,
@@ -123,7 +127,7 @@ pub enum SessionBootstrapState {
 /// Session 恢复时的上下文重建策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRepositoryRehydrateMode {
-    /// 从持久化事件重建 system context markdown（旧路径，适用于不支持 executor restore 的执行器）。
+    /// 从持久化事件重建 continuation context frame（适用于不支持 executor restore 的执行器）。
     SystemContext,
     /// 从持久化事件重建为 `Vec<AgentMessage>`，交由 connector 走执行器原生的 session restore。
     ExecutorState,

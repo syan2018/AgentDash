@@ -258,6 +258,13 @@ pub enum ContextFrameSection {
         #[serde(default)]
         fragments: Vec<RuntimeContextFragmentEntry>,
     },
+    ContinuationContext {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_context: Option<String>,
+        transcript_markdown: String,
+    },
     CapabilityDelta {
         #[serde(default)]
         added_capabilities: Vec<String>,

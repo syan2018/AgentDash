@@ -366,9 +366,11 @@ pub(super) fn session_hook_trace_decision(
     match trigger {
         HookTrigger::SessionStart => {
             if resolution.refresh_snapshot {
-                "baseline_refreshed"
-            } else if !resolution.injections.is_empty() || !resolution.diagnostics.is_empty() {
-                "baseline_initialized"
+                "refresh_requested"
+            } else if !resolution.injections.is_empty() {
+                "context_injected"
+            } else if !resolution.diagnostics.is_empty() {
+                "notified"
             } else {
                 "noop"
             }

@@ -56,6 +56,7 @@ fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
         vfs: None,
         capability_state: None,
         context_bundle: None,
+        continuation_context_frame: None,
         hook_snapshot_reload: HookSnapshotReloadTrigger::None,
         identity: None,
         post_turn_handler: None,
@@ -1307,7 +1308,7 @@ async fn owner_bootstrap_marks_session_meta_bootstrapped() {
 }
 
 #[tokio::test]
-async fn render_system_context_markdown_strips_owner_resource_blocks() {
+async fn continuation_context_frame_strips_owner_resource_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -1365,16 +1366,17 @@ async fn render_system_context_markdown_strips_owner_resource_blocks() {
         .build_projected_transcript(&session.id)
         .await
         .expect("transcript should build");
-    let context = super::super::continuation::render_system_context_markdown(
+    let frame = super::super::continuation::build_continuation_context_frame(
         &transcript,
         Some("## Owner\nproject"),
     )
     .expect("continuation context should exist");
-    assert!(context.contains("继续分析 session 生命周期"));
-    assert!(context.contains("已记录历史"));
-    assert!(context.contains("## Owner"));
-    assert!(!context.contains("agentdash://project-context/"));
-    assert!(!context.contains("hidden"));
+    assert_eq!(frame.kind, "continuation_context");
+    assert!(frame.rendered_text.contains("继续分析 session 生命周期"));
+    assert!(frame.rendered_text.contains("已记录历史"));
+    assert!(frame.rendered_text.contains("## Owner"));
+    assert!(!frame.rendered_text.contains("agentdash://project-context/"));
+    assert!(!frame.rendered_text.contains("hidden"));
 }
 
 #[tokio::test]
@@ -1680,7 +1682,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
 }
 
 #[tokio::test]
-async fn render_system_context_markdown_uses_compacted_projection() {
+async fn continuation_context_frame_uses_compacted_projection() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionHub::new_with_hooks_and_persistence(
@@ -1725,13 +1727,13 @@ async fn render_system_context_markdown_uses_compacted_projection() {
         .build_projected_transcript(&session.id)
         .await
         .expect("transcript should build");
-    let context = super::super::continuation::render_system_context_markdown(&transcript, None)
+    let frame = super::super::continuation::build_continuation_context_frame(&transcript, None)
         .expect("continuation context should exist");
 
-    assert!(context.contains("压缩后的历史摘要"));
-    assert!(context.contains("保留的新历史"));
-    assert!(!context.contains("第一段旧历史"));
-    assert!(!context.contains("第二段旧历史"));
+    assert!(frame.rendered_text.contains("压缩后的历史摘要"));
+    assert!(frame.rendered_text.contains("保留的新历史"));
+    assert!(!frame.rendered_text.contains("第一段旧历史"));
+    assert!(!frame.rendered_text.contains("第二段旧历史"));
 }
 
 #[tokio::test]

@@ -450,8 +450,13 @@ impl SessionHub {
             }
         }
 
+        let continuation_context_frame = req.continuation_context_frame.take();
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
+            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            turn_context_frames.push(frame);
+        }
+        if let Some(frame) = continuation_context_frame {
             let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);
         }

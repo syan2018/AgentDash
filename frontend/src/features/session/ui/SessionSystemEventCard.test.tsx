@@ -55,7 +55,7 @@ describe("AcpSystemEventCard", () => {
     expect(html).toContain("Agent 上下文已更新");
   });
 
-  it("legacy context injection 不再冒充用户可见上下文卡", () => {
+  it("有 injections 的 context_injected 应展示注入卡片", () => {
     const event: BackboneEvent = {
       type: "platform",
       payload: {
@@ -90,8 +90,10 @@ describe("AcpSystemEventCard", () => {
       },
     };
 
-    expect(isRenderableSystemEventUpdate(event)).toBe(false);
-    expect(renderToStaticMarkup(<AcpSystemEventCard event={event} />)).toBe("");
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<AcpSystemEventCard event={event} />);
+    expect(markup).toContain("1 项上下文注入");
+    expect(markup).toContain("workflow");
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {
@@ -107,6 +109,39 @@ describe("AcpSystemEventCard", () => {
             decision: "context_injected",
             sequence: 1n,
             revision: 2n,
+            severity: "info",
+            tool_name: null,
+            tool_call_id: null,
+            subagent_type: null,
+            matched_rule_keys: [],
+            refresh_snapshot: false,
+            block_reason: null,
+            completion: null,
+            diagnostic_codes: [],
+            diagnostics: [],
+            injections: [],
+          },
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(false);
+    expect(renderToStaticMarkup(<AcpSystemEventCard event={event} />)).toBe("");
+  });
+
+  it("session_start 的 context_injected 在 injections 为空时隐藏", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "hook_trace",
+        data: {
+          eventType: "hook:session_start:context_injected",
+          message: "Hook 已注入启动上下文",
+          data: {
+            trigger: "session_start",
+            decision: "context_injected",
+            sequence: 1n,
+            revision: 1n,
             severity: "info",
             tool_name: null,
             tool_call_id: null,

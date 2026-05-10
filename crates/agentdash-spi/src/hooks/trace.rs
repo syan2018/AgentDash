@@ -109,11 +109,11 @@ fn normalize_event_decision(decision: &str) -> String {
 
 fn describe_hook_trace(entry: &HookTraceEntry) -> String {
     match (&entry.trigger, entry.decision.as_str()) {
-        (HookTrigger::SessionStart, "baseline_initialized") => {
-            "Hook 已完成当前会话的 baseline 初始化".to_string()
+        (HookTrigger::SessionStart, "context_injected") => {
+            "Hook 在会话启动阶段注入了上下文".to_string()
         }
-        (HookTrigger::SessionStart, "baseline_refreshed") => {
-            "Hook 在会话启动阶段请求并完成了 baseline 刷新".to_string()
+        (HookTrigger::SessionStart, "refresh_requested") => {
+            "Hook 在会话启动阶段请求刷新运行时快照".to_string()
         }
         (HookTrigger::UserPromptSubmit, "context_injected") => {
             "Hook 已为当前输入注入动态上下文".to_string()

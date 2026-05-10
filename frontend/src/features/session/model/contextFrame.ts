@@ -17,6 +17,7 @@ export interface ContextFrame {
 export type ContextFrameSection =
   | IdentitySection
   | MissionContextSection
+  | ContinuationContextSection
   | CapabilityDeltaSection
   | ToolSchemaSection
   | ToolSchemaDeltaSection
@@ -32,6 +33,14 @@ export interface MissionContextSection {
   title: string;
   summary: string;
   fragments: RuntimeContextFragmentEntry[];
+}
+
+export interface ContinuationContextSection {
+  kind: "continuation_context";
+  title: string;
+  summary: string;
+  owner_context?: string;
+  transcript_markdown: string;
 }
 
 export interface IdentitySection {
@@ -203,6 +212,15 @@ function parseSection(value: unknown): ContextFrameSection | null {
       agent_prompt: readString(value.agent_prompt) ?? undefined,
       mode: readString(value.mode) ?? "append",
       effective_prompt: readString(value.effective_prompt) ?? "",
+    };
+  }
+  if (kind === "continuation_context") {
+    return {
+      kind,
+      title: readString(value.title) ?? "Session Continuation",
+      summary: readString(value.summary) ?? "",
+      owner_context: readString(value.owner_context) ?? undefined,
+      transcript_markdown: readString(value.transcript_markdown) ?? "",
     };
   }
   if (kind === "capability_delta") {
@@ -397,6 +415,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "BDL", variant: "neutral" };
     case "mission_context":
       return { token: "MIS", variant: "primary" };
+    case "continuation_context":
+      return { token: "CNT", variant: "warning" };
     case "pending_action":
       return { token: "ACT", variant: "warning" };
     case "auto_resume":
@@ -419,6 +439,8 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "IDN", variant: "primary" };
     case "mission_context":
       return { token: "MIS", variant: "primary" };
+    case "continuation_context":
+      return { token: "CNT", variant: "warning" };
     case "capability_delta":
       return { token: "CAP", variant: "neutral" };
     case "tool_schema":

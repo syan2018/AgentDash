@@ -9,6 +9,7 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{AgentConfig, AgentConnector};
+use agentdash_spi::hooks::ContextFrame;
 
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
@@ -447,7 +448,8 @@ impl RoutineExecutor {
             "text": prompt,
         })];
 
-        // RepositoryRehydrate(SystemContext) 需要预查 continuation bundle
+        // RepositoryRehydrate(SystemContext) 需要预查 continuation frame
+        let mut continuation_context_frame: Option<ContextFrame> = None;
         let lifecycle = match kind {
             SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
             SessionPromptLifecycle::RepositoryRehydrate(
@@ -458,15 +460,12 @@ impl RoutineExecutor {
                     .build_projected_transcript(session_id)
                     .await
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
-                let markdown =
-                    crate::session::continuation::render_system_context_markdown(&transcript, None);
-                let bundle_session_id =
-                    Uuid::parse_str(session_id).unwrap_or_else(|_| Uuid::new_v4());
-                let prebuilt_continuation_bundle = markdown.map(|md| {
-                    crate::context::build_continuation_bundle_from_markdown(bundle_session_id, md)
-                });
+                continuation_context_frame =
+                    crate::session::continuation::build_continuation_context_frame(
+                        &transcript, None,
+                    );
                 OwnerPromptLifecycle::RepositoryRehydrate {
-                    prebuilt_continuation_bundle,
+                    prebuilt_continuation_bundle: None,
                     include_owner_bundle: false,
                 }
             }
@@ -523,7 +522,9 @@ impl RoutineExecutor {
             routine.id,
         ));
 
-        Ok(finalize_request(base, prepared))
+        let mut req = finalize_request(base, prepared);
+        req.continuation_context_frame = continuation_context_frame;
+        Ok(req)
     }
 }
 

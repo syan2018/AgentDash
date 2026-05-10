@@ -15,6 +15,7 @@ import type {
   AutoResumeSection,
   CapabilityDeltaSection,
   CompactionSummarySection,
+  ContinuationContextSection,
   ContextFrameSection,
   ContextTokenInfo,
   IdentitySection,
@@ -62,6 +63,8 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "Identity";
     case "mission_context":
       return section.title || "Mission Context";
+    case "continuation_context":
+      return section.title || "Session Continuation";
     case "capability_delta":
       return "能力与工具变化";
     case "tool_schema":
@@ -89,6 +92,8 @@ function sectionHint(section: ContextFrameSection): string | null {
       return section.mode || "append";
     case "mission_context":
       return `${section.fragments.length} 个片段`;
+    case "continuation_context":
+      return section.summary || null;
     case "capability_delta": {
       const added =
         section.added_capabilities.length +
@@ -140,6 +145,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <IdentityBody section={section} />;
     case "mission_context":
       return <MissionContextBody section={section} />;
+    case "continuation_context":
+      return <ContinuationContextBody section={section} />;
     case "capability_delta":
       return <CapabilityDeltaBody section={section} />;
     case "tool_schema":
@@ -191,6 +198,28 @@ function MissionContextBody({ section }: { section: MissionContextSection }) {
           fragment={fragment}
         />
       ))}
+    </div>
+  );
+}
+
+function ContinuationContextBody({ section }: { section: ContinuationContextSection }) {
+  return (
+    <div className="space-y-2">
+      {section.summary && (
+        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
+      )}
+      {section.owner_context && (
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+          {section.owner_context}
+        </pre>
+      )}
+      {section.transcript_markdown ? (
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-[6px] border border-border/70 bg-background p-2 text-xs leading-relaxed text-foreground/75">
+          {section.transcript_markdown}
+        </pre>
+      ) : (
+        <p className="text-xs text-muted-foreground/60">暂无可恢复 transcript</p>
+      )}
     </div>
   );
 }

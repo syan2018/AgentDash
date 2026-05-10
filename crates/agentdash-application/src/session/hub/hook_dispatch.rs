@@ -90,13 +90,8 @@ impl SessionHub {
                         .await;
                 }
                 let effects = resolution.effects.clone();
-                let injections = resolution.injections.clone();
+                let trace_injections = resolution.injections.clone();
                 if let Some(trace_trigger) = trigger.trace_trigger() {
-                    let trace_injections = if matches!(trigger, HookTrigger::SessionStart) {
-                        Vec::new()
-                    } else {
-                        resolution.injections.clone()
-                    };
                     let trace = HookTraceEntry {
                         sequence: hook_session.next_trace_sequence(),
                         timestamp_ms: chrono::Utc::now().timestamp_millis(),
@@ -111,7 +106,7 @@ impl SessionHub {
                         block_reason: resolution.block_reason,
                         completion: resolution.completion,
                         diagnostics: resolution.diagnostics,
-                        injections: trace_injections,
+                        injections: trace_injections.clone(),
                     };
                     hook_session.append_trace(trace.clone());
                     // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
@@ -123,7 +118,7 @@ impl SessionHub {
                         let _ = self.persist_notification(session_id, envelope).await;
                     }
                 }
-                if !injections.is_empty() {
+                if !trace_injections.is_empty() {
                     let sink = SessionRuntimeHookInjectionSink::new(
                         self.sessions.clone(),
                         self.current_context_audit_bus().await,
@@ -131,7 +126,7 @@ impl SessionHub {
                     sink.emit_injections(
                         session_id,
                         RuntimeInjectionSource::Hook(*trigger),
-                        &injections,
+                        &trace_injections,
                     )
                     .await;
                 }

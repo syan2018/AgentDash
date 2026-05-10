@@ -112,6 +112,20 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("Agent 上下文已更新");
     expect(markup).toContain("CMP");
   });
+
+  it("解析并渲染 continuation_context frame", () => {
+    const notice = parseContextFrame(sampleContinuationNotice());
+
+    expect(notice?.kind).toBe("continuation_context");
+    expect(notice?.sections[0]?.kind).toBe("continuation_context");
+
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard data={sampleContinuationNotice()} defaultExpanded />,
+    );
+    expect(markup).toContain("CNT");
+    expect(markup).toContain("Session Continuation");
+    expect(markup).toContain("从会话仓储恢复 3 条历史消息");
+  });
 });
 
 function sampleNotice(): Record<string, unknown> {
@@ -296,6 +310,28 @@ function sampleCompactionNotice(): Record<string, unknown> {
         messages_compacted: 12,
         compacted_until_ref: { turn_id: "turn-1", entry_index: 3 },
         timestamp_ms: 1710000000000,
+      },
+    ],
+  };
+}
+
+function sampleContinuationNotice(): Record<string, unknown> {
+  return {
+    id: "continuation-context-1",
+    kind: "continuation_context",
+    source: "runtime_context_update",
+    delivery_status: "prepared_for_connector",
+    delivery_channel: "connector_context",
+    message_role: "system",
+    rendered_text: "## Session Continuation\n\n### Transcript\n#### 用户\n继续处理",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "continuation_context",
+        title: "Session Continuation",
+        summary: "从会话仓储恢复 3 条历史消息。",
+        owner_context: "## Owner Context\nproject",
+        transcript_markdown: "### Transcript\n#### 用户\n继续处理",
       },
     ],
   };

@@ -110,7 +110,7 @@ Runtime Client
 
 ### Implementation Progress
 
-截至 2026-05-09，当前分支 `codex/runtime-gateway` 已完成以下落地：
+截至 2026-05-11，当前分支 `codex/runtime-gateway` 已完成以下落地：
 
 1. **Gateway Core Protocol 已完成首版实现**
    - 已新增 application 层 `runtime_gateway` 模块。
@@ -130,12 +130,20 @@ Runtime Client
    - 已覆盖 Runtime Gateway/provider 单测：action key 校验、setup actor 限制、trace 回填、MCP probe、workspace detect、detect git、browse directory。
    - 已运行并通过 targeted Rust 验证：`cargo test -p agentdash-application runtime_gateway`、`cargo test -p agentdash-api backends`、`cargo test -p agentdash-api workspaces`、`cargo test -p agentdash-api rpc`、`cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
 
+4. **Session Runtime Plane 已完成 MCP action 首版闭环**
+   - 已新增 Session Runtime Action：`mcp.list_tools` 与 `mcp.call_tool`。
+   - Gateway 已注册 `McpListToolsProvider` / `McpCallToolProvider`，并继续复用 Session Runtime 的 actor/context 校验：必须是同一 `session_id` 的 session actor 调用。
+   - Session MCP 工具面通过 `RuntimeSessionMcpAccess` 接入 SessionHub；SessionHub 从 `CapabilityState.tool.mcp_servers` 读取 canonical MCP server 列表，并复用既有 direct/relay MCP discovery 与 tool adapter。
+   - Executor MCP discovery 增加 `DiscoveredMcpTool` metadata entry，用于 Runtime Gateway 输出 `runtime_name/server_name/tool_name/uses_relay/schema`，但真实执行仍由原 MCP adapter 完成。
+   - `mcp.call_tool` 支持按 `runtime_name` 或 `server_name + tool_name` 定位工具；目标工具必须先出现在 capability-filtered surface 中，否则返回 `CapabilityDenied`。
+   - `.trellis/spec/backend/runtime-gateway.md` 已补充 Session Runtime Action 场景、输入输出、Capability 契约和错误矩阵。
+
 尚未完成的内容：
 
-1. **Session Runtime Plane 尚未落地**
-   - `mcp.call_tool` / `mcp.list_tools` 尚未通过 Runtime Gateway 暴露。
-   - Runtime Surface 与 `CapabilityState` / capability pipeline 的正式裁决尚未接入。
+1. **Session Runtime Plane 仍有后续增强**
    - `RuntimeActionToolAdapter` 尚未实现。
+   - `RuntimeGateway::surface_for(Session)` 仍是 action 粒度的粗 surface；具体 MCP tool surface 已由 `mcp.list_tools` 裁决，但还未升级为统一的 async / actor-aware surface API。
+   - Session Runtime Action 目前先覆盖 MCP；VFS/context/workflow 等 provider 仍待后续切片。
 
 2. **Runtime Consumers 尚未落地**
    - Canvas Runtime Bridge SDK 尚未接入 Gateway。
@@ -170,8 +178,8 @@ Runtime Client
 - [x] 有明确的 Runtime Gateway / Action / Invocation / Provider / Surface / Actor 类型设计。
 - [x] Canvas 不再是协议命名中心，只作为 Runtime Client 之一。
 - [x] Relay 被定位为 provider/transport 内部实现，不直接暴露给上层 runtime。
-- [ ] Gateway 调用经过 CapabilityState 或等价 policy 裁决。
-- [ ] 至少完成 `mcp.call_tool` 的端到端设计，明确 direct MCP 与 relay MCP 的路由方式。
+- [x] Gateway 调用经过 CapabilityState 或等价 policy 裁决。
+- [x] 至少完成 `mcp.call_tool` 的端到端设计，明确 direct MCP 与 relay MCP 的路由方式。
 - [x] 至少完成一个非 Canvas 调用方场景设计，例如 Agent tool adapter 或 environment/workspace prepare。
 - [x] 明确 Runtime Scope 与 Gateway/Surface/Invocation/Provider 资源生命周期关系。
 - [x] 明确 Session 是 Runtime Surface 的唯一一等宿主，Project / WorkspaceBinding / WorkflowRun / CanvasView 不形成平行运行时上下文。

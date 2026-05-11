@@ -17,8 +17,9 @@ use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfi
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{
-    McpProbeTransportProvider, RuntimeGateway, WorkspaceBrowseDirectoryProvider,
-    WorkspaceDetectGitProvider, WorkspaceDetectProvider,
+    McpCallToolProvider, McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway,
+    RuntimeSessionMcpAccess, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
+    WorkspaceDetectProvider,
 };
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
@@ -206,21 +207,6 @@ impl AppState {
         let setup_action_transport: Arc<
             dyn agentdash_application::backend_transport::BackendTransport,
         > = backend_registry.clone();
-        let runtime_gateway = Arc::new(
-            RuntimeGateway::new()
-                .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
-                    mcp_probe_relay,
-                ))))
-                .with_provider(Arc::new(WorkspaceDetectProvider::new(
-                    setup_action_transport.clone(),
-                )))
-                .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
-                    setup_action_transport.clone(),
-                )))
-                .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
-                    setup_action_transport,
-                ))),
-        );
         let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
         let terminal_cache =
             agentdash_application::session::terminal_cache::SessionTerminalCache::new();
@@ -346,6 +332,27 @@ impl AppState {
         }
 
         session_hub_handle.set(session_hub.clone()).await;
+
+        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> = Arc::new(session_hub.clone());
+        let runtime_gateway = Arc::new(
+            RuntimeGateway::new()
+                .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
+                    mcp_probe_relay,
+                ))))
+                .with_provider(Arc::new(WorkspaceDetectProvider::new(
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
+                    setup_action_transport,
+                )))
+                .with_provider(Arc::new(McpListToolsProvider::new(
+                    session_mcp_access.clone(),
+                )))
+                .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access))),
+        );
 
         let lock_map = Arc::new(TaskLockMap::new());
 

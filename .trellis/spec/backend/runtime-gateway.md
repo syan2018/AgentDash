@@ -2,6 +2,113 @@
 
 Runtime Gateway 是 application 层的统一运行时能力调用入口。它承载 Session Runtime Action 与 Setup Action 的 Invocation / Provider / Result / Trace 协议，避免 Canvas、Agent、Workflow、环境准备 UI 各自维护一套能力调用道路。
 
+## Scenario: Session Runtime Action 通过 Runtime Gateway 调用 MCP 工具
+
+### 1. Scope / Trigger
+
+- Trigger: 新增或迁移普通运行时能力调用，例如 `mcp.list_tools`、`mcp.call_tool`、后续 Agent tool adapter / Canvas bridge / Workflow node 运行期调用。
+- Scope: Runtime Gateway 负责 actor/context 校验、provider 路由、trace 回填与 provider 错误归一化；SessionHub 负责读取 session 当前或最近的 `CapabilityState` 并复用既有 MCP direct/relay discovery。
+- Boundary: Session Runtime Action 必须绑定 `RuntimeContext::Session { session_id, ... }`，调用 actor 必须携带同一个 `session_id`。不得使用 `PlatformUser` / `EnvironmentSetup` 绕过 session surface 调用普通 runtime action。
+
+### 2. Current Actions
+
+```rust
+pub const MCP_LIST_TOOLS_ACTION: &str = "mcp.list_tools";
+pub const MCP_CALL_TOOL_ACTION: &str = "mcp.call_tool";
+```
+
+`mcp.list_tools` 输入：
+
+```rust
+pub struct McpListToolsInput {
+    pub server_names: Option<Vec<String>>,
+}
+```
+
+`mcp.list_tools` 输出：
+
+```rust
+pub struct McpListToolsOutput {
+    pub tools: Vec<RuntimeMcpToolDescriptor>,
+}
+
+pub struct RuntimeMcpToolDescriptor {
+    pub runtime_name: String,
+    pub server_name: String,
+    pub tool_name: String,
+    pub uses_relay: bool,
+    pub description: String,
+    pub parameters_schema: serde_json::Value,
+}
+```
+
+`mcp.call_tool` 输入：
+
+```rust
+pub struct McpCallToolInput {
+    pub runtime_name: Option<String>,
+    pub server_name: Option<String>,
+    pub tool_name: Option<String>,
+    pub arguments: Option<serde_json::Value>,
+}
+```
+
+`mcp.call_tool` 输出：
+
+```rust
+AgentToolResult
+```
+
+调用方应优先使用 `runtime_name`；若希望显式路由，也可以同时提供 `server_name` + `tool_name`。`arguments` 只允许 JSON object 或 null。
+
+### 3. Capability Contract
+
+- Session MCP surface 的唯一能力来源是 `CapabilityState`。
+- Provider 不直接读取 MCP preset、agent config 或 relay 裸命令；它通过 `RuntimeSessionMcpAccess` 进入 SessionHub。
+- SessionHub 使用 `get_latest_capability_state(session_id)` 读取 active turn 或 `session_profile` 中的 canonical state。
+- MCP server 列表必须来自 `CapabilityState.tool.mcp_servers`。
+- direct MCP discovery 与 relay MCP discovery 必须复用 `agentdash_executor::mcp` 中的 capability-aware 入口；所有工具暴露都必须经过：
+
+```rust
+capability_state.is_capability_tool_enabled(
+    capability_key,
+    tool_name,
+    None,
+)
+```
+
+- 空 `CapabilityState` 不得暴露任何 MCP 工具，即使 MCP server 已挂载。
+- `RuntimeGateway::surface_for(Session)` 目前只表达 action 粒度可用性；具体 MCP tool surface 由 `mcp.list_tools` 输出并应用 session capability policy。
+
+### 4. Error Matrix
+
+| Condition | Runtime error |
+| --- | --- |
+| Session Runtime Action 使用 Setup context | `InvalidRequest` |
+| actor 未绑定 session 或 session_id 不一致 | `CapabilityDenied` |
+| session 没有可用 `CapabilityState` | `Conflict` |
+| `mcp.call_tool` 未提供 tool target | `InvalidRequest` |
+| `arguments` 不是 object/null | `InvalidRequest` |
+| 目标工具不在 capability-filtered surface 中 | `CapabilityDenied` |
+| MCP discovery 连接失败 | `ProviderFailed` |
+| MCP tool execute 失败 | `ProviderFailed` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Gateway 注册 `McpListToolsProvider` / `McpCallToolProvider`，provider 只依赖 `RuntimeSessionMcpAccess`，测试可用 fake access 验证协议行为。
+- Good: SessionHub 复用既有 direct/relay MCP adapter，新增 metadata entry 只用于 Runtime Gateway descriptor 与按 `runtime_name` 调用，不复制 MCP 协议执行逻辑。
+- Base: `mcp.list_tools` 可选按 `server_names` 过滤，但过滤发生在 canonical capability surface 之后。
+- Bad: Gateway provider 自己解析 MCP transport、直接调用 relay command，或把 relay 返回的裸工具列表绕过 `CapabilityState` 暴露给 Canvas/Agent/Workflow。
+
+### 6. Tests Required
+
+- Provider 单测：`mcp.list_tools` 返回 `RuntimeMcpToolDescriptor` payload。
+- Provider 单测：`mcp.call_tool` 缺少 tool target 返回 `InvalidRequest`。
+- Provider 单测：`mcp.call_tool` 目标工具不可见返回 `CapabilityDenied`。
+- Gateway 单测：Session Runtime Action 拒绝 setup actor、拒绝不一致 session actor。
+- Executor 单测：direct/relay discovery 继续遵守 capability-aware filter。
+- Check：至少运行 `cargo test -p agentdash-application runtime_gateway`、`cargo test -p agentdash-executor mcp`、`cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
+
 ## Scenario: Setup Action 通过 Runtime Gateway 调用
 
 ### 1. Scope / Trigger

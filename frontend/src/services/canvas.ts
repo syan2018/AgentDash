@@ -6,9 +6,15 @@ import type {
   CanvasFile,
   CanvasImportMap,
   CanvasRuntimeBinding,
+  CanvasRuntimeBridgeSnapshot,
   CanvasRuntimeFile,
   CanvasRuntimeSnapshot,
   CanvasSandboxConfig,
+  RuntimeActionDescriptor,
+  RuntimeContext,
+  RuntimeInvocationResult,
+  RuntimePolicy,
+  RuntimeSurface,
 } from "../types";
 
 function mapCanvasImportMap(raw: unknown): CanvasImportMap {
@@ -63,6 +69,67 @@ function mapCanvasRuntimeBinding(raw: Record<string, unknown>): CanvasRuntimeBin
   };
 }
 
+function mapRuntimePolicy(raw: unknown): RuntimePolicy {
+  const value = asRecord(raw);
+  return {
+    required_capabilities: asStringArray(value?.required_capabilities),
+    timeout_ms: typeof value?.timeout_ms === "number" ? value.timeout_ms : null,
+    allow_background: Boolean(value?.allow_background),
+  };
+}
+
+function mapRuntimeActionDescriptor(raw: Record<string, unknown>): RuntimeActionDescriptor {
+  return {
+    action_key: String(raw.action_key ?? ""),
+    kind: raw.kind === "setup" ? "setup" : "session_runtime",
+    description: raw.description != null ? String(raw.description) : null,
+    input_schema: raw.input_schema,
+    output_schema: raw.output_schema,
+    default_policy: mapRuntimePolicy(raw.default_policy),
+  };
+}
+
+function mapRuntimeContext(raw: unknown): RuntimeContext {
+  const value = asRecord(raw);
+  if (value?.type === "setup") {
+    return {
+      type: "setup",
+      project_id: value.project_id != null ? String(value.project_id) : null,
+      workspace_id: value.workspace_id != null ? String(value.workspace_id) : null,
+      backend_id: value.backend_id != null ? String(value.backend_id) : null,
+      root_ref: value.root_ref != null ? String(value.root_ref) : null,
+    };
+  }
+
+  return {
+    type: "session",
+    session_id: String(value?.session_id ?? ""),
+    project_id: value?.project_id != null ? String(value.project_id) : null,
+    workspace_id: value?.workspace_id != null ? String(value.workspace_id) : null,
+  };
+}
+
+function mapRuntimeSurface(raw: unknown): RuntimeSurface | null {
+  const value = asRecord(raw);
+  if (!value) {
+    return null;
+  }
+
+  return {
+    context: mapRuntimeContext(value.context),
+    actions: asRecordArray(value.actions).map(mapRuntimeActionDescriptor),
+  };
+}
+
+function mapCanvasRuntimeBridge(raw: unknown): CanvasRuntimeBridgeSnapshot {
+  const value = asRecord(raw);
+  return {
+    enabled: Boolean(value?.enabled),
+    surface: mapRuntimeSurface(value?.surface),
+    disabled_reason: value?.disabled_reason != null ? String(value.disabled_reason) : null,
+  };
+}
+
 function mapCanvas(raw: Record<string, unknown>): Canvas {
   return {
     id: String(raw.id ?? ""),
@@ -88,6 +155,7 @@ function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSn
     bindings: asRecordArray(raw.bindings).map(mapCanvasRuntimeBinding),
     import_map: mapCanvasImportMap(raw.import_map),
     libraries: asStringArray(raw.libraries),
+    runtime_bridge: mapCanvasRuntimeBridge(raw.runtime_bridge),
   };
 }
 
@@ -163,4 +231,20 @@ export async function fetchCanvasRuntimeSnapshot(
       : `/canvases/${encodeURIComponent(canvasId)}/runtime-snapshot`,
   );
   return mapCanvasRuntimeSnapshot(raw);
+}
+
+export interface CanvasRuntimeInvokeInput {
+  session_id: string;
+  action_key: string;
+  input?: unknown;
+}
+
+export async function invokeCanvasRuntimeAction(
+  canvasId: string,
+  input: CanvasRuntimeInvokeInput,
+): Promise<RuntimeInvocationResult> {
+  return api.post<RuntimeInvocationResult>(
+    `/canvases/${encodeURIComponent(canvasId)}/runtime-invoke`,
+    input,
+  );
 }

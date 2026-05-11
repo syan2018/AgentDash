@@ -16,14 +16,14 @@ use rmcp::{
         StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
     },
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 /// Probe 超时（秒）——覆盖连接 + tools/list 全过程。
 const PROBE_TIMEOUT_SECS: u64 = 15;
 
 /// Probe 结果。
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ProbeResult {
     /// 连接成功并获取到工具列表。
@@ -38,7 +38,7 @@ pub enum ProbeResult {
 }
 
 /// Probe 发现的单个工具信息。
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProbeTool {
     pub name: String,
     pub description: String,

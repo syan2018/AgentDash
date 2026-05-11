@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/05-09-runtime-gateway/prd.md", "reason": "检查实现是否符合任务目标、MVP 范围、非目标和安全边界。"}
+{"file": ".trellis/tasks/05-09-runtime-gateway/plan-01-gateway-core-protocol.md", "reason": "检查 Gateway 核心协议、Provider SPI、Invocation 和错误模型是否按主线计划落地。"}
+{"file": ".trellis/tasks/05-09-runtime-gateway/plan-02-session-runtime-plane.md", "reason": "检查普通 Runtime Surface 是否正确收束到 Session，并复用 capability/MCP 工具面。"}
+{"file": ".trellis/tasks/05-09-runtime-gateway/plan-03-setup-action-plane.md", "reason": "检查 Setup Action 是否纳入 Gateway，且旧 API 是否收口为 thin route。"}
+{"file": ".trellis/tasks/05-09-runtime-gateway/plan-04-runtime-consumers.md", "reason": "检查 Canvas、Agent、Workflow、平台 UI 消费端是否复用 Gateway，而非各自维护执行链。"}
+{"file": ".trellis/tasks/05-09-runtime-gateway/plan-05-governance-migration.md", "reason": "检查权限、审计、错误、长任务与旧通路迁移治理是否闭合。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层数据流、权限边界和前后端契约是否闭合。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查 Runtime Action 暴露与调用是否受 CapabilityState / tool policy 约束。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 VFS provider 与 relay transport 是否保持分层边界。"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 session runtime、relay MCP 投影和 follow-up 收口规则是否未被破坏。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 actor/context 字段是否符合 SessionFrame / TurnFrame 生命周期约束。"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 Runtime Gateway 是否与 hook runtime / workflow policy / session surface 语义兼容。"}
+{"file": "docs/relay-protocol.md", "reason": "检查新增调用路径是否没有绕过现有 Relay 协议边界和错误处理约束。"}

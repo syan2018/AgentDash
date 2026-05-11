@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
@@ -118,7 +118,6 @@ pub struct StoryMcpServer {
     services: Arc<McpServices>,
     story_id: Uuid,
     project_id: Uuid,
-    tool_router: ToolRouter<Self>,
 }
 
 impl StoryMcpServer {
@@ -127,7 +126,6 @@ impl StoryMcpServer {
             services,
             story_id,
             project_id,
-            tool_router: Self::tool_router(),
         }
     }
 

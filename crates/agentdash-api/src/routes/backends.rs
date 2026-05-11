@@ -11,6 +11,11 @@ use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
 use crate::app_state::AppState;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
+use agentdash_application::runtime_gateway::{
+    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput,
+};
 use agentdash_application::session::context::normalize_optional_string;
 
 #[derive(Deserialize)]
@@ -321,48 +326,45 @@ pub async fn browse_directory(
     if backend_id.is_empty() {
         return Err(ApiError::BadRequest("backend_id 不能为空".into()));
     }
-    if !state.services.backend_registry.is_online(backend_id).await {
-        return Err(ApiError::Conflict(format!(
-            "目标 Backend 当前不在线: {backend_id}"
-        )));
-    }
 
-    let cmd = agentdash_relay::RelayMessage::CommandBrowseDirectory {
-        id: agentdash_relay::RelayMessage::new_id("browse-dir"),
-        payload: agentdash_relay::CommandBrowseDirectoryPayload { path: req.path },
-    };
-    let resp = state
-        .services
-        .backend_registry
-        .send_command(backend_id, cmd)
-        .await
-        .map_err(|e| ApiError::Internal(format!("relay browse_directory 失败: {e}")))?;
+    let input = serde_json::to_value(WorkspaceBrowseDirectoryInput {
+        backend_id: backend_id.to_string(),
+        path: req.path,
+    })
+    .map_err(|error| {
+        ApiError::BadRequest(format!("workspace.browse_directory 输入非法: {error}"))
+    })?;
+    let request = RuntimeInvocationRequest::new(
+        RuntimeActionKey::parse(WORKSPACE_BROWSE_DIRECTORY_ACTION).map_err(|error| {
+            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
+        })?,
+        RuntimeActor::PlatformUser { user_id: None },
+        RuntimeContext::Setup {
+            project_id: None,
+            workspace_id: None,
+            backend_id: Some(backend_id.to_string()),
+            root_ref: None,
+        },
+        input,
+    );
+    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let output = serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(invocation.output.output)
+        .map_err(|error| {
+            ApiError::Internal(format!(
+                "workspace.browse_directory 返回值解析失败: {error}"
+            ))
+        })?;
 
-    match resp {
-        agentdash_relay::RelayMessage::ResponseBrowseDirectory {
-            payload: Some(payload),
-            error: None,
-            ..
-        } => Ok(Json(BrowseDirectoryResponse {
-            current_path: payload.current_path,
-            entries: payload
-                .entries
-                .into_iter()
-                .map(|e| BrowseDirectoryEntryResponse {
-                    name: e.name,
-                    path: e.path,
-                    is_dir: e.is_dir,
-                })
-                .collect(),
-        })),
-        agentdash_relay::RelayMessage::ResponseBrowseDirectory {
-            error: Some(err), ..
-        } => Err(ApiError::Internal(format!(
-            "远程 browse_directory 错误: {}",
-            err.message
-        ))),
-        _ => Err(ApiError::Internal(
-            "远程 browse_directory 返回了意外响应".into(),
-        )),
-    }
+    Ok(Json(BrowseDirectoryResponse {
+        current_path: output.current_path,
+        entries: output
+            .entries
+            .into_iter()
+            .map(|entry| BrowseDirectoryEntryResponse {
+                name: entry.name,
+                path: entry.path,
+                is_dir: entry.is_dir,
+            })
+            .collect(),
+    }))
 }

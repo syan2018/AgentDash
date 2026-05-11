@@ -34,6 +34,7 @@ impl Canvas {
             files: vec![
                 CanvasFile::default_entry(),
                 CanvasFile::default_canvas_system_skill(),
+                CanvasFile::default_canvas_system_runtime_bridge_reference(),
             ],
             bindings: Vec::new(),
             created_at: now,

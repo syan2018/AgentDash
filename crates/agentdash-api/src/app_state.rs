@@ -16,6 +16,11 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::runtime_gateway::{
+    McpCallToolProvider, McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway,
+    RuntimeSessionMcpAccess, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
+    WorkspaceDetectProvider,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::SessionHub;
 use agentdash_application::task::service::StoryStepActivationService;
@@ -74,6 +79,8 @@ pub struct ServiceSet {
     pub routine_executor: Option<Arc<RoutineExecutor>>,
     /// Session 上下文审计总线 — Bundle / Fragment 产出与消费的可观测轨迹
     pub audit_bus: SharedContextAuditBus,
+    /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
+    pub runtime_gateway: Arc<RuntimeGateway>,
 }
 
 /// 应用级配置
@@ -196,6 +203,10 @@ impl AppState {
         };
 
         let backend_registry = BackendRegistry::new();
+        let mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
+        let setup_action_transport: Arc<
+            dyn agentdash_application::backend_transport::BackendTransport,
+        > = backend_registry.clone();
         let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
         let terminal_cache =
             agentdash_application::session::terminal_cache::SessionTerminalCache::new();
@@ -322,6 +333,27 @@ impl AppState {
 
         session_hub_handle.set(session_hub.clone()).await;
 
+        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> = Arc::new(session_hub.clone());
+        let runtime_gateway = Arc::new(
+            RuntimeGateway::new()
+                .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
+                    mcp_probe_relay,
+                ))))
+                .with_provider(Arc::new(WorkspaceDetectProvider::new(
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
+                    setup_action_transport.clone(),
+                )))
+                .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
+                    setup_action_transport,
+                )))
+                .with_provider(Arc::new(McpListToolsProvider::new(
+                    session_mcp_access.clone(),
+                )))
+                .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access))),
+        );
+
         let lock_map = Arc::new(TaskLockMap::new());
 
         let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
@@ -406,6 +438,7 @@ impl AppState {
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: None,
                 audit_bus,
+                runtime_gateway,
             },
             config: AppConfig {
                 platform_config,

@@ -3,10 +3,16 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
+use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::canvas::{
-    CanvasMutationInput, apply_canvas_mutation, build_canvas, build_runtime_snapshot_with_bindings,
+    CanvasMutationInput, CanvasRuntimeBridgeSnapshot, apply_canvas_mutation, build_canvas,
+    build_runtime_snapshot_with_bindings,
+};
+use agentdash_application::runtime_gateway::{
+    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+    RuntimeInvocationResult,
 };
 use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -46,6 +52,14 @@ pub struct UpdateCanvasRequest {
 #[derive(Debug, Deserialize, Default)]
 pub struct CanvasRuntimeSnapshotQuery {
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CanvasRuntimeInvokeRequest {
+    pub session_id: String,
+    pub action_key: String,
+    #[serde(default)]
+    pub input: Value,
 }
 
 pub async fn list_project_canvases(
@@ -169,15 +183,77 @@ pub async fn get_canvas_runtime_snapshot(
 
     let vfs =
         resolve_canvas_runtime_vfs(&state, query.session_id.as_deref(), canvas.project_id).await?;
-    let snapshot = build_runtime_snapshot_with_bindings(
+    let mut snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
-        query.session_id,
+        query.session_id.clone(),
         vfs.as_ref(),
         state.services.vfs_service.as_ref(),
     )
     .await;
+    if let Some(session_id) = query.session_id.as_deref() {
+        snapshot.runtime_bridge =
+            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id)?;
+    }
 
     Ok(Json(snapshot))
+}
+
+pub async fn invoke_canvas_runtime_action(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+    Json(req): Json<CanvasRuntimeInvokeRequest>,
+) -> Result<Json<RuntimeInvocationResult>, ApiError> {
+    let canvas =
+        load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
+            .await?;
+    let session_id = req.session_id.trim();
+    if session_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Canvas runtime invoke 缺少 session_id".to_string(),
+        ));
+    }
+
+    ensure_canvas_session_scope(state.as_ref(), session_id, canvas.project_id).await?;
+
+    let action_key = RuntimeActionKey::parse(req.action_key)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let request = RuntimeInvocationRequest::new(
+        action_key,
+        RuntimeActor::UserCanvas {
+            session_id: session_id.to_string(),
+            canvas_id: Some(canvas.id),
+        },
+        RuntimeContext::Session {
+            session_id: session_id.to_string(),
+            project_id: Some(canvas.project_id),
+            workspace_id: None,
+        },
+        req.input,
+    );
+
+    let result = state.services.runtime_gateway.invoke(request).await?;
+    Ok(Json(result))
+}
+
+fn build_canvas_runtime_bridge_surface(
+    state: &AppState,
+    canvas: &agentdash_domain::canvas::Canvas,
+    session_id: &str,
+) -> Result<CanvasRuntimeBridgeSnapshot, ApiError> {
+    let surface = state.services.runtime_gateway.surface_for_actor(
+        RuntimeActor::UserCanvas {
+            session_id: session_id.to_string(),
+            canvas_id: Some(canvas.id),
+        },
+        RuntimeContext::Session {
+            session_id: session_id.to_string(),
+            project_id: Some(canvas.project_id),
+            workspace_id: None,
+        },
+    )?;
+
+    Ok(CanvasRuntimeBridgeSnapshot::enabled(surface))
 }
 
 async fn load_canvas_with_permission(
@@ -215,22 +291,8 @@ async fn resolve_canvas_runtime_vfs(
         return Ok(None);
     };
 
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await?;
-    if bindings.is_empty() {
-        return Err(ApiError::NotFound(format!("Session {session_id} 不存在")));
-    }
-    if !bindings
-        .iter()
-        .any(|binding| binding.project_id == expected_project_id)
-    {
-        return Err(ApiError::Forbidden(
-            "当前 session 与目标 Canvas 不属于同一 Project".to_string(),
-        ));
-    }
+    let bindings =
+        ensure_canvas_session_scope(state.as_ref(), session_id, expected_project_id).await?;
 
     let Some(binding) = pick_primary_binding_for_project(&bindings, expected_project_id) else {
         return Ok(None);
@@ -286,6 +348,31 @@ async fn resolve_canvas_runtime_vfs(
             Ok(built_context.vfs)
         }
     }
+}
+
+async fn ensure_canvas_session_scope(
+    state: &AppState,
+    session_id: &str,
+    expected_project_id: Uuid,
+) -> Result<Vec<SessionBinding>, ApiError> {
+    let bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(session_id)
+        .await?;
+    if bindings.is_empty() {
+        return Err(ApiError::NotFound(format!("Session {session_id} 不存在")));
+    }
+    if !bindings
+        .iter()
+        .any(|binding| binding.project_id == expected_project_id)
+    {
+        return Err(ApiError::Forbidden(
+            "当前 session 与目标 Canvas 不属于同一 Project".to_string(),
+        ));
+    }
+
+    Ok(bindings)
 }
 
 fn pick_primary_binding_for_project(

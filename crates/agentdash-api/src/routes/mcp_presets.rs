@@ -12,10 +12,13 @@ use uuid::Uuid;
 
 use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
-    UpdateMcpPresetInput, probe_transport,
+    UpdateMcpPresetInput,
+};
+use agentdash_application::runtime_gateway::{
+    MCP_PROBE_TRANSPORT_ACTION, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    RuntimeInvocationRequest,
 };
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
-use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -284,8 +287,26 @@ pub async fn probe_mcp_transport_handler(
     )
     .await?;
 
-    let relay: &dyn McpRelayProvider = state.services.backend_registry.as_ref();
-    let result = probe_transport(&transport, Some(relay)).await;
+    let input = serde_json::to_value(transport)
+        .map_err(|error| ApiError::BadRequest(format!("MCP transport 配置非法: {error}")))?;
+    let request = RuntimeInvocationRequest::new(
+        RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).map_err(|error| {
+            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
+        })?,
+        RuntimeActor::PlatformUser {
+            user_id: Some(current_user.user_id.clone()),
+        },
+        RuntimeContext::Setup {
+            project_id: Some(project_id),
+            workspace_id: None,
+            backend_id: None,
+            root_ref: None,
+        },
+        input,
+    );
+    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    let result = serde_json::from_value::<ProbeMcpPresetResponse>(invocation.output.output)
+        .map_err(|error| ApiError::Internal(format!("MCP probe 返回值解析失败: {error}")))?;
     Ok(Json(result))
 }
 

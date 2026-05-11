@@ -36,6 +36,17 @@ pub trait BackendTransport: Send + Sync {
             .git
             .unwrap_or_default())
     }
+
+    /// 浏览远程后端上的目录入口。
+    async fn browse_directory(
+        &self,
+        _backend_id: &str,
+        _path: Option<&str>,
+    ) -> Result<DirectoryBrowseInfo, TransportError> {
+        Err(TransportError::OperationFailed(
+            "backend transport 未实现 browse_directory".to_string(),
+        ))
+    }
 }
 
 /// relay prompt 传输端口 — `RelayAgentConnector` 通过此 trait 与远程后端交互。
@@ -162,6 +173,19 @@ pub struct WorkspaceProbeInfo {
     pub git: Option<GitRepoInfo>,
     pub p4: Option<P4WorkspaceInfo>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DirectoryBrowseInfo {
+    pub current_path: String,
+    pub entries: Vec<DirectoryEntryInfo>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DirectoryEntryInfo {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

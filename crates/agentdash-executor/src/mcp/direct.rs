@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 
 use agentdash_spi::ConnectorError;
 
+use super::DiscoveredMcpTool;
+
 #[derive(Debug, Clone)]
 struct McpHttpServerSpec {
     name: String,
@@ -124,7 +126,18 @@ pub async fn discover_mcp_tools(
     servers: &[SessionMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-    let mut tools: Vec<DynAgentTool> = Vec::new();
+    Ok(discover_mcp_tool_entries(servers, capability_state)
+        .await?
+        .into_iter()
+        .map(|entry| entry.tool)
+        .collect())
+}
+
+pub async fn discover_mcp_tool_entries(
+    servers: &[SessionMcpServer],
+    capability_state: &CapabilityState,
+) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+    let mut entries = Vec::new();
 
     for server in servers {
         let Some(server_spec) = parse_http_session_server(server) else {
@@ -150,13 +163,21 @@ pub async fn discover_mcp_tools(
             ) {
                 continue;
             }
-            tools.push(
-                Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool)) as DynAgentTool,
-            );
+            let adapter = Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool));
+            let tool = adapter.clone() as DynAgentTool;
+            entries.push(DiscoveredMcpTool {
+                runtime_name: adapter.runtime_name.clone(),
+                server_name: server_spec.name.clone(),
+                tool_name: adapter.original_name.clone(),
+                uses_relay: false,
+                description: adapter.description.clone(),
+                parameters_schema: adapter.parameters_schema.clone(),
+                tool,
+            });
         }
     }
 
-    Ok(tools)
+    Ok(entries)
 }
 
 pub fn capability_key_for_mcp_server_name(server_name: &str) -> String {

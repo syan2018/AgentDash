@@ -239,6 +239,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(canvases::get_canvas_runtime_snapshot),
         )
         .route(
+            "/canvases/{id}/runtime-invoke",
+            post(canvases::invoke_canvas_runtime_action),
+        )
+        .route(
             "/stories/{id}/tasks",
             get(stories::list_tasks).post(stories::create_task),
         )

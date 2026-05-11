@@ -11,6 +11,7 @@ use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpToolInfo};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use super::DiscoveredMcpTool;
 use super::direct::{capability_key_for_mcp_server_name, namespaced_tool_name};
 
 /// 将 relay MCP 工具适配为 Pi Agent 可调用的 AgentTool。
@@ -104,6 +105,18 @@ pub async fn discover_relay_mcp_tools(
     server_names: &[String],
     capability_state: &CapabilityState,
 ) -> Vec<DynAgentTool> {
+    discover_relay_mcp_tool_entries(provider, server_names, capability_state)
+        .await
+        .into_iter()
+        .map(|entry| entry.tool)
+        .collect()
+}
+
+pub async fn discover_relay_mcp_tool_entries(
+    provider: Arc<dyn McpRelayProvider>,
+    server_names: &[String],
+    capability_state: &CapabilityState,
+) -> Vec<DiscoveredMcpTool> {
     if server_names.is_empty() {
         return Vec::new();
     }
@@ -115,7 +128,17 @@ pub async fn discover_relay_mcp_tools(
             capability_state.is_capability_tool_enabled(&capability_key, &info.tool_name, None)
         })
         .map(|info| {
-            Arc::new(RelayMcpToolAdapter::from_info(info, provider.clone())) as DynAgentTool
+            let adapter = Arc::new(RelayMcpToolAdapter::from_info(info, provider.clone()));
+            let tool = adapter.clone() as DynAgentTool;
+            DiscoveredMcpTool {
+                runtime_name: adapter.runtime_name.clone(),
+                server_name: adapter.server_name.clone(),
+                tool_name: adapter.original_tool_name.clone(),
+                uses_relay: true,
+                description: adapter.description.clone(),
+                parameters_schema: adapter.parameters_schema.clone(),
+                tool,
+            }
         })
         .collect()
 }

@@ -5,6 +5,7 @@ pub mod canvas;
 pub mod common;
 pub mod context_container;
 pub mod context_source;
+pub mod embedded_skill;
 pub mod identity;
 pub mod inline_file;
 pub mod llm_provider;

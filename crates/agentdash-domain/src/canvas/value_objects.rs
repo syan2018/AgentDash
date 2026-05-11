@@ -2,9 +2,37 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::embedded_skill::{
+    EmbeddedSkillBundle, EmbeddedSkillFile, EmbeddedSkillFileKind, EmbeddedSkillTargetFile,
+    ensure_embedded_skill_bundle,
+};
+
 pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
 pub const CANVAS_SYSTEM_SKILL_PATH: &str = "skills/canvas-system/SKILL.md";
+pub const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH: &str =
+    "skills/canvas-system/references/runtime-bridge.md";
 const CANVAS_SYSTEM_SKILL_CONTENT: &str = include_str!("skills/canvas-system/SKILL.md");
+const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/runtime-bridge.md");
+const CANVAS_SYSTEM_BUNDLE_FILES: &[EmbeddedSkillFile] = &[
+    EmbeddedSkillFile {
+        relative_path: "SKILL.md",
+        content: CANVAS_SYSTEM_SKILL_CONTENT,
+        kind: EmbeddedSkillFileKind::Skill,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/runtime-bridge.md",
+        content: CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+];
+
+pub const CANVAS_SYSTEM_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
+    name: CANVAS_SYSTEM_SKILL_NAME,
+    root_path: "skills/canvas-system",
+    entry_path: "SKILL.md",
+    files: CANVAS_SYSTEM_BUNDLE_FILES,
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanvasSandboxConfig {
@@ -78,23 +106,19 @@ root.innerHTML = `
             content: canvas_system_skill_content().to_string(),
         }
     }
+
+    pub fn default_canvas_system_runtime_bridge_reference() -> Self {
+        Self {
+            path: CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH.to_string(),
+            content: canvas_system_runtime_bridge_reference_content().to_string(),
+        }
+    }
 }
 
 pub fn ensure_canvas_system_skill(files: &mut Vec<CanvasFile>) -> bool {
-    let content = canvas_system_skill_content();
-    if let Some(file) = files
-        .iter_mut()
-        .find(|file| file.path == CANVAS_SYSTEM_SKILL_PATH)
-    {
-        if file.content == content {
-            return false;
-        }
-        file.content = content.to_string();
-        return true;
-    }
-
-    files.push(CanvasFile::default_canvas_system_skill());
-    true
+    ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
+        .expect("canvas-system embedded skill bundle should be valid")
+        .changed()
 }
 
 pub fn is_canvas_system_skill_path(path: &str) -> bool {
@@ -103,6 +127,32 @@ pub fn is_canvas_system_skill_path(path: &str) -> bool {
 
 pub fn canvas_system_skill_content() -> &'static str {
     CANVAS_SYSTEM_SKILL_CONTENT
+}
+
+pub fn canvas_system_runtime_bridge_reference_content() -> &'static str {
+    CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT
+}
+
+impl EmbeddedSkillTargetFile for CanvasFile {
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn content(&self) -> &str {
+        &self.content
+    }
+
+    fn set_path(&mut self, path: String) {
+        self.path = path;
+    }
+
+    fn set_content(&mut self, content: String) {
+        self.content = content;
+    }
+
+    fn from_path_content(path: String, content: String) -> Self {
+        Self { path, content }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,9 +13,16 @@
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
+use agentdash_executor::mcp::DiscoveredMcpTool;
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
+use async_trait::async_trait;
+use serde_json::Value;
 
 use super::SessionHub;
+use crate::runtime_gateway::{
+    McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
+    execute_runtime_mcp_tool,
+};
 use crate::session::types::CapabilityState;
 
 impl SessionHub {
@@ -171,5 +178,116 @@ impl SessionHub {
         }
 
         all_tools
+    }
+
+    async fn discover_runtime_mcp_tool_entries(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+        use agentdash_executor::mcp::{self as mcp_discovery};
+
+        let capability_state = self
+            .get_latest_capability_state(session_id)
+            .await
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 当前没有可用 CapabilityState"
+                ))
+            })?;
+        let mcp_servers = capability_state.tool.mcp_servers.clone();
+        let (relay_names, direct_servers) =
+            agentdash_spi::partition_session_mcp_servers(&mcp_servers);
+        let mut entries =
+            mcp_discovery::discover_mcp_tool_entries(&direct_servers, &capability_state).await?;
+
+        if let Some(relay) = &self.mcp_relay_provider {
+            entries.extend(
+                mcp_discovery::discover_relay_mcp_tool_entries(
+                    relay.clone(),
+                    &relay_names,
+                    &capability_state,
+                )
+                .await,
+            );
+        } else if !relay_names.is_empty() {
+            tracing::warn!(
+                session_id = %session_id,
+                "Session 声明了 relay MCP server，但当前没有 mcp_relay_provider"
+            );
+        }
+
+        Ok(entries)
+    }
+}
+
+#[async_trait]
+impl RuntimeSessionMcpAccess for SessionHub {
+    async fn list_mcp_tools(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<RuntimeMcpToolDescriptor>, RuntimeSessionMcpError> {
+        let entries = self
+            .discover_runtime_mcp_tool_entries(session_id)
+            .await
+            .map_err(runtime_mcp_error_from_connector)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| RuntimeMcpToolDescriptor {
+                runtime_name: entry.runtime_name,
+                server_name: entry.server_name,
+                tool_name: entry.tool_name,
+                uses_relay: entry.uses_relay,
+                description: entry.description,
+                parameters_schema: entry.parameters_schema,
+            })
+            .collect())
+    }
+
+    async fn call_mcp_tool(
+        &self,
+        session_id: &str,
+        input: McpCallToolInput,
+    ) -> Result<agentdash_agent_types::AgentToolResult, RuntimeSessionMcpError> {
+        let entries = self
+            .discover_runtime_mcp_tool_entries(session_id)
+            .await
+            .map_err(runtime_mcp_error_from_connector)?;
+        let entry = entries
+            .into_iter()
+            .find(|entry| runtime_mcp_entry_matches(entry, &input))
+            .ok_or_else(|| {
+                RuntimeSessionMcpError::ToolUnavailable(
+                    "目标 MCP 工具不在当前 Session Runtime Surface 中".to_string(),
+                )
+            })?;
+        let arguments = input.arguments.unwrap_or(Value::Null);
+        execute_runtime_mcp_tool(entry.tool, &entry.runtime_name, arguments).await
+    }
+}
+
+fn runtime_mcp_entry_matches(entry: &DiscoveredMcpTool, input: &McpCallToolInput) -> bool {
+    if let Some(runtime_name) = input.runtime_name.as_deref()
+        && runtime_name == entry.runtime_name
+    {
+        return true;
+    }
+    matches!(
+        (input.server_name.as_deref(), input.tool_name.as_deref()),
+        (Some(server_name), Some(tool_name))
+            if server_name == entry.server_name && tool_name == entry.tool_name
+    )
+}
+
+fn runtime_mcp_error_from_connector(error: ConnectorError) -> RuntimeSessionMcpError {
+    match error {
+        ConnectorError::Runtime(message) | ConnectorError::InvalidConfig(message) => {
+            RuntimeSessionMcpError::SessionUnavailable(message)
+        }
+        ConnectorError::ConnectionFailed(message) => {
+            RuntimeSessionMcpError::DiscoveryFailed(message)
+        }
+        ConnectorError::SpawnFailed(message) => RuntimeSessionMcpError::DiscoveryFailed(message),
+        ConnectorError::Io(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
+        ConnectorError::Json(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
     }
 }

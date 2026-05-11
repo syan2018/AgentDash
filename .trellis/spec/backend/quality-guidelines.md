@@ -41,7 +41,7 @@ ACP 协议对象、第三方 SDK 透传、明确标注为"桥接层"的响应对
 
 ### RMCP Tool Router 宏约定
 
-使用 `rmcp` 的 `#[tool_router]` / `#[tool_handler]` 时，server struct 不需要持有 `ToolRouter<Self>` 字段；宏会生成 `Self::tool_router()` 关联方法，`#[tool_handler]` 会基于该生成路由完成工具注册与分发。
+使用 `rmcp` 的 `#[tool_router]` / `#[tool_handler]` 时，server struct 不需要持有 `ToolRouter<Self>` 字段；宏会生成 `Self::tool_router()` 关联方法。由于 `rmcp-macros` 的 `#[tool_handler]` 默认 router 表达式是 `self.tool_router`，无字段写法必须显式指定 `#[tool_handler(router = Self::tool_router())]`，让工具注册与分发使用 `#[tool_router]` 生成的关联方法。
 
 ```rust
 // ✅ Correct：只保留业务状态，测试或 schema 校验可直接调用 Self::tool_router()
@@ -56,6 +56,13 @@ impl StoryMcpServer {
     #[tool(description = "获取当前 Story 的完整上下文信息")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         // ...
+    }
+}
+
+#[tool_handler(router = Self::tool_router())]
+impl ServerHandler for StoryMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
     }
 }
 ```

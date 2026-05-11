@@ -662,7 +662,7 @@ impl WorkflowMcpServer {
 
 // ─── ServerHandler 实现 ──────────────────────────────────────
 
-#[tool_handler]
+#[tool_handler(router = Self::tool_router())]
 impl ServerHandler for WorkflowMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())

@@ -381,7 +381,7 @@ impl RelayMcpServer {
 
 // ─── ServerHandler 实现 ──────────────────────────────────────
 
-#[tool_handler]
+#[tool_handler(router = Self::tool_router())]
 impl ServerHandler for RelayMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(

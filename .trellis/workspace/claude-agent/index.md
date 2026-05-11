@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 34
-- **Last Active**: 2026-05-09
+- **Total Sessions**: 35
+- **Last Active**: 2026-05-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~278 | Active |
+| `journal-2.md` | ~313 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 35 | 2026-05-11 | Workflow/Lifecycle 前端编辑统一为单 editor | `5cfa9674`, `0212f193`, `578abcfb` | `main` |
 | 34 | 2026-05-09 | ContextFrame 卡片重构：双层 shell + WYSIWYG 单列 | `ed736414` | `main` |
 | 33 | 2026-05-07 | Lifecycle Journey VFS 收尾 | `12f81e2`, `a0cf627`, `ec22ec6`, `ed78669`, `2f43761`, `5eb63b7` | `codex/lifecycle-vfs-owner-binding` |
 | 32 | 2026-05-07 | 实现 Lifecycle Journey VFS | `a0cf627` | `main` |

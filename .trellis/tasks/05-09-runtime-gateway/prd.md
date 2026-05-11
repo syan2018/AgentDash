@@ -144,10 +144,17 @@ Runtime Client
    - Adapter 会把 runtime action / trace 与 provider details 回填到 `AgentToolResult.details`，便于后续审计和调试。
    - 当前尚未默认注入到 session tool surface；是否暴露 generic Runtime Action tool 需等待 capability/surface 策略明确，避免和现有 per-MCP-tool schema 重复暴露。
 
+6. **Runtime Surface 已补 actor-aware action manifest**
+   - `RuntimeGateway::surface_for_actor(actor, context)` 已落地，复用 Runtime Invocation 的 actor/context 校验语义。
+   - Session context 只允许同 `session_id` 的 `AgentSession` / `UserCanvas` / `WorkflowNode` / `SessionUser` 查询；Setup context 只允许 `PlatformUser` / `EnvironmentSetup` 查询。
+   - `surface_for(context)` 保留为 context-only 粗枚举，不能作为消费端授权来源。
+   - actor-aware surface 只表达 action 粒度；MCP tool 粒度仍由 `mcp.list_tools` 负责。
+
 尚未完成的内容：
 
 1. **Session Runtime Plane 仍有后续增强**
-   - `RuntimeGateway::surface_for(Session)` 仍是 action 粒度的粗 surface；具体 MCP tool surface 已由 `mcp.list_tools` 裁决，但还未升级为统一的 async / actor-aware surface API。
+   - `RuntimeGateway::surface_for_actor` 已完成 action 粒度 actor-aware manifest；具体 MCP tool surface 已由 `mcp.list_tools` 裁决。
+   - 尚未形成统一 async/provider-aware surface API；如未来 provider 需要动态 action manifest，再另行扩展。
    - Session Runtime Action 目前先覆盖 MCP；VFS/context/workflow 等 provider 仍待后续切片。
    - `RuntimeActionToolAdapter` 已有基础件，但还未进入正式 session tool 注入策略。
 

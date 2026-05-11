@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::error::RuntimeInvocationError;
 use super::provider::RuntimeProvider;
 use super::types::{
-    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
+    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeSurface,
 };
 
@@ -48,6 +48,24 @@ impl RuntimeGateway {
             .map(|provider| provider.describe_action())
             .collect();
         RuntimeSurface { context, actions }
+    }
+
+    pub fn surface_for_actor(
+        &self,
+        actor: RuntimeActor,
+        context: RuntimeContext,
+    ) -> Result<RuntimeSurface, RuntimeInvocationError> {
+        let trace = None;
+        validate_actor_context(context.action_kind(), &actor, &context, trace)?;
+
+        let actions = self
+            .providers
+            .values()
+            .filter(|provider| provider.action_kind() == context.action_kind())
+            .map(|provider| provider.describe_action())
+            .collect();
+
+        Ok(RuntimeSurface { context, actions })
     }
 
     pub async fn invoke(
@@ -101,57 +119,77 @@ fn validate_request(
     provider: &dyn RuntimeProvider,
     request: &RuntimeInvocationRequest,
 ) -> Result<(), RuntimeInvocationError> {
-    match provider.action_kind() {
-        RuntimeActionKind::SessionRuntime => validate_session_runtime_request(request),
-        RuntimeActionKind::Setup => validate_setup_request(request),
+    validate_actor_context(
+        provider.action_kind(),
+        &request.actor,
+        &request.context,
+        Some(request.trace.clone()),
+    )
+}
+
+fn validate_actor_context(
+    action_kind: RuntimeActionKind,
+    actor: &RuntimeActor,
+    context: &RuntimeContext,
+    trace: Option<super::types::RuntimeTrace>,
+) -> Result<(), RuntimeInvocationError> {
+    match action_kind {
+        RuntimeActionKind::SessionRuntime => {
+            validate_session_runtime_actor_context(actor, context, trace)
+        }
+        RuntimeActionKind::Setup => validate_setup_actor_context(actor, context, trace),
     }
 }
 
-fn validate_session_runtime_request(
-    request: &RuntimeInvocationRequest,
+fn validate_session_runtime_actor_context(
+    actor: &RuntimeActor,
+    context: &RuntimeContext,
+    trace: Option<super::types::RuntimeTrace>,
 ) -> Result<(), RuntimeInvocationError> {
-    let Some(context_session_id) = request.context.session_id() else {
+    let Some(context_session_id) = context.session_id() else {
         return Err(RuntimeInvocationError::invalid_request(
             "Session Runtime Action 必须绑定 Session context",
-            Some(request.trace.clone()),
+            trace,
         ));
     };
     if context_session_id.is_empty() {
         return Err(RuntimeInvocationError::invalid_request(
             "Session Runtime Action 的 session_id 不能为空",
-            Some(request.trace.clone()),
+            trace,
         ));
     }
 
-    let Some(actor_session_id) = request.actor.session_id() else {
+    let Some(actor_session_id) = actor.session_id() else {
         return Err(RuntimeInvocationError::capability_denied(
             "Session Runtime Action 只能由绑定同一 Session 的 actor 调用",
-            Some(request.trace.clone()),
+            trace,
         ));
     };
     if actor_session_id != context_session_id {
         return Err(RuntimeInvocationError::capability_denied(
             "Runtime actor 与 Runtime context 的 session_id 不一致",
-            Some(request.trace.clone()),
+            trace,
         ));
     }
 
     Ok(())
 }
 
-fn validate_setup_request(
-    request: &RuntimeInvocationRequest,
+fn validate_setup_actor_context(
+    actor: &RuntimeActor,
+    context: &RuntimeContext,
+    trace: Option<super::types::RuntimeTrace>,
 ) -> Result<(), RuntimeInvocationError> {
-    if !matches!(request.context, RuntimeContext::Setup { .. }) {
+    if !matches!(context, RuntimeContext::Setup { .. }) {
         return Err(RuntimeInvocationError::invalid_request(
             "Setup Action 必须使用 Setup context",
-            Some(request.trace.clone()),
+            trace,
         ));
     }
-    if !request.actor.is_setup_actor() {
+    if !actor.is_setup_actor() {
         return Err(RuntimeInvocationError::capability_denied(
             "Setup Action 只允许平台 UI 或 environment setup actor 调用",
-            Some(request.trace.clone()),
+            trace,
         ));
     }
 
@@ -334,5 +372,120 @@ mod tests {
 
         assert_eq!(result.output.output, json!({ "ok": true }));
         assert_eq!(result.action_key.as_str(), "session.echo");
+    }
+
+    #[test]
+    fn actor_aware_surface_returns_session_actions_for_bound_session_actor() {
+        let gateway = RuntimeGateway::new()
+            .with_provider(Arc::new(FakeProvider::new(
+                "session.echo",
+                RuntimeActionKind::SessionRuntime,
+            )))
+            .with_provider(Arc::new(FakeProvider::new(
+                "workspace.detect",
+                RuntimeActionKind::Setup,
+            )));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::AgentSession {
+                    session_id: "session-1".to_string(),
+                    agent_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: None,
+                    workspace_id: None,
+                },
+            )
+            .expect("session actor should see session runtime actions");
+        let keys = surface
+            .actions
+            .iter()
+            .map(|action| action.action_key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["session.echo"]);
+    }
+
+    #[test]
+    fn actor_aware_surface_rejects_mismatched_session_actor() {
+        let gateway = RuntimeGateway::new().with_provider(Arc::new(FakeProvider::new(
+            "session.echo",
+            RuntimeActionKind::SessionRuntime,
+        )));
+
+        let err = gateway
+            .surface_for_actor(
+                RuntimeActor::AgentSession {
+                    session_id: "session-a".to_string(),
+                    agent_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-b".to_string(),
+                    project_id: None,
+                    workspace_id: None,
+                },
+            )
+            .expect_err("mismatched session actor should not receive a surface");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[test]
+    fn actor_aware_surface_returns_setup_actions_for_setup_actor() {
+        let gateway = RuntimeGateway::new()
+            .with_provider(Arc::new(FakeProvider::new(
+                "session.echo",
+                RuntimeActionKind::SessionRuntime,
+            )))
+            .with_provider(Arc::new(FakeProvider::new(
+                "workspace.detect",
+                RuntimeActionKind::Setup,
+            )));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::PlatformUser { user_id: None },
+                RuntimeContext::Setup {
+                    project_id: None,
+                    workspace_id: None,
+                    backend_id: None,
+                    root_ref: None,
+                },
+            )
+            .expect("setup actor should see setup actions");
+        let keys = surface
+            .actions
+            .iter()
+            .map(|action| action.action_key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["workspace.detect"]);
+    }
+
+    #[test]
+    fn actor_aware_surface_rejects_session_actor_for_setup_context() {
+        let gateway = RuntimeGateway::new().with_provider(Arc::new(FakeProvider::new(
+            "workspace.detect",
+            RuntimeActionKind::Setup,
+        )));
+
+        let err = gateway
+            .surface_for_actor(
+                RuntimeActor::AgentSession {
+                    session_id: "session-1".to_string(),
+                    agent_id: None,
+                },
+                RuntimeContext::Setup {
+                    project_id: None,
+                    workspace_id: None,
+                    backend_id: None,
+                    root_ref: None,
+                },
+            )
+            .expect_err("session actor should not receive setup surface");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
 }

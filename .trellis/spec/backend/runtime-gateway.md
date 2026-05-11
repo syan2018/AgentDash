@@ -2,6 +2,86 @@
 
 Runtime Gateway 是 application 层的统一运行时能力调用入口。它承载 Session Runtime Action 与 Setup Action 的 Invocation / Provider / Result / Trace 协议，避免 Canvas、Agent、Workflow、环境准备 UI 各自维护一套能力调用道路。
 
+## Scenario: Actor-aware Runtime Surface Manifest
+
+### 1. Scope / Trigger
+
+- Trigger: 消费端需要在调用前查询当前 actor/context 可见的 Runtime Action，例如 Agent adapter 注入策略、Canvas bridge manifest、Workflow node action picker。
+- Scope: Gateway 提供 action 粒度 manifest；provider 仍负责各自 action 内部的细粒度 surface，例如 `mcp.list_tools` 输出 MCP tool surface。
+- Boundary: 不得只凭 `RuntimeContext` 暴露 action 给上层消费端；普通消费端必须使用 actor-aware 查询，确保 Setup Action 不会进入 Session actor surface。
+
+### 2. Signatures
+
+```rust
+impl RuntimeGateway {
+    pub fn surface_for(&self, context: RuntimeContext) -> RuntimeSurface;
+
+    pub fn surface_for_actor(
+        &self,
+        actor: RuntimeActor,
+        context: RuntimeContext,
+    ) -> Result<RuntimeSurface, RuntimeInvocationError>;
+}
+```
+
+`surface_for(context)` 是 context-only 的粗粒度枚举，只按 `RuntimeActionKind` 过滤 provider；它适合内部调试或迁移期观察，不应作为消费端授权来源。
+
+### 3. Contracts
+
+- `surface_for_actor` 必须复用 Runtime Invocation 的 actor/context 校验语义。
+- `RuntimeContext::Session` 只能配套带同一个 `session_id` 的 `AgentSession` / `UserCanvas` / `WorkflowNode` / `SessionUser` actor。
+- `RuntimeContext::Setup` 只能配套 `PlatformUser` / `EnvironmentSetup` actor。
+- 返回的 `RuntimeSurface.actions` 只包含与 context kind 相同的 action descriptor。
+- Action descriptor 只表达 action 级可见性；具体目标级可见性必须由 provider 的 action 输出表达，例如 MCP 工具列表由 `mcp.list_tools` 返回。
+- `surface_for_actor` 不执行 provider discovery，不连接 MCP/relay，不读取本机文件系统。
+
+### 4. Validation & Error Matrix
+
+| Condition | Runtime error |
+| --- | --- |
+| Session context 的 `session_id` 为空 | `InvalidRequest` |
+| Session context 搭配无 session actor | `CapabilityDenied` |
+| actor/session context 的 `session_id` 不一致 | `CapabilityDenied` |
+| Setup context 搭配 Agent/Canvas/Workflow/SessionUser actor | `CapabilityDenied` |
+| Session actor 查询 Setup context | `CapabilityDenied` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Canvas bridge 查询 surface 时传入 `RuntimeActor::UserCanvas { session_id, canvas_id }` + `RuntimeContext::Session { session_id, ... }`。
+- Good: 平台 UI 查询 setup action manifest 时传入 `RuntimeActor::PlatformUser` + `RuntimeContext::Setup`。
+- Base: `surface_for_actor` 返回 `mcp.call_tool` / `mcp.list_tools` 这类 action；调用方再调用 `mcp.list_tools` 获取当前 MCP tool surface。
+- Bad: 前端或 adapter 使用 `surface_for(context)` 作为授权结果；它没有 actor 校验。
+- Bad: 在 surface manifest 查询中做 MCP discovery；这会让 manifest 查询变成潜在慢操作并复制 provider 的细粒度职责。
+
+### 6. Tests Required
+
+- Gateway 单测：同 session actor 查询 Session context 返回 session action。
+- Gateway 单测：不同 session actor 查询 Session context 返回 `CapabilityDenied`。
+- Gateway 单测：setup actor 查询 Setup context 返回 setup action。
+- Gateway 单测：session actor 查询 Setup context 返回 `CapabilityDenied`。
+- Check：至少运行 `cargo test -p agentdash-application runtime_gateway::gateway`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let surface = gateway.surface_for(RuntimeContext::Session { session_id, project_id, workspace_id });
+```
+
+问题：该入口只按 context kind 过滤 action，不知道调用者是谁，不能作为 Canvas/Agent/Workflow 的授权 manifest。
+
+#### Correct
+
+```rust
+let surface = gateway.surface_for_actor(
+    RuntimeActor::UserCanvas { session_id: session_id.clone(), canvas_id },
+    RuntimeContext::Session { session_id, project_id, workspace_id },
+)?;
+```
+
+这样 Gateway 在返回 manifest 前先确认 actor 与 runtime context 绑定一致。
+
 ## Scenario: Session Runtime Action 通过 Runtime Gateway 调用 MCP 工具
 
 ### 1. Scope / Trigger

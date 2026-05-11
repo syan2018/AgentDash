@@ -43,7 +43,7 @@ function describeProjectAccess(project: Project): string {
   return "仅查看";
 }
 
-function ProjectCreateDrawer({ open, onClose }: ProjectCreateDrawerProps) {
+export function ProjectCreateDrawer({ open, onClose }: ProjectCreateDrawerProps) {
   const { createProject, error } = useProjectStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

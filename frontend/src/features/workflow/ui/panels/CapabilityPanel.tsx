@@ -20,7 +20,6 @@ import type {
   ToolDescriptor,
   WorkflowTargetKind,
 } from "../../../../types";
-import { DetailSection } from "../../../../components/ui/detail-panel";
 import {
   addDirective,
   capabilityBlockedByWorkflow,
@@ -674,6 +673,12 @@ export interface CapabilityPanelProps {
   projectId: string;
   targetKinds: WorkflowTargetKind[];
   directives: CapabilityDirective[];
+  /**
+   * 紧凑模式：窄侧栏下保留单列，未来若 picker 出现 grid-cols-N 也按此降级。
+   * 当前 CapabilitiesEditor 内部的 capability row 本就是纵向卡片堆叠，
+   * 仅对 picker 展开区做轻量传递（保留入参以备未来调整）。
+   */
+  compact?: boolean;
   onDirectivesChange: (next: CapabilityDirective[]) => void;
 }
 
@@ -681,19 +686,19 @@ export function CapabilityPanel({
   projectId,
   targetKinds,
   directives,
+  compact: _compact = false,
   onDirectivesChange,
 }: CapabilityPanelProps) {
+  void _compact;
   return (
-    <DetailSection
-      title={`Agent 工具能力 (${directives.length})`}
-      description="声明此 workflow 下 agent 可用的工具基线。每个按钮动作对应一条 Add / Remove 指令，与后端 slot 归约契约一一映射。"
-    >
+    <section className="space-y-2">
+      <label className="agentdash-form-label">Agent 工具能力 ({directives.length})</label>
       <CapabilitiesEditor
         projectId={projectId}
         targetKinds={targetKinds}
         directives={directives}
         onChange={onDirectivesChange}
       />
-    </DetailSection>
+    </section>
   );
 }

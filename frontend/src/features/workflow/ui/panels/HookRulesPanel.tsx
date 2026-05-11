@@ -1,11 +1,12 @@
 /**
  * Hook Rules Panel —— hook rules + presets。
  *
- * 分两段展示：
- *  - 过程行为（process trigger）：工具调用、Turn 结束、子 Agent 交互等
- *  - 结束门禁（gate trigger）：Session 终态 / 结束前
+ * 视觉语言对齐 Overview：线性 section heading + 控件；无 DetailSection 边框灰底，
+ * 无平铺 description 注释。
  *
- * 受控组件：不直接依赖 workflowStore；容器把 store action 串回本组件。
+ * 分两段：
+ *  - 过程行为（process trigger）
+ *  - 结束门禁（gate trigger）
  */
 
 import { useMemo, useState } from "react";
@@ -15,7 +16,6 @@ import type {
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
 } from "../../../../types";
-import { DetailSection } from "../../../../components/ui/detail-panel";
 import {
   GATE_TRIGGERS,
   GATE_TRIGGER_OPTIONS,
@@ -38,73 +38,75 @@ function HookRuleItem({
   onToggle: () => void;
   onRemove: () => void;
 }) {
+  const isPreset = !!rule.preset;
+  const isScript = !rule.preset && !!rule.script;
+
   return (
     <div
-      className={`flex items-center gap-3 rounded-[10px] border px-3 py-2.5 transition-colors ${
-        rule.enabled
-          ? "border-border bg-background"
-          : "border-border/40 bg-secondary/30 opacity-60"
+      className={`rounded-[10px] border px-3 py-2 transition-colors ${
+        rule.enabled ? "border-border bg-background" : "border-border/40 bg-secondary/20 opacity-60"
       }`}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`shrink-0 size-4 rounded-[4px] border-2 transition-colors ${
-          rule.enabled
-            ? "border-primary bg-primary"
-            : "border-muted-foreground/40 bg-transparent"
-        }`}
-        title={rule.enabled ? "点击禁用" : "点击启用"}
-      >
-        {rule.enabled && (
-          <svg
-            viewBox="0 0 12 12"
-            className="size-full text-primary-foreground"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M2 6l3 3 5-5" />
-          </svg>
-        )}
-      </button>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-foreground">
+      <div className="flex items-start gap-2.5">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`mt-0.5 shrink-0 size-4 rounded-[4px] border-2 transition-colors ${
+            rule.enabled ? "border-primary bg-primary" : "border-muted-foreground/40 bg-transparent"
+          }`}
+          title={rule.enabled ? "点击禁用" : "点击启用"}
+        >
+          {rule.enabled && (
+            <svg
+              viewBox="0 0 12 12"
+              className="size-full text-primary-foreground"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M2 6l3 3 5-5" />
+            </svg>
+          )}
+        </button>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="break-words text-xs font-medium leading-[1.4] text-foreground">
             {rule.description || rule.key}
-          </span>
-          {rule.preset && (
-            <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-              {rule.preset}
-            </span>
-          )}
-          {!rule.preset && rule.script && (
-            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-600">
-              rhai
-            </span>
-          )}
-          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/70">
-            {TRIGGER_LABEL[rule.trigger]}
-          </span>
-        </div>
-        {rule.params && Object.keys(rule.params).length > 0 && (
-          <p className="mt-0.5 text-[11px] text-muted-foreground font-mono truncate">
-            params: {JSON.stringify(rule.params)}
           </p>
-        )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {isPreset && (
+              <code
+                className="break-all rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono leading-[1.3] text-muted-foreground"
+                title={rule.preset ?? undefined}
+              >
+                {rule.preset}
+              </code>
+            )}
+            {isScript && (
+              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-600">
+                rhai
+              </span>
+            )}
+          </div>
+          {rule.params && Object.keys(rule.params).length > 0 && (
+            <p className="break-all text-[10px] font-mono leading-[1.4] text-muted-foreground">
+              {JSON.stringify(rule.params)}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-xs text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+          aria-label="删除"
+        >
+          ×
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10"
-      >
-        ×
-      </button>
     </div>
   );
 }
 
-// ─── Inline new-rule editor (edit mode) ────────────────
+// ─── Inline new-rule editor ────────────────────────────
 
 function NewRuleEditor({
   triggerOptions,
@@ -172,136 +174,119 @@ function NewRuleEditor({
   };
 
   return (
-    <div className="rounded-[10px] border-2 border-dashed border-primary/30 bg-primary/5 p-3 space-y-2.5">
-      <div className="grid gap-2 sm:grid-cols-3">
-        {/* Trigger 选择 */}
+    <div className="space-y-2.5 rounded-[10px] border border-dashed border-primary/30 bg-primary/5 p-3">
+      <div>
+        <label className="agentdash-form-label">触发时机</label>
+        <select
+          value={trigger}
+          onChange={(e) => handleTriggerChange(e.target.value as WorkflowHookTrigger)}
+          className="agentdash-form-select"
+        >
+          {triggerOptions.map((t) => (
+            <option key={t} value={t}>
+              {TRIGGER_LABEL[t]}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">行为类型</label>
+        <select
+          value={mode}
+          onChange={(e) => {
+            setMode(e.target.value as "preset" | "script");
+            setSelectedPreset("");
+          }}
+          className="agentdash-form-select"
+        >
+          <option value="preset">预设逻辑</option>
+          <option value="script">自定义脚本 (Rhai)</option>
+        </select>
+      </div>
+
+      {mode === "preset" ? (
         <div>
-          <label className="text-[11px] font-medium text-muted-foreground">触发时机</label>
+          <label className="agentdash-form-label">选择预设</label>
           <select
-            value={trigger}
-            onChange={(e) => handleTriggerChange(e.target.value as WorkflowHookTrigger)}
-            className="agentdash-form-select mt-0.5 text-xs"
+            value={selectedPreset}
+            onChange={(e) => setSelectedPreset(e.target.value)}
+            className="agentdash-form-select"
           >
-            {triggerOptions.map((t) => (
-              <option key={t} value={t}>
-                {TRIGGER_LABEL[t]}
+            <option value="">-- 选择 --</option>
+            {presetsForTrigger.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
               </option>
             ))}
           </select>
+          {activePreset && (
+            <div className="mt-2 space-y-1.5">
+              <p className="break-words text-[11px] leading-[1.5] text-muted-foreground">
+                {activePreset.description}
+              </p>
+              {activePreset.script && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowPresetScript(!showPresetScript)}
+                    className="text-[11px] text-primary/70 underline hover:text-primary"
+                  >
+                    {showPresetScript ? "隐藏脚本" : "查看脚本"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("script");
+                      setScript(activePreset.script || "");
+                      setDescription(activePreset.label);
+                      setSelectedPreset("");
+                      setShowPresetScript(false);
+                    }}
+                    className="text-[11px] text-primary/70 underline hover:text-primary"
+                  >
+                    Clone 为自定义
+                  </button>
+                </div>
+              )}
+              {showPresetScript && activePreset.script && (
+                <pre className="max-h-40 overflow-auto rounded-md border bg-secondary/30 p-2 text-[11px] font-mono leading-[1.6] text-foreground/80">
+                  {activePreset.script}
+                </pre>
+              )}
+            </div>
+          )}
         </div>
-
-        {/* 行为类型 */}
-        <div>
-          <label className="text-[11px] font-medium text-muted-foreground">行为类型</label>
-          <select
-            value={mode}
-            onChange={(e) => {
-              setMode(e.target.value as "preset" | "script");
-              setSelectedPreset("");
-            }}
-            className="agentdash-form-select mt-0.5 text-xs"
-          >
-            <option value="preset">预设逻辑</option>
-            <option value="script">自定义脚本 (Rhai)</option>
-          </select>
-        </div>
-
-        {/* Preset 或 script 内容 */}
-        {mode === "preset" ? (
+      ) : (
+        <>
           <div>
-            <label className="text-[11px] font-medium text-muted-foreground">选择预设</label>
-            <select
-              value={selectedPreset}
-              onChange={(e) => setSelectedPreset(e.target.value)}
-              className="agentdash-form-select mt-0.5 text-xs"
-            >
-              <option value="">-- 选择 --</option>
-              {presetsForTrigger.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground">描述</label>
+            <label className="agentdash-form-label">描述</label>
             <input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="agentdash-form-input mt-0.5 text-xs"
+              className="agentdash-form-input"
               placeholder="这条 hook 做什么"
             />
           </div>
-        )}
-      </div>
-
-      {/* Preset description + script preview */}
-      {mode === "preset" && activePreset && (
-        <div className="space-y-1.5">
-          <p className="text-[11px] text-muted-foreground leading-4">
-            {activePreset.description}
-          </p>
-          <div className="flex items-center gap-2">
-            {activePreset.script && (
-              <button
-                type="button"
-                onClick={() => setShowPresetScript(!showPresetScript)}
-                className="text-[11px] text-primary/70 hover:text-primary underline"
-              >
-                {showPresetScript ? "隐藏脚本" : "查看脚本"}
-              </button>
-            )}
-            {activePreset.script && (
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("script");
-                  setScript(activePreset.script || "");
-                  setDescription(activePreset.label);
-                  setSelectedPreset("");
-                  setShowPresetScript(false);
-                }}
-                className="text-[11px] text-primary/70 hover:text-primary underline"
-              >
-                Clone 为自定义
-              </button>
-            )}
+          <div>
+            <label className="agentdash-form-label">Rhai 脚本</label>
+            <textarea
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+              rows={7}
+              className="agentdash-form-textarea font-mono text-xs leading-[1.6]"
+              placeholder={'if ctx.tool_name == "shell_exec" {\n    #{ block: "禁止执行 shell" }\n} else {\n    #{}\n}'}
+              spellCheck={false}
+            />
           </div>
-          {showPresetScript && activePreset.script && (
-            <pre className="max-h-48 overflow-auto rounded-md border bg-secondary/30 p-2 text-[11px] font-mono text-foreground/80 leading-[1.6]">
-              {activePreset.script}
-            </pre>
-          )}
-        </div>
+        </>
       )}
 
-      {/* Rhai script editor */}
-      {mode === "script" && (
-        <div>
-          <label className="text-[11px] font-medium text-muted-foreground">Rhai 脚本</label>
-          <textarea
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            rows={8}
-            className="agentdash-form-textarea mt-0.5 font-mono text-xs leading-[1.6]"
-            placeholder={`// 返回一个 map 表达决策效果\n// 空 map #{} 表示无操作\n\nif ctx.tool_name == "shell_exec" {\n    #{ block: "禁止执行 shell" }\n} else {\n    #{}\n}`}
-            spellCheck={false}
-          />
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            使用 Rhai 语法。可用 <code className="bg-secondary/50 px-1 rounded">ctx</code> 访问触发上下文，
-            <code className="bg-secondary/50 px-1 rounded">make_injection()</code>、
-            <code className="bg-secondary/50 px-1 rounded">make_diagnostic()</code> 等辅助函数。
-          </p>
-        </div>
-      )}
-
-      {/* Actions */}
       <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="agentdash-button-secondary text-xs px-3 py-1"
+          className="rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground hover:bg-secondary"
         >
           取消
         </button>
@@ -309,7 +294,7 @@ function NewRuleEditor({
           type="button"
           onClick={handleCommit}
           disabled={!canCommit}
-          className="agentdash-button-primary text-xs px-3 py-1 disabled:opacity-40"
+          className="rounded-[8px] border border-primary bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:opacity-95 disabled:opacity-40"
         >
           确认添加
         </button>
@@ -318,7 +303,7 @@ function NewRuleEditor({
   );
 }
 
-// ─── Rule group (list + add) ───────────────────────────
+// ─── Rule group ────────────────────────────────────────
 
 function HookRuleGroup({
   rules,
@@ -354,17 +339,12 @@ function HookRuleGroup({
   const activeTriggers = triggerOrder.filter((t) => grouped.has(t));
 
   return (
-    <div className="space-y-2.5">
-      {rules.length === 0 && !adding && (
-        <p className="py-3 text-center text-sm text-muted-foreground">尚未配置</p>
-      )}
-
+    <div className="space-y-2">
       {activeTriggers.map((trigger) => (
-        <div key={trigger}>
-          <h4 className="mb-1.5 flex items-center gap-2 text-xs font-medium text-foreground/70">
-            <span className="inline-block size-1.5 rounded-full bg-primary/50" />
+        <div key={trigger} className="space-y-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
             {TRIGGER_LABEL[trigger]}
-          </h4>
+          </p>
           <div className="space-y-1.5">
             {(grouped.get(trigger) ?? []).map((rule) => (
               <HookRuleItem
@@ -377,6 +357,9 @@ function HookRuleGroup({
           </div>
         </div>
       ))}
+      {rules.length === 0 && !adding && (
+        <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
+      )}
 
       {adding ? (
         <NewRuleEditor
@@ -393,9 +376,9 @@ function HookRuleGroup({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="w-full rounded-[10px] border-2 border-dashed border-border/60 py-2.5 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary/70 transition-colors"
+          className="w-full rounded-[10px] border border-dashed border-border/70 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary/70"
         >
-          + 添加 Hook 行为
+          + 添加
         </button>
       )}
     </div>
@@ -405,10 +388,10 @@ function HookRuleGroup({
 // ─── Panel 主组件 ──────────────────────────────────────
 
 export interface HookRulesPanelProps {
-  /** 所有 hook rules（合并过程 + 门禁后的平铺序列）。 */
   hookRules: WorkflowHookRuleSpec[];
-  /** 可选 preset 列表；来自 store 的 hookPresets。 */
   presets: HookRulePreset[];
+  /** @deprecated 视觉语言统一后不再需要；保留 prop 以兼容调用方。 */
+  compact?: boolean;
   onAdd: (rule: WorkflowHookRuleSpec) => void;
   onToggle: (ruleKey: string) => void;
   onRemove: (ruleKey: string) => void;
@@ -421,10 +404,7 @@ export function HookRulesPanel({
   onToggle,
   onRemove,
 }: HookRulesPanelProps) {
-  const existingKeys = useMemo(
-    () => new Set(hookRules.map((r) => r.key)),
-    [hookRules],
-  );
+  const existingKeys = useMemo(() => new Set(hookRules.map((r) => r.key)), [hookRules]);
   const processRules = useMemo(
     () => hookRules.filter((r) => PROCESS_TRIGGERS.has(r.trigger)),
     [hookRules],
@@ -435,11 +415,9 @@ export function HookRulesPanel({
   );
 
   return (
-    <>
-      <DetailSection
-        title={`过程行为 (${processRules.length})`}
-        description="工具调用、Turn 结束、子 Agent 交互等过程中触发的 hook 行为。"
-      >
+    <section className="space-y-4">
+      <div>
+        <label className="agentdash-form-label">过程行为 ({processRules.length})</label>
         <HookRuleGroup
           rules={processRules}
           triggerOrder={PROCESS_TRIGGER_ORDER}
@@ -450,12 +428,10 @@ export function HookRulesPanel({
           onToggle={onToggle}
           onRemove={onRemove}
         />
-      </DetailSection>
+      </div>
 
-      <DetailSection
-        title={`结束门禁 (${gateRules.length})`}
-        description="Session 结束前和终态判定时触发的 hook，控制完成条件和 step 推进。"
-      >
+      <div>
+        <label className="agentdash-form-label">结束门禁 ({gateRules.length})</label>
         <HookRuleGroup
           rules={gateRules}
           triggerOrder={GATE_TRIGGER_ORDER}
@@ -466,7 +442,7 @@ export function HookRulesPanel({
           onToggle={onToggle}
           onRemove={onRemove}
         />
-      </DetailSection>
-    </>
+      </div>
+    </section>
   );
 }

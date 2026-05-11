@@ -1,8 +1,8 @@
 /**
  * Injection Panel —— guidance + context_bindings。
  *
- * 受控组件：展示 Session 启动时注入给 Agent 的目标文本，
- * 以及挂载到 Session 的外部上下文资源。
+ * 视觉语言对齐 Overview：线性 section heading + 控件；不包 DetailSection，
+ * 不加平铺 description 注释。
  */
 
 import type {
@@ -10,7 +10,6 @@ import type {
   WorkflowInjectionSpec,
 } from "../../../../types";
 import { BindingEditor } from "../../binding-editor";
-import { DetailSection } from "../../../../components/ui/detail-panel";
 
 export interface InjectionPanelProps {
   injection: WorkflowInjectionSpec;
@@ -30,37 +29,31 @@ export function InjectionPanel({
   const bindings = injection.context_bindings;
 
   return (
-    <>
-      {/* Session 指引 */}
-      <DetailSection
-        title="Session 指引"
-        description="Workflow 激活时注入给 Agent 的目标、行为边界和完成要求。"
-      >
+    <section className="space-y-4">
+      <div>
+        <label className="agentdash-form-label">Session 指引</label>
         <textarea
           value={injection.guidance ?? ""}
           onChange={(e) => onGuidanceChange(e.target.value || null)}
-          rows={7}
+          rows={6}
           className="agentdash-form-textarea"
-          placeholder={
-            "描述这个 Workflow 下 Agent 应完成什么、遵守什么边界、如何结束。\n\n例如：\n当前处于 Review 阶段，检查实现质量与风险。\n- 先阅读相关 diff 与测试结果\n- 输出明确问题和建议\n- 完成后调用 complete_lifecycle_node"
-          }
+          placeholder="描述 Agent 该做什么、遵守什么边界、如何结束"
         />
-      </DetailSection>
+      </div>
 
-      {/* Context Bindings */}
-      <DetailSection
-        title={`上下文挂载 (${bindings.length})`}
-        description="Session 启动时自动挂载的外部上下文资源。"
-        extra={
+      <div>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <label className="agentdash-form-label m-0">
+            上下文挂载 ({bindings.length})
+          </label>
           <button
             type="button"
             onClick={onBindingAdd}
-            className="agentdash-button-secondary text-sm"
+            className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
           >
             + 添加
           </button>
-        }
-      >
+        </div>
         <div className="space-y-2">
           {bindings.map((binding, idx) => (
             <BindingEditor
@@ -72,10 +65,10 @@ export function InjectionPanel({
             />
           ))}
           {bindings.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">暂无上下文挂载</p>
+            <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
           )}
         </div>
-      </DetailSection>
-    </>
+      </div>
+    </section>
   );
 }

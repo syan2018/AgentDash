@@ -24,24 +24,18 @@ import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import type {
   LifecycleDefinition,
-  WorkflowDefinition,
   WorkflowDefinitionSource,
   WorkflowTemplate,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 
-type AssetTab = "lifecycle" | "workflow";
-
-type DeleteTarget =
-  | { kind: "lifecycle"; id: string; name: string; source: WorkflowDefinitionSource }
-  | { kind: "workflow"; id: string; name: string; source: WorkflowDefinitionSource };
+type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
 
 export function WorkflowCategoryPanel() {
   const navigate = useNavigate();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
 
   const templates = useWorkflowStore((s) => s.templates);
-  const definitions = useWorkflowStore((s) => s.definitions);
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const error = useWorkflowStore((s) => s.error);
 
@@ -49,10 +43,8 @@ export function WorkflowCategoryPanel() {
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const bootstrapTemplate = useWorkflowStore((s) => s.bootstrapTemplate);
-  const removeDefinition = useWorkflowStore((s) => s.removeDefinition);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
 
-  const [tab, setTab] = useState<AssetTab>("lifecycle");
   const [message, setMessage] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
@@ -99,14 +91,11 @@ export function WorkflowCategoryPanel() {
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
     setBusyKey(`delete:${confirmDelete.id}`);
-    const ok =
-      confirmDelete.kind === "workflow"
-        ? await removeDefinition(confirmDelete.id)
-        : await removeLifecycle(confirmDelete.id);
+    const ok = await removeLifecycle(confirmDelete.id);
     if (ok) setMessage(`已删除：${confirmDelete.name}`);
     setConfirmDelete(null);
     setBusyKey(null);
-  }, [confirmDelete, removeDefinition, removeLifecycle]);
+  }, [confirmDelete, removeLifecycle]);
 
   if (!currentProjectId) {
     return (
@@ -124,7 +113,7 @@ export function WorkflowCategoryPanel() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">Workflow 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {lifecycles.length} 个 Lifecycle · {definitions.length} 个 Workflow · builtin / user 来源区分
+            {lifecycles.length} 个 Workflow 资产 · builtin / user 来源区分
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -143,14 +132,7 @@ export function WorkflowCategoryPanel() {
           )}
           <button
             type="button"
-            onClick={() => navigate("/lifecycle-editor/new")}
-            className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary"
-          >
-            + Lifecycle
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate("/workflow-editor/new")}
+            onClick={() => navigate("/workflow/new")}
             className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
             + Workflow
@@ -177,53 +159,15 @@ export function WorkflowCategoryPanel() {
         </div>
       )}
 
-      {/* Tab 切换 */}
-      <div className="flex gap-1 rounded-[10px] border border-border bg-secondary/35 p-1">
-        <button
-          type="button"
-          onClick={() => setTab("lifecycle")}
-          className={`rounded-[8px] px-3 py-1.5 text-sm transition-colors ${
-            tab === "lifecycle"
-              ? "bg-background font-medium text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Lifecycle ({lifecycles.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("workflow")}
-          className={`rounded-[8px] px-3 py-1.5 text-sm transition-colors ${
-            tab === "workflow"
-              ? "bg-background font-medium text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Workflow ({definitions.length})
-        </button>
-      </div>
-
-      {/* 列表 */}
-      {tab === "lifecycle" && (
-        <LifecycleAssetGrid
-          items={lifecycles}
-          onEdit={(lc) => navigate(`/lifecycle-editor/${lc.id}`)}
-          onDelete={(lc) =>
-            setConfirmDelete({ kind: "lifecycle", id: lc.id, name: lc.name, source: lc.source })
-          }
-          busyKey={busyKey}
-        />
-      )}
-      {tab === "workflow" && (
-        <WorkflowAssetGrid
-          items={definitions}
-          onEdit={(wf) => navigate(`/workflow-editor/${wf.id}`)}
-          onDelete={(wf) =>
-            setConfirmDelete({ kind: "workflow", id: wf.id, name: wf.name, source: wf.source })
-          }
-          busyKey={busyKey}
-        />
-      )}
+      {/* 统一列表 */}
+      <LifecycleAssetGrid
+        items={lifecycles}
+        onEdit={(lc) => navigate(`/workflow/${lc.id}`)}
+        onDelete={(lc) =>
+          setConfirmDelete({ id: lc.id, name: lc.name, source: lc.source })
+        }
+        busyKey={busyKey}
+      />
 
       {/* 删除确认 */}
       {confirmDelete && (
@@ -237,8 +181,7 @@ export function WorkflowCategoryPanel() {
           >
             <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              确定要删除{" "}
-              {confirmDelete.kind === "workflow" ? "Workflow" : "Lifecycle"}{" "}
+              确定要删除 Workflow{" "}
               <span className="font-medium text-foreground">{confirmDelete.name}</span> 吗？
               {confirmDelete.source === "builtin_seed" && (
                 <span className="mt-1 block text-destructive">
@@ -351,128 +294,6 @@ function LifecycleAssetCard({
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
           {edgeCount} edge
         </span>
-        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          target: {formatTargetKinds(item.target_kinds)}
-        </span>
-      </div>
-
-      <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
-        <span>更新于 {formatDateTime(item.updated_at)}</span>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => onEdit(item)}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            {item.source === "builtin_seed" ? "查看" : "编辑"}
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(item)}
-            disabled={isDeleting}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-          >
-            {isDeleting ? "删除中…" : "删除"}
-          </button>
-        </div>
-      </footer>
-    </article>
-  );
-}
-
-/* ─── 资产列表：Workflow ─── */
-
-function WorkflowAssetGrid({
-  items,
-  onEdit,
-  onDelete,
-  busyKey,
-}: {
-  items: WorkflowDefinition[];
-  onEdit: (wf: WorkflowDefinition) => void;
-  onDelete: (wf: WorkflowDefinition) => void;
-  busyKey: string | null;
-}) {
-  if (items.length === 0) {
-    return (
-      <div className="rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
-        <p className="text-sm text-foreground">暂无 Workflow 定义</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          可通过顶部"注册内置 Bundle"装载内置模板，或"+ Workflow"新建用户定义。
-        </p>
-      </div>
-    );
-  }
-
-  const sorted = items.slice().sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {sorted.map((wf) => (
-        <WorkflowAssetCard
-          key={wf.id}
-          item={wf}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          isDeleting={busyKey === `delete:${wf.id}`}
-        />
-      ))}
-    </div>
-  );
-}
-
-function WorkflowAssetCard({
-  item,
-  onEdit,
-  onDelete,
-  isDeleting,
-}: {
-  item: WorkflowDefinition;
-  onEdit: (wf: WorkflowDefinition) => void;
-  onDelete: (wf: WorkflowDefinition) => void;
-  isDeleting: boolean;
-}) {
-  const bindCount = item.contract.injection.context_bindings.length;
-  const portCount = (item.contract.output_ports?.length ?? 0) + (item.contract.input_ports?.length ?? 0);
-  const hookCount = item.contract.hook_rules.length;
-
-  return (
-    <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
-      <header className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-6 text-foreground">{item.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.key}</p>
-        </div>
-        <SourceBadge source={item.source} />
-      </header>
-
-      {item.description && (
-        <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {item.description}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-        {bindCount > 0 && (
-          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            {bindCount} bind
-          </span>
-        )}
-        {hookCount > 0 && (
-          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            {hookCount} hook
-          </span>
-        )}
-        {portCount > 0 && (
-          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            {portCount} port
-          </span>
-        )}
-        {bindCount + portCount + hookCount === 0 && (
-          <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-            空 contract
-          </span>
-        )}
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
           target: {formatTargetKinds(item.target_kinds)}
         </span>

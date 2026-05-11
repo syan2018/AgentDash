@@ -47,9 +47,10 @@ describe("BasicInfoPanel", () => {
       />,
     );
 
-    expect(markup).toContain("基本信息");
+    // 线性语言，无外壳 heading，验字段内容足矣
     expect(markup).toContain('value="my_workflow"');
     expect(markup).toContain("我的 Workflow");
+    expect(markup).toContain("描述");
   });
 
   it("keyDisabled=true 时输入框禁用", () => {
@@ -124,7 +125,8 @@ describe("InjectionPanel", () => {
       />,
     );
 
-    expect(markup).toContain("暂无上下文挂载");
+    expect(markup).toContain("上下文挂载 (0)");
+    expect(markup).toContain("暂无");
   });
 
   it("回调签名匹配 store action", () => {
@@ -190,7 +192,8 @@ describe("HookRulesPanel", () => {
 
     expect(markup).toContain("过程行为 (0)");
     expect(markup).toContain("结束门禁 (0)");
-    expect(markup.match(/尚未配置/g)?.length).toBe(2);
+    // 空 group 占位文案统一为"暂无"
+    expect((markup.match(/暂无/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
   it("buildDefaultParams 处理 schema properties", () => {
@@ -264,7 +267,6 @@ describe("PortsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("Ports (2)");
     expect(markup).toContain("Output Ports (1)");
     expect(markup).toContain("Input Ports (1)");
     expect(markup).toContain('value="report"');
@@ -281,8 +283,11 @@ describe("PortsPanel", () => {
       />,
     );
 
-    expect(markup).toContain("暂无 output port");
-    expect(markup).toContain("暂无 input port");
+    expect(markup).toContain("Output Ports (0)");
+    expect(markup).toContain("Input Ports (0)");
+    // 空占位统一文案
+    const placeholderCount = (markup.match(/暂无/g) ?? []).length;
+    expect(placeholderCount).toBeGreaterThanOrEqual(2);
   });
 
   it("onOutputChange 接收 OutputPortDefinition[]", () => {

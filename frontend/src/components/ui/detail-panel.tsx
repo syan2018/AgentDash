@@ -66,9 +66,33 @@ export interface DetailSectionProps {
   description?: string;
   children: ReactNode;
   extra?: ReactNode;
+  /**
+   * 紧凑模式：窄容器（如 DAG 侧栏 w-96）下使用。
+   * - title + extra 同行（title 用 flex-1 min-w-0 防挤压）
+   * - description 独占第二行，不与 extra 抢空间
+   * - section 内边距略收紧
+   */
+  compact?: boolean;
 }
 
-export function DetailSection({ title, description, children, extra }: DetailSectionProps) {
+export function DetailSection({ title, description, children, extra, compact = false }: DetailSectionProps) {
+  if (compact) {
+    return (
+      <section className="space-y-2.5 rounded-[12px] border border-border bg-secondary/35 p-3">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{title}</h4>
+            {extra && <div className="shrink-0">{extra}</div>}
+          </div>
+          {description && (
+            <p className="text-[11px] leading-[1.5] text-muted-foreground">{description}</p>
+          )}
+        </div>
+        {children}
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3 rounded-[12px] border border-border bg-secondary/35 p-4">
       <div className="flex items-start justify-between">

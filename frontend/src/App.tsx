@@ -87,6 +87,12 @@ const LifecycleEditorPage = lazy(async () => {
   return { default: m.LifecycleEditorPage };
 });
 
+// PR2：统一 Workflow 编辑器（自适应 Form / DAG 布局）
+const LifecycleEditorShellPage = lazy(async () => {
+  const m = await import("./pages/LifecycleEditorShellPage");
+  return { default: m.LifecycleEditorShellPage };
+});
+
 // ─── 通用加载占位 ──────────────────────────────────────
 
 function RouteFallback() {
@@ -260,6 +266,8 @@ function AppContent() {
 
           <Route path="/workflow-editor/:definitionId" element={<WorkflowEditorPage />} />
           <Route path="/lifecycle-editor/:definitionId" element={<LifecycleEditorPage />} />
+          {/* PR2：新统一 Workflow 编辑器路由 */}
+          <Route path="/workflow/:id" element={<LifecycleEditorShellPage />} />
 
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />
 

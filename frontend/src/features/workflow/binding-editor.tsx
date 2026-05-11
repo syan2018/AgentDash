@@ -1,10 +1,10 @@
-import type {
-  WorkflowContextBinding,
-} from "../../types";
+import type { WorkflowContextBinding } from "../../types";
 
 interface BindingEditorProps {
   binding: WorkflowContextBinding;
   index: number;
+  /** @deprecated 视觉语言统一后不再需要；保留 prop 以兼容调用方。 */
+  compact?: boolean;
   onChange: (patch: Partial<WorkflowContextBinding>) => void;
   onRemove: () => void;
 }
@@ -16,9 +16,11 @@ export function BindingEditor({
   onRemove,
 }: BindingEditorProps) {
   return (
-    <div className="rounded-[10px] border border-border bg-secondary/10 p-3 space-y-3">
+    <div className="space-y-2.5 rounded-[10px] border border-border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-muted-foreground">Binding #{index + 1}</span>
+        <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+          #{index + 1}
+        </span>
         <button
           type="button"
           onClick={onRemove}
@@ -28,39 +30,37 @@ export function BindingEditor({
         </button>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div>
-          <label className="text-[11px] text-muted-foreground">Locator</label>
-          <input
-            value={binding.locator}
-            onChange={(e) => onChange({ locator: e.target.value })}
-            className="agentdash-form-input mt-1 text-sm"
-            placeholder="e.g. main/docs/workflow.md"
-          />
-        </div>
-
-        <div>
-          <label className="text-[11px] text-muted-foreground">标题（可选）</label>
-          <input
-            value={binding.title ?? ""}
-            onChange={(e) => onChange({ title: e.target.value || null })}
-            className="agentdash-form-input mt-1 text-sm"
-            placeholder="可选显示名"
-          />
-        </div>
+      <div>
+        <label className="agentdash-form-label">Locator</label>
+        <input
+          value={binding.locator}
+          onChange={(e) => onChange({ locator: e.target.value })}
+          className="agentdash-form-input font-mono text-xs"
+          placeholder="main/docs/workflow.md"
+        />
       </div>
 
       <div>
-        <label className="text-[11px] text-muted-foreground">用途说明</label>
+        <label className="agentdash-form-label">标题</label>
+        <input
+          value={binding.title ?? ""}
+          onChange={(e) => onChange({ title: e.target.value || null })}
+          className="agentdash-form-input text-xs"
+          placeholder="可选显示名"
+        />
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">用途</label>
         <input
           value={binding.reason}
           onChange={(e) => onChange({ reason: e.target.value })}
-          className="agentdash-form-input mt-1 text-sm w-full"
+          className="agentdash-form-input text-xs"
           placeholder="为什么需要此 binding"
         />
       </div>
 
-      <label className="flex items-center gap-2 text-[11px] text-foreground">
+      <label className="flex cursor-pointer items-center gap-2 text-[11px] text-foreground">
         <input
           type="checkbox"
           checked={binding.required}

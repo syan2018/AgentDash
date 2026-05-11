@@ -105,9 +105,19 @@ StepContractPanels（受控）
 
 ### phase_node 与 Form 模式
 
-- phase_node 没有 contract，只能在 DAG 模式出现
-- Form 模式的单 step 永远是 agent_node
-- 从 Form 升级 DAG 后可添加 phase_node
+- **更正（2026-05-11）**：之前 Decision Log 里写的"phase_node 没有 workflow contract"是错的。领域层 `LifecycleStepDefinition.workflow_key` 从未限定 node_type，phase_node 与 agent_node 一样可以绑 workflow contract。老 `dag-side-panel.tsx` 的 `isAgentNode` 是 UI 偏见，不是领域约束。
+- 唯一硬约束：entry step 必须是 agent_node（[lifecycle-edge.md §4](.trellis/spec/backend/workflow/lifecycle-edge.md)）
+- Form 模式的单 step 默认 agent_node（因为它就是 entry），但若用户在 Form 模式想切 phase_node 应被允许（仅当不是 entry 时）—— 实际 Form 模式只有一个 step 即 entry，所以单 step Form 模式下永远 agent_node 是结果不是约束
+- DAG 模式下 phase_node 同样可编辑完整 workflow contract
+
+### 侧栏布局（Overview / Detail 双 tab）
+
+DAG 模式下右侧栏（保持窄宽度，约 w-96）顶部有两个 tab 切换：
+
+- **Overview**（节点外部接口视图）：key、name、description、node_type、input_ports、output_ports —— 对齐 DAG 画布上一眼能看到的"标注信息"，是编排者视角
+- **Detail**（workflow contract 编辑）：完整 5 panel（Basic / Injection / Hooks / Capability / Ports）—— 是 step 行为约束的细节视角
+
+panel 组件需要修复响应式样式以适配窄宽度（避免 grid-cols-2 导致挤压、过宽 input、过长 label 等）。Form 模式宽容器仍用现有布局。
 
 ## Decision Log
 

@@ -24,7 +24,7 @@
  * 展示 5 panel 编辑器。
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type {
   CapabilityDirective,
@@ -44,6 +44,8 @@ import {
   CapabilityPanel,
   HookRulesPanel,
   InjectionPanel,
+  InputPortItem,
+  OutputPortItem,
   PortsPanel,
 } from "./panels";
 
@@ -321,6 +323,7 @@ export function StepInspector(props: StepInspectorProps) {
               step={step}
               nodeType={nodeType}
               isEntry={isEntry}
+              workflowDraft={workflowDraft}
               availableWorkflows={availableWorkflows}
               onStepChange={onStepChange}
               onCloneFromWorkflow={onCloneFromWorkflow}
@@ -423,6 +426,7 @@ function OverviewTab({
   step,
   nodeType,
   isEntry,
+  workflowDraft,
   availableWorkflows,
   onStepChange,
   onCloneFromWorkflow,
@@ -430,10 +434,22 @@ function OverviewTab({
   step: LifecycleStepDefinition;
   nodeType: LifecycleNodeType;
   isEntry: boolean;
+  workflowDraft: WorkflowEditorDraft;
   availableWorkflows: WorkflowDefinition[];
   onStepChange: (patch: Partial<LifecycleStepDefinition>) => void;
   onCloneFromWorkflow?: (wf: WorkflowDefinition) => void;
 }) {
+  // contract 源 port 的 key 集合 —— Overview 上标记为"标准"只读，不可编辑不可删；
+  // step 里不在 contract 集里的 = step-extra，Overview 可全量编辑 + 删除。
+  const outputContractKeys = useMemo(
+    () => new Set((workflowDraft.contract.output_ports ?? []).map((p) => p.key)),
+    [workflowDraft.contract.output_ports],
+  );
+  const inputContractKeys = useMemo(
+    () => new Set((workflowDraft.contract.input_ports ?? []).map((p) => p.key)),
+    [workflowDraft.contract.input_ports],
+  );
+
   return (
     <section className="space-y-3">
       <div>
@@ -471,35 +487,16 @@ function OverviewTab({
         </select>
       </div>
 
-      {/* Ports 快捷编辑（编排者视角）——key + 描述，gate/context strategy 在 Detail → Ports */}
-      <OverviewPortsSection
-        label={`Output Ports (${step.output_ports.length})`}
+      <OverviewOutputPortsSection
         ports={step.output_ports}
+        contractKeys={outputContractKeys}
         onChange={(next) => onStepChange({ output_ports: next })}
-        onAdd={() =>
-          onStepChange({
-            output_ports: [
-              ...step.output_ports,
-              { key: "", description: "", gate_strategy: "existence" },
-            ],
-          })
-        }
-        placeholderKey="port_key"
       />
 
-      <OverviewPortsSection
-        label={`Input Ports (${step.input_ports.length})`}
+      <OverviewInputPortsSection
         ports={step.input_ports}
+        contractKeys={inputContractKeys}
         onChange={(next) => onStepChange({ input_ports: next })}
-        onAdd={() =>
-          onStepChange({
-            input_ports: [
-              ...step.input_ports,
-              { key: "", description: "", context_strategy: "full" },
-            ],
-          })
-        }
-        placeholderKey="port_key"
       />
 
       {onCloneFromWorkflow && availableWorkflows.length > 0 && (
@@ -512,34 +509,37 @@ function OverviewTab({
   );
 }
 
-// ─── Overview Ports 快捷编辑块 ─────────────────────────
+// ─── Overview 端口区（按来源区分 contract / step-extra）─────
 //
-// 复用同一组件承载 OutputPortDefinition / InputPortDefinition —— 两者都含
-// 必要的 `key` + 可选 `description` 字段（其它 gate / context_strategy 等差异
-// 保留在 patch 回调里，由调用方决定合并策略，本组件不关心）。
+// 默认态：contract 端口走 readOnly OutputPortItem（只读卡片 + "标准" badge，
+// 不可编辑不可删）；step-extra 走带 view/edit 切换的 OutputPortItem + 删除按钮。
+// 新增：追加一个空 key 的 step-extra，`OutputPortItem` 初始化时 key 为空会自动
+// 进入 edit 态。
 
-type OverviewPortLike = { key: string; description: string } & Record<string, unknown>;
-
-function OverviewPortsSection<T extends OverviewPortLike>({
-  label,
+function OverviewOutputPortsSection({
   ports,
+  contractKeys,
   onChange,
-  onAdd,
-  placeholderKey,
 }: {
-  label: string;
-  ports: T[];
-  onChange: (next: T[]) => void;
-  onAdd: () => void;
-  placeholderKey: string;
+  ports: OutputPortDefinition[];
+  contractKeys: Set<string>;
+  onChange: (next: OutputPortDefinition[]) => void;
 }) {
+  const handleAdd = () =>
+    onChange([
+      ...ports,
+      { key: "", description: "", gate_strategy: "existence" },
+    ]);
+
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <label className="agentdash-form-label m-0">{label}</label>
+        <label className="agentdash-form-label m-0">
+          Output Ports ({ports.length})
+        </label>
         <button
           type="button"
-          onClick={onAdd}
+          onClick={handleAdd}
           className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
         >
           + 添加
@@ -549,58 +549,90 @@ function OverviewPortsSection<T extends OverviewPortLike>({
         {ports.length === 0 && (
           <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
         )}
-        {ports.map((p, idx) => (
-          <div
-            key={idx}
-            className="flex items-start gap-1.5 rounded-[8px] border border-border bg-background p-2"
-          >
-            <div className="min-w-0 flex-1 space-y-1">
-              <input
-                value={p.key}
-                onChange={(e) => {
-                  const next = [...ports];
-                  next[idx] = { ...p, key: e.target.value };
-                  onChange(next);
-                }}
-                className="agentdash-form-input font-mono text-xs"
-                placeholder={placeholderKey}
-              />
-              <input
-                value={p.description}
-                onChange={(e) => {
-                  const next = [...ports];
-                  next[idx] = { ...p, description: e.target.value };
-                  onChange(next);
-                }}
-                className="agentdash-form-input text-xs"
-                placeholder="描述"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => onChange(ports.filter((_, i) => i !== idx))}
-              className="shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
-              aria-label="删除 port"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M3 6h18" />
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-              </svg>
-            </button>
-          </div>
-        ))}
+        {ports.map((p, idx) => {
+          const isContract = p.key !== "" && contractKeys.has(p.key);
+          return (
+            <OutputPortItem
+              key={idx}
+              port={p}
+              readOnly={isContract}
+              badge={isContract ? "标准" : undefined}
+              onChange={
+                isContract
+                  ? undefined
+                  : (next) => {
+                      const n = [...ports];
+                      n[idx] = next;
+                      onChange(n);
+                    }
+              }
+              onRemove={
+                isContract ? undefined : () => onChange(ports.filter((_, i) => i !== idx))
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function OverviewInputPortsSection({
+  ports,
+  contractKeys,
+  onChange,
+}: {
+  ports: InputPortDefinition[];
+  contractKeys: Set<string>;
+  onChange: (next: InputPortDefinition[]) => void;
+}) {
+  const handleAdd = () =>
+    onChange([
+      ...ports,
+      { key: "", description: "", context_strategy: "full" },
+    ]);
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className="agentdash-form-label m-0">
+          Input Ports ({ports.length})
+        </label>
+        <button
+          type="button"
+          onClick={handleAdd}
+          className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
+        >
+          + 添加
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {ports.length === 0 && (
+          <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
+        )}
+        {ports.map((p, idx) => {
+          const isContract = p.key !== "" && contractKeys.has(p.key);
+          return (
+            <InputPortItem
+              key={idx}
+              port={p}
+              readOnly={isContract}
+              badge={isContract ? "标准" : undefined}
+              onChange={
+                isContract
+                  ? undefined
+                  : (next) => {
+                      const n = [...ports];
+                      n[idx] = next;
+                      onChange(n);
+                    }
+              }
+              onRemove={
+                isContract ? undefined : () => onChange(ports.filter((_, i) => i !== idx))
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );

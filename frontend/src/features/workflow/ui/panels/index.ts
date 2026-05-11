@@ -14,5 +14,12 @@ export type { HookRulesPanelProps } from "./HookRulesPanel";
 export { CapabilityPanel } from "./CapabilityPanel";
 export type { CapabilityPanelProps } from "./CapabilityPanel";
 
-export { PortsPanel } from "./PortsPanel";
+export {
+  PortsPanel,
+  OutputPortItem,
+  InputPortItem,
+  PortViewCard,
+  GATE_LABEL,
+  CTX_LABEL,
+} from "./PortsPanel";
 export type { PortsPanelProps } from "./PortsPanel";

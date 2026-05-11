@@ -227,8 +227,11 @@ describe("PortsPanel", () => {
 
     expect(markup).toContain("Output Ports (1)");
     expect(markup).toContain("Input Ports (1)");
-    expect(markup).toContain('value="report"');
-    expect(markup).toContain('value="research_input"');
+    // 默认 view 态：key 以 <code> 展示，策略标签显示
+    expect(markup).toContain("report");
+    expect(markup).toContain("research_input");
+    expect(markup).toContain("门禁：文件存在");
+    expect(markup).toContain("上下文：完整");
   });
 
   it("两侧均空时分别显示占位文案", () => {

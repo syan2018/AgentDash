@@ -138,16 +138,23 @@ Runtime Client
    - `mcp.call_tool` 支持按 `runtime_name` 或 `server_name + tool_name` 定位工具；目标工具必须先出现在 capability-filtered surface 中，否则返回 `CapabilityDenied`。
    - `.trellis/spec/backend/runtime-gateway.md` 已补充 Session Runtime Action 场景、输入输出、Capability 契约和错误矩阵。
 
+5. **RuntimeActionToolAdapter 已完成基础件**
+   - 已新增 `RuntimeActionToolAdapter` 与 `RuntimeActionToolSpec`，可将选定 Runtime Action 包装为 `AgentTool`。
+   - Adapter 只负责将 Agent tool call 转成 `RuntimeInvocationRequest` 并调用 `RuntimeGateway::invoke`；不直接持有底层 provider，不绕过 Gateway policy。
+   - Adapter 会把 runtime action / trace 与 provider details 回填到 `AgentToolResult.details`，便于后续审计和调试。
+   - 当前尚未默认注入到 session tool surface；是否暴露 generic Runtime Action tool 需等待 capability/surface 策略明确，避免和现有 per-MCP-tool schema 重复暴露。
+
 尚未完成的内容：
 
 1. **Session Runtime Plane 仍有后续增强**
-   - `RuntimeActionToolAdapter` 尚未实现。
    - `RuntimeGateway::surface_for(Session)` 仍是 action 粒度的粗 surface；具体 MCP tool surface 已由 `mcp.list_tools` 裁决，但还未升级为统一的 async / actor-aware surface API。
    - Session Runtime Action 目前先覆盖 MCP；VFS/context/workflow 等 provider 仍待后续切片。
+   - `RuntimeActionToolAdapter` 已有基础件，但还未进入正式 session tool 注入策略。
 
 2. **Runtime Consumers 尚未落地**
    - Canvas Runtime Bridge SDK 尚未接入 Gateway。
-   - Agent tool adapter 与 Workflow node 直接调用 Runtime Action 尚未接入。
+   - Agent tool adapter 基础件已完成，但自动注入、manifest 与 UI/Workflow 调用策略尚未接入。
+   - Workflow node 直接调用 Runtime Action 尚未接入。
    - 平台 UI 目前仍通过既有 HTTP route 间接触发 Setup Action，尚未有统一 Runtime Bridge client。
 
 3. **Governance / Operation / Audit 仍是后续主线**

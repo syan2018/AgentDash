@@ -109,6 +109,116 @@ capability_state.is_capability_tool_enabled(
 - Executor 单测：direct/relay discovery 继续遵守 capability-aware filter。
 - Check：至少运行 `cargo test -p agentdash-application runtime_gateway`、`cargo test -p agentdash-executor mcp`、`cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
 
+## Scenario: Agent 通过 RuntimeActionToolAdapter 调用 Runtime Action
+
+### 1. Scope / Trigger
+
+- Trigger: 需要把某个 Session Runtime Action 暴露为 Agent 可调用工具，例如后续将 `mcp.call_tool`、`context.read` 或 workflow runtime action 包装为 `AgentTool`。
+- Scope: `RuntimeActionToolAdapter` 只做 AgentTool → RuntimeInvocationRequest 的协议转换；真实授权、provider 路由、trace 和错误归一仍必须由 Runtime Gateway 完成。
+- Boundary: Adapter 不得直接持有或调用底层 provider，也不得绕过 Gateway 构造 executor/MCP/relay 请求。
+
+### 2. Signatures
+
+```rust
+pub struct RuntimeActionToolSpec {
+    pub tool_name: String,
+    pub description: String,
+    pub parameters_schema: serde_json::Value,
+    pub action_key: RuntimeActionKey,
+    pub actor: RuntimeActor,
+    pub context: RuntimeContext,
+    pub target: Option<RuntimeTarget>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+pub struct RuntimeActionToolAdapter;
+
+impl AgentTool for RuntimeActionToolAdapter {
+    async fn execute(
+        &self,
+        tool_call_id: &str,
+        args: serde_json::Value,
+        cancel: CancellationToken,
+        on_update: Option<ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError>;
+}
+```
+
+Agent session 便捷构造必须使用：
+
+```rust
+RuntimeActor::AgentSession { session_id, agent_id }
+RuntimeContext::Session { session_id, .. }
+```
+
+### 3. Contracts
+
+- Adapter 的 `args` 作为 provider `input` 原样进入 `RuntimeInvocationRequest`，具体 input schema 由 `RuntimeActionToolSpec.parameters_schema` 描述。
+- Adapter 不自行做 capability 裁决；Gateway 与 provider 负责拒绝不合法 context、actor、action 或目标工具。
+- 若 provider 输出已经是 `AgentToolResult`，Adapter 保留其 content/is_error，并将 runtime action/trace 与 provider details 合并到 `details`。
+- 若 provider 输出是普通 JSON，Adapter 将 JSON pretty-print 为 text content，并把 runtime action/trace 写入 `details`。
+- 当前实现只提供可复用 adapter 基础件；是否把某个 Runtime Action 注入 session tool surface，必须由后续 capability/surface 策略显式决定，不能默认全量注入。
+
+### 4. Validation & Error Matrix
+
+| Condition | Agent tool error |
+| --- | --- |
+| `CancellationToken` 已取消 | `ExecutionFailed` |
+| Gateway 返回 `InvalidRequest` | `InvalidArguments` |
+| Gateway 返回 `CapabilityDenied` | `ExecutionFailed` |
+| Gateway 返回 `Conflict` | `ExecutionFailed` |
+| Gateway 返回 `ProviderUnavailable` | `ExecutionFailed` |
+| Gateway 返回 `ProviderFailed` | `ExecutionFailed` |
+| Gateway 返回 `Timeout` | `ExecutionFailed` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Agent tool call 进入 `RuntimeGateway::invoke(request)`，再由 Gateway 找 provider。
+- Good: Adapter test 使用 fake `RuntimeProvider`，验证 provider 捕获到的 input 与 Agent tool args 一致。
+- Base: Adapter 可包装 `mcp.call_tool`，但若同一 session 已暴露 per-MCP-tool schema，是否额外暴露 generic action tool 需要单独策略。
+- Bad: Adapter 直接调用 `McpRelayProvider::call_relay_tool` 或 direct MCP client；这会绕过 Runtime Gateway 的 actor/context/trace 语义。
+
+### 6. Tests Required
+
+- Adapter 单测：AgentTool execute 调用 Gateway provider，并返回 provider 的 `AgentToolResult`。
+- Adapter 单测：provider details 与 runtime trace 写入 `AgentToolResult.details`。
+- Adapter 单测：未注册 action / provider error 不被吞掉，映射为 `AgentToolError`。
+- Check：至少运行 `cargo test -p agentdash-application runtime_gateway`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+impl AgentTool for RuntimeActionToolAdapter {
+    async fn execute(&self, _: &str, args: Value, _: CancellationToken, _: Option<ToolUpdateCallback>) -> Result<AgentToolResult, AgentToolError> {
+        self.mcp_relay.call_relay_tool("server", "tool", args.as_object().cloned()).await?;
+        // ...
+    }
+}
+```
+
+问题：Adapter 重新拥有底层 provider 调用链，会绕过 Runtime Gateway 的 actor/context 校验、trace 回填和错误模型。
+
+#### Correct
+
+```rust
+impl AgentTool for RuntimeActionToolAdapter {
+    async fn execute(&self, _: &str, args: Value, _: CancellationToken, _: Option<ToolUpdateCallback>) -> Result<AgentToolResult, AgentToolError> {
+        let request = RuntimeInvocationRequest::new(
+            self.spec.action_key.clone(),
+            self.spec.actor.clone(),
+            self.spec.context.clone(),
+            args,
+        );
+        let result = self.gateway.invoke(request).await?;
+        // ...
+    }
+}
+```
+
+这样 Agent tool adapter 只是消费端桥接层，真实 runtime policy 仍集中在 Gateway/provider。
+
 ## Scenario: Setup Action 通过 Runtime Gateway 调用
 
 ### 1. Scope / Trigger

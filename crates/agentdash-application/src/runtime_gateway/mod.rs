@@ -3,6 +3,7 @@ mod gateway;
 mod provider;
 mod session_actions;
 mod setup_actions;
+mod tool_adapter;
 mod types;
 
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
@@ -21,6 +22,7 @@ pub use setup_actions::{
     WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
     WorkspaceDetectGitProvider, WorkspaceDetectInput, WorkspaceDetectProvider,
 };
+pub use tool_adapter::{RuntimeActionToolAdapter, RuntimeActionToolSpec};
 pub use types::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKeyError, RuntimeActionKind,
     RuntimeActor, RuntimeContext, RuntimeInvocationOutput, RuntimeInvocationRequest,

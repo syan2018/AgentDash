@@ -45,6 +45,42 @@ import stats from "../bindings/stats.json";
 
 Adjust the relative path from the importing source file.
 
+## Runtime Bridge
+
+Use the runtime bridge only when the canvas needs a user-triggered session runtime action. In canvas code, call:
+
+```ts
+const result = await window.agentdash.invoke("action.key", { /* action input */ });
+```
+
+- `window.agentdash.invoke(actionKey, input)` is available inside the preview iframe.
+- The parent page supplies the canvas actor, session context, trace, and Gateway policy. Do not build or send those fields from canvas code.
+- Treat the result as a `RuntimeInvocationResult`; provider data is under `result.output.output`.
+- The promise rejects when the action is unavailable, denied, invalid, or failed. Show a compact error state in the canvas UI.
+- Trigger bridge calls from explicit user actions such as buttons, forms, or refresh controls. Do not auto-run runtime actions on module load or render.
+- Do not implement a runtime action discovery flow in the canvas. Use only action keys and input contracts explicitly provided by the platform, the user request, or the surrounding task context.
+- Do not expose relay commands, MCP transports, backend ids, tokens, absolute paths, or arbitrary HTTP requests in canvas source.
+
+Example pattern:
+
+```tsx
+async function refresh() {
+  setLoading(true);
+  setError(null);
+  try {
+    const invocation = await window.agentdash.invoke("mcp.call_tool", {
+      runtime_name: "provided_runtime_tool_name",
+      arguments: { limit: 10 },
+    });
+    setData(invocation.output.output);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "Runtime action failed");
+  } finally {
+    setLoading(false);
+  }
+}
+```
+
 ## Quality Rules
 
 - Build the actual usable canvas first; avoid landing-page copy unless the user asked for it.

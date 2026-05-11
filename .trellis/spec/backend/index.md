@@ -130,6 +130,7 @@ Workspace (1) → (*) WorkspaceBinding
 | [数据库指南](./database-guidelines.md) | PostgreSQL + SQLite + SQLx 存储规范 | ✅ 已更新 |
 | [错误处理](./error-handling.md) | 分层错误体系、错误边界规则 | ✅ 已更新 |
 | [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 类型化盘点和迁移路线 | ✅ 已创建 |
+| [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill 文档包、references/scripts/assets 批量同步到受管载体的契约 | ✅ 已创建 |
 | [质量规范](./quality-guidelines.md) | 代码标准、DTO 命名契约、Session 状态持久化 | ✅ 已更新 |
 | [日志规范](./logging-guidelines.md) | 结构化日志、级别约定 | ✅ 已更新 |
 | [Runtime Gateway](./runtime-gateway.md) | Runtime Action / Provider / Setup Action 跨层调用契约 | ✅ 已创建 |

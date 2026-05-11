@@ -46,9 +46,9 @@ const StoryTabView = lazy(async () => {
   return { default: m.StoryTabView };
 });
 
-// NOTE: Workflow / Canvas 原顶级 Tab 已降级为 Assets 子类目（PR3）。
-// `workflow-tab-view.tsx` / `CanvasTabView.tsx` 组件文件保留——PR4 会通过新的
-// 子路由（例如 `/dashboard/assets/workflow/:id/edit`）重新拉起做资产编辑。
+// NOTE: Workflow / Canvas 原顶级 Tab 已降级为 Assets 子类目。
+// `CanvasTabView.tsx` 组件文件保留——未来会通过新的子路由
+// （例如 `/dashboard/assets/canvas/:id/edit`）重新拉起做资产编辑。
 
 const RoutineTabView = lazy(async () => {
   const m = await import("./features/routine/routine-tab-view");
@@ -77,17 +77,7 @@ const AssetsMcpPresetPanel = lazy(async () => {
   return { default: m.McpPresetCategoryPanel };
 });
 
-const WorkflowEditorPage = lazy(async () => {
-  const m = await import("./pages/WorkflowEditorPage");
-  return { default: m.WorkflowEditorPage };
-});
-
-const LifecycleEditorPage = lazy(async () => {
-  const m = await import("./pages/LifecycleEditorPage");
-  return { default: m.LifecycleEditorPage };
-});
-
-// PR2：统一 Workflow 编辑器（自适应 Form / DAG 布局）
+// 统一 Workflow 编辑器（自适应 Form / DAG 布局）
 const LifecycleEditorShellPage = lazy(async () => {
   const m = await import("./pages/LifecycleEditorShellPage");
   return { default: m.LifecycleEditorShellPage };
@@ -264,9 +254,7 @@ function AppContent() {
 
           <Route path="/story/:storyId" element={<StoryPage />} />
 
-          <Route path="/workflow-editor/:definitionId" element={<WorkflowEditorPage />} />
-          <Route path="/lifecycle-editor/:definitionId" element={<LifecycleEditorPage />} />
-          {/* PR2：新统一 Workflow 编辑器路由 */}
+          {/* 统一 Workflow 编辑器路由 */}
           <Route path="/workflow/:id" element={<LifecycleEditorShellPage />} />
 
           <Route path="/session/:sessionId" element={<SessionRouteWrapper />} />

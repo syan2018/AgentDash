@@ -5,9 +5,6 @@
  * 通过 props + onChange 与容器交互，不直接依赖 workflowStore。
  */
 
-export { BasicInfoPanel } from "./BasicInfoPanel";
-export type { BasicInfoPanelProps } from "./BasicInfoPanel";
-
 export { InjectionPanel } from "./InjectionPanel";
 export type { InjectionPanelProps } from "./InjectionPanel";
 

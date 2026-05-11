@@ -24,53 +24,11 @@ import type {
   WorkflowTargetKind,
 } from "../../../../types";
 import { addDirective, makeAddCapability } from "../../capability-directive-ops";
-import { BasicInfoPanel } from "./BasicInfoPanel";
 import { InjectionPanel } from "./InjectionPanel";
 import { HookRulesPanel } from "./HookRulesPanel";
 import { CapabilityPanel } from "./CapabilityPanel";
 import { PortsPanel } from "./PortsPanel";
 import { toggleTargetKind, buildDefaultParams } from "./shared";
-
-describe("BasicInfoPanel", () => {
-  it("渲染 key/name/description 输入控件", () => {
-    const markup = renderToStaticMarkup(
-      <BasicInfoPanel
-        draftKey="my_workflow"
-        name="我的 Workflow"
-        description="描述"
-        targetKinds={["story"]}
-        keyDisabled={false}
-        onKeyChange={() => undefined}
-        onNameChange={() => undefined}
-        onDescriptionChange={() => undefined}
-        onTargetKindsChange={() => undefined}
-      />,
-    );
-
-    // 线性语言，无外壳 heading，验字段内容足矣
-    expect(markup).toContain('value="my_workflow"');
-    expect(markup).toContain("我的 Workflow");
-    expect(markup).toContain("描述");
-  });
-
-  it("keyDisabled=true 时输入框禁用", () => {
-    const markup = renderToStaticMarkup(
-      <BasicInfoPanel
-        draftKey="locked"
-        name=""
-        description=""
-        targetKinds={["story"]}
-        keyDisabled={true}
-        onKeyChange={() => undefined}
-        onNameChange={() => undefined}
-        onDescriptionChange={() => undefined}
-        onTargetKindsChange={() => undefined}
-      />,
-    );
-
-    expect(markup).toContain("disabled");
-  });
-});
 
 describe("toggleTargetKind", () => {
   it("追加未勾选的 kind", () => {

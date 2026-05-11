@@ -5,10 +5,8 @@ import type {
   LifecycleDefinition,
   LifecycleEdge,
   LifecycleStepDefinition,
-  WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
-  WorkflowHookRuleSpec,
   WorkflowRun,
   WorkflowTargetKind,
   WorkflowTemplate,
@@ -28,39 +26,11 @@ import {
   fetchHookPresets,
   fetchWorkflowTemplates,
   getLifecycleDefinition,
-  getWorkflowDefinition,
   startWorkflowRun,
   updateLifecycleDefinition,
   updateWorkflowDefinition,
   validateLifecycleDefinition,
-  validateWorkflowDefinition,
 } from "../services/workflow";
-
-// ─── Editor state（消除 workflow / lifecycle 编辑器的镜像重复）───
-
-interface EditorState<T> {
-  draft: T | null;
-  originalId: string | null;
-  validation: WorkflowValidationResult | null;
-  isSaving: boolean;
-  isValidating: boolean;
-  dirty: boolean;
-  isLoading: boolean;
-  error: string | null;
-}
-
-function emptyEditor<T>(): EditorState<T> {
-  return {
-    draft: null,
-    originalId: null,
-    validation: null,
-    isSaving: false,
-    isValidating: false,
-    dirty: false,
-    isLoading: false,
-    error: null,
-  };
-}
 
 // ─── Draft types ─────────────────────────────────────────
 
@@ -92,14 +62,13 @@ export interface LifecycleDraftSeed {
   initial_step_key?: string;
 }
 
-// ─── Unified Lifecycle Editor（PR2）───────────────────────
+// ─── Unified Lifecycle Editor ────────────────────────────
 //
-// 把 `lcEditor`（lifecycle draft）和 `wfEditor`（workflow contract draft）合并成单一
-// editor state。前端向用户呈现"一个 editor 编辑一个 workflow 资产"，内部仍按后端双实
-// 体 schema 保存（先 upsert 每 step 对应的 workflow，再 upsert lifecycle）。
+// 单 editor state：前端向用户呈现"一个 editor 编辑一个 workflow 资产"，内部
+// 按后端双实体 schema 保存（先 upsert 每 step 对应的 workflow，再 upsert lifecycle）。
 //
-// 每个 step 关联的 workflow contract 放在 `workflowDraftsByStepKey[stepKey]`，key 为
-// step.key（不是 workflow_key，避免新建 step 时 key 还未定型的情况）。
+// 每个 step 关联的 workflow contract 放在 `workflowDraftsByStepKey[stepKey]`，
+// key 为 step.key（不是 workflow_key，避免新建 step 时 key 还未定型的情况）。
 
 export interface LifecycleEditorState {
   draft: LifecycleEditorDraft | null;
@@ -132,29 +101,11 @@ function emptyLifecycleEditor(): LifecycleEditorState {
   };
 }
 
-export function createEmptyDraft(projectId = ""): WorkflowEditorDraft {
-  return {
-    id: null,
-    project_id: projectId,
-    key: "",
-    name: "",
-    description: "",
-    target_kinds: ["story"],
-    contract: {
-      injection: { guidance: null, context_bindings: [] },
-      hook_rules: [],
-      capability_config: { tool_directives: [], mount_directives: [] },
-      output_ports: [],
-      input_ports: [],
-    },
-  };
-}
-
 function emptyCapabilityConfig(): WorkflowContract["capability_config"] {
   return { tool_directives: [], mount_directives: [] };
 }
 
-export function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft {
+function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft {
   return {
     id: definition.id,
     project_id: definition.project_id,
@@ -189,7 +140,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
   };
 }
 
-export function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEditorDraft {
+function lifecycleToDraft(definition: LifecycleDefinition): LifecycleEditorDraft {
   return {
     id: definition.id,
     project_id: definition.project_id,
@@ -267,9 +218,7 @@ interface WorkflowState {
   isLoading: boolean;
   error: string | null;
 
-  wfEditor: EditorState<WorkflowEditorDraft>;
-  lcEditor: EditorState<LifecycleEditorDraft>;
-  /** PR2：合并后的单 editor state（与 wfEditor / lcEditor 双栈并存，PR3 才删旧栈） */
+  /** 合并后的统一 editor state */
   lifecycleEditor: LifecycleEditorState;
 
   fetchHookPresets: () => Promise<HookRulePreset[]>;
@@ -291,33 +240,10 @@ interface WorkflowState {
     summary?: string;
   }) => Promise<WorkflowRun | null>;
 
-  openNewDraft: (projectId?: string) => void;
-  openEditDraft: (definitionId: string) => Promise<void>;
-  closeDraft: () => void;
-  updateDraft: (patch: Partial<WorkflowEditorDraft>) => void;
-  updateDraftBinding: (bindingIndex: number, patch: Partial<WorkflowContextBinding>) => void;
-  addDraftBinding: () => void;
-  removeDraftBinding: (bindingIndex: number) => void;
-  validateDraft: () => Promise<WorkflowValidationResult | null>;
-  saveDraft: () => Promise<WorkflowDefinition | null>;
   removeDefinition: (id: string) => Promise<boolean>;
-
-  addDraftHookRule: (rule: WorkflowHookRuleSpec) => void;
-  removeDraftHookRule: (ruleKey: string) => void;
-  updateDraftHookRule: (ruleKey: string, patch: Partial<WorkflowHookRuleSpec>) => void;
-
-  openNewLifecycleDraft: (projectId?: string, seed?: LifecycleDraftSeed) => void;
-  openEditLifecycleDraft: (definitionId: string) => Promise<void>;
-  closeLifecycleDraft: () => void;
-  updateLifecycleDraft: (patch: Partial<LifecycleEditorDraft>) => void;
-  updateLifecycleStep: (stepIndex: number, patch: Partial<LifecycleStepDefinition>) => void;
-  addLifecycleStep: () => void;
-  removeLifecycleStep: (stepIndex: number) => void;
-  validateLifecycleDraft: () => Promise<WorkflowValidationResult | null>;
-  saveLifecycleDraft: () => Promise<LifecycleDefinition | null>;
   removeLifecycle: (id: string) => Promise<boolean>;
 
-  // ── Unified Lifecycle Editor actions（PR2）──
+  // ── Unified Lifecycle Editor actions ──
   openLifecycleForm: (projectId: string, seed?: LifecycleDraftSeed) => void;
   openLifecycleById: (id: string) => Promise<void>;
   selectLifecycleStep: (stepKey: string | null) => void;
@@ -341,8 +267,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  wfEditor: emptyEditor<WorkflowEditorDraft>(),
-  lcEditor: emptyEditor<LifecycleEditorDraft>(),
   lifecycleEditor: emptyLifecycleEditor(),
 
   // ── Data fetching ──
@@ -468,197 +392,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  // ── Workflow Definition editor ──
-
-  openNewDraft: (projectId = "") => {
-    set({ wfEditor: { ...emptyEditor<WorkflowEditorDraft>(), draft: createEmptyDraft(projectId) } });
-  },
-
-  openEditDraft: async (definitionId) => {
-    set((s) => ({ wfEditor: { ...s.wfEditor, isLoading: true, error: null } }));
-    try {
-      const definition = await getWorkflowDefinition(definitionId);
-      set((state) => ({
-        definitions: upsert(state.definitions, definition),
-        wfEditor: {
-          ...emptyEditor<WorkflowEditorDraft>(),
-          draft: definitionToDraft(definition),
-          originalId: definition.id,
-        },
-      }));
-    } catch (error) {
-      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isLoading: false } }));
-    }
-  },
-
-  closeDraft: () => {
-    set({ wfEditor: emptyEditor<WorkflowEditorDraft>() });
-  },
-
-  updateDraft: (patch) => {
-    set((state) => {
-      if (!state.wfEditor.draft) return state;
-      return { wfEditor: { ...state.wfEditor, draft: { ...state.wfEditor.draft, ...patch }, dirty: true } };
-    });
-  },
-
-  updateDraftBinding: (bindingIndex, patch) => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      const bindings = draft.contract.injection.context_bindings.map((b, i) =>
-        i === bindingIndex ? { ...b, ...patch } : b,
-      );
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: bindings } } },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  addDraftBinding: () => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      const newBinding: WorkflowContextBinding = { locator: "", reason: "", required: true, title: null };
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: [...draft.contract.injection.context_bindings, newBinding] } } },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  removeDraftBinding: (bindingIndex) => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: { ...draft, contract: { ...draft.contract, injection: { ...draft.contract.injection, context_bindings: draft.contract.injection.context_bindings.filter((_, i) => i !== bindingIndex) } } },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  addDraftHookRule: (rule) => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      const existing = draft.contract.hook_rules.some((r) => r.key === rule.key);
-      if (existing) return state;
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: { ...draft, contract: { ...draft.contract, hook_rules: [...draft.contract.hook_rules, rule] } },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  removeDraftHookRule: (ruleKey) => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: { ...draft, contract: { ...draft.contract, hook_rules: draft.contract.hook_rules.filter((r) => r.key !== ruleKey) } },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  updateDraftHookRule: (ruleKey, patch) => {
-    set((state) => {
-      const draft = state.wfEditor.draft;
-      if (!draft) return state;
-      return {
-        wfEditor: {
-          ...state.wfEditor,
-          draft: {
-            ...draft,
-            contract: {
-              ...draft.contract,
-              hook_rules: draft.contract.hook_rules.map((r) =>
-                r.key === ruleKey ? { ...r, ...patch } : r,
-              ),
-            },
-          },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  validateDraft: async () => {
-    const draft = get().wfEditor.draft;
-    if (!draft) return null;
-    set((s) => ({ wfEditor: { ...s.wfEditor, isValidating: true, error: null } }));
-    try {
-      const result = await validateWorkflowDefinition({
-        project_id: draft.project_id,
-        key: draft.key,
-        name: draft.name,
-        description: draft.description,
-        target_kinds: draft.target_kinds,
-        contract: draft.contract,
-      });
-      set((s) => ({ wfEditor: { ...s.wfEditor, validation: result, isValidating: false } }));
-      return result;
-    } catch (error) {
-      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isValidating: false } }));
-      return null;
-    }
-  },
-
-  saveDraft: async () => {
-    const { draft, originalId } = get().wfEditor;
-    if (!draft) return null;
-    set((s) => ({ wfEditor: { ...s.wfEditor, isSaving: true, error: null } }));
-    try {
-      const definition = originalId
-        ? await updateWorkflowDefinition(originalId, {
-            name: draft.name,
-            description: draft.description,
-            binding_kinds: draft.target_kinds,
-            contract: draft.contract,
-          })
-        : await createWorkflowDefinition({
-            project_id: draft.project_id,
-            key: draft.key,
-            name: draft.name,
-            description: draft.description,
-            target_kinds: draft.target_kinds,
-            contract: draft.contract,
-          });
-      set((state) => ({
-        definitions: upsert(state.definitions, definition),
-        wfEditor: {
-          ...state.wfEditor,
-          draft: definitionToDraft(definition),
-          originalId: definition.id,
-          validation: null,
-          isSaving: false,
-          dirty: false,
-        },
-      }));
-      return definition;
-    } catch (error) {
-      set((s) => ({ wfEditor: { ...s.wfEditor, error: (error as Error).message, isSaving: false } }));
-      return null;
-    }
-  },
-
   removeDefinition: async (id) => {
     set({ error: null });
     try {
@@ -668,161 +401,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
       return false;
-    }
-  },
-
-  // ── Lifecycle Definition editor ──
-
-  openNewLifecycleDraft: (projectId = "", seed = {}) => {
-    set({ lcEditor: { ...emptyEditor<LifecycleEditorDraft>(), draft: createEmptyLifecycleDraft(projectId, seed) } });
-  },
-
-  openEditLifecycleDraft: async (definitionId) => {
-    set((s) => ({ lcEditor: { ...s.lcEditor, isLoading: true, error: null } }));
-    try {
-      const definition = await getLifecycleDefinition(definitionId);
-      set((state) => ({
-        lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition),
-        lcEditor: {
-          ...emptyEditor<LifecycleEditorDraft>(),
-          draft: lifecycleToDraft(definition),
-          originalId: definition.id,
-        },
-      }));
-    } catch (error) {
-      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isLoading: false } }));
-    }
-  },
-
-  closeLifecycleDraft: () => {
-    set({ lcEditor: emptyEditor<LifecycleEditorDraft>() });
-  },
-
-  updateLifecycleDraft: (patch) => {
-    set((state) => {
-      if (!state.lcEditor.draft) return state;
-      return { lcEditor: { ...state.lcEditor, draft: { ...state.lcEditor.draft, ...patch }, dirty: true } };
-    });
-  },
-
-  updateLifecycleStep: (stepIndex, patch) => {
-    set((state) => {
-      const draft = state.lcEditor.draft;
-      if (!draft) return state;
-      return {
-        lcEditor: {
-          ...state.lcEditor,
-          draft: { ...draft, steps: draft.steps.map((step, i) => (i === stepIndex ? { ...step, ...patch } : step)) },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  addLifecycleStep: () => {
-    set((state) => {
-      const draft = state.lcEditor.draft;
-      if (!draft) return state;
-      return {
-        lcEditor: {
-          ...state.lcEditor,
-          draft: {
-            ...draft,
-            steps: [
-              ...draft.steps,
-              {
-                key: "",
-                description: "",
-                workflow_key: null,
-                node_type: "agent_node",
-                output_ports: [],
-                input_ports: [],
-                capability_config: emptyCapabilityConfig(),
-              },
-            ],
-          },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  removeLifecycleStep: (stepIndex) => {
-    set((state) => {
-      const draft = state.lcEditor.draft;
-      if (!draft) return state;
-      return {
-        lcEditor: {
-          ...state.lcEditor,
-          draft: { ...draft, steps: draft.steps.filter((_, i) => i !== stepIndex) },
-          dirty: true,
-        },
-      };
-    });
-  },
-
-  validateLifecycleDraft: async () => {
-    const draft = get().lcEditor.draft;
-    if (!draft) return null;
-    set((s) => ({ lcEditor: { ...s.lcEditor, isValidating: true, error: null } }));
-    try {
-      const result = await validateLifecycleDefinition({
-        project_id: draft.project_id,
-        key: draft.key,
-        name: draft.name,
-        description: draft.description,
-        target_kinds: draft.target_kinds,
-        entry_step_key: draft.entry_step_key,
-        steps: draft.steps,
-        edges: draft.edges,
-      });
-      set((s) => ({ lcEditor: { ...s.lcEditor, validation: result, isValidating: false } }));
-      return result;
-    } catch (error) {
-      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isValidating: false } }));
-      return null;
-    }
-  },
-
-  saveLifecycleDraft: async () => {
-    const { draft, originalId } = get().lcEditor;
-    if (!draft) return null;
-    set((s) => ({ lcEditor: { ...s.lcEditor, isSaving: true, error: null } }));
-    try {
-      const definition = originalId
-        ? await updateLifecycleDefinition(originalId, {
-            name: draft.name,
-            description: draft.description,
-            binding_kinds: draft.target_kinds,
-            entry_step_key: draft.entry_step_key,
-            steps: draft.steps,
-            edges: draft.edges,
-          })
-        : await createLifecycleDefinition({
-            project_id: draft.project_id,
-            key: draft.key,
-            name: draft.name,
-            description: draft.description,
-            target_kinds: draft.target_kinds,
-            entry_step_key: draft.entry_step_key,
-            steps: draft.steps,
-            edges: draft.edges,
-          });
-      set((state) => ({
-        lifecycleDefinitions: upsert(state.lifecycleDefinitions, definition),
-        lcEditor: {
-          ...state.lcEditor,
-          draft: lifecycleToDraft(definition),
-          originalId: definition.id,
-          validation: null,
-          isSaving: false,
-          dirty: false,
-        },
-      }));
-      return definition;
-    } catch (error) {
-      set((s) => ({ lcEditor: { ...s.lcEditor, error: (error as Error).message, isSaving: false } }));
-      return null;
     }
   },
 
@@ -838,10 +416,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  // ── Unified Lifecycle Editor（PR2）──
-  //
-  // 这一栈与上面 lcEditor / wfEditor 双栈并存；新 `/workflow/:id` 路由及 LifecycleEditorShell
-  // 走这一栈，老路由继续走双栈，PR3 删旧栈。
+  // ── Unified Lifecycle Editor ──
 
   openLifecycleForm: (projectId, seed = {}) => {
     const draft = createEmptyLifecycleDraft(projectId, seed);

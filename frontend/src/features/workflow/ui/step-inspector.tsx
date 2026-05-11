@@ -193,25 +193,63 @@ export function StepInspector(props: StepInspectorProps) {
     [workflowDraft, onWorkflowChange],
   );
 
+  // props 快捷别名，供 handler 闭包读取最新 step ports
+  const propsStepOutputPorts = step.output_ports;
+  const propsStepInputPorts = step.input_ports;
+
+  // ─── Port 双层语义 ───
+  //
+  // 后端 catalog.rs:312 明确：edge 引用的 port 必须存在于 step 级 ports 中。
+  //   - workflow.contract.output_ports / input_ports = workflow 行为标准声明
+  //   - step.output_ports / input_ports = DAG edge 真相源 / step 级拓展
+  //
+  // 用户决策（2026-05-11）：Overview 只改 step（DAG 视角），
+  //   Detail PortsPanel 改 workflow contract 且自动合并到 step：
+  //     - contract 新增 port → 追加到 step
+  //     - contract 删除 port → 从 step 移除（仅删除原本来自 contract 的）
+  //     - contract 修改 port → step 中同 key 的 port 跟着更新
+  //     - step 独立加的（Overview 加的、不在 oldContract key 集里）保留不动
+  //   反向不同步（Overview 改 step 不回流到 contract）。
+  function mergeContractIntoStep<P extends { key: string }>(
+    oldContract: P[],
+    newContract: P[],
+    currentStep: P[],
+  ): P[] {
+    const oldContractKeys = new Set(oldContract.map((p) => p.key));
+    const stepExtras = currentStep.filter((p) => !oldContractKeys.has(p.key));
+    return [...newContract, ...stepExtras];
+  }
+
   const handleOutputPortsChange = useCallback(
-    (ports: OutputPortDefinition[]) => {
-      // Port 以 step 为真相源
-      onStepChange({ output_ports: ports });
+    (nextContractPorts: OutputPortDefinition[]) => {
+      const oldContractPorts = workflowDraft.contract.output_ports ?? [];
       onWorkflowChange({
-        contract: { ...workflowDraft.contract, output_ports: ports },
+        contract: { ...workflowDraft.contract, output_ports: nextContractPorts },
       });
+      const mergedStep = mergeContractIntoStep(
+        oldContractPorts,
+        nextContractPorts,
+        propsStepOutputPorts,
+      );
+      onStepChange({ output_ports: mergedStep });
     },
-    [onStepChange, onWorkflowChange, workflowDraft],
+    [onStepChange, onWorkflowChange, workflowDraft, propsStepOutputPorts],
   );
 
   const handleInputPortsChange = useCallback(
-    (ports: InputPortDefinition[]) => {
-      onStepChange({ input_ports: ports });
+    (nextContractPorts: InputPortDefinition[]) => {
+      const oldContractPorts = workflowDraft.contract.input_ports ?? [];
       onWorkflowChange({
-        contract: { ...workflowDraft.contract, input_ports: ports },
+        contract: { ...workflowDraft.contract, input_ports: nextContractPorts },
       });
+      const mergedStep = mergeContractIntoStep(
+        oldContractPorts,
+        nextContractPorts,
+        propsStepInputPorts,
+      );
+      onStepChange({ input_ports: mergedStep });
     },
-    [onStepChange, onWorkflowChange, workflowDraft],
+    [onStepChange, onWorkflowChange, workflowDraft, propsStepInputPorts],
   );
 
   const showDetail = hideTabs || activeTab === "detail";
@@ -349,9 +387,11 @@ export function StepInspector(props: StepInspectorProps) {
                 onRemove={handleRemoveHookRule}
               />
 
+              {/* Detail PortsPanel 编辑 workflow 行为标准 ports（contract 级）；
+                  保存时 handler 会同步合并到 step.ports（DAG 真相源）。 */}
               <PortsPanel
-                outputPorts={step.output_ports}
-                inputPorts={step.input_ports}
+                outputPorts={workflowDraft.contract.output_ports ?? []}
+                inputPorts={workflowDraft.contract.input_ports ?? []}
                 compact={compact}
                 onOutputChange={handleOutputPortsChange}
                 onInputChange={handleInputPortsChange}
@@ -404,9 +444,6 @@ function OverviewTab({
           className="agentdash-form-input"
           placeholder="implement"
         />
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          lifecycle 内唯一标识，用作 edge 连接引用
-        </p>
       </div>
 
       <div>
@@ -432,60 +469,38 @@ function OverviewTab({
             Phase Node{isEntry ? "（入口不可用）" : ""}
           </option>
         </select>
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          Agent / Phase 均可绑定 workflow contract；切换到 Detail tab 编辑。
-        </p>
       </div>
 
-      {/* Ports 只读摘要（编排者视角） */}
-      <div className="space-y-1.5">
-        <label className="agentdash-form-label">Output Ports ({step.output_ports.length})</label>
-        {step.output_ports.length === 0 ? (
-          <p className="rounded-[8px] border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
-            暂无 output port
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {step.output_ports.map((p, idx) => (
-              <div
-                key={idx}
-                className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1.5"
-              >
-                <p className="font-mono text-[11px] text-foreground">{p.key || "(未命名)"}</p>
-                {p.description && (
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">{p.description}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Ports 快捷编辑（编排者视角）——key + 描述，gate/context strategy 在 Detail → Ports */}
+      <OverviewPortsSection
+        label={`Output Ports (${step.output_ports.length})`}
+        ports={step.output_ports}
+        onChange={(next) => onStepChange({ output_ports: next })}
+        onAdd={() =>
+          onStepChange({
+            output_ports: [
+              ...step.output_ports,
+              { key: "", description: "", gate_strategy: "existence" },
+            ],
+          })
+        }
+        placeholderKey="port_key"
+      />
 
-      <div className="space-y-1.5">
-        <label className="agentdash-form-label">Input Ports ({step.input_ports.length})</label>
-        {step.input_ports.length === 0 ? (
-          <p className="rounded-[8px] border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground">
-            暂无 input port
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {step.input_ports.map((p, idx) => (
-              <div
-                key={idx}
-                className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1.5"
-              >
-                <p className="font-mono text-[11px] text-foreground">{p.key || "(未命名)"}</p>
-                {p.description && (
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">{p.description}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        <p className="text-[10px] text-muted-foreground">
-          Port 详细配置（gate / context strategy）请在 Detail → Ports 编辑
-        </p>
-      </div>
+      <OverviewPortsSection
+        label={`Input Ports (${step.input_ports.length})`}
+        ports={step.input_ports}
+        onChange={(next) => onStepChange({ input_ports: next })}
+        onAdd={() =>
+          onStepChange({
+            input_ports: [
+              ...step.input_ports,
+              { key: "", description: "", context_strategy: "full" },
+            ],
+          })
+        }
+        placeholderKey="port_key"
+      />
 
       {onCloneFromWorkflow && availableWorkflows.length > 0 && (
         <CloneFromWorkflowButton
@@ -494,6 +509,100 @@ function OverviewTab({
         />
       )}
     </section>
+  );
+}
+
+// ─── Overview Ports 快捷编辑块 ─────────────────────────
+//
+// 复用同一组件承载 OutputPortDefinition / InputPortDefinition —— 两者都含
+// 必要的 `key` + 可选 `description` 字段（其它 gate / context_strategy 等差异
+// 保留在 patch 回调里，由调用方决定合并策略，本组件不关心）。
+
+type OverviewPortLike = { key: string; description: string } & Record<string, unknown>;
+
+function OverviewPortsSection<T extends OverviewPortLike>({
+  label,
+  ports,
+  onChange,
+  onAdd,
+  placeholderKey,
+}: {
+  label: string;
+  ports: T[];
+  onChange: (next: T[]) => void;
+  onAdd: () => void;
+  placeholderKey: string;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className="agentdash-form-label m-0">{label}</label>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
+        >
+          + 添加
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {ports.length === 0 && (
+          <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
+        )}
+        {ports.map((p, idx) => (
+          <div
+            key={idx}
+            className="flex items-start gap-1.5 rounded-[8px] border border-border bg-background p-2"
+          >
+            <div className="min-w-0 flex-1 space-y-1">
+              <input
+                value={p.key}
+                onChange={(e) => {
+                  const next = [...ports];
+                  next[idx] = { ...p, key: e.target.value };
+                  onChange(next);
+                }}
+                className="agentdash-form-input font-mono text-xs"
+                placeholder={placeholderKey}
+              />
+              <input
+                value={p.description}
+                onChange={(e) => {
+                  const next = [...ports];
+                  next[idx] = { ...p, description: e.target.value };
+                  onChange(next);
+                }}
+                className="agentdash-form-input text-xs"
+                placeholder="描述"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(ports.filter((_, i) => i !== idx))}
+              className="shrink-0 rounded-[6px] p-1 text-destructive/60 hover:bg-destructive/5 hover:text-destructive"
+              aria-label="删除 port"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 6h18" />
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

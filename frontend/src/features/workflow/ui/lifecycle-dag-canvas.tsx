@@ -1,11 +1,10 @@
 /**
  * LifecycleDagCanvas —— 纯 DAG 画布（ReactFlow）的可复用封装。
  *
- * 从 lifecycle-dag-editor.tsx 中抽出画布部分，作为受控组件。
+ * 受控组件：
  * - 输入：steps / edges / entry_step_key + 可选 workflowDefs（供节点 label 渲染）
  * - 输出：onStepsChange / onEdgesChange（整体替换），以及 onSelectStep
  * - 不读写 store；所有副作用（位置持久化、布局计算）仍由画布自身管理
- * - 兼容老 lifecycle-dag-editor.tsx：旧入口继续用本组件 + 自己的 side panel
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";

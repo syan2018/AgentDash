@@ -1,20 +1,14 @@
 /**
- * WorkflowCategoryPanel — Assets 页 Workflow 类目实装（PR4）。
+ * WorkflowCategoryPanel — Assets 页 Workflow 类目。
  *
  * 职责：
- * - 从 `useWorkflowStore` 拉取 Lifecycle + Workflow 定义
- * - 以 Tab 区分 Lifecycle / Workflow 两类资产
- * - 每行展示：name、key、description、来源 chip（builtin/user）、更新时间、step/edge/binding 计数
- * - 只读预览：用 step/edge/binding 计数文字代替 DAG 缩略（避免重造渲染器）
+ * - 从 `useWorkflowStore` 拉取 Lifecycle 定义（= Workflow 资产）
+ * - 每行展示：name、key、description、来源 chip（builtin/user）、更新时间、step/edge 计数
+ * - 只读预览：用 step/edge 计数文字代替 DAG 缩略（避免重造渲染器）
  * - 行动作：
- *   - `编辑` → `navigate("/workflow-editor/:id")` 或 `navigate("/lifecycle-editor/:id")`
- *   - Builtin 来源：`编辑` 显示为 "查看"（只读复用原 editor，editor 自行判定可编辑态）
- *   - 复制 / 删除：当前后端 workflow store 没暴露 clone；提供"删除"走 removeDefinition / removeLifecycle
- *     - Builtin 删除目前视为"取消注册"（后端行为），展示警告确认
- *
- * 重要：复用 WorkflowTabView 的 `fetchTemplates` / `fetchDefinitions` / `fetchLifecycles`，
- * 这样即使用户先从 Assets 进入也能把模板注册按钮保留在原 Workflow Tab 的"装载 Bundle"入口
- * （这里提供"装载内置 Bundle"按钮，对齐原 WorkflowTabView 的 `handleBootstrapAll`）。
+ *   - `编辑` / `查看` → `navigate("/workflow/:id")`（统一编辑器，按 step 规模自适应 Form / DAG）
+ *   - 删除：走 removeLifecycle；Builtin 来源目前视为"取消注册"，展示警告确认
+ * - 顶部"装载内置 Bundle"按钮：bootstrap 未注册的内置模板。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

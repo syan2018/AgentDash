@@ -50,11 +50,9 @@ export function WorkspaceLayout() {
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
-  // Assets 页及其子类目——Workflow / Lifecycle 编辑器页也归属 Assets（PRD: 编辑跳转拉起原 editor）
+  // Assets 页及其子类目——Workflow 编辑器页也归属 Assets（PRD: 编辑跳转拉起统一 editor）
   const assetsDashboardMatch = useMatch("/dashboard/assets/*");
-  const workflowEditorMatch = useMatch("/workflow-editor/:definitionId");
-  const lifecycleEditorMatch = useMatch("/lifecycle-editor/:definitionId");
-  // PR2：统一 Workflow 编辑器新路由
+  // 统一 Workflow 编辑器路由
   const unifiedWorkflowEditorMatch = useMatch("/workflow/:id");
   const routineDashboardMatch = useMatch("/dashboard/routine");
 
@@ -66,9 +64,7 @@ export function WorkspaceLayout() {
     !!storyRouteMatch;       // Story 详情页从 Story Tab 进入，高亮 Story
   const isAssetsActive =
     !!assetsDashboardMatch ||
-    !!workflowEditorMatch ||
-    !!lifecycleEditorMatch ||
-    !!unifiedWorkflowEditorMatch;  // Workflow / Lifecycle 编辑器从 Assets 跳入，高亮 Assets
+    !!unifiedWorkflowEditorMatch;  // Workflow 编辑器从 Assets 跳入，高亮 Assets
   const isRoutineActive = !!routineDashboardMatch;
 
   const agentNavTarget = useMemo(() => {
@@ -99,8 +95,6 @@ export function WorkspaceLayout() {
     if (!isSettingsRoute) return "/dashboard/assets";
     if (
       rememberedPath.startsWith("/dashboard/assets")
-      || rememberedPath.startsWith("/workflow-editor/")
-      || rememberedPath.startsWith("/lifecycle-editor/")
       || rememberedPath.startsWith("/workflow/")
     ) {
       return rememberedPath;

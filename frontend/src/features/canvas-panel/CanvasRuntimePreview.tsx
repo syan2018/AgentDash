@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import ts from "typescript";
+import { invokeCanvasRuntimeAction } from "../../services/canvas";
 import type { CanvasRuntimeFile, CanvasRuntimeSnapshot } from "../../types";
 
 export interface CanvasRuntimePreviewProps {
@@ -12,6 +13,23 @@ interface PreviewEnvelope {
   kind: "canvas-preview-ready" | "canvas-preview-error";
   frame_id: string;
   message?: string;
+}
+
+interface RuntimeInvokeEnvelope {
+  kind: "canvas-runtime-invoke";
+  frame_id: string;
+  request_id: string;
+  action_key: string;
+  input?: unknown;
+}
+
+interface RuntimeResultEnvelope {
+  kind: "canvas-runtime-result";
+  frame_id: string;
+  request_id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
 }
 
 interface BuiltPreviewDocument {
@@ -86,12 +104,70 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     };
   }, [snapshot, frameId]);
 
+  const sendRuntimeResult = useCallback((payload: RuntimeResultEnvelope) => {
+    iframeRef.current?.contentWindow?.postMessage(payload, "*");
+  }, []);
+
+  const handleRuntimeInvoke = useCallback(async (payload: RuntimeInvokeEnvelope) => {
+    if (!snapshot?.session_id) {
+      sendRuntimeResult({
+        kind: "canvas-runtime-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: "Canvas runtime bridge 需要绑定 Session 后才能调用",
+      });
+      return;
+    }
+
+    const visibleActions = snapshot.runtime_bridge.surface?.actions ?? [];
+    const actionVisible = visibleActions.some((action) => action.action_key === payload.action_key);
+    if (!snapshot.runtime_bridge.enabled || !actionVisible) {
+      sendRuntimeResult({
+        kind: "canvas-runtime-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: `Canvas runtime action 不可见: ${payload.action_key}`,
+      });
+      return;
+    }
+
+    try {
+      const result = await invokeCanvasRuntimeAction(snapshot.canvas_id, {
+        session_id: snapshot.session_id,
+        action_key: payload.action_key,
+        input: payload.input ?? {},
+      });
+      sendRuntimeResult({
+        kind: "canvas-runtime-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      sendRuntimeResult({
+        kind: "canvas-runtime-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: error instanceof Error ? error.message : "Canvas runtime action 调用失败",
+      });
+    }
+  }, [frameId, sendRuntimeResult, snapshot]);
+
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
     if (!iframe || event.source !== iframe.contentWindow) {
       return;
     }
     const payload = event.data;
+    if (isRuntimeInvokeEnvelope(payload) && payload.frame_id === frameId) {
+      void handleRuntimeInvoke(payload);
+      return;
+    }
+
     if (!isPreviewEnvelope(payload) || payload.frame_id !== frameId) {
       return;
     }
@@ -103,7 +179,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, [frameId]);
+  }, [frameId, handleRuntimeInvoke]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);
@@ -226,6 +302,56 @@ function buildPreviewDocument(
     const send = (kind, message) => {
       window.parent.postMessage({ kind, frame_id: frameId, message }, "*");
     };
+    const runtimeInvokeTimeoutMs = 60000;
+    const pendingRuntimeInvocations = new Map();
+    let runtimeInvokeSeq = 0;
+    window.agentdash = Object.freeze({
+      invoke(actionKey, input = {}) {
+        if (typeof actionKey !== "string" || actionKey.trim().length === 0) {
+          return Promise.reject(new Error("agentdash.invoke 需要非空 actionKey"));
+        }
+
+        const requestId = "canvas-rt-" + (++runtimeInvokeSeq);
+        return new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            pendingRuntimeInvocations.delete(requestId);
+            reject(new Error("Canvas runtime action 调用超时"));
+          }, runtimeInvokeTimeoutMs);
+          pendingRuntimeInvocations.set(requestId, { resolve, reject, timeout });
+          window.parent.postMessage({
+            kind: "canvas-runtime-invoke",
+            frame_id: frameId,
+            request_id: requestId,
+            action_key: actionKey,
+            input,
+          }, "*");
+        });
+      },
+    });
+    window.addEventListener("message", (event) => {
+      const payload = event.data;
+      if (
+        !payload
+        || payload.kind !== "canvas-runtime-result"
+        || payload.frame_id !== frameId
+        || typeof payload.request_id !== "string"
+      ) {
+        return;
+      }
+
+      const pending = pendingRuntimeInvocations.get(payload.request_id);
+      if (!pending) {
+        return;
+      }
+      pendingRuntimeInvocations.delete(payload.request_id);
+      window.clearTimeout(pending.timeout);
+
+      if (payload.ok) {
+        pending.resolve(payload.result);
+      } else {
+        pending.reject(new Error(payload.error || "Canvas runtime action 调用失败"));
+      }
+    });
     const isRootEmpty = (root) => {
       if (!root) return false;
       if (root.childElementCount > 0) return false;
@@ -474,6 +600,20 @@ function isPreviewEnvelope(value: unknown): value is PreviewEnvelope {
     (record.kind === "canvas-preview-ready" || record.kind === "canvas-preview-error")
     && typeof record.frame_id === "string"
     && (record.message == null || typeof record.message === "string")
+  );
+}
+
+function isRuntimeInvokeEnvelope(value: unknown): value is RuntimeInvokeEnvelope {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === "canvas-runtime-invoke"
+    && typeof record.frame_id === "string"
+    && typeof record.request_id === "string"
+    && typeof record.action_key === "string"
   );
 }
 

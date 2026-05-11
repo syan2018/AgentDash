@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use agentdash_domain::canvas::{Canvas, CanvasImportMap};
 use agentdash_spi::Vfs;
 
+use crate::runtime_gateway::RuntimeSurface;
 use crate::vfs::{RelayVfsService, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +17,7 @@ pub struct CanvasRuntimeSnapshot {
     pub bindings: Vec<CanvasRuntimeBinding>,
     pub import_map: CanvasImportMap,
     pub libraries: Vec<String>,
+    pub runtime_bridge: CanvasRuntimeBridgeSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,33 @@ pub struct CanvasRuntimeBinding {
     pub data_path: String,
     pub content_type: String,
     pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanvasRuntimeBridgeSnapshot {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<RuntimeSurface>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
+}
+
+impl CanvasRuntimeBridgeSnapshot {
+    pub fn disabled(reason: impl Into<String>) -> Self {
+        Self {
+            enabled: false,
+            surface: None,
+            disabled_reason: Some(reason.into()),
+        }
+    }
+
+    pub fn enabled(surface: RuntimeSurface) -> Self {
+        Self {
+            enabled: true,
+            surface: Some(surface),
+            disabled_reason: None,
+        }
+    }
 }
 
 pub fn build_runtime_snapshot(
@@ -76,6 +105,12 @@ pub fn build_runtime_snapshot(
         });
     }
 
+    let runtime_bridge = if session_id.is_some() {
+        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime bridge surface 尚未装配")
+    } else {
+        CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime snapshot 尚未绑定 Session")
+    };
+
     CanvasRuntimeSnapshot {
         canvas_id: canvas.id,
         session_id,
@@ -84,6 +119,7 @@ pub fn build_runtime_snapshot(
         bindings,
         import_map: canvas.sandbox_config.import_map.clone(),
         libraries: canvas.sandbox_config.libraries.clone(),
+        runtime_bridge,
     }
 }
 
@@ -137,8 +173,13 @@ mod tests {
     use uuid::Uuid;
 
     use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile};
+    use serde_json::json;
 
     use super::*;
+    use crate::runtime_gateway::{
+        RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
+        RuntimeSurface,
+    };
 
     #[test]
     fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {
@@ -169,5 +210,58 @@ mod tests {
         );
         assert_eq!(snapshot.bindings[0].data_path, "bindings/stats.json");
         assert!(!snapshot.bindings[0].resolved);
+    }
+
+    #[test]
+    fn build_runtime_snapshot_disables_bridge_without_session_surface() {
+        let canvas = Canvas::new(
+            Uuid::new_v4(),
+            "demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
+
+        let snapshot = build_runtime_snapshot(&canvas, None);
+
+        assert!(!snapshot.runtime_bridge.enabled);
+        assert!(snapshot.runtime_bridge.surface.is_none());
+        assert!(
+            snapshot
+                .runtime_bridge
+                .disabled_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Session")
+        );
+    }
+
+    #[test]
+    fn canvas_runtime_bridge_snapshot_can_attach_actor_surface() {
+        let surface = RuntimeSurface {
+            context: RuntimeContext::Session {
+                session_id: "session-1".to_string(),
+                project_id: None,
+                workspace_id: None,
+            },
+            actions: vec![RuntimeActionDescriptor {
+                action_key: RuntimeActionKey::parse("mcp.list_tools").expect("valid action key"),
+                kind: RuntimeActionKind::SessionRuntime,
+                description: Some("list tools".to_string()),
+                input_schema: Some(json!({ "type": "object" })),
+                output_schema: None,
+                default_policy: Default::default(),
+            }],
+        };
+
+        let bridge = CanvasRuntimeBridgeSnapshot::enabled(surface);
+
+        assert!(bridge.enabled);
+        assert_eq!(
+            bridge.surface.as_ref().unwrap().actions[0]
+                .action_key
+                .as_str(),
+            "mcp.list_tools"
+        );
+        assert!(bridge.disabled_reason.is_none());
     }
 }

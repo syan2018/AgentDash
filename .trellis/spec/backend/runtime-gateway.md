@@ -6,7 +6,7 @@ Runtime Gateway 是 application 层的统一运行时能力调用入口。它承
 
 ### 1. Scope / Trigger
 
-- Trigger: 消费端需要在调用前查询当前 actor/context 可见的 Runtime Action，例如 Agent adapter 注入策略、Canvas bridge manifest、Workflow node action picker。
+- Trigger: 消费端需要在调用前查询当前 actor/context 可见的 Runtime Action，例如 Canvas bridge manifest、Workflow node action picker、平台自定义工具装配。
 - Scope: Gateway 提供 action 粒度 manifest；provider 仍负责各自 action 内部的细粒度 surface，例如 `mcp.list_tools` 输出 MCP tool surface。
 - Boundary: 不得只凭 `RuntimeContext` 暴露 action 给上层消费端；普通消费端必须使用 actor-aware 查询，确保 Setup Action 不会进入 Session actor surface。
 
@@ -189,13 +189,13 @@ capability_state.is_capability_tool_enabled(
 - Executor 单测：direct/relay discovery 继续遵守 capability-aware filter。
 - Check：至少运行 `cargo test -p agentdash-application runtime_gateway`、`cargo test -p agentdash-executor mcp`、`cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
 
-## Scenario: Agent 通过 RuntimeActionToolAdapter 调用 Runtime Action
+## Scenario: Agent 工具边界与 RuntimeActionToolAdapter 基础件
 
 ### 1. Scope / Trigger
 
-- Trigger: 需要把某个 Session Runtime Action 暴露为 Agent 可调用工具，例如后续将 `mcp.call_tool`、`context.read` 或 workflow runtime action 包装为 `AgentTool`。
-- Scope: `RuntimeActionToolAdapter` 只做 AgentTool → RuntimeInvocationRequest 的协议转换；真实授权、provider 路由、trace 和错误归一仍必须由 Runtime Gateway 完成。
-- Boundary: Adapter 不得直接持有或调用底层 provider，也不得绕过 Gateway 构造 executor/MCP/relay 请求。
+- Trigger: 需要验证 AgentTool → RuntimeInvocationRequest 的底层桥接能力，或平台自定义工具内部希望复用 Gateway invocation。
+- Scope: `RuntimeActionToolAdapter` 只作为基础件/测试桥存在；真实产品侧 Agent 工具应由平台显式定义工具名、参数、权限和行为边界，再在内部选择是否调用 Runtime Gateway / relay / provider。
+- Boundary: 不得把裸 Runtime Action 直接作为 Agent 工具面默认注入。Adapter 不得直接持有或调用底层 provider，也不得绕过 Gateway 构造 executor/MCP/relay 请求。
 
 ### 2. Signatures
 
@@ -237,7 +237,9 @@ RuntimeContext::Session { session_id, .. }
 - Adapter 不自行做 capability 裁决；Gateway 与 provider 负责拒绝不合法 context、actor、action 或目标工具。
 - 若 provider 输出已经是 `AgentToolResult`，Adapter 保留其 content/is_error，并将 runtime action/trace 与 provider details 合并到 `details`。
 - 若 provider 输出是普通 JSON，Adapter 将 JSON pretty-print 为 text content，并把 runtime action/trace 写入 `details`。
-- 当前实现只提供可复用 adapter 基础件；是否把某个 Runtime Action 注入 session tool surface，必须由后续 capability/surface 策略显式决定，不能默认全量注入。
+- 当前实现只提供可复用 adapter 基础件；它不代表产品注入策略。
+- Agent 面向的是平台定义的受控工具，而不是 `mcp.call_tool`、`workspace.*`、`relay.*` 这类基础 Runtime Action 的原样暴露。
+- 平台自定义工具可以在内部复用 Gateway invocation，但其 schema 必须收窄到明确业务动作，例如固定 relay 操作、固定参数模板或受控环境准备步骤。
 
 ### 4. Validation & Error Matrix
 
@@ -255,8 +257,9 @@ RuntimeContext::Session { session_id, .. }
 
 - Good: Agent tool call 进入 `RuntimeGateway::invoke(request)`，再由 Gateway 找 provider。
 - Good: Adapter test 使用 fake `RuntimeProvider`，验证 provider 捕获到的 input 与 Agent tool args 一致。
-- Base: Adapter 可包装 `mcp.call_tool`，但若同一 session 已暴露 per-MCP-tool schema，是否额外暴露 generic action tool 需要单独策略。
+- Base: Adapter 可包装 `mcp.call_tool` 用于测试 Gateway 行为；产品层若要给 Agent 暴露 MCP 能力，应优先设计平台工具或 per-tool schema，而不是额外暴露 generic action tool。
 - Bad: Adapter 直接调用 `McpRelayProvider::call_relay_tool` 或 direct MCP client；这会绕过 Runtime Gateway 的 actor/context/trace 语义。
+- Bad: 自动把 `surface_for_actor(AgentSession, Session)` 返回的所有 Runtime Action 注册进 session tool set；这会让 Agent 拿到过宽、过底层的执行面。
 
 ### 6. Tests Required
 
@@ -298,6 +301,71 @@ impl AgentTool for RuntimeActionToolAdapter {
 ```
 
 这样 Agent tool adapter 只是消费端桥接层，真实 runtime policy 仍集中在 Gateway/provider。
+
+## Scenario: Canvas Runtime Bridge 通过 Gateway 调用 Session Action
+
+### 1. Scope / Trigger
+
+- Trigger: Canvas iframe 需要在用户交互中读取或触发当前 Session 可用能力，例如调用 `mcp.list_tools` 或 `mcp.call_tool`。
+- Scope: Canvas runtime snapshot 返回 bridge metadata 与 actor-aware action manifest；iframe 内 SDK 只提供 `window.agentdash.invoke(actionKey, input)`；父页面负责 frame/session/canvas 校验并调用 API route；API route 组装 `RuntimeActor::UserCanvas` 后进入 Gateway。
+- Boundary: Canvas 文件和 iframe 代码不可信，不能直接拿 relay/MCP/http secret，也不能绕过父页面与 Gateway 自行调用底层 provider。
+
+### 2. Contracts
+
+`CanvasRuntimeSnapshot` 必须包含：
+
+```rust
+pub struct CanvasRuntimeSnapshot {
+    pub canvas_id: Uuid,
+    pub session_id: Option<String>,
+    pub runtime_bridge: CanvasRuntimeBridgeSnapshot,
+    // files / bindings / import_map ...
+}
+
+pub struct CanvasRuntimeBridgeSnapshot {
+    pub enabled: bool,
+    pub surface: Option<RuntimeSurface>,
+    pub disabled_reason: Option<String>,
+}
+```
+
+- 未绑定 `session_id` 时，`runtime_bridge.enabled = false`，不返回 action surface。
+- 绑定 `session_id` 时，API route 必须先确认该 SessionBinding 属于 Canvas 所在 Project，再用 `surface_for_actor(RuntimeActor::UserCanvas { session_id, canvas_id }, RuntimeContext::Session { session_id, project_id, ... })` 构造 manifest。
+- iframe SDK 发出的消息只包含 `action_key` 与 provider input，不包含 actor/context/trace；这些字段由父页面/API route 组装。
+- Canvas 专用 `/runtime-invoke` request 只接受 `session_id`、`action_key`、`input`；不得从 iframe/API body 接收 `actor`、`context`、`target`、`metadata`、`policy` 或 `trace`。
+- API route 必须再次校验 Session 与 Canvas Project 的绑定关系，不能信任前端已经校验过。
+
+### 3. HTTP Boundary
+
+```text
+GET /api/canvases/{id}/runtime-snapshot?session_id={session_id}
+  -> CanvasRuntimeSnapshot
+
+POST /api/canvases/{id}/runtime-invoke
+Request:
+{
+  "session_id": "session-1",
+  "action_key": "mcp.list_tools",
+  "input": {}
+}
+Response:
+  RuntimeInvocationResult
+```
+
+### 4. Good/Base/Bad Cases
+
+- Good: 父页面收到 iframe `canvas-runtime-invoke` 后，先校验 `frame_id`、`session_id` 与 snapshot manifest，再调用 `/runtime-invoke`。
+- Good: `/runtime-invoke` 使用 `RuntimeActor::UserCanvas` + `RuntimeContext::Session`，让 Gateway 继续执行 actor/context/action 校验。
+- Base: `runtime_bridge.surface.actions` 只表达 action 粒度，Canvas 如需具体 MCP tool surface，应再调用 `mcp.list_tools`。
+- Bad: iframe 直接拿 relay command、MCP server transport、backend id 或 platform token。
+- Bad: API route 直接调用 SessionHub / relay MCP provider；这样会复制 Gateway 的 policy 和 trace 语义。
+
+### 5. Tests Required
+
+- Canvas runtime 单测：未绑定 session 时 bridge disabled。
+- API check：`cargo check -p agentdash-api`。
+- Gateway check：`cargo test -p agentdash-application runtime_gateway`。
+- Frontend check：Canvas preview bridge 改动后至少运行前端 typecheck。
 
 ## Scenario: Setup Action 通过 Runtime Gateway 调用
 

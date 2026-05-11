@@ -26,7 +26,7 @@
   - Setup Action：尚未有 `session_id`，服务 workspace / MCP / backend / environment 的配置、探测与准备流程；不进入普通 runtime surface。
 - 支持至少以下调用方模型：
   - Canvas / iframe runtime 通过前端 Runtime Bridge SDK 调用。
-  - Agent 通过 RuntimeActionToolAdapter 调用。
+  - Agent 通过平台定义的受控工具调用能力；这些工具可以在内部复用 Runtime Gateway / relay 固定操作，但不把裸 Runtime Action 直接暴露给 Agent。
   - Workflow node 在生命周期执行中直接调用。
   - 环境准备业务通过 gateway 触发本机探测、准备、启动等动作。
   - 平台 UI 可通过 gateway 触发受控本机操作。
@@ -89,9 +89,20 @@ Runtime Client
 - 接入环境/工作区类 action 的统一门面，优先复用已有 `workspace_prepare`、`workspace_detect`、`browse_directory`、terminal relay/API 通路，而不是重写本机执行逻辑。
 - 将 workspace detect、browse directory、MCP probe 等创建前操作纳入 Gateway 统一协议，作为 Setup Action 暴露给平台 UI / environment setup actor；现有 API 入口后续迁移为调用 Gateway 的 thin route。
 - 将原先设想的只读 VFS 调整为 `context.read` / `context.search` 候选 provider：它的价值是验证 Gateway 可按 runtime scope 读取 session/project/workspace 上下文数据，但不强制作为首个 MVP 主线。
-- 实现 `RuntimeActionToolAdapter`，让 Agent 可以通过 Gateway 调用 action。
-- 实现 Canvas Runtime Bridge SDK 的最小调用链，但 Canvas 仅作为消费方之一。
+- Agent 侧暂不推进“Runtime Action 直接注入工具集”。后续应先设计平台可自定义工具体系：由平台工具封装 relay / runtime / provider 的固定操作，给 Agent 暴露更窄、更可控的工具语义。
+- 优先实现 Canvas Runtime Bridge SDK 的最小调用链，但 Canvas 仅作为消费方之一。
 - 记录 invocation trace，并在需要时投影为 session event。
+
+### Design Note: Agent Tool 不直接等于 Runtime Action
+
+2026-05-11 讨论更新：`RuntimeActionToolAdapter` 只能视为底层桥接基础件或测试工具，不代表产品层要把 Runtime Action 原样注入给 Agent。Agent 面向的是平台设计的一组可控工具，这些工具可以封装 relay 的固定操作、Runtime Gateway invocation 或其它平台能力，但工具名、参数、权限和行为边界应由平台显式定义。
+
+原因：
+
+- Runtime Action 是跨 Canvas / Workflow / UI / Setup 的内部能力协议，粒度偏基础，不一定适合 LLM 直接使用。
+- 直接把 `mcp.call_tool`、`workspace.*` 或未来 `relay.*` 这类 action 暴露给 Agent，会让 Agent 拿到过宽的执行面，降低行为可控性。
+- 很多场景更需要“平台工具”：例如一个工具只允许执行某个 relay 固定操作、固定参数模板或受控环境准备步骤，而不是让 Agent 自由拼 Runtime Action input。
+- 因此 Agent 注入策略先暂停；Runtime Consumers 下一优先级切到 Canvas Bridge / Canvas Runtime Snapshot。
 
 ### Workstream Decomposition
 
@@ -103,7 +114,7 @@ Runtime Client
    - 执行计划：[`plan-02-session-runtime-plane.md`](plan-02-session-runtime-plane.md)
 3. **Setup Action Plane**：把 workspace detect、browse directory、MCP probe、环境准备等创建前/准备期操作纳入 Gateway，现有 API 变成 thin route。
    - 执行计划：[`plan-03-setup-action-plane.md`](plan-03-setup-action-plane.md)
-4. **Runtime Consumers**：接入 Canvas Bridge SDK、Agent tool adapter、Workflow node、平台 UI 等消费端，但都复用 Gateway/Surface，不各写一套执行链。
+4. **Runtime Consumers**：接入 Canvas Bridge SDK、平台自定义 Agent tools、Workflow node、平台 UI 等消费端，但都复用 Gateway/Surface，不各写一套执行链。
    - 执行计划：[`plan-04-runtime-consumers.md`](plan-04-runtime-consumers.md)
 5. **Governance And Migration**：统一权限裁决、审计追踪、长任务 Operation、错误语义、文档与旧通路迁移验证。
    - 执行计划：[`plan-05-governance-migration.md`](plan-05-governance-migration.md)
@@ -142,7 +153,7 @@ Runtime Client
    - 已新增 `RuntimeActionToolAdapter` 与 `RuntimeActionToolSpec`，可将选定 Runtime Action 包装为 `AgentTool`。
    - Adapter 只负责将 Agent tool call 转成 `RuntimeInvocationRequest` 并调用 `RuntimeGateway::invoke`；不直接持有底层 provider，不绕过 Gateway policy。
    - Adapter 会把 runtime action / trace 与 provider details 回填到 `AgentToolResult.details`，便于后续审计和调试。
-   - 当前尚未默认注入到 session tool surface；是否暴露 generic Runtime Action tool 需等待 capability/surface 策略明确，避免和现有 per-MCP-tool schema 重复暴露。
+   - 该基础件当前不进入产品注入策略；后续 Agent 工具应优先走平台自定义工具体系，工具内部可选择复用 Gateway，而不是把 Runtime Action 原样暴露给 Agent。
 
 6. **Runtime Surface 已补 actor-aware action manifest**
    - `RuntimeGateway::surface_for_actor(actor, context)` 已落地，复用 Runtime Invocation 的 actor/context 校验语义。
@@ -150,17 +161,25 @@ Runtime Client
    - `surface_for(context)` 保留为 context-only 粗枚举，不能作为消费端授权来源。
    - actor-aware surface 只表达 action 粒度；MCP tool 粒度仍由 `mcp.list_tools` 负责。
 
+7. **Canvas Runtime Bridge 已完成最小调用链**
+   - `CanvasRuntimeSnapshot` 已新增 `runtime_bridge` metadata；绑定 `session_id` 时由 API route 通过 `RuntimeActor::UserCanvas` + `RuntimeContext::Session` 查询 actor-aware action manifest。
+   - `GET /api/canvases/{id}/runtime-snapshot?session_id=...` 会先确认 SessionBinding 属于 Canvas 所在 Project，再返回 Canvas 可见的 action surface。
+   - 已新增 `POST /api/canvases/{id}/runtime-invoke`，由 API route 组装 `RuntimeInvocationRequest` 并调用 `RuntimeGateway::invoke`，不让 Canvas 直接接触底层 provider。
+   - 前端 Canvas iframe 已注入 `window.agentdash.invoke(actionKey, input)`；iframe 只发 `postMessage`，父页面校验 frame/session/canvas/action manifest 后再调用后端 Gateway。
+   - `.trellis/spec/backend/runtime-gateway.md` 已补充 Canvas Runtime Bridge 场景和跨层契约。
+
 尚未完成的内容：
 
 1. **Session Runtime Plane 仍有后续增强**
    - `RuntimeGateway::surface_for_actor` 已完成 action 粒度 actor-aware manifest；具体 MCP tool surface 已由 `mcp.list_tools` 裁决。
    - 尚未形成统一 async/provider-aware surface API；如未来 provider 需要动态 action manifest，再另行扩展。
    - Session Runtime Action 目前先覆盖 MCP；VFS/context/workflow 等 provider 仍待后续切片。
-   - `RuntimeActionToolAdapter` 已有基础件，但还未进入正式 session tool 注入策略。
+   - Agent Runtime Action 直注策略已暂停；后续另行设计平台自定义工具体系，避免 Agent 直接操作裸 Runtime Action。
 
-2. **Runtime Consumers 尚未落地**
-   - Canvas Runtime Bridge SDK 尚未接入 Gateway。
-   - Agent tool adapter 基础件已完成，但自动注入、manifest 与 UI/Workflow 调用策略尚未接入。
+2. **Runtime Consumers 仍有后续增强**
+   - Canvas Runtime Bridge 已完成最小链路，但还未做高风险 action 的用户确认、gesture 约束、bridge nonce 持久化或 invocation result 的 UI 审计展示。
+   - Canvas Runtime Snapshot 已返回 action 粒度 manifest；具体 MCP tool surface 仍需通过 `mcp.list_tools` 动态获取。
+   - Agent tool adapter 基础件已完成，但不作为近期产品化方向；平台自定义工具体系需另开设计。
    - Workflow node 直接调用 Runtime Action 尚未接入。
    - 平台 UI 目前仍通过既有 HTTP route 间接触发 Setup Action，尚未有统一 Runtime Bridge client。
 
@@ -199,6 +218,7 @@ Runtime Client
 - [x] 明确 Session 是 Runtime Surface 的唯一一等宿主，Project / WorkspaceBinding / WorkflowRun / CanvasView 不形成平行运行时上下文。
 - [x] 明确 Setup Action 纳入 Runtime Gateway 统一协议，但不暴露给普通 Canvas / Agent / Workflow runtime surface。
 - [x] 现有 workspace detect、browse directory、MCP probe 等入口有明确迁移策略：API 层只保留 thin route，业务执行收口到 Gateway/provider。
+- [x] Canvas Runtime Snapshot 已能返回 UserCanvas actor-aware action manifest，并具备 iframe `window.agentdash.invoke()` 到 Gateway 的最小调用链。
 - [ ] 明确 HTTP action 的边界、allowlist、凭据策略、超时和响应大小限制。
 - [ ] 所有 invocation 均具备 trace/audit 语义。
 

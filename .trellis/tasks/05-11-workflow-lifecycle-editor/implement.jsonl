@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/05-11-workflow-lifecycle-editor/prd.md", "reason": "本任务决策、PR 拆分、Form/DAG 状态机、Clone 语义等所有必须遵守的约束"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端总览 + 设计约束（视图与状态解耦、Project 驱动、实时状态、数据隔离），所有 PR 实现必须遵循"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "FSD 模块组织规则；新增组件（LifecycleEditorShell / 受控 Panel）必须放在 features/workflow/ 正确子目录"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件 Props 设计、样式约定；panel 组件改造为受控组件时必遵守"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 规则；PR2 合并 lcEditor/wfEditor 为 lifecycleEditor 时参考"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "自定义 hook 规范；Form/DAG 模式判定逻辑可能抽成 hook"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "snake_case 直接映射、类型守卫；处理 LifecycleEdge 判别联合、EditorState 泛型时关键"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "禁止模式 + 代码标准；防止 PR1 解耦时引入反模式"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-edge.md", "reason": "领域层 edge kind 与 DAG 校验规则（单 step 特例、entry must agent_node、禁自连接等）；Form/DAG 判定、Clone key 派生、节点合法性必须对齐"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "PR1 panel 解耦核心是重用 — Form 与 DAG 两种模式共享同一组 panel；拆分时需按本指南先想清楚"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "涉及 store ↔ component ↔ route 多层改动；PR2 切换入口涉及路由、store、组件三层一致性"}

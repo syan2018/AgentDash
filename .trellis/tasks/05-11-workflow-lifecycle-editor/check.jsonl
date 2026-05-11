@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/05-11-workflow-lifecycle-editor/prd.md", "reason": "Acceptance Criteria 与 Definition of Done 检查清单的唯一来源"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "代码标准 + 禁止模式校验；PR 收口时核对"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型守卫和 snake_case 映射约束；防止 panel 受控组件 props 类型走偏"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Props 与样式约定 — DOM 结构验收（不再有 DetailPanel 嵌套）需对齐"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "store 合并后的形态校验（单 lifecycleEditor、不再 lcEditor/wfEditor 镜像）"}
+{"file": ".trellis/spec/backend/workflow/lifecycle-edge.md", "reason": "校验领域约束未被破坏：entry 必须 agent_node、单 step 特例、禁自连接、edge kind/port 对齐"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "审视 PR1 panel 是否真复用（Form/DAG 共享）；防止拆分后两边各写一份"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "PR2/PR3 跨层一致性核对：路由层、store 层、组件层、Assets 面板入口同步"}

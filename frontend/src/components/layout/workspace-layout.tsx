@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useMatch, useNavigate, type NavLinkRenderProps } from "react-router-dom";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
-import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
+import { useSidebarSessionsStore } from "../../stores/sidebarSessionsStore";
 import { useTheme } from "../../hooks/use-theme";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project, ProjectSessionEntry } from "../../types";
@@ -21,11 +22,11 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
-// Icon 统一走 feather-style inline SVG，业务感更强：
-//  - Agent  → sparkles（AI / 代理）
-//  - Story  → scroll（故事脚本 / 叙事）
-//  - Assets → workflow 连线节点（工作流资产）
-//  - Routine→ list-checks（日常例行勾选）
+// Icon 与项目其他地方一致：feather-style，stroke 1.8 / 18px。
+//  - Agent  → bot（智能体）
+//  - Story  → book-open（故事 / 叙事）
+//  - Assets → layers（资产堆叠）
+//  - Routine→ check-square（例行勾选）
 const NAV_ITEMS: NavItem[] = [
   {
     key: "agent",
@@ -33,13 +34,13 @@ const NAV_ITEMS: NavItem[] = [
     defaultPath: "/dashboard/agent",
     pathPrefixes: ["/dashboard/agent", "/session/"],
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 3v4" />
-        <path d="m8 5 2 2 2-2" opacity="0" />
-        <path d="M5 8l2 2" />
-        <path d="M17 8l-2 2" />
-        <path d="M12 21a7 7 0 0 0 7-7c0-3-2-5-5-6-1-1-1-3 0-5-4 0-9 3-9 8a7 7 0 0 0 7 10Z" />
-        <circle cx="12" cy="14" r="1.2" fill="currentColor" />
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 8V4H8" />
+        <rect x="4" y="8" width="16" height="12" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
       </svg>
     ),
   },
@@ -49,11 +50,9 @@ const NAV_ITEMS: NavItem[] = [
     defaultPath: "/dashboard/story",
     pathPrefixes: ["/dashboard/story", "/story/"],
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8 21h11a2 2 0 0 0 2-2v-1a2 2 0 0 0-2-2H8v5Z" />
-        <path d="M8 16V5a2 2 0 1 0-4 0v14a2 2 0 0 0 2 2" />
-        <path d="M11 7h6" />
-        <path d="M11 11h6" />
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
       </svg>
     ),
   },
@@ -63,12 +62,10 @@ const NAV_ITEMS: NavItem[] = [
     defaultPath: "/dashboard/assets",
     pathPrefixes: ["/dashboard/assets", "/workflow/"],
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="6" height="6" rx="1" />
-        <rect x="15" y="4" width="6" height="6" rx="1" />
-        <rect x="9" y="15" width="6" height="6" rx="1" />
-        <path d="M6 9v3a2 2 0 0 0 2 2h4" />
-        <path d="M18 10v2a2 2 0 0 1-2 2h-4" />
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.91a1 1 0 0 0 0-1.83Z" />
+        <path d="M2 12.5l8.58 3.91a2 2 0 0 0 1.66 0L22 12.5" />
+        <path d="M2 17l8.58 3.91a2 2 0 0 0 1.66 0L22 17" />
       </svg>
     ),
   },
@@ -78,19 +75,16 @@ const NAV_ITEMS: NavItem[] = [
     defaultPath: "/dashboard/routine",
     pathPrefixes: ["/dashboard/routine"],
     icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-        <path d="m3 7 3 3 5-5" />
-        <path d="m3 14 3 3 5-5" />
-        <path d="M14 7h7" />
-        <path d="M14 14h7" />
-        <path d="M14 21h7" />
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path d="m9 12 2 2 4-4" />
       </svg>
     ),
   },
 ];
 
-// 底栏共享 popover 的 key
-type FooterPanelKey = "backend" | "stream" | "user" | "theme";
+// 底栏共享 popover：事件流移除（无人关注），仅保留后端 + 主题
+type FooterPanelKey = "backend" | "theme";
 
 export function WorkspaceLayout() {
   const location = useLocation();
@@ -99,7 +93,7 @@ export function WorkspaceLayout() {
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
-  const { sessions, loadForProject, clearForProject } = useActiveSessionsStore();
+  const { sessions, loadForProject, clearForProject } = useSidebarSessionsStore();
 
   const [activeFooterPanel, setActiveFooterPanel] = useState<FooterPanelKey | null>(null);
 
@@ -118,7 +112,7 @@ export function WorkspaceLayout() {
     }
   }, [currentProjectId, fetchWorkspaces]);
 
-  // 项目切换时同步活跃会话（与 agent-tab-view 共享 store，竞态由 store 兜底）
+  // Sidebar 会话列表：独立 store，独立刷新生命周期（与 agent-tab-view 脱钩）
   const prevProjectIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!currentProjectId) return;
@@ -127,6 +121,15 @@ export function WorkspaceLayout() {
     clearForProject(currentProjectId);
     void loadForProject(currentProjectId);
   }, [currentProjectId, clearForProject, loadForProject]);
+
+  // 定时轮询（30s），保证 sidebar 最近会话不过期；Agent tab 各自按需刷新
+  useEffect(() => {
+    if (!currentProjectId) return;
+    const interval = window.setInterval(() => {
+      void loadForProject(currentProjectId);
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [currentProjectId, loadForProject]);
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");
@@ -164,14 +167,22 @@ export function WorkspaceLayout() {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <aside className="relative flex h-full w-72 flex-col border-r border-border bg-background">
-        {/* 顶部：项目下拉（置顶替代原 header） */}
+        {/* 头部：品牌 */}
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3.5">
+          <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            APP
+          </span>
+          <h1 className="text-lg font-semibold tracking-tight text-foreground">AgentDash</h1>
+        </div>
+
+        {/* 项目下拉 */}
         <ProjectDropdown
           projects={projects}
           currentProjectId={currentProjectId}
           onSelect={selectProject}
         />
 
-        {/* 横排 Nav：切换感加强 —— 激活项用 primary 填充 pill */}
+        {/* 横排 Nav：icon + 文字标签，占两行 */}
         <div className="grid grid-cols-4 gap-1 border-b border-border px-2 py-2">
           {NAV_ITEMS.map((item) => {
             const isActive = activeMap[item.key];
@@ -182,7 +193,7 @@ export function WorkspaceLayout() {
                 title={item.label}
                 aria-label={item.label}
                 className={() =>
-                  `flex h-10 items-center justify-center rounded-[10px] transition-all ${
+                  `flex h-14 flex-col items-center justify-center gap-1 rounded-[10px] transition-all ${
                     isActive
                       ? "bg-primary text-primary-foreground shadow-sm"
                       : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -190,30 +201,20 @@ export function WorkspaceLayout() {
                 }
               >
                 {item.icon}
+                <span className="text-[10px] font-medium leading-none tracking-wide">{item.label}</span>
               </NavLink>
             );
           })}
         </div>
 
-        {/* Session 快捷列表 */}
+        {/* Session 快捷列表：flex-1 填充中段，内部自滚 */}
         <SessionShortcutList sessions={sessions} />
 
-        {/* 底栏共享 popover 面板 */}
-        {activeFooterPanel && (
-          <div className="border-t border-border bg-background">
-            <FooterPanelContent
-              panel={activeFooterPanel}
-              onClose={() => setActiveFooterPanel(null)}
-              backends={backends}
-              connectionState={connectionState}
-            />
-          </div>
-        )}
-
-        {/* 底栏横排按钮 */}
-        <FooterIconBar
+        {/* 底栏 */}
+        <SidebarFooter
           activePanel={activeFooterPanel}
           onTogglePanel={toggleFooterPanel}
+          onClosePanel={() => setActiveFooterPanel(null)}
           backends={backends}
           connectionState={connectionState}
           currentUser={currentUser}
@@ -236,149 +237,236 @@ interface ProjectDropdownProps {
   onSelect: (id: string) => void;
 }
 
+const PROJECT_ROLE_LABELS: Record<NonNullable<Project["access"]["role"]>, string> = {
+  owner: "Owner",
+  editor: "Editor",
+  viewer: "Viewer",
+};
+const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
+  private: "私有",
+  template_visible: "模板可见",
+};
+function describeProjectAccess(project: Project): string {
+  if (project.access.via_admin_bypass) return "管理员旁路";
+  if (project.access.role) return PROJECT_ROLE_LABELS[project.access.role];
+  if (project.access.via_template_visibility) return "模板访客";
+  return "仅查看";
+}
+
 function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdownProps) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const switchBtnRef = useRef<HTMLButtonElement>(null);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
 
   const current = projects.find((p) => p.id === currentProjectId) ?? null;
+  const otherProjects = projects.filter((p) => p.id !== currentProjectId);
 
-  // 点击外部关闭
+  useEffect(() => {
+    if (!open) {
+      setPopupPos(null);
+      return;
+    }
+    const update = () => {
+      if (!switchBtnRef.current) return;
+      const rect = switchBtnRef.current.getBoundingClientRect();
+      setPopupPos({ top: Math.round(rect.top), left: Math.round(rect.right + 8) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (event: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      if (switchBtnRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  return (
-    <div ref={wrapperRef} className="relative border-b border-border">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-secondary/40"
+  const renderCard = (project: Project, isActive: boolean) => {
+    const isFocused = focusedProjectId === project.id;
+    const showSettingsButton = isActive || isFocused;
+    return (
+      <div
+        key={project.id}
+        className={`flex items-center justify-between rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+          isActive
+            ? "border-primary/20 bg-background"
+            : "border-transparent bg-transparent hover:border-border hover:bg-background/80"
+        }`}
+        onMouseEnter={() => setFocusedProjectId(project.id)}
+        onMouseLeave={() =>
+          setFocusedProjectId((value) => (value === project.id ? null : value))
+        }
+        onFocusCapture={() => setFocusedProjectId(project.id)}
+        onBlurCapture={(event) => {
+          const nextTarget = event.relatedTarget as Node | null;
+          if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+            setFocusedProjectId((value) => (value === project.id ? null : value));
+          }
+        }}
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-primary/10 text-primary">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-          </svg>
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {current?.name ?? "未选择项目"}
-          </p>
-          <p className="truncate text-[10px] text-muted-foreground">
-            {current ? (current.description || `${projects.length} 个项目可选`) : "请选择项目"}
-          </p>
-        </div>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+        <button
+          type="button"
+          onClick={() => {
+            onSelect(project.id);
+            if (!isActive) setOpen(false);
+          }}
+          className="min-w-0 flex-1 text-left text-foreground"
         >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute left-2 right-2 top-full z-20 mt-1 rounded-[10px] border border-border bg-background shadow-lg">
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">项目</span>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setIsCreateOpen(true);
-              }}
-              className="rounded-[6px] px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              + 新建
-            </button>
-          </div>
-
-          <div className="max-h-80 overflow-y-auto border-t border-border py-1">
-            {projects.length === 0 && (
-              <p className="px-3 py-3 text-xs text-muted-foreground">暂无项目</p>
+          <p className="truncate font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {project.description || `ID: ${project.id}`}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+              {describeProjectAccess(project)}
+            </span>
+            {project.is_template && (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+                模板
+              </span>
             )}
-            {projects.map((project) => {
-              const isActive = currentProjectId === project.id;
-              return (
-                <div
-                  key={project.id}
-                  className={`group flex items-center gap-1 px-2 ${isActive ? "" : ""}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSelect(project.id);
-                      setOpen(false);
-                    }}
-                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors ${
-                      isActive ? "bg-primary/5 text-foreground" : "text-foreground hover:bg-secondary/50"
-                    }`}
-                  >
-                    <span
-                      className={`shrink-0 ${isActive ? "text-primary" : "text-transparent"}`}
-                      aria-hidden="true"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M20 6 9 17l-5-5" />
-                      </svg>
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{project.name}</p>
-                      {project.description && (
-                        <p className="truncate text-[10px] text-muted-foreground">{project.description}</p>
-                      )}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSelect(project.id);
-                      navigate(`/projects/${project.id}/settings`);
-                      setOpen(false);
-                    }}
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground group-hover:opacity-100"
-                    aria-label="项目设置"
-                    title="项目设置"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="1" />
-                      <circle cx="19" cy="12" r="1" />
-                      <circle cx="5" cy="12" r="1" />
-                    </svg>
-                  </button>
-                </div>
-              );
-            })}
+            <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+              {PROJECT_VISIBILITY_LABELS[project.visibility]}
+            </span>
           </div>
+        </button>
+        {showSettingsButton && (
+          <button
+            type="button"
+            onClick={() => {
+              onSelect(project.id);
+              navigate(`/projects/${project.id}/settings`);
+              setOpen(false);
+            }}
+            className="ml-2 inline-flex h-7 w-7 items-center justify-center rounded-[8px] border border-border bg-secondary text-sm leading-none text-muted-foreground transition-colors hover:text-foreground"
+            aria-label="打开项目设置"
+            title="打开项目设置"
+          >
+            ⋯
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="relative space-y-1.5 border-b border-border px-3 py-3">
+      <div className="flex items-center justify-between px-1">
+        <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">项目</p>
+        <div className="flex items-center gap-1.5">
+          {otherProjects.length > 0 && (
+            <button
+              ref={switchBtnRef}
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-pressed={open}
+              className={`flex items-center gap-1 rounded-[8px] border px-2 py-1 text-xs transition-colors ${
+                open
+                  ? "border-border bg-secondary text-foreground"
+                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m17 3 4 4-4 4" />
+                <path d="M21 7H9" />
+                <path d="m7 21-4-4 4-4" />
+                <path d="M3 17h12" />
+              </svg>
+              <span>切换</span>
+              <span className="text-[10px] text-muted-foreground/80">{otherProjects.length}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            + 新建
+          </button>
         </div>
+      </div>
+
+      {/* 当前项目卡片 */}
+      {current ? (
+        renderCard(current, true)
+      ) : (
+        <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+          {projects.length === 0 ? "暂无项目" : "未选择项目"}
+        </p>
       )}
 
       <ProjectCreateDrawer open={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+
+      {/* 切换项目 popup：Portal 到 body + fixed 定位 */}
+      {open &&
+        otherProjects.length > 0 &&
+        popupPos &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            style={{ position: "fixed", top: popupPos.top, left: popupPos.left }}
+            className="z-50 w-80 overflow-hidden rounded-[12px] border border-border bg-background shadow-xl"
+          >
+            <div className="flex items-center justify-between px-4 pb-2 pt-3">
+              <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                切换项目
+              </span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+                aria-label="关闭"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="max-h-[70vh] space-y-1 overflow-y-auto px-2 pb-2">
+              {otherProjects.map((project) => renderCard(project, false))}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
 
-// ─── Session 快捷列表（紧凑单行） ──────────────────────────
+// ─── Session 快捷列表（容器高度自适应 + 末尾 ...） ──────────
 
 function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [rowHeights, setRowHeights] = useState<Map<string, number>>(new Map());
+  const [containerH, setContainerH] = useState(0);
 
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const activeSessionId = sessionRouteMatch?.params.sessionId ?? null;
@@ -391,48 +479,128 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
     });
   }, [sessions]);
 
+  // 监听容器高度变化
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const update = () => setContainerH(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 测量每行实际高度（记录到 id → height 的 Map）；DOM 变动时重算
+  useEffect(() => {
+    const map = new Map<string, number>();
+    rowsRef.current.forEach((el, id) => {
+      map.set(id, el.offsetHeight);
+    });
+    setRowHeights((prev) => {
+      // 仅当有差异时才 setState，避免无意义重渲染
+      if (prev.size === map.size) {
+        let same = true;
+        for (const [k, v] of map) {
+          if (prev.get(k) !== v) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return prev;
+      }
+      return map;
+    });
+  }, [sorted]);
+
+  // 用已知行高 + 容器高度决定可见数量；未知行用保守估算
+  const { displayed, hasMore } = useMemo(() => {
+    if (sorted.length === 0 || containerH <= 0) {
+      return { displayed: sorted, hasMore: false };
+    }
+    const estH = (s: ProjectSessionEntry) =>
+      rowHeights.get(s.session_id) ?? (s.agent_display_name?.trim() ? 52 : 36);
+    let acc = 0;
+    let count = 0;
+    for (const s of sorted) {
+      const h = estH(s);
+      if (acc + h > containerH) break;
+      acc += h;
+      count += 1;
+    }
+    if (count >= sorted.length) {
+      return { displayed: sorted, hasMore: false };
+    }
+    return { displayed: sorted.slice(0, Math.max(1, count)), hasMore: true };
+  }, [sorted, containerH, rowHeights]);
+
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
+    <div className="flex min-h-0 flex-1 flex-col border-b border-border">
+      {/* 标题行：左右各 px-4，与 ProjectDropdown 对齐 */}
+      <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">最近会话</span>
         {sorted.length > 0 && (
-          <span className="text-[10px] text-muted-foreground/70">{sorted.length}</span>
+          <span className="text-[10px] text-muted-foreground/70">
+            {hasMore ? `${displayed.length} / ${sorted.length}` : sorted.length}
+          </span>
         )}
       </div>
       {sorted.length === 0 ? (
-        <p className="px-3 py-2 text-xs text-muted-foreground">暂无活跃会话</p>
+        <p className="px-4 pb-3 text-xs text-muted-foreground">暂无活跃会话</p>
       ) : (
-        <div className="flex-1 overflow-y-auto">
-          {sorted.map((session) => {
-            const isActive = session.session_id === activeSessionId;
-            const title = session.session_title?.trim() || "无标题会话";
-            const agent = session.agent_display_name?.trim() || null;
-            const time = formatRelativeTime(session.last_activity);
-            return (
+        <>
+          <div ref={listRef} className="min-h-0 flex-1 overflow-hidden px-3">
+            {displayed.map((session) => {
+              const isActive = session.session_id === activeSessionId;
+              const title = session.session_title?.trim() || "无标题会话";
+              const agent = session.agent_display_name?.trim() || null;
+              const time = formatRelativeTime(session.last_activity);
+              return (
+                <button
+                  key={session.session_id}
+                  ref={(el) => {
+                    if (el) rowsRef.current.set(session.session_id, el);
+                    else rowsRef.current.delete(session.session_id);
+                  }}
+                  type="button"
+                  onClick={() => {
+                    if (location.pathname === `/session/${session.session_id}`) return;
+                    navigate(`/session/${session.session_id}`);
+                  }}
+                  className={`flex w-full flex-col gap-0.5 rounded-[8px] px-2.5 py-2 text-left transition-colors ${
+                    isActive ? "bg-primary/10" : "hover:bg-secondary/50"
+                  }`}
+                  title={agent ? `${title} · ${agent}` : title}
+                >
+                  <div className="flex items-center gap-2">
+                    <SessionStatusDot status={session.execution_status} />
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{title}</span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                  </div>
+                  {agent && (
+                    <p className="ml-3.5 truncate text-[11px] text-muted-foreground">{agent}</p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {/* 固定按钮槽：无论 hasMore 与否都占相同高度，列表容器尺寸稳定 */}
+          <div className="flex h-7 shrink-0 items-center justify-center px-3 pb-1">
+            {hasMore && (
               <button
-                key={session.session_id}
                 type="button"
-                onClick={() => {
-                  if (location.pathname === `/session/${session.session_id}`) return;
-                  navigate(`/session/${session.session_id}`);
-                }}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
-                  isActive ? "bg-primary/5" : "hover:bg-secondary/40"
-                }`}
-                title={agent ? `${title} · ${agent}` : title}
+                onClick={() => navigate("/dashboard/agent")}
+                title={`查看全部会话（还有 ${sorted.length - displayed.length} 个）`}
+                className="flex w-full items-center justify-center rounded-[8px] py-1 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
               >
-                <SessionStatusDot status={session.execution_status} />
-                <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{title}</span>
-                {agent && (
-                  <span className="shrink-0 rounded-[4px] bg-secondary/60 px-1 text-[10px] leading-[1.4] text-muted-foreground">
-                    {agent.slice(0, 2)}
-                  </span>
-                )}
-                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="5" cy="12" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="19" cy="12" r="1.5" />
+                </svg>
               </button>
-            );
-          })}
-        </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -476,104 +644,163 @@ function formatRelativeTime(timestamp: number | null): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-// ─── 底栏：横排 icon 按钮 ──────────────────────────────────
+// ─── 底栏：UserCard 常驻 + IconBar + Portal overlay popup ───
 
-interface FooterIconBarProps {
+interface SidebarFooterProps {
   activePanel: FooterPanelKey | null;
   onTogglePanel: (key: FooterPanelKey) => void;
+  onClosePanel: () => void;
   backends: import("../../types").BackendConfig[];
   connectionState: string;
   currentUser: ReturnType<typeof useCurrentUserStore.getState>["currentUser"];
   rememberedPath: string;
 }
 
-function FooterIconBar({ activePanel, onTogglePanel, backends, connectionState, currentUser, rememberedPath }: FooterIconBarProps) {
+function SidebarFooter({
+  activePanel,
+  onTogglePanel,
+  onClosePanel,
+  backends,
+  connectionState,
+  currentUser,
+  rememberedPath,
+}: SidebarFooterProps) {
+  const footerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const { theme } = useTheme();
+
+  const [anchor, setAnchor] = useState<{ top: number; left: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (!activePanel) {
+      setAnchor(null);
+      return;
+    }
+    const update = () => {
+      if (!footerRef.current) return;
+      const rect = footerRef.current.getBoundingClientRect();
+      setAnchor({ top: Math.round(rect.top), left: Math.round(rect.left), right: Math.round(rect.right) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [activePanel]);
+
+  useEffect(() => {
+    if (!activePanel) return;
+    const handler = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (overlayRef.current?.contains(target)) return;
+      if (footerRef.current?.contains(target)) return;
+      onClosePanel();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [activePanel, onClosePanel]);
+
   const backendOnline = backends.filter((b) => b.online).length;
   const backendDotClass = backendOnline > 0 ? "bg-emerald-500" : "bg-muted-foreground/30";
-  const streamDotClass =
-    connectionState === "connected"
-      ? "bg-emerald-500"
-      : connectionState === "reconnecting" || connectionState === "connecting"
-        ? "bg-amber-400"
-        : "bg-muted-foreground/30";
-  const userInitial = currentUser
-    ? (currentUser.display_name?.trim()?.[0] || currentUser.email?.trim()?.[0] || currentUser.user_id[0] || "?")
-        .toUpperCase()
-    : null;
+
+  const panelTitle =
+    activePanel === "backend" ? "后端连接" : activePanel === "theme" ? "主题" : "";
 
   return (
-    <div className="flex items-center gap-0.5 border-t border-border px-2 py-1.5">
-      <FooterIconButton
-        label="后端连接"
-        active={activePanel === "backend"}
-        onClick={() => onTogglePanel("backend")}
-      >
-        <span className="relative">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="3" width="20" height="8" rx="2" />
-            <rect x="2" y="13" width="20" height="8" rx="2" />
-            <path d="M6 7h.01" />
-            <path d="M6 17h.01" />
-          </svg>
-          <span className={`absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-background ${backendDotClass}`} />
-        </span>
-      </FooterIconButton>
+    <>
+      <div ref={footerRef} className="border-t border-border">
+        {currentUser && <UserCard />}
+        <div className="flex items-center gap-0.5 border-t border-border/60 px-2 py-1.5">
+          <FooterIconButton
+            label="后端连接"
+            active={activePanel === "backend"}
+            onClick={() => onTogglePanel("backend")}
+          >
+            <span className="relative">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="8" rx="2" />
+                <rect x="2" y="13" width="20" height="8" rx="2" />
+                <path d="M6 7h.01" />
+                <path d="M6 17h.01" />
+              </svg>
+              <span className={`absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-background ${backendDotClass}`} />
+            </span>
+          </FooterIconButton>
 
-      <FooterIconButton
-        label="事件流"
-        active={activePanel === "stream"}
-        onClick={() => onTogglePanel("stream")}
-      >
-        <span className="relative">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 12h-4l-3 9-6-18-3 9H2" />
-          </svg>
-          <span className={`absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-background ${streamDotClass}`} />
-        </span>
-      </FooterIconButton>
+          <FooterIconButton
+            label="主题"
+            active={activePanel === "theme"}
+            onClick={() => onTogglePanel("theme")}
+          >
+            <ThemeIcon theme={theme} />
+          </FooterIconButton>
 
-      {currentUser && (
-        <FooterIconButton
-          label="当前身份"
-          active={activePanel === "user"}
-          onClick={() => onTogglePanel("user")}
-        >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold text-foreground">
-            {userInitial}
-          </span>
-        </FooterIconButton>
-      )}
+          <div className="flex-1" />
 
-      <div className="flex-1" />
+          <NavLink
+            to="/settings"
+            state={{ return_to: rememberedPath }}
+            title="设置"
+            aria-label="设置"
+            className={({ isActive }: NavLinkRenderProps) =>
+              `flex h-8 w-8 items-center justify-center rounded-[8px] transition-colors ${
+                isActive
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+              }`
+            }
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </NavLink>
+        </div>
+      </div>
 
-      <NavLink
-        to="/settings"
-        state={{ return_to: rememberedPath }}
-        title="设置"
-        aria-label="设置"
-        className={({ isActive }: NavLinkRenderProps) =>
-          `flex h-8 w-8 items-center justify-center rounded-[8px] transition-colors ${
-            isActive
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          }`
-        }
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
-      </NavLink>
-
-      <FooterIconButton
-        label="主题"
-        active={activePanel === "theme"}
-        onClick={() => onTogglePanel("theme")}
-      >
-        <ThemeIcon theme={theme} />
-      </FooterIconButton>
-    </div>
+      {/* Portal overlay：从 footer 上方向上浮出，平面化内部内容（无嵌套 card） */}
+      {activePanel &&
+        anchor &&
+        createPortal(
+          <div
+            ref={overlayRef}
+            style={{
+              position: "fixed",
+              left: anchor.left + 8,
+              width: anchor.right - anchor.left - 16,
+              bottom: window.innerHeight - anchor.top + 6,
+              maxHeight: `calc(${anchor.top}px - 16px)`,
+            }}
+            className="z-40 flex flex-col overflow-hidden rounded-[12px] border border-border bg-background shadow-2xl"
+          >
+            <div className="flex items-center justify-between px-4 pb-2 pt-3">
+              <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                {panelTitle}
+              </span>
+              <button
+                type="button"
+                onClick={onClosePanel}
+                className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+                aria-label="关闭"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 pb-3">
+              {activePanel === "backend" && (
+                <BackendPanel backends={backends} connectionState={connectionState} />
+              )}
+              {activePanel === "theme" && <ThemePanel />}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -638,146 +865,56 @@ function ThemeIcon({ theme }: { theme: "light" | "dark" | "system" }) {
   );
 }
 
-// ─── 底栏共享 popover 内容 ─────────────────────────────────
+// ─── 常驻 UserCard ─────────────────────────────────────────
 
-interface FooterPanelContentProps {
-  panel: FooterPanelKey;
-  onClose: () => void;
-  backends: import("../../types").BackendConfig[];
-  connectionState: string;
-}
+function UserCard() {
+  const { currentUser } = useCurrentUserStore();
+  if (!currentUser) return null;
 
-function FooterPanelContent({ panel, onClose, backends, connectionState }: FooterPanelContentProps) {
+  const title = currentUser.display_name?.trim() || currentUser.email?.trim() || currentUser.user_id;
+  const subtitle = currentUser.email?.trim() || currentUser.user_id;
+  const initial = (title?.[0] || "?").toUpperCase();
+  const modeLabel = currentUser.auth_mode === "enterprise" ? "企业" : "个人";
+
   return (
-    <div className="px-3 py-2.5">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          {panel === "backend" && "后端连接"}
-          {panel === "stream" && "事件流"}
-          {panel === "user" && "当前身份"}
-          {panel === "theme" && "主题"}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
-          aria-label="关闭"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 6 6 18" />
-            <path d="m6 6 12 12" />
-          </svg>
-        </button>
+    <div className="flex items-center gap-2 px-3 py-2">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-foreground">
+        {initial}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-foreground">{title}</p>
+        {subtitle !== title && (
+          <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
+        )}
       </div>
-
-      {panel === "backend" && <BackendPanel backends={backends} />}
-      {panel === "stream" && <StreamPanel connectionState={connectionState} />}
-      {panel === "user" && <UserPanel />}
-      {panel === "theme" && <ThemePanel />}
+      <div className="flex shrink-0 items-center gap-1">
+        {currentUser.is_admin && (
+          <span className="rounded-[4px] border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">
+            Admin
+          </span>
+        )}
+        <span className="rounded-[4px] border border-border bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">
+          {modeLabel}
+        </span>
+      </div>
     </div>
   );
 }
 
-function BackendPanel({ backends }: { backends: import("../../types").BackendConfig[] }) {
+// ─── BackendPanel：平面化（行 + 分割线，无嵌套 card） ────────
+
+function BackendPanel({
+  backends,
+  connectionState,
+}: {
+  backends: import("../../types").BackendConfig[];
+  connectionState: string;
+}) {
   const [expandedId, setExpandedId] = useState<string | null>(
     backends.length === 1 ? backends[0].id : null,
   );
 
-  if (backends.length === 0) {
-    return <p className="rounded-[8px] border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">暂无后端</p>;
-  }
-
-  return (
-    <div className="space-y-1">
-      {backends.map((backend) => {
-        const isExpanded = expandedId === backend.id;
-        const executors = backend.capabilities?.executors ?? [];
-        const availableCount = executors.filter((e) => e.available).length;
-        const roots = backend.accessible_roots ?? [];
-        return (
-          <div key={backend.id} className="rounded-[8px] border border-border/60">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-secondary/30"
-              onClick={() => setExpandedId((prev) => (prev === backend.id ? null : backend.id))}
-            >
-              <span
-                className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
-              />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{backend.name}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
-                {backend.online
-                  ? `${availableCount} 执行器`
-                  : backend.backend_type === "local"
-                    ? "本机"
-                    : "远程"}
-              </span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </button>
-            {isExpanded && (
-              <div className="space-y-2 border-t border-border/60 px-2.5 py-2">
-                {backend.online && executors.length > 0 && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">执行器</p>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {executors.map((ex) => (
-                        <span
-                          key={ex.id}
-                          className={`inline-block rounded-[6px] border px-1.5 py-0.5 text-[10px] ${
-                            ex.available
-                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                              : "border-border bg-muted/50 text-muted-foreground"
-                          }`}
-                        >
-                          {ex.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {roots.length > 0 && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">可访问路径</p>
-                    <div className="mt-1 space-y-0.5">
-                      {roots.map((root) => (
-                        <p key={root} className="truncate text-[10px] text-muted-foreground" title={root}>
-                          {root.replace(/^\\\\\?\\/, "")}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{backend.backend_type === "local" ? "本机" : "远程"}</span>
-                  <span>·</span>
-                  <span>{backend.online ? "在线" : "离线"}</span>
-                  <span>·</span>
-                  <span className="truncate font-mono">{backend.id}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function StreamPanel({ connectionState }: { connectionState: string }) {
-  const label =
+  const streamLabel =
     connectionState === "connected"
       ? "已连接"
       : connectionState === "reconnecting"
@@ -785,51 +922,111 @@ function StreamPanel({ connectionState }: { connectionState: string }) {
         : connectionState === "connecting"
           ? "连接中…"
           : "未连接";
-  const dotClass =
+  const streamDotClass =
     connectionState === "connected"
       ? "bg-emerald-500"
       : connectionState === "reconnecting" || connectionState === "connecting"
         ? "bg-amber-400 animate-pulse"
         : "bg-muted-foreground/30";
-  return (
-    <div className="flex items-center gap-2 rounded-[8px] border border-border/60 px-2.5 py-2">
-      <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
-      <span className="text-xs text-foreground">{label}</span>
-      <span className="ml-auto text-[10px] text-muted-foreground">SSE</span>
-    </div>
-  );
-}
-
-function UserPanel() {
-  const { currentUser } = useCurrentUserStore();
-  if (!currentUser) return null;
-
-  const title = currentUser.display_name?.trim() || currentUser.email?.trim() || currentUser.user_id;
-  const subtitle = currentUser.email?.trim() || currentUser.user_id;
-  const modeLabel = currentUser.auth_mode === "enterprise" ? "企业模式" : "个人模式";
-  const groupCount = currentUser.groups.length;
 
   return (
-    <div className="space-y-2 rounded-[8px] border border-border/60 px-2.5 py-2">
-      <div>
-        <p className="truncate text-sm font-medium text-foreground">{title}</p>
-        {subtitle !== title && <p className="truncate text-[11px] text-muted-foreground">{subtitle}</p>}
+    <div>
+      {backends.length === 0 ? (
+        <p className="px-2 py-2 text-xs text-muted-foreground">暂无后端</p>
+      ) : (
+        <div>
+          {backends.map((backend) => {
+            const isExpanded = expandedId === backend.id;
+            const executors = backend.capabilities?.executors ?? [];
+            const availableCount = executors.filter((e) => e.available).length;
+            const roots = backend.accessible_roots ?? [];
+            return (
+              <div key={backend.id}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary/50"
+                  onClick={() => setExpandedId((prev) => (prev === backend.id ? null : backend.id))}
+                >
+                  <span
+                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{backend.name}</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {backend.online
+                      ? `${availableCount} 执行器`
+                      : backend.backend_type === "local"
+                        ? "本机"
+                        : "远程"}
+                  </span>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
+                {isExpanded && (
+                  <div className="space-y-2 px-2 pb-2 pt-1 text-[11px]">
+                    {backend.online && executors.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">执行器</p>
+                        <div className="flex flex-wrap gap-1">
+                          {executors.map((ex) => (
+                            <span
+                              key={ex.id}
+                              className={`inline-block rounded-[6px] px-1.5 py-0.5 text-[10px] ${
+                                ex.available
+                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                  : "bg-secondary text-muted-foreground"
+                              }`}
+                            >
+                              {ex.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {roots.length > 0 && (
+                      <div>
+                        <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">可访问路径</p>
+                        <div className="space-y-0.5">
+                          {roots.map((root) => (
+                            <p key={root} className="truncate text-[10px] text-muted-foreground" title={root}>
+                              {root.replace(/^\\\\\?\\/, "")}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span>{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                      <span>·</span>
+                      <span>{backend.online ? "在线" : "离线"}</span>
+                      <span>·</span>
+                      <span className="truncate font-mono">{backend.id}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 事件流状态：作为 backend 面板里的元信息行（无独立 card） */}
+      <div className="mt-2 flex items-center gap-2 border-t border-border/60 px-2 pt-2">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${streamDotClass}`} />
+        <span className="text-[11px] text-muted-foreground">事件流 · {streamLabel}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground/70">SSE</span>
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {currentUser.is_admin && (
-          <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
-            Admin
-          </span>
-        )}
-        <span className="rounded-[6px] border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">{modeLabel}</span>
-        <span className="rounded-[6px] border border-border bg-secondary/70 px-2 py-0.5 text-[10px] text-muted-foreground">
-          provider: {currentUser.provider ?? "unknown"}
-        </span>
-        <span className="rounded-[6px] border border-border bg-secondary/70 px-2 py-0.5 text-[10px] text-muted-foreground">
-          groups: {groupCount}
-        </span>
-      </div>
-      <p className="truncate font-mono text-[10px] text-muted-foreground">{currentUser.user_id}</p>
     </div>
   );
 }
@@ -842,7 +1039,7 @@ function ThemePanel() {
     { value: "system", label: "系统" },
   ];
   return (
-    <div className="flex gap-1 rounded-[8px] border border-border/60 p-1">
+    <div className="flex gap-1 px-1 pt-1">
       {options.map((option) => {
         const active = option.value === theme;
         return (
@@ -850,8 +1047,10 @@ function ThemePanel() {
             key={option.value}
             type="button"
             onClick={() => setTheme(option.value)}
-            className={`flex-1 rounded-[6px] px-2 py-1.5 text-xs transition-colors ${
-              active ? "bg-secondary text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            className={`flex-1 rounded-[8px] px-2 py-1.5 text-xs transition-colors ${
+              active
+                ? "bg-secondary text-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
             }`}
           >
             {option.label}

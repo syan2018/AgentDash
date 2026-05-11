@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 
 pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
 pub const CANVAS_SYSTEM_SKILL_PATH: &str = "skills/canvas-system/SKILL.md";
+pub const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH: &str =
+    "skills/canvas-system/references/runtime-bridge.md";
 const CANVAS_SYSTEM_SKILL_CONTENT: &str = include_str!("skills/canvas-system/SKILL.md");
+const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/runtime-bridge.md");
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanvasSandboxConfig {
@@ -78,23 +82,27 @@ root.innerHTML = `
             content: canvas_system_skill_content().to_string(),
         }
     }
+
+    pub fn default_canvas_system_runtime_bridge_reference() -> Self {
+        Self {
+            path: CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH.to_string(),
+            content: canvas_system_runtime_bridge_reference_content().to_string(),
+        }
+    }
 }
 
 pub fn ensure_canvas_system_skill(files: &mut Vec<CanvasFile>) -> bool {
-    let content = canvas_system_skill_content();
-    if let Some(file) = files
-        .iter_mut()
-        .find(|file| file.path == CANVAS_SYSTEM_SKILL_PATH)
-    {
-        if file.content == content {
-            return false;
-        }
-        file.content = content.to_string();
-        return true;
-    }
-
-    files.push(CanvasFile::default_canvas_system_skill());
-    true
+    let mut changed = ensure_managed_canvas_file(
+        files,
+        CANVAS_SYSTEM_SKILL_PATH,
+        canvas_system_skill_content(),
+    );
+    changed |= ensure_managed_canvas_file(
+        files,
+        CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH,
+        canvas_system_runtime_bridge_reference_content(),
+    );
+    changed
 }
 
 pub fn is_canvas_system_skill_path(path: &str) -> bool {
@@ -103,6 +111,30 @@ pub fn is_canvas_system_skill_path(path: &str) -> bool {
 
 pub fn canvas_system_skill_content() -> &'static str {
     CANVAS_SYSTEM_SKILL_CONTENT
+}
+
+pub fn canvas_system_runtime_bridge_reference_content() -> &'static str {
+    CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT
+}
+
+fn ensure_managed_canvas_file(
+    files: &mut Vec<CanvasFile>,
+    path: &'static str,
+    content: &'static str,
+) -> bool {
+    if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+        if file.content == content {
+            return false;
+        }
+        file.content = content.to_string();
+        return true;
+    }
+
+    files.push(CanvasFile {
+        path: path.to_string(),
+        content: content.to_string(),
+    });
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

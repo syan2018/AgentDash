@@ -13,7 +13,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 - Each attached canvas is exposed as a VFS mount named `cvs-<canvas_id>`.
 - Canvas mounts support `read`, `write`, `list`, and `search`; they do not support `exec`.
 - Use mount URIs such as `cvs-demo://src/main.tsx`. Do not use backend ids or absolute paths.
-- Keep this managed skill file intact: `skills/canvas-system/SKILL.md`.
+- Keep managed skill files intact under `skills/canvas-system/`.
 
 ## Workflow
 
@@ -60,6 +60,7 @@ const result = await window.agentdash.invoke("action.key", { /* action input */ 
 - Trigger bridge calls from explicit user actions such as buttons, forms, or refresh controls. Do not auto-run runtime actions on module load or render.
 - Do not implement a runtime action discovery flow in the canvas. Use only action keys and input contracts explicitly provided by the platform, the user request, or the surrounding task context.
 - Do not expose relay commands, MCP transports, backend ids, tokens, absolute paths, or arbitrary HTTP requests in canvas source.
+- For the full inline API reference, read `skills/canvas-system/references/runtime-bridge.md`.
 
 Example pattern:
 

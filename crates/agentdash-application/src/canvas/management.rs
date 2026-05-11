@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, ensure_canvas_system_skill,
-    is_canvas_system_skill_path,
+    CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH, Canvas, CanvasDataBinding, CanvasFile,
+    CanvasSandboxConfig, ensure_canvas_system_skill, is_canvas_system_skill_path,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -297,6 +297,9 @@ mod tests {
                 .any(|file| file.path == "skills/canvas-system/SKILL.md"
                     && file.content.contains("name: canvas-system"))
         );
+        assert!(canvas.files.iter().any(|file| file.path
+            == CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH
+            && file.content.contains("mcp.call_tool")));
         assert!(
             canvas
                 .sandbox_config
@@ -333,6 +336,12 @@ mod tests {
                 .files
                 .iter()
                 .any(|file| file.path == "skills/canvas-system/SKILL.md")
+        );
+        assert!(
+            canvas
+                .files
+                .iter()
+                .any(|file| file.path == CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH)
         );
     }
 

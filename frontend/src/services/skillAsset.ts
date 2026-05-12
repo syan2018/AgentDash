@@ -47,6 +47,12 @@ export interface SkillMarkdownFrontmatterPatch {
   disable_model_invocation?: boolean;
 }
 
+interface FrontmatterEntry {
+  key: string | null;
+  lines: string[];
+  value: string | null;
+}
+
 function normalizeSource(value: unknown): SkillAssetSource {
   return value === "builtin_seed" ? "builtin_seed" : "user";
 }
@@ -98,6 +104,96 @@ function parseFrontmatterValue(value: string): string {
   return trimmed;
 }
 
+function countLeadingSpaces(value: string): number {
+  return value.match(/^ */)?.[0].length ?? 0;
+}
+
+function isBlockScalarHeader(value: string): boolean {
+  return /^[>|][+-]?\d*$/.test(value.trim());
+}
+
+function parseBlockScalar(header: string, rawLines: string[]): string {
+  const indicator = header.trim()[0];
+  const chomp = header.trim().includes("-") ? "strip" : "clip";
+  const nonEmptyIndents = rawLines
+    .filter((line) => line.trim().length > 0)
+    .map(countLeadingSpaces);
+  const indent = nonEmptyIndents.length > 0 ? Math.min(...nonEmptyIndents) : 0;
+  const lines = rawLines.map((line) => line.slice(Math.min(indent, line.length)));
+  const parsed = indicator === "|" ? lines.join("\n") : foldYamlBlockLines(lines);
+  return chomp === "strip" ? parsed.replace(/\n+$/g, "") : `${parsed.replace(/\n+$/g, "")}\n`;
+}
+
+function foldYamlBlockLines(lines: string[]): string {
+  let result = "";
+  let previousBlank = true;
+  for (const line of lines) {
+    if (line.trim().length === 0) {
+      result = result.replace(/[ ]+$/g, "");
+      result += "\n";
+      previousBlank = true;
+      continue;
+    }
+    if (result && !previousBlank && !result.endsWith("\n")) {
+      result += " ";
+    }
+    result += line.trim();
+    previousBlank = false;
+  }
+  return result;
+}
+
+function parseFrontmatterEntries(frontmatter: string): FrontmatterEntry[] {
+  const lines = frontmatter.split(/\r?\n/);
+  const entries: FrontmatterEntry[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const match = /^(\s*)([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (!match) {
+      entries.push({ key: null, lines: [line], value: null });
+      index += 1;
+      continue;
+    }
+
+    const [, indent, key, rawValue] = match;
+    if (!isBlockScalarHeader(rawValue)) {
+      entries.push({
+        key,
+        lines: [line],
+        value: parseFrontmatterValue(rawValue),
+      });
+      index += 1;
+      continue;
+    }
+
+    const baseIndent = indent.length;
+    let endIndex = index + 1;
+    while (endIndex < lines.length) {
+      const nextLine = lines[endIndex];
+      if (nextLine.trim().length === 0) {
+        endIndex += 1;
+        continue;
+      }
+      const nextIndent = countLeadingSpaces(nextLine);
+      const nextLooksLikeTopLevelKey = /^[A-Za-z0-9_-]+:/.test(nextLine.trimStart());
+      if (nextIndent <= baseIndent && nextLooksLikeTopLevelKey) break;
+      endIndex += 1;
+    }
+
+    const blockLines = lines.slice(index + 1, endIndex);
+    entries.push({
+      key,
+      lines: lines.slice(index, endIndex),
+      value: parseBlockScalar(rawValue, blockLines),
+    });
+    index = endIndex;
+  }
+
+  return entries;
+}
+
 function readFrontmatterParts(content: string): {
   leading: string;
   frontmatter: string;
@@ -131,17 +227,13 @@ export function parseSkillMarkdown(content: string): ParsedSkillMarkdown {
   let description: string | null = null;
   let disableModelInvocation = false;
 
-  for (const line of parts.frontmatter.split(/\r?\n/)) {
-    const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line.trim());
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    const value = parseFrontmatterValue(rawValue);
-    if (key === "name") {
-      name = value;
-    } else if (key === "description") {
-      description = value;
-    } else if (key === "disable-model-invocation") {
-      disableModelInvocation = value === "true";
+  for (const entry of parseFrontmatterEntries(parts.frontmatter)) {
+    if (entry.key === "name") {
+      name = entry.value;
+    } else if (entry.key === "description") {
+      description = entry.value;
+    } else if (entry.key === "disable-model-invocation") {
+      disableModelInvocation = entry.value === "true";
     }
   }
 
@@ -158,6 +250,14 @@ function quotedYamlString(value: string): string {
   return JSON.stringify(value);
 }
 
+function yamlScalarField(key: string, value: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized.includes("\n")) {
+    return `${key}: ${quotedYamlString(normalized)}`;
+  }
+  return [`${key}: |-`, ...normalized.split("\n").map((line) => `  ${line}`)].join("\n");
+}
+
 export function buildSkillMarkdown(asset: SkillAssetDraft): string {
   const frontmatter = buildSkillYamlFrontmatter(asset);
   const body = asset.body.trimEnd();
@@ -168,7 +268,7 @@ export function buildSkillYamlFrontmatter(asset: SkillAssetDraft): string {
   return [
     "---",
     `name: ${asset.key.trim()}`,
-    `description: ${quotedYamlString(asset.description.trim())}`,
+    yamlScalarField("description", asset.description),
     ...(asset.disable_model_invocation ? ["disable-model-invocation: true"] : []),
     "---",
   ].join("\n");
@@ -200,7 +300,7 @@ export function updateSkillMarkdownFrontmatter(
     return `${buildSkillYamlFrontmatter(draft)}\n${content}`;
   }
 
-  const lines = parts.frontmatter.split(/\r?\n/);
+  const entries = parseFrontmatterEntries(parts.frontmatter);
   const touched = {
     name: false,
     description: false,
@@ -208,33 +308,33 @@ export function updateSkillMarkdownFrontmatter(
   };
   const nextLines: string[] = [];
 
-  for (const line of lines) {
-    const match = /^([A-Za-z0-9_-]+):/.exec(line.trim());
-    const key = match?.[1] ?? null;
-    if (key === "name") {
-      nextLines.push(patches.name && nextName != null ? `name: ${nextName.trim()}` : line);
+  for (const entry of entries) {
+    if (entry.key === "name") {
+      nextLines.push(
+        patches.name && nextName != null ? `name: ${nextName.trim()}` : entry.lines.join("\n"),
+      );
       touched.name = true;
       continue;
     }
-    if (key === "description") {
+    if (entry.key === "description") {
       nextLines.push(
         patches.description && nextDescription != null
-          ? `description: ${quotedYamlString(nextDescription.trim())}`
-          : line,
+          ? yamlScalarField("description", nextDescription)
+          : entry.lines.join("\n"),
       );
       touched.description = true;
       continue;
     }
-    if (key === "disable-model-invocation") {
+    if (entry.key === "disable-model-invocation") {
       if (patches.disable_model_invocation) {
         if (nextDisableModelInvocation) nextLines.push("disable-model-invocation: true");
       } else {
-        nextLines.push(line);
+        nextLines.push(entry.lines.join("\n"));
       }
       touched.disable_model_invocation = true;
       continue;
     }
-    nextLines.push(line);
+    nextLines.push(entry.lines.join("\n"));
   }
 
   if (!touched.name && patches.name && nextName != null) {
@@ -245,7 +345,7 @@ export function updateSkillMarkdownFrontmatter(
     nextLines.splice(
       insertAt >= 0 ? insertAt + 1 : nextLines.length,
       0,
-      `description: ${quotedYamlString(nextDescription.trim())}`,
+      yamlScalarField("description", nextDescription),
     );
   }
   if (

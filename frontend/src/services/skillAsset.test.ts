@@ -110,4 +110,51 @@ describe("skillAsset", () => {
       body: "# Writer\n",
     });
   });
+
+  it("parses folded YAML description blocks", () => {
+    const parsed = parseSkillMarkdown(
+      [
+        "---",
+        "name: abc-slang",
+        "description: >-",
+        "  将非技术人员的口语自动翻译为",
+        "  项目代码术语。",
+        "disable-model-invocation: true",
+        "---",
+        "# Body",
+        "",
+      ].join("\n"),
+    );
+
+    expect(parsed).toMatchObject({
+      name: "abc-slang",
+      description: "将非技术人员的口语自动翻译为 项目代码术语。",
+      disable_model_invocation: true,
+    });
+  });
+
+  it("replaces multiline YAML description blocks without leaving stale lines", () => {
+    const content = [
+      "---",
+      "name: abc-slang",
+      "description: >-",
+      "  旧描述第一行",
+      "  旧描述第二行",
+      "category: docs",
+      "---",
+      "# Body",
+      "",
+    ].join("\n");
+
+    const updated = updateSkillMarkdownFrontmatter(content, {
+      description: "新描述第一行\n新描述第二行",
+    });
+
+    expect(updated).toContain("description: |-\n  新描述第一行\n  新描述第二行");
+    expect(updated).toContain("category: docs");
+    expect(updated).not.toContain("旧描述");
+    expect(parseSkillMarkdown(updated)).toMatchObject({
+      description: "新描述第一行\n新描述第二行",
+    });
+  });
 });

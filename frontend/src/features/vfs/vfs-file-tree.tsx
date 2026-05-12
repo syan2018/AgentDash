@@ -26,6 +26,7 @@ export interface VfsFileTreeProps {
   mountId: string;
   onSelectFile: (path: string) => void;
   selectedPath: string | null;
+  refreshKey?: number;
 }
 
 // ─── Component ──────────────────────────────────────────
@@ -35,6 +36,7 @@ export function VfsFileTree({
   mountId,
   onSelectFile,
   selectedPath,
+  refreshKey = 0,
 }: VfsFileTreeProps) {
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,7 +62,7 @@ export function VfsFileTree({
         setLoading(false);
       }
     })();
-  }, [surfaceRef, mountId]);
+  }, [surfaceRef, mountId, refreshKey]);
 
   const toggleDir = useCallback(
     async (path: string) => {

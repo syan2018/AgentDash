@@ -7,9 +7,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
+  createSurfaceFile,
+  deleteSurfaceFile,
   readSurfaceFile,
+  renameSurfaceFile,
   writeSurfaceFile,
 } from "../../services/vfs";
 import type { ExecutionVfs, ResolvedVfsSurface } from "../../types";
@@ -30,6 +34,11 @@ interface MountOption {
   displayName: string;
   provider: string;
   canWrite: boolean;
+  editCapabilities: {
+    create: boolean;
+    delete: boolean;
+    rename: boolean;
+  };
 }
 
 export function VfsBrowserPanel({
@@ -43,6 +52,9 @@ export function VfsBrowserPanel({
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
+  const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+  const [operationBusy, setOperationBusy] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
 
   const surfaceRef = surface?.surface_ref ?? null;
 
@@ -53,6 +65,13 @@ export function VfsBrowserPanel({
       displayName: m.display_name || m.id,
       provider: m.provider,
       canWrite: m.default_write || m.capabilities.includes("write"),
+      editCapabilities: "edit_capabilities" in m
+        ? m.edit_capabilities
+        : {
+            create: m.default_write || m.capabilities.includes("write"),
+            delete: false,
+            rename: false,
+          },
     }));
   }, [surface, vfs]);
 
@@ -72,6 +91,7 @@ export function VfsBrowserPanel({
       setSelectedFilePath(null);
       setFileContent(null);
     }
+    setOperationError(null);
   }, [mounts, selectedMountId, initialMountId, initialFilePath]);
 
   // 有 initialFilePath 时自动加载文件内容
@@ -90,6 +110,7 @@ export function VfsBrowserPanel({
     async (path: string) => {
       if (!surfaceRef || !selectedMountId) return;
       setSelectedFilePath(path);
+      setOperationError(null);
       onNavigate?.(selectedMountId, path);
       setFileLoading(true);
       try {
@@ -121,6 +142,87 @@ export function VfsBrowserPanel({
     },
     [surfaceRef, selectedMountId, selectedFilePath],
   );
+
+  const refreshTree = useCallback(() => {
+    setTreeRefreshKey((current) => current + 1);
+  }, []);
+
+  const handleCreateFile = useCallback(async () => {
+    if (!surfaceRef || !selectedMountId || !selectedMount?.editCapabilities.create) return;
+    const suggestedPath = selectedFilePath
+      ? `${parentPath(selectedFilePath)}new-file.txt`
+      : "new-file.txt";
+    const path = window.prompt("新建文件路径", suggestedPath);
+    const normalizedPath = path?.trim();
+    if (!normalizedPath) return;
+
+    setOperationBusy(true);
+    setOperationError(null);
+    try {
+      await createSurfaceFile({
+        surfaceRef,
+        mountId: selectedMountId,
+        path: normalizedPath,
+        content: "",
+      });
+      refreshTree();
+      setSelectedFilePath(normalizedPath);
+      setFileContent("");
+      onNavigate?.(selectedMountId, normalizedPath);
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : "新建文件失败");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [surfaceRef, selectedMountId, selectedMount, selectedFilePath, refreshTree, onNavigate]);
+
+  const handleDeleteFile = useCallback(async () => {
+    if (!surfaceRef || !selectedMountId || !selectedFilePath || !selectedMount?.editCapabilities.delete) return;
+    if (!window.confirm(`删除文件「${selectedFilePath}」？`)) return;
+
+    setOperationBusy(true);
+    setOperationError(null);
+    try {
+      await deleteSurfaceFile({
+        surfaceRef,
+        mountId: selectedMountId,
+        path: selectedFilePath,
+      });
+      refreshTree();
+      setSelectedFilePath(null);
+      setFileContent(null);
+      onNavigate?.(selectedMountId, null);
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : "删除文件失败");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [surfaceRef, selectedMountId, selectedFilePath, selectedMount, refreshTree, onNavigate]);
+
+  const handleRenameFile = useCallback(async () => {
+    if (!surfaceRef || !selectedMountId || !selectedFilePath || !selectedMount?.editCapabilities.rename) return;
+    const path = window.prompt("重命名为", selectedFilePath);
+    const normalizedPath = path?.trim();
+    if (!normalizedPath || normalizedPath === selectedFilePath) return;
+
+    setOperationBusy(true);
+    setOperationError(null);
+    try {
+      await renameSurfaceFile({
+        surfaceRef,
+        mountId: selectedMountId,
+        fromPath: selectedFilePath,
+        toPath: normalizedPath,
+      });
+      refreshTree();
+      setSelectedFilePath(normalizedPath);
+      onNavigate?.(selectedMountId, normalizedPath);
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : "重命名文件失败");
+    } finally {
+      setOperationBusy(false);
+    }
+  }, [surfaceRef, selectedMountId, selectedFilePath, selectedMount, refreshTree, onNavigate]);
 
   if (mounts.length === 0) {
     return (
@@ -156,6 +258,7 @@ export function VfsBrowserPanel({
             setSelectedMountId(newMountId);
             setSelectedFilePath(null);
             setFileContent(null);
+            setOperationError(null);
             onNavigate?.(newMountId, null);
           }}
           className="min-w-0 flex-1 rounded-[6px] border border-border bg-background px-2 py-1 text-xs text-foreground focus:border-primary/40 focus:outline-none"
@@ -166,7 +269,36 @@ export function VfsBrowserPanel({
             </option>
           ))}
         </select>
+        <div className="flex shrink-0 items-center gap-1">
+          <FileActionButton
+            title="新建文件"
+            disabled={operationBusy || !selectedMount?.editCapabilities.create}
+            onClick={() => void handleCreateFile()}
+          >
+            <PlusIcon />
+          </FileActionButton>
+          <FileActionButton
+            title="重命名当前文件"
+            disabled={operationBusy || !selectedFilePath || !selectedMount?.editCapabilities.rename}
+            onClick={() => void handleRenameFile()}
+          >
+            <RenameIcon />
+          </FileActionButton>
+          <FileActionButton
+            title="删除当前文件"
+            disabled={operationBusy || !selectedFilePath || !selectedMount?.editCapabilities.delete}
+            onClick={() => void handleDeleteFile()}
+            danger
+          >
+            <TrashIcon />
+          </FileActionButton>
+        </div>
       </div>
+      {operationError && (
+        <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-3 py-1 text-xs text-destructive">
+          {operationError}
+        </div>
+      )}
 
       {/* 左右分栏 */}
       <Group orientation="horizontal" className="min-h-0 flex-1">
@@ -179,6 +311,7 @@ export function VfsBrowserPanel({
                 mountId={selectedMountId}
                 onSelectFile={(path) => void handleSelectFile(path)}
                 selectedPath={selectedFilePath}
+                refreshKey={treeRefreshKey}
               />
             )}
           </div>
@@ -213,5 +346,72 @@ export function VfsBrowserPanel({
         </Panel>
       </Group>
     </div>
+  );
+}
+
+function parentPath(path: string): string {
+  const index = path.lastIndexOf("/");
+  if (index < 0) return "";
+  return `${path.slice(0, index)}/`;
+}
+
+function FileActionButton({
+  children,
+  title,
+  disabled,
+  danger = false,
+  onClick,
+}: {
+  children: ReactNode;
+  title: string;
+  disabled?: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        danger
+          ? "border-destructive/25 text-destructive hover:bg-destructive/10"
+          : "border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function RenameIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
   );
 }

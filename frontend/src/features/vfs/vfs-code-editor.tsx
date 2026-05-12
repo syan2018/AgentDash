@@ -61,7 +61,7 @@ export interface VfsCodeEditorProps {
   content: string;
   filePath: string;
   readOnly?: boolean;
-  onSave?: (content: string) => void;
+  onSave?: (content: string) => void | Promise<void>;
   className?: string;
 }
 
@@ -111,7 +111,7 @@ export function VfsCodeEditor({
     const currentContent = viewRef.current.state.doc.toString();
     setSaving(true);
     try {
-      onSave(currentContent);
+      await onSave(currentContent);
       setIsDirty(false);
     } finally {
       setSaving(false);

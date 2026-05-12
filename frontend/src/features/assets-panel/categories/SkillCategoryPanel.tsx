@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectStore } from "../../../stores/projectStore";
 import {
   bootstrapSkillAssets,
+  buildSkillYamlFrontmatter,
   createEmptySkillAssetDraft,
   createSkillAsset,
   deleteSkillAsset,
@@ -466,28 +467,11 @@ function SkillEditorDialog({
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 lg:grid-cols-[320px_minmax(0,1fr)]">
           <section className="space-y-4">
             <label className="block space-y-1.5">
-              <span className="agentdash-form-label">Key</span>
-              <input value={draft.key} onChange={(event) => updateField("key", event.target.value)} className="agentdash-form-input" placeholder="my-skill" />
-            </label>
-
-            <label className="block space-y-1.5">
               <span className="agentdash-form-label">显示名称</span>
               <input value={draft.display_name} onChange={(event) => updateField("display_name", event.target.value)} className="agentdash-form-input" placeholder="My Skill" />
             </label>
 
-            <label className="block space-y-1.5">
-              <span className="agentdash-form-label">描述</span>
-              <textarea value={draft.description} onChange={(event) => updateField("description", event.target.value)} className="agentdash-form-textarea" rows={3} />
-            </label>
-
-            <label className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/30 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={draft.disable_model_invocation}
-                onChange={(event) => updateField("disable_model_invocation", event.target.checked)}
-              />
-              <span className="text-xs text-foreground">仅允许显式触发</span>
-            </label>
+            <SkillYamlMetaPanel draft={draft} onChange={onDraftChange} />
 
             <section className="space-y-2">
               <div className="flex items-center justify-between">
@@ -556,6 +540,62 @@ function SkillEditorDialog({
         </footer>
       </div>
     </div>
+  );
+}
+
+function SkillYamlMetaPanel({
+  draft,
+  onChange,
+}: {
+  draft: SkillAssetDraft;
+  onChange: (draft: SkillAssetDraft) => void;
+}) {
+  const patchDraft = <K extends keyof SkillAssetDraft>(key: K, value: SkillAssetDraft[K]) => {
+    onChange({ ...draft, [key]: value });
+  };
+
+  return (
+    <section className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="agentdash-form-label">YAML meta</p>
+        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          SKILL.md
+        </span>
+      </div>
+
+      <label className="block space-y-1.5">
+        <span className="agentdash-form-label">name</span>
+        <input
+          value={draft.key}
+          onChange={(event) => patchDraft("key", event.target.value)}
+          className="agentdash-form-input"
+          placeholder="my-skill"
+        />
+      </label>
+
+      <label className="block space-y-1.5">
+        <span className="agentdash-form-label">description</span>
+        <textarea
+          value={draft.description}
+          onChange={(event) => patchDraft("description", event.target.value)}
+          className="agentdash-form-textarea"
+          rows={3}
+        />
+      </label>
+
+      <label className="flex items-center gap-2 rounded-[7px] border border-border bg-background px-3 py-2">
+        <input
+          type="checkbox"
+          checked={draft.disable_model_invocation}
+          onChange={(event) => patchDraft("disable_model_invocation", event.target.checked)}
+        />
+        <span className="text-xs text-foreground">disable-model-invocation</span>
+      </label>
+
+      <pre className="max-h-40 overflow-auto rounded-[7px] border border-border bg-background px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+        {buildSkillYamlFrontmatter(draft)}
+      </pre>
+    </section>
   );
 }
 

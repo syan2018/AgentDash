@@ -145,15 +145,19 @@ function quotedYamlString(value: string): string {
 }
 
 export function buildSkillMarkdown(asset: SkillAssetDraft): string {
-  const frontmatter = [
+  const frontmatter = buildSkillYamlFrontmatter(asset);
+  const body = asset.body.trimEnd();
+  return body ? `${frontmatter}\n${body}\n` : `${frontmatter}\n`;
+}
+
+export function buildSkillYamlFrontmatter(asset: SkillAssetDraft): string {
+  return [
     "---",
     `name: ${asset.key.trim()}`,
     `description: ${quotedYamlString(asset.description.trim())}`,
     ...(asset.disable_model_invocation ? ["disable-model-invocation: true"] : []),
     "---",
   ].join("\n");
-  const body = asset.body.trimEnd();
-  return body ? `${frontmatter}\n${body}\n` : `${frontmatter}\n`;
 }
 
 export function draftFromSkillAsset(asset: SkillAssetDto): SkillAssetDraft {

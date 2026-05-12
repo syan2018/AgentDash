@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSkillMarkdown,
+  buildSkillYamlFrontmatter,
   draftFromSkillAsset,
   dtoFilesFromDraft,
   mapSkillAsset,
@@ -63,6 +64,9 @@ describe("skillAsset", () => {
 
     expect(validateSkillAssetDraft(draft).ok).toBe(true);
     expect(buildSkillMarkdown(draft)).toContain("name: writer");
+    expect(buildSkillYamlFrontmatter(draft)).toBe(
+      '---\nname: writer\ndescription: "写作辅助"\n---',
+    );
     expect(dtoFilesFromDraft(draft).map((file) => file.path)).toEqual([
       "SKILL.md",
       "references/style.md",

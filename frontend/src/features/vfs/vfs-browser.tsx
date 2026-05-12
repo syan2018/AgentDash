@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type {
   ExecutionVfs,
   ResolvedMountSummary,
@@ -15,6 +16,7 @@ import type {
 } from "../../types";
 import { resolveVfsSurface } from "../../services/vfs";
 import { VfsBrowserPanel } from "./vfs-browser-panel";
+import type { VfsBrowserPanelInspectorContext } from "./vfs-browser-panel";
 
 export interface VfsBrowserProps {
   /** 已解析好的 runtime / preview surface（优先使用） */
@@ -32,6 +34,7 @@ export interface VfsBrowserProps {
   /** 裁切到 mount 内的指定子目录 */
   rootPath?: string;
   protectedFilePaths?: string[];
+  renderInspector?: (context: VfsBrowserPanelInspectorContext) => ReactNode;
   browserHeightClassName?: string;
   className?: string;
 }
@@ -62,6 +65,7 @@ export function VfsBrowser({
   initialFilePath,
   rootPath,
   protectedFilePaths,
+  renderInspector,
   browserHeightClassName = "h-[520px] min-h-[360px] max-h-[70vh]",
   className = "",
 }: VfsBrowserProps) {
@@ -163,6 +167,7 @@ export function VfsBrowser({
           initialFilePath={initialFilePath}
           rootPath={rootPath}
           protectedFilePaths={protectedFilePaths}
+          renderInspector={renderInspector}
         />
       </div>
     </div>

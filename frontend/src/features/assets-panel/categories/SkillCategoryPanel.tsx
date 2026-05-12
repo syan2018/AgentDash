@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
-import { VfsBrowser, VfsCodeEditor } from "../../vfs";
+import { VfsBrowser, VfsCodeEditor, type VfsBrowserPanelInspectorContext } from "../../vfs";
 import {
   bootstrapSkillAssets,
   buildSkillYamlFrontmatter,
@@ -13,7 +13,9 @@ import {
   dtoFilesFromDraft,
   fetchProjectSkillAssets,
   normalizeSkillExtraPath,
+  parseSkillMarkdown,
   resetSkillAssetFromBuiltin,
+  updateSkillMarkdownFrontmatter,
   updateSkillAsset,
   uploadSkillAssets,
   validateSkillAssetDraft,
@@ -472,6 +474,7 @@ function SkillEditorDialog({
               protectedFilePaths={[`${skillRootPath}/SKILL.md`]}
               browserHeightClassName="min-h-0 flex-1"
               className="flex h-full flex-col"
+              renderInspector={(context) => <SkillVfsInspector context={context} />}
             />
           </div>
         </div>
@@ -536,6 +539,186 @@ function SkillEditorDialog({
       </div>
     </div>
   );
+}
+
+function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorContext }) {
+  const isSkillDocument = context.displayPath === "SKILL.md";
+  const parsed = useMemo(
+    () => (context.fileContent && isSkillDocument ? parseSkillMarkdown(context.fileContent) : null),
+    [context.fileContent, isSkillDocument],
+  );
+  const [description, setDescription] = useState("");
+  const [disableModelInvocation, setDisableModelInvocation] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!parsed) return;
+    setDescription(parsed.description ?? "");
+    setDisableModelInvocation(parsed.disable_model_invocation);
+    setSaveError(null);
+  }, [parsed]);
+
+  const dirty = Boolean(
+    parsed &&
+      (description !== (parsed.description ?? "") ||
+        disableModelInvocation !== parsed.disable_model_invocation),
+  );
+
+  const saveMeta = useCallback(async () => {
+    if (!context.fileContent || context.readOnly || !parsed) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const nextContent = updateSkillMarkdownFrontmatter(context.fileContent, {
+        description,
+        disable_model_invocation: disableModelInvocation,
+      });
+      await context.saveFile(nextContent);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "保存 YAML meta 失败");
+    } finally {
+      setSaving(false);
+    }
+  }, [context, description, disableModelInvocation, parsed]);
+
+  if (!context.filePath) {
+    return (
+      <aside className="flex h-full flex-col justify-center px-4 text-center text-xs text-muted-foreground">
+        未选择文件
+      </aside>
+    );
+  }
+
+  if (!isSkillDocument || !parsed) {
+    return (
+      <aside className="space-y-4 p-4">
+        <InspectorHeader title="文件" badge={context.mount?.displayName ?? context.mountId ?? "mount"} />
+        <dl className="space-y-3 text-xs">
+          <InspectorRow label="path" value={context.displayPath ?? context.filePath} mono />
+          <InspectorRow label="mount" value={context.mountId ?? "-"} mono />
+          <InspectorRow label="provider" value={context.mount?.provider ?? "-"} />
+          <InspectorRow label="mode" value={context.readOnly ? "readonly" : "editable"} />
+          <InspectorRow label="size" value={formatBytes(context.fileContent?.length ?? 0)} />
+        </dl>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="space-y-4 p-4">
+      <InspectorHeader title="YAML meta" badge="SKILL.md" />
+
+      <section className="space-y-3 rounded-[8px] border border-border bg-background p-3">
+        <label className="block space-y-1.5">
+          <span className="agentdash-form-label">name</span>
+          <input
+            value={parsed.name ?? ""}
+            readOnly
+            className="agentdash-form-input font-mono text-[12px] opacity-80"
+          />
+        </label>
+
+        <label className="block space-y-1.5">
+          <span className="agentdash-form-label">description</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            readOnly={context.readOnly}
+            className="agentdash-form-textarea min-h-24"
+            rows={4}
+          />
+        </label>
+
+        <label className="flex items-center gap-2 rounded-[7px] border border-border bg-secondary/20 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={disableModelInvocation}
+            disabled={context.readOnly}
+            onChange={(event) => setDisableModelInvocation(event.target.checked)}
+          />
+          <span className="text-xs text-foreground">disable-model-invocation</span>
+        </label>
+
+        {saveError && (
+          <p className="rounded-[6px] border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+            {saveError}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-3">
+          <span className="text-[10px] text-muted-foreground">
+            {dirty ? "已修改" : "已同步"}
+          </span>
+          <button
+            type="button"
+            onClick={() => void saveMeta()}
+            disabled={context.readOnly || saving || !dirty}
+            className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            {saving ? "保存中..." : "保存 meta"}
+          </button>
+        </div>
+      </section>
+
+      <section className="space-y-2 rounded-[8px] border border-border bg-background p-3">
+        <div className="flex items-center justify-between">
+          <p className="agentdash-form-label">Frontmatter</p>
+          <span className="text-[10px] text-muted-foreground">{formatBytes(parsed.frontmatter?.length ?? 0)}</span>
+        </div>
+        <pre className="max-h-48 overflow-auto rounded-[7px] border border-border bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+          {parsed.frontmatter ?? ""}
+        </pre>
+      </section>
+
+      <section className="space-y-2 rounded-[8px] border border-border bg-background p-3">
+        <p className="agentdash-form-label">File</p>
+        <dl className="space-y-2 text-xs">
+          <InspectorRow label="path" value={context.displayPath ?? context.filePath} mono />
+          <InspectorRow label="mode" value={context.readOnly ? "readonly" : "editable"} />
+          <InspectorRow label="size" value={formatBytes(context.fileContent?.length ?? 0)} />
+        </dl>
+      </section>
+    </aside>
+  );
+}
+
+function InspectorHeader({ title, badge }: { title: string; badge: string }) {
+  return (
+    <header className="flex items-center justify-between gap-3">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </h4>
+      <span className="max-w-[160px] truncate rounded-[6px] border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+        {badge}
+      </span>
+    </header>
+  );
+}
+
+function InspectorRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <dt className="agentdash-form-label">{label}</dt>
+      <dd className={`break-words text-foreground/85 ${mono ? "font-mono text-[11px]" : ""}`}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function SkillYamlMetaPanel({

@@ -33,11 +33,18 @@ export interface SkillAssetValidationResult {
   message?: string;
 }
 
-interface ParsedSkillMarkdown {
+export interface ParsedSkillMarkdown {
   name: string | null;
   description: string | null;
   disable_model_invocation: boolean;
+  frontmatter: string | null;
   body: string;
+}
+
+export interface SkillMarkdownFrontmatterPatch {
+  name?: string;
+  description?: string;
+  disable_model_invocation?: boolean;
 }
 
 function normalizeSource(value: unknown): SkillAssetSource {
@@ -91,34 +98,40 @@ function parseFrontmatterValue(value: string): string {
   return trimmed;
 }
 
-function parseSkillMarkdown(content: string): ParsedSkillMarkdown {
-  const normalized = content.trimStart();
-  if (!normalized.startsWith("---")) {
+function readFrontmatterParts(content: string): {
+  leading: string;
+  frontmatter: string;
+  body: string;
+} | null {
+  const leadingLength = content.length - content.trimStart().length;
+  const leading = content.slice(0, leadingLength);
+  const normalized = content.slice(leadingLength);
+  const match = /^(?:---\r?\n)([\s\S]*?)(?:\r?\n---)(?:\r?\n)?/.exec(normalized);
+  if (!match) return null;
+  return {
+    leading,
+    frontmatter: match[1],
+    body: normalized.slice(match[0].length),
+  };
+}
+
+export function parseSkillMarkdown(content: string): ParsedSkillMarkdown {
+  const parts = readFrontmatterParts(content);
+  if (!parts) {
     return {
       name: null,
       description: null,
       disable_model_invocation: false,
+      frontmatter: null,
       body: content,
     };
   }
 
-  const closeIndex = normalized.slice(3).indexOf("\n---");
-  if (closeIndex < 0) {
-    return {
-      name: null,
-      description: null,
-      disable_model_invocation: false,
-      body: content,
-    };
-  }
-
-  const frontmatter = normalized.slice(3, closeIndex + 3);
-  const body = normalized.slice(closeIndex + 7).replace(/^\r?\n/, "");
   let name: string | null = null;
   let description: string | null = null;
   let disableModelInvocation = false;
 
-  for (const line of frontmatter.split(/\r?\n/)) {
+  for (const line of parts.frontmatter.split(/\r?\n/)) {
     const match = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line.trim());
     if (!match) continue;
     const [, key, rawValue] = match;
@@ -136,7 +149,8 @@ function parseSkillMarkdown(content: string): ParsedSkillMarkdown {
     name,
     description,
     disable_model_invocation: disableModelInvocation,
-    body,
+    frontmatter: parts.frontmatter,
+    body: parts.body,
   };
 }
 
@@ -158,6 +172,91 @@ export function buildSkillYamlFrontmatter(asset: SkillAssetDraft): string {
     ...(asset.disable_model_invocation ? ["disable-model-invocation: true"] : []),
     "---",
   ].join("\n");
+}
+
+export function updateSkillMarkdownFrontmatter(
+  content: string,
+  patch: SkillMarkdownFrontmatterPatch,
+): string {
+  const parts = readFrontmatterParts(content);
+  const parsed = parseSkillMarkdown(content);
+  const patches = {
+    name: Object.prototype.hasOwnProperty.call(patch, "name"),
+    description: Object.prototype.hasOwnProperty.call(patch, "description"),
+    disable_model_invocation: Object.prototype.hasOwnProperty.call(
+      patch,
+      "disable_model_invocation",
+    ),
+  };
+  const nextName = patch.name ?? parsed.name;
+  const nextDescription = patch.description ?? parsed.description;
+  const nextDisableModelInvocation =
+    patch.disable_model_invocation ?? parsed.disable_model_invocation;
+
+  if (!parts) {
+    const draft = createEmptySkillAssetDraft(nextName ?? "");
+    draft.description = nextDescription ?? "";
+    draft.disable_model_invocation = nextDisableModelInvocation;
+    return `${buildSkillYamlFrontmatter(draft)}\n${content}`;
+  }
+
+  const lines = parts.frontmatter.split(/\r?\n/);
+  const touched = {
+    name: false,
+    description: false,
+    disable_model_invocation: false,
+  };
+  const nextLines: string[] = [];
+
+  for (const line of lines) {
+    const match = /^([A-Za-z0-9_-]+):/.exec(line.trim());
+    const key = match?.[1] ?? null;
+    if (key === "name") {
+      nextLines.push(patches.name && nextName != null ? `name: ${nextName.trim()}` : line);
+      touched.name = true;
+      continue;
+    }
+    if (key === "description") {
+      nextLines.push(
+        patches.description && nextDescription != null
+          ? `description: ${quotedYamlString(nextDescription.trim())}`
+          : line,
+      );
+      touched.description = true;
+      continue;
+    }
+    if (key === "disable-model-invocation") {
+      if (patches.disable_model_invocation) {
+        if (nextDisableModelInvocation) nextLines.push("disable-model-invocation: true");
+      } else {
+        nextLines.push(line);
+      }
+      touched.disable_model_invocation = true;
+      continue;
+    }
+    nextLines.push(line);
+  }
+
+  if (!touched.name && patches.name && nextName != null) {
+    nextLines.unshift(`name: ${nextName.trim()}`);
+  }
+  if (!touched.description && patches.description && nextDescription != null) {
+    const insertAt = nextLines.findIndex((line) => /^name:/.test(line.trim()));
+    nextLines.splice(
+      insertAt >= 0 ? insertAt + 1 : nextLines.length,
+      0,
+      `description: ${quotedYamlString(nextDescription.trim())}`,
+    );
+  }
+  if (
+    !touched.disable_model_invocation &&
+    patches.disable_model_invocation &&
+    nextDisableModelInvocation
+  ) {
+    nextLines.push("disable-model-invocation: true");
+  }
+
+  return `${parts.leading}---\n${nextLines.join("\n")}\n---\n${parts.body}`;
 }
 
 export function draftFromSkillAsset(asset: SkillAssetDto): SkillAssetDraft {

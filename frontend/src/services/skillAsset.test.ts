@@ -6,6 +6,8 @@ import {
   draftFromSkillAsset,
   dtoFilesFromDraft,
   mapSkillAsset,
+  parseSkillMarkdown,
+  updateSkillMarkdownFrontmatter,
   validateSkillAssetDraft,
   type SkillAssetDraft,
 } from "./skillAsset";
@@ -87,5 +89,25 @@ describe("skillAsset", () => {
 
     expect(validateSkillAssetDraft(draft).ok).toBe(false);
     expect(validateSkillAssetDraft({ ...draft, files: [] }, ["writer"]).ok).toBe(false);
+  });
+
+  it("updates SKILL.md frontmatter while preserving unknown metadata", () => {
+    const content =
+      '---\nname: writer\ndescription: "写作辅助"\ncategory: docs\ndisable-model-invocation: true\n---\n# Writer\n';
+
+    const updated = updateSkillMarkdownFrontmatter(content, {
+      description: "更新后的写作辅助",
+      disable_model_invocation: false,
+    });
+
+    expect(updated).toContain('description: "更新后的写作辅助"');
+    expect(updated).toContain("category: docs");
+    expect(updated).not.toContain("disable-model-invocation");
+    expect(parseSkillMarkdown(updated)).toMatchObject({
+      name: "writer",
+      description: "更新后的写作辅助",
+      disable_model_invocation: false,
+      body: "# Writer\n",
+    });
   });
 });

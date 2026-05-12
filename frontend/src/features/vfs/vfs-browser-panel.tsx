@@ -30,9 +30,11 @@ export interface VfsBrowserPanelProps {
   protectedFilePaths?: string[];
   /** 当用户切换 mount 或文件时回调，用于更新 Tab URI */
   onNavigate?: (mountId: string, filePath: string | null) => void;
+  /** 可选右侧检查器，用于在不重写文件树/编辑器的前提下承载业务语义面板。 */
+  renderInspector?: (context: VfsBrowserPanelInspectorContext) => ReactNode;
 }
 
-interface MountOption {
+export interface VfsBrowserPanelMountOption {
   id: string;
   displayName: string;
   provider: string;
@@ -44,6 +46,23 @@ interface MountOption {
   };
 }
 
+export interface VfsBrowserPanelInspectorContext {
+  surfaceRef: string;
+  mount: VfsBrowserPanelMountOption | null;
+  mountId: string | null;
+  filePath: string | null;
+  displayPath: string | null;
+  rootPath: string;
+  fileContent: string | null;
+  fileLoading: boolean;
+  readOnly: boolean;
+  fileProtected: boolean;
+  operationBusy: boolean;
+  operationError: string | null;
+  saveFile: (content: string) => Promise<void>;
+  refreshTree: () => void;
+}
+
 export function VfsBrowserPanel({
   surface,
   vfs,
@@ -52,6 +71,7 @@ export function VfsBrowserPanel({
   rootPath,
   protectedFilePaths = [],
   onNavigate,
+  renderInspector,
 }: VfsBrowserPanelProps) {
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
@@ -69,7 +89,7 @@ export function VfsBrowserPanel({
   );
   const selectedFileProtected = selectedFilePath ? protectedPathSet.has(selectedFilePath) : false;
 
-  const mounts = useMemo<MountOption[]>(() => {
+  const mounts = useMemo<VfsBrowserPanelMountOption[]>(() => {
     const source = surface?.mounts ?? vfs?.mounts ?? [];
     return source.map((m) => ({
       id: m.id,
@@ -255,6 +275,24 @@ export function VfsBrowserPanel({
     );
   }
 
+  const inspectorContext: VfsBrowserPanelInspectorContext = {
+    surfaceRef,
+    mount: selectedMount,
+    mountId: selectedMountId,
+    filePath: selectedFilePath,
+    displayPath: selectedFilePath ? toScopedDisplayPath(selectedFilePath, scopedRootPath) : null,
+    rootPath: scopedRootPath,
+    fileContent,
+    fileLoading,
+    readOnly: !selectedMount?.canWrite,
+    fileProtected: selectedFileProtected,
+    operationBusy,
+    operationError,
+    saveFile: handleSave,
+    refreshTree,
+  };
+  const inspector = renderInspector?.(inspectorContext) ?? null;
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Mount 选择器 */}
@@ -333,8 +371,8 @@ export function VfsBrowserPanel({
           <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/40 transition-colors group-hover:bg-primary/40" />
         </Separator>
 
-        {/* 右栏：文件编辑器 */}
-        <Panel defaultSize="70%" minSize="30%">
+        {/* 中栏：文件编辑器 */}
+        <Panel defaultSize={inspector ? "50%" : "70%"} minSize="30%">
           {fileLoading && (
             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
               正在读取文件…
@@ -356,6 +394,20 @@ export function VfsBrowserPanel({
             </div>
           )}
         </Panel>
+
+        {inspector && (
+          <>
+            <Separator className="group relative w-1 shrink-0 bg-border/20 transition-colors hover:bg-primary/20 active:bg-primary/40 data-[separator]:cursor-col-resize">
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/40 transition-colors group-hover:bg-primary/40" />
+            </Separator>
+
+            <Panel defaultSize="25%" minSize="20%" maxSize="40%">
+              <div className="h-full overflow-y-auto border-l border-border/50 bg-secondary/10">
+                {inspector}
+              </div>
+            </Panel>
+          </>
+        )}
       </Group>
     </div>
   );

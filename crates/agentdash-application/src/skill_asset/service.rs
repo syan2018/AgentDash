@@ -393,13 +393,15 @@ fn validate_skill_files(
     Ok(())
 }
 
-struct ParsedSkillMetadata {
-    name: String,
-    description: String,
-    disable_model_invocation: bool,
+pub(crate) struct ParsedSkillMetadata {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) disable_model_invocation: bool,
 }
 
-fn parse_skill_metadata(content: &str) -> Result<ParsedSkillMetadata, SkillAssetApplicationError> {
+pub(crate) fn parse_skill_metadata(
+    content: &str,
+) -> Result<ParsedSkillMetadata, SkillAssetApplicationError> {
     let (frontmatter, _body) = parse_skill_file(content);
     let frontmatter = frontmatter.ok_or_else(|| {
         SkillAssetApplicationError::BadRequest("SKILL.md 必须包含 YAML frontmatter".to_string())

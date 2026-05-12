@@ -26,6 +26,7 @@ export interface VfsFileTreeProps {
   mountId: string;
   onSelectFile: (path: string) => void;
   selectedPath: string | null;
+  rootPath?: string;
   refreshKey?: number;
 }
 
@@ -36,6 +37,7 @@ export function VfsFileTree({
   mountId,
   onSelectFile,
   selectedPath,
+  rootPath,
   refreshKey = 0,
 }: VfsFileTreeProps) {
   const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
@@ -52,7 +54,7 @@ export function VfsFileTree({
         const result = await listSurfaceMountEntries({
           surfaceRef,
           mountId,
-          path: ".",
+          path: normalizeTreeRootPath(rootPath),
           recursive: false,
         });
         setRootNodes(entriesToNodes(result.entries));
@@ -62,7 +64,7 @@ export function VfsFileTree({
         setLoading(false);
       }
     })();
-  }, [surfaceRef, mountId, refreshKey]);
+  }, [surfaceRef, mountId, rootPath, refreshKey]);
 
   const toggleDir = useCallback(
     async (path: string) => {
@@ -231,6 +233,11 @@ function TreeNodeItem({
 }
 
 // ─── Helpers ────────────────────────────────────────────
+
+function normalizeTreeRootPath(path?: string): string {
+  const normalized = path?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") ?? "";
+  return normalized || ".";
+}
 
 function entriesToNodes(entries: SurfaceMountEntry[]): TreeNode[] {
   const dirs = entries.filter((e) => e.is_dir).sort((a, b) => a.path.localeCompare(b.path));

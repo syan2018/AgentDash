@@ -25,6 +25,9 @@ export interface VfsBrowserPanelProps {
   vfs?: ExecutionVfs | null;
   initialMountId?: string;
   initialFilePath?: string;
+  /** 将浏览器裁切到 mount 内的某个子目录；文件操作仍使用完整 mount-relative path。 */
+  rootPath?: string;
+  protectedFilePaths?: string[];
   /** 当用户切换 mount 或文件时回调，用于更新 Tab URI */
   onNavigate?: (mountId: string, filePath: string | null) => void;
 }
@@ -46,6 +49,8 @@ export function VfsBrowserPanel({
   vfs,
   initialMountId,
   initialFilePath,
+  rootPath,
+  protectedFilePaths = [],
   onNavigate,
 }: VfsBrowserPanelProps) {
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
@@ -57,6 +62,12 @@ export function VfsBrowserPanel({
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const surfaceRef = surface?.surface_ref ?? null;
+  const scopedRootPath = useMemo(() => normalizeScopedRootPath(rootPath), [rootPath]);
+  const protectedPathSet = useMemo(
+    () => new Set(protectedFilePaths.map((path) => normalizeScopedRootPath(path))),
+    [protectedFilePaths],
+  );
+  const selectedFileProtected = selectedFilePath ? protectedPathSet.has(selectedFilePath) : false;
 
   const mounts = useMemo<MountOption[]>(() => {
     const source = surface?.mounts ?? vfs?.mounts ?? [];
@@ -150,10 +161,10 @@ export function VfsBrowserPanel({
   const handleCreateFile = useCallback(async () => {
     if (!surfaceRef || !selectedMountId || !selectedMount?.editCapabilities.create) return;
     const suggestedPath = selectedFilePath
-      ? `${parentPath(selectedFilePath)}new-file.txt`
+      ? `${parentPath(toScopedDisplayPath(selectedFilePath, scopedRootPath))}new-file.txt`
       : "new-file.txt";
     const path = window.prompt("新建文件路径", suggestedPath);
-    const normalizedPath = path?.trim();
+    const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath) return;
 
     setOperationBusy(true);
@@ -174,11 +185,11 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMount, selectedFilePath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate]);
 
   const handleDeleteFile = useCallback(async () => {
-    if (!surfaceRef || !selectedMountId || !selectedFilePath || !selectedMount?.editCapabilities.delete) return;
-    if (!window.confirm(`删除文件「${selectedFilePath}」？`)) return;
+    if (!surfaceRef || !selectedMountId || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
+    if (!window.confirm(`删除文件「${toScopedDisplayPath(selectedFilePath, scopedRootPath)}」？`)) return;
 
     setOperationBusy(true);
     setOperationError(null);
@@ -197,12 +208,12 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedFilePath, selectedMount, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
 
   const handleRenameFile = useCallback(async () => {
-    if (!surfaceRef || !selectedMountId || !selectedFilePath || !selectedMount?.editCapabilities.rename) return;
-    const path = window.prompt("重命名为", selectedFilePath);
-    const normalizedPath = path?.trim();
+    if (!surfaceRef || !selectedMountId || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
+    const path = window.prompt("重命名为", toScopedDisplayPath(selectedFilePath, scopedRootPath));
+    const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath || normalizedPath === selectedFilePath) return;
 
     setOperationBusy(true);
@@ -222,7 +233,7 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedFilePath, selectedMount, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
 
   if (mounts.length === 0) {
     return (
@@ -279,14 +290,14 @@ export function VfsBrowserPanel({
           </FileActionButton>
           <FileActionButton
             title="重命名当前文件"
-            disabled={operationBusy || !selectedFilePath || !selectedMount?.editCapabilities.rename}
+            disabled={operationBusy || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.rename}
             onClick={() => void handleRenameFile()}
           >
             <RenameIcon />
           </FileActionButton>
           <FileActionButton
             title="删除当前文件"
-            disabled={operationBusy || !selectedFilePath || !selectedMount?.editCapabilities.delete}
+            disabled={operationBusy || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.delete}
             onClick={() => void handleDeleteFile()}
             danger
           >
@@ -311,6 +322,7 @@ export function VfsBrowserPanel({
                 mountId={selectedMountId}
                 onSelectFile={(path) => void handleSelectFile(path)}
                 selectedPath={selectedFilePath}
+                rootPath={scopedRootPath}
                 refreshKey={treeRefreshKey}
               />
             )}
@@ -347,6 +359,24 @@ export function VfsBrowserPanel({
       </Group>
     </div>
   );
+}
+
+function normalizeScopedRootPath(path?: string): string {
+  return path?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") ?? "";
+}
+
+function resolveScopedPath(rootPath: string, input: string | null | undefined): string | null {
+  const value = input?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") ?? "";
+  if (!value) return null;
+  if (!rootPath) return value;
+  if (value === rootPath || value.startsWith(`${rootPath}/`)) return value;
+  return `${rootPath}/${value}`;
+}
+
+function toScopedDisplayPath(path: string, rootPath: string): string {
+  if (!rootPath) return path;
+  if (path === rootPath) return "";
+  return path.startsWith(`${rootPath}/`) ? path.slice(rootPath.length + 1) : path;
 }
 
 function parentPath(path: string): string {

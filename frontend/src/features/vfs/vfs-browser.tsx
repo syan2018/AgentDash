@@ -27,6 +27,13 @@ export interface VfsBrowserProps {
   visibleMountIds?: string[];
   /** 初始选中的 mount id */
   initialMountId?: string;
+  /** 初始选中文件 */
+  initialFilePath?: string;
+  /** 裁切到 mount 内的指定子目录 */
+  rootPath?: string;
+  protectedFilePaths?: string[];
+  browserHeightClassName?: string;
+  className?: string;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -52,6 +59,11 @@ export function VfsBrowser({
   vfs,
   visibleMountIds,
   initialMountId,
+  initialFilePath,
+  rootPath,
+  protectedFilePaths,
+  browserHeightClassName = "h-[520px] min-h-[360px] max-h-[70vh]",
+  className = "",
 }: VfsBrowserProps) {
   const [resolvedSurface, setResolvedSurface] = useState<ResolvedVfsSurface | null>(surface ?? null);
   const [loading, setLoading] = useState(false);
@@ -135,7 +147,7 @@ export function VfsBrowser({
   }
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-border bg-background">
+    <div className={`overflow-hidden rounded-[8px] border border-border bg-background ${className}`}>
       <div className="border-b border-border bg-secondary/20 px-3 py-2">
         <MountSummaryList
           mounts={mounts}
@@ -143,11 +155,14 @@ export function VfsBrowser({
           compact
         />
       </div>
-      <div className="h-[520px] min-h-[360px] max-h-[70vh]">
+      <div className={browserHeightClassName}>
         <VfsBrowserPanel
           surface={filteredSurface}
           vfs={filteredVfs}
           initialMountId={initialMountId}
+          initialFilePath={initialFilePath}
+          rootPath={rootPath}
+          protectedFilePaths={protectedFilePaths}
         />
       </div>
     </div>

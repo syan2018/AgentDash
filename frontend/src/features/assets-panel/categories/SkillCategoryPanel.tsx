@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
-import { VfsCodeEditor } from "../../vfs";
+import { VfsBrowser, VfsCodeEditor } from "../../vfs";
 import {
   bootstrapSkillAssets,
   buildSkillYamlFrontmatter,
@@ -287,10 +287,14 @@ export function SkillCategoryPanel() {
       {detail.kind !== "closed" && (
         <SkillEditorDialog
           mode={detail.kind}
+          projectId={currentProjectId}
           draft={draft}
           isSaving={isSaving}
           onDraftChange={setDraft}
-          onClose={() => setDetail({ kind: "closed" })}
+          onClose={() => {
+            setDetail({ kind: "closed" });
+            void loadSkills();
+          }}
           onSave={() => void handleSaveDraft()}
         />
       )}
@@ -422,6 +426,7 @@ function SkillGrid({
 
 function SkillEditorDialog({
   mode,
+  projectId,
   draft,
   isSaving,
   onDraftChange,
@@ -429,6 +434,7 @@ function SkillEditorDialog({
   onSave,
 }: {
   mode: "create" | "edit";
+  projectId: string;
   draft: SkillAssetDraft;
   isSaving: boolean;
   onDraftChange: (draft: SkillAssetDraft) => void;
@@ -438,6 +444,40 @@ function SkillEditorDialog({
   const updateField = <K extends keyof SkillAssetDraft>(key: K, value: SkillAssetDraft[K]) => {
     onDraftChange({ ...draft, [key]: value });
   };
+  const skillRootPath = draft.key ? `skills/${draft.key}` : "";
+
+  if (mode === "edit" && skillRootPath) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+        <div
+          className="flex h-[88vh] w-[1120px] max-w-full flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <header className="flex items-center justify-between border-b border-border px-5 py-4">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">编辑 Skill</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">{skillRootPath}/SKILL.md</p>
+            </div>
+            <button type="button" onClick={onClose} className="agentdash-button-secondary">
+              关闭
+            </button>
+          </header>
+          <div className="min-h-0 flex-1">
+            <VfsBrowser
+              source={{ source_type: "project_skill_assets", project_id: projectId }}
+              visibleMountIds={["skill-assets"]}
+              initialMountId="skill-assets"
+              initialFilePath={`${skillRootPath}/SKILL.md`}
+              rootPath={skillRootPath}
+              protectedFilePaths={[`${skillRootPath}/SKILL.md`]}
+              browserHeightClassName="min-h-0 flex-1"
+              className="flex h-full flex-col"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>

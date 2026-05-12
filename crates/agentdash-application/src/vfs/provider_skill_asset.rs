@@ -7,7 +7,9 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::skill_asset::{SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput};
+use crate::skill_asset::{
+    SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, parse_skill_metadata,
+};
 
 use super::mount::{
     PROVIDER_SKILL_ASSET_FS, SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY,
@@ -256,14 +258,24 @@ impl MountProvider for SkillAssetFsMountProvider {
             existing.content = content.to_string();
         } else {
             files.push(SkillAssetFileInput {
-                path: relative_path,
+                path: relative_path.clone(),
                 content: content.to_string(),
             });
         }
+        let metadata = if relative_path == "SKILL.md" {
+            Some(parse_skill_metadata(content).map_err(map_app_err)?)
+        } else {
+            None
+        };
         service
             .update(
                 asset.id,
                 UpdateSkillAssetInput {
+                    key: metadata.as_ref().map(|meta| meta.name.clone()),
+                    description: metadata.as_ref().map(|meta| meta.description.clone()),
+                    disable_model_invocation: metadata
+                        .as_ref()
+                        .map(|meta| meta.disable_model_invocation),
                     files: Some(files),
                     ..Default::default()
                 },
@@ -625,5 +637,22 @@ mod tests {
                 .iter()
                 .all(|file| file.path != "references/renamed.md")
         );
+
+        provider
+            .write_text(
+                &mount,
+                "skills/writer/SKILL.md",
+                "---\nname: writer\ndescription: \"更新后的描述\"\ndisable-model-invocation: true\n---\n# Writer\n",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("write skill file");
+        let asset = repo
+            .get_by_project_and_key(project_id, "writer")
+            .await
+            .expect("repo query")
+            .expect("asset");
+        assert_eq!(asset.description, "更新后的描述");
+        assert!(asset.disable_model_invocation);
     }
 }

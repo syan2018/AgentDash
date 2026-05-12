@@ -69,6 +69,37 @@ export interface WriteSurfaceFileResponse {
   persisted: boolean;
 }
 
+export interface CreateSurfaceFileResponse {
+  surface_ref: string;
+  mount_id: string;
+  path: string;
+  size: number;
+}
+
+export interface DeleteSurfaceFileResponse {
+  surface_ref: string;
+  mount_id: string;
+  path: string;
+  deleted: boolean;
+}
+
+export interface RenameSurfaceFileResponse {
+  surface_ref: string;
+  mount_id: string;
+  from_path: string;
+  to_path: string;
+}
+
+export interface StatSurfaceFileResponse {
+  surface_ref: string;
+  mount_id: string;
+  path: string;
+  entry_type: string;
+  size?: number | null;
+  modified_at?: number | null;
+  is_dir: boolean;
+}
+
 export interface ApplySurfacePatchResponse {
   surface_ref: string;
   mount_id: string;
@@ -170,6 +201,58 @@ export async function writeSurfaceFile(params: {
     mount_id: params.mountId,
     path: params.path,
     content: params.content,
+  });
+}
+
+export async function createSurfaceFile(params: {
+  surfaceRef: string;
+  mountId: string;
+  path: string;
+  content: string;
+}): Promise<CreateSurfaceFileResponse> {
+  return api.post<CreateSurfaceFileResponse>("/vfs-surfaces/create-file", {
+    surface_ref: params.surfaceRef,
+    mount_id: params.mountId,
+    path: params.path,
+    content: params.content,
+  });
+}
+
+export async function deleteSurfaceFile(params: {
+  surfaceRef: string;
+  mountId: string;
+  path: string;
+}): Promise<DeleteSurfaceFileResponse> {
+  return api.post<DeleteSurfaceFileResponse>("/vfs-surfaces/delete-file", {
+    surface_ref: params.surfaceRef,
+    mount_id: params.mountId,
+    path: params.path,
+  });
+}
+
+export async function renameSurfaceFile(params: {
+  surfaceRef: string;
+  mountId: string;
+  fromPath: string;
+  toPath: string;
+}): Promise<RenameSurfaceFileResponse> {
+  return api.post<RenameSurfaceFileResponse>("/vfs-surfaces/rename-file", {
+    surface_ref: params.surfaceRef,
+    mount_id: params.mountId,
+    from_path: params.fromPath,
+    to_path: params.toPath,
+  });
+}
+
+export async function statSurfaceFile(params: {
+  surfaceRef: string;
+  mountId: string;
+  path: string;
+}): Promise<StatSurfaceFileResponse> {
+  return api.post<StatSurfaceFileResponse>("/vfs-surfaces/stat-file", {
+    surface_ref: params.surfaceRef,
+    mount_id: params.mountId,
+    path: params.path,
   });
 }
 

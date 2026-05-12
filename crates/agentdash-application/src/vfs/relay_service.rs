@@ -124,6 +124,198 @@ impl RelayVfsService {
         Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
+    pub async fn create_text(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        content: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), String> {
+        match self.read_text(vfs, target, overlay, identity).await {
+            Ok(_) => return Err(format!("目标文件已存在: {}", target.path)),
+            Err(_) => {
+                // 读取失败在 create 语义下按“不存在或不可读”处理；真正的权限、
+                // backend 离线等错误仍会在 write_text 阶段返回。
+            }
+        }
+
+        self.write_text(vfs, target, content, overlay, identity)
+            .await
+    }
+
+    pub async fn delete_text(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Write)?;
+        let path = normalize_mount_relative_path(&target.path, false)?;
+
+        self.read_text(
+            vfs,
+            &ResourceRef {
+                mount_id: target.mount_id.clone(),
+                path: path.clone(),
+            },
+            overlay,
+            identity,
+        )
+        .await?;
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            let ov = overlay.ok_or_else(|| {
+                format!(
+                    "mount `{}` 是内联容器，需要 InlineContentOverlay 才能删除",
+                    mount.id
+                )
+            })?;
+            return ov.delete(mount, &path).await;
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
+            return provider
+                .delete_text(mount, &path, &ctx)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        Err(format!("unregistered mount provider: {}", mount.provider))
+    }
+
+    pub async fn rename_text(
+        &self,
+        vfs: &Vfs,
+        mount_id: &str,
+        from_path: &str,
+        to_path: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::Write)?;
+        let from_path = normalize_mount_relative_path(from_path, false)?;
+        let to_path = normalize_mount_relative_path(to_path, false)?;
+        if from_path == to_path {
+            return Ok(());
+        }
+
+        let source = self
+            .read_text(
+                vfs,
+                &ResourceRef {
+                    mount_id: mount_id.to_string(),
+                    path: from_path.clone(),
+                },
+                overlay,
+                identity,
+            )
+            .await?;
+
+        if self
+            .read_text(
+                vfs,
+                &ResourceRef {
+                    mount_id: mount_id.to_string(),
+                    path: to_path.clone(),
+                },
+                overlay,
+                identity,
+            )
+            .await
+            .is_ok()
+        {
+            return Err(format!("目标文件已存在: {to_path}"));
+        }
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            let ov = overlay.ok_or_else(|| {
+                format!(
+                    "mount `{}` 是内联容器，需要 InlineContentOverlay 才能重命名",
+                    mount.id
+                )
+            })?;
+            ov.write(mount, &to_path, &source.content).await?;
+            return ov.delete(mount, &from_path).await;
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
+            return provider
+                .rename_text(mount, &from_path, &to_path, &ctx)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        Err(format!("unregistered mount provider: {}", mount.provider))
+    }
+
+    pub async fn stat(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<RuntimeFileEntry, String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::List)?;
+        let path = normalize_mount_relative_path(&target.path, true)?;
+
+        if path.is_empty() || path == "." {
+            return Ok(RuntimeFileEntry::dir("."));
+        }
+
+        if mount.provider != PROVIDER_INLINE_FS
+            && let Some(provider) = self.mount_provider_registry.get(&mount.provider)
+        {
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
+            match provider.stat(mount, &path, &ctx).await {
+                Ok(entry) => return Ok(entry),
+                Err(MountError::NotSupported(_)) => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+
+        let parent = path
+            .rsplit_once('/')
+            .map(|(parent, _)| {
+                if parent.is_empty() {
+                    ".".to_string()
+                } else {
+                    parent.to_string()
+                }
+            })
+            .unwrap_or_else(|| ".".to_string());
+        let listed = self
+            .list(
+                vfs,
+                &target.mount_id,
+                ListOptions {
+                    path: parent,
+                    pattern: None,
+                    recursive: false,
+                },
+                overlay,
+                identity,
+            )
+            .await?;
+        listed
+            .entries
+            .into_iter()
+            .find(|entry| entry.path == path)
+            .ok_or_else(|| format!("文件不存在: {path}"))
+    }
+
     pub async fn apply_patch(
         &self,
         vfs: &Vfs,

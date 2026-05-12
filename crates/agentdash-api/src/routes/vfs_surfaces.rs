@@ -7,9 +7,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use agentdash_application::vfs::{
-    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResolvedMountSummary, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource, ResourceRef, SessionMountTarget, build_project_agent_knowledge_vfs,
-    mount_container_id, mount_owner_id, mount_owner_kind, mount_purpose,
+    ListOptions, PROVIDER_INLINE_FS, ReadResult, ResolvedMountEditCapabilities,
+    ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource, ResourceRef,
+    RuntimeFileEntry, SessionMountTarget, build_project_agent_knowledge_vfs, mount_container_id,
+    mount_owner_id, mount_owner_kind, mount_purpose,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_spi::Vfs;
@@ -93,6 +94,71 @@ pub struct SurfaceWriteFileResponse {
     pub path: String,
     pub size: u64,
     pub persisted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SurfaceCreateFileRequest {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SurfaceCreateFileResponse {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SurfaceDeleteFileRequest {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SurfaceDeleteFileResponse {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SurfaceRenameFileRequest {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub from_path: String,
+    pub to_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SurfaceRenameFileResponse {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub from_path: String,
+    pub to_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SurfaceStatFileRequest {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SurfaceStatFileResponse {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+    pub entry_type: String,
+    pub size: Option<u64>,
+    pub modified_at: Option<i64>,
+    pub is_dir: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -294,6 +360,159 @@ pub async fn write_surface_file(
     }))
 }
 
+pub async fn create_surface_file(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<SurfaceCreateFileRequest>,
+) -> Result<Json<SurfaceCreateFileResponse>, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+        .map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+    ensure_mount_can_edit(&state, &vfs, &req.mount_id, "create")?;
+    let normalized_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
+            .map_err(ApiError::BadRequest)?;
+    let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
+
+    state
+        .services
+        .vfs_service
+        .create_text(
+            &vfs,
+            &ResourceRef {
+                mount_id: req.mount_id.clone(),
+                path: normalized_path.clone(),
+            },
+            &req.content,
+            overlay.as_ref(),
+            None,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(SurfaceCreateFileResponse {
+        surface_ref: req.surface_ref,
+        mount_id: req.mount_id,
+        path: normalized_path,
+        size: req.content.len() as u64,
+    }))
+}
+
+pub async fn delete_surface_file(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<SurfaceDeleteFileRequest>,
+) -> Result<Json<SurfaceDeleteFileResponse>, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+        .map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+    ensure_mount_can_edit(&state, &vfs, &req.mount_id, "delete")?;
+    let normalized_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
+            .map_err(ApiError::BadRequest)?;
+    let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
+
+    state
+        .services
+        .vfs_service
+        .delete_text(
+            &vfs,
+            &ResourceRef {
+                mount_id: req.mount_id.clone(),
+                path: normalized_path.clone(),
+            },
+            overlay.as_ref(),
+            None,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(SurfaceDeleteFileResponse {
+        surface_ref: req.surface_ref,
+        mount_id: req.mount_id,
+        path: normalized_path,
+        deleted: true,
+    }))
+}
+
+pub async fn rename_surface_file(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<SurfaceRenameFileRequest>,
+) -> Result<Json<SurfaceRenameFileResponse>, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+        .map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+    ensure_mount_can_edit(&state, &vfs, &req.mount_id, "rename")?;
+    let from_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&req.from_path, false)
+            .map_err(ApiError::BadRequest)?;
+    let to_path = agentdash_application::vfs::normalize_mount_relative_path(&req.to_path, false)
+        .map_err(ApiError::BadRequest)?;
+    let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
+
+    state
+        .services
+        .vfs_service
+        .rename_text(
+            &vfs,
+            &req.mount_id,
+            &from_path,
+            &to_path,
+            overlay.as_ref(),
+            None,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(SurfaceRenameFileResponse {
+        surface_ref: req.surface_ref,
+        mount_id: req.mount_id,
+        from_path,
+        to_path,
+    }))
+}
+
+pub async fn stat_surface_file(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<SurfaceStatFileRequest>,
+) -> Result<Json<SurfaceStatFileResponse>, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+        .map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+    let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
+
+    let entry = state
+        .services
+        .vfs_service
+        .stat(
+            &vfs,
+            &ResourceRef {
+                mount_id: req.mount_id.clone(),
+                path: req.path,
+            },
+            overlay.as_ref(),
+            None,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+
+    Ok(Json(surface_stat_response(
+        req.surface_ref,
+        req.mount_id,
+        entry,
+    )))
+}
+
 pub async fn apply_surface_patch(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -304,27 +523,10 @@ pub async fn apply_surface_patch(
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
 
-    let mount = vfs
-        .mounts
-        .iter()
-        .find(|mount| mount.id == req.mount_id)
-        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
-
-    if !mount.supports(agentdash_spi::MountCapability::Write) {
-        return Err(ApiError::BadRequest(format!(
-            "挂载点 \"{}\" 没有 write 能力",
-            mount.display_name,
-        )));
-    }
+    let mount = ensure_mount_can_write(&vfs, &req.mount_id)?;
 
     if mount.provider == PROVIDER_INLINE_FS {
-        let persister =
-            agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
-                state.repos.inline_file_repo.clone(),
-            );
-        let overlay = agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(
-            Arc::new(persister),
-        );
+        let overlay = db_inline_overlay(&state);
         let result = state
             .services
             .vfs_service
@@ -616,6 +818,7 @@ pub(crate) async fn build_surface_summary(
             container_id: mount_container_id(mount).map(str::to_string),
             backend_online,
             file_count,
+            edit_capabilities: resolved_edit_capabilities(state, mount),
         });
     }
 
@@ -625,6 +828,114 @@ pub(crate) async fn build_surface_summary(
         mounts,
         default_mount_id: vfs.default_mount_id.clone(),
     })
+}
+
+fn ensure_mount_can_write<'a>(
+    vfs: &'a Vfs,
+    mount_id: &str,
+) -> Result<&'a agentdash_spi::Mount, ApiError> {
+    let mount = vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.id == mount_id)
+        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {mount_id}")))?;
+
+    if !mount.supports(agentdash_spi::MountCapability::Write) {
+        return Err(ApiError::BadRequest(format!(
+            "挂载点 \"{}\" 没有 write 能力",
+            mount.display_name,
+        )));
+    }
+    Ok(mount)
+}
+
+fn ensure_mount_can_edit<'a>(
+    state: &Arc<AppState>,
+    vfs: &'a Vfs,
+    mount_id: &str,
+    operation: &str,
+) -> Result<&'a agentdash_spi::Mount, ApiError> {
+    let mount = ensure_mount_can_write(vfs, mount_id)?;
+    let capabilities = resolved_edit_capabilities(state, mount);
+    let supported = match operation {
+        "create" => capabilities.create,
+        "delete" => capabilities.delete,
+        "rename" => capabilities.rename,
+        _ => false,
+    };
+    if !supported {
+        return Err(ApiError::BadRequest(format!(
+            "挂载点 \"{}\" 不支持 {operation} 操作",
+            mount.display_name,
+        )));
+    }
+    Ok(mount)
+}
+
+fn db_inline_overlay(
+    state: &Arc<AppState>,
+) -> agentdash_application::vfs::inline_persistence::InlineContentOverlay {
+    let persister = agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
+        state.repos.inline_file_repo.clone(),
+    );
+    agentdash_application::vfs::inline_persistence::InlineContentOverlay::new(Arc::new(persister))
+}
+
+fn inline_overlay_for_mount(
+    state: &Arc<AppState>,
+    vfs: &Vfs,
+    mount_id: &str,
+) -> Option<agentdash_application::vfs::inline_persistence::InlineContentOverlay> {
+    vfs.mounts
+        .iter()
+        .any(|mount| mount.id == mount_id && mount.provider == PROVIDER_INLINE_FS)
+        .then(|| db_inline_overlay(state))
+}
+
+fn surface_stat_response(
+    surface_ref: String,
+    mount_id: String,
+    entry: RuntimeFileEntry,
+) -> SurfaceStatFileResponse {
+    SurfaceStatFileResponse {
+        surface_ref,
+        mount_id,
+        path: entry.path,
+        entry_type: if entry.is_dir {
+            "directory".to_string()
+        } else {
+            "file".to_string()
+        },
+        size: entry.size,
+        modified_at: entry.modified_at,
+        is_dir: entry.is_dir,
+    }
+}
+
+fn resolved_edit_capabilities(
+    state: &Arc<AppState>,
+    mount: &agentdash_spi::Mount,
+) -> ResolvedMountEditCapabilities {
+    if mount.provider == PROVIDER_INLINE_FS && mount.supports(agentdash_spi::MountCapability::Write)
+    {
+        return ResolvedMountEditCapabilities {
+            create: true,
+            delete: true,
+            rename: true,
+        };
+    }
+
+    state
+        .services
+        .mount_provider_registry
+        .get(&mount.provider)
+        .map(|provider| provider.edit_capabilities(mount))
+        .map(|capabilities| ResolvedMountEditCapabilities {
+            create: capabilities.create,
+            delete: capabilities.delete,
+            rename: capabilities.rename,
+        })
+        .unwrap_or_default()
 }
 
 async fn check_mount_available(

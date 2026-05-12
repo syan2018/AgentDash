@@ -45,10 +45,10 @@ pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
 pub use relay_service::{RelayVfsService, TextSearchParams};
 pub use surface::{
-    ResolvedMountOwnerKind, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource,
+    ResolvedMountEditCapabilities, ResolvedMountOwnerKind, ResolvedMountPurpose,
+    ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource,
 };
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
-    MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef,
+    MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,
 };

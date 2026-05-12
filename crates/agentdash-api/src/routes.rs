@@ -449,6 +449,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(vfs_surfaces::write_surface_file),
         )
         .route(
+            "/vfs-surfaces/create-file",
+            post(vfs_surfaces::create_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/delete-file",
+            post(vfs_surfaces::delete_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/rename-file",
+            post(vfs_surfaces::rename_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/stat-file",
+            post(vfs_surfaces::stat_surface_file),
+        )
+        .route(
             "/vfs-surfaces/apply-patch",
             post(vfs_surfaces::apply_surface_patch),
         )

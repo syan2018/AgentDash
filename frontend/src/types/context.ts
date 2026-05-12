@@ -81,6 +81,12 @@ export type ResolvedMountOwnerKind =
   | "workspace"
   | "external";
 
+export interface ResolvedMountEditCapabilities {
+  create: boolean;
+  delete: boolean;
+  rename: boolean;
+}
+
 export type ResolvedVfsSurfaceSource =
   | { source_type: "project_preview"; project_id: string }
   | { source_type: "story_preview"; project_id: string; story_id: string }
@@ -102,6 +108,7 @@ export interface ResolvedMountSummary {
   container_id?: string | null;
   backend_online?: boolean | null;
   file_count?: number | null;
+  edit_capabilities: ResolvedMountEditCapabilities;
 }
 
 export interface ResolvedVfsSurface {

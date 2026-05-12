@@ -159,6 +159,15 @@ pub struct ResolvedMountSummary {
     pub container_id: Option<String>,
     pub backend_online: Option<bool>,
     pub file_count: Option<usize>,
+    pub edit_capabilities: ResolvedMountEditCapabilities,
+}
+
+/// mount 的标准文件编辑 primitive 能力。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ResolvedMountEditCapabilities {
+    pub create: bool,
+    pub delete: bool,
+    pub rename: bool,
 }
 
 /// mount 在 UI/诊断中的语义用途。

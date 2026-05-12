@@ -32,6 +32,9 @@ pub enum ResolvedVfsSurfaceSource {
     SessionRuntime {
         session_id: String,
     },
+    ProjectSkillAssets {
+        project_id: Uuid,
+    },
     ProjectAgentKnowledge {
         project_id: Uuid,
         agent_id: Uuid,
@@ -54,6 +57,9 @@ impl ResolvedVfsSurfaceSource {
             } => format!("task-preview:{project_id}:{task_id}"),
             Self::SessionRuntime { session_id } => {
                 format!("session-runtime:{}", session_id.trim())
+            }
+            Self::ProjectSkillAssets { project_id } => {
+                format!("project-skill-assets:{project_id}")
             }
             Self::ProjectAgentKnowledge {
                 project_id,
@@ -114,6 +120,11 @@ impl ResolvedVfsSurfaceSource {
             return Ok(Self::SessionRuntime {
                 session_id: session_id.to_string(),
             });
+        }
+        if let Some(rest) = trimmed.strip_prefix("project-skill-assets:") {
+            let project_id = Uuid::parse_str(rest)
+                .map_err(|_| format!("无效的 project skill assets surface_ref: {trimmed}"))?;
+            return Ok(Self::ProjectSkillAssets { project_id });
         }
         if let Some(rest) = trimmed.strip_prefix("project-agent-knowledge:") {
             let mut parts = rest.split(':');

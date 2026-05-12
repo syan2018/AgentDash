@@ -704,6 +704,30 @@ pub fn build_skill_asset_mount(project_id: Uuid, skill_asset_keys: &[String]) ->
     }
 }
 
+pub fn build_project_skill_asset_management_mount(
+    project_id: Uuid,
+    skill_asset_keys: &[String],
+) -> Mount {
+    Mount {
+        id: "skill-assets".to_string(),
+        provider: PROVIDER_SKILL_ASSET_FS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("skill-assets://project/{project_id}"),
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: true,
+        display_name: "Project Skill Assets".to_string(),
+        metadata: serde_json::json!({
+            SKILL_ASSET_PROJECT_ID_METADATA_KEY: project_id.to_string(),
+            SKILL_ASSET_KEYS_METADATA_KEY: normalized_skill_asset_keys(skill_asset_keys),
+        }),
+    }
+}
+
 pub fn append_skill_asset_projection(vfs: &mut Vfs, project_id: Uuid, skill_asset_keys: &[String]) {
     let keys = normalized_skill_asset_keys(skill_asset_keys);
     if keys.is_empty() {

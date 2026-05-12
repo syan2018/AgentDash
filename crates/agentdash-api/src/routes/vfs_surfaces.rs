@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use agentdash_application::vfs::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResolvedMountEditCapabilities,
     ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource, ResourceRef,
-    RuntimeFileEntry, SessionMountTarget, build_project_agent_knowledge_vfs, mount_container_id,
-    mount_owner_id, mount_owner_kind, mount_purpose,
+    RuntimeFileEntry, SessionMountTarget, build_project_agent_knowledge_vfs,
+    build_project_skill_asset_management_mount, mount_container_id, mount_owner_id,
+    mount_owner_kind, mount_purpose,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_spi::Vfs;
@@ -684,6 +685,29 @@ pub(crate) async fn resolve_surface_bundle(
             build_project_agent_knowledge_vfs(&link).map_err(|error| {
                 ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}"))
             })?
+        }
+        ResolvedVfsSurfaceSource::ProjectSkillAssets { project_id } => {
+            load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
+                .await?;
+            let service = agentdash_application::skill_asset::SkillAssetService::new(
+                state.repos.skill_asset_repo.as_ref(),
+            );
+            let keys = service
+                .list(*project_id)
+                .await?
+                .into_iter()
+                .map(|asset| asset.key)
+                .collect::<Vec<_>>();
+            Vfs {
+                mounts: vec![build_project_skill_asset_management_mount(
+                    *project_id,
+                    &keys,
+                )],
+                default_mount_id: Some("skill-assets".to_string()),
+                source_project_id: Some(project_id.to_string()),
+                source_story_id: None,
+                links: Vec::new(),
+            }
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             let bindings =

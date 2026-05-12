@@ -92,6 +92,7 @@ export type ResolvedVfsSurfaceSource =
   | { source_type: "story_preview"; project_id: string; story_id: string }
   | { source_type: "task_preview"; project_id: string; task_id: string }
   | { source_type: "session_runtime"; session_id: string }
+  | { source_type: "project_skill_assets"; project_id: string }
   | { source_type: "project_agent_knowledge"; project_id: string; agent_id: string; link_id: string };
 
 export interface ResolvedMountSummary {

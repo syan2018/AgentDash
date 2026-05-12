@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
+import { VfsCodeEditor } from "../../vfs";
 import {
   bootstrapSkillAssets,
   buildSkillYamlFrontmatter,
@@ -437,13 +439,6 @@ function SkillEditorDialog({
     onDraftChange({ ...draft, [key]: value });
   };
 
-  const updateFile = (index: number, patch: Partial<SkillAssetDraft["files"][number]>) => {
-    onDraftChange({
-      ...draft,
-      files: draft.files.map((file, i) => (i === index ? { ...file, ...patch } : file)),
-    });
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
@@ -473,50 +468,10 @@ function SkillEditorDialog({
 
             <SkillYamlMetaPanel draft={draft} onChange={onDraftChange} />
 
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="agentdash-form-label">附加文件</p>
-                <button
-                  type="button"
-                  onClick={() => updateField("files", [...draft.files, { relative_path: "references/notes.md", content: "" }])}
-                  className="rounded-[7px] border border-border px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
-                >
-                  + 文件
-                </button>
-              </div>
-              {draft.files.length === 0 ? (
-                <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-3 py-4 text-center text-xs text-muted-foreground">
-                  无附加文件
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {draft.files.map((file, index) => (
-                    <div key={`${index}:${file.relative_path}`} className="rounded-[8px] border border-border p-2">
-                      <div className="flex gap-2">
-                        <input
-                          value={file.relative_path}
-                          onChange={(event) => updateFile(index, { relative_path: event.target.value })}
-                          className="h-8 min-w-0 flex-1 rounded-[7px] border border-border bg-background px-2 text-xs outline-none transition-colors focus:border-primary"
-                          placeholder="references/api.md"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => updateField("files", draft.files.filter((_, i) => i !== index))}
-                          className="rounded-[7px] px-2 text-xs text-destructive transition-colors hover:bg-destructive/10"
-                        >
-                          删除
-                        </button>
-                      </div>
-                      <textarea
-                        value={file.content}
-                        onChange={(event) => updateFile(index, { content: event.target.value })}
-                        className="mt-2 min-h-24 w-full resize-y rounded-[7px] border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none transition-colors focus:border-primary"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+            <SkillExtraFilesEditor
+              files={draft.files}
+              onChange={(files) => updateField("files", files)}
+            />
           </section>
 
           <section className="flex min-h-[420px] flex-col space-y-1.5">
@@ -596,6 +551,193 @@ function SkillYamlMetaPanel({
         {buildSkillYamlFrontmatter(draft)}
       </pre>
     </section>
+  );
+}
+
+function SkillExtraFilesEditor({
+  files,
+  onChange,
+}: {
+  files: SkillAssetDraft["files"];
+  onChange: (files: SkillAssetDraft["files"]) => void;
+}) {
+  const [selectedPath, setSelectedPath] = useState<string | null>(files[0]?.relative_path ?? null);
+  const selectedFile = files.find((file) => file.relative_path === selectedPath) ?? files[0] ?? null;
+
+  const createFile = () => {
+    const path = window.prompt("新建附加文件路径", nextExtraFilePath(files));
+    const normalizedPath = normalizeSkillExtraPath(path ?? "");
+    if (!normalizedPath || files.some((file) => file.relative_path === normalizedPath)) return;
+    onChange([...files, { relative_path: normalizedPath, content: "" }]);
+    setSelectedPath(normalizedPath);
+  };
+
+  const renameFile = () => {
+    if (!selectedFile) return;
+    const path = window.prompt("重命名附加文件", selectedFile.relative_path);
+    const normalizedPath = normalizeSkillExtraPath(path ?? "");
+    if (!normalizedPath || normalizedPath === selectedFile.relative_path) return;
+    if (files.some((file) => file.relative_path === normalizedPath)) return;
+    onChange(
+      files.map((file) =>
+        file.relative_path === selectedFile.relative_path
+          ? { ...file, relative_path: normalizedPath }
+          : file,
+      ),
+    );
+    setSelectedPath(normalizedPath);
+  };
+
+  const deleteFile = () => {
+    if (!selectedFile) return;
+    if (!window.confirm(`删除附加文件「${selectedFile.relative_path}」？`)) return;
+    const nextFiles = files.filter((file) => file.relative_path !== selectedFile.relative_path);
+    onChange(nextFiles);
+    setSelectedPath(nextFiles[0]?.relative_path ?? null);
+  };
+
+  const saveContent = (content: string) => {
+    if (!selectedFile) return;
+    onChange(
+      files.map((file) =>
+        file.relative_path === selectedFile.relative_path ? { ...file, content } : file,
+      ),
+    );
+  };
+
+  return (
+    <section className="overflow-hidden rounded-[8px] border border-border">
+      <header className="flex items-center justify-between border-b border-border bg-secondary/20 px-3 py-2">
+        <p className="agentdash-form-label">附加文件</p>
+        <div className="flex items-center gap-1">
+          <SkillFileActionButton title="新建附加文件" onClick={createFile}>
+            <PlusIcon />
+          </SkillFileActionButton>
+          <SkillFileActionButton title="重命名附加文件" onClick={renameFile} disabled={!selectedFile}>
+            <RenameIcon />
+          </SkillFileActionButton>
+          <SkillFileActionButton title="删除附加文件" onClick={deleteFile} disabled={!selectedFile} danger>
+            <TrashIcon />
+          </SkillFileActionButton>
+        </div>
+      </header>
+
+      <div className="grid min-h-[360px] grid-cols-[180px_minmax(0,1fr)]">
+        <div className="border-r border-border bg-secondary/10">
+          {files.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+              无附加文件
+            </div>
+          ) : (
+            <div className="max-h-[360px] overflow-auto py-1">
+              {files.map((file) => {
+                const selected = file.relative_path === selectedFile?.relative_path;
+                return (
+                  <button
+                    key={file.relative_path}
+                    type="button"
+                    onClick={() => setSelectedPath(file.relative_path)}
+                    className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-secondary/60 ${
+                      selected ? "bg-primary/8 text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    <span className="shrink-0 text-muted-foreground/60">#</span>
+                    <span className="min-w-0 flex-1 truncate">{file.relative_path}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          {selectedFile ? (
+            <VfsCodeEditor
+              key={selectedFile.relative_path}
+              content={selectedFile.content}
+              filePath={selectedFile.relative_path}
+              onSave={saveContent}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
+              选择或新建附加文件
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function nextExtraFilePath(files: SkillAssetDraft["files"]): string {
+  let index = 1;
+  let path = "references/notes.md";
+  const used = new Set(files.map((file) => file.relative_path));
+  while (used.has(path)) {
+    index += 1;
+    path = `references/notes-${index}.md`;
+  }
+  return path;
+}
+
+function SkillFileActionButton({
+  children,
+  title,
+  disabled,
+  danger = false,
+  onClick,
+}: {
+  children: ReactNode;
+  title: string;
+  disabled?: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        danger
+          ? "border-destructive/25 text-destructive hover:bg-destructive/10"
+          : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function RenameIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
   );
 }
 

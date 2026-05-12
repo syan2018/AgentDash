@@ -655,4 +655,60 @@ mod tests {
         assert_eq!(asset.description, "更新后的描述");
         assert!(asset.disable_model_invocation);
     }
+
+    #[tokio::test]
+    async fn writable_skill_asset_mount_rejects_skill_document_delete_and_rename() {
+        let project_id = Uuid::new_v4();
+        let repo = repo_with_skill(project_id);
+        let provider = SkillAssetFsMountProvider::new(repo.clone());
+        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        mount.capabilities = vec![
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+        ];
+        mount.default_write = true;
+
+        let delete_result = provider
+            .delete_text(
+                &mount,
+                "skills/writer/SKILL.md",
+                &MountOperationContext::default(),
+            )
+            .await;
+        assert!(matches!(delete_result, Err(MountError::OperationFailed(_))));
+
+        let rename_from_result = provider
+            .rename_text(
+                &mount,
+                "skills/writer/SKILL.md",
+                "skills/writer/SKILL.old.md",
+                &MountOperationContext::default(),
+            )
+            .await;
+        assert!(matches!(
+            rename_from_result,
+            Err(MountError::OperationFailed(_))
+        ));
+
+        let rename_to_result = provider
+            .rename_text(
+                &mount,
+                "skills/writer/references/style.md",
+                "skills/writer/SKILL.md",
+                &MountOperationContext::default(),
+            )
+            .await;
+        assert!(matches!(
+            rename_to_result,
+            Err(MountError::OperationFailed(_))
+        ));
+
+        let asset = repo
+            .get_by_project_and_key(project_id, "writer")
+            .await
+            .expect("repo query")
+            .expect("asset");
+        assert!(asset.files.iter().any(|file| file.path == "SKILL.md"));
+    }
 }

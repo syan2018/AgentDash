@@ -414,6 +414,7 @@ pub async fn delete_surface_file(
     let normalized_path =
         agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
             .map_err(ApiError::BadRequest)?;
+    ensure_not_skill_asset_document_path(&source, &normalized_path, "删除")?;
     let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
@@ -455,6 +456,8 @@ pub async fn rename_surface_file(
             .map_err(ApiError::BadRequest)?;
     let to_path = agentdash_application::vfs::normalize_mount_relative_path(&req.to_path, false)
         .map_err(ApiError::BadRequest)?;
+    ensure_not_skill_asset_document_path(&source, &from_path, "重命名")?;
+    ensure_not_skill_asset_document_path(&source, &to_path, "重命名为")?;
     let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
@@ -894,6 +897,27 @@ fn ensure_mount_can_edit<'a>(
         )));
     }
     Ok(mount)
+}
+
+fn ensure_not_skill_asset_document_path(
+    source: &ResolvedVfsSurfaceSource,
+    path: &str,
+    operation: &str,
+) -> Result<(), ApiError> {
+    if matches!(source, ResolvedVfsSurfaceSource::ProjectSkillAssets { .. })
+        && skill_asset_relative_path(path) == Some("SKILL.md")
+    {
+        return Err(ApiError::BadRequest(format!(
+            "不能通过 VFS {operation} Skill 主文档 SKILL.md"
+        )));
+    }
+    Ok(())
+}
+
+fn skill_asset_relative_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("skills/")?;
+    let (_key, relative_path) = rest.split_once('/')?;
+    Some(relative_path)
 }
 
 fn db_inline_overlay(

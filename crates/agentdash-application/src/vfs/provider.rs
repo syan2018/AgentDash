@@ -92,6 +92,7 @@ impl MountProviderRegistryBuilder {
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
         canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
         inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
+        skill_asset_repo: Arc<dyn agentdash_domain::skill_asset::SkillAssetRepository>,
         session_persistence: Arc<dyn crate::session::SessionPersistence>,
     ) -> Self {
         self.registry.register(Arc::new(
@@ -101,11 +102,15 @@ impl MountProviderRegistryBuilder {
             super::provider_lifecycle::LifecycleMountProvider::new(
                 lifecycle_run_repo,
                 inline_file_repo,
+                skill_asset_repo.clone(),
                 session_persistence,
             ),
         ));
         self.registry.register(Arc::new(
             super::provider_canvas::CanvasFsMountProvider::new(canvas_repo),
+        ));
+        self.registry.register(Arc::new(
+            super::provider_skill_asset::SkillAssetFsMountProvider::new(skill_asset_repo),
         ));
         self
     }

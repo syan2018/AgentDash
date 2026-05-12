@@ -55,8 +55,8 @@ const RoutineTabView = lazy(async () => {
   return { default: m.RoutineTabView };
 });
 
-// Assets 页：Workflow / Canvas / MCP Preset 三类项目级可复用资产的统一入口。
-// 顶层壳 AssetsTabView + 三个类目 Panel 通过嵌套路由切换。
+// Assets 页：Workflow / Canvas / MCP Preset / Skill 四类项目级可复用资产的统一入口。
+// 顶层壳 AssetsTabView + 四个类目 Panel 通过嵌套路由切换。
 const AssetsTabView = lazy(async () => {
   const m = await import("./features/assets-panel");
   return { default: m.AssetsTabView };
@@ -75,6 +75,11 @@ const AssetsCanvasPanel = lazy(async () => {
 const AssetsMcpPresetPanel = lazy(async () => {
   const m = await import("./features/assets-panel");
   return { default: m.McpPresetCategoryPanel };
+});
+
+const AssetsSkillPanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.SkillCategoryPanel };
 });
 
 // 统一 Workflow 编辑器（自适应 Form / DAG 布局）
@@ -239,12 +244,13 @@ function AppContent() {
             <Route index element={<Navigate to="agent" replace />} />
             <Route path="agent" element={<AgentTabView />} />
             <Route path="story" element={<StoryTabView />} />
-            {/* Assets 页：Workflow / Canvas / MCP Preset 三类项目级可复用资产统一入口 */}
+            {/* Assets 页：Workflow / Canvas / MCP Preset / Skill 四类项目级可复用资产统一入口 */}
             <Route path="assets" element={<AssetsTabView />}>
               <Route index element={<Navigate to="workflow" replace />} />
               <Route path="workflow" element={<AssetsWorkflowPanel />} />
               <Route path="canvas" element={<AssetsCanvasPanel />} />
               <Route path="mcp-preset" element={<AssetsMcpPresetPanel />} />
+              <Route path="skill" element={<AssetsSkillPanel />} />
             </Route>
             {/* 旧路径深链兼容：重定向到 Assets 对应子类目，避免收藏 / 外部链接失效 */}
             <Route path="canvas" element={<Navigate to="/dashboard/assets/canvas" replace />} />

@@ -9,3 +9,4 @@ export { AssetsTabView } from "./AssetsTabView";
 export { WorkflowCategoryPanel } from "./categories/WorkflowCategoryPanel";
 export { CanvasCategoryPanel } from "./categories/CanvasCategoryPanel";
 export { McpPresetCategoryPanel } from "./categories/McpPresetCategoryPanel";
+export { SkillCategoryPanel } from "./categories/SkillCategoryPanel";

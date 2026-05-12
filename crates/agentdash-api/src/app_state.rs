@@ -41,8 +41,9 @@ use agentdash_infrastructure::{
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
     PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
     PostgresRoutineRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
-    PostgresSettingsRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresSettingsRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
+    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -176,6 +177,12 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("mcp_presets 表初始化失败: {e}"))?;
 
+        let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
+        skill_asset_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("skill_assets 表初始化失败: {e}"))?;
+
         let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
 
         // RepositorySet —— 提前构造,供 build_pi_agent_connector / RoutineExecutor / AppState 共用
@@ -192,6 +199,7 @@ impl AppState {
             settings_repo: settings_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
             mcp_preset_repo: mcp_preset_repo.clone(),
+            skill_asset_repo: skill_asset_repo.clone(),
             agent_repo: agent_repo.clone(),
             agent_link_repo: agent_repo.clone(),
             workflow_definition_repo: workflow_repo.clone(),
@@ -216,6 +224,7 @@ impl AppState {
                 workflow_repo.clone(),
                 canvas_repo.clone(),
                 inline_file_repo.clone(),
+                skill_asset_repo.clone(),
                 session_repo.clone(),
             )
             .register(Arc::new(RelayFsMountProvider::new(

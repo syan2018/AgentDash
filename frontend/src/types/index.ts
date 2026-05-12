@@ -206,6 +206,7 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   description?: string;
   capability_directives?: CapabilityDirective[];
   mcp_preset_keys?: string[];
+  skill_asset_keys?: string[];
   allowed_companions?: string[];
 }
 
@@ -496,4 +497,5 @@ export * from "./workflow";
 export * from "./canvas";
 export * from "./session";
 export * from "./mcp-preset";
+export * from "./skill-asset";
 export * from "./acp";

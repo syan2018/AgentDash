@@ -68,6 +68,9 @@ pub struct AgentPresetConfig {
     /// MCP Preset key 引用列表（如 `["github", "jira"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_preset_keys: Option<Vec<String>>,
+    /// Project SkillAsset key 引用列表（如 `["research", "writer"]`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_asset_keys: Option<Vec<String>>,
     /// 允许此 Agent 调用的 companion agent 名称白名单。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_companions: Option<Vec<String>>,
@@ -100,6 +103,7 @@ impl AgentPresetConfig {
             description,
             capability_directives,
             mcp_preset_keys,
+            skill_asset_keys,
             allowed_companions,
         )
     }
@@ -193,13 +197,36 @@ mod tests {
         let config = AgentPresetConfig::from_json(&serde_json::json!({
             "display_name": "Reviewer",
             "description": "检查代码结构",
+            "skill_asset_keys": ["research", "review"],
             "capability_directives": [{ "add": "workflow_management" }]
         }))
         .expect("valid preset config");
 
         assert_eq!(config.display_name.as_deref(), Some("Reviewer"));
         assert_eq!(config.description.as_deref(), Some("检查代码结构"));
+        assert_eq!(
+            config.skill_asset_keys.as_deref(),
+            Some(["research".to_string(), "review".to_string()].as_slice())
+        );
         assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn preset_config_merge_over_replaces_skill_asset_keys_when_present() {
+        let base = AgentPresetConfig {
+            skill_asset_keys: Some(vec!["base".to_string()]),
+            mcp_preset_keys: Some(vec!["mcp-base".to_string()]),
+            ..Default::default()
+        };
+        let over = AgentPresetConfig {
+            skill_asset_keys: Some(vec!["override".to_string()]),
+            ..Default::default()
+        };
+
+        let merged = over.merge_over(&base);
+
+        assert_eq!(merged.skill_asset_keys, Some(vec!["override".to_string()]));
+        assert_eq!(merged.mcp_preset_keys, Some(vec!["mcp-base".to_string()]));
     }
 
     #[test]

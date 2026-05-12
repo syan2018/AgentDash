@@ -29,7 +29,7 @@ license = "MIT"
 tokio = { version = "1.0", features = ["full"] }
 
 # Web 框架
-axum = { version = "0.8", features = ["macros", "ws"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # 序列化
@@ -56,6 +56,7 @@ regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures = "0.3"
+zip = "2.4"
 
 # 嵌入式脚本引擎
 rhai = { version = "1.24", features = ["serde", "sync"] }

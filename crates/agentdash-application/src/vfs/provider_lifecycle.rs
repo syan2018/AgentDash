@@ -8,6 +8,10 @@ use super::path::normalize_mount_relative_path;
 use super::provider::{
     MountError, MountOperationContext, MountProvider, SearchQuery, SearchResult,
 };
+use super::provider_skill_asset::{
+    list_projected_skill_files, parse_skill_asset_mount_metadata, read_projected_skill_file,
+    search_projected_skill_files,
+};
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
@@ -17,6 +21,7 @@ use crate::workflow::lifecycle::journey::{
     step_session_id, to_json_pretty, tool_call_projections,
 };
 use agentdash_domain::inline_file::InlineFileRepository;
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
 use async_trait::async_trait;
 use tracing::info;
@@ -24,6 +29,7 @@ use uuid::Uuid;
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    skill_asset_repo: Arc<dyn SkillAssetRepository>,
     journey: LifecycleJourneyProjection,
 }
 
@@ -31,13 +37,21 @@ impl LifecycleMountProvider {
     pub fn new(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
+        skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
+            skill_asset_repo,
             journey: LifecycleJourneyProjection::new(inline_file_repo, session_persistence),
         }
     }
+}
+
+fn lifecycle_mount_has_skills(mount: &Mount) -> bool {
+    parse_skill_asset_mount_metadata(mount)
+        .map(|(_, keys)| !keys.is_empty())
+        .unwrap_or(false)
 }
 
 fn map_domain_err(error: agentdash_domain::common::error::DomainError) -> MountError {
@@ -142,6 +156,11 @@ impl MountProvider for LifecycleMountProvider {
         let path_norm =
             normalize_mount_relative_path(path, true).map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&path_norm);
+
+        if matches!(segs.as_slice(), ["skills", ..]) {
+            return read_projected_skill_file(self.skill_asset_repo.as_ref(), mount, &path_norm)
+                .await;
+        }
 
         let content = match segs.as_slice() {
             ["artifacts"] | ["active", "artifacts"] => {
@@ -431,20 +450,32 @@ impl MountProvider for LifecycleMountProvider {
         let base = normalize_mount_relative_path(&options.path, true)
             .map_err(MountError::OperationFailed)?;
         let segs = segments_from_path(&base);
+
+        if matches!(segs.as_slice(), ["skills", ..]) {
+            return list_projected_skill_files(self.skill_asset_repo.as_ref(), mount, options)
+                .await;
+        }
+
         let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
         let entries = match segs.as_slice() {
-            [] => vec![
-                RuntimeFileEntry::dir("active").as_virtual(),
-                RuntimeFileEntry::dir("artifacts"),
-                RuntimeFileEntry::file("state").as_virtual(),
-                RuntimeFileEntry::dir("session").as_virtual(),
-                RuntimeFileEntry::dir("tool-calls").as_virtual(),
-                RuntimeFileEntry::file("writes").as_virtual(),
-                RuntimeFileEntry::dir("records"),
-                RuntimeFileEntry::dir("nodes").as_virtual(),
-                RuntimeFileEntry::dir("runs").as_virtual(),
-            ],
+            [] => {
+                let mut entries = vec![
+                    RuntimeFileEntry::dir("active").as_virtual(),
+                    RuntimeFileEntry::dir("artifacts"),
+                    RuntimeFileEntry::file("state").as_virtual(),
+                    RuntimeFileEntry::dir("session").as_virtual(),
+                    RuntimeFileEntry::dir("tool-calls").as_virtual(),
+                    RuntimeFileEntry::file("writes").as_virtual(),
+                    RuntimeFileEntry::dir("records"),
+                    RuntimeFileEntry::dir("nodes").as_virtual(),
+                    RuntimeFileEntry::dir("runs").as_virtual(),
+                ];
+                if lifecycle_mount_has_skills(mount) {
+                    entries.push(RuntimeFileEntry::dir("skills").as_virtual());
+                }
+                entries
+            }
             ["active"] => vec![
                 RuntimeFileEntry::dir("active/steps").as_virtual(),
                 RuntimeFileEntry::dir("active/artifacts"),
@@ -732,10 +763,19 @@ impl MountProvider for LifecycleMountProvider {
 
     async fn search_text(
         &self,
-        _mount: &Mount,
-        _query: &SearchQuery,
+        mount: &Mount,
+        query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
+        if query
+            .path
+            .as_deref()
+            .map(|path| path.trim_matches('/').starts_with("skills"))
+            .unwrap_or(false)
+        {
+            return search_projected_skill_files(self.skill_asset_repo.as_ref(), mount, query)
+                .await;
+        }
         Ok(SearchResult { matches: vec![] })
     }
 
@@ -761,6 +801,7 @@ mod tests {
     use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, SourceInfo, TraceInfo};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
+    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_domain::workflow::{LifecycleStepDefinition, LifecycleStepExecutionStatus};
     use std::sync::Mutex;
 
@@ -984,6 +1025,48 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct EmptySkillAssetRepo;
+
+    #[async_trait::async_trait]
+    impl SkillAssetRepository for EmptySkillAssetRepo {
+        async fn create(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, _id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            _project_id: Uuid,
+            _key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_builtin_key(
+            &self,
+            _project_id: Uuid,
+            _builtin_key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
     fn test_step(key: &str) -> LifecycleStepDefinition {
         LifecycleStepDefinition {
             key: key.to_string(),
@@ -1181,6 +1264,7 @@ mod tests {
         let provider = LifecycleMountProvider::new(
             run_repo,
             inline_repo.clone(),
+            Arc::new(EmptySkillAssetRepo),
             Arc::new(persistence.clone()),
         );
         (provider, mount, persistence)

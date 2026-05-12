@@ -15,6 +15,7 @@ pub mod routine;
 pub mod session_binding;
 pub mod session_composition;
 pub mod settings;
+pub mod skill_asset;
 pub mod story;
 pub mod task;
 pub mod workflow;

@@ -32,8 +32,8 @@ use agentdash_domain::{
 };
 
 use agentdash_plugin_api::AuthIdentity;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::HookSessionRuntimeSnapshot;
+use agentdash_spi::hooks::ContextFrame;
 use serde::Serialize;
 
 use super::project_agents::{
@@ -1190,6 +1190,7 @@ async fn build_story_owner_prompt_request(
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp::default(),
             agent_tool_directives: Vec::new(),
+            agent_skill_asset_keys: Vec::new(),
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
@@ -1257,6 +1258,11 @@ async fn build_project_owner_prompt_request(
         .capability_directives
         .clone()
         .unwrap_or_default();
+    let agent_skill_asset_keys = project_agent
+        .preset_config
+        .skill_asset_keys
+        .clone()
+        .unwrap_or_default();
 
     let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
     let (lifecycle, continuation_context_frame) =
@@ -1285,6 +1291,7 @@ async fn build_project_owner_prompt_request(
             user_prompt_blocks,
             agent_mcp: AgentLevelMcp { preset_mcp_servers },
             agent_tool_directives,
+            agent_skill_asset_keys,
             request_mcp_servers: req.mcp_servers.clone(),
             existing_vfs: req.vfs.clone(),
             visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
@@ -1323,9 +1330,12 @@ async fn build_continuation_context_frame_for_session(
         .build_projected_transcript(session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(agentdash_application::session::continuation::build_continuation_context_frame(
-        &transcript, None,
-    ))
+    Ok(
+        agentdash_application::session::continuation::build_continuation_context_frame(
+            &transcript,
+            None,
+        ),
+    )
 }
 
 /// `SessionPromptLifecycle` → `OwnerPromptLifecycle`，预留 continuation bundle 槽位。

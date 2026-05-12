@@ -101,6 +101,24 @@ impl From<agentdash_application::mcp_preset::McpPresetApplicationError> for ApiE
     }
 }
 
+impl From<agentdash_application::skill_asset::SkillAssetApplicationError> for ApiError {
+    fn from(err: agentdash_application::skill_asset::SkillAssetApplicationError) -> Self {
+        use agentdash_application::skill_asset::SkillAssetApplicationError as E;
+        match err {
+            E::BadRequest(message) => ApiError::BadRequest(message),
+            E::NotFound(message) => ApiError::NotFound(message),
+            E::Conflict(message) => ApiError::Conflict(message),
+            E::Internal(message) => {
+                if looks_like_skill_asset_unique_violation(&message) {
+                    ApiError::Conflict("skill_asset key 已存在，请换一个".to_string())
+                } else {
+                    ApiError::Internal(message)
+                }
+            }
+        }
+    }
+}
+
 impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for ApiError {
     fn from(err: agentdash_application::runtime_gateway::RuntimeInvocationError) -> Self {
         use agentdash_application::runtime_gateway::{
@@ -139,6 +157,16 @@ fn looks_like_unique_violation(message: &str) -> bool {
         || lower.contains("unique");
     let scoped_to_mcp_presets = lower.contains("mcp_presets") || lower.contains("idx_mcp_presets_");
     unique_marker && scoped_to_mcp_presets
+}
+
+fn looks_like_skill_asset_unique_violation(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let unique_marker = lower.contains("duplicate key")
+        || lower.contains("unique constraint")
+        || lower.contains("unique");
+    let scoped_to_skill_assets =
+        lower.contains("skill_assets") || lower.contains("idx_skill_assets_");
+    unique_marker && scoped_to_skill_assets
 }
 
 #[cfg(test)]

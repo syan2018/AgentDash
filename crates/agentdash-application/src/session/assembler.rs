@@ -729,6 +729,8 @@ pub struct OwnerBootstrapSpec<'a> {
     pub agent_mcp: AgentLevelMcp,
     /// Agent preset 中声明的能力指令，作为 agent 来源 contribution 输入 resolver。
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
+    /// Agent preset 中选择装载的项目 SkillAsset key。
+    pub agent_skill_asset_keys: Vec<String>,
     /// 前端/request 已携带的 MCP server(透传)。
     pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
@@ -998,6 +1000,11 @@ impl<'a> SessionRequestAssembler<'a> {
             )
             .await
             .map_err(|e| e.to_string())?;
+            crate::vfs::append_skill_asset_projection(
+                space,
+                project_id,
+                &spec.agent_skill_asset_keys,
+            );
         }
 
         // ── 2. workflow 上下文解析 → ToolContribution ──

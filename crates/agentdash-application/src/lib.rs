@@ -18,6 +18,7 @@ pub mod runtime_gateway;
 pub mod scheduling;
 pub mod session;
 pub mod skill;
+pub mod skill_asset;
 pub mod story;
 pub mod task;
 pub mod vfs;

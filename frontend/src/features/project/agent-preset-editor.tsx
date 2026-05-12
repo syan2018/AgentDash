@@ -3,6 +3,7 @@ import {
   createMcpPreset,
   fetchProjectMcpPresets,
 } from "../../services/mcpPreset";
+import { fetchProjectSkillAssets } from "../../services/skillAsset";
 import type {
   AgentPreset,
   CapabilityDirective,
@@ -11,6 +12,7 @@ import type {
   McpPresetDto,
   McpRoutePolicy,
   McpTransportConfig,
+  SkillAssetDto,
   SystemPromptMode,
   ThinkingLevel,
 } from "../../types";
@@ -42,6 +44,7 @@ export interface PresetFormState {
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
   mcp_preset_keys: string[];
+  skill_asset_keys: string[];
   capability_directives: CapabilityKey[];
   allowed_companions: string[];
 }
@@ -51,6 +54,9 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = preset?.config ?? {};
   const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
     ? (cfg.mcp_preset_keys as string[])
+    : [];
+  const rawSkillAssetKeys = Array.isArray(cfg.skill_asset_keys)
+    ? (cfg.skill_asset_keys as string[])
     : [];
   const rawDirectives = Array.isArray(cfg.capability_directives) ? cfg.capability_directives as CapabilityDirective[] : [];
   const capKeys: CapabilityKey[] = rawDirectives
@@ -70,6 +76,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     mcp_preset_keys: rawMcpPresetKeys,
+    skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capKeys,
     allowed_companions: rawCompanions,
   };
@@ -88,6 +95,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.mcp_preset_keys.length > 0) config.mcp_preset_keys = form.mcp_preset_keys;
+  if (form.skill_asset_keys.length > 0) config.skill_asset_keys = form.skill_asset_keys;
   if (form.capability_directives.length > 0) {
     config.capability_directives = form.capability_directives.map((key) => ({ add: key }));
   }
@@ -611,6 +619,19 @@ export function PresetFormFields({
           onChange={(mcp_preset_keys) => patchForm({ mcp_preset_keys })}
         />
       </FormSection>
+
+      {/* ── Section 7: Skills ── */}
+      <FormSection
+        title="Skills"
+        defaultOpen={false}
+        badge={form.skill_asset_keys.length > 0 ? `${form.skill_asset_keys.length} 个` : undefined}
+      >
+        <SkillAssetPicker
+          projectId={projectId}
+          selectedKeys={form.skill_asset_keys}
+          onChange={(skill_asset_keys) => patchForm({ skill_asset_keys })}
+        />
+      </FormSection>
     </div>
   );
 }
@@ -886,6 +907,102 @@ function McpPresetPicker({
   );
 }
 
+function SkillAssetPicker({
+  projectId,
+  selectedKeys,
+  onChange,
+}: {
+  projectId?: string;
+  selectedKeys: string[];
+  onChange: (keys: string[]) => void;
+}) {
+  const [skills, setSkills] = useState<SkillAssetDto[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadSkills = async () => {
+    if (!projectId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      setSkills(await fetchProjectSkillAssets(projectId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载 Skill 资产失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSkills();
+    // loadSkills 本身只依赖 projectId，把它纳入 deps 会因每次渲染重建函数引用导致无限 fetch。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const toggleKey = (key: string) => {
+    if (selectedKeys.includes(key)) {
+      onChange(selectedKeys.filter((item) => item !== key));
+      return;
+    }
+    onChange([...selectedKeys, key]);
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] text-muted-foreground/70">
+        选中的项目 Skill 会以 skills/&lt;key&gt;/SKILL.md 注入会话 VFS。
+      </p>
+      {error && (
+        <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[10px] text-destructive">
+          {error}
+        </p>
+      )}
+      {isLoading ? (
+        <p className="rounded-[8px] border border-dashed border-border px-2 py-2 text-center text-[10px] text-muted-foreground">
+          正在加载 Skill…
+        </p>
+      ) : skills.length === 0 ? (
+        <div className="rounded-[8px] border border-dashed border-border px-3 py-3 text-center text-[10px] text-muted-foreground">
+          当前项目还没有 Skill 资产
+        </div>
+      ) : (
+        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-1">
+          {skills
+            .slice()
+            .sort((a, b) => a.display_name.localeCompare(b.display_name, "zh-CN"))
+            .map((skill) => {
+              const checked = selectedKeys.includes(skill.key);
+              return (
+                <label
+                  key={skill.id}
+                  className={`flex cursor-pointer items-start gap-2 rounded-[8px] px-2.5 py-2 transition-colors ${
+                    checked ? "bg-primary/6" : "hover:bg-secondary/50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleKey(skill.key)}
+                    className="mt-0.5 h-3.5 w-3.5"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium text-foreground">
+                      {skill.display_name}
+                    </span>
+                    <span className="block text-[10px] text-muted-foreground">
+                      {skill.key} · {skill.source === "builtin_seed" ? "builtin" : "user"}
+                      {skill.disable_model_invocation ? " · explicit" : ""}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAgentTypeOptions() {
   const { executors, isLoading } = useExecutorDiscovery();
@@ -919,6 +1036,8 @@ function formatPresetSummary(preset: AgentPreset): string {
   if (desc) parts.push(desc);
   const presetKeys = Array.isArray(cfg.mcp_preset_keys) ? (cfg.mcp_preset_keys as string[]) : [];
   if (presetKeys.length > 0) parts.push(`${presetKeys.length} MCP Preset`);
+  const skillKeys = Array.isArray(cfg.skill_asset_keys) ? (cfg.skill_asset_keys as string[]) : [];
+  if (skillKeys.length > 0) parts.push(`${skillKeys.length} Skill`);
   return parts.join(" · ");
 }
 

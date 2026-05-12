@@ -16,6 +16,7 @@ pub mod project_sessions;
 pub mod projects;
 pub mod routines;
 pub mod settings;
+pub mod skill_assets;
 pub mod stories;
 pub mod story_sessions;
 pub mod task_execution;
@@ -188,6 +189,29 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/mcp-presets/{id}/clone",
             post(mcp_presets::clone_mcp_preset),
+        )
+        // Skill Asset（Project 级云端 Skill 仓储，Assets 页子类目）
+        .route(
+            "/projects/{project_id}/skill-assets",
+            get(skill_assets::list_skill_assets).post(skill_assets::create_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/upload",
+            post(skill_assets::upload_skill_assets),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/bootstrap",
+            post(skill_assets::bootstrap_skill_assets),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}",
+            get(skill_assets::get_skill_asset)
+                .patch(skill_assets::update_skill_asset)
+                .delete(skill_assets::delete_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}/reset-from-builtin",
+            post(skill_assets::reset_skill_asset_from_builtin),
         )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(

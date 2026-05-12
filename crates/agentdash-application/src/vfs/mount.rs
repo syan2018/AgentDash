@@ -20,9 +20,12 @@ pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
 pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
+pub const PROVIDER_SKILL_ASSET_FS: &str = "skill_asset_fs";
 pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
+pub(crate) const SKILL_ASSET_PROJECT_ID_METADATA_KEY: &str = "skill_asset_project_id";
+pub(crate) const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextContainerOwnerScope {
@@ -441,6 +444,9 @@ pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
     if mount.provider == PROVIDER_CANVAS_FS {
         return ResolvedMountOwnerKind::Canvas;
     }
+    if mount.provider == PROVIDER_SKILL_ASSET_FS {
+        return ResolvedMountOwnerKind::Project;
+    }
     match mount
         .metadata
         .get(CONTEXT_OWNER_KIND_METADATA_KEY)
@@ -476,6 +482,7 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
         PROVIDER_RELAY_FS => ResolvedMountPurpose::Workspace,
         PROVIDER_LIFECYCLE_VFS => ResolvedMountPurpose::Lifecycle,
         PROVIDER_CANVAS_FS => ResolvedMountPurpose::Canvas,
+        PROVIDER_SKILL_ASSET_FS => ResolvedMountPurpose::ProjectContainer,
         PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
             ResolvedMountOwnerKind::Project => ResolvedMountPurpose::ProjectContainer,
             ResolvedMountOwnerKind::Story => ResolvedMountPurpose::StoryContainer,
@@ -675,6 +682,91 @@ pub fn build_lifecycle_mount_with_ports(
             }
         }),
     }
+}
+
+pub fn build_skill_asset_mount(project_id: Uuid, skill_asset_keys: &[String]) -> Mount {
+    Mount {
+        id: "skill-assets".to_string(),
+        provider: PROVIDER_SKILL_ASSET_FS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("skill-assets://project/{project_id}"),
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: false,
+        display_name: "Project Skill Assets".to_string(),
+        metadata: serde_json::json!({
+            SKILL_ASSET_PROJECT_ID_METADATA_KEY: project_id.to_string(),
+            SKILL_ASSET_KEYS_METADATA_KEY: normalized_skill_asset_keys(skill_asset_keys),
+        }),
+    }
+}
+
+pub fn append_skill_asset_projection(vfs: &mut Vfs, project_id: Uuid, skill_asset_keys: &[String]) {
+    let keys = normalized_skill_asset_keys(skill_asset_keys);
+    if keys.is_empty() {
+        return;
+    }
+
+    if let Some(lifecycle) = vfs
+        .mounts
+        .iter_mut()
+        .find(|mount| mount.id == "lifecycle" && mount.provider == PROVIDER_LIFECYCLE_VFS)
+    {
+        let mut metadata = match std::mem::take(&mut lifecycle.metadata) {
+            serde_json::Value::Object(object) => object,
+            serde_json::Value::Null => serde_json::Map::new(),
+            other => {
+                let mut object = serde_json::Map::new();
+                object.insert("raw_metadata".to_string(), other);
+                object
+            }
+        };
+        metadata.insert(
+            SKILL_ASSET_PROJECT_ID_METADATA_KEY.to_string(),
+            serde_json::Value::String(project_id.to_string()),
+        );
+        metadata.insert(
+            SKILL_ASSET_KEYS_METADATA_KEY.to_string(),
+            serde_json::Value::Array(
+                keys.iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        lifecycle.metadata = serde_json::Value::Object(metadata);
+        return;
+    }
+
+    let mount = build_skill_asset_mount(project_id, &keys);
+    if let Some(existing) = vfs
+        .mounts
+        .iter_mut()
+        .find(|candidate| candidate.id == mount.id)
+    {
+        *existing = mount;
+    } else {
+        vfs.mounts.push(mount);
+    }
+}
+
+fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    skill_asset_keys
+        .iter()
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+        .filter_map(|key| {
+            if seen.insert(key.to_string()) {
+                Some(key.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 pub fn build_canvas_mount_id(canvas: &Canvas) -> String {

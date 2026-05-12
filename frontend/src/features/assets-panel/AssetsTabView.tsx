@@ -3,13 +3,12 @@
  *
  * 布局：
  * - 顶部：页面 header（标题 + 项目上下文）
- * - 左侧：类目竖排 NavLink 列表（Workflow / Canvas / MCP Preset）
+ * - 左侧：类目竖排 NavLink 列表（Workflow / Canvas / MCP Preset / Skill）
  * - 右侧：`<Outlet />` 渲染选中类目对应的 CategoryPanel
  *
  * 类目切换通过路由 URL 同步（`/dashboard/assets/:category`）。
  * 空 projectId 时展示 "请选择项目" 空态，对齐其他 Tab view 的风格。
  *
- * 本 PR（PR3）仅提供壳 + 占位；具体列表数据留给 PR4/PR5。
  */
 
 import { useMemo } from "react";
@@ -28,6 +27,7 @@ const CATEGORIES: Array<{
   { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
   { segment: "canvas", label: "Canvas", hint: "可视化资产" },
   { segment: "mcp-preset", label: "MCP Preset", hint: "MCP Server 模板" },
+  { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
 ];
 
 export function AssetsTabView() {
@@ -61,7 +61,7 @@ export function AssetsTabView() {
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-foreground">项目资产</h2>
             <p className="text-xs text-muted-foreground">
-              {currentProject.name} · 统一管理 Workflow / Canvas / MCP Preset 等项目级可复用资产
+              {currentProject.name} · 统一管理 Workflow / Canvas / MCP Preset / Skill 等项目级可复用资产
             </p>
           </div>
         </div>

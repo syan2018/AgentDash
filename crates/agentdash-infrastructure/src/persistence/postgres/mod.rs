@@ -10,6 +10,7 @@ mod routine_repository;
 mod session_binding_repository;
 mod session_repository;
 mod settings_repository;
+mod skill_asset_repository;
 mod state_change_repository;
 mod state_change_store;
 mod story_repository;
@@ -106,6 +107,7 @@ pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutine
 pub use session_binding_repository::PostgresSessionBindingRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;
+pub use skill_asset_repository::PostgresSkillAssetRepository;
 pub use state_change_repository::PostgresStateChangeRepository;
 pub use story_repository::PostgresStoryRepository;
 pub use user_directory_repository::PostgresUserDirectoryRepository;

@@ -8,8 +8,8 @@ use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AgentConfig, AgentConnector};
 use agentdash_spi::hooks::ContextFrame;
+use agentdash_spi::{AgentConfig, AgentConnector};
 
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
@@ -51,6 +51,7 @@ struct RoutineAgentContext {
     workspace: Option<Workspace>,
     executor_config: AgentConfig,
     agent_tool_directives: Vec<ToolCapabilityDirective>,
+    agent_skill_asset_keys: Vec<String>,
     display_name: String,
     preset_name: Option<String>,
     preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -255,6 +256,7 @@ impl RoutineExecutor {
             .capability_directives
             .clone()
             .unwrap_or_default();
+        let agent_skill_asset_keys = preset_config.skill_asset_keys.clone().unwrap_or_default();
         let display_name = preset_config
             .display_name
             .as_deref()
@@ -275,6 +277,7 @@ impl RoutineExecutor {
             workspace,
             executor_config,
             agent_tool_directives,
+            agent_skill_asset_keys,
             display_name,
             preset_name: Some(agent.name.clone()),
             preset_mcp_servers,
@@ -462,7 +465,8 @@ impl RoutineExecutor {
                     .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
                 continuation_context_frame =
                     crate::session::continuation::build_continuation_context_frame(
-                        &transcript, None,
+                        &transcript,
+                        None,
                     );
                 OwnerPromptLifecycle::RepositoryRehydrate {
                     prebuilt_continuation_bundle: None,
@@ -505,6 +509,7 @@ impl RoutineExecutor {
                     preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
                 },
                 agent_tool_directives: agent_context.agent_tool_directives.clone(),
+                agent_skill_asset_keys: agent_context.agent_skill_asset_keys.clone(),
                 request_mcp_servers: Vec::new(),
                 existing_vfs: None,
                 visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),

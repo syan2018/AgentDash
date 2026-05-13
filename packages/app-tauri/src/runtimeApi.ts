@@ -18,6 +18,14 @@ export interface LocalRuntimeStatus {
   message: string | null
 }
 
+export interface LocalLogEvent {
+  sequence: number
+  timestamp: string
+  level: string
+  target: string
+  message: string
+}
+
 export interface RuntimeStartRequest {
   cloud_url: string
   token: string
@@ -60,6 +68,16 @@ export async function runtimeStart(request: RuntimeStartRequest): Promise<LocalR
 export async function runtimeStop(): Promise<void> {
   ensureTauriHost()
   return invoke('runtime_stop')
+}
+
+export async function logsTail(limit = 200): Promise<LocalLogEvent[]> {
+  if (!isTauriHost()) return []
+  return invoke('logs_tail', { limit })
+}
+
+export async function logsClear(): Promise<void> {
+  ensureTauriHost()
+  return invoke('logs_clear')
 }
 
 export async function mcpServersLoad(root: string): Promise<McpLocalServerEntry[]> {

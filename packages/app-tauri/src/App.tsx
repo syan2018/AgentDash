@@ -1,8 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import {
+  LocalLogEvent,
   LocalRuntimeStatus,
   McpLocalServerEntry,
   RuntimeStartRequest,
+  logsClear,
+  logsTail,
   mcpServerProbe,
   mcpServersLoad,
   mcpServersSave,
@@ -26,6 +29,8 @@ function App() {
   const [mcpServers, setMcpServers] = useState<McpLocalServerEntry[]>([])
   const [mcpMessage, setMcpMessage] = useState<string | null>(null)
   const [probingIndex, setProbingIndex] = useState<number | null>(null)
+  const [logs, setLogs] = useState<LocalLogEvent[]>([])
+  const [logLevel, setLogLevel] = useState('all')
 
   useEffect(() => {
     let alive = true
@@ -33,6 +38,8 @@ function App() {
       try {
         const next = await runtimeSnapshot()
         if (alive) setSnapshot(next)
+        const nextLogs = await logsTail()
+        if (alive) setLogs(nextLogs)
       } catch (err) {
         if (alive) setError(formatError(err))
       }
@@ -61,6 +68,10 @@ function App() {
   }, [mcpRoot, roots])
 
   const effectiveMcpRoot = mcpRoot.trim() || roots[0] || ''
+  const visibleLogs = useMemo(
+    () => logs.filter((log) => logLevel === 'all' || log.level === logLevel),
+    [logLevel, logs],
+  )
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -92,6 +103,32 @@ function App() {
       setError(formatError(err))
     } finally {
       setIsBusy(false)
+    }
+  }
+
+  async function handleRefreshLogs() {
+    try {
+      setLogs(await logsTail())
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  async function handleClearLogs() {
+    try {
+      await logsClear()
+      setLogs(await logsTail())
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  async function handleCopyLogs() {
+    try {
+      const content = visibleLogs.map(formatLogLine).join('\n')
+      await navigator.clipboard.writeText(content)
+    } catch (err) {
+      setError(formatError(err))
     }
   }
 
@@ -355,6 +392,41 @@ function App() {
 
             {mcpMessage ? <div className="message-box">{mcpMessage}</div> : null}
           </section>
+
+          <section className="panel logs-panel">
+            <div className="panel-header">
+              <h2>Runtime Logs</h2>
+              <div className="inline-actions">
+                <select className="compact-select" value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
+                  <option value="all">全部</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+                <button className="secondary-button" type="button" onClick={() => void handleRefreshLogs()}>
+                  刷新
+                </button>
+                <button className="secondary-button" type="button" onClick={() => void handleCopyLogs()} disabled={visibleLogs.length === 0}>
+                  复制
+                </button>
+                <button className="danger-button" type="button" onClick={() => void handleClearLogs()}>
+                  清空
+                </button>
+              </div>
+            </div>
+
+            <div className="log-list">
+              {visibleLogs.map((log) => (
+                <div className={`log-row log-${log.level}`} key={log.sequence}>
+                  <time>{formatTime(log.timestamp)}</time>
+                  <span>{log.level}</span>
+                  <code>{log.target}</code>
+                  <p>{log.message}</p>
+                </div>
+              ))}
+              {visibleLogs.length === 0 ? <div className="empty-state">暂无本机 runtime 日志</div> : null}
+            </div>
+          </section>
         </div>
       </section>
     </main>
@@ -378,6 +450,16 @@ function stateText(state: LocalRuntimeStatus['state']) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function formatLogLine(log: LocalLogEvent) {
+  return `${log.timestamp} ${log.level.toUpperCase()} ${log.target} ${log.message}`
+}
+
+function formatTime(timestamp: string) {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return timestamp
+  return date.toLocaleTimeString()
 }
 
 function parseLines(value: string) {

@@ -1,5 +1,6 @@
 //! 本机 runtime 组装与生命周期管理。
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -76,6 +77,16 @@ pub struct LocalRuntimeStatus {
 
 pub type LocalRuntimeSnapshot = LocalRuntimeStatus;
 
+/// Desktop local 设置页展示的结构化日志事件。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LocalLogEvent {
+    pub sequence: u64,
+    pub timestamp: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
 /// 对已启动 runtime 的只读句柄。
 pub struct LocalRuntimeHandle {
     pub backend_id: String,
@@ -102,6 +113,7 @@ pub struct McpProbeResult {
 #[derive(Default, Clone)]
 pub struct LocalRuntimeManager {
     inner: Arc<Mutex<Option<RunningRuntime>>>,
+    logs: Arc<Mutex<LocalLogBuffer>>,
 }
 
 struct RunningRuntime {
@@ -111,6 +123,14 @@ struct RunningRuntime {
     join: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
+#[derive(Default)]
+struct LocalLogBuffer {
+    next_sequence: u64,
+    events: VecDeque<LocalLogEvent>,
+}
+
+const LOCAL_LOG_CAPACITY: usize = 500;
+
 impl LocalRuntimeManager {
     pub fn new() -> Self {
         Self::default()
@@ -119,14 +139,28 @@ impl LocalRuntimeManager {
     pub async fn start(&self, config: LocalRuntimeConfig) -> anyhow::Result<LocalRuntimeHandle> {
         let mut guard = self.inner.lock().await;
         if guard.is_some() {
+            self.record_log("warn", "runtime", "本机 runtime 已经在运行")
+                .await;
             anyhow::bail!("本机 runtime 已经在运行");
         }
+
+        self.record_log(
+            "info",
+            "runtime",
+            format!(
+                "准备启动 runtime: backend={}, roots={}",
+                config.backend_id,
+                config.accessible_roots.len()
+            ),
+        )
+        .await;
 
         let ws_config = build_ws_config(&config).await?;
         let initial_status = status_from_config(&config, LocalRuntimeState::Starting, None);
         let (status_tx, status_rx) = watch::channel(initial_status);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
+        let logs = Arc::clone(&self.logs);
 
         let join = tokio::spawn({
             let status_tx = status_tx.clone();
@@ -134,6 +168,13 @@ impl LocalRuntimeManager {
                 let running_status =
                     status_from_ws_config(&ws_config, LocalRuntimeState::Running, None);
                 let _ = status_tx.send(running_status);
+                push_log(
+                    &logs,
+                    "info",
+                    "runtime",
+                    format!("runtime 已启动: backend={}", ws_config.backend_id),
+                )
+                .await;
 
                 let result = ws_client::run_until_shutdown(ws_config, shutdown_rx).await;
                 let final_status = match &result {
@@ -149,6 +190,14 @@ impl LocalRuntimeManager {
                     ),
                 };
                 let _ = status_tx.send(final_status);
+                match &result {
+                    Ok(()) => {
+                        push_log(&logs, "info", "runtime", "runtime 已停止").await;
+                    }
+                    Err(error) => {
+                        push_log(&logs, "error", "runtime", error.to_string()).await;
+                    }
+                }
                 result
             }
         });
@@ -175,9 +224,13 @@ impl LocalRuntimeManager {
         };
 
         let Some(running) = running else {
+            self.record_log("info", "runtime", "runtime 未运行，忽略停止请求")
+                .await;
             return Ok(());
         };
 
+        self.record_log("info", "runtime", "收到 runtime 停止请求")
+            .await;
         let stopping_status = status_with_state(
             &running.status_rx.borrow(),
             LocalRuntimeState::Stopping,
@@ -194,11 +247,61 @@ impl LocalRuntimeManager {
         Ok(())
     }
 
+    pub async fn record_log(
+        &self,
+        level: impl Into<String>,
+        target: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        push_log(&self.logs, level, target, message).await;
+    }
+
+    pub async fn logs_tail(&self, limit: usize) -> Vec<LocalLogEvent> {
+        let limit = limit.clamp(1, LOCAL_LOG_CAPACITY);
+        let guard = self.logs.lock().await;
+        guard
+            .events
+            .iter()
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    pub async fn logs_clear(&self) {
+        let mut guard = self.logs.lock().await;
+        guard.events.clear();
+    }
+
     pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot> {
         let guard = self.inner.lock().await;
         guard
             .as_ref()
             .map(|running| running.status_rx.borrow().clone())
+    }
+}
+
+async fn push_log(
+    logs: &Arc<Mutex<LocalLogBuffer>>,
+    level: impl Into<String>,
+    target: impl Into<String>,
+    message: impl Into<String>,
+) {
+    let mut guard = logs.lock().await;
+    let event = LocalLogEvent {
+        sequence: guard.next_sequence,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        level: level.into(),
+        target: target.into(),
+        message: redact_log_message(&message.into()),
+    };
+    guard.next_sequence = guard.next_sequence.saturating_add(1);
+    guard.events.push_back(event);
+    while guard.events.len() > LOCAL_LOG_CAPACITY {
+        guard.events.pop_front();
     }
 }
 
@@ -362,6 +465,34 @@ fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
     Ok(root)
 }
 
+fn redact_log_message(message: &str) -> String {
+    let mut redacted = message.to_string();
+    for marker in ["token=", "access_token=", "refresh_token="] {
+        redacted = redact_marker_value(&redacted, marker);
+    }
+    redacted
+}
+
+fn redact_marker_value(message: &str, marker: &str) -> String {
+    let mut output = String::with_capacity(message.len());
+    let mut rest = message;
+
+    while let Some(start) = rest.find(marker) {
+        let marker_end = start + marker.len();
+        output.push_str(&rest[..marker_end]);
+        output.push_str("***");
+
+        let after_marker = &rest[marker_end..];
+        let value_end = after_marker
+            .find(|ch: char| ch == '&' || ch.is_whitespace())
+            .unwrap_or(after_marker.len());
+        rest = &after_marker[value_end..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
 fn status_from_config(
     config: &LocalRuntimeConfig,
     state: LocalRuntimeState,
@@ -379,6 +510,33 @@ fn status_from_config(
         executor_enabled: config.executor_enabled,
         mcp_server_count: 0,
         message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_logs_keep_recent_events_and_redact_tokens() {
+        let manager = LocalRuntimeManager::new();
+        manager
+            .record_log("info", "test", "connecting token=secret123&mode=test")
+            .await;
+
+        let logs = manager.logs_tail(10).await;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].sequence, 0);
+        assert_eq!(logs[0].message, "connecting token=***&mode=test");
+    }
+
+    #[tokio::test]
+    async fn runtime_logs_clear_removes_events() {
+        let manager = LocalRuntimeManager::new();
+        manager.record_log("info", "test", "one").await;
+        manager.logs_clear().await;
+
+        assert!(manager.logs_tail(10).await.is_empty());
     }
 }
 

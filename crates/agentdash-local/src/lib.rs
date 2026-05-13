@@ -15,8 +15,8 @@ mod ws_client;
 pub mod runtime;
 
 pub use runtime::{
-    LocalRuntimeConfig, LocalRuntimeHandle, LocalRuntimeManager, LocalRuntimeSnapshot,
-    LocalRuntimeState, LocalRuntimeStatus, McpProbeResult, StopReason,
+    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeHandle, LocalRuntimeManager,
+    LocalRuntimeSnapshot, LocalRuntimeState, LocalRuntimeStatus, McpProbeResult, StopReason,
     canonicalize_accessible_roots, load_mcp_servers_for_root, probe_mcp_server, run_standalone,
     save_mcp_servers_for_root,
 };

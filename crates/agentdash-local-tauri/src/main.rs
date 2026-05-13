@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
-    LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult, StopReason,
-    load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
+    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
+    StopReason, load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
 };
 use serde::Deserialize;
 use tauri::State;
@@ -77,18 +77,75 @@ async fn runtime_snapshot(
 }
 
 #[tauri::command]
-async fn mcp_servers_load(root: PathBuf) -> Result<Vec<McpLocalServerEntry>, String> {
+async fn mcp_servers_load(
+    state: State<'_, DesktopState>,
+    root: PathBuf,
+) -> Result<Vec<McpLocalServerEntry>, String> {
+    state
+        .runtime
+        .record_log(
+            "info",
+            "mcp",
+            format!("加载 MCP servers: root={}", root.display()),
+        )
+        .await;
     load_mcp_servers_for_root(root).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn mcp_servers_save(root: PathBuf, servers: Vec<McpLocalServerEntry>) -> Result<(), String> {
+async fn mcp_servers_save(
+    state: State<'_, DesktopState>,
+    root: PathBuf,
+    servers: Vec<McpLocalServerEntry>,
+) -> Result<(), String> {
+    state
+        .runtime
+        .record_log(
+            "info",
+            "mcp",
+            format!(
+                "保存 MCP servers: root={}, count={}",
+                root.display(),
+                servers.len()
+            ),
+        )
+        .await;
     save_mcp_servers_for_root(root, servers).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn mcp_server_probe(server: McpLocalServerEntry) -> Result<McpProbeResult, String> {
-    Ok(probe_mcp_server(server).await)
+async fn mcp_server_probe(
+    state: State<'_, DesktopState>,
+    server: McpLocalServerEntry,
+) -> Result<McpProbeResult, String> {
+    let result = probe_mcp_server(server.clone()).await;
+    state
+        .runtime
+        .record_log(
+            if result.ok { "info" } else { "warn" },
+            "mcp",
+            format!("探测 MCP server: name={}, {}", server.name, result.message),
+        )
+        .await;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn logs_tail(
+    state: State<'_, DesktopState>,
+    limit: Option<usize>,
+) -> Result<Vec<LocalLogEvent>, String> {
+    Ok(state.runtime.logs_tail(limit.unwrap_or(200)).await)
+}
+
+#[tauri::command]
+async fn logs_clear(state: State<'_, DesktopState>) -> Result<(), String> {
+    state.runtime.logs_clear().await;
+    state
+        .runtime
+        .record_log("info", "runtime", "已清空本机日志")
+        .await;
+    Ok(())
 }
 
 fn main() {
@@ -98,6 +155,8 @@ fn main() {
             mcp_server_probe,
             mcp_servers_load,
             mcp_servers_save,
+            logs_clear,
+            logs_tail,
             runtime_start,
             runtime_stop,
             runtime_snapshot

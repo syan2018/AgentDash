@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引，需要挂载新增 VFS 物化 spec"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "统一 VFS 访问契约，新增 spec 需要与其边界保持一致"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "skill bundle 的 scripts/references/assets 布局影响 skill-assets 物化 root 规则"}
+{"file": ".trellis/tasks/04-08-cross-mount-shell-materialization/prd.md", "reason": "已有 VFS 物化任务规划，提供当前实现偏差和验收项背景"}

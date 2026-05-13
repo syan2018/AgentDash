@@ -143,6 +143,9 @@ trait VfsProvider {
 - 声明式来源解析与运行时工具访问必须共享同一套 provider 底座。
 - `File / ProjectSnapshot` 不应长期保留专属实现路径。
 - 如果某资源可被 context 注入读取，也应能在 runtime tool 中以相同 mount/path 访问。
+- 当本机 shell、relay MCP 或 URL-only 消费者需要把 VFS URI 转成本机 path / workdir / URL 时，必须遵守
+  [VFS 资源本机物化契约](./vfs-materialization.md)，不得自行使用 `session_id / plan_id / backend_id`
+  拼接临时目录。
 
 #### 3.6 非物理 workspace warp 契约
 

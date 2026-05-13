@@ -169,6 +169,7 @@ Workspace (1) → (*) WorkspaceBinding
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [VFS Access](./vfs/vfs-access.md) | 统一 VFS / Provider / Runtime Tool 跨层契约 | ✅ 已创建 |
+| [VFS Materialization](./vfs/vfs-materialization.md) | 云端 VFS URI 物化为本机 path / workdir / URL 的 scope、路径、刷新与 provider 映射契约 | ✅ 已创建 |
 
 #### `capability/` — 能力管线与插件
 

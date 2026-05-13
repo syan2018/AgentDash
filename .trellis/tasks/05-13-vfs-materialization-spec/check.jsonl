@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "确认新增 spec 已被后端规范索引引用"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "确认物化 spec 没有破坏统一 VFS / provider / runtime tool 分层"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "确认 skill-assets 资源组规则与 Embedded Skill Bundle 契约一致"}
+{"file": ".trellis/tasks/05-13-vfs-materialization-spec/prd.md", "reason": "确认实现满足本任务验收标准"}

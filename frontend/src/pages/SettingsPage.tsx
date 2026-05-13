@@ -1609,7 +1609,8 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
           const isExpanded = expandedId === backend.id;
           const executors = backend.capabilities?.executors ?? [];
           const availableExecs = executors.filter((e) => e.available);
-          const roots = backend.accessible_roots ?? [];
+          const runtimeHealth = backend.runtime_health;
+          const roots = backend.accessible_roots ?? runtimeHealth?.accessible_roots ?? [];
 
           return (
             <div key={backend.id} className="rounded-[10px] border border-border bg-background/80">
@@ -1663,7 +1664,25 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                     </span>
                     <span className="text-muted-foreground">类型</span>
                     <span className="text-foreground">{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                    {runtimeHealth && (
+                      <>
+                        <span className="text-muted-foreground">Runtime</span>
+                        <span className="text-foreground">{runtimeStatusLabel(runtimeHealth.status)}</span>
+                        <span className="text-muted-foreground">版本</span>
+                        <span className="truncate font-mono text-foreground" title={runtimeHealth.version ?? undefined}>
+                          {runtimeHealth.version ?? "—"}
+                        </span>
+                        <span className="text-muted-foreground">Last seen</span>
+                        <span className="text-foreground">{formatRuntimeTimestamp(runtimeHealth.last_seen_at)}</span>
+                      </>
+                    )}
                   </div>
+
+                  {runtimeHealth?.disconnect_reason && !backend.online && (
+                    <p className="rounded-[8px] border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      断开原因：{runtimeHealth.disconnect_reason}
+                    </p>
+                  )}
 
                   {executors.length > 0 && (
                     <div>
@@ -1715,6 +1734,30 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
       </div>
     </SectionCard>
   );
+}
+
+function runtimeStatusLabel(status: NonNullable<BackendConfig["runtime_health"]>["status"]) {
+  switch (status) {
+    case "online":
+      return "在线";
+    case "offline":
+      return "离线";
+    case "starting":
+      return "启动中";
+    case "degraded":
+      return "降级";
+    case "stopping":
+      return "停止中";
+    case "error":
+      return "错误";
+  }
+}
+
+function formatRuntimeTimestamp(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function ScopeTabs({

@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::backend::{BackendConfig, BackendRepository, BackendType};
+use agentdash_domain::backend::{
+    BackendConfig, BackendRepository, BackendType, RuntimeHealth, RuntimeHealthStatus,
+};
 
 use crate::app_state::AppState;
 use crate::relay::registry::OnlineBackendInfo;
@@ -33,9 +35,30 @@ pub struct BackendWithStatus {
     pub config: BackendConfig,
     pub online: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_health: Option<RuntimeHealthResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub accessible_roots: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<agentdash_relay::CapabilitiesPayload>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeHealthResponse {
+    pub backend_id: String,
+    pub profile_id: Option<String>,
+    pub name: String,
+    pub status: RuntimeHealthStatus,
+    pub online: bool,
+    pub version: Option<String>,
+    pub capabilities: serde_json::Value,
+    pub accessible_roots: Vec<String>,
+    pub device: serde_json::Value,
+    pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub disconnected_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub disconnect_reason: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub async fn list_backends(
@@ -43,6 +66,15 @@ pub async fn list_backends(
 ) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
     let backends = state.repos.backend_repo.list_backends().await?;
     let online_list = state.services.backend_registry.list_online().await;
+    let runtime_health = state
+        .repos
+        .runtime_health_repo
+        .list_runtime_health()
+        .await?;
+    let runtime_health_by_backend = runtime_health
+        .into_iter()
+        .map(|health| (health.backend_id.clone(), health))
+        .collect::<std::collections::HashMap<_, _>>();
     let mut result = Vec::with_capacity(backends.len() + online_list.len());
 
     let mut seen_ids = std::collections::HashSet::new();
@@ -50,8 +82,13 @@ pub async fn list_backends(
     for b in backends {
         seen_ids.insert(b.id.clone());
         let online_info = online_list.iter().find(|o| o.backend_id == b.id);
+        let runtime_health = runtime_health_by_backend
+            .get(&b.id)
+            .cloned()
+            .map(|health| runtime_health_response(health, online_info.is_some()));
         result.push(BackendWithStatus {
             online: online_info.is_some(),
+            runtime_health,
             accessible_roots: online_info.map(|o| o.accessible_roots.clone()),
             capabilities: online_info.map(|o| o.capabilities.clone()),
             config: b,
@@ -62,8 +99,13 @@ pub async fn list_backends(
         if seen_ids.contains(&o.backend_id) {
             continue;
         }
+        let runtime_health = runtime_health_by_backend
+            .get(&o.backend_id)
+            .cloned()
+            .map(|health| runtime_health_response(health, true));
         result.push(BackendWithStatus {
             online: true,
+            runtime_health,
             accessible_roots: Some(o.accessible_roots.clone()),
             capabilities: Some(o.capabilities.clone()),
             config: BackendConfig {
@@ -81,12 +123,73 @@ pub async fn list_backends(
     Ok(Json(result))
 }
 
+pub async fn list_runtime_health(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<RuntimeHealthResponse>>, ApiError> {
+    let online_ids = state
+        .services
+        .backend_registry
+        .list_online_ids()
+        .await
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let items = state
+        .repos
+        .runtime_health_repo
+        .list_runtime_health()
+        .await?
+        .into_iter()
+        .map(|health| {
+            let online = online_ids.contains(&health.backend_id);
+            runtime_health_response(health, online)
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+pub async fn get_runtime_health(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<RuntimeHealthResponse>, ApiError> {
+    let health = state
+        .repos
+        .runtime_health_repo
+        .get_runtime_health(&id)
+        .await?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "runtime_health",
+            id: id.clone(),
+        })?;
+    let online = state.services.backend_registry.is_online(&id).await;
+    Ok(Json(runtime_health_response(health, online)))
+}
+
 /// 列出通过 WebSocket 连接的在线后端
 pub async fn list_online_backends(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<OnlineBackendInfo>>, ApiError> {
     let online = state.services.backend_registry.list_online().await;
     Ok(Json(online))
+}
+
+fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealthResponse {
+    RuntimeHealthResponse {
+        backend_id: health.backend_id,
+        profile_id: health.profile_id,
+        name: health.name,
+        status: health.status,
+        online,
+        version: health.version,
+        capabilities: health.capabilities,
+        accessible_roots: health.accessible_roots,
+        device: health.device,
+        connected_at: health.connected_at,
+        last_seen_at: health.last_seen_at,
+        disconnected_at: health.disconnected_at,
+        disconnect_reason: health.disconnect_reason,
+        created_at: health.created_at,
+        updated_at: health.updated_at,
+    }
 }
 
 pub async fn get_backend(

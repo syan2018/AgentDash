@@ -22,8 +22,9 @@ pub use apply_patch::{
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use materialization::{
-    MaterializationRewrite, RewriteShellCommandInput, RewriteShellCommandOutput,
-    VfsMaterializationService, VfsMaterializationTransport,
+    MaterializationRewrite, RewriteJsonArgumentsInput, RewriteJsonArgumentsOutput,
+    RewriteShellCommandInput, RewriteShellCommandOutput, VfsMaterializationService,
+    VfsMaterializationTransport,
 };
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,

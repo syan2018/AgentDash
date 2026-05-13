@@ -73,7 +73,9 @@ pub use hooks::{
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
-pub use platform::mcp_relay::{McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo};
+pub use platform::mcp_relay::{
+    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
+};
 pub use platform::mount::MountEditCapabilities;
 pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use platform::skill::SkillRef;

@@ -7,6 +7,7 @@ use agentdash_relay::{
 };
 use agentdash_spi::{Mount, MountCapability, Vfs};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use super::inline_persistence::InlineContentOverlay;
@@ -106,6 +107,28 @@ impl VfsMaterializationService {
         })
     }
 
+    pub async fn rewrite_json_arguments(
+        &self,
+        input: RewriteJsonArgumentsInput<'_>,
+    ) -> Result<RewriteJsonArgumentsOutput, String> {
+        let mut rewrites = Vec::new();
+        let value = rewrite_json_value(
+            self,
+            input,
+            serde_json::Value::Object(input.arguments.clone()),
+            &mut rewrites,
+        )
+        .await?;
+        let arguments = match value {
+            serde_json::Value::Object(map) => map,
+            _ => unreachable!("object input remains object"),
+        };
+        Ok(RewriteJsonArgumentsOutput {
+            arguments,
+            rewrites,
+        })
+    }
+
     async fn build_payload(
         &self,
         input: &RewriteShellCommandInput<'_>,
@@ -143,6 +166,76 @@ impl VfsMaterializationService {
             cache_scope: plan.cache_scope,
             ttl_ms: Some(30 * 60 * 1000),
         })
+    }
+
+    async fn build_payload_for_context(
+        &self,
+        input: MaterializationBuildInput<'_>,
+    ) -> Result<VfsMaterializePayload, String> {
+        let plan = self
+            .plan_entries(
+                input.vfs,
+                input.target,
+                input.source_mount,
+                input.overlay,
+                input.identity,
+            )
+            .await?;
+        let entries = self
+            .read_plan_entries(
+                input.vfs,
+                input.target,
+                &plan,
+                input.overlay,
+                input.identity,
+            )
+            .await?;
+
+        Ok(VfsMaterializePayload {
+            session_id: input.session_id.to_string(),
+            turn_id: input.turn_id.map(str::to_string),
+            tool_call_id: input.tool_call_id.map(str::to_string),
+            plan_id: uuid::Uuid::new_v4().to_string(),
+            plan_kind: plan.kind,
+            source_uri: input.source_uri.to_string(),
+            root_uri: format_mount_uri(&input.target.mount_id, &plan.root_path),
+            mount_id: input.target.mount_id.clone(),
+            provider: input.source_mount.provider.clone(),
+            primary_relative_path: plan.primary_relative_path,
+            target_kind: plan.target_kind,
+            access_mode: plan.access_mode,
+            entries,
+            cache_scope: plan.cache_scope,
+            ttl_ms: Some(30 * 60 * 1000),
+        })
+    }
+
+    async fn local_path_for_uri(&self, input: LocalPathForUriInput<'_>) -> Result<String, String> {
+        let target = parse_mount_uri(input.source_uri, input.vfs)?;
+        let source_mount = resolve_mount(input.vfs, &target.mount_id, MountCapability::Read)?;
+        if can_directly_reference_backend_path(source_mount, input.target_backend_id) {
+            let path = normalize_mount_relative_path(&target.path, true)?;
+            return Ok(join_root_ref(&source_mount.root_ref, &path));
+        }
+
+        let payload = self
+            .build_payload_for_context(MaterializationBuildInput {
+                vfs: input.vfs,
+                source_uri: input.source_uri,
+                target: &target,
+                source_mount,
+                session_id: input.session_id,
+                turn_id: input.turn_id,
+                tool_call_id: input.tool_call_id,
+                overlay: input.overlay,
+                identity: input.identity,
+            })
+            .await?;
+        let response = self
+            .transport
+            .materialize(input.target_backend_id, payload)
+            .await?;
+        Ok(response.primary_local_path)
     }
 
     async fn plan_entries(
@@ -290,6 +383,18 @@ pub struct RewriteShellCommandInput<'a> {
     pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
 }
 
+#[derive(Clone, Copy)]
+pub struct RewriteJsonArgumentsInput<'a> {
+    pub vfs: &'a Vfs,
+    pub target_backend_id: &'a str,
+    pub arguments: &'a serde_json::Map<String, serde_json::Value>,
+    pub session_id: &'a str,
+    pub turn_id: Option<&'a str>,
+    pub tool_call_id: Option<&'a str>,
+    pub overlay: Option<&'a InlineContentOverlay>,
+    pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteShellCommandOutput {
     pub command: String,
@@ -297,9 +402,38 @@ pub struct RewriteShellCommandOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteJsonArgumentsOutput {
+    pub arguments: serde_json::Map<String, serde_json::Value>,
+    pub rewrites: Vec<MaterializationRewrite>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaterializationRewrite {
     pub source_uri: String,
     pub local_path: String,
+}
+
+struct MaterializationBuildInput<'a> {
+    vfs: &'a Vfs,
+    source_uri: &'a str,
+    target: &'a ResourceRef,
+    source_mount: &'a Mount,
+    session_id: &'a str,
+    turn_id: Option<&'a str>,
+    tool_call_id: Option<&'a str>,
+    overlay: Option<&'a InlineContentOverlay>,
+    identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+}
+
+struct LocalPathForUriInput<'a> {
+    vfs: &'a Vfs,
+    target_backend_id: &'a str,
+    source_uri: &'a str,
+    session_id: &'a str,
+    turn_id: Option<&'a str>,
+    tool_call_id: Option<&'a str>,
+    overlay: Option<&'a InlineContentOverlay>,
+    identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
 }
 
 struct MaterializationPlan {
@@ -313,10 +447,93 @@ struct MaterializationPlan {
 }
 
 fn can_directly_reference_local_path(source_mount: &Mount, exec_mount: &Mount) -> bool {
+    exec_mount.provider == PROVIDER_RELAY_FS
+        && can_directly_reference_backend_path(source_mount, &exec_mount.backend_id)
+}
+
+fn can_directly_reference_backend_path(source_mount: &Mount, target_backend_id: &str) -> bool {
     source_mount.provider == PROVIDER_RELAY_FS
-        && exec_mount.provider == PROVIDER_RELAY_FS
         && !source_mount.backend_id.is_empty()
-        && source_mount.backend_id == exec_mount.backend_id
+        && source_mount.backend_id == target_backend_id
+}
+
+fn rewrite_json_value<'a>(
+    service: &'a VfsMaterializationService,
+    input: RewriteJsonArgumentsInput<'a>,
+    value: serde_json::Value,
+    rewrites: &'a mut Vec<MaterializationRewrite>,
+) -> BoxFuture<'a, Result<serde_json::Value, String>> {
+    Box::pin(async move {
+        match value {
+            serde_json::Value::String(text) => {
+                let rewritten = rewrite_json_string(service, input, &text, rewrites).await?;
+                Ok(serde_json::Value::String(rewritten))
+            }
+            serde_json::Value::Array(values) => {
+                let mut next = Vec::with_capacity(values.len());
+                for value in values {
+                    next.push(rewrite_json_value(service, input, value, rewrites).await?);
+                }
+                Ok(serde_json::Value::Array(next))
+            }
+            serde_json::Value::Object(map) => {
+                let mut next = serde_json::Map::new();
+                for (key, value) in map {
+                    next.insert(
+                        key,
+                        rewrite_json_value(service, input, value, rewrites).await?,
+                    );
+                }
+                Ok(serde_json::Value::Object(next))
+            }
+            other => Ok(other),
+        }
+    })
+}
+
+async fn rewrite_json_string(
+    service: &VfsMaterializationService,
+    input: RewriteJsonArgumentsInput<'_>,
+    text: &str,
+    rewrites: &mut Vec<MaterializationRewrite>,
+) -> Result<String, String> {
+    let mount_ids = input
+        .vfs
+        .mounts
+        .iter()
+        .map(|mount| mount.id.clone())
+        .collect::<Vec<_>>();
+    let candidates = find_mount_uri_candidates(text, &mount_ids);
+    if candidates.is_empty() {
+        return Ok(text.to_string());
+    }
+
+    let mut replacements = Vec::new();
+    for candidate in candidates {
+        let local_path = service
+            .local_path_for_uri(LocalPathForUriInput {
+                vfs: input.vfs,
+                target_backend_id: input.target_backend_id,
+                source_uri: &candidate.value,
+                session_id: input.session_id,
+                turn_id: input.turn_id,
+                tool_call_id: input.tool_call_id,
+                overlay: input.overlay,
+                identity: input.identity,
+            })
+            .await?;
+        replacements.push(RewriteReplacement {
+            start: candidate.start,
+            end: candidate.end,
+            value: local_path.clone(),
+        });
+        rewrites.push(MaterializationRewrite {
+            source_uri: candidate.value,
+            local_path,
+        });
+    }
+
+    Ok(apply_replacements(text, &replacements))
 }
 
 fn is_skill_script_path(path: &str) -> bool {

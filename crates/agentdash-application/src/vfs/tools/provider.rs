@@ -72,6 +72,11 @@ impl RelayRuntimeToolProvider {
         )));
         self
     }
+
+    pub fn with_materialization_service(mut self, service: Arc<VfsMaterializationService>) -> Self {
+        self.materialization = Some(service);
+        self
+    }
 }
 
 #[derive(Clone, Default)]

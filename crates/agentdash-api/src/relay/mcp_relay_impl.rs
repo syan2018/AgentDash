@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use agentdash_relay::RelayMessage;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::platform::mcp_relay::{
-    McpRelayProvider, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult, RelayProbeTool,
+    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
+    RelayProbeTool,
 };
 
 use super::registry::BackendRegistry;
@@ -85,6 +86,7 @@ impl McpRelayProvider for BackendRegistry {
         server_name: &str,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
+        _context: Option<RelayMcpCallContext>,
     ) -> Result<RelayMcpCallResult, ConnectorError> {
         let backend_id = self
             .find_backend_for_mcp_server(server_name)

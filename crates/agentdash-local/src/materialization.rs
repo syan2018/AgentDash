@@ -8,6 +8,8 @@ use agentdash_relay::{
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+use crate::resource_server::ResourceServer;
+
 #[derive(Debug, thiserror::Error)]
 pub enum MaterializationError {
     #[error("物化请求没有包含任何资源 entry")]
@@ -42,6 +44,7 @@ pub struct MaterializationStore {
     workdir_root: PathBuf,
     max_entry_bytes: u64,
     max_total_bytes: u64,
+    resource_server: ResourceServer,
 }
 
 impl MaterializationStore {
@@ -58,6 +61,8 @@ impl MaterializationStore {
                 .join(backend_key),
             max_entry_bytes: 8 * 1024 * 1024,
             max_total_bytes: 64 * 1024 * 1024,
+            resource_server: ResourceServer::start()
+                .expect("materialized resource server must bind to 127.0.0.1"),
         }
     }
 
@@ -68,6 +73,8 @@ impl MaterializationStore {
             workdir_root,
             max_entry_bytes: 8 * 1024 * 1024,
             max_total_bytes: 64 * 1024 * 1024,
+            resource_server: ResourceServer::start()
+                .expect("materialized resource server must bind to 127.0.0.1"),
         }
     }
 
@@ -143,6 +150,14 @@ impl MaterializationStore {
             _ => local_root.join(primary_relative),
         };
         ensure_inside(&primary_local_path, &local_root)?;
+        let primary_local_url = {
+            let mut url = self
+                .resource_server
+                .register_root(resource_token(&manifest_digest), local_root.clone())
+                .await;
+            url.push_str(&url_path_suffix(&primary_local_path, &local_root)?);
+            Some(url)
+        };
 
         let total_size_bytes = prepared.iter().map(|entry| entry.size_bytes).sum();
         tracing::info!(
@@ -160,7 +175,7 @@ impl MaterializationStore {
             source_uri: payload.source_uri,
             local_root_path: local_root.to_string_lossy().to_string(),
             primary_local_path: primary_local_path.to_string_lossy().to_string(),
-            primary_local_url: None,
+            primary_local_url,
             access_mode: payload.access_mode,
             manifest_digest,
             total_size_bytes,
@@ -339,6 +354,35 @@ fn resource_key(payload: &VfsMaterializePayload) -> String {
     sha256_hex(seed.as_bytes())
 }
 
+fn resource_token(manifest_digest: &str) -> String {
+    manifest_digest
+        .trim_start_matches("sha256:")
+        .chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .take(32)
+        .collect()
+}
+
+fn url_path_suffix(path: &Path, root: &Path) -> Result<String, MaterializationError> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        MaterializationError::InvalidPath(format!("{} 不在 {} 内", path.display(), root.display()))
+    })?;
+    if relative.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    let mut suffix = String::new();
+    for component in relative.components() {
+        let Component::Normal(segment) = component else {
+            return Err(MaterializationError::InvalidPath(
+                relative.display().to_string(),
+            ));
+        };
+        suffix.push('/');
+        suffix.push_str(&url_encode_path_segment(&segment.to_string_lossy()));
+    }
+    Ok(suffix)
+}
+
 fn set_file_mode(
     path: &Path,
     access_mode: MaterializationAccessMode,
@@ -368,6 +412,18 @@ fn set_file_mode(
 
     std::fs::set_permissions(path, permissions)?;
     Ok(())
+}
+
+fn url_encode_path_segment(input: &str) -> String {
+    let mut out = String::new();
+    for byte in input.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn clean_component(raw: &str) -> String {
@@ -479,6 +535,13 @@ mod tests {
         let response = store.materialize(payload()).await.expect("materialize");
         assert_eq!(response.entry_count, 1);
         assert!(!response.cache_hit);
+        assert!(
+            response
+                .primary_local_url
+                .as_deref()
+                .is_some_and(|url| url.starts_with("http://127.0.0.1:")),
+            "materialized file should expose a localhost URL"
+        );
         let content = tokio::fs::read_to_string(&response.primary_local_path)
             .await
             .expect("read materialized file");

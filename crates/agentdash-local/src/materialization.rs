@@ -8,6 +8,8 @@ use agentdash_relay::{
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+const MANIFEST_FILE_NAME: &str = ".agentdash-materialization.json";
+
 #[derive(Debug, thiserror::Error)]
 pub enum MaterializationError {
     #[error("物化请求没有包含任何资源 entry")]
@@ -71,13 +73,12 @@ impl MaterializationStore {
 
         let prepared = prepare_entries(&payload, self.max_entry_bytes, self.max_total_bytes)?;
         let manifest_digest = manifest_digest(&payload, &prepared);
-        let local_root = self.local_root_for_payload(&payload)?;
+        let materialization_key = materialization_key(&payload);
+        let base_local_root = self.base_local_root_for_payload(&payload)?;
+        let local_root = resolve_local_root(&base_local_root, &materialization_key).await?;
 
         ensure_inside(&local_root, &self.materialized_root)?;
-        let manifest_path = local_root
-            .parent()
-            .unwrap_or(local_root.as_path())
-            .join("manifest.json");
+        let manifest_path = manifest_path(&local_root);
         let cache_hit = existing_manifest_matches(&manifest_path, &manifest_digest).await;
 
         if !cache_hit {
@@ -110,7 +111,7 @@ impl MaterializationStore {
                 "plan_kind": payload.plan_kind,
                 "target_kind": payload.target_kind,
                 "access_mode": payload.access_mode,
-                "materialization_key": materialization_key(&payload),
+                "materialization_key": materialization_key,
                 "entry_count": prepared.len(),
                 "total_size_bytes": prepared.iter().map(|entry| entry.size_bytes).sum::<u64>(),
                 "audit": {
@@ -160,7 +161,7 @@ impl MaterializationStore {
         })
     }
 
-    fn local_root_for_payload(
+    fn base_local_root_for_payload(
         &self,
         payload: &VfsMaterializePayload,
     ) -> Result<PathBuf, MaterializationError> {
@@ -185,8 +186,7 @@ impl MaterializationStore {
                     .join("workdirs")
                     .join(resource_path)
             }
-        }
-        .join("content");
+        };
         ensure_inside(&root, &self.materialized_root)?;
         Ok(root)
     }
@@ -212,6 +212,12 @@ fn prepare_entries(
     for entry in &payload.entries {
         let relative_path = safe_relative_path(&entry.relative_path)?;
         let normalized_key = relative_path.to_string_lossy().replace('\\', "/");
+        if normalized_key == MANIFEST_FILE_NAME {
+            return Err(MaterializationError::InvalidPath(format!(
+                "{} 是物化元数据保留文件名",
+                entry.relative_path
+            )));
+        }
         if !seen.insert(normalized_key.clone()) {
             return Err(MaterializationError::InvalidPath(format!(
                 "重复 entry: {}",
@@ -325,6 +331,32 @@ async fn existing_manifest_matches(path: &Path, digest: &str) -> bool {
         .is_some_and(|existing| existing == digest)
 }
 
+async fn existing_materialization_key(path: &Path) -> Option<String> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
+    value
+        .get("materialization_key")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+async fn resolve_local_root(
+    base_root: &Path,
+    materialization_key: &str,
+) -> Result<PathBuf, MaterializationError> {
+    let manifest_path = manifest_path(base_root);
+    match existing_materialization_key(&manifest_path).await {
+        Some(existing_key) if existing_key != materialization_key => {
+            disambiguated_path(base_root, materialization_key)
+        }
+        _ => Ok(base_root.to_path_buf()),
+    }
+}
+
+fn manifest_path(local_root: &Path) -> PathBuf {
+    local_root.join(MANIFEST_FILE_NAME)
+}
+
 fn manifest_digest(payload: &VfsMaterializePayload, entries: &[PreparedEntry]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payload.root_uri.as_bytes());
@@ -374,10 +406,6 @@ fn materialized_resource_path(
     } else {
         clean_component(&payload.mount_id)
     };
-    let short_key = materialization_key(payload)
-        .chars()
-        .take(10)
-        .collect::<String>();
     let mut parts = readable_root_parts(&payload.root_uri);
     if parts.is_empty() {
         parts.push("root".to_string());
@@ -388,9 +416,24 @@ fn materialized_resource_path(
         for part in parents {
             path.push(part);
         }
-        path.push(format!("{last}--{short_key}"));
+        path.push(last);
     }
     Ok(path)
+}
+
+fn disambiguated_path(
+    base_root: &Path,
+    materialization_key: &str,
+) -> Result<PathBuf, MaterializationError> {
+    let short_key = materialization_key.chars().take(10).collect::<String>();
+    let Some(last) = base_root.file_name() else {
+        return Err(MaterializationError::InvalidPath(format!(
+            "无法为 {} 生成冲突消歧路径",
+            base_root.display()
+        )));
+    };
+    let suffix = format!("{}~{}", last.to_string_lossy(), short_key);
+    Ok(base_root.with_file_name(suffix))
 }
 
 fn readable_root_parts(uri: &str) -> Vec<String> {
@@ -528,6 +571,12 @@ mod tests {
     use super::*;
     use agentdash_relay::{MaterializationPlanKind, VfsMaterializeEntry, VfsMaterializePayload};
 
+    fn path_contains_component(path: &str, component: &str) -> bool {
+        Path::new(path)
+            .components()
+            .any(|part| part.as_os_str().to_string_lossy() == component)
+    }
+
     fn payload() -> VfsMaterializePayload {
         let text = "echo ok\n";
         VfsMaterializePayload {
@@ -575,6 +624,11 @@ mod tests {
         let second = store.materialize(payload()).await.expect("cache hit");
         assert!(second.cache_hit);
         assert_eq!(second.primary_local_path, response.primary_local_path);
+        assert!(
+            Path::new(&response.local_root_path)
+                .join(MANIFEST_FILE_NAME)
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -593,7 +647,9 @@ mod tests {
         assert!(first.local_root_path.contains("readonly"));
         assert!(first.local_root_path.contains("skill-assets"));
         assert!(first.local_root_path.contains("skills"));
-        assert!(first.local_root_path.contains("reviewer--"));
+        assert!(path_contains_component(&first.local_root_path, "reviewer"));
+        assert!(!first.local_root_path.contains("--"));
+        assert!(!path_contains_component(&first.local_root_path, "content"));
         assert!(!first.local_root_path.contains("session-1"));
         assert!(!first.local_root_path.contains("plan-1"));
     }
@@ -612,7 +668,15 @@ mod tests {
         let response = store.materialize(payload).await.expect("materialize");
 
         assert!(response.local_root_path.contains("workdirs"));
-        assert!(response.primary_local_path.ends_with("content"));
+        assert_eq!(response.primary_local_path, response.local_root_path);
+        assert!(path_contains_component(
+            &response.local_root_path,
+            "reviewer"
+        ));
+        assert!(!path_contains_component(
+            &response.local_root_path,
+            "content"
+        ));
         assert!(!response.local_root_path.contains("session-1"));
     }
 
@@ -646,5 +710,35 @@ mod tests {
             .await
             .expect_err("path traversal must fail");
         assert!(matches!(err, MaterializationError::InvalidPath(_)));
+    }
+
+    #[tokio::test]
+    async fn materialize_rejects_manifest_sidecar_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
+        let mut payload = payload();
+        payload.entries[0].relative_path = MANIFEST_FILE_NAME.to_string();
+
+        let err = store
+            .materialize(payload)
+            .await
+            .expect_err("manifest sidecar entry must fail");
+        assert!(matches!(err, MaterializationError::InvalidPath(_)));
+    }
+
+    #[tokio::test]
+    async fn readable_path_only_adds_suffix_for_real_collision() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
+
+        let first = store.materialize(payload()).await.expect("first");
+        let mut second_payload = payload();
+        second_payload.provider = "other_skill_asset_fs".to_string();
+        let second = store.materialize(second_payload).await.expect("second");
+
+        assert_ne!(first.local_root_path, second.local_root_path);
+        assert!(path_contains_component(&first.local_root_path, "reviewer"));
+        assert!(!first.local_root_path.contains('~'));
+        assert!(second.local_root_path.contains("reviewer~"));
     }
 }

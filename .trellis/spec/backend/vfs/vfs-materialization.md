@@ -91,7 +91,7 @@ enum MaterializationAccessMode {
 - `backend_id` / `local-dev-1`
 - 单次 relay message id
 
-这些字段只进入 `manifest.json` / audit trace。
+这些字段只进入 `.agentdash-materialization.json` / audit trace。
 
 ---
 
@@ -109,30 +109,29 @@ enum MaterializationAccessMode {
 
 ```text
 {local_data}/agentdash/materialized/readonly/
-  {provider}/{readable-root}--{short-key}/
-    manifest.json
-    content/...
+  {provider-or-mount}/{readable-root}/
+    .agentdash-materialization.json
+    ...
 ```
 
 示例：
 
 ```text
-.../readonly/skill-assets/skills/foo--a1b2c3d4/
-  manifest.json
-  content/
-    SKILL.md
-    scripts/check.sh
-    references/rules.md
-    assets/logo.png
+.../readonly/skill-assets/skills/foo/
+  .agentdash-materialization.json
+  SKILL.md
+  scripts/check.sh
+  references/rules.md
+  assets/logo.png
 ```
 
 ### 4.2 公共可写工作副本
 
 ```text
 {local_data}/agentdash/materialized/workdirs/
-  {provider}/{readable-root}--{short-key}/
-    manifest.json
-    content/...
+  {provider-or-mount}/{readable-root}/
+    .agentdash-materialization.json
+    ...
 ```
 
 示例：
@@ -144,21 +143,21 @@ uv init skill-assets://skills/foo
 rewrite 后应指向：
 
 ```text
-.../workdirs/skill-assets/skills/foo--a1b2c3d4/content
+.../workdirs/skill-assets/skills/foo
 ```
 
-公共 workdir 不随 session 清理。它必须通过 manifest 记录来源、source digest、dirty 状态和 last_used。
+公共 workdir 不随 session 清理。它必须通过旁路 manifest 记录来源、source digest、dirty 状态和 last_used。
 
 ### 4.3 Session 级物化
 
 ```text
 {local_data}/agentdash/materialized/sessions/{session_id}/
-  readonly/{provider}/{readable-root}--{short-key}/
-    manifest.json
-    content/...
-  workdirs/{provider}/{readable-root}--{short-key}/
-    manifest.json
-    content/...
+  readonly/{provider-or-mount}/{readable-root}/
+    .agentdash-materialization.json
+    ...
+  workdirs/{provider-or-mount}/{readable-root}/
+    .agentdash-materialization.json
+    ...
   temp/{tool-call-or-token}/...
 ```
 
@@ -166,9 +165,10 @@ rewrite 后应指向：
 
 ### 4.4 用户可见路径规则
 
-- 路径必须包含可读 `provider` 和 `readable-root`。
-- `short-key` 只用于消歧，长度建议 8-12 hex。
+- 路径必须包含可读 `provider-or-mount` 和 `readable-root`；当 mount id 已经是用户可读命名空间（如 `skill-assets`）时优先使用 mount id。
+- 默认路径不得附加 hash / key 后缀；同一命名空间和 readable-root 真正命中不同 `materialization_key` 时，才允许给冲突项追加 `~{short-key}` 消歧。
 - `backend_id`、`local-dev-1`、`plan_id`、`turn_id` 不得出现在默认用户可见路径中。
+- 不额外套 `content/` 包装层；materialization root 本身就是资源 root 的本机镜像。
 - Windows 与 Unix 路径分隔由本机 filesystem 决定；manifest 中的 entry path 一律使用 `/`。
 
 ---
@@ -311,7 +311,7 @@ URL 转换必须是显式 API / 显式 policy。不得对普通文本中的 VFS 
 
 ## 8. Manifest 契约
 
-每个 materialization root 必须包含 `manifest.json`，至少记录：
+每个 materialization root 必须包含 `.agentdash-materialization.json`，至少记录：
 
 - `provider`
 - `mount_id`
@@ -330,6 +330,10 @@ URL 转换必须是显式 API / 显式 policy。不得对普通文本中的 VFS 
 - `audit`：最近一次 `plan_id / session_id / turn_id / tool_call_id / backend_id`
 
 `audit` 字段只用于追踪最近触发来源，不得反向决定路径。
+
+`.agentdash-materialization.json` 是本机物化层保留文件名。VFS entry 不允许在 materialization root
+的顶层写入同名文件；若上游资源确实需要携带这个文件名，provider 必须先显式改名或声明新的 root
+规则，不能覆盖旁路元数据。
 
 ---
 
@@ -370,9 +374,11 @@ URL 转换必须是显式 API / 显式 policy。不得对普通文本中的 VFS 
 
 - 两次物化同一 `skill-assets://skills/foo`，即使 `plan_id` 不同，也返回同一本机路径。
 - `skill-assets` 公共路径不包含 `session_id`、`backend_id`、`plan_id`。
+- `skill-assets` 默认公共路径不包含 hash 后缀，也不包含 `content` 包装层。
+- `.agentdash-materialization.json` 作为旁路 manifest 写在 materialization root 顶层，VFS entry 不得覆盖它。
 - `lifecycle_vfs` 物化路径必须包含 `sessions/{session_id}`。
 - `skill-assets://skills/foo/scripts/check.sh` 物化包含 `SKILL.md / scripts/** / references/** / assets/**`，rewrite 指向 primary script。
-- `uv init skill-assets://skills/foo` rewrite 到公共 `workdirs/.../content` 目录。
+- `uv init skill-assets://skills/foo` rewrite 到公共 `workdirs/skill-assets/skills/foo` 目录。
 - 同一个 shell command / MCP JSON arguments 内重复引用同一 root 时只下发一次 materialize 请求。
 - 同 backend `relay_fs` 直接 rewrite 到 workspace path，不创建 materialized cache。
 - RuntimeGateway relay MCP 调用与 session 内 relay MCP 调用都能执行 VFS URI rewrite。
@@ -399,9 +405,9 @@ URL 转换必须是显式 API / 显式 policy。不得对普通文本中的 VFS 
 ### Correct
 
 ```text
-{local_data}/agentdash/materialized/readonly/skill-assets/skills/foo--a1b2c3d4/content/...
-{local_data}/agentdash/materialized/workdirs/skill-assets/skills/foo--a1b2c3d4/content/...
-{local_data}/agentdash/materialized/sessions/{session_id}/readonly/lifecycle/skills/foo--a1b2c3d4/content/...
+{local_data}/agentdash/materialized/readonly/skill-assets/skills/foo/...
+{local_data}/agentdash/materialized/workdirs/skill-assets/skills/foo/...
+{local_data}/agentdash/materialized/sessions/{session_id}/readonly/lifecycle/skills/foo/...
 ```
 
 这些路径同时满足：

@@ -20,6 +20,7 @@
 - 明确 `skill_asset_fs` 的 root 规则：skill 脚本/目录均以 `skills/{skill_key}` 为物化 root，保留 `SKILL.md / scripts / references / assets` 相对布局。
 - 明确 `lifecycle_vfs` 的 root 和 scope：复用资源组规划规则，但落在 `sessions/{session_id}` 下。
 - 明确 `plan_id / turn_id / tool_call_id / backend_id` 只进入 manifest/audit，不参与稳定路径。
+- 明确默认本机路径就是资源 root 镜像，不额外追加 hash 后缀，也不套 `content/` 包装层；只有真实路径冲突时才消歧。
 - 更新后端规范索引，让后续实现 VFS 物化时必须读取该 spec。
 - 更新 relay protocol / application planner / local store，让当前实现遵守新增 spec。
 
@@ -34,6 +35,9 @@
 - [x] 同一公共资源即使 `plan_id` 不同，也复用同一本机路径。
 - [x] `skill-assets` 公共路径不包含 `session_id`、`backend_id` 或 `plan_id`。
 - [x] `lifecycle_vfs` 物化路径进入 `sessions/{session_id}`。
+- [x] `skill-assets` 默认公共路径不包含 hash 后缀，也不包含 `content` 包装层。
+- [x] `uv init skill-assets://skills/foo` rewrite 到公共 `workdirs/skill-assets/skills/foo` 目录。
+- [x] manifest 作为 `.agentdash-materialization.json` 放在资源 root 顶层，且不允许 VFS entry 覆盖。
 
 ## Definition of Done
 
@@ -65,5 +69,5 @@
 - 相关现有任务：`.trellis/tasks/04-08-cross-mount-shell-materialization/prd.md`
 - 相关代码观察：
   - `crates/agentdash-application/src/vfs/materialization.rs` 当前生成 UUID `plan_id`
-  - `crates/agentdash-local/src/materialization.rs` 当前使用 `backend_id/session_id/plan_id` 组成只读 cache 路径
+  - `crates/agentdash-local/src/materialization.rs` 负责把 planner 输出落到公共 readonly / workdir / session 路径
   - `crates/agentdash-application/src/session/hub/tool_builder.rs` 的 relay MCP RuntimeGateway 入口存在 context 不一致风险

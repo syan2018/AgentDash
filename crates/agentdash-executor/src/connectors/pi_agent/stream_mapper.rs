@@ -144,6 +144,24 @@ fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
     (command, cwd)
 }
 
+fn partial_result_details_type(partial_result: &serde_json::Value) -> Option<&str> {
+    partial_result
+        .get("details")
+        .and_then(|d| d.get("type"))
+        .and_then(|t| t.as_str())
+}
+
+fn partial_result_text(partial_result: &serde_json::Value) -> String {
+    partial_result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// 通过 serde 构造 CommandExecution ThreadItem（绕过 AbsolutePathBuf 未 re-export 的限制）
 fn make_command_execution_item(
     item_id: &str,
@@ -526,11 +544,10 @@ pub(super) fn convert_event_to_envelopes(
             partial_result,
             ..
         } => {
-            let is_shell_output = partial_result
-                .get("details")
-                .and_then(|d| d.get("type"))
-                .and_then(|t| t.as_str())
-                == Some("shell_output");
+            let details_type = partial_result_details_type(partial_result);
+            let is_shell_output = details_type == Some("shell_output");
+            let is_vfs_uri_rewrite =
+                is_shell_exec(tool_name) && details_type == Some("vfs_uri_rewrite");
 
             let (state, _) = upsert_state_from_tool_name(
                 tool_call_states,
@@ -540,16 +557,9 @@ pub(super) fn convert_event_to_envelopes(
                 Some(args.clone()),
             );
 
-            if is_shell_output {
+            if is_shell_output || is_vfs_uri_rewrite {
                 let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
-                let delta = partial_result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let delta = partial_result_text(partial_result);
                 vec![wrap(
                     BackboneEvent::CommandOutputDelta(
                         codex::CommandExecutionOutputDeltaNotification {

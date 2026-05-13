@@ -81,7 +81,17 @@ pub fn apply_replacements(input: &str, replacements: &[RewriteReplacement]) -> S
 }
 
 pub fn quote_for_shell_path(path: &str) -> String {
-    format!("\"{}\"", path.replace('"', "\\\""))
+    quote_shell_literal(path)
+}
+
+#[cfg(windows)]
+fn quote_shell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(windows))]
+fn quote_shell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn mount_start(input: &str, sep: usize) -> usize {
@@ -151,5 +161,32 @@ mod tests {
             ],
         );
         assert_eq!(rewritten, "cat \"/tmp/one\" \"/tmp/two\"");
+    }
+
+    #[test]
+    fn quotes_paths_for_the_platform_shell() {
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                quote_for_shell_path("C:\\A B\\demo.py"),
+                "'C:\\A B\\demo.py'"
+            );
+            assert_eq!(
+                quote_for_shell_path("C:\\A'B\\demo.py"),
+                "'C:\\A''B\\demo.py'"
+            );
+        }
+
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                quote_for_shell_path("/tmp/a b/demo.py"),
+                "'/tmp/a b/demo.py'"
+            );
+            assert_eq!(
+                quote_for_shell_path("/tmp/a'b/demo.py"),
+                "'/tmp/a'\\''b/demo.py'"
+            );
+        }
     }
 }

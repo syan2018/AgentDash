@@ -151,6 +151,13 @@ impl CommandHandler {
         let call_id = payload.call_id.clone();
         let event_tx = self.event_tx.clone();
 
+        tracing::info!(
+            call_id = %payload.call_id,
+            cwd = ?payload.cwd,
+            command = %payload.command,
+            "本机收到 shell_exec"
+        );
+
         match self
             .tool_executor
             .shell_exec_streaming(

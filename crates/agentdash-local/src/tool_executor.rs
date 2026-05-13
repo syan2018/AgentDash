@@ -207,13 +207,7 @@ impl ToolExecutor {
             "shell_exec"
         );
 
-        let shell = if cfg!(windows) { "cmd" } else { "sh" };
-        let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-        let child = tokio::process::Command::new(shell)
-            .arg(flag)
-            .arg(command)
-            .current_dir(&ws)
+        let child = shell_command(command, &ws)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
@@ -250,13 +244,7 @@ impl ToolExecutor {
             "shell_exec_streaming"
         );
 
-        let shell = if cfg!(windows) { "cmd" } else { "sh" };
-        let flag = if cfg!(windows) { "/C" } else { "-c" };
-
-        let mut child = tokio::process::Command::new(shell)
-            .arg(flag)
-            .arg(command)
-            .current_dir(&ws)
+        let mut child = shell_command(command, &ws)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
@@ -264,64 +252,62 @@ impl ToolExecutor {
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
 
-        let mut stdout_reader = BufReader::new(stdout).lines();
-        let mut stderr_reader = BufReader::new(stderr).lines();
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut stderr_reader = BufReader::new(stderr);
         let mut stdout_buf = String::new();
         let mut stderr_buf = String::new();
 
         let read_loop = async {
-            loop {
+            let mut stdout_done = false;
+            let mut stderr_done = false;
+            let mut stdout_line = Vec::new();
+            let mut stderr_line = Vec::new();
+
+            while !stdout_done || !stderr_done {
                 tokio::select! {
-                    line = stdout_reader.next_line() => {
-                        match line {
-                            Ok(Some(text)) => {
-                                let chunk = format!("{text}\n");
+                    read = stdout_reader.read_until(b'\n', &mut stdout_line), if !stdout_done => {
+                        match read {
+                            Ok(0) => {
+                                stdout_done = true;
+                            }
+                            Ok(_) => {
+                                let chunk = decode_output_chunk(&stdout_line);
+                                stdout_line.clear();
                                 on_output(&chunk, ShellOutputStream::Stdout);
                                 stdout_buf.push_str(&chunk);
                             }
-                            Ok(None) => {
-                                // stdout closed — wait for stderr to finish then break
-                                while let Ok(Some(text)) = stderr_reader.next_line().await {
-                                    let chunk = format!("{text}\n");
-                                    on_output(&chunk, ShellOutputStream::Stderr);
-                                    stderr_buf.push_str(&chunk);
-                                }
-                                break;
-                            }
                             Err(e) => {
                                 tracing::warn!(error = %e, "stdout read error");
-                                break;
+                                return Err(e);
                             }
                         }
                     }
-                    line = stderr_reader.next_line() => {
-                        match line {
-                            Ok(Some(text)) => {
-                                let chunk = format!("{text}\n");
+                    read = stderr_reader.read_until(b'\n', &mut stderr_line), if !stderr_done => {
+                        match read {
+                            Ok(0) => {
+                                stderr_done = true;
+                            }
+                            Ok(_) => {
+                                let chunk = decode_output_chunk(&stderr_line);
+                                stderr_line.clear();
                                 on_output(&chunk, ShellOutputStream::Stderr);
                                 stderr_buf.push_str(&chunk);
                             }
-                            Ok(None) => {
-                                // stderr closed — drain remaining stdout then break
-                                while let Ok(Some(text)) = stdout_reader.next_line().await {
-                                    let chunk = format!("{text}\n");
-                                    on_output(&chunk, ShellOutputStream::Stdout);
-                                    stdout_buf.push_str(&chunk);
-                                }
-                                break;
-                            }
                             Err(e) => {
                                 tracing::warn!(error = %e, "stderr read error");
-                                break;
+                                return Err(e);
                             }
                         }
                     }
                 }
             }
+
+            Ok::<(), std::io::Error>(())
         };
 
         match tokio::time::timeout(timeout, read_loop).await {
-            Ok(()) => {}
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(ToolError::Io(e)),
             Err(_) => {
                 let _ = child.kill().await;
                 return Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000)));
@@ -790,6 +776,37 @@ async fn collect_entries(
     Ok(())
 }
 
+fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
+    #[cfg(windows)]
+    {
+        let mut shell = tokio::process::Command::new("powershell.exe");
+        let command = format!(
+            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $OutputEncoding; {command}"
+        );
+        shell
+            .arg("-NoLogo")
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(command)
+            .current_dir(cwd);
+        shell
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut shell = tokio::process::Command::new("sh");
+        shell.arg("-c").arg(command).current_dir(cwd);
+        shell
+    }
+}
+
+fn decode_output_chunk(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,5 +902,59 @@ mod tests {
             .expect_err("outside absolute cwd should be rejected");
 
         assert!(matches!(error, ToolError::PathNotAccessible(_)));
+    }
+
+    #[tokio::test]
+    async fn shell_exec_handles_quoted_absolute_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("space dir");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let file = dir.join("demo file.txt");
+        std::fs::write(&file, "quoted ok").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+        let file_path = file.to_string_lossy();
+        let command = if cfg!(windows) {
+            format!("Get-Content -LiteralPath '{file_path}'")
+        } else {
+            format!("cat \"{file_path}\"")
+        };
+
+        let result = executor
+            .shell_exec(&command, &root, None, Some(10_000))
+            .await
+            .expect("quoted absolute path command should run");
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "quoted ok");
+    }
+
+    #[tokio::test]
+    async fn shell_exec_streaming_captures_stdout() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("demo.txt");
+        std::fs::write(&file, "stream ok").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+        let file_path = file.to_string_lossy();
+        let command = if cfg!(windows) {
+            format!("Get-Content -LiteralPath '{file_path}'")
+        } else {
+            format!("cat \"{file_path}\"")
+        };
+        let mut streamed = String::new();
+
+        let result = executor
+            .shell_exec_streaming(&command, &root, None, Some(10_000), |delta, stream| {
+                if matches!(stream, ShellOutputStream::Stdout) {
+                    streamed.push_str(delta);
+                }
+            })
+            .await
+            .expect("streaming stdout should run");
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "stream ok");
+        assert_eq!(streamed.trim(), "stream ok");
     }
 }

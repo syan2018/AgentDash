@@ -678,6 +678,80 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
 }
 
 #[test]
+fn shell_exec_vfs_rewrite_update_maps_to_command_output_delta() {
+    let start_event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        args: serde_json::json!({
+            "command": "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+            "cwd": "."
+        }),
+    };
+    let update_event = AgentEvent::ToolExecutionUpdate {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        args: serde_json::json!({
+            "command": "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+            "cwd": "."
+        }),
+        partial_result: serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "vfs_uri_rewrite: 1 URI(s) materialized\nskill-assets://skills/abc-user-lookup/scripts/lookup.py -> C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\nexecuted_command: python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao"
+            }],
+            "is_error": false,
+            "details": {
+                "type": "vfs_uri_rewrite",
+                "original_command": "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+                "executed_command": "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao"
+            }
+        }),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let start_envelopes = convert_event_to_envelopes(
+        &start_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+    let update_envelopes = convert_event_to_envelopes(
+        &update_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    match &start_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let item = serde_json::to_value(&n.item).expect("thread item should serialize");
+            assert_eq!(
+                item.get("command").and_then(|value| value.as_str()),
+                Some("python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao")
+            );
+        }
+        other => panic!("unexpected start event: {other:?}"),
+    }
+
+    assert_eq!(update_envelopes.len(), 1);
+    match &update_envelopes[0].event {
+        BackboneEvent::CommandOutputDelta(n) => {
+            assert!(n.delta.contains("vfs_uri_rewrite"));
+            assert!(n.delta.contains("executed_command:"));
+        }
+        other => panic!("unexpected update event: {other:?}"),
+    }
+}
+
+#[test]
 fn pending_approval_event_maps_to_tool_call_update() {
     let event = AgentEvent::ToolExecutionPendingApproval {
         tool_call_id: "tool-approval-1".to_string(),

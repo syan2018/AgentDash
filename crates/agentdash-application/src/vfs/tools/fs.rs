@@ -12,9 +12,10 @@ use tokio_util::sync::CancellationToken;
 use crate::vfs::build_canvas_mount;
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::rewrite::find_mount_uri_candidates;
 use crate::vfs::{
-    ExecRequest, ListOptions, ResourceRef, VfsMaterializationService, capability_name,
-    parse_mount_uri, resolve_mount,
+    ExecRequest, ListOptions, MaterializationRewrite, ResourceRef, RewriteShellCommandOutput,
+    VfsMaterializationService, capability_name, parse_mount_uri, resolve_mount,
 };
 
 /// Resolve a tool parameter path into a `ResourceRef`.
@@ -714,8 +715,8 @@ impl AgentTool for ShellExecTool {
             resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
                 .map_err(AgentToolError::ExecutionFailed)?;
 
-        let rewritten_command = if let Some(materialization) = &self.materialization {
-            let output = materialization
+        let rewrite_output = if let Some(materialization) = &self.materialization {
+            materialization
                 .rewrite_shell_command(crate::vfs::RewriteShellCommandInput {
                     vfs: &vfs,
                     exec_mount_id: &target.mount_id,
@@ -727,18 +728,31 @@ impl AgentTool for ShellExecTool {
                     identity: self.identity.as_ref(),
                 })
                 .await
-                .map_err(AgentToolError::ExecutionFailed)?;
-            if !output.rewrites.is_empty() {
-                tracing::info!(
-                    exec_mount_id = %exec_mount.id,
-                    rewrite_count = output.rewrites.len(),
-                    "shell_exec command 中的 VFS URI 已物化并重写"
-                );
-            }
-            output.command
+                .map_err(AgentToolError::ExecutionFailed)?
         } else {
-            params.command.clone()
+            RewriteShellCommandOutput {
+                command: params.command.clone(),
+                rewrites: Vec::new(),
+            }
         };
+        if !rewrite_output.rewrites.is_empty() {
+            tracing::info!(
+                exec_mount_id = %exec_mount.id,
+                rewrite_count = rewrite_output.rewrites.len(),
+                "shell_exec command 中的 VFS URI 已物化并重写"
+            );
+            if let Some(on_update) = &on_update {
+                on_update(vfs_uri_rewrite_notice(
+                    &params.command,
+                    &rewrite_output.command,
+                    &rewrite_output.rewrites,
+                ));
+            }
+        }
+        let rewritten_command = rewrite_output.command.clone();
+        if let Some(message) = unresolved_vfs_uri_message(&rewritten_command, &vfs) {
+            return Err(AgentToolError::ExecutionFailed(message));
+        }
 
         let streaming_call_id = self
             .shell_output_registry
@@ -801,12 +815,254 @@ impl AgentTool for ShellExecTool {
             format!("[stdout]\n{}\n\n[stderr]\n{}", result.stdout, result.stderr)
         };
         Ok(AgentToolResult {
-            content: vec![ContentPart::text(format!(
-                "command: {}\ncwd: {}://{}\nexit_code: {}\n{}",
-                params.command, target.mount_id, cwd, result.exit_code, merged
+            content: vec![ContentPart::text(shell_exec_result_text(
+                &params.command,
+                &rewritten_command,
+                &target.mount_id,
+                &cwd,
+                result.exit_code,
+                &merged,
+                !rewrite_output.rewrites.is_empty(),
             ))],
             is_error: result.exit_code != 0,
-            details: None,
+            details: shell_exec_result_details(
+                &params.command,
+                &rewritten_command,
+                &rewrite_output.rewrites,
+            ),
         })
+    }
+}
+
+fn vfs_uri_rewrite_notice(
+    original_command: &str,
+    rewritten_command: &str,
+    rewrites: &[MaterializationRewrite],
+) -> AgentToolResult {
+    AgentToolResult {
+        content: vec![ContentPart::text(format_vfs_uri_rewrite_notice(
+            rewritten_command,
+            rewrites,
+        ))],
+        is_error: false,
+        details: Some(vfs_uri_rewrite_details(
+            original_command,
+            rewritten_command,
+            rewrites,
+        )),
+    }
+}
+
+fn format_vfs_uri_rewrite_notice(
+    rewritten_command: &str,
+    rewrites: &[MaterializationRewrite],
+) -> String {
+    let mut lines = vec![format!(
+        "vfs_uri_rewrite: {} URI(s) materialized",
+        rewrites.len()
+    )];
+    for rewrite in rewrites {
+        lines.push(format!("{} -> {}", rewrite.source_uri, rewrite.local_path));
+    }
+    lines.push(format!("executed_command: {rewritten_command}"));
+    lines.join("\n")
+}
+
+fn vfs_uri_rewrite_details(
+    original_command: &str,
+    rewritten_command: &str,
+    rewrites: &[MaterializationRewrite],
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "vfs_uri_rewrite",
+        "original_command": original_command,
+        "executed_command": rewritten_command,
+        "rewritten_command": rewritten_command,
+        "rewrite_count": rewrites.len(),
+        "rewrites": rewrites.iter().map(|rewrite| {
+            serde_json::json!({
+                "source_uri": rewrite.source_uri,
+                "local_path": rewrite.local_path,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn shell_exec_result_text(
+    original_command: &str,
+    rewritten_command: &str,
+    mount_id: &str,
+    cwd: &str,
+    exit_code: i32,
+    merged_output: &str,
+    has_rewrite: bool,
+) -> String {
+    if has_rewrite {
+        format!(
+            "command: {original_command}\nexecuted_command: {rewritten_command}\ncwd: {mount_id}://{cwd}\nexit_code: {exit_code}\n{merged_output}"
+        )
+    } else {
+        format!(
+            "command: {original_command}\ncwd: {mount_id}://{cwd}\nexit_code: {exit_code}\n{merged_output}"
+        )
+    }
+}
+
+fn shell_exec_result_details(
+    original_command: &str,
+    rewritten_command: &str,
+    rewrites: &[MaterializationRewrite],
+) -> Option<serde_json::Value> {
+    (!rewrites.is_empty()).then(|| {
+        serde_json::json!({
+            "type": "shell_exec",
+            "original_command": original_command,
+            "executed_command": rewritten_command,
+            "rewrite": vfs_uri_rewrite_details(original_command, rewritten_command, rewrites),
+        })
+    })
+}
+
+fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option<String> {
+    let mut unresolved = unresolved_current_mount_uris(command, vfs);
+    unresolved.extend(unresolved_reserved_vfs_uris(command));
+    unresolved.sort();
+    unresolved.dedup();
+    if unresolved.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "shell_exec 拒绝执行：命令中仍包含未物化的 VFS URI: {}。这类 URI 不能直接交给本机 shell 执行，否则会被当作普通路径/参数并可能超时；请确认当前 session VFS 包含对应 mount，且物化 rewrite 已在下发前成功。",
+        unresolved.join(", ")
+    ))
+}
+
+fn unresolved_current_mount_uris(command: &str, vfs: &agentdash_spi::Vfs) -> Vec<String> {
+    let mount_ids = vfs
+        .mounts
+        .iter()
+        .map(|mount| mount.id.clone())
+        .collect::<Vec<_>>();
+    find_mount_uri_candidates(command, &mount_ids)
+        .into_iter()
+        .map(|candidate| candidate.value)
+        .collect()
+}
+
+fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
+    const RESERVED_VFS_SCHEMES: &[&str] = &["skill-assets", "lifecycle"];
+    let mount_ids = RESERVED_VFS_SCHEMES
+        .iter()
+        .map(|scheme| scheme.to_string())
+        .collect::<Vec<_>>();
+    find_mount_uri_candidates(command, &mount_ids)
+        .into_iter()
+        .map(|candidate| candidate.value)
+        .collect()
+}
+
+#[cfg(test)]
+mod shell_exec_rewrite_tests {
+    use super::*;
+    use agentdash_spi::{Mount, Vfs};
+
+    fn rewrite() -> MaterializationRewrite {
+        MaterializationRewrite {
+            source_uri: "skill-assets://skills/abc-user-lookup/scripts/lookup.py".to_string(),
+            local_path: "C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py".to_string(),
+        }
+    }
+
+    #[test]
+    fn rewrite_notice_exposes_mapping_and_rewritten_command() {
+        let rewrites = vec![rewrite()];
+        let result = vfs_uri_rewrite_notice(
+            "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+            "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
+            &rewrites,
+        );
+
+        assert!(!result.is_error);
+        let text = result.content[0].extract_text().expect("text content");
+        assert!(text.contains("vfs_uri_rewrite"));
+        assert!(text.contains("skill-assets://skills/abc-user-lookup/scripts/lookup.py"));
+        assert!(text.contains("executed_command:"));
+        let details = result.details.expect("details");
+        assert_eq!(details["type"], "vfs_uri_rewrite");
+        assert_eq!(
+            details["executed_command"],
+            "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao"
+        );
+        assert_eq!(details["rewrite_count"], 1);
+        assert_eq!(
+            details["rewrites"][0]["source_uri"],
+            "skill-assets://skills/abc-user-lookup/scripts/lookup.py"
+        );
+    }
+
+    #[test]
+    fn shell_exec_result_shows_rewritten_command_only_when_rewritten() {
+        let rewritten = shell_exec_result_text(
+            "python skill-assets://skills/foo/scripts/run.py",
+            "python \"C:\\agentdash\\materialized\\readonly\\skill-assets\\skills\\foo\\scripts\\run.py\"",
+            "main",
+            ".",
+            0,
+            "ok",
+            true,
+        );
+        assert!(rewritten.contains("executed_command:"));
+
+        let plain = shell_exec_result_text("echo ok", "echo ok", "main", ".", 0, "ok", false);
+        assert!(!plain.contains("executed_command:"));
+    }
+
+    #[test]
+    fn shell_exec_result_details_are_absent_without_rewrite() {
+        assert!(shell_exec_result_details("echo ok", "echo ok", &[]).is_none());
+
+        let rewrites = vec![rewrite()];
+        let details = shell_exec_result_details(
+            "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+            "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
+            &rewrites,
+        )
+        .expect("rewrite details");
+        assert_eq!(details["type"], "shell_exec");
+        assert_eq!(
+            details["executed_command"],
+            "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao"
+        );
+        assert_eq!(details["rewrite"]["type"], "vfs_uri_rewrite");
+    }
+
+    #[test]
+    fn unresolved_vfs_uri_is_rejected_before_shell_execution() {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: crate::vfs::PROVIDER_RELAY_FS.to_string(),
+                backend_id: "local-dev-1".to_string(),
+                root_ref: "D:\\workspace".to_string(),
+                capabilities: vec![agentdash_spi::MountCapability::Exec],
+                default_write: true,
+                display_name: "main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let message = unresolved_vfs_uri_message(
+            "python skill-assets://skills/abc-user-lookup/scripts/lookup.py yihao.liao",
+            &vfs,
+        )
+        .expect("unresolved VFS URI should be rejected");
+
+        assert!(message.contains("未物化的 VFS URI"));
+        assert!(message.contains("skill-assets://skills/abc-user-lookup/scripts/lookup.py"));
     }
 }

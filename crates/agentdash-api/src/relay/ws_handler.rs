@@ -248,27 +248,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             tracing::debug!(backend_id = %backend_id, "收到 pong");
         }
         // 响应消息 → 分发到等待方
-        RelayMessage::ResponsePrompt { .. }
-        | RelayMessage::ResponseCancel { .. }
-        | RelayMessage::ResponseDiscover { .. }
-        | RelayMessage::ResponseWorkspaceDetect { .. }
-        | RelayMessage::ResponseWorkspaceDetectGit { .. }
-        | RelayMessage::ResponseToolFileRead { .. }
-        | RelayMessage::ResponseToolFileWrite { .. }
-        | RelayMessage::ResponseToolFileDelete { .. }
-        | RelayMessage::ResponseToolFileRename { .. }
-        | RelayMessage::ResponseToolApplyPatch { .. }
-        | RelayMessage::ResponseToolShellExec { .. }
-        | RelayMessage::ResponseToolFileList { .. }
-        | RelayMessage::ResponseToolSearch { .. }
-        | RelayMessage::ResponseBrowseDirectory { .. }
-        | RelayMessage::ResponseMcpListTools { .. }
-        | RelayMessage::ResponseMcpCallTool { .. }
-        | RelayMessage::ResponseMcpClose { .. }
-        | RelayMessage::ResponseTerminalSpawn { .. }
-        | RelayMessage::ResponseTerminalInput { .. }
-        | RelayMessage::ResponseTerminalResize { .. }
-        | RelayMessage::ResponseTerminalKill { .. } => {
+        response if is_pending_response_message(response) => {
             if !state.services.backend_registry.resolve_response(&msg).await {
                 tracing::warn!(
                     backend_id = %backend_id,
@@ -467,6 +447,34 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             );
         }
     }
+}
+
+fn is_pending_response_message(msg: &RelayMessage) -> bool {
+    matches!(
+        msg,
+        RelayMessage::ResponsePrompt { .. }
+            | RelayMessage::ResponseCancel { .. }
+            | RelayMessage::ResponseDiscover { .. }
+            | RelayMessage::ResponseWorkspaceDetect { .. }
+            | RelayMessage::ResponseWorkspaceDetectGit { .. }
+            | RelayMessage::ResponseToolFileRead { .. }
+            | RelayMessage::ResponseToolFileWrite { .. }
+            | RelayMessage::ResponseToolFileDelete { .. }
+            | RelayMessage::ResponseToolFileRename { .. }
+            | RelayMessage::ResponseToolApplyPatch { .. }
+            | RelayMessage::ResponseToolShellExec { .. }
+            | RelayMessage::ResponseToolFileList { .. }
+            | RelayMessage::ResponseToolSearch { .. }
+            | RelayMessage::ResponseBrowseDirectory { .. }
+            | RelayMessage::ResponseMcpListTools { .. }
+            | RelayMessage::ResponseMcpCallTool { .. }
+            | RelayMessage::ResponseMcpClose { .. }
+            | RelayMessage::ResponseVfsMaterialize { .. }
+            | RelayMessage::ResponseTerminalSpawn { .. }
+            | RelayMessage::ResponseTerminalInput { .. }
+            | RelayMessage::ResponseTerminalResize { .. }
+            | RelayMessage::ResponseTerminalKill { .. }
+    )
 }
 
 async fn read_next_relay(
@@ -728,5 +736,30 @@ mod tests {
 
         assert_eq!(err.code, RelayErrorCode::Forbidden);
         assert!(err.message.contains("已禁用"));
+    }
+
+    #[test]
+    fn vfs_materialize_response_is_routed_to_pending_requests() {
+        let response = RelayMessage::ResponseVfsMaterialize {
+            id: "vfs-materialize-1".to_string(),
+            payload: None,
+            error: None,
+        };
+
+        assert!(is_pending_response_message(&response));
+    }
+
+    #[test]
+    fn shell_output_event_is_not_treated_as_pending_response() {
+        let event = RelayMessage::EventToolShellOutput {
+            id: "shell-out-1".to_string(),
+            payload: ToolShellOutputPayload {
+                call_id: "call-1".to_string(),
+                delta: "ok\n".to_string(),
+                stream: ShellOutputStream::Stdout,
+            },
+        };
+
+        assert!(!is_pending_response_message(&event));
     }
 }

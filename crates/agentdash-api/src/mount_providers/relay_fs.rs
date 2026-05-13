@@ -370,6 +370,13 @@ impl MountProvider for RelayFsMountProvider {
             .streaming_call_id
             .clone()
             .unwrap_or_else(|| RelayMessage::new_id("call"));
+        tracing::info!(
+            backend_id = %mount.backend_id,
+            mount_id = %mount.id,
+            cwd = %cwd,
+            command = %request.command,
+            "relay_fs 下发 shell_exec"
+        );
         let response = self
             .backends
             .send_command(

@@ -9,6 +9,7 @@ import {
   mcpServerProbe,
   mcpServersLoad,
   mcpServersSave,
+  runtimeRestart,
   runtimeSnapshot,
   runtimeStart,
   runtimeStop,
@@ -99,6 +100,19 @@ function App() {
     try {
       await runtimeStop()
       setSnapshot(await runtimeSnapshot())
+    } catch (err) {
+      setError(formatError(err))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  async function handleRestart() {
+    setIsBusy(true)
+    setError(null)
+    try {
+      setSnapshot(await runtimeRestart())
+      setLogs(await logsTail())
     } catch (err) {
       setError(formatError(err))
     } finally {
@@ -293,6 +307,9 @@ function App() {
               </button>
               <button className="danger-button" type="button" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
                 停止
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
+                重启
               </button>
             </div>
           </form>

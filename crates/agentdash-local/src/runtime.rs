@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::{SessionExecutionState, SessionHub};
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
@@ -117,6 +117,8 @@ pub struct LocalRuntimeManager {
 }
 
 struct RunningRuntime {
+    config: LocalRuntimeConfig,
+    session_hub: Option<SessionHub>,
     shutdown_tx: watch::Sender<bool>,
     status_tx: watch::Sender<LocalRuntimeStatus>,
     status_rx: watch::Receiver<LocalRuntimeStatus>,
@@ -161,6 +163,7 @@ impl LocalRuntimeManager {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
+        let session_hub = ws_config.session_hub.clone();
 
         let join = tokio::spawn({
             let status_tx = status_tx.clone();
@@ -208,6 +211,8 @@ impl LocalRuntimeManager {
         };
 
         *guard = Some(RunningRuntime {
+            config,
+            session_hub,
             shutdown_tx,
             status_tx,
             status_rx,
@@ -245,6 +250,33 @@ impl LocalRuntimeManager {
             .map_err(|error| anyhow::anyhow!("runtime task join 失败: {error}"))??;
 
         Ok(())
+    }
+
+    pub async fn restart(&self) -> anyhow::Result<LocalRuntimeSnapshot> {
+        let config = {
+            let guard = self.inner.lock().await;
+            let Some(running) = guard.as_ref() else {
+                anyhow::bail!("本机 runtime 未运行");
+            };
+
+            let active_sessions = count_active_sessions(running.session_hub.as_ref()).await?;
+            if active_sessions > 0 {
+                self.record_log(
+                    "warn",
+                    "runtime",
+                    format!("存在 {active_sessions} 个运行中的 session，已阻止 runtime 重启"),
+                )
+                .await;
+                anyhow::bail!("存在 {active_sessions} 个运行中的 session，暂不重启 runtime");
+            }
+
+            running.config.clone()
+        };
+
+        self.record_log("info", "runtime", "准备重启 runtime").await;
+        self.stop(StopReason::Restart).await?;
+        let handle = self.start(config).await?;
+        Ok(handle.status_rx.borrow().clone())
     }
 
     pub async fn record_log(
@@ -303,6 +335,27 @@ async fn push_log(
     while guard.events.len() > LOCAL_LOG_CAPACITY {
         guard.events.pop_front();
     }
+}
+
+async fn count_active_sessions(session_hub: Option<&SessionHub>) -> anyhow::Result<usize> {
+    let Some(session_hub) = session_hub else {
+        return Ok(0);
+    };
+
+    let sessions = session_hub.list_sessions().await?;
+    if sessions.is_empty() {
+        return Ok(0);
+    }
+
+    let ids = sessions
+        .into_iter()
+        .map(|session| session.id)
+        .collect::<Vec<_>>();
+    let states = session_hub.inspect_execution_states_bulk(&ids).await?;
+    Ok(states
+        .values()
+        .filter(|state| matches!(state, SessionExecutionState::Running { .. }))
+        .count())
 }
 
 /// standalone CLI 入口：保持原有无限重连行为。

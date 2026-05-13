@@ -70,6 +70,15 @@ async fn runtime_stop(state: State<'_, DesktopState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn runtime_restart(state: State<'_, DesktopState>) -> Result<LocalRuntimeSnapshot, String> {
+    state
+        .runtime
+        .restart()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn runtime_snapshot(
     state: State<'_, DesktopState>,
 ) -> Result<Option<LocalRuntimeSnapshot>, String> {
@@ -157,6 +166,7 @@ fn main() {
             mcp_servers_save,
             logs_clear,
             logs_tail,
+            runtime_restart,
             runtime_start,
             runtime_stop,
             runtime_snapshot

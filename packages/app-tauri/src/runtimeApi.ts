@@ -70,6 +70,11 @@ export async function runtimeStop(): Promise<void> {
   return invoke('runtime_stop')
 }
 
+export async function runtimeRestart(): Promise<LocalRuntimeStatus> {
+  ensureTauriHost()
+  return invoke('runtime_restart')
+}
+
 export async function logsTail(limit = 200): Promise<LocalLogEvent[]> {
   if (!isTauriHost()) return []
   return invoke('logs_tail', { limit })

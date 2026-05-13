@@ -520,3 +520,48 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 完成 Tauri 桌面端统一架构 MVP
+
+**Date**: 2026-05-14
+**Task**: 完成 Tauri 桌面端统一架构 MVP
+**Branch**: `codex/tauri-desktop-local-runtime`
+
+### Summary
+
+完成 Tauri 桌面端统一架构 MVP：agentdash-local lib 化、Tauri 壳、Local Runtime 管理页、runtime health、前端 monorepo/shared packages、Dashboard 复用、桌面托管 API 与 Windows bundle 验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c26bbf8` | (see git log) |
+| `8aae9ffe` | (see git log) |
+| `db133e90` | (see git log) |
+| `2ffeedff` | (see git log) |
+| `a9b2dc02` | (see git log) |
+| `4a1c2ee6` | (see git log) |
+| `17529709` | (see git log) |
+| `ed0f8c35` | (see git log) |
+| `64ae8ebd` | (see git log) |
+| `c44ed3b8` | (see git log) |
+| `110e998e` | (see git log) |
+| `23bcff35` | (see git log) |
+| `6bfda9fd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

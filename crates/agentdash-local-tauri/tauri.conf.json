@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.agentdash.desktop",
   "build": {
+    "beforeBuildCommand": "pnpm --dir ../.. --filter app-tauri build",
     "devUrl": "http://127.0.0.1:5381",
     "frontendDist": "../../packages/app-tauri/dist"
   },

@@ -9,6 +9,7 @@
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [ACP Meta Warp](./acp-meta-warp.md) | ACP `_meta.agentdash` 跨层序列化契约 | ✅ 已更新 |
+| [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面端托管 API、Local Runtime command、profile 与打包契约 | ✅ 已创建 |
 
 ---
 

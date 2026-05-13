@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
@@ -7,18 +9,57 @@ use agentdash_local::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::Mutex;
+use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
+const DESKTOP_API_PORT: u16 = 3001;
 
 #[derive(Clone)]
 struct DesktopState {
     runtime: LocalRuntimeManager,
+    api: DesktopApiManager,
 }
 
 impl Default for DesktopState {
     fn default() -> Self {
         Self {
             runtime: LocalRuntimeManager::new(),
+            api: DesktopApiManager::default(),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct DesktopApiManager {
+    snapshot: Arc<Mutex<DesktopApiSnapshot>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DesktopApiSnapshot {
+    state: DesktopApiState,
+    origin: String,
+    message: Option<String>,
+    database_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DesktopApiState {
+    Starting,
+    Running,
+    Error,
+    Stopped,
+}
+
+impl Default for DesktopApiSnapshot {
+    fn default() -> Self {
+        Self {
+            state: DesktopApiState::Starting,
+            origin: desktop_api_origin(DESKTOP_API_PORT),
+            message: Some("桌面端 API 正在启动".to_string()),
+            database_url: None,
         }
     }
 }
@@ -228,10 +269,29 @@ async fn logs_clear(state: State<'_, DesktopState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn desktop_api_snapshot(
+    state: State<'_, DesktopState>,
+) -> Result<DesktopApiSnapshot, String> {
+    Ok(state.api.snapshot().await)
+}
+
 fn main() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .try_init();
+
     tauri::Builder::default()
         .manage(DesktopState::default())
+        .setup(|app| {
+            let state = app.state::<DesktopState>().inner().clone();
+            start_desktop_api(state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            desktop_api_snapshot,
             profile_delete,
             profile_load,
             profile_save,
@@ -247,6 +307,102 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("启动 AgentDash 桌面端失败");
+}
+
+fn start_desktop_api(state: DesktopState) {
+    std::thread::Builder::new()
+        .name("agentdash-desktop-api".to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("agentdash-desktop-api-worker")
+                .build();
+
+            match runtime {
+                Ok(runtime) => runtime.block_on(run_desktop_api(state)),
+                Err(error) => {
+                    tracing::error!(error = %error, "创建桌面端 API runtime 失败");
+                }
+            }
+        })
+        .expect("启动桌面端 API 线程失败");
+}
+
+async fn run_desktop_api(state: DesktopState) {
+    state.api.mark_starting(DESKTOP_API_PORT).await;
+    let options = ApiServerOptions::desktop_localhost(DESKTOP_API_PORT);
+    match agentdash_api::build_server(agentdash_api::builtin_plugins(), options).await {
+        Ok(server) => {
+            let ready = server.ready().clone();
+            state.api.mark_running(&ready).await;
+            if let Err(error) = server.serve().await {
+                tracing::error!(error = %error, "桌面端 API 服务退出");
+                state
+                    .api
+                    .mark_error(DESKTOP_API_PORT, error.to_string())
+                    .await;
+            } else {
+                state.api.mark_stopped(DESKTOP_API_PORT).await;
+            }
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "桌面端 API 启动失败");
+            state
+                .api
+                .mark_error(DESKTOP_API_PORT, error.to_string())
+                .await;
+        }
+    }
+}
+
+impl DesktopApiManager {
+    async fn snapshot(&self) -> DesktopApiSnapshot {
+        self.snapshot.lock().await.clone()
+    }
+
+    async fn mark_starting(&self, port: u16) {
+        let mut guard = self.snapshot.lock().await;
+        *guard = DesktopApiSnapshot {
+            state: DesktopApiState::Starting,
+            origin: desktop_api_origin(port),
+            message: Some("桌面端 API 正在启动".to_string()),
+            database_url: None,
+        };
+    }
+
+    async fn mark_running(&self, ready: &ApiServerReady) {
+        let mut guard = self.snapshot.lock().await;
+        *guard = DesktopApiSnapshot {
+            state: DesktopApiState::Running,
+            origin: ready.origin.clone(),
+            message: Some(format!("桌面端 API 已启动: {}", ready.addr)),
+            database_url: Some(ready.database_url.clone()),
+        };
+    }
+
+    async fn mark_error(&self, port: u16, message: String) {
+        let mut guard = self.snapshot.lock().await;
+        *guard = DesktopApiSnapshot {
+            state: DesktopApiState::Error,
+            origin: desktop_api_origin(port),
+            message: Some(message),
+            database_url: None,
+        };
+    }
+
+    async fn mark_stopped(&self, port: u16) {
+        let mut guard = self.snapshot.lock().await;
+        *guard = DesktopApiSnapshot {
+            state: DesktopApiState::Stopped,
+            origin: desktop_api_origin(port),
+            message: Some("桌面端 API 已停止".to_string()),
+            database_url: None,
+        };
+    }
+}
+
+fn desktop_api_origin(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
 }
 
 fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {

@@ -39,12 +39,26 @@ impl PostgresRuntimeHealthRepository {
                     status IN ('online', 'offline', 'starting', 'degraded', 'stopping', 'error')
                 )
             );
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        sqlx::query(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_runtime_health_status
-                ON runtime_health(status);
+                ON runtime_health(status)
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
+        sqlx::query(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_runtime_health_last_seen_at
-                ON runtime_health(last_seen_at);
+                ON runtime_health(last_seen_at)
             "#,
         )
         .execute(&self.pool)

@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import WebDashboardApp from 'app-web'
 import { LocalRuntimeView } from '@agentdash/views/local-runtime'
+import { invoke } from '@tauri-apps/api/core'
 import { createTauriLocalRuntimeClient } from './runtimeApi'
 
 type DesktopView = 'runtime' | 'dashboard'
 type DashboardApiState = 'checking' | 'ready' | 'unavailable'
+type DesktopApiSnapshot = {
+  state: 'starting' | 'running' | 'error' | 'stopped'
+  origin: string
+  message?: string | null
+  database_url?: string | null
+}
 
 const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
 
@@ -44,20 +51,42 @@ function App() {
 function DashboardHost() {
   const [state, setState] = useState<DashboardApiState>('checking')
   const [attempt, setAttempt] = useState(0)
+  const [apiSnapshot, setApiSnapshot] = useState<DesktopApiSnapshot | null>(null)
 
   useEffect(() => {
     let alive = true
+    let timer: number | undefined
     setState('checking')
-    fetch(`${API_ORIGIN}/api/health`)
-      .then((response) => {
-        if (!alive) return
-        setState(response.ok ? 'ready' : 'unavailable')
-      })
-      .catch(() => {
-        if (alive) setState('unavailable')
-      })
+
+    const check = async () => {
+      const snapshot = await loadDesktopApiSnapshot()
+      const origin = normalizeApiOrigin(snapshot?.origin ?? API_ORIGIN)
+
+      if (!alive) return
+      setApiSnapshot(snapshot)
+
+      if (snapshot && snapshot.state !== 'running') {
+        setState(snapshot.state === 'starting' ? 'checking' : 'unavailable')
+        if (snapshot.state === 'starting') {
+          timer = window.setTimeout(() => setAttempt((value) => value + 1), 1000)
+        }
+        return
+      }
+
+      fetch(`${origin}/api/health`)
+        .then((response) => {
+          if (!alive) return
+          setState(response.ok ? 'ready' : 'unavailable')
+        })
+        .catch(() => {
+          if (alive) setState('unavailable')
+        })
+    }
+
+    void check()
     return () => {
       alive = false
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [attempt])
 
@@ -71,7 +100,7 @@ function DashboardHost() {
         <span className={`dashboard-host-dot ${state}`} />
         <div>
           <h1>Dashboard API</h1>
-          <p>{state === 'checking' ? '正在检查 127.0.0.1:3001' : '127.0.0.1:3001 暂不可用'}</p>
+          <p>{dashboardApiMessage(state, apiSnapshot)}</p>
         </div>
         <button className="secondary-button" type="button" onClick={() => setAttempt((value) => value + 1)}>
           重试
@@ -79,6 +108,25 @@ function DashboardHost() {
       </div>
     </div>
   )
+}
+
+async function loadDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null> {
+  try {
+    return await invoke<DesktopApiSnapshot>('desktop_api_snapshot')
+  } catch {
+    return null
+  }
+}
+
+function dashboardApiMessage(state: DashboardApiState, snapshot: DesktopApiSnapshot | null): string {
+  if (state === 'checking') {
+    return snapshot?.message ?? `正在检查 ${normalizeApiOrigin(API_ORIGIN)}`
+  }
+  return snapshot?.message ?? `${normalizeApiOrigin(API_ORIGIN)} 暂不可用`
+}
+
+function normalizeApiOrigin(value: string): string {
+  return value.replace(/\/+$/, '')
 }
 
 export default App

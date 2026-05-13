@@ -16,14 +16,27 @@
   "worktree_path": null,
   "current_phase": 0,
   "next_action": [
-    { "phase": 1, "action": "implement" },
-    { "phase": 2, "action": "check" },
-    { "phase": 3, "action": "finish" },
-    { "phase": 4, "action": "create-pr" }
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
   ],
   "commit": null,
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": "从 04-08-pi-agent-stdio-mcp-relay 讨论中拆出。MCP 配置管理是首要场景，但界面应设计为通用的 local backend 管理入口。\n\n2026-05-14 codex 作为 04-28-tauri-desktop-unified-architecture 子任务推进并完成：Local Runtime 管理页已迁入 app-tauri，并支持 runtime start/stop/restart、profile auto start、MCP servers load/save/probe、运行时日志与状态快照；Dashboard 入口已接入桌面壳，桌面端 API authority 已由 Tauri 进程托管。对应 GitHub issue: https://github.com/syan2018/AgentDash/issues/17。"
+  "notes": "从 04-08-pi-agent-stdio-mcp-relay 讨论中拆出。MCP 配置管理是首要场景，但界面应设计为通用的 local backend 管理入口。\n\n2026-05-14 codex 作为 04-28-tauri-desktop-unified-architecture 子任务推进并完成：Local Runtime 管理页已迁入 app-tauri，并支持 runtime start/stop/restart、profile auto start、MCP servers load/save/probe、运行时日志与状态快照；Dashboard 入口已接入桌面壳，桌面端 API authority 已由 Tauri 进程托管。对应 GitHub issue: https://github.com/syan2018/AgentDash/issues/17。",
+  "parent": null
 }

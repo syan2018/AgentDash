@@ -15,6 +15,7 @@ members = [
     "crates/agentdash-agent",
     "crates/agentdash-relay",
     "crates/agentdash-local",
+    "crates/agentdash-local-tauri",
     "crates/agentdash-agent-protocol",
 ]
 

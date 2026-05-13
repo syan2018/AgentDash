@@ -1,0 +1,22 @@
+[package]
+name = "agentdash-local-tauri"
+description = "AgentDash Tauri 桌面端壳 — 本机 runtime 管理与桌面命令"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+agentdash-local = { path = "../agentdash-local", default-features = false }
+
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

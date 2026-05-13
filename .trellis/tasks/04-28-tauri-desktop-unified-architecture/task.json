@@ -33,7 +33,7 @@
     {
       "id": "3",
       "title": "阶段 3: Tauri 壳 crate (agentdash-local-tauri)",
-      "status": "pending",
+      "status": "completed",
       "detail": "依赖 agentdash-local lib，挂载 Tauri v2 shell；暴露 command 给前端调用 local backend"
     },
     {

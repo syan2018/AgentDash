@@ -269,6 +269,11 @@ impl AppState {
                     Some(inline_persister),
                     platform_config.clone(),
                 )
+                .with_materialization_transport(Arc::new(
+                    crate::vfs_materialization::RelayVfsMaterializationTransport::new(
+                        backend_registry.clone(),
+                    ),
+                ))
                 .with_shell_output_registry(shell_output_registry.clone()),
             );
         let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();

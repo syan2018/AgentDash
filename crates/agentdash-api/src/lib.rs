@@ -13,6 +13,7 @@ pub mod task_agent_context;
 pub mod title_generator;
 #[cfg(test)]
 mod vfs_access;
+pub mod vfs_materialization;
 pub mod workspace_resolution;
 
 use anyhow::Result;

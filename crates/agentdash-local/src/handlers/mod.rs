@@ -5,9 +5,11 @@
 //! - `workspace`：workspace 探测 + 目录浏览
 //! - `tool_calls`：PiAgent tool call（文件/Shell/搜索）
 //! - `mcp_relay`：MCP probe / list_tools / call_tool / close
+//! - `materialization`：VFS 资源物化到本机 cache / working copy
 //! - `terminal`：交互式终端 spawn / input / resize / kill
 //! - `relay_mcp_servers`：relay MCP Server 配置解析
 
+mod materialization;
 mod mcp_relay;
 mod prompt;
 pub(crate) mod relay_mcp_servers;
@@ -21,6 +23,7 @@ use agentdash_relay::*;
 use tokio::sync::mpsc;
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
+use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
 use crate::terminal_manager::TerminalManager;
 use crate::tool_executor::ToolExecutor;
@@ -37,10 +40,12 @@ pub struct CommandHandler {
     pub(crate) workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub(crate) event_tx: mpsc::UnboundedSender<RelayMessage>,
     pub(crate) terminal_manager: Arc<TerminalManager>,
+    pub(crate) materialization_store: Arc<MaterializationStore>,
 }
 
 impl CommandHandler {
     pub fn new(
+        backend_id: String,
         tool_executor: ToolExecutor,
         session_hub: Option<SessionHub>,
         connector: Option<Arc<dyn AgentConnector>>,
@@ -49,6 +54,7 @@ impl CommandHandler {
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         let terminal_manager = Arc::new(TerminalManager::new(event_tx.clone()));
+        let materialization_store = Arc::new(MaterializationStore::new(backend_id));
         Self {
             tool_executor,
             session_hub,
@@ -57,6 +63,7 @@ impl CommandHandler {
             workspace_contract_config,
             event_tx,
             terminal_manager,
+            materialization_store,
         }
     }
 
@@ -133,6 +140,9 @@ impl CommandHandler {
             }
             RelayMessage::CommandToolShellExec { id, payload } => {
                 vec![self.handle_tool_shell_exec(id, payload).await]
+            }
+            RelayMessage::CommandVfsMaterialize { id, payload } => {
+                vec![self.handle_vfs_materialize(id, *payload).await]
             }
             RelayMessage::CommandToolFileList { id, payload } => {
                 vec![self.handle_tool_file_list(id, payload).await]

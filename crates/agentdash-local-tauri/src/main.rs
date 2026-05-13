@@ -5,8 +5,10 @@ use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
     StopReason, load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
 };
-use serde::Deserialize;
-use tauri::State;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager, State};
+
+const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
 
 #[derive(Clone)]
 struct DesktopState {
@@ -30,6 +32,75 @@ struct RuntimeStartRequest {
     name: Option<String>,
     accessible_roots: Vec<PathBuf>,
     executor_enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct LocalRuntimeProfile {
+    cloud_url: String,
+    token: String,
+    #[serde(default)]
+    backend_id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    accessible_roots: Vec<PathBuf>,
+    #[serde(default = "default_executor_enabled")]
+    executor_enabled: bool,
+    #[serde(default)]
+    auto_start: bool,
+}
+
+fn default_executor_enabled() -> bool {
+    true
+}
+
+impl From<LocalRuntimeProfile> for RuntimeStartRequest {
+    fn from(profile: LocalRuntimeProfile) -> Self {
+        Self {
+            cloud_url: profile.cloud_url,
+            token: profile.token,
+            backend_id: profile.backend_id,
+            name: profile.name,
+            accessible_roots: profile.accessible_roots,
+            executor_enabled: profile.executor_enabled,
+        }
+    }
+}
+
+#[tauri::command]
+async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, String> {
+    let path = profile_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|error| format!("读取桌面端 profile 失败: {error}"))
+}
+
+#[tauri::command]
+async fn profile_save(
+    app: AppHandle,
+    profile: LocalRuntimeProfile,
+) -> Result<LocalRuntimeProfile, String> {
+    let path = profile_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(&profile).map_err(|error| error.to_string())?;
+    std::fs::write(&path, content).map_err(|error| error.to_string())?;
+    Ok(profile)
+}
+
+#[tauri::command]
+async fn profile_delete(app: AppHandle) -> Result<(), String> {
+    let path = profile_path(&app)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::remove_file(path).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -161,6 +232,9 @@ fn main() {
     tauri::Builder::default()
         .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
+            profile_delete,
+            profile_load,
+            profile_save,
             mcp_server_probe,
             mcp_servers_load,
             mcp_servers_save,
@@ -173,4 +247,11 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("启动 AgentDash 桌面端失败");
+}
+
+fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(DESKTOP_PROFILE_FILE))
+        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
 }

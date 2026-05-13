@@ -27,6 +27,10 @@ export interface RuntimeStartRequest {
   executor_enabled: boolean
 }
 
+export interface LocalRuntimeProfile extends RuntimeStartRequest {
+  auto_start: boolean
+}
+
 export interface McpEnvEntry {
   name: string
   value: string
@@ -48,6 +52,9 @@ export interface McpProbeResult {
 }
 
 export interface LocalRuntimeClient {
+  profileLoad(): Promise<LocalRuntimeProfile | null>
+  profileSave(profile: LocalRuntimeProfile): Promise<LocalRuntimeProfile>
+  profileDelete(): Promise<void>
   runtimeSnapshot(): Promise<LocalRuntimeStatus | null>
   runtimeStart(request: RuntimeStartRequest): Promise<LocalRuntimeStatus>
   runtimeStop(): Promise<void>

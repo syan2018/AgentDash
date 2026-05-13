@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   LocalLogEvent,
   LocalRuntimeClient,
+  LocalRuntimeProfile,
   LocalRuntimeStatus,
   McpLocalServerEntry,
   McpProbeResult,
@@ -16,6 +17,9 @@ declare global {
 
 export function createTauriLocalRuntimeClient(): LocalRuntimeClient {
   return {
+    profileLoad,
+    profileSave,
+    profileDelete,
     runtimeSnapshot,
     runtimeStart,
     runtimeStop,
@@ -26,6 +30,21 @@ export function createTauriLocalRuntimeClient(): LocalRuntimeClient {
     mcpServersSave,
     mcpServerProbe,
   }
+}
+
+async function profileLoad(): Promise<LocalRuntimeProfile | null> {
+  if (!isTauriHost()) return null
+  return invoke('profile_load')
+}
+
+async function profileSave(profile: LocalRuntimeProfile): Promise<LocalRuntimeProfile> {
+  ensureTauriHost()
+  return invoke('profile_save', { profile })
+}
+
+async function profileDelete(): Promise<void> {
+  ensureTauriHost()
+  return invoke('profile_delete')
 }
 
 async function runtimeSnapshot(): Promise<LocalRuntimeStatus | null> {

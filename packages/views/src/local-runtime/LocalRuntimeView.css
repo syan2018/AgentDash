@@ -244,6 +244,13 @@ textarea {
   gap: 8px;
 }
 
+.switch-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .actions {
   display: flex;
   gap: 10px;
@@ -379,6 +386,14 @@ button:disabled {
   border: 1px solid #bfdbfe;
   background: #eff6ff;
   color: #1e3a8a;
+}
+
+.profile-actions {
+  margin-top: 10px;
+}
+
+.profile-message {
+  margin: 0 0 12px;
 }
 
 .compact-select {

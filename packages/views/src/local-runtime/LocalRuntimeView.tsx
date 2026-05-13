@@ -11,6 +11,7 @@ import {
 import type {
   LocalLogEvent,
   LocalRuntimeClient,
+  LocalRuntimeProfile,
   LocalRuntimeStatus,
   McpLocalServerEntry,
   RuntimeStartRequest,
@@ -33,8 +34,10 @@ export function LocalRuntimeView({
   const [backendName, setBackendName] = useState(defaultBackendName)
   const [accessibleRoots, setAccessibleRoots] = useState('')
   const [executorEnabled, setExecutorEnabled] = useState(true)
+  const [autoStart, setAutoStart] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [profileMessage, setProfileMessage] = useState<string | null>(null)
   const [mcpRoot, setMcpRoot] = useState('')
   const [mcpServers, setMcpServers] = useState<McpLocalServerEntry[]>([])
   const [mcpMessage, setMcpMessage] = useState<string | null>(null)
@@ -44,6 +47,20 @@ export function LocalRuntimeView({
 
   useEffect(() => {
     let alive = true
+    const loadProfile = async () => {
+      try {
+        const profile = await client.profileLoad()
+        if (!alive || !profile) return
+        applyProfile(profile)
+        setProfileMessage('已加载本机 profile')
+        if (profile.auto_start && profile.cloud_url.trim() && profile.token.trim()) {
+          setSnapshot(await client.runtimeStart(profile))
+          setProfileMessage('已加载本机 profile 并自动启动 runtime')
+        }
+      } catch (err) {
+        if (alive) setProfileMessage(formatError(err))
+      }
+    }
     const refresh = async () => {
       try {
         const next = await client.runtimeSnapshot()
@@ -54,6 +71,7 @@ export function LocalRuntimeView({
         if (alive) setError(formatError(err))
       }
     }
+    void loadProfile()
     void refresh()
     const timer = window.setInterval(refresh, 1500)
     return () => {
@@ -81,18 +99,67 @@ export function LocalRuntimeView({
     setIsBusy(true)
     setError(null)
     try {
-      const request: RuntimeStartRequest = {
-        cloud_url: cloudUrl.trim(),
-        token: token.trim(),
-        name: backendName.trim() || undefined,
-        accessible_roots: roots,
-        executor_enabled: executorEnabled,
-      }
+      const request = buildStartRequest(cloudUrl, token, backendName, roots, executorEnabled)
       setSnapshot(await client.runtimeStart(request))
     } catch (err) {
       setError(formatError(err))
     } finally {
       setIsBusy(false)
+    }
+  }
+
+  async function handleLoadProfile() {
+    setProfileMessage(null)
+    try {
+      const profile = await client.profileLoad()
+      if (!profile) {
+        setProfileMessage('尚未保存本机 profile')
+        return
+      }
+      applyProfile(profile)
+      setProfileMessage('已加载本机 profile')
+    } catch (err) {
+      setProfileMessage(formatError(err))
+    }
+  }
+
+  async function handleSaveProfile() {
+    setProfileMessage(null)
+    try {
+      const profile = await client.profileSave(buildProfile())
+      applyProfile(profile)
+      setProfileMessage('已保存本机 profile')
+    } catch (err) {
+      setProfileMessage(formatError(err))
+    }
+  }
+
+  async function handleDeleteProfile() {
+    setProfileMessage(null)
+    try {
+      await client.profileDelete()
+      setProfileMessage('已删除本机 profile')
+    } catch (err) {
+      setProfileMessage(formatError(err))
+    }
+  }
+
+  function applyProfile(profile: LocalRuntimeProfile) {
+    setCloudUrl(profile.cloud_url)
+    setToken(profile.token)
+    setBackendName(profile.name ?? defaultBackendName)
+    setAccessibleRoots(profile.accessible_roots.join('\n'))
+    setExecutorEnabled(profile.executor_enabled)
+    setAutoStart(profile.auto_start)
+    if (profile.accessible_roots[0]) {
+      setMcpRoot(profile.accessible_roots[0])
+    }
+  }
+
+  function buildProfile(): LocalRuntimeProfile {
+    return {
+      ...buildStartRequest(cloudUrl, token, backendName, roots, executorEnabled),
+      auto_start: autoStart,
     }
   }
 
@@ -262,14 +329,24 @@ export function LocalRuntimeView({
           <form className="panel control-panel" onSubmit={handleStart}>
             <div className="panel-header">
               <h2>Start Runtime</h2>
-              <label className="switch">
-                <input
-                  checked={executorEnabled}
-                  onChange={(event) => setExecutorEnabled(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>Executor</span>
-              </label>
+              <div className="switch-group">
+                <label className="switch">
+                  <input
+                    checked={executorEnabled}
+                    onChange={(event) => setExecutorEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>Executor</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={autoStart}
+                    onChange={(event) => setAutoStart(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>Auto start</span>
+                </label>
+              </div>
             </div>
 
             <label className="field">
@@ -302,6 +379,7 @@ export function LocalRuntimeView({
             </label>
 
             {error ? <div className="error-box">{error}</div> : null}
+            {profileMessage ? <div className="message-box profile-message">{profileMessage}</div> : null}
 
             <div className="actions">
               <button className="primary-button" type="submit" disabled={isBusy || !cloudUrl.trim() || !token.trim()}>
@@ -312,6 +390,17 @@ export function LocalRuntimeView({
               </button>
               <button className="secondary-button" type="button" onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
                 重启
+              </button>
+            </div>
+            <div className="actions profile-actions">
+              <button className="secondary-button" type="button" onClick={() => void handleLoadProfile()}>
+                加载 profile
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void handleSaveProfile()} disabled={!cloudUrl.trim() || !token.trim()}>
+                保存 profile
+              </button>
+              <button className="danger-button" type="button" onClick={() => void handleDeleteProfile()}>
+                删除 profile
               </button>
             </div>
           </form>
@@ -450,6 +539,22 @@ export function LocalRuntimeView({
       </section>
     </main>
   )
+}
+
+function buildStartRequest(
+  cloudUrl: string,
+  token: string,
+  backendName: string,
+  roots: string[],
+  executorEnabled: boolean,
+): RuntimeStartRequest {
+  return {
+    cloud_url: cloudUrl.trim(),
+    token: token.trim(),
+    name: backendName.trim() || undefined,
+    accessible_roots: roots,
+    executor_enabled: executorEnabled,
+  }
 }
 
 function stateText(state: LocalRuntimeStatus['state']) {

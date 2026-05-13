@@ -9,16 +9,16 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::skill_asset::{
-    CreateSkillAssetInput, RawSkillUploadFile, SkillAssetApplicationError, SkillAssetFileInput,
-    SkillAssetService, UpdateSkillAssetInput,
+    CreateSkillAssetInput, ImportRemoteSkillAssetInput, RawSkillUploadFile,
+    SkillAssetApplicationError, SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput,
 };
 use agentdash_domain::skill_asset::SkillAsset;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    BootstrapSkillAssetRequest, CreateSkillAssetRequest, ListSkillAssetQuery, SkillAssetFileDto,
-    SkillAssetResponse, UpdateSkillAssetRequest,
+    BootstrapSkillAssetRequest, CreateSkillAssetRequest, ImportRemoteSkillAssetRequest,
+    ListSkillAssetQuery, SkillAssetFileDto, SkillAssetResponse, UpdateSkillAssetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -51,11 +51,12 @@ pub async fn list_skill_assets(
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     let mut assets = service.list(project_id).await?;
     match query.source.as_deref() {
-        Some("user") => assets.retain(|asset| !asset.is_builtin_seed()),
+        Some("user") => assets.retain(|asset| asset.source.tag() == "user"),
         Some("builtin_seed") => assets.retain(SkillAsset::is_builtin_seed),
+        Some("github") => assets.retain(|asset| asset.source.tag() == "github"),
         Some(other) if !other.is_empty() => {
             return Err(ApiError::BadRequest(format!(
-                "无效的 source 过滤值: {other}（可选 user | builtin_seed）"
+                "无效的 source 过滤值: {other}（可选 user | builtin_seed | github）"
             )));
         }
         _ => {}
@@ -153,6 +154,31 @@ pub async fn delete_skill_asset(
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     service.delete(asset.id).await?;
     Ok(Json(serde_json::json!({ "deleted": asset.id })))
+}
+
+pub async fn import_remote_skill_asset(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<ProjectSkillAssetsPath>,
+    Json(req): Json<ImportRemoteSkillAssetRequest>,
+) -> Result<Json<SkillAssetResponse>, ApiError> {
+    let project_id = parse_project_id(&path.project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
+    let asset = service
+        .import_remote(ImportRemoteSkillAssetInput {
+            project_id,
+            url: req.url,
+        })
+        .await?;
+    Ok(Json(asset.into()))
 }
 
 pub async fn upload_skill_assets(

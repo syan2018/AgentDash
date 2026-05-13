@@ -2,7 +2,7 @@
 //
 // 对齐后端 DTO：crates/agentdash-api/src/dto/skill_asset.rs
 
-export type SkillAssetSource = "builtin_seed" | "user";
+export type SkillAssetSource = "builtin_seed" | "user" | "github";
 
 export interface SkillAssetFileDto {
   path: string;
@@ -18,10 +18,18 @@ export interface SkillAssetDto {
   description: string;
   source: SkillAssetSource;
   builtin_key?: string | null;
+  remote_source?: RemoteSkillAssetSourceDto | null;
   disable_model_invocation: boolean;
   files: SkillAssetFileDto[];
   created_at: string;
   updated_at: string;
+}
+
+export interface RemoteSkillAssetSourceDto {
+  source_type: "github" | string;
+  url: string;
+  imported_at: string;
+  digest: string;
 }
 
 export interface CreateSkillAssetRequest {
@@ -42,6 +50,10 @@ export interface UpdateSkillAssetRequest {
 
 export interface BootstrapSkillAssetRequest {
   builtin_key?: string;
+}
+
+export interface ImportRemoteSkillAssetRequest {
+  url: string;
 }
 
 export interface ListSkillAssetQuery {

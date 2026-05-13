@@ -212,6 +212,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(skill_assets::upload_skill_assets),
         )
         .route(
+            "/projects/{project_id}/skill-assets/import",
+            post(skill_assets::import_remote_skill_asset),
+        )
+        .route(
             "/projects/{project_id}/skill-assets/bootstrap",
             post(skill_assets::bootstrap_skill_assets),
         )

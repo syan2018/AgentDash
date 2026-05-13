@@ -1,9 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
 };
+use reqwest::Url;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::skill::parse_skill_file;
@@ -15,6 +18,9 @@ use super::error::SkillAssetApplicationError;
 
 const MAX_SKILL_KEY_LENGTH: usize = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH: usize = 1024;
+const MAX_REMOTE_SKILL_FILE_COUNT: usize = 48;
+const MAX_REMOTE_SKILL_FILE_SIZE_BYTES: usize = 256 * 1024;
+const MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SkillAssetFileInput {
@@ -45,6 +51,12 @@ pub struct UpdateSkillAssetInput {
 pub struct RawSkillUploadFile {
     pub path: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportRemoteSkillAssetInput {
+    pub project_id: Uuid,
+    pub url: String,
 }
 
 pub struct SkillAssetService<'a, R: ?Sized> {
@@ -260,6 +272,20 @@ where
         Ok(results)
     }
 
+    pub async fn import_remote(
+        &self,
+        input: ImportRemoteSkillAssetInput,
+    ) -> Result<SkillAsset, SkillAssetApplicationError> {
+        let source = parse_github_skill_source(&input.url)?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|error| SkillAssetApplicationError::Internal(error.to_string()))?;
+        let files = fetch_github_skill_files(&client, &source).await?;
+        self.create_from_remote_files(input.project_id, source.normalized_url, files)
+            .await
+    }
+
     async fn create_from_builtin_template(
         &self,
         project_id: Uuid,
@@ -288,6 +314,50 @@ where
         Ok(asset)
     }
 
+    async fn create_from_remote_files(
+        &self,
+        project_id: Uuid,
+        source_url: String,
+        input_files: Vec<SkillAssetFileInput>,
+    ) -> Result<SkillAsset, SkillAssetApplicationError> {
+        let skill_md = input_files
+            .iter()
+            .find(|file| file.path == "SKILL.md")
+            .ok_or_else(|| {
+                SkillAssetApplicationError::BadRequest("远端 Skill 缺少根目录 SKILL.md".to_string())
+            })?;
+        let meta = parse_skill_metadata(&skill_md.content)?;
+        self.ensure_key_available(project_id, &meta.name, None)
+            .await?;
+        let files = build_files(Uuid::nil(), input_files)?;
+        validate_skill_files(
+            &meta.name,
+            &meta.description,
+            meta.disable_model_invocation,
+            &files,
+        )?;
+
+        let digest = digest_skill_files(&files);
+        let mut asset = SkillAsset::new_github_import(
+            project_id,
+            meta.name.clone(),
+            meta.name,
+            meta.description,
+            meta.disable_model_invocation,
+            source_url,
+            digest,
+        );
+        asset.files = files
+            .into_iter()
+            .map(|mut file| {
+                file.skill_asset_id = asset.id;
+                file
+            })
+            .collect();
+        self.repo.create(&asset).await?;
+        Ok(asset)
+    }
+
     async fn ensure_key_available(
         &self,
         project_id: Uuid,
@@ -303,6 +373,317 @@ where
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubSkillSource {
+    owner: String,
+    repo: String,
+    ref_name: Option<String>,
+    skill_dir: String,
+    normalized_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRepoInfo {
+    default_branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubContentEntry {
+    path: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    size: Option<u64>,
+    download_url: Option<String>,
+}
+
+fn parse_github_skill_source(raw: &str) -> Result<GithubSkillSource, SkillAssetApplicationError> {
+    let url = Url::parse(raw.trim()).map_err(|_| {
+        SkillAssetApplicationError::BadRequest("远端 Skill URL 必须是合法 URL".to_string())
+    })?;
+    if url.scheme() != "https" || url.host_str() != Some("github.com") {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "当前只支持 https://github.com/... Skill URL".to_string(),
+        ));
+    }
+
+    let segments = url
+        .path_segments()
+        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if segments.len() < 2 {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "GitHub URL 必须包含 owner/repo".to_string(),
+        ));
+    }
+    let owner = segments[0].to_string();
+    let repo = segments[1].trim_end_matches(".git").to_string();
+    let mut ref_name = None;
+    let mut skill_dir = String::new();
+
+    match segments.get(2).copied() {
+        None => {}
+        Some("tree") => {
+            let Some(ref_segment) = segments.get(3) else {
+                return Err(SkillAssetApplicationError::BadRequest(
+                    "GitHub tree URL 缺少 ref".to_string(),
+                ));
+            };
+            ref_name = Some((*ref_segment).to_string());
+            skill_dir = segments
+                .get(4..)
+                .unwrap_or_default()
+                .join("/")
+                .trim_matches('/')
+                .to_string();
+        }
+        Some("blob") => {
+            let Some(ref_segment) = segments.get(3) else {
+                return Err(SkillAssetApplicationError::BadRequest(
+                    "GitHub blob URL 缺少 ref".to_string(),
+                ));
+            };
+            ref_name = Some((*ref_segment).to_string());
+            let blob_path = segments
+                .get(4..)
+                .unwrap_or_default()
+                .join("/")
+                .trim_matches('/')
+                .to_string();
+            if !blob_path.ends_with("SKILL.md") {
+                return Err(SkillAssetApplicationError::BadRequest(
+                    "GitHub blob URL 必须指向 SKILL.md".to_string(),
+                ));
+            }
+            skill_dir = blob_path
+                .strip_suffix("SKILL.md")
+                .unwrap_or("")
+                .trim_matches('/')
+                .to_string();
+        }
+        Some(other) => {
+            return Err(SkillAssetApplicationError::BadRequest(format!(
+                "不支持的 GitHub Skill URL 路径: {other}"
+            )));
+        }
+    }
+
+    Ok(GithubSkillSource {
+        owner,
+        repo,
+        ref_name,
+        skill_dir,
+        normalized_url: raw.trim().to_string(),
+    })
+}
+
+async fn fetch_github_skill_files(
+    client: &reqwest::Client,
+    source: &GithubSkillSource,
+) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
+    let ref_name = match &source.ref_name {
+        Some(ref_name) => ref_name.clone(),
+        None => fetch_default_branch(client, source).await?,
+    };
+    let mut entries = Vec::new();
+    collect_github_directory_entries(client, source, &ref_name, &source.skill_dir, &mut entries)
+        .await?;
+    if entries.len() > MAX_REMOTE_SKILL_FILE_COUNT {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "远端 Skill 文件数量不能超过 {MAX_REMOTE_SKILL_FILE_COUNT}"
+        )));
+    }
+    if !entries.iter().any(|entry| {
+        entry.entry_type == "file"
+            && relative_github_path(&source.skill_dir, &entry.path) == "SKILL.md"
+    }) {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "GitHub 目录下未找到 SKILL.md".to_string(),
+        ));
+    }
+
+    let mut total_size = 0usize;
+    let mut files = Vec::new();
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    for entry in entries
+        .into_iter()
+        .filter(|entry| entry.entry_type == "file")
+    {
+        let relative_path = relative_github_path(&source.skill_dir, &entry.path);
+        if relative_path.is_empty() {
+            continue;
+        }
+        let declared_size = entry.size.unwrap_or(0) as usize;
+        if declared_size > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
+            return Err(SkillAssetApplicationError::BadRequest(format!(
+                "远端 Skill 文件过大: {}",
+                relative_path
+            )));
+        }
+        let download_url = entry.download_url.ok_or_else(|| {
+            SkillAssetApplicationError::BadRequest(format!(
+                "GitHub 文件缺少 download_url: {}",
+                entry.path
+            ))
+        })?;
+        let content = fetch_github_text_file(client, &download_url, &relative_path).await?;
+        total_size = total_size.saturating_add(content.len());
+        if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
+            return Err(SkillAssetApplicationError::BadRequest(format!(
+                "远端 Skill 总大小不能超过 {} KB",
+                MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES / 1024
+            )));
+        }
+        files.push(SkillAssetFileInput {
+            path: relative_path,
+            content,
+        });
+    }
+    Ok(files)
+}
+
+async fn fetch_default_branch(
+    client: &reqwest::Client,
+    source: &GithubSkillSource,
+) -> Result<String, SkillAssetApplicationError> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}",
+        source.owner, source.repo
+    );
+    let repo = github_get(client, &url).await?;
+    let repo: GithubRepoInfo = serde_json::from_value(repo).map_err(|error| {
+        SkillAssetApplicationError::BadRequest(format!("GitHub repo 响应解析失败: {error}"))
+    })?;
+    Ok(repo.default_branch)
+}
+
+async fn collect_github_directory_entries(
+    client: &reqwest::Client,
+    source: &GithubSkillSource,
+    ref_name: &str,
+    dir_path: &str,
+    entries: &mut Vec<GithubContentEntry>,
+) -> Result<(), SkillAssetApplicationError> {
+    let mut pending = VecDeque::from([dir_path.trim_matches('/').to_string()]);
+    while let Some(current_dir) = pending.pop_front() {
+        let url = if current_dir.is_empty() {
+            format!(
+                "https://api.github.com/repos/{}/{}/contents?ref={}",
+                source.owner, source.repo, ref_name
+            )
+        } else {
+            format!(
+                "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
+                source.owner, source.repo, current_dir, ref_name
+            )
+        };
+        let value = github_get(client, &url).await?;
+        let list = value.as_array().ok_or_else(|| {
+            SkillAssetApplicationError::BadRequest("GitHub Skill URL 必须指向目录".to_string())
+        })?;
+        for item in list {
+            let entry: GithubContentEntry =
+                serde_json::from_value(item.clone()).map_err(|error| {
+                    SkillAssetApplicationError::BadRequest(format!(
+                        "GitHub contents 响应解析失败: {error}"
+                    ))
+                })?;
+            if entry.entry_type == "dir" {
+                pending.push_back(entry.path);
+            } else {
+                entries.push(entry);
+            }
+            if entries.len() > MAX_REMOTE_SKILL_FILE_COUNT {
+                return Err(SkillAssetApplicationError::BadRequest(format!(
+                    "远端 Skill 文件数量不能超过 {MAX_REMOTE_SKILL_FILE_COUNT}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn github_get(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<serde_json::Value, SkillAssetApplicationError> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "AgentDash")
+        .send()
+        .await
+        .map_err(|error| {
+            SkillAssetApplicationError::BadRequest(format!("GitHub 请求失败: {error}"))
+        })?;
+    if !response.status().is_success() {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "GitHub 请求失败: HTTP {}",
+            response.status()
+        )));
+    }
+    response.json().await.map_err(|error| {
+        SkillAssetApplicationError::BadRequest(format!("GitHub 响应解析失败: {error}"))
+    })
+}
+
+async fn fetch_github_text_file(
+    client: &reqwest::Client,
+    download_url: &str,
+    path: &str,
+) -> Result<String, SkillAssetApplicationError> {
+    let response = client
+        .get(download_url)
+        .header(reqwest::header::USER_AGENT, "AgentDash")
+        .send()
+        .await
+        .map_err(|error| {
+            SkillAssetApplicationError::BadRequest(format!("下载 GitHub 文件失败: {path}: {error}"))
+        })?;
+    if !response.status().is_success() {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "下载 GitHub 文件失败: {path}: HTTP {}",
+            response.status()
+        )));
+    }
+    let bytes = response.bytes().await.map_err(|error| {
+        SkillAssetApplicationError::BadRequest(format!("读取 GitHub 文件失败: {path}: {error}"))
+    })?;
+    if bytes.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "远端 Skill 文件过大: {path}"
+        )));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|error| {
+        SkillAssetApplicationError::BadRequest(format!(
+            "远端 Skill 文件必须是 UTF-8 文本: {path}: {error}"
+        ))
+    })
+}
+
+fn relative_github_path(base_dir: &str, path: &str) -> String {
+    let base = base_dir.trim_matches('/');
+    let normalized = path.trim_matches('/');
+    if base.is_empty() {
+        normalized.to_string()
+    } else {
+        normalized
+            .strip_prefix(base)
+            .unwrap_or(normalized)
+            .trim_matches('/')
+            .to_string()
+    }
+}
+
+fn digest_skill_files(files: &[SkillAssetFile]) -> String {
+    let mut hasher = Sha256::new();
+    for file in files {
+        hasher.update(file.path.as_bytes());
+        hasher.update([0]);
+        hasher.update(file.content.as_bytes());
+        hasher.update([0]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn files_from_embedded_bundle(
@@ -759,5 +1140,68 @@ mod tests {
         ])
         .expect("multi skill");
         assert_eq!(grouped.len(), 2);
+    }
+
+    #[test]
+    fn github_source_parser_accepts_repo_tree_and_blob_urls() {
+        let repo = parse_github_skill_source("https://github.com/acme/skills")
+            .expect("repo url should parse");
+        assert_eq!(repo.owner, "acme");
+        assert_eq!(repo.repo, "skills");
+        assert_eq!(repo.ref_name, None);
+        assert_eq!(repo.skill_dir, "");
+
+        let tree =
+            parse_github_skill_source("https://github.com/acme/skills/tree/main/research/writer")
+                .expect("tree url should parse");
+        assert_eq!(tree.ref_name.as_deref(), Some("main"));
+        assert_eq!(tree.skill_dir, "research/writer");
+
+        let blob = parse_github_skill_source(
+            "https://github.com/acme/skills/blob/main/research/writer/SKILL.md",
+        )
+        .expect("blob url should parse");
+        assert_eq!(blob.ref_name.as_deref(), Some("main"));
+        assert_eq!(blob.skill_dir, "research/writer");
+    }
+
+    #[test]
+    fn github_source_parser_rejects_non_skill_blob() {
+        let err = parse_github_skill_source(
+            "https://github.com/acme/skills/blob/main/research/writer/README.md",
+        )
+        .expect_err("blob must target SKILL.md");
+        assert!(matches!(err, SkillAssetApplicationError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn remote_files_create_github_skill_asset_with_digest() {
+        let repo = InMemorySkillAssetRepo::default();
+        let service = SkillAssetService::new(&repo);
+        let project_id = Uuid::new_v4();
+        let created = service
+            .create_from_remote_files(
+                project_id,
+                "https://github.com/acme/skills/tree/main/writer".to_string(),
+                vec![
+                    skill_file("writer", "写作辅助"),
+                    SkillAssetFileInput {
+                        path: "references/style.md".to_string(),
+                        content: "保持简洁".to_string(),
+                    },
+                ],
+            )
+            .await
+            .expect("remote import should create asset");
+
+        assert_eq!(created.key, "writer");
+        assert_eq!(created.files.len(), 2);
+        match created.source {
+            agentdash_domain::skill_asset::SkillAssetSource::Github { url, digest, .. } => {
+                assert_eq!(url, "https://github.com/acme/skills/tree/main/writer");
+                assert!(digest.starts_with("sha256:"));
+            }
+            other => panic!("unexpected source: {other:?}"),
+        }
     }
 }

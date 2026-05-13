@@ -14,10 +14,20 @@ pub struct SkillAssetResponse {
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_source: Option<RemoteSkillAssetSourceDto>,
     pub disable_model_invocation: bool,
     pub files: Vec<SkillAssetFileDto>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteSkillAssetSourceDto {
+    pub source_type: &'static str,
+    pub url: String,
+    pub imported_at: DateTime<Utc>,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,8 +53,17 @@ impl From<SkillAsset> for SkillAssetResponse {
         let source = asset.source.tag();
         let builtin_key = match &asset.source {
             SkillAssetSource::BuiltinSeed { key } => Some(key.clone()),
-            SkillAssetSource::User => None,
+            SkillAssetSource::Github { .. } | SkillAssetSource::User => None,
         };
+        let remote_source = asset
+            .source
+            .remote_source()
+            .map(|source| RemoteSkillAssetSourceDto {
+                source_type: source.source_type,
+                url: source.url.to_string(),
+                imported_at: *source.imported_at,
+                digest: source.digest.to_string(),
+            });
         Self {
             id: asset.id,
             project_id: asset.project_id,
@@ -53,6 +72,7 @@ impl From<SkillAsset> for SkillAssetResponse {
             description: asset.description,
             source,
             builtin_key,
+            remote_source,
             disable_model_invocation: asset.disable_model_invocation,
             files: asset.files.into_iter().map(Into::into).collect(),
             created_at: asset.created_at,
@@ -70,6 +90,11 @@ pub struct CreateSkillAssetRequest {
     pub disable_model_invocation: bool,
     #[serde(default)]
     pub files: Vec<SkillAssetFileDto>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportRemoteSkillAssetRequest {
+    pub url: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -94,7 +119,7 @@ pub struct BootstrapSkillAssetRequest {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListSkillAssetQuery {
-    /// 期望值：`"user"` / `"builtin_seed"` / None（不过滤）
+    /// 期望值：`"user"` / `"builtin_seed"` / `"github"` / None（不过滤）
     #[serde(default)]
     pub source: Option<String>,
 }

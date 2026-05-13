@@ -8,6 +8,6 @@ pub use definition::{
 pub use error::SkillAssetApplicationError;
 pub(crate) use service::parse_skill_metadata;
 pub use service::{
-    CreateSkillAssetInput, RawSkillUploadFile, SkillAssetFileInput, SkillAssetService,
-    UpdateSkillAssetInput,
+    CreateSkillAssetInput, ImportRemoteSkillAssetInput, RawSkillUploadFile, SkillAssetFileInput,
+    SkillAssetService, UpdateSkillAssetInput,
 };

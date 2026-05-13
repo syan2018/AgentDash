@@ -4,6 +4,7 @@ import { asRecord } from "../api/mappers";
 import type {
   BootstrapSkillAssetRequest,
   CreateSkillAssetRequest,
+  ImportRemoteSkillAssetRequest,
   ListSkillAssetQuery,
   SkillAssetDto,
   SkillAssetFileDto,
@@ -54,7 +55,8 @@ interface FrontmatterEntry {
 }
 
 function normalizeSource(value: unknown): SkillAssetSource {
-  return value === "builtin_seed" ? "builtin_seed" : "user";
+  if (value === "builtin_seed" || value === "github") return value;
+  return "user";
 }
 
 function mapSkillAssetFile(raw: unknown): SkillAssetFileDto {
@@ -82,10 +84,23 @@ export function mapSkillAsset(raw: Record<string, unknown>): SkillAssetDto {
       raw.builtin_key === null || raw.builtin_key === undefined
         ? null
         : String(raw.builtin_key),
+    remote_source: mapRemoteSource(raw.remote_source),
     disable_model_invocation: Boolean(raw.disable_model_invocation),
     files,
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function mapRemoteSource(raw: unknown): SkillAssetDto["remote_source"] {
+  if (raw === null || raw === undefined) return null;
+  const value = asRecord(raw);
+  if (!value) return null;
+  return {
+    source_type: String(value.source_type ?? ""),
+    url: String(value.url ?? ""),
+    imported_at: String(value.imported_at ?? ""),
+    digest: String(value.digest ?? ""),
   };
 }
 
@@ -538,6 +553,17 @@ export async function bootstrapSkillAssets(
     input,
   );
   return raw.map(mapSkillAsset);
+}
+
+export async function importRemoteSkillAsset(
+  projectId: string,
+  input: ImportRemoteSkillAssetRequest,
+): Promise<SkillAssetDto> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/projects/${encodeURIComponent(projectId)}/skill-assets/import`,
+    input,
+  );
+  return mapSkillAsset(raw);
 }
 
 export async function resetSkillAssetFromBuiltin(

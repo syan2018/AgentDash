@@ -3,7 +3,7 @@
   "name": "remote-skill-import-management",
   "title": "远端 Skill 导入与 Pi Agent 管理交互",
   "description": "围绕 Pi Agent 与 Project Skill Asset，评估远端 Skill 获取、导入、绑定、预览、诊断与来源管理能力。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

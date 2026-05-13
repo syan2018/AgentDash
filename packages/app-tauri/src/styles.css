@@ -25,6 +25,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -214,6 +215,7 @@ textarea {
 }
 
 .field input,
+.field select,
 .field textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -230,6 +232,7 @@ textarea {
 }
 
 .field input:focus,
+.field select:focus,
 .field textarea:focus {
   border-color: #93c5fd;
   box-shadow: 0 0 0 2px #dbeafe;
@@ -244,6 +247,13 @@ textarea {
 .actions {
   display: flex;
   gap: 10px;
+  justify-content: flex-end;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
 }
 
@@ -289,4 +299,96 @@ button:disabled {
   padding: 10px;
   font-size: 0.84rem;
   overflow-wrap: anywhere;
+}
+
+.mcp-panel {
+  grid-column: 1 / -1;
+}
+
+.mcp-toolbar {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.compact-field {
+  margin-bottom: 0;
+}
+
+.toolbar-actions {
+  padding-bottom: 0;
+}
+
+.server-list {
+  display: grid;
+  gap: 12px;
+}
+
+.server-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 14px;
+}
+
+.server-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(110px, 0.55fr) repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.wide-field {
+  grid-column: span 2;
+}
+
+.server-fields textarea {
+  min-height: 78px;
+}
+
+.server-actions {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+
+.empty-state,
+.message-box {
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.empty-state {
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  text-align: center;
+}
+
+.message-box {
+  margin-top: 12px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+@media (max-width: 1180px) {
+  .server-row,
+  .mcp-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .server-actions,
+  .toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .server-fields {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
 }

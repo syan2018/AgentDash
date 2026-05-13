@@ -1,7 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   LocalRuntimeStatus,
+  McpLocalServerEntry,
   RuntimeStartRequest,
+  mcpServerProbe,
+  mcpServersLoad,
+  mcpServersSave,
   runtimeSnapshot,
   runtimeStart,
   runtimeStop,
@@ -18,6 +22,10 @@ function App() {
   const [executorEnabled, setExecutorEnabled] = useState(true)
   const [isBusy, setIsBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mcpRoot, setMcpRoot] = useState('')
+  const [mcpServers, setMcpServers] = useState<McpLocalServerEntry[]>([])
+  const [mcpMessage, setMcpMessage] = useState<string | null>(null)
+  const [probingIndex, setProbingIndex] = useState<number | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -45,6 +53,14 @@ function App() {
         .filter(Boolean),
     [accessibleRoots],
   )
+
+  useEffect(() => {
+    if (!mcpRoot && roots[0]) {
+      setMcpRoot(roots[0])
+    }
+  }, [mcpRoot, roots])
+
+  const effectiveMcpRoot = mcpRoot.trim() || roots[0] || ''
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -77,6 +93,61 @@ function App() {
     } finally {
       setIsBusy(false)
     }
+  }
+
+  async function handleLoadMcpServers() {
+    setMcpMessage(null)
+    try {
+      setMcpServers(await mcpServersLoad(effectiveMcpRoot))
+      setMcpMessage('已加载 MCP servers')
+    } catch (err) {
+      setMcpMessage(formatError(err))
+    }
+  }
+
+  async function handleSaveMcpServers() {
+    setMcpMessage(null)
+    try {
+      await mcpServersSave(effectiveMcpRoot, mcpServers.map(normalizeMcpServer))
+      setMcpMessage('已保存 MCP servers')
+    } catch (err) {
+      setMcpMessage(formatError(err))
+    }
+  }
+
+  async function handleProbeMcpServer(index: number) {
+    setProbingIndex(index)
+    setMcpMessage(null)
+    try {
+      const result = await mcpServerProbe(normalizeMcpServer(mcpServers[index]))
+      setMcpMessage(`${result.ok ? '探测成功' : '探测失败'}：${result.message}`)
+    } catch (err) {
+      setMcpMessage(formatError(err))
+    } finally {
+      setProbingIndex(null)
+    }
+  }
+
+  function addMcpServer(transport: McpLocalServerEntry['transport']) {
+    const baseName = `mcp-${mcpServers.length + 1}`
+    setMcpServers((current) => [
+      ...current,
+      transport === 'stdio'
+        ? { name: baseName, transport, command: '', args: [], env: [] }
+        : { name: baseName, transport, url: '' },
+    ])
+  }
+
+  function updateMcpServer(index: number, patch: Partial<McpLocalServerEntry>) {
+    setMcpServers((current) =>
+      current.map((server, currentIndex) =>
+        currentIndex === index ? { ...server, ...patch } : server,
+      ),
+    )
+  }
+
+  function removeMcpServer(index: number) {
+    setMcpServers((current) => current.filter((_, currentIndex) => currentIndex !== index))
   }
 
   const stateLabel = snapshot ? stateText(snapshot.state) : '未启动'
@@ -188,6 +259,102 @@ function App() {
               </button>
             </div>
           </form>
+
+          <section className="panel mcp-panel">
+            <div className="panel-header">
+              <h2>MCP Servers</h2>
+              <div className="inline-actions">
+                <button className="secondary-button" type="button" onClick={() => addMcpServer('stdio')}>
+                  添加 stdio
+                </button>
+                <button className="secondary-button" type="button" onClick={() => addMcpServer('http')}>
+                  添加 HTTP
+                </button>
+              </div>
+            </div>
+
+            <div className="mcp-toolbar">
+              <label className="field compact-field">
+                <span>Config Root</span>
+                <input value={mcpRoot} onChange={(event) => setMcpRoot(event.target.value)} placeholder="保存到 root/.agentdash/local-backend.json" />
+              </label>
+              <div className="actions toolbar-actions">
+                <button className="secondary-button" type="button" onClick={() => void handleLoadMcpServers()} disabled={!effectiveMcpRoot}>
+                  加载
+                </button>
+                <button className="primary-button" type="button" onClick={() => void handleSaveMcpServers()} disabled={!effectiveMcpRoot}>
+                  保存
+                </button>
+              </div>
+            </div>
+
+            <div className="server-list">
+              {mcpServers.map((server, index) => (
+                <article className="server-row" key={`${server.name}-${index}`}>
+                  <div className="server-fields">
+                    <label className="field compact-field">
+                      <span>Name</span>
+                      <input value={server.name} onChange={(event) => updateMcpServer(index, { name: event.target.value })} />
+                    </label>
+
+                    <label className="field compact-field">
+                      <span>Transport</span>
+                      <select
+                        value={server.transport}
+                        onChange={(event) => updateMcpServer(index, { transport: event.target.value as McpLocalServerEntry['transport'] })}
+                      >
+                        <option value="stdio">stdio</option>
+                        <option value="http">http</option>
+                        <option value="sse">sse</option>
+                      </select>
+                    </label>
+
+                    {server.transport === 'stdio' ? (
+                      <>
+                        <label className="field compact-field wide-field">
+                          <span>Command</span>
+                          <input value={server.command ?? ''} onChange={(event) => updateMcpServer(index, { command: event.target.value })} />
+                        </label>
+                        <label className="field compact-field">
+                          <span>Args</span>
+                          <textarea
+                            value={(server.args ?? []).join('\n')}
+                            onChange={(event) => updateMcpServer(index, { args: parseLines(event.target.value) })}
+                            placeholder="每行一个参数"
+                          />
+                        </label>
+                        <label className="field compact-field">
+                          <span>Env</span>
+                          <textarea
+                            value={(server.env ?? []).map((entry) => `${entry.name}=${entry.value}`).join('\n')}
+                            onChange={(event) => updateMcpServer(index, { env: parseEnv(event.target.value) })}
+                            placeholder="NAME=value"
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <label className="field compact-field wide-field">
+                        <span>URL</span>
+                        <input value={server.url ?? ''} onChange={(event) => updateMcpServer(index, { url: event.target.value })} />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="server-actions">
+                    <button className="secondary-button" type="button" onClick={() => void handleProbeMcpServer(index)} disabled={probingIndex === index}>
+                      {probingIndex === index ? '探测中' : '探测'}
+                    </button>
+                    <button className="danger-button" type="button" onClick={() => removeMcpServer(index)}>
+                      删除
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {mcpServers.length === 0 ? <div className="empty-state">当前 root 未配置 MCP servers</div> : null}
+            </div>
+
+            {mcpMessage ? <div className="message-box">{mcpMessage}</div> : null}
+          </section>
         </div>
       </section>
     </main>
@@ -211,6 +378,56 @@ function stateText(state: LocalRuntimeStatus['state']) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function parseLines(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function parseEnv(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.indexOf('=')
+      if (separatorIndex === -1) {
+        return { name: line, value: '' }
+      }
+      return {
+        name: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1),
+      }
+    })
+    .filter((entry) => entry.name)
+}
+
+function normalizeMcpServer(server: McpLocalServerEntry): McpLocalServerEntry {
+  const name = server.name.trim()
+  if (server.transport === 'stdio') {
+    const args = server.args?.map((arg) => arg.trim()).filter(Boolean) ?? []
+    const env = server.env?.filter((entry) => entry.name.trim()) ?? []
+    return {
+      name,
+      transport: 'stdio',
+      command: server.command?.trim() || null,
+      args: args.length ? args : null,
+      env: env.length ? env : null,
+      url: null,
+    }
+  }
+
+  return {
+    name,
+    transport: server.transport,
+    command: null,
+    args: null,
+    env: null,
+    url: server.url?.trim() || null,
+  }
 }
 
 export default App

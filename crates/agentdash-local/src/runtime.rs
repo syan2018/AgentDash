@@ -9,11 +9,12 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_infrastructure::SqliteSessionRepository;
 use agentdash_spi::AgentConnector;
+use anyhow::Context;
 use serde::Serialize;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio::sync::{Mutex, watch};
 
-use crate::local_backend_config;
+use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
@@ -88,6 +89,14 @@ pub enum StopReason {
     UserRequested,
     Restart,
     Shutdown,
+}
+
+/// MCP server 探测结果，用于桌面端设置页即时反馈。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct McpProbeResult {
+    pub ok: bool,
+    pub tool_count: usize,
+    pub message: String,
 }
 
 #[derive(Default, Clone)]
@@ -211,6 +220,52 @@ pub fn canonicalize_accessible_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
         .collect()
 }
 
+pub fn load_mcp_servers_for_root(root: PathBuf) -> anyhow::Result<Vec<McpLocalServerEntry>> {
+    let root = canonicalize_existing_root(root)?;
+    Ok(local_backend_config::load_local_backend_config_for_root(&root).mcp_servers)
+}
+
+pub fn save_mcp_servers_for_root(
+    root: PathBuf,
+    servers: Vec<McpLocalServerEntry>,
+) -> anyhow::Result<()> {
+    let root = canonicalize_existing_root(root)?;
+    let mut config = local_backend_config::load_local_backend_config_for_root(&root);
+    config.mcp_servers = servers;
+    local_backend_config::save_local_backend_config_for_root(&root, &config)
+}
+
+pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
+    if server.name.trim().is_empty() {
+        return McpProbeResult {
+            ok: false,
+            tool_count: 0,
+            message: "MCP server name 不能为空".to_string(),
+        };
+    }
+
+    let manager = McpClientManager::new(vec![server.clone()]);
+    match manager.list_tools(&server.name).await {
+        Ok(tools) => {
+            let tool_count = tools.len();
+            let _ = manager.close(&server.name).await;
+            McpProbeResult {
+                ok: true,
+                tool_count,
+                message: format!("连接成功，发现 {tool_count} 个工具"),
+            }
+        }
+        Err(error) => {
+            let _ = manager.close(&server.name).await;
+            McpProbeResult {
+                ok: false,
+                tool_count: 0,
+                message: error.to_string(),
+            }
+        }
+    }
+}
+
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
     if config.accessible_roots.is_empty() {
         tracing::warn!("未指定 accessible_roots，将使用当前目录作为 SessionHub 工作目录兜底");
@@ -296,6 +351,15 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         mcp_manager,
         workspace_contract_config: local_backend_config.workspace_contract,
     })
+}
+
+fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
+    let root = std::fs::canonicalize(&root)
+        .with_context(|| format!("accessible root 不存在或不可访问: {}", root.display()))?;
+    if !root.is_dir() {
+        anyhow::bail!("accessible root 不是目录: {}", root.display());
+    }
+    Ok(root)
 }
 
 fn status_from_config(

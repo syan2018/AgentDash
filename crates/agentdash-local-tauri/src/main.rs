@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
-use agentdash_local::{LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, StopReason};
+use agentdash_local::local_backend_config::McpLocalServerEntry;
+use agentdash_local::{
+    LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult, StopReason,
+    load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
+};
 use serde::Deserialize;
 use tauri::State;
 
@@ -72,10 +76,28 @@ async fn runtime_snapshot(
     Ok(state.runtime.snapshot().await)
 }
 
+#[tauri::command]
+async fn mcp_servers_load(root: PathBuf) -> Result<Vec<McpLocalServerEntry>, String> {
+    load_mcp_servers_for_root(root).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn mcp_servers_save(root: PathBuf, servers: Vec<McpLocalServerEntry>) -> Result<(), String> {
+    save_mcp_servers_for_root(root, servers).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn mcp_server_probe(server: McpLocalServerEntry) -> Result<McpProbeResult, String> {
+    Ok(probe_mcp_server(server).await)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
+            mcp_server_probe,
+            mcp_servers_load,
+            mcp_servers_save,
             runtime_start,
             runtime_stop,
             runtime_snapshot

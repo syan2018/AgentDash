@@ -27,6 +27,26 @@ export interface RuntimeStartRequest {
   executor_enabled: boolean
 }
 
+export interface McpEnvEntry {
+  name: string
+  value: string
+}
+
+export interface McpLocalServerEntry {
+  name: string
+  transport: 'stdio' | 'http' | 'sse'
+  command?: string | null
+  args?: string[] | null
+  env?: McpEnvEntry[] | null
+  url?: string | null
+}
+
+export interface McpProbeResult {
+  ok: boolean
+  tool_count: number
+  message: string
+}
+
 export async function runtimeSnapshot(): Promise<LocalRuntimeStatus | null> {
   if (!isTauriHost()) return null
   return invoke('runtime_snapshot')
@@ -40,6 +60,21 @@ export async function runtimeStart(request: RuntimeStartRequest): Promise<LocalR
 export async function runtimeStop(): Promise<void> {
   ensureTauriHost()
   return invoke('runtime_stop')
+}
+
+export async function mcpServersLoad(root: string): Promise<McpLocalServerEntry[]> {
+  ensureTauriHost()
+  return invoke('mcp_servers_load', { root })
+}
+
+export async function mcpServersSave(root: string, servers: McpLocalServerEntry[]): Promise<void> {
+  ensureTauriHost()
+  return invoke('mcp_servers_save', { root, servers })
+}
+
+export async function mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResult> {
+  ensureTauriHost()
+  return invoke('mcp_server_probe', { server })
 }
 
 function isTauriHost() {

@@ -283,6 +283,10 @@ function LlmProvidersSection({
                 await deleteProvider(provider.id);
                 onRefreshModels();
               }}
+              onProviderChanged={async () => {
+                await fetchProviders();
+                onRefreshModels();
+              }}
             />
           ))}
         </div>
@@ -306,7 +310,7 @@ function LlmProvidersSection({
             ))}
             <div className="border-t border-border mt-1 pt-2">
               <p className="text-xs text-muted-foreground mb-1.5 px-3">自定义端点</p>
-              {(["openai_compatible", "openai_codex", "anthropic", "gemini"] as const).map((proto) => (
+              {(["openai_compatible", "anthropic", "gemini"] as const).map((proto) => (
                 <button
                   key={proto}
                   type="button"
@@ -396,6 +400,7 @@ function LlmProviderRow({
   saving,
   onSave,
   onDelete,
+  onProviderChanged,
 }: {
   provider: LlmProvider;
   discoveredModels: ModelInfo[];
@@ -404,6 +409,7 @@ function LlmProviderRow({
   saving: boolean;
   onSave: (req: UpdateLlmProviderRequest) => void;
   onDelete: () => void;
+  onProviderChanged: () => Promise<void> | void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const configured = provider.api_key_configured;
@@ -458,6 +464,7 @@ function LlmProviderRow({
           saving={saving}
           onSave={onSave}
           onDelete={onDelete}
+          onProviderChanged={onProviderChanged}
         />
       )}
     </div>
@@ -472,6 +479,7 @@ function LlmProviderForm({
   saving,
   onSave,
   onDelete,
+  onProviderChanged,
 }: {
   provider: LlmProvider;
   discoveredModels: ModelInfo[];
@@ -480,6 +488,7 @@ function LlmProviderForm({
   saving: boolean;
   onSave: (req: UpdateLlmProviderRequest) => void;
   onDelete: () => void;
+  onProviderChanged: () => Promise<void> | void;
 }) {
   const [name, setName] = useState(provider.name);
   const [apiKey, setApiKey] = useState(provider.api_key);
@@ -497,10 +506,26 @@ function LlmProviderForm({
   const [probedModels, setProbedModels] = useState<ProbeModelEntry[] | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
+  const [codexLoginStatus, setCodexLoginStatus] = useState<"idle" | "starting" | "waiting" | "completed" | "failed">("idle");
+  const [codexLoginMessage, setCodexLoginMessage] = useState<string | null>(null);
+  const [codexAuthUrl, setCodexAuthUrl] = useState<string | null>(null);
+  const codexFlowIdRef = useRef<string | null>(null);
+  const codexPollCancelledRef = useRef(false);
 
-  const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic" || provider.protocol === "openai_codex";
+  const showApiKey = provider.protocol !== "openai_codex";
+  const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic";
   const showWireApi = provider.protocol === "openai_compatible";
   const showDefaultModel = true; // all protocols support default model
+
+  useEffect(() => {
+    return () => {
+      codexPollCancelledRef.current = true;
+      const flowId = codexFlowIdRef.current;
+      if (flowId) {
+        void llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
+      }
+    };
+  }, []);
 
   // 合并来源：probe 结果优先（当存在时替代 discovery 结果），否则用全局 discovery
   const effectiveDiscoveredModels: ModelInfo[] = useMemo(() => {
@@ -596,6 +621,68 @@ function LlmProviderForm({
     }
   }, [provider.id, provider.protocol, provider.env_api_key, apiKey, apiKeyTouched, baseUrl]);
 
+  const pollCodexOAuth = useCallback(async (flowId: string) => {
+    while (!codexPollCancelledRef.current) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      if (codexPollCancelledRef.current) return;
+      const status = await llmProvidersApi.getCodexOAuthStatus(flowId);
+      if (status.status === "pending") continue;
+      codexFlowIdRef.current = null;
+      if (status.status === "completed") {
+        setCodexLoginStatus("completed");
+        setCodexLoginMessage(status.message ?? "Codex 登录已完成");
+        setApiKeyTouched(false);
+        await onProviderChanged();
+        return;
+      }
+      setCodexLoginStatus("failed");
+      setCodexLoginMessage(status.message ?? "Codex 登录失败");
+      return;
+    }
+  }, [onProviderChanged]);
+
+  const handleStartCodexLogin = useCallback(async () => {
+    codexPollCancelledRef.current = false;
+    setCodexLoginStatus("starting");
+    setCodexLoginMessage(null);
+    setCodexAuthUrl(null);
+    const loginWindow = window.open("about:blank", "_blank");
+    try {
+      const flow = await llmProvidersApi.startCodexOAuth(provider.id);
+      codexFlowIdRef.current = flow.flow_id;
+      setCodexAuthUrl(flow.auth_url);
+      setCodexLoginStatus("waiting");
+      setCodexLoginMessage("等待 ChatGPT 授权完成…");
+      if (loginWindow) {
+        loginWindow.location.href = flow.auth_url;
+      } else {
+        window.open(flow.auth_url, "_blank", "noopener,noreferrer");
+      }
+      void pollCodexOAuth(flow.flow_id).catch((e) => {
+        codexFlowIdRef.current = null;
+        setCodexLoginStatus("failed");
+        setCodexLoginMessage(e instanceof Error ? e.message : String(e));
+      });
+    } catch (e) {
+      if (loginWindow) loginWindow.close();
+      codexFlowIdRef.current = null;
+      setCodexLoginStatus("failed");
+      setCodexLoginMessage(e instanceof Error ? e.message : String(e));
+    }
+  }, [pollCodexOAuth, provider.id]);
+
+  const handleCancelCodexLogin = useCallback(async () => {
+    codexPollCancelledRef.current = true;
+    const flowId = codexFlowIdRef.current;
+    codexFlowIdRef.current = null;
+    if (flowId) {
+      await llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
+    }
+    setCodexLoginStatus("idle");
+    setCodexLoginMessage(null);
+    setCodexAuthUrl(null);
+  }, []);
+
   const handleAddModel = (initial?: ModelConfig) => {
     const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
     setModels([...models, newModel]);
@@ -633,20 +720,56 @@ function LlmProviderForm({
       </Field>
 
       {/* API Key */}
-      <Field
-        label={provider.protocol === "openai_codex" ? "Codex 登录凭据" : "API Key"}
-        desc={provider.protocol === "openai_codex"
-          ? "可填 ChatGPT Codex access token，或包含 access/refresh/expires/accountId 的 OAuth JSON；保存后以掩码形式显示"
-          : "服务密钥，保存后以掩码形式显示"}
-      >
-        <input
-          type="password"
-          className={inputCls}
-          value={apiKey}
-          placeholder={provider.protocol === "openai_codex" ? "输入 Codex OAuth token 或 JSON" : "输入 API Key"}
-          onChange={(e) => { setApiKey(e.target.value); setApiKeyTouched(true); }}
-        />
-      </Field>
+      {showApiKey && (
+        <Field label="API Key" desc="服务密钥，保存后以掩码形式显示">
+          <input
+            type="password"
+            className={inputCls}
+            value={apiKey}
+            placeholder="输入 API Key"
+            onChange={(e) => { setApiKey(e.target.value); setApiKeyTouched(true); }}
+          />
+        </Field>
+      )}
+
+      {provider.protocol === "openai_codex" && (
+        <div className="rounded-[8px] border border-border bg-muted/20 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={btnPrimaryCls}
+              disabled={codexLoginStatus === "starting" || codexLoginStatus === "waiting"}
+              onClick={handleStartCodexLogin}
+            >
+              {codexLoginStatus === "starting" ? "启动中…" : codexLoginStatus === "waiting" ? "登录中…" : "通过 ChatGPT 登录"}
+            </button>
+            {codexLoginStatus === "waiting" && (
+              <button
+                type="button"
+                className="rounded-[8px] border border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                onClick={handleCancelCodexLogin}
+              >
+                取消
+              </button>
+            )}
+            {codexAuthUrl && codexLoginStatus === "waiting" && (
+              <a
+                className="text-xs text-primary hover:underline"
+                href={codexAuthUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                重新打开登录页
+              </a>
+            )}
+          </div>
+          {codexLoginMessage && (
+            <p className={`mt-2 text-xs ${codexLoginStatus === "failed" ? "text-red-500" : "text-muted-foreground"}`}>
+              {codexLoginMessage}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Base URL */}
       {showBaseUrl && (

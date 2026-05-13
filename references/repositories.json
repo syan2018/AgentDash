@@ -23,6 +23,12 @@
       "path": "references/Trellis",
       "url": "https://github.com/mindfold-ai/Trellis",
       "branch": "main"
+    },
+    {
+      "name": "multica",
+      "path": "references/multica",
+      "url": "https://github.com/multica-ai/multica",
+      "branch": "main"
     }
   ]
 }

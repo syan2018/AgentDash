@@ -273,17 +273,7 @@ export function LocalRuntimeView({
   const stateLabel = snapshot ? stateText(snapshot.state) : '未启动'
 
   return (
-    <main className="desktop-shell">
-      <aside className="sidebar">
-        <div className="brand">AgentDash</div>
-        <nav className="nav-list" aria-label="桌面端导航">
-          <button className="nav-item active" type="button">Runtime</button>
-          <button className="nav-item" type="button" disabled>Dashboard</button>
-          <button className="nav-item" type="button" disabled>Settings</button>
-        </nav>
-      </aside>
-
-      <section className="workspace">
+      <section className="workspace local-runtime-workspace">
         <header className="topbar">
           <div>
             <h1>Local Runtime</h1>
@@ -537,7 +527,6 @@ export function LocalRuntimeView({
           </section>
         </div>
       </section>
-    </main>
   )
 }
 

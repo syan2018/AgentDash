@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "中文文档与跨层思考要求"}
+{"file": ".trellis/tasks/05-14-remote-skill-import-management/prd.md", "reason": "检查方案评估任务范围与验收"}
+{"file": ".trellis/tasks/05-14-remote-skill-import-management/design.md", "reason": "检查 Pi Agent 优先的远端 Skill 获取与管理交互方案"}
+{"file": "crates/agentdash-application/src/vfs/provider_skill_asset.rs", "reason": "检查 Skill Asset VFS projection 事实是否准确"}
+{"file": "crates/agentdash-api/src/routes/project_agents.rs", "reason": "检查 Pi Agent / ProjectAgentLink skill 绑定事实是否准确"}
+{"file": "references/multica/server/internal/handler/skill.go", "reason": "复核 multica 远端 skill 导入、来源识别与下载限制"}
+{"file": "references/multica/server/internal/handler/skill_create.go", "reason": "复核 multica skill supporting files 写入事务"}
+{"file": "references/multica/packages/views/skills/components/create-skill-dialog.tsx", "reason": "复核 multica URL 导入交互"}
+{"file": "references/multica/packages/views/skills/lib/origin.ts", "reason": "复核 multica 来源 metadata 展示"}

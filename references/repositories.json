@@ -13,12 +13,6 @@
       "branch": "main"
     },
     {
-      "name": "rig",
-      "path": "references/rig",
-      "url": "https://github.com/0xPlaygrounds/rig",
-      "branch": "main"
-    },
-    {
       "name": "Trellis",
       "path": "references/Trellis",
       "url": "https://github.com/mindfold-ai/Trellis",

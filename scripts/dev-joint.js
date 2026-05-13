@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, spawn } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +29,7 @@ if (config.databaseUrl && !isPostgresUrl(config.databaseUrl)) {
   throw new Error(`--database-url / DATABASE_URL 必须是 PostgreSQL URL，收到: ${config.databaseUrl}`);
 }
 
+const rustBuild = configureRustBuild(config);
 const managedChildren = [];
 let shuttingDown = false;
 
@@ -67,6 +68,7 @@ async function main() {
     console.log('[1/4] 构建二进制...');
     await runCommand('cargo', ['build', '--bin', 'agentdash-server', '--bin', 'agentdash-local'], {
       cwd: root,
+      env: rustBuild.env,
       label: 'cargo build'
     });
     console.log('  构建完成');
@@ -153,6 +155,8 @@ function parseArgs(args) {
     frontendPort: 5380,
     help: false,
     noExecutor: false,
+    sccacheMode: 'auto',
+    sccacheDir: process.env.SCCACHE_DIR || null,
     serverHost: '127.0.0.1',
     serverPort: 3001,
     skipBuild: false,
@@ -185,6 +189,22 @@ function parseArgs(args) {
     }
     if (arg === '--no-executor') {
       result.noExecutor = true;
+      continue;
+    }
+    if (arg === '--sccache') {
+      result.sccacheMode = 'required';
+      continue;
+    }
+    if (arg === '--no-sccache') {
+      result.sccacheMode = 'disabled';
+      continue;
+    }
+    if (arg.startsWith('--sccache-dir=')) {
+      result.sccacheDir = arg.slice('--sccache-dir='.length);
+      continue;
+    }
+    if (arg === '--sccache-dir') {
+      result.sccacheDir = readNextValue(args, ++index, arg);
       continue;
     }
     if (arg.startsWith('--accessible-roots=')) {
@@ -300,6 +320,9 @@ function printHelp() {
   console.log('  --skip-server             不启动 server，复用现有服务');
   console.log('  --skip-frontend           不启动前端');
   console.log('  --no-executor             local 追加 --no-executor');
+  console.log('  --sccache                 强制使用 sccache，未安装时报错');
+  console.log('  --no-sccache              关闭自动 sccache 检测');
+  console.log('  --sccache-dir <path>      指定 SCCACHE_DIR');
   console.log('  --accessible-roots <val>  指定 accessible roots');
   console.log('  --backend-id <val>        指定 backend id');
   console.log('  --backend-name <val>      指定 backend name');
@@ -321,6 +344,7 @@ function printBanner() {
   console.log(`  backend_id: ${config.backendId}`);
   console.log(`  frontend:   ${config.frontendMode}`);
   console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
+  console.log(`  rust cache: ${rustBuild.description}`);
   console.log('');
 }
 
@@ -334,6 +358,85 @@ function isPostgresUrl(value) {
 
 function formatDatabaseMode(value) {
   return isPostgresUrl(value) ? value : 'embedded-postgresql';
+}
+
+function configureRustBuild(options) {
+  const env = { ...process.env };
+  const configuredSccacheDir = normalizeOptionalValue(options.sccacheDir);
+  if (configuredSccacheDir) {
+    env.SCCACHE_DIR = path.isAbsolute(configuredSccacheDir)
+      ? configuredSccacheDir
+      : path.resolve(root, configuredSccacheDir);
+  }
+
+  if (options.sccacheMode === 'disabled') {
+    delete env.RUSTC_WRAPPER;
+    return {
+      description: '已关闭',
+      env
+    };
+  }
+
+  const existingWrapper = normalizeOptionalValue(env.RUSTC_WRAPPER);
+  if (existingWrapper && options.sccacheMode !== 'required') {
+    return {
+      description: `RUSTC_WRAPPER=${existingWrapper}${formatCacheDirSuffix(env.SCCACHE_DIR)}`,
+      env
+    };
+  }
+
+  const sccachePath = resolveExecutable('sccache');
+  if (sccachePath) {
+    env.RUSTC_WRAPPER = sccachePath;
+    return {
+      description: formatSccacheDescription(sccachePath, env.SCCACHE_DIR),
+      env
+    };
+  }
+
+  if (options.sccacheMode === 'required') {
+    throw new Error('--sccache 需要先安装 sccache，并确保 sccache 在 PATH 中可执行');
+  }
+
+  return {
+    description: '未检测到 sccache，已退化为普通 rustc',
+    env
+  };
+}
+
+function normalizeOptionalValue(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveExecutable(name) {
+  const command = isWindows ? 'where.exe' : 'sh';
+  const args = isWindows ? [name] : ['-lc', `command -v ${name}`];
+  const result = spawnSync(command, args, {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  const firstLine = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine || null;
+}
+
+function formatSccacheDescription(sccachePath, cacheDir) {
+  return `sccache (${sccachePath})${formatCacheDirSuffix(cacheDir)}`;
+}
+
+function formatCacheDirSuffix(cacheDir) {
+  const normalized = normalizeOptionalValue(cacheDir);
+  return normalized ? `，SCCACHE_DIR=${normalized}` : '';
 }
 
 async function runStep0Cleanup() {
@@ -601,6 +704,7 @@ function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? root,
+      env: options.env ?? process.env,
       stdio: 'inherit',
       windowsHide: false
     });

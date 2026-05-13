@@ -190,6 +190,12 @@ pnpm install
 # 一键启动全部服务（推荐）
 pnpm run dev
 
+# 强制要求 sccache 可用
+pnpm run dev:sccache
+
+# 排查编译缓存问题时关闭 sccache
+pnpm run dev:no-sccache
+
 # 启动后自动打开：
 #   API:      http://127.0.0.1:3001
 #   Frontend: http://127.0.0.1:5380
@@ -203,6 +209,24 @@ pnpm run dev
 5. 启动 Vite 前端开发服务器 (:5380)
 
 > **注意**：修改 Rust 代码后需要完整重启 `pnpm dev`，否则浏览器仍运行旧后端。
+
+### Rust 编译缓存
+
+`pnpm run dev` 会自动检测 `sccache`，检测到时以 `sccache` 作为 `RUSTC_WRAPPER` 执行启动前的 `cargo build`；未检测到时退化为普通 `rustc` 编译并继续启动。
+
+如果希望多个 git worktree 共用同一份缓存，可在启动前指定 `SCCACHE_DIR`：
+
+```powershell
+$env:SCCACHE_DIR = "F:\.cache\sccache-agentdash"
+pnpm run dev
+```
+
+也可以直接传给联合启动脚本。`--sccache` 表示强制启用，未安装时会直接报错；`--no-sccache` 可用于临时关闭自动检测：
+
+```bash
+node ./scripts/dev-joint.js --sccache --sccache-dir .cache/sccache
+node ./scripts/dev-joint.js --no-sccache
+```
 
 ### 其他启动模式
 

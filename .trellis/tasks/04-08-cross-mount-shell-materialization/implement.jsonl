@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "VFS mount/provider/capability/path 安全契约"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "Skill scripts/references/assets 资源包与 materialization 约束"}

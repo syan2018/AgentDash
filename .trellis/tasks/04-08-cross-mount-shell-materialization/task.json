@@ -1,12 +1,12 @@
 {
   "id": "cross-mount-shell-materialization",
   "name": "cross-mount-shell-materialization",
-  "title": "跨 Mount Shell 访问：云端内容本地化",
-  "description": "解决 skill 等资源寄存于云端 mount 时，bash 执行层（本机）无法访问云端文件的问题。分层实现：skill 预取、显式 URI 路径重写、系统 prompt 指导。",
+  "title": "VFS 资源本地物化与 URL 重定向",
+  "description": "为云端 VFS/Skill/lifecycle 资源建立受控的本地物化层，并在 shell_exec、外部 MCP/脚本参数和浏览器 URL 场景中把 mount URI 重写为本机可访问的 path 或 localhost URL。",
   "status": "planning",
   "dev_type": null,
-  "scope": null,
-  "priority": "P2",
+  "scope": "backend/runtime-vfs/relay-local",
+  "priority": "P1",
   "creator": "claude-agent",
   "assignee": "-",
   "createdAt": "2026-04-08",
@@ -37,11 +37,25 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [
+    "crates/agentdash-application/src/vfs/materialization.rs",
+    "crates/agentdash-application/src/vfs/rewrite.rs",
     "crates/agentdash-application/src/vfs/relay_service.rs",
     "crates/agentdash-application/src/vfs/tools/fs.rs",
+    "crates/agentdash-application/src/vfs/tools/provider.rs",
+    "crates/agentdash-application/src/runtime_gateway/session_actions.rs",
     "crates/agentdash-application/src/vfs/path.rs",
+    "crates/agentdash-application/src/vfs/mount.rs",
+    "crates/agentdash-application/src/vfs/provider_skill_asset.rs",
+    "crates/agentdash-application/src/vfs/provider_lifecycle.rs",
     "crates/agentdash-api/src/mount_providers/relay_fs.rs",
-    "crates/agentdash-injection/src/"
+    "crates/agentdash-api/src/relay/mcp_relay_impl.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "crates/agentdash-local/src/materialization.rs",
+    "crates/agentdash-local/src/handlers/materialization.rs",
+    "crates/agentdash-local/src/resource_server.rs",
+    "crates/agentdash-local/src/mcp_client_manager.rs",
+    "crates/agentdash-local/src/handlers/mcp_relay.rs",
+    "crates/agentdash-relay/src/protocol.rs"
   ],
-  "notes": "前置依赖：04-08-skill-discovery-injection（skill loader 是物化的入口点）；04-08-tool-execution-improvements（ShellExecInterceptor 是路径重写的执行点）"
+  "notes": "2026-05-13 重写任务。前置依赖 05-12-skill-assets-category 已完成并归档。当前任务不再只做 MountUriResolver，而是正式落为 VFS materialization + shell path rewrite + localhost URL proxy 三段能力。"
 }

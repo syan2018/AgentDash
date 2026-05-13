@@ -726,8 +726,8 @@ function startFrontendProcess() {
     VITE_API_ORIGIN: `http://${config.serverHost}:${config.serverPort}`
   };
   const frontendCommand = config.frontendMode === 'preview'
-    ? `pnpm --filter frontend preview -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`
-    : `pnpm --filter frontend dev -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`;
+    ? `pnpm --filter app-web preview -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`
+    : `pnpm --filter app-web dev -- --host ${config.frontendHost} --port ${config.frontendPort} --strictPort`;
   if (isWindows) {
     startManagedProcess(
       'cmd.exe',
@@ -738,8 +738,8 @@ function startFrontendProcess() {
     return;
   }
   const args = config.frontendMode === 'preview'
-    ? ['--filter', 'frontend', 'preview', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort']
-    : ['--filter', 'frontend', 'dev', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'];
+    ? ['--filter', 'app-web', 'preview', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort']
+    : ['--filter', 'app-web', 'dev', '--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'];
   startManagedProcess('pnpm', args, 'frontend', { env: frontendEnv });
 }
 

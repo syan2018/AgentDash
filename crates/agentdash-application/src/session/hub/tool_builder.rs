@@ -168,10 +168,18 @@ impl SessionHub {
         }
 
         if let Some(relay) = &self.mcp_relay_provider {
+            let call_context = agentdash_spi::RelayMcpCallContext {
+                session_id: session_id.to_string(),
+                turn_id: Some(context.session.turn_id.clone()),
+                tool_call_id: None,
+                vfs: context.session.vfs.clone(),
+                identity: context.session.identity.clone(),
+            };
             let tools = mcp_discovery::discover_relay_mcp_tools(
                 relay.clone(),
                 &relay_names,
                 &context.turn.capability_state,
+                Some(call_context),
             )
             .await;
             all_tools.extend(tools);
@@ -206,6 +214,7 @@ impl SessionHub {
                     relay.clone(),
                     &relay_names,
                     &capability_state,
+                    None,
                 )
                 .await,
             );

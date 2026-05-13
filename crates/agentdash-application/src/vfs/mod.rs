@@ -1,6 +1,7 @@
 pub mod apply_patch;
 pub mod binding_resolver;
 pub mod inline_persistence;
+pub mod materialization;
 pub mod mount;
 pub mod path;
 pub mod provider;
@@ -9,6 +10,7 @@ pub mod provider_inline;
 pub mod provider_lifecycle;
 pub mod provider_skill_asset;
 pub mod relay_service;
+pub mod rewrite;
 pub mod surface;
 pub mod tools;
 pub mod types;
@@ -19,6 +21,11 @@ pub use apply_patch::{
     apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
+pub use materialization::{
+    MaterializationRewrite, RewriteJsonArgumentsInput, RewriteJsonArgumentsOutput,
+    RewriteShellCommandInput, RewriteShellCommandOutput, VfsMaterializationService,
+    VfsMaterializationTransport,
+};
 pub use mount::{
     PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     PROVIDER_SKILL_ASSET_FS, SessionMountTarget, append_agent_knowledge_mounts,

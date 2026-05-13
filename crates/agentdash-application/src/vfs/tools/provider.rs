@@ -20,6 +20,7 @@ use crate::vfs::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
     ShellExecTool,
 };
+use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 use crate::workflow::tools::advance_node::CompleteLifecycleNodeTool;
 use uuid::Uuid;
 
@@ -31,6 +32,7 @@ pub struct RelayRuntimeToolProvider {
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    materialization: Option<Arc<VfsMaterializationService>>,
 }
 
 impl RelayRuntimeToolProvider {
@@ -48,6 +50,7 @@ impl RelayRuntimeToolProvider {
             inline_persister,
             platform_config,
             shell_output_registry: None,
+            materialization: None,
         }
     }
 
@@ -56,6 +59,22 @@ impl RelayRuntimeToolProvider {
         registry: Arc<agentdash_relay::ShellOutputRegistry>,
     ) -> Self {
         self.shell_output_registry = Some(registry);
+        self
+    }
+
+    pub fn with_materialization_transport(
+        mut self,
+        transport: Arc<dyn VfsMaterializationTransport>,
+    ) -> Self {
+        self.materialization = Some(Arc::new(VfsMaterializationService::new(
+            self.service.clone(),
+            transport,
+        )));
+        self
+    }
+
+    pub fn with_materialization_service(mut self, service: Arc<VfsMaterializationService>) -> Self {
+        self.materialization = Some(service);
         self
     }
 }
@@ -93,6 +112,12 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             .map(|p| Arc::new(InlineContentOverlay::new(p.clone())));
 
         let identity = context.session.identity.clone();
+        let session_id = context
+            .turn
+            .hook_session
+            .as_ref()
+            .map(|session| session.session_id().to_string())
+            .unwrap_or_else(|| context.session.turn_id.clone());
 
         let clusters = &context.turn.capability_state.tool.enabled_clusters;
 
@@ -150,7 +175,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 self.service.clone(),
                 shared_vfs.clone(),
                 overlay.clone(),
-                identity,
+                identity.clone(),
             )));
         }
 
@@ -162,7 +187,14 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 Some(ToolCluster::Execute),
             )
         {
-            let mut shell_tool = ShellExecTool::new(self.service.clone(), shared_vfs.clone());
+            let mut shell_tool = ShellExecTool::new(self.service.clone(), shared_vfs.clone())
+                .with_materialization_context(
+                    self.materialization.clone(),
+                    session_id.clone(),
+                    Some(context.session.turn_id.clone()),
+                    overlay.clone(),
+                    identity.clone(),
+                );
             if let Some(ref registry) = self.shell_output_registry {
                 shell_tool = shell_tool.with_shell_output_registry(registry.clone());
             }

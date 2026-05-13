@@ -134,6 +134,13 @@ pub enum RelayMessage {
         payload: ToolShellExecPayload,
     },
 
+    /// 将云端 VFS 资源物化到本机 backend 的 session cache / working copy
+    #[serde(rename = "command.vfs.materialize")]
+    CommandVfsMaterialize {
+        id: String,
+        payload: Box<VfsMaterializePayload>,
+    },
+
     /// 列出目录内容
     #[serde(rename = "command.tool.file_list")]
     CommandToolFileList {
@@ -254,6 +261,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ToolShellExecResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.vfs.materialize")]
+    ResponseVfsMaterialize {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<VfsMaterializeResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -480,6 +496,7 @@ impl RelayMessage {
             | Self::CommandToolFileRename { id, .. }
             | Self::CommandToolApplyPatch { id, .. }
             | Self::CommandToolShellExec { id, .. }
+            | Self::CommandVfsMaterialize { id, .. }
             | Self::CommandToolFileList { id, .. }
             | Self::CommandToolSearch { id, .. }
             | Self::ResponsePrompt { id, .. }
@@ -494,6 +511,7 @@ impl RelayMessage {
             | Self::ResponseToolFileRename { id, .. }
             | Self::ResponseToolApplyPatch { id, .. }
             | Self::ResponseToolShellExec { id, .. }
+            | Self::ResponseVfsMaterialize { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
             | Self::CommandMcpProbeTransport { id, .. }
@@ -754,6 +772,77 @@ pub struct ToolShellExecPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VfsMaterializePayload {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    pub plan_id: String,
+    pub plan_kind: MaterializationPlanKind,
+    pub source_uri: String,
+    pub root_uri: String,
+    pub mount_id: String,
+    pub provider: String,
+    pub primary_relative_path: String,
+    pub target_kind: MaterializationTargetKind,
+    pub access_mode: MaterializationAccessMode,
+    pub entries: Vec<VfsMaterializeEntry>,
+    pub cache_scope: MaterializationCacheScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationPlanKind {
+    SingleFile,
+    DirectorySubtree,
+    SkillResourceSet,
+    WritableWorkingCopy,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationTargetKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationAccessMode {
+    ReadOnly,
+    WritableLocalCopy,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterializationCacheScope {
+    Session,
+    PersistentWorkingCopy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VfsMaterializeEntry {
+    pub relative_path: String,
+    pub content: VfsMaterializeContent,
+    pub digest: String,
+    pub size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_hint: Option<String>,
+    #[serde(default)]
+    pub executable_hint: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "encoding", rename_all = "snake_case")]
+pub enum VfsMaterializeContent {
+    Utf8Text { text: String },
+    Base64Bytes { data: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFileListPayload {
     pub call_id: String,
     pub path: String,
@@ -930,6 +1019,23 @@ pub struct ToolShellExecResponse {
     pub stdout: String,
     #[serde(default)]
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VfsMaterializeResponse {
+    pub source_uri: String,
+    pub local_root_path: String,
+    pub primary_local_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_local_url: Option<String>,
+    pub access_mode: MaterializationAccessMode,
+    pub manifest_digest: String,
+    pub total_size_bytes: u64,
+    pub entry_count: usize,
+    #[serde(default)]
+    pub dirty: bool,
+    #[serde(default)]
+    pub cache_hit: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1254,5 +1360,76 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["payload"]["status"], "error");
         assert_eq!(json["payload"]["error"], "进程启动失败");
+    }
+
+    #[test]
+    fn vfs_materialize_command_roundtrip() {
+        let msg = RelayMessage::CommandVfsMaterialize {
+            id: "mat-1".to_string(),
+            payload: Box::new(VfsMaterializePayload {
+                session_id: "session-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                tool_call_id: Some("tool-1".to_string()),
+                plan_id: "plan-1".to_string(),
+                plan_kind: MaterializationPlanKind::SkillResourceSet,
+                source_uri: "skill-assets://skills/reviewer/scripts/check.sh".to_string(),
+                root_uri: "skill-assets://skills/reviewer".to_string(),
+                mount_id: "skill-assets".to_string(),
+                provider: "skill_asset_fs".to_string(),
+                primary_relative_path: "scripts/check.sh".to_string(),
+                target_kind: MaterializationTargetKind::File,
+                access_mode: MaterializationAccessMode::ReadOnly,
+                entries: vec![VfsMaterializeEntry {
+                    relative_path: "scripts/check.sh".to_string(),
+                    content: VfsMaterializeContent::Utf8Text {
+                        text: "echo ok\n".to_string(),
+                    },
+                    digest: "sha256:test".to_string(),
+                    size_bytes: 8,
+                    mime_hint: Some("text/x-shellscript".to_string()),
+                    executable_hint: true,
+                }],
+                cache_scope: MaterializationCacheScope::Session,
+                ttl_ms: Some(60_000),
+            }),
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "command.vfs.materialize");
+        assert_eq!(json["payload"]["plan_kind"], "skill_resource_set");
+        assert_eq!(
+            json["payload"]["entries"][0]["content"]["encoding"],
+            "utf8_text"
+        );
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "mat-1");
+    }
+
+    #[test]
+    fn vfs_materialize_response_roundtrip() {
+        let msg = RelayMessage::ResponseVfsMaterialize {
+            id: "mat-1".to_string(),
+            payload: Some(VfsMaterializeResponse {
+                source_uri: "skill-assets://skills/reviewer/scripts/check.sh".to_string(),
+                local_root_path: "/tmp/agentdash/materialized/session-1/plan-1".to_string(),
+                primary_local_path: "/tmp/agentdash/materialized/session-1/plan-1/scripts/check.sh"
+                    .to_string(),
+                primary_local_url: None,
+                access_mode: MaterializationAccessMode::ReadOnly,
+                manifest_digest: "sha256:manifest".to_string(),
+                total_size_bytes: 8,
+                entry_count: 1,
+                dirty: false,
+                cache_hit: false,
+            }),
+            error: None,
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "response.vfs.materialize");
+        assert_eq!(json["payload"]["entry_count"], 1);
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "mat-1");
     }
 }

@@ -3,7 +3,7 @@
   "name": "cross-mount-shell-materialization",
   "title": "VFS 资源本地物化与 URL 重定向",
   "description": "为云端 VFS/Skill/lifecycle 资源建立受控的本地物化层，并在 shell_exec、外部 MCP/脚本参数和浏览器 URL 场景中把 mount URI 重写为本机可访问的 path 或 localhost URL。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "backend/runtime-vfs/relay-local",
   "priority": "P1",

@@ -72,6 +72,7 @@ async fn run_session(
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
 
     let handler = CommandHandler::new(
+        config.backend_id.clone(),
         config.tool_executor.clone(),
         config.session_hub.clone(),
         config.connector.clone(),

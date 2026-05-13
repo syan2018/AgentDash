@@ -12,7 +12,10 @@ use tokio_util::sync::CancellationToken;
 use crate::vfs::build_canvas_mount;
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::relay_service::RelayVfsService;
-use crate::vfs::{ExecRequest, ListOptions, ResourceRef, capability_name, parse_mount_uri};
+use crate::vfs::{
+    ExecRequest, ListOptions, ResourceRef, VfsMaterializationService, capability_name,
+    parse_mount_uri, resolve_mount,
+};
 
 /// Resolve a tool parameter path into a `ResourceRef`.
 ///
@@ -616,6 +619,11 @@ pub struct ShellExecTool {
     service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    materialization: Option<Arc<VfsMaterializationService>>,
+    session_id: String,
+    turn_id: Option<String>,
+    overlay: Option<Arc<InlineContentOverlay>>,
+    identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl ShellExecTool {
     pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
@@ -623,6 +631,11 @@ impl ShellExecTool {
             service,
             vfs,
             shell_output_registry: None,
+            materialization: None,
+            session_id: "session".to_string(),
+            turn_id: None,
+            overlay: None,
+            identity: None,
         }
     }
 
@@ -631,6 +644,22 @@ impl ShellExecTool {
         registry: Arc<agentdash_relay::ShellOutputRegistry>,
     ) -> Self {
         self.shell_output_registry = Some(registry);
+        self
+    }
+
+    pub fn with_materialization_context(
+        mut self,
+        materialization: Option<Arc<VfsMaterializationService>>,
+        session_id: String,
+        turn_id: Option<String>,
+        overlay: Option<Arc<InlineContentOverlay>>,
+        identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Self {
+        self.materialization = materialization;
+        self.session_id = session_id;
+        self.turn_id = turn_id;
+        self.overlay = overlay;
+        self.identity = identity;
         self
     }
 }
@@ -681,6 +710,35 @@ impl AgentTool for ShellExecTool {
         } else {
             target.path
         };
+        let exec_mount =
+            resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
+                .map_err(AgentToolError::ExecutionFailed)?;
+
+        let rewritten_command = if let Some(materialization) = &self.materialization {
+            let output = materialization
+                .rewrite_shell_command(crate::vfs::RewriteShellCommandInput {
+                    vfs: &vfs,
+                    exec_mount_id: &target.mount_id,
+                    command: &params.command,
+                    session_id: &self.session_id,
+                    turn_id: self.turn_id.as_deref(),
+                    tool_call_id: Some(_tool_call_id),
+                    overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+                    identity: self.identity.as_ref(),
+                })
+                .await
+                .map_err(AgentToolError::ExecutionFailed)?;
+            if !output.rewrites.is_empty() {
+                tracing::info!(
+                    exec_mount_id = %exec_mount.id,
+                    rewrite_count = output.rewrites.len(),
+                    "shell_exec command 中的 VFS URI 已物化并重写"
+                );
+            }
+            output.command
+        } else {
+            params.command.clone()
+        };
 
         let streaming_call_id = self
             .shell_output_registry
@@ -717,7 +775,7 @@ impl AgentTool for ShellExecTool {
                 &ExecRequest {
                     mount_id: target.mount_id.clone(),
                     cwd: cwd.clone(),
-                    command: params.command.clone(),
+                    command: rewritten_command.clone(),
                     timeout_ms: params.timeout_secs.map(|s| s.saturating_mul(1000)),
                     streaming_call_id: streaming_call_id.clone(),
                 },

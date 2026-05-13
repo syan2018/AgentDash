@@ -259,6 +259,16 @@ impl AppState {
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
         let mut prompt_config: Option<(String, Vec<String>)> = None;
+        let materialization_transport = Arc::new(
+            crate::vfs_materialization::RelayVfsMaterializationTransport::new(
+                backend_registry.clone(),
+            ),
+        );
+        let materialization_service =
+            Arc::new(agentdash_application::vfs::VfsMaterializationService::new(
+                vfs_service.clone(),
+                materialization_transport.clone(),
+            ));
 
         let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> =
             Arc::new(
@@ -269,9 +279,15 @@ impl AppState {
                     Some(inline_persister),
                     platform_config.clone(),
                 )
+                .with_materialization_service(materialization_service.clone())
                 .with_shell_output_registry(shell_output_registry.clone()),
             );
-        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
+        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = Arc::new(
+            crate::vfs_materialization::MaterializingMcpRelayProvider::new(
+                backend_registry.clone(),
+                materialization_service,
+            ),
+        );
 
         if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: settings_repo.clone(),

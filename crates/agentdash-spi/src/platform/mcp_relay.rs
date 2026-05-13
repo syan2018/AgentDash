@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::ConnectorError;
+use crate::{AuthIdentity, ConnectorError, Vfs};
 
 /// relay MCP 工具描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +20,16 @@ pub struct RelayMcpToolInfo {
 pub struct RelayMcpCallResult {
     pub content: String,
     pub is_error: bool,
+}
+
+/// relay MCP 调用时由 application 注入的 session/VFS 上下文。
+#[derive(Debug, Clone)]
+pub struct RelayMcpCallContext {
+    pub session_id: String,
+    pub turn_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub vfs: Option<Vfs>,
+    pub identity: Option<AuthIdentity>,
 }
 
 /// relay probe 结果
@@ -52,6 +62,7 @@ pub trait McpRelayProvider: Send + Sync {
         server_name: &str,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
+        context: Option<RelayMcpCallContext>,
     ) -> Result<RelayMcpCallResult, ConnectorError>;
 
     /// 一次性 probe：通过 relay 下发 transport 配置，探测连通性和工具列表。

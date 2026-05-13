@@ -1,5 +1,6 @@
 mod handlers;
 mod local_backend_config;
+mod materialization;
 mod mcp_client_manager;
 mod terminal_manager;
 mod tool_executor;

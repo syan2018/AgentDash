@@ -146,6 +146,7 @@ impl agentdash_spi::McpRelayProvider for StaticRelayMcpProvider {
         _server_name: &str,
         _tool_name: &str,
         _arguments: Option<serde_json::Map<String, serde_json::Value>>,
+        _context: Option<agentdash_spi::RelayMcpCallContext>,
     ) -> Result<agentdash_spi::RelayMcpCallResult, ConnectorError> {
         Ok(agentdash_spi::RelayMcpCallResult {
             content: String::new(),

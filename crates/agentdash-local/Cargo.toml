@@ -36,6 +36,8 @@ tracing-subscriber.workspace = true
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 regex.workspace = true
+base64 = "0.22"
+sha2 = "0.10"
 postgresql_embedded = { workspace = true }
 gix = { version = "0.83.0", default-features = false, features = ["revision", "sha1"] }
 portable-pty = "0.9"

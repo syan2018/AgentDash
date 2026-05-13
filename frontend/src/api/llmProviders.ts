@@ -6,7 +6,7 @@ export interface LlmProvider {
   id: string;
   name: string;
   slug: string;
-  protocol: 'anthropic' | 'gemini' | 'openai_compatible';
+  protocol: 'anthropic' | 'gemini' | 'openai_compatible' | 'openai_codex';
   api_key: string;
   api_key_configured: boolean;
   base_url: string;
@@ -66,6 +66,18 @@ export interface ProbeModelEntry {
   name: string;
 }
 
+export interface StartCodexOAuthResponse {
+  flow_id: string;
+  auth_url: string;
+  expires_at: string;
+}
+
+export interface CodexOAuthStatusResponse {
+  flow_id: string;
+  status: 'pending' | 'completed' | 'failed';
+  message?: string;
+}
+
 // ─── API ───
 
 export const llmProvidersApi = {
@@ -86,4 +98,13 @@ export const llmProvidersApi = {
 
   probeModels: (req: ProbeModelsRequest) =>
     api.post<ProbeModelEntry[]>('/llm-providers/probe-models', req),
+
+  startCodexOAuth: (providerId: string) =>
+    api.post<StartCodexOAuthResponse>(`/llm-providers/${providerId}/codex-oauth/start`, {}),
+
+  getCodexOAuthStatus: (flowId: string) =>
+    api.get<CodexOAuthStatusResponse>(`/llm-providers/codex-oauth/${flowId}`),
+
+  cancelCodexOAuth: (flowId: string) =>
+    api.post<CodexOAuthStatusResponse>(`/llm-providers/codex-oauth/${flowId}/cancel`, {}),
 };

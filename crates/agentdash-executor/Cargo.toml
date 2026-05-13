@@ -26,7 +26,8 @@ agentdash-agent-protocol = { workspace = true }
 json-patch = "2.0"
 serde_yaml = "0.9"
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "form"] }
+base64 = "0.22"
 
 # Pi Agent 框架（仅云端编译）
 agentdash-agent = { workspace = true, optional = true }

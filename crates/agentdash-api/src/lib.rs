@@ -3,6 +3,7 @@ pub mod auth;
 pub mod bootstrap;
 pub mod dto;
 pub mod mount_providers;
+pub mod oauth_flow;
 pub mod plugins;
 pub mod relay;
 pub mod routes;

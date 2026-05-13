@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 /// LLM 通信协议类型
 ///
-/// 仅 3 种 wire protocol，决定后端用哪种 rig client 构造 bridge。
+/// wire protocol 决定后端用哪种 client/bridge 构造模型连接。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireProtocol {
@@ -15,6 +15,8 @@ pub enum WireProtocol {
     /// OpenAI Chat Completions / Responses API 及所有兼容端点
     /// (OpenAI, DeepSeek, Groq, xAI, Ollama, Azure, …)
     OpenaiCompatible,
+    /// ChatGPT 账号登录后的 Codex Responses API
+    OpenaiCodex,
 }
 
 impl WireProtocol {
@@ -23,6 +25,7 @@ impl WireProtocol {
             Self::Anthropic => "anthropic",
             Self::Gemini => "gemini",
             Self::OpenaiCompatible => "openai_compatible",
+            Self::OpenaiCodex => "openai_codex",
         }
     }
 }
@@ -35,6 +38,7 @@ impl std::str::FromStr for WireProtocol {
             "anthropic" => Ok(Self::Anthropic),
             "gemini" => Ok(Self::Gemini),
             "openai_compatible" => Ok(Self::OpenaiCompatible),
+            "openai_codex" => Ok(Self::OpenaiCodex),
             _ => Err(()),
         }
     }

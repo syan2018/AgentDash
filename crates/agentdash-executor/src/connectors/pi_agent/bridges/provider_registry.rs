@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::AnthropicBridge;
+use super::OpenAiCodexResponsesBridge;
 use super::OpenAiCompletionsBridge;
 use super::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
@@ -234,7 +235,7 @@ pub(crate) async fn build_provider_entries_from_db(
 
 fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProviderEntry> {
     let api_key = db_provider.resolve_api_key();
-    // 对于非 openai_compatible + 空 api_key 的情况，Anthropic/Gemini 需要 key
+    // 对于非 openai_compatible + 空 api_key 的情况，Anthropic/Gemini/Codex 需要 key
     let needs_api_key = !matches!(db_provider.protocol, WireProtocol::OpenaiCompatible)
         || !db_provider.api_key.is_empty()
         || !db_provider.env_api_key.is_empty();
@@ -384,6 +385,16 @@ fn build_bridge_factory_by_protocol(
                 )) as Arc<dyn LlmBridge>,
             })
         }
+        WireProtocol::OpenaiCodex => {
+            let base = base_url;
+            Arc::new(move |model_id: &str| {
+                Arc::new(OpenAiCodexResponsesBridge::new(
+                    &api_key,
+                    model_id,
+                    base.as_deref(),
+                )) as Arc<dyn LlmBridge>
+            })
+        }
     }
 }
 
@@ -395,6 +406,7 @@ fn build_model_lister_by_protocol(
 ) -> Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>> {
     match protocol {
         WireProtocol::Anthropic => None, // Anthropic has no models list API
+        WireProtocol::OpenaiCodex => None, // ChatGPT Codex 后端不提供稳定 models list
         WireProtocol::Gemini => Some(Arc::new(move || {
             let api_key = api_key.clone();
             Box::pin(async move { list_gemini_models(&api_key).await })
@@ -680,6 +692,7 @@ pub async fn probe_models_for_protocol(
                 .collect())
         }
         WireProtocol::Anthropic => Ok(vec![]),
+        WireProtocol::OpenaiCodex => Ok(vec![]),
     }
 }
 

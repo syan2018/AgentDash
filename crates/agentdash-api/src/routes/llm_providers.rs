@@ -172,7 +172,7 @@ pub async fn create_provider(
     }
     let protocol = req.protocol.parse::<WireProtocol>().map_err(|_| {
         ApiError::BadRequest(format!(
-            "无效的 protocol: {}（支持: anthropic, gemini, openai_compatible）",
+            "无效的 protocol: {}（支持: anthropic, gemini, openai_compatible, openai_codex）",
             req.protocol
         ))
     })?;

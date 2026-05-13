@@ -6,7 +6,7 @@ export interface LlmProvider {
   id: string;
   name: string;
   slug: string;
-  protocol: 'anthropic' | 'gemini' | 'openai_compatible';
+  protocol: 'anthropic' | 'gemini' | 'openai_compatible' | 'openai_codex';
   api_key: string;
   api_key_configured: boolean;
   base_url: string;

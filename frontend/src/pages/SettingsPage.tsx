@@ -130,18 +130,36 @@ function Field({
 // LLM Providers 配置 (data-driven from DB)
 // ---------------------------------------------------------------------------
 
+type ProviderProtocol = "anthropic" | "gemini" | "openai_compatible" | "openai_codex";
+
 interface ProviderPreset {
   name: string;
   slug: string;
-  protocol: "anthropic" | "gemini" | "openai_compatible";
+  protocol: ProviderProtocol;
   base_url: string;
   env_api_key: string;
+  default_model?: string;
+  models?: ModelConfig[];
 }
 
 const PROVIDER_PRESETS: ProviderPreset[] = [
   { name: "Anthropic Claude", slug: "anthropic", protocol: "anthropic", base_url: "", env_api_key: "ANTHROPIC_API_KEY" },
   { name: "Google Gemini", slug: "gemini", protocol: "gemini", base_url: "", env_api_key: "GEMINI_API_KEY" },
   { name: "OpenAI", slug: "openai", protocol: "openai_compatible", base_url: "https://api.openai.com/v1", env_api_key: "OPENAI_API_KEY" },
+  {
+    name: "ChatGPT Codex",
+    slug: "openai-codex",
+    protocol: "openai_codex",
+    base_url: "",
+    env_api_key: "OPENAI_CODEX_OAUTH",
+    default_model: "gpt-5.5",
+    models: [
+      { id: "gpt-5.5", name: "GPT-5.5", context_window: 272000, reasoning: true, supports_image: true },
+      { id: "gpt-5.4", name: "GPT-5.4", context_window: 272000, reasoning: true, supports_image: true },
+      { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", context_window: 272000, reasoning: true, supports_image: true },
+      { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", context_window: 272000, reasoning: true, supports_image: true },
+    ],
+  },
   { name: "DeepSeek", slug: "deepseek", protocol: "openai_compatible", base_url: "https://api.deepseek.com/v1", env_api_key: "DEEPSEEK_API_KEY" },
   { name: "Groq", slug: "groq", protocol: "openai_compatible", base_url: "https://api.groq.com/openai/v1", env_api_key: "GROQ_API_KEY" },
   { name: "xAI (Grok)", slug: "xai", protocol: "openai_compatible", base_url: "https://api.x.ai/v1", env_api_key: "XAI_API_KEY" },
@@ -181,7 +199,7 @@ function LlmProvidersSection({
   const [createPreset, setCreatePreset] = useState<ProviderPreset | null>(null);
   const [createName, setCreateName] = useState("");
   const [createSlug, setCreateSlug] = useState("");
-  const [createProtocol, setCreateProtocol] = useState<"anthropic" | "gemini" | "openai_compatible">("openai_compatible");
+  const [createProtocol, setCreateProtocol] = useState<ProviderProtocol>("openai_compatible");
   const [createError, setCreateError] = useState("");
 
   useEffect(() => {
@@ -197,7 +215,7 @@ function LlmProvidersSection({
     setCreateStep("form");
   };
 
-  const startCreateCustom = (protocol: "anthropic" | "gemini" | "openai_compatible") => {
+  const startCreateCustom = (protocol: ProviderProtocol) => {
     setCreatePreset(null);
     setCreateName("");
     setCreateSlug("");
@@ -230,6 +248,8 @@ function LlmProvidersSection({
       ...(createPreset ? {
         base_url: createPreset.base_url,
         env_api_key: createPreset.env_api_key,
+        default_model: createPreset.default_model,
+        models: createPreset.models,
       } : {}),
     });
     if (result) {
@@ -286,7 +306,7 @@ function LlmProvidersSection({
             ))}
             <div className="border-t border-border mt-1 pt-2">
               <p className="text-xs text-muted-foreground mb-1.5 px-3">自定义端点</p>
-              {(["openai_compatible", "anthropic", "gemini"] as const).map((proto) => (
+              {(["openai_compatible", "openai_codex", "anthropic", "gemini"] as const).map((proto) => (
                 <button
                   key={proto}
                   type="button"
@@ -478,7 +498,7 @@ function LlmProviderForm({
   const [isProbing, setIsProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
 
-  const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic";
+  const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic" || provider.protocol === "openai_codex";
   const showWireApi = provider.protocol === "openai_compatible";
   const showDefaultModel = true; // all protocols support default model
 
@@ -613,12 +633,17 @@ function LlmProviderForm({
       </Field>
 
       {/* API Key */}
-      <Field label="API Key" desc="服务密钥，保存后以掩码形式显示">
+      <Field
+        label={provider.protocol === "openai_codex" ? "Codex 登录凭据" : "API Key"}
+        desc={provider.protocol === "openai_codex"
+          ? "可填 ChatGPT Codex access token，或包含 access/refresh/expires/accountId 的 OAuth JSON；保存后以掩码形式显示"
+          : "服务密钥，保存后以掩码形式显示"}
+      >
         <input
           type="password"
           className={inputCls}
           value={apiKey}
-          placeholder="输入 API Key"
+          placeholder={provider.protocol === "openai_codex" ? "输入 Codex OAuth token 或 JSON" : "输入 API Key"}
           onChange={(e) => { setApiKey(e.target.value); setApiKeyTouched(true); }}
         />
       </Field>

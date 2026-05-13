@@ -110,10 +110,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(llm_providers::probe_models),
         )
         .route(
+            "/llm-providers/codex-oauth/{flow_id}",
+            get(llm_providers::get_codex_oauth_status),
+        )
+        .route(
+            "/llm-providers/codex-oauth/{flow_id}/cancel",
+            post(llm_providers::cancel_codex_oauth),
+        )
+        .route(
             "/llm-providers/{id}",
             get(llm_providers::get_provider)
                 .put(llm_providers::update_provider)
                 .delete(llm_providers::delete_provider),
+        )
+        .route(
+            "/llm-providers/{id}/codex-oauth/start",
+            post(llm_providers::start_codex_oauth),
         )
         // Project-Agent 关联（新模型）
         .route(

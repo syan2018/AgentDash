@@ -21,7 +21,7 @@
     {
       "id": "1",
       "title": "阶段 1: agentdash-local 重构（bin → lib + optional bin）",
-      "status": "pending",
+      "status": "completed",
       "detail": "src/main.rs 收拢入口逻辑，暴露 lib.rs 作为核心 API；bin 目标加 `required-features = [\"standalone\"]`"
     },
     {

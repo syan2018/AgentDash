@@ -114,7 +114,6 @@ pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendCo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn default_local_backend_config_is_disabled() {

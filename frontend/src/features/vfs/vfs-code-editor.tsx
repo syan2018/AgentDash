@@ -19,6 +19,9 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import type { Extension } from "@codemirror/state";
+import { MarkdownRenderer } from "../../components/ui/markdown-renderer";
+
+type MarkdownViewMode = "edit" | "preview" | "split";
 
 const lightTheme = EditorView.theme({
   "&": {
@@ -94,6 +97,15 @@ function getLanguageExtension(filePath: string): Extension | null {
   }
 }
 
+function isMarkdownFile(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  return ext === "md" || ext === "mdx";
+}
+
+function getDefaultMarkdownViewMode(filePath: string): MarkdownViewMode {
+  return isMarkdownFile(filePath) ? "preview" : "edit";
+}
+
 export function VfsCodeEditor({
   content,
   filePath,
@@ -105,6 +117,14 @@ export function VfsCodeEditor({
   const viewRef = useRef<EditorView | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [draftContent, setDraftContent] = useState(content);
+  const [viewMode, setViewMode] = useState<MarkdownViewMode>(() => getDefaultMarkdownViewMode(filePath));
+
+  const markdownEnabled = isMarkdownFile(filePath);
+  const effectiveViewMode = markdownEnabled ? viewMode : "edit";
+  const showEditor = effectiveViewMode === "edit" || effectiveViewMode === "split";
+  const showPreview = effectiveViewMode === "preview" || effectiveViewMode === "split";
+  const previewContent = getMarkdownPreviewContent(draftContent);
 
   const handleSave = useCallback(async () => {
     if (!viewRef.current || !onSave || readOnly) return;
@@ -112,11 +132,21 @@ export function VfsCodeEditor({
     setSaving(true);
     try {
       await onSave(currentContent);
+      setDraftContent(currentContent);
       setIsDirty(false);
     } finally {
       setSaving(false);
     }
   }, [onSave, readOnly]);
+
+  useEffect(() => {
+    setDraftContent(content);
+    setIsDirty(false);
+  }, [content, filePath]);
+
+  useEffect(() => {
+    setViewMode(getDefaultMarkdownViewMode(filePath));
+  }, [filePath]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -142,7 +172,10 @@ export function VfsCodeEditor({
     if (!readOnly) {
       extensions.push(
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) setIsDirty(true);
+          if (update.docChanged) {
+            setDraftContent(update.state.doc.toString());
+            setIsDirty(true);
+          }
         }),
       );
     }
@@ -166,6 +199,9 @@ export function VfsCodeEditor({
           {filePath}
         </span>
         <div className="flex shrink-0 items-center gap-2">
+          {markdownEnabled && (
+            <MarkdownModeControl value={viewMode} onChange={setViewMode} />
+          )}
           {isDirty && (
             <span className="text-[10px] text-amber-600">已修改</span>
           )}
@@ -181,8 +217,92 @@ export function VfsCodeEditor({
           )}
         </div>
       </div>
-      {/* 编辑器容器 — CodeMirror 管理自己的滚动 */}
-      <div ref={containerRef} className="min-h-0 flex-1" />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0">
+          {/* 编辑器容器 — CodeMirror 管理自己的滚动 */}
+          <div
+            className={`${showEditor ? "flex" : "hidden"} min-h-0 min-w-0 flex-col ${
+              showPreview ? "w-1/2 border-r border-border/50" : "w-full"
+            }`}
+          >
+            <div ref={containerRef} className="min-h-0 flex-1" />
+          </div>
+
+          {markdownEnabled && showPreview && (
+            <div className={`${showEditor ? "w-1/2" : "w-full"} min-h-0 min-w-0 overflow-y-auto bg-background`}>
+              <div className="mx-auto min-h-full w-full max-w-4xl px-5 py-4">
+                {previewContent.trim() ? (
+                  <MarkdownRenderer content={previewContent} />
+                ) : (
+                  <div className="flex min-h-40 items-center justify-center rounded-[6px] border border-dashed border-border bg-secondary/20 px-4 text-center text-xs text-muted-foreground">
+                    空 Markdown 文档
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function getMarkdownPreviewContent(content: string): string {
+  const lines = content.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return content;
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (endIndex < 0) return content;
+
+  return lines.slice(endIndex + 1).join("\n").trimStart();
+}
+
+function MarkdownModeControl({
+  value,
+  onChange,
+}: {
+  value: MarkdownViewMode;
+  onChange: (value: MarkdownViewMode) => void;
+}) {
+  return (
+    <div className="inline-flex h-6 items-center overflow-hidden rounded-[5px] border border-border bg-background text-[10px]">
+      <MarkdownModeButton value="edit" current={value} onChange={onChange}>
+        编辑
+      </MarkdownModeButton>
+      <MarkdownModeButton value="preview" current={value} onChange={onChange}>
+        预览
+      </MarkdownModeButton>
+      <MarkdownModeButton value="split" current={value} onChange={onChange}>
+        分栏
+      </MarkdownModeButton>
+    </div>
+  );
+}
+
+function MarkdownModeButton({
+  children,
+  value,
+  current,
+  onChange,
+}: {
+  children: string;
+  value: MarkdownViewMode;
+  current: MarkdownViewMode;
+  onChange: (value: MarkdownViewMode) => void;
+}) {
+  const selected = value === current;
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={() => onChange(value)}
+      className={`h-full min-w-10 px-2 transition-colors ${
+        selected
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
   );
 }

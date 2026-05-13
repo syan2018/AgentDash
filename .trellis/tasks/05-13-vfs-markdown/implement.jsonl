@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发总体约束与语言要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "React 组件结构、Props 与样式规范"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "FSD 目录组织与共享组件放置约束"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript 类型安全要求"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量检查与禁止模式"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "抽取 Markdown 渲染器前检查复用原则"}

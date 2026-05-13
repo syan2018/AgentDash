@@ -1,9 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { Streamdown } from "streamdown";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
-import { cjk } from "@streamdown/cjk";
+import { MarkdownRenderer } from "../../../components/ui/markdown-renderer";
 import {
   FILE_PILL_BADGE_CLASS,
   FILE_PILL_CLASS,
@@ -150,24 +146,5 @@ const MESSAGE_CONFIG = {
     contentClass: "rounded-[12px] border border-dashed border-border bg-secondary/60 px-4 py-3.5 text-muted-foreground",
   },
 } as const;
-
-const MarkdownRenderer = memo(function MarkdownRenderer({
-  content,
-  isStreaming,
-}: {
-  content: string;
-  isStreaming?: boolean;
-}) {
-  return (
-    <div className="agentdash-chat-markdown">
-      <Streamdown
-        isAnimating={isStreaming ?? false}
-        plugins={{ code, math, mermaid, cjk }}
-      >
-        {content}
-      </Streamdown>
-    </div>
-  );
-});
 
 export default AcpMessageCard;

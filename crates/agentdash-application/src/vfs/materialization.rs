@@ -16,7 +16,8 @@ use super::rewrite::{
     RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
 };
 use super::{
-    ListOptions, PROVIDER_RELAY_FS, ResourceRef, format_mount_uri, join_root_ref,
+    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
+    PROVIDER_SKILL_ASSET_FS, ResourceRef, format_mount_uri, join_root_ref,
     normalize_mount_relative_path, parse_mount_uri, resolve_mount,
 };
 
@@ -242,7 +243,7 @@ impl VfsMaterializationService {
         &self,
         vfs: &Vfs,
         target: &ResourceRef,
-        _mount: &Mount,
+        mount: &Mount,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<MaterializationPlan, String> {
@@ -269,7 +270,7 @@ impl VfsMaterializationService {
                 entry_paths: entries,
                 target_kind: MaterializationTargetKind::File,
                 access_mode: MaterializationAccessMode::ReadOnly,
-                cache_scope: MaterializationCacheScope::Session,
+                cache_scope: default_cache_scope(mount),
             });
         }
 
@@ -287,8 +288,8 @@ impl VfsMaterializationService {
                 primary_relative_path: ".".to_string(),
                 entry_paths: entries,
                 target_kind: MaterializationTargetKind::Directory,
-                access_mode: MaterializationAccessMode::WritableLocalCopy,
-                cache_scope: MaterializationCacheScope::PersistentWorkingCopy,
+                access_mode: MaterializationAccessMode::WritableWorkdir,
+                cache_scope: default_cache_scope(mount),
             });
         }
 
@@ -301,7 +302,7 @@ impl VfsMaterializationService {
             entry_paths: vec![normalized_path],
             target_kind: MaterializationTargetKind::File,
             access_mode: MaterializationAccessMode::ReadOnly,
-            cache_scope: MaterializationCacheScope::Session,
+            cache_scope: default_cache_scope(mount),
         })
     }
 
@@ -455,6 +456,16 @@ fn can_directly_reference_backend_path(source_mount: &Mount, target_backend_id: 
     source_mount.provider == PROVIDER_RELAY_FS
         && !source_mount.backend_id.is_empty()
         && source_mount.backend_id == target_backend_id
+}
+
+fn default_cache_scope(mount: &Mount) -> MaterializationCacheScope {
+    match mount.provider.as_str() {
+        PROVIDER_SKILL_ASSET_FS | PROVIDER_INLINE_FS | PROVIDER_CANVAS_FS => {
+            MaterializationCacheScope::Public
+        }
+        PROVIDER_LIFECYCLE_VFS => MaterializationCacheScope::Session,
+        _ => MaterializationCacheScope::Session,
+    }
 }
 
 fn rewrite_json_value<'a>(
@@ -664,5 +675,26 @@ mod tests {
         );
         assert!(is_skill_resource_path("references/rules.md"));
         assert!(!is_skill_resource_path("tmp/cache.txt"));
+    }
+
+    #[test]
+    fn cache_scope_defaults_to_public_except_lifecycle_and_unknown() {
+        assert_eq!(
+            default_cache_scope(&mount(
+                "skill-assets",
+                PROVIDER_SKILL_ASSET_FS,
+                "",
+                "project"
+            )),
+            MaterializationCacheScope::Public
+        );
+        assert_eq!(
+            default_cache_scope(&mount("lifecycle", PROVIDER_LIFECYCLE_VFS, "", "run")),
+            MaterializationCacheScope::Session
+        );
+        assert_eq!(
+            default_cache_scope(&mount("custom", "custom_provider", "", "root")),
+            MaterializationCacheScope::Session
+        );
     }
 }

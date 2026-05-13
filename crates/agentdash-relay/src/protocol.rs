@@ -813,14 +813,14 @@ pub enum MaterializationTargetKind {
 #[serde(rename_all = "snake_case")]
 pub enum MaterializationAccessMode {
     ReadOnly,
-    WritableLocalCopy,
+    WritableWorkdir,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MaterializationCacheScope {
+    Public,
     Session,
-    PersistentWorkingCopy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1389,7 +1389,7 @@ mod tests {
                     mime_hint: Some("text/x-shellscript".to_string()),
                     executable_hint: true,
                 }],
-                cache_scope: MaterializationCacheScope::Session,
+                cache_scope: MaterializationCacheScope::Public,
                 ttl_ms: Some(60_000),
             }),
         };
@@ -1397,6 +1397,7 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["type"], "command.vfs.materialize");
         assert_eq!(json["payload"]["plan_kind"], "skill_resource_set");
+        assert_eq!(json["payload"]["cache_scope"], "public");
         assert_eq!(
             json["payload"]["entries"][0]["content"]["encoding"],
             "utf8_text"

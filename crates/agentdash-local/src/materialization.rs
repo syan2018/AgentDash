@@ -38,34 +38,24 @@ pub enum MaterializationError {
 
 #[derive(Debug, Clone)]
 pub struct MaterializationStore {
-    readonly_root: PathBuf,
-    workdir_root: PathBuf,
+    materialized_root: PathBuf,
     max_entry_bytes: u64,
     max_total_bytes: u64,
 }
 
 impl MaterializationStore {
-    pub fn new(backend_id: impl AsRef<str>) -> Self {
-        let backend_key = clean_component(backend_id.as_ref());
+    pub fn new(_backend_id: impl AsRef<str>) -> Self {
         Self {
-            readonly_root: std::env::temp_dir()
-                .join("agentdash")
-                .join("materialized")
-                .join(&backend_key),
-            workdir_root: local_data_root()
-                .join("agentdash")
-                .join("materialized-workdirs")
-                .join(backend_key),
+            materialized_root: local_data_root().join("agentdash").join("materialized"),
             max_entry_bytes: 8 * 1024 * 1024,
             max_total_bytes: 64 * 1024 * 1024,
         }
     }
 
     #[cfg(test)]
-    fn new_for_test(readonly_root: PathBuf, workdir_root: PathBuf) -> Self {
+    fn new_for_test(materialized_root: PathBuf) -> Self {
         Self {
-            readonly_root,
-            workdir_root,
+            materialized_root,
             max_entry_bytes: 8 * 1024 * 1024,
             max_total_bytes: 64 * 1024 * 1024,
         }
@@ -81,19 +71,9 @@ impl MaterializationStore {
 
         let prepared = prepare_entries(&payload, self.max_entry_bytes, self.max_total_bytes)?;
         let manifest_digest = manifest_digest(&payload, &prepared);
-        let local_root = match payload.cache_scope {
-            MaterializationCacheScope::Session => self
-                .readonly_root
-                .join(clean_component(&payload.session_id))
-                .join(clean_component(&payload.plan_id))
-                .join("content"),
-            MaterializationCacheScope::PersistentWorkingCopy => self
-                .workdir_root
-                .join(resource_key(&payload))
-                .join("content"),
-        };
+        let local_root = self.local_root_for_payload(&payload)?;
 
-        ensure_inside_any_root(&local_root, &[&self.readonly_root, &self.workdir_root])?;
+        ensure_inside(&local_root, &self.materialized_root)?;
         let manifest_path = local_root
             .parent()
             .unwrap_or(local_root.as_path())
@@ -105,6 +85,7 @@ impl MaterializationStore {
                 tokio::fs::create_dir_all(parent).await?;
             }
             if local_root.exists() {
+                make_tree_writable(&local_root)?;
                 tokio::fs::remove_dir_all(&local_root).await?;
             }
             tokio::fs::create_dir_all(&local_root).await?;
@@ -125,11 +106,20 @@ impl MaterializationStore {
                 "root_uri": payload.root_uri,
                 "mount_id": payload.mount_id,
                 "provider": payload.provider,
+                "cache_scope": payload.cache_scope,
                 "plan_kind": payload.plan_kind,
                 "target_kind": payload.target_kind,
                 "access_mode": payload.access_mode,
+                "materialization_key": materialization_key(&payload),
                 "entry_count": prepared.len(),
                 "total_size_bytes": prepared.iter().map(|entry| entry.size_bytes).sum::<u64>(),
+                "audit": {
+                    "session_id": payload.session_id,
+                    "turn_id": payload.turn_id,
+                    "tool_call_id": payload.tool_call_id,
+                    "plan_id": payload.plan_id,
+                },
+                "dirty": false,
                 "written_at": chrono::Utc::now().to_rfc3339(),
             });
             tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?).await?;
@@ -168,6 +158,37 @@ impl MaterializationStore {
             dirty: false,
             cache_hit,
         })
+    }
+
+    fn local_root_for_payload(
+        &self,
+        payload: &VfsMaterializePayload,
+    ) -> Result<PathBuf, MaterializationError> {
+        let resource_path = materialized_resource_path(payload)?;
+        let root = match (payload.cache_scope, payload.access_mode) {
+            (MaterializationCacheScope::Public, MaterializationAccessMode::ReadOnly) => {
+                self.materialized_root.join("readonly").join(resource_path)
+            }
+            (MaterializationCacheScope::Public, MaterializationAccessMode::WritableWorkdir) => {
+                self.materialized_root.join("workdirs").join(resource_path)
+            }
+            (MaterializationCacheScope::Session, MaterializationAccessMode::ReadOnly) => self
+                .materialized_root
+                .join("sessions")
+                .join(clean_component(&payload.session_id))
+                .join("readonly")
+                .join(resource_path),
+            (MaterializationCacheScope::Session, MaterializationAccessMode::WritableWorkdir) => {
+                self.materialized_root
+                    .join("sessions")
+                    .join(clean_component(&payload.session_id))
+                    .join("workdirs")
+                    .join(resource_path)
+            }
+        }
+        .join("content");
+        ensure_inside(&root, &self.materialized_root)?;
+        Ok(root)
     }
 }
 
@@ -291,16 +312,6 @@ fn ensure_inside(path: &Path, root: &Path) -> Result<(), MaterializationError> {
     Ok(())
 }
 
-fn ensure_inside_any_root(path: &Path, roots: &[&Path]) -> Result<(), MaterializationError> {
-    if roots.iter().any(|root| path.starts_with(root)) {
-        Ok(())
-    } else {
-        Err(MaterializationError::InvalidPath(
-            path.display().to_string(),
-        ))
-    }
-}
-
 async fn existing_manifest_matches(path: &Path, digest: &str) -> bool {
     let Ok(bytes) = tokio::fs::read(path).await else {
         return false;
@@ -316,11 +327,13 @@ async fn existing_manifest_matches(path: &Path, digest: &str) -> bool {
 
 fn manifest_digest(payload: &VfsMaterializePayload, entries: &[PreparedEntry]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(payload.source_uri.as_bytes());
-    hasher.update([0]);
     hasher.update(payload.root_uri.as_bytes());
     hasher.update([0]);
     hasher.update(format!("{:?}", payload.plan_kind).as_bytes());
+    hasher.update([0]);
+    hasher.update(format!("{:?}", payload.cache_scope).as_bytes());
+    hasher.update([0]);
+    hasher.update(format!("{:?}", payload.access_mode).as_bytes());
     hasher.update([0]);
     for entry in entries {
         hasher.update(entry.relative_path.to_string_lossy().as_bytes());
@@ -331,12 +344,89 @@ fn manifest_digest(payload: &VfsMaterializePayload, entries: &[PreparedEntry]) -
     format!("sha256:{}", to_hex(&hasher.finalize()))
 }
 
-fn resource_key(payload: &VfsMaterializePayload) -> String {
+fn materialization_key(payload: &VfsMaterializePayload) -> String {
+    let identity_uri = if matches!(
+        payload.plan_kind,
+        agentdash_relay::MaterializationPlanKind::SingleFile
+    ) {
+        &payload.source_uri
+    } else {
+        &payload.root_uri
+    };
     let seed = format!(
-        "{}\0{}\0{}\0{}",
-        payload.mount_id, payload.provider, payload.root_uri, payload.source_uri
+        "{}\0{}\0{}\0{}\0{:?}\0{:?}\0{:?}",
+        payload.mount_id,
+        payload.provider,
+        payload.root_uri,
+        identity_uri,
+        payload.plan_kind,
+        payload.cache_scope,
+        payload.access_mode
     );
     sha256_hex(seed.as_bytes())
+}
+
+fn materialized_resource_path(
+    payload: &VfsMaterializePayload,
+) -> Result<PathBuf, MaterializationError> {
+    let namespace = if payload.mount_id.trim().is_empty() {
+        clean_component(&payload.provider)
+    } else {
+        clean_component(&payload.mount_id)
+    };
+    let short_key = materialization_key(payload)
+        .chars()
+        .take(10)
+        .collect::<String>();
+    let mut parts = readable_root_parts(&payload.root_uri);
+    if parts.is_empty() {
+        parts.push("root".to_string());
+    }
+
+    let mut path = PathBuf::from(namespace);
+    if let Some((last, parents)) = parts.split_last() {
+        for part in parents {
+            path.push(part);
+        }
+        path.push(format!("{last}--{short_key}"));
+    }
+    Ok(path)
+}
+
+fn readable_root_parts(uri: &str) -> Vec<String> {
+    let path = uri
+        .split_once("://")
+        .map(|(_, path)| path)
+        .unwrap_or(uri)
+        .trim_matches('/');
+    path.split('/')
+        .filter(|part| !part.trim().is_empty())
+        .map(clean_component)
+        .collect()
+}
+
+fn make_tree_writable(path: &Path) -> Result<(), MaterializationError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let child = entry.path();
+        if child.is_dir() {
+            make_tree_writable(&child)?;
+        }
+        let mut permissions = std::fs::metadata(&child)?.permissions();
+        if permissions.readonly() {
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&child, permissions)?;
+        }
+    }
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    if permissions.readonly() {
+        permissions.set_readonly(false);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
 }
 
 fn set_file_mode(
@@ -352,8 +442,8 @@ fn set_file_mode(
         let mode = match (access_mode, executable) {
             (MaterializationAccessMode::ReadOnly, true) => 0o555,
             (MaterializationAccessMode::ReadOnly, false) => 0o444,
-            (MaterializationAccessMode::WritableLocalCopy, true) => 0o755,
-            (MaterializationAccessMode::WritableLocalCopy, false) => 0o644,
+            (MaterializationAccessMode::WritableWorkdir, true) => 0o755,
+            (MaterializationAccessMode::WritableWorkdir, false) => 0o644,
         };
         permissions.set_mode(mode);
     }
@@ -445,16 +535,16 @@ mod tests {
             turn_id: None,
             tool_call_id: None,
             plan_id: "plan-1".to_string(),
-            plan_kind: MaterializationPlanKind::SingleFile,
+            plan_kind: MaterializationPlanKind::SkillResourceSet,
             source_uri: "skill-assets://skills/reviewer/scripts/check.sh".to_string(),
-            root_uri: "skill-assets://skills/reviewer/scripts".to_string(),
+            root_uri: "skill-assets://skills/reviewer".to_string(),
             mount_id: "skill-assets".to_string(),
             provider: "skill_asset_fs".to_string(),
-            primary_relative_path: "check.sh".to_string(),
+            primary_relative_path: "scripts/check.sh".to_string(),
             target_kind: MaterializationTargetKind::File,
             access_mode: MaterializationAccessMode::ReadOnly,
             entries: vec![VfsMaterializeEntry {
-                relative_path: "check.sh".to_string(),
+                relative_path: "scripts/check.sh".to_string(),
                 content: VfsMaterializeContent::Utf8Text {
                     text: text.to_string(),
                 },
@@ -463,7 +553,7 @@ mod tests {
                 mime_hint: None,
                 executable_hint: true,
             }],
-            cache_scope: MaterializationCacheScope::Session,
+            cache_scope: MaterializationCacheScope::Public,
             ttl_ms: None,
         }
     }
@@ -471,10 +561,7 @@ mod tests {
     #[tokio::test]
     async fn materialize_writes_verified_entries() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let store = MaterializationStore::new_for_test(
-            temp.path().join("readonly"),
-            temp.path().join("workdirs"),
-        );
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
 
         let response = store.materialize(payload()).await.expect("materialize");
         assert_eq!(response.entry_count, 1);
@@ -487,15 +574,70 @@ mod tests {
 
         let second = store.materialize(payload()).await.expect("cache hit");
         assert!(second.cache_hit);
+        assert_eq!(second.primary_local_path, response.primary_local_path);
+    }
+
+    #[tokio::test]
+    async fn public_materialization_uses_stable_readable_path_across_plan_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
+
+        let first = store.materialize(payload()).await.expect("first");
+        let mut second_payload = payload();
+        second_payload.plan_id = "plan-2".to_string();
+        second_payload.turn_id = Some("turn-2".to_string());
+        let second = store.materialize(second_payload).await.expect("second");
+
+        assert!(second.cache_hit);
+        assert_eq!(first.local_root_path, second.local_root_path);
+        assert!(first.local_root_path.contains("readonly"));
+        assert!(first.local_root_path.contains("skill-assets"));
+        assert!(first.local_root_path.contains("skills"));
+        assert!(first.local_root_path.contains("reviewer--"));
+        assert!(!first.local_root_path.contains("session-1"));
+        assert!(!first.local_root_path.contains("plan-1"));
+    }
+
+    #[tokio::test]
+    async fn writable_public_directory_uses_workdir_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
+        let mut payload = payload();
+        payload.plan_kind = MaterializationPlanKind::WritableWorkingCopy;
+        payload.source_uri = "skill-assets://skills/reviewer".to_string();
+        payload.primary_relative_path = ".".to_string();
+        payload.target_kind = MaterializationTargetKind::Directory;
+        payload.access_mode = MaterializationAccessMode::WritableWorkdir;
+
+        let response = store.materialize(payload).await.expect("materialize");
+
+        assert!(response.local_root_path.contains("workdirs"));
+        assert!(response.primary_local_path.ends_with("content"));
+        assert!(!response.local_root_path.contains("session-1"));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_materialization_uses_session_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
+        let mut payload = payload();
+        payload.mount_id = "lifecycle".to_string();
+        payload.provider = "lifecycle_vfs".to_string();
+        payload.source_uri = "lifecycle://skills/reviewer/scripts/check.sh".to_string();
+        payload.root_uri = "lifecycle://skills/reviewer".to_string();
+        payload.cache_scope = MaterializationCacheScope::Session;
+
+        let response = store.materialize(payload).await.expect("materialize");
+
+        assert!(response.local_root_path.contains("sessions"));
+        assert!(response.local_root_path.contains("session-1"));
+        assert!(response.local_root_path.contains("lifecycle"));
     }
 
     #[tokio::test]
     async fn materialize_rejects_path_traversal() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let store = MaterializationStore::new_for_test(
-            temp.path().join("readonly"),
-            temp.path().join("workdirs"),
-        );
+        let store = MaterializationStore::new_for_test(temp.path().join("materialized"));
         let mut payload = payload();
         payload.entries[0].relative_path = "../escape.sh".to_string();
 

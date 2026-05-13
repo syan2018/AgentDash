@@ -1,8 +1,8 @@
-# VFS 物化规则收口与规范化
+# VFS 物化规则收口与实现
 
 ## Goal
 
-把云端 VFS 资源物化到本机的规则从“每次工具调用生成临时目录”收口为“按资源 root 稳定映射到本机目录”。默认可共享资源进入本机公共稳定物化区，只有语义明确绑定 session 的资源（尤其 lifecycle 投影）进入 session scope，并形成可执行的 spec 约束后续实现。
+把云端 VFS 资源物化到本机的规则从“每次工具调用生成临时目录”收口为“按资源 root 稳定映射到本机目录”。默认可共享资源进入本机公共稳定物化区，只有语义明确绑定 session 的资源（尤其 lifecycle 投影）进入 session scope，并把 spec 与实际物化逻辑统一到同一份任务中。
 
 ## What I already know
 
@@ -21,6 +21,7 @@
 - 明确 `lifecycle_vfs` 的 root 和 scope：复用资源组规划规则，但落在 `sessions/{session_id}` 下。
 - 明确 `plan_id / turn_id / tool_call_id / backend_id` 只进入 manifest/audit，不参与稳定路径。
 - 更新后端规范索引，让后续实现 VFS 物化时必须读取该 spec。
+- 更新 relay protocol / application planner / local store，让当前实现遵守新增 spec。
 
 ## Acceptance Criteria
 
@@ -30,6 +31,9 @@
 - [x] spec 明确公共物化、session 物化、workdir、temporary 的路径布局。
 - [x] spec 明确 `skill-assets://skills/foo` 与 `lifecycle://skills/foo` 的差异。
 - [x] spec 明确现有实现需要修正的测试断言方向。
+- [x] 同一公共资源即使 `plan_id` 不同，也复用同一本机路径。
+- [x] `skill-assets` 公共路径不包含 `session_id`、`backend_id` 或 `plan_id`。
+- [x] `lifecycle_vfs` 物化路径进入 `sessions/{session_id}`。
 
 ## Definition of Done
 
@@ -51,7 +55,6 @@
 
 ## Out of Scope
 
-- 本任务不直接改 Rust 实现。
 - 本任务不恢复或实现 localhost URL server。
 - 本任务不实现 VFS 写回云端；workdir publish/import 需要独立显式能力。
 - 本任务不设计完整实时同步，只规定显式更新/refresh 驱动的失效模型。

@@ -14,6 +14,18 @@ pub enum RegisterBackendError {
     AlreadyOnline { backend_id: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BackendCommandError {
+    #[error("Backend 不在线: {backend_id}")]
+    Offline { backend_id: String },
+    #[error("发送至本机后端失败: {backend_id}")]
+    SendFailed { backend_id: String },
+    #[error("命令超时: {backend_id}")]
+    Timeout { backend_id: String },
+    #[error("本机后端响应通道已关闭: {backend_id}")]
+    ResponseDropped { backend_id: String },
+}
+
 /// 已连接的本机后端
 pub struct ConnectedBackend {
     pub backend_id: String,
@@ -99,30 +111,9 @@ impl BackendRegistry {
         &self,
         backend_id: &str,
         msg: RelayMessage,
-    ) -> Result<RelayMessage, anyhow::Error> {
-        let msg_id = msg.id().to_string();
-
-        let sender = {
-            let backends = self.backends.read().await;
-            let backend = backends
-                .get(backend_id)
-                .ok_or_else(|| anyhow::anyhow!("Backend 不在线: {backend_id}"))?;
-            backend.sender.clone()
-        };
-
-        let (tx, rx) = oneshot::channel();
-        self.pending.write().await.insert(msg_id.clone(), tx);
-
-        if sender.send(msg).is_err() {
-            self.pending.write().await.remove(&msg_id);
-            anyhow::bail!("发送至本机后端失败");
-        }
-
-        let resp = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
+    ) -> Result<RelayMessage, BackendCommandError> {
+        self.send_command_with_timeout(backend_id, msg, std::time::Duration::from_secs(30))
             .await
-            .map_err(|_| anyhow::anyhow!("命令超时"))??;
-
-        Ok(resp)
     }
 
     /// 匹配并分发一条响应消息到等待方
@@ -229,14 +220,16 @@ impl BackendRegistry {
         backend_id: &str,
         msg: RelayMessage,
         timeout: std::time::Duration,
-    ) -> Result<RelayMessage, anyhow::Error> {
+    ) -> Result<RelayMessage, BackendCommandError> {
         let msg_id = msg.id().to_string();
 
         let sender = {
             let backends = self.backends.read().await;
             let backend = backends
                 .get(backend_id)
-                .ok_or_else(|| anyhow::anyhow!("Backend 不在线: {backend_id}"))?;
+                .ok_or_else(|| BackendCommandError::Offline {
+                    backend_id: backend_id.to_string(),
+                })?;
             backend.sender.clone()
         };
 
@@ -245,23 +238,47 @@ impl BackendRegistry {
 
         if sender.send(msg).is_err() {
             self.pending.write().await.remove(&msg_id);
-            anyhow::bail!("发送至本机后端失败");
+            return Err(BackendCommandError::SendFailed {
+                backend_id: backend_id.to_string(),
+            });
         }
 
-        let resp = tokio::time::timeout(timeout, rx)
-            .await
-            .map_err(|_| anyhow::anyhow!("MCP 命令超时"))??;
+        let resp = match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.pending.write().await.remove(&msg_id);
+                return Err(BackendCommandError::ResponseDropped {
+                    backend_id: backend_id.to_string(),
+                });
+            }
+            Err(_) => {
+                self.pending.write().await.remove(&msg_id);
+                return Err(BackendCommandError::Timeout {
+                    backend_id: backend_id.to_string(),
+                });
+            }
+        };
 
         Ok(resp)
+    }
+
+    #[cfg(test)]
+    async fn drop_pending_for_test(&self, msg_id: &str) {
+        self.pending.write().await.remove(msg_id);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_relay::CommandBrowseDirectoryPayload;
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
         let (sender, _rx) = mpsc::unbounded_channel();
+        connected_backend_with_sender(backend_id, sender)
+    }
+
+    fn connected_backend_with_sender(backend_id: &str, sender: BackendSender) -> ConnectedBackend {
         ConnectedBackend {
             backend_id: backend_id.to_string(),
             name: "测试后端".to_string(),
@@ -275,6 +292,13 @@ mod tests {
             accessible_roots: Vec::new(),
             sender,
             connected_at: Utc::now(),
+        }
+    }
+
+    fn browse_command(prefix: &str) -> RelayMessage {
+        RelayMessage::CommandBrowseDirectory {
+            id: RelayMessage::new_id(prefix),
+            payload: CommandBrowseDirectoryPayload { path: None },
         }
     }
 
@@ -294,6 +318,101 @@ mod tests {
         assert_eq!(
             err,
             RegisterBackendError::AlreadyOnline {
+                backend_id: "local-a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_command_reports_offline_backend() {
+        let registry = BackendRegistry::new();
+
+        let err = registry
+            .send_command("missing", browse_command("offline"))
+            .await
+            .expect_err("offline backend should be classified");
+
+        assert_eq!(
+            err,
+            BackendCommandError::Offline {
+                backend_id: "missing".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_command_reports_send_failed_when_receiver_is_gone() {
+        let registry = BackendRegistry::new();
+        registry
+            .try_register(connected_backend("local-a"))
+            .await
+            .expect("backend should register");
+
+        let err = registry
+            .send_command("local-a", browse_command("send-failed"))
+            .await
+            .expect_err("dropped receiver should fail send");
+
+        assert_eq!(
+            err,
+            BackendCommandError::SendFailed {
+                backend_id: "local-a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_command_with_timeout_reports_timeout() {
+        let registry = BackendRegistry::new();
+        let (sender, _rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(connected_backend_with_sender("local-a", sender))
+            .await
+            .expect("backend should register");
+
+        let err = registry
+            .send_command_with_timeout(
+                "local-a",
+                browse_command("timeout"),
+                std::time::Duration::from_millis(1),
+            )
+            .await
+            .expect_err("missing response should timeout");
+
+        assert_eq!(
+            err,
+            BackendCommandError::Timeout {
+                backend_id: "local-a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_command_reports_response_dropped() {
+        let registry = BackendRegistry::new();
+        let (sender, mut rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(connected_backend_with_sender("local-a", sender))
+            .await
+            .expect("backend should register");
+
+        let command = browse_command("response-dropped");
+        let msg_id = command.id().to_string();
+        let pending = {
+            let registry = Arc::clone(&registry);
+            tokio::spawn(async move { registry.send_command("local-a", command).await })
+        };
+
+        rx.recv().await.expect("command should be sent");
+        registry.drop_pending_for_test(&msg_id).await;
+
+        let err = pending
+            .await
+            .expect("join should succeed")
+            .expect_err("dropped pending sender should be classified");
+        assert_eq!(
+            err,
+            BackendCommandError::ResponseDropped {
                 backend_id: "local-a".to_string()
             }
         );

@@ -3,7 +3,7 @@
   "name": "runtime-stability-admission-fixes",
   "title": "Runtime 稳定性与执行准入小修",
   "description": "从 multica 对齐研究中抽取小粒度优化：relay 错误分类、Routine 触发准入 skipped、provider adapter 行为矩阵测试。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

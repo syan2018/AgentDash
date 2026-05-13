@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "检查输出需符合项目中文沟通与跨层思考要求"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/prd.md", "reason": "检查研究产物是否覆盖验收标准"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/design.md", "reason": "检查概念映射与专题研究边界是否一致"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/implement.md", "reason": "检查后续研究步骤与注意事项是否被执行"}
+{"file": "README.md", "reason": "检查 AgentDash 目录/概念映射是否覆盖当前 README 的核心架构"}
+{"file": "references/multica/apps/docs/content/docs/developers/architecture.zh.mdx", "reason": "检查 multica 目录/概念映射是否覆盖官方架构说明"}

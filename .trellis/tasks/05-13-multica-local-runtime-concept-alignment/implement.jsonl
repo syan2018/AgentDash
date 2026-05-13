@@ -1,0 +1,9 @@
+{"file": "README.md", "reason": "AgentDash 当前架构、领域模型、local/cloud/VFS/Session/Routine 概念基线"}
+{"file": ".trellis/spec/guides/index.md", "reason": "中文要求与跨层思考入口"}
+{"file": "references/multica/README.zh-CN.md", "reason": "multica 产品定位、架构概览、daemon/runtime/agent 协作说明"}
+{"file": "references/multica/apps/docs/content/docs/developers/architecture.zh.mdx", "reason": "multica 官方架构、包边界、前端状态管理与数据流说明"}
+{"file": "references/multica/CLI_AND_DAEMON.md", "reason": "multica CLI/daemon 行为、心跳、任务执行、GC、配置与本机运行时说明"}
+{"file": "Cargo.toml", "reason": "AgentDash Rust workspace crate 目录与模块边界索引"}
+{"file": "package.json", "reason": "AgentDash 前端/后端开发脚本与整体工作区入口"}
+{"file": "references/multica/package.json", "reason": "multica pnpm/turbo workspace、web/docs/desktop 构建入口"}
+{"file": "references/multica/pnpm-workspace.yaml", "reason": "multica apps/packages 单仓目录组织入口"}

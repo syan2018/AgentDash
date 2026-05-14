@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
-  DEFAULT_LOCAL_RUNTIME_CLOUD_URL,
+  DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
+  DEFAULT_LOCAL_RUNTIME_SERVER_URL,
   formatLocalLogLine,
   normalizeMcpLocalServer,
   parseRuntimeEnv,
@@ -20,18 +21,24 @@ import { Badge, Button, Card, CardHeader, Field, Select, Textarea, TextInput, cn
 
 export interface LocalRuntimeViewProps {
   client: LocalRuntimeClient
-  defaultCloudUrl?: string
+  defaultServerUrl?: string
+  defaultAccessToken?: string
+  defaultProfileId?: string
   defaultBackendName?: string
 }
 
 export function LocalRuntimeView({
   client,
-  defaultCloudUrl = DEFAULT_LOCAL_RUNTIME_CLOUD_URL,
+  defaultServerUrl = DEFAULT_LOCAL_RUNTIME_SERVER_URL,
+  defaultAccessToken = '',
+  defaultProfileId = DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   defaultBackendName = DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
 }: LocalRuntimeViewProps) {
   const [snapshot, setSnapshot] = useState<LocalRuntimeStatus | null>(null)
-  const [cloudUrl, setCloudUrl] = useState(defaultCloudUrl)
-  const [token, setToken] = useState('')
+  const [serverUrl, setServerUrl] = useState(defaultServerUrl)
+  const [accessToken, setAccessToken] = useState(defaultAccessToken)
+  const [profileId, setProfileId] = useState(defaultProfileId)
+  const [deviceId, setDeviceId] = useState(() => createDeviceId())
   const [backendName, setBackendName] = useState(defaultBackendName)
   const [accessibleRoots, setAccessibleRoots] = useState('')
   const [executorEnabled, setExecutorEnabled] = useState(true)
@@ -54,7 +61,7 @@ export function LocalRuntimeView({
         if (!alive || !profile) return
         applyProfile(profile)
         setProfileMessage('已加载本机 profile')
-        if (profile.auto_start && profile.cloud_url.trim() && profile.token.trim()) {
+        if (profile.auto_start && profile.server_url.trim() && profile.access_token.trim()) {
           setSnapshot(await client.runtimeStart(profile))
           setProfileMessage('已加载本机 profile 并自动启动 runtime')
         }
@@ -100,7 +107,7 @@ export function LocalRuntimeView({
     setIsBusy(true)
     setError(null)
     try {
-      const request = buildStartRequest(cloudUrl, token, backendName, roots, executorEnabled)
+      const request = buildStartRequest(serverUrl, accessToken, profileId, deviceId, backendName, roots, executorEnabled)
       setSnapshot(await client.runtimeStart(request))
     } catch (err) {
       setError(formatError(err))
@@ -146,8 +153,10 @@ export function LocalRuntimeView({
   }
 
   function applyProfile(profile: LocalRuntimeProfile) {
-    setCloudUrl(profile.cloud_url)
-    setToken(profile.token)
+    setServerUrl(profile.server_url)
+    setAccessToken(profile.access_token || defaultAccessToken)
+    setProfileId(profile.profile_id || defaultProfileId)
+    setDeviceId(profile.device_id || createDeviceId())
     setBackendName(profile.name ?? defaultBackendName)
     setAccessibleRoots(profile.accessible_roots.join('\n'))
     setExecutorEnabled(profile.executor_enabled)
@@ -159,8 +168,9 @@ export function LocalRuntimeView({
 
   function buildProfile(): LocalRuntimeProfile {
     return {
-      ...buildStartRequest(cloudUrl, token, backendName, roots, executorEnabled),
+      ...buildStartRequest(serverUrl, accessToken, profileId, deviceId, backendName, roots, executorEnabled),
       auto_start: autoStart,
+      backend_id: snapshot?.backend_id ?? null,
     }
   }
 
@@ -327,18 +337,28 @@ export function LocalRuntimeView({
           </CardHeader>
 
           <div className="grid gap-3">
-            <Field label="Cloud WebSocket URL">
-              <TextInput value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} />
+            <Field label="Server URL">
+              <TextInput value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
             </Field>
 
-            <Field label="Backend Token">
+            <Field label="Access Token">
               <TextInput
                 autoComplete="current-password"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
+                value={accessToken}
+                onChange={(event) => setAccessToken(event.target.value)}
                 type="password"
               />
             </Field>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Profile ID">
+                <TextInput value={profileId} onChange={(event) => setProfileId(event.target.value)} />
+              </Field>
+
+              <Field label="Device ID">
+                <TextInput value={deviceId} onChange={(event) => setDeviceId(event.target.value)} />
+              </Field>
+            </div>
 
             <Field label="Backend Name">
               <TextInput value={backendName} onChange={(event) => setBackendName(event.target.value)} />
@@ -357,7 +377,7 @@ export function LocalRuntimeView({
           {profileMessage ? <RuntimeMessage>{profileMessage}</RuntimeMessage> : null}
 
           <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <Button type="submit" variant="primary" disabled={isBusy || !cloudUrl.trim() || !token.trim()}>
+            <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim() || !accessToken.trim()}>
               启动
             </Button>
             <Button variant="danger" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
@@ -370,7 +390,7 @@ export function LocalRuntimeView({
 
           <div className="mt-2 flex flex-wrap justify-end gap-2">
             <Button onClick={() => void handleLoadProfile()}>加载 profile</Button>
-            <Button onClick={() => void handleSaveProfile()} disabled={!cloudUrl.trim() || !token.trim()}>
+            <Button onClick={() => void handleSaveProfile()} disabled={!serverUrl.trim() || !accessToken.trim()}>
               保存 profile
             </Button>
             <Button variant="danger" onClick={() => void handleDeleteProfile()}>
@@ -580,19 +600,30 @@ function RuntimeEmpty({ children }: { children: string }) {
 }
 
 function buildStartRequest(
-  cloudUrl: string,
-  token: string,
+  serverUrl: string,
+  accessToken: string,
+  profileId: string,
+  deviceId: string,
   backendName: string,
   roots: string[],
   executorEnabled: boolean,
 ): RuntimeStartRequest {
   return {
-    cloud_url: cloudUrl.trim(),
-    token: token.trim(),
+    server_url: serverUrl.trim(),
+    access_token: accessToken.trim(),
+    profile_id: profileId.trim() || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
+    device_id: deviceId.trim() || createDeviceId(),
     name: backendName.trim() || undefined,
     accessible_roots: roots,
     executor_enabled: executorEnabled,
   }
+}
+
+function createDeviceId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function stateText(state: LocalRuntimeStatus['state']) {

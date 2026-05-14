@@ -15,6 +15,7 @@ type DesktopApiSnapshot = {
 }
 
 const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
+const ACCESS_TOKEN_KEY = 'agentdash_access_token'
 
 function App() {
   const client = useMemo(() => createTauriLocalRuntimeClient(), [])
@@ -43,7 +44,15 @@ function App() {
       </aside>
 
       <section className="min-h-screen min-w-0 overflow-hidden">
-        {activeView === 'runtime' ? <LocalRuntimeView client={client} /> : <DashboardHost />}
+        {activeView === 'runtime' ? (
+          <LocalRuntimeView
+            client={client}
+            defaultAccessToken={readStoredAccessToken()}
+            defaultServerUrl={API_ORIGIN || 'http://127.0.0.1:3001'}
+          />
+        ) : (
+          <DashboardHost />
+        )}
       </section>
     </main>
   )
@@ -148,6 +157,11 @@ function dashboardHostDotClass(state: DashboardApiState): string {
     case 'unavailable':
       return 'bg-destructive'
   }
+}
+
+function readStoredAccessToken(): string {
+  if (typeof localStorage === 'undefined') return ''
+  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? ''
 }
 
 export default App

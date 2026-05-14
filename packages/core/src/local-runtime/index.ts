@@ -19,9 +19,10 @@ export interface LocalLogEvent {
 }
 
 export interface RuntimeStartRequest {
-  cloud_url: string
-  token: string
-  backend_id?: string
+  server_url: string
+  access_token: string
+  profile_id: string
+  device_id: string
   name?: string
   accessible_roots: string[]
   executor_enabled: boolean
@@ -29,6 +30,8 @@ export interface RuntimeStartRequest {
 
 export interface LocalRuntimeProfile extends RuntimeStartRequest {
   auto_start: boolean
+  backend_id?: string | null
+  relay_ws_url?: string | null
 }
 
 export interface McpEnvEntry {
@@ -66,7 +69,8 @@ export interface LocalRuntimeClient {
   mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResult>
 }
 
-export const DEFAULT_LOCAL_RUNTIME_CLOUD_URL = 'ws://127.0.0.1:3001/ws/backend'
+export const DEFAULT_LOCAL_RUNTIME_SERVER_URL = 'http://127.0.0.1:3001'
+export const DEFAULT_LOCAL_RUNTIME_PROFILE_ID = 'default'
 export const DEFAULT_LOCAL_RUNTIME_BACKEND_NAME = 'desktop-local-backend'
 
 export function parseRuntimeLines(value: string) {

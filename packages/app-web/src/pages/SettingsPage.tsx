@@ -16,6 +16,7 @@ import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../
 import type { BackendConfig } from "../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
 import { getDesktopLocalRuntimeClient } from "../desktop/localRuntimeBridge";
+import { hasDesktopExternalBrowserOpener, openDesktopExternalBrowser } from "../desktop/externalBrowser";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -669,16 +670,20 @@ function LlmProviderForm({
     setCodexLoginStatus("starting");
     setCodexLoginMessage(null);
     setCodexAuthUrl(null);
-    const loginWindow = window.open("about:blank", "_blank");
+    const useDesktopExternalBrowser = hasDesktopExternalBrowserOpener();
+    const loginWindow = useDesktopExternalBrowser ? null : window.open("about:blank", "_blank");
     try {
       const flow = await llmProvidersApi.startCodexOAuth(provider.id);
       codexFlowIdRef.current = flow.flow_id;
       setCodexAuthUrl(flow.auth_url);
       setCodexLoginStatus("waiting");
       setCodexLoginMessage("等待 ChatGPT 授权完成…");
+      const openedInDesktop = useDesktopExternalBrowser
+        ? await openDesktopExternalBrowser(flow.auth_url)
+        : false;
       if (loginWindow) {
         loginWindow.location.href = flow.auth_url;
-      } else {
+      } else if (!openedInDesktop) {
         window.open(flow.auth_url, "_blank", "noopener,noreferrer");
       }
       void pollCodexOAuth(flow.flow_id).catch((e) => {
@@ -688,6 +693,10 @@ function LlmProviderForm({
       });
     } catch (e) {
       if (loginWindow) loginWindow.close();
+      const flowId = codexFlowIdRef.current;
+      if (flowId) {
+        await llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
+      }
       codexFlowIdRef.current = null;
       setCodexLoginStatus("failed");
       setCodexLoginMessage(e instanceof Error ? e.message : String(e));

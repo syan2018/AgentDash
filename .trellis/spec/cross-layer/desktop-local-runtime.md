@@ -55,6 +55,7 @@ logs_clear() -> void
 mcp_servers_load(root: PathBuf) -> McpLocalServerEntry[]
 mcp_servers_save(root: PathBuf, servers: McpLocalServerEntry[]) -> void
 mcp_server_probe(server: McpLocalServerEntry) -> McpProbeResult
+open_external_url(url: string) -> void
 ```
 
 Shared TypeScript client port:
@@ -91,6 +92,7 @@ export interface LocalRuntimeClient {
 - 开发期 `scripts/dev-desktop.js` 不得注入 machine identity 路径；Tauri 壳应复用 `agentdash-local` crate 的机器身份逻辑，确保 Web 联合调试和桌面调试看到同一台 local runtime。
 - `device_id` 仅作为旧 profile/backend 的 legacy merge 输入存在；新前端/Tauri 请求不得生成或提交新的 `device_id`。
 - Local Runtime UI 不直接 import Tauri API；它只依赖 `@agentdash/core` 的 `LocalRuntimeClient` port。`app-tauri` 负责把 `invoke()` 适配成 client。
+- 桌面端需要打开 OAuth / 文档等外部网页时，`app-tauri` 必须通过 Tauri command 暴露受限 bridge，并由系统浏览器打开；`packages/app-web` 只能检测 bridge 是否存在，不能直接 import Tauri API。`open_external_url` 只允许 `http` / `https` URL。
 - `packages/app-web` 只导出 `App`，`packages/app-tauri` 复用该入口作为 Dashboard 页，不能复制 Web Dashboard 组件树。
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口，承载 Tailwind v4 theme、base layer、component layer 和第三方渲染样式；`app-web`、`app-tauri`、`views` 不能再各自维护全局壳样式。
 - 桌面打包入口必须可复现：`pnpm run desktop:build` 生成 release exe，`pnpm run desktop:bundle` 生成 Windows NSIS installer。

@@ -18,6 +18,7 @@ const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
 declare global {
   interface Window {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient
+    __AGENTDASH_DESKTOP_OPEN_EXTERNAL__?: (url: string) => Promise<void>
   }
 }
 
@@ -26,8 +27,10 @@ function App() {
 
   useEffect(() => {
     window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = client
+    window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__ = (url: string) => invoke<void>('open_external_url', { url })
     return () => {
       delete window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__
+      delete window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__
     }
   }, [client])
 

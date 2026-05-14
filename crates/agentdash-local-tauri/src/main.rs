@@ -290,6 +290,16 @@ async fn desktop_api_snapshot(
     Ok(state.api.snapshot().await)
 }
 
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|error| format!("外部链接无效: {error}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("不支持打开 {scheme}:// 外部链接")),
+    }
+    open::that(parsed.as_str()).map_err(|error| format!("打开系统浏览器失败: {error}"))
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct EnsureLocalRuntimePayload {
@@ -666,7 +676,8 @@ fn main() {
             runtime_restart,
             runtime_start,
             runtime_stop,
-            runtime_snapshot
+            runtime_snapshot,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("启动 AgentDash 桌面端失败");

@@ -74,7 +74,7 @@ export function LocalRuntimeView({
         if (!alive || !profile) return
         applyProfile(profile)
         setProfileMessage('已加载本机 profile')
-        if (profile.auto_start && profile.server_url.trim() && profile.access_token.trim()) {
+        if (profile.auto_start && profile.server_url.trim()) {
           setSnapshot(await client.runtimeStart(profile))
           setProfileMessage('已加载本机 profile 并自动启动 runtime')
         }
@@ -354,7 +354,7 @@ export function LocalRuntimeView({
               <TextInput value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
             </Field>
 
-            <Field label="Access Token">
+            <Field label="Access Token (optional)">
               <TextInput
                 autoComplete="current-password"
                 value={accessToken}
@@ -390,7 +390,7 @@ export function LocalRuntimeView({
           {profileMessage ? <Notice className="mt-3">{profileMessage}</Notice> : null}
 
           <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim() || !accessToken.trim()}>
+            <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim()}>
               启动
             </Button>
             <Button variant="danger" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
@@ -403,7 +403,7 @@ export function LocalRuntimeView({
 
           <div className="mt-2 flex flex-wrap justify-end gap-2">
             <Button onClick={() => void handleLoadProfile()}>加载 profile</Button>
-            <Button onClick={() => void handleSaveProfile()} disabled={!serverUrl.trim() || !accessToken.trim()}>
+            <Button onClick={() => void handleSaveProfile()} disabled={!serverUrl.trim()}>
               保存 profile
             </Button>
             <Button variant="danger" onClick={() => void handleDeleteProfile()}>

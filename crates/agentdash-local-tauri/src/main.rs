@@ -71,6 +71,7 @@ impl Default for DesktopApiSnapshot {
 #[serde(rename_all = "snake_case")]
 struct RuntimeStartRequest {
     server_url: String,
+    #[serde(default)]
     access_token: String,
     profile_id: String,
     device_id: String,
@@ -83,6 +84,7 @@ struct RuntimeStartRequest {
 #[serde(rename_all = "snake_case")]
 struct LocalRuntimeProfile {
     server_url: String,
+    #[serde(default)]
     access_token: String,
     #[serde(default = "default_profile_id")]
     profile_id: String,
@@ -314,14 +316,6 @@ async fn auto_start_profile(app: AppHandle, state: DesktopState) {
     };
 
     let request = RuntimeStartRequest::from(profile);
-    if request.access_token.trim().is_empty() {
-        state
-            .runtime
-            .record_log("warn", "profile", "auto-start profile 缺少 access token")
-            .await;
-        return;
-    }
-
     state
         .runtime
         .record_log(
@@ -419,9 +413,14 @@ async fn post_local_runtime_claim(
     payload: &EnsureLocalRuntimePayload,
 ) -> anyhow::Result<EnsureLocalRuntimeResponse> {
     let endpoint = format!("{server_url}/api/local-runtime/ensure");
-    let response = reqwest::Client::new()
-        .post(&endpoint)
-        .bearer_auth(access_token.trim())
+    let client = reqwest::Client::new();
+    let mut request = client.post(&endpoint);
+    let access_token = access_token.trim();
+    if !access_token.is_empty() {
+        request = request.bearer_auth(access_token);
+    }
+
+    let response = request
         .json(payload)
         .send()
         .await

@@ -20,7 +20,7 @@ export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
 export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {
   const client = getDesktopLocalRuntimeClient();
   const token = accessToken.trim();
-  if (!client || !token) return;
+  if (!client) return;
 
   const snapshot = await client.runtimeSnapshot().catch(() => null);
   if (snapshot?.state === 'starting' || snapshot?.state === 'running') return;
@@ -41,12 +41,14 @@ async function loadOrCreateAutoStartProfile(
 ): Promise<LocalRuntimeProfile> {
   const current = await client.profileLoad().catch(() => null);
   if (current) {
+    const shouldAutoStart = current.auto_start || !current.backend_id;
     const normalized = {
       ...current,
       access_token: accessToken,
       server_url: resolveDesktopServerUrl(current.server_url),
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
       device_id: current.device_id || createDeviceId(),
+      auto_start: shouldAutoStart,
     };
     await client.profileSave(normalized);
     return normalized;

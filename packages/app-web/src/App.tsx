@@ -178,9 +178,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!currentUser) return;
-    const token = getStoredToken();
-    if (!token || !getDesktopLocalRuntimeClient()) return;
-    ensureDesktopLocalRuntimeStarted(token).catch((error: unknown) => {
+    if (!getDesktopLocalRuntimeClient()) return;
+    ensureDesktopLocalRuntimeStarted(getStoredToken() ?? "").catch((error: unknown) => {
       console.warn("desktop local runtime auto-start failed", error);
     });
   }, [currentUser]);

@@ -383,12 +383,17 @@ pub async fn ensure_local_runtime(
     device["accessible_root_count"] =
         serde_json::Value::Number(serde_json::Number::from(req.accessible_roots.len() as u64));
 
+    let legacy_machine_ids = normalize_legacy_machine_ids(
+        enrich_legacy_machine_ids(req.legacy_machine_ids, &machine_label),
+        &machine_id,
+    );
+
     let claim = LocalBackendClaim {
         owner_user_id: current_user.user_id.clone(),
         profile_id: profile_id.clone(),
         machine_id: machine_id.clone(),
         machine_label: machine_label.clone(),
-        legacy_machine_ids: normalize_legacy_machine_ids(req.legacy_machine_ids, &machine_id),
+        legacy_machine_ids,
         visibility,
         share_scope_kind,
         share_scope_id: share_scope_id.clone(),
@@ -524,6 +529,19 @@ fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<St
         .filter(|value| !value.is_empty() && value != machine_id)
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+fn enrich_legacy_machine_ids(mut values: Vec<String>, machine_label: &str) -> Vec<String> {
+    let machine_label = machine_label.trim();
+    if !machine_label.is_empty() {
+        values.push(machine_label.to_string());
+        let lower = machine_label.to_ascii_lowercase();
+        values.push(lower.clone());
+        if !lower.ends_with(".local") {
+            values.push(format!("{lower}.local"));
+        }
+    }
+    values
 }
 
 fn default_machine_label(machine_id: &str) -> String {

@@ -31,7 +31,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '..');
-const devRuntimeProfilePath = path.join(root, '.agentdash', 'dev-joint-runtime-profile.json');
+const devMachineIdentityPath = path.join(root, '.agentdash', 'dev-machine-identity.json');
+const legacyDevRuntimeProfilePath = path.join(root, '.agentdash', 'dev-joint-runtime-profile.json');
 
 const config = parseArgs(process.argv.slice(2));
 
@@ -659,7 +660,7 @@ async function ensureDevLocalRuntimeClaim(port, options) {
   const backend = await requestJson(port, 'POST', '/api/local-runtime/ensure', {
     machine_id: profile.machine_id,
     machine_label: profile.machine_label,
-    legacy_machine_ids: profile.legacy_machine_ids,
+    legacy_machine_ids: devMachineLegacyIds(profile, options),
     profile_id: formatDevRuntimeProfileId(options),
     scope: { kind: 'user' },
     capability_slot: 'default',
@@ -706,7 +707,7 @@ async function ensureDevLocalRuntimeClaim(port, options) {
 }
 
 function loadOrCreateDevRuntimeProfile() {
-  const existing = readJsonFile(devRuntimeProfilePath);
+  const existing = readJsonFile(devMachineIdentityPath) || readJsonFile(legacyDevRuntimeProfilePath);
   const machineId = normalizeOptionalValue(existing?.machine_id) || randomUUID();
   const machineLabel = normalizeOptionalValue(existing?.machine_label)
     || normalizeOptionalValue(os.hostname())
@@ -741,12 +742,35 @@ function readJsonFile(filePath) {
 }
 
 function saveDevRuntimeProfile(profile) {
-  fs.mkdirSync(path.dirname(devRuntimeProfilePath), { recursive: true });
+  fs.mkdirSync(path.dirname(devMachineIdentityPath), { recursive: true });
   fs.writeFileSync(
-    devRuntimeProfilePath,
+    devMachineIdentityPath,
     `${JSON.stringify(profile, null, 2)}\n`,
     'utf8'
   );
+}
+
+function devMachineLegacyIds(profile, options) {
+  return [
+    ...profile.legacy_machine_ids,
+    ...machineLabelAliases(profile.machine_label),
+    ...machineLabelAliases(os.hostname()),
+    options.backendName,
+    'dev-local'
+  ].filter((value) => value !== profile.machine_id);
+}
+
+function machineLabelAliases(value) {
+  const label = normalizeOptionalValue(value);
+  if (!label) {
+    return [];
+  }
+  const lower = label.toLowerCase();
+  const aliases = [label, lower];
+  if (!lower.endsWith('.local')) {
+    aliases.push(`${lower}.local`);
+  }
+  return [...new Set(aliases)];
 }
 
 function splitAccessibleRoots(value) {

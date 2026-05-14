@@ -86,7 +86,9 @@ export interface LocalRuntimeClient {
 - `backend_id`、`relay_ws_url` 和 relay token 必须来自 server ensure/claim 响应；Tauri/renderer 不允许自行拼接或发明 server 侧 runtime 身份。
 - `access_token` 可以为空。Personal auth / 本地开发模式下，server 仍可通过自身认证 provider 解析当前用户；Tauri 只有在 token 非空时才发送 Bearer header。
 - server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capability_slot` 定位 local backend。个人本机是 `scope.kind=user`、`visibility=private`；未来共享本机使用同一模型扩展 `project/system` scope。
-- `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议。开发脚本只允许在 `.agentdash/dev-joint-runtime-profile.json` 保存本机 `machine_id` 与 `machine_label`，不得直接调用 `/api/backends` 创建 local backend，也不得提供 `--backend-id` 让调用方绕过 server 生成规则。
+- server ensure API 必须把 `machine_label` 及其大小写/`.local` 变体纳入 legacy identity 候选；repository 命中 legacy backend 时应合并重复 local backend row，避免同一台机器在 Web/Tauri 登录后出现多个 personal runtime。
+- `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议。开发脚本只允许在 `.agentdash/dev-machine-identity.json` 保存本机 `machine_id` 与 `machine_label`，不得直接调用 `/api/backends` 创建 local backend，也不得提供 `--backend-id` 让调用方绕过 server 生成规则。
+- 开发期 `scripts/dev-desktop.js` 必须通过 `AGENTDASH_DESKTOP_MACHINE_IDENTITY_PATH` 让 Tauri 壳使用同一个 `.agentdash/dev-machine-identity.json`；正式 Tauri 运行不设置该变量时继续使用 app config dir 下的 `desktop-machine-identity.json`。
 - `device_id` 仅作为旧 profile/backend 的 legacy merge 输入存在；新前端/Tauri 请求不得生成或提交新的 `device_id`。
 - Local Runtime UI 不直接 import Tauri API；它只依赖 `@agentdash/core` 的 `LocalRuntimeClient` port。`app-tauri` 负责把 `invoke()` 适配成 client。
 - `packages/app-web` 只导出 `App`，`packages/app-tauri` 复用该入口作为 Dashboard 页，不能复制 Web Dashboard 组件树。
@@ -119,6 +121,7 @@ export interface LocalRuntimeClient {
 - Bad: Dashboard 直接读取 `LocalRuntimeManager` 或通过 Tauri command 绕过 `agentdash-api` 的 Repository/API 契约。
 - Bad: 用 hostname、随机 UUID 或当前登录用户直接拼 `backend_id`。server 侧 backend 身份必须由 ensure API 根据稳定 machine/scope 决定。
 - Bad: 开发脚本为了省事直接 POST `/api/backends`，或把 `local-dev-1` 一类固定 `backend_id` 写进启动参数。
+- Bad: `pnpm dev` 和 `pnpm dev:desktop` 各自生成开发机 `machine_id`，导致同一用户看到多个“本机” personal backend。
 - Bad: 依赖本机全局 `cargo tauri`；仓库脚本应使用 `pnpm exec tauri`。
 
 ### 6. Tests Required

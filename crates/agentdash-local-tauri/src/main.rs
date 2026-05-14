@@ -17,6 +17,7 @@ const DESKTOP_MACHINE_FILE: &str = "desktop-machine-identity.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
+const DESKTOP_MACHINE_IDENTITY_PATH_ENV: &str = "AGENTDASH_DESKTOP_MACHINE_IDENTITY_PATH";
 const DEFAULT_PROFILE_ID: &str = "default";
 
 #[derive(Clone)]
@@ -622,6 +623,20 @@ fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<St
         .collect()
 }
 
+fn machine_label_aliases(value: &str) -> Vec<String> {
+    let label = value.trim();
+    if label.is_empty() {
+        return Vec::new();
+    }
+
+    let lower = label.to_ascii_lowercase();
+    let mut aliases = vec![label.to_string(), lower.clone()];
+    if !lower.ends_with(".local") {
+        aliases.push(format!("{lower}.local"));
+    }
+    aliases
+}
+
 fn normalize_optional_text(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -659,11 +674,11 @@ fn load_or_create_machine_identity(app: &AppHandle) -> Result<DesktopMachineIden
         return Ok(normalized);
     }
 
-    let identity = DesktopMachineIdentity {
+    let identity = normalize_machine_identity(DesktopMachineIdentity {
         machine_id: uuid::Uuid::new_v4().to_string(),
         machine_label: local_hostname().unwrap_or_else(|| "AgentDash Desktop".to_string()),
         legacy_machine_ids: Vec::new(),
-    };
+    });
     save_machine_identity(&path, &identity)?;
     Ok(identity)
 }
@@ -681,7 +696,14 @@ fn normalize_machine_identity(identity: DesktopMachineIdentity) -> DesktopMachin
     } else {
         machine_label.to_string()
     };
-    let legacy_machine_ids = normalize_legacy_machine_ids(identity.legacy_machine_ids, &machine_id);
+    let legacy_machine_ids = normalize_legacy_machine_ids(
+        identity
+            .legacy_machine_ids
+            .into_iter()
+            .chain(machine_label_aliases(&machine_label))
+            .collect(),
+        &machine_id,
+    );
     DesktopMachineIdentity {
         machine_id,
         machine_label,
@@ -887,6 +909,13 @@ fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn machine_identity_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(DESKTOP_MACHINE_IDENTITY_PATH_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(DESKTOP_MACHINE_FILE))

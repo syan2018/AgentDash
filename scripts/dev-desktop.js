@@ -31,6 +31,7 @@ const DESKTOP_FRONTEND_PORT = 5381;
 const DESKTOP_PREVIEW_PORT = 5382;
 const DESKTOP_API_PORT = 3001;
 const DESKTOP_API_ORIGIN = `http://127.0.0.1:${DESKTOP_API_PORT}`;
+const DEV_MACHINE_IDENTITY_PATH = path.join(root, '.agentdash', 'dev-machine-identity.json');
 
 const config = parseArgs(process.argv.slice(2));
 const supervisor = createProcessSupervisor({
@@ -234,6 +235,7 @@ function startDesktopShell() {
     ...process.env,
     AGENTDASH_DESKTOP_API_MODE: 'external',
     AGENTDASH_DESKTOP_API_ORIGIN: DESKTOP_API_ORIGIN,
+    AGENTDASH_DESKTOP_MACHINE_IDENTITY_PATH: DEV_MACHINE_IDENTITY_PATH,
   };
   startDebugBinary(supervisor, root, 'agentdash-local-tauri', { env });
 }

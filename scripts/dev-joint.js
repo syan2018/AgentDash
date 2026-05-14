@@ -656,7 +656,7 @@ async function ensureDevLocalRuntimeClaim(port, options) {
   const backend = await requestJson(port, 'POST', '/api/local-runtime/ensure', {
     machine_id: profile.machine_id,
     machine_label: profile.machine_label,
-    legacy_machine_ids: devMachineLegacyIds(profile, options),
+    legacy_machine_ids: devMachineLegacyIds(profile),
     profile_id: formatDevRuntimeProfileId(options),
     scope: { kind: 'user' },
     capability_slot: 'default',
@@ -731,26 +731,8 @@ function localBinaryPath() {
   return path.join(root, 'target', 'debug', isWindows ? 'agentdash-local.exe' : 'agentdash-local');
 }
 
-function devMachineLegacyIds(profile, options) {
-  return [
-    ...profile.legacy_machine_ids,
-    ...machineLabelAliases(profile.machine_label),
-    options.backendName,
-    'dev-local'
-  ].filter((value) => value !== profile.machine_id);
-}
-
-function machineLabelAliases(value) {
-  const label = normalizeOptionalValue(value);
-  if (!label) {
-    return [];
-  }
-  const lower = label.toLowerCase();
-  const aliases = [label, lower];
-  if (!lower.endsWith('.local')) {
-    aliases.push(`${lower}.local`);
-  }
-  return [...new Set(aliases)];
+function devMachineLegacyIds(profile) {
+  return profile.legacy_machine_ids.filter((value) => value !== profile.machine_id);
 }
 
 function splitAccessibleRoots(value) {

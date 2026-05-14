@@ -511,11 +511,16 @@ async fn post_local_runtime_claim(
 fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
     let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
     let mut legacy_machine_ids = profile.legacy_machine_ids;
+    if let Some(profile_machine_id) = normalize_optional_text(profile.machine_id) {
+        if profile_machine_id != identity.machine_id {
+            legacy_machine_ids.push(profile_machine_id);
+        }
+    }
     if !profile.legacy_device_id.trim().is_empty() {
         legacy_machine_ids.push(profile.legacy_device_id);
     }
     legacy_machine_ids.extend(identity.legacy_machine_ids.clone());
-    let machine_id = normalize_machine_id(profile.machine_id, &identity.machine_id);
+    let machine_id = identity.machine_id;
     let machine_label = profile
         .machine_label
         .and_then(normalize_optional_text)
@@ -541,19 +546,19 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
 
 fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartRequest, String> {
     let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
-    let machine_id = normalize_machine_id(request.machine_id, &identity.machine_id);
+    let mut legacy_machine_ids = request.legacy_machine_ids;
+    if let Some(request_machine_id) = normalize_optional_text(request.machine_id) {
+        if request_machine_id != identity.machine_id {
+            legacy_machine_ids.push(request_machine_id);
+        }
+    }
+    legacy_machine_ids.extend(identity.legacy_machine_ids);
+    let machine_id = identity.machine_id;
     let machine_label = request
         .machine_label
         .and_then(normalize_optional_text)
         .unwrap_or(identity.machine_label);
-    let legacy_machine_ids = normalize_legacy_machine_ids(
-        request
-            .legacy_machine_ids
-            .into_iter()
-            .chain(identity.legacy_machine_ids)
-            .collect(),
-        &machine_id,
-    );
+    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
 
     Ok(RuntimeStartRequest {
         server_url: normalize_server_origin(&request.server_url),
@@ -581,15 +586,6 @@ fn normalize_profile_id(value: String) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         DEFAULT_PROFILE_ID.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn normalize_machine_id(value: String, fallback: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        fallback.to_string()
     } else {
         trimmed.to_string()
     }

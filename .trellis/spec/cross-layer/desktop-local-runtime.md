@@ -81,12 +81,12 @@ export interface LocalRuntimeClient {
 - Desktop API 默认使用 `ApiServerOptions::desktop_localhost(3001)`，绑定 `127.0.0.1:3001`，`service_name = "agentdash_desktop_api"`。
 - `desktop_api_snapshot` 响应使用 snake_case：`state`、`origin`、`message`、`database_url`。`state` 只能是 `starting | running | error | stopped`。
 - DashboardHost 必须优先读取 `desktop_api_snapshot().origin`，再请求 `${origin}/api/health`，确认 ready 后才渲染 Web Dashboard。
-- `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`，字段使用 snake_case，包含 `server_url`、`access_token`、`profile_id`、`machine_id`、`machine_label`、`legacy_machine_ids`、`backend_id`、`relay_ws_url`、`name`、`accessible_roots`、`executor_enabled`、`auto_start`。
+- `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`，字段使用 snake_case，包含 `server_url`、`access_token`、`profile_id`、`machine_id`、`machine_label`、`legacy_machine_ids`、`backend_id`、`relay_ws_url`、`name`、`accessible_roots`、`executor_enabled`、`auto_start`。其中 `machine_id` 只作为保存后的展示/诊断字段；每次 profile load/save/start 都必须用 `agentdash-local` 机器身份覆盖 canonical machine id，旧 profile/request 里的不同 machine id 只能进入显式 legacy 列表。
 - 机器级身份由 `agentdash-local` runtime library 负责识别、生成和持久化；Tauri / dev scripts 只能调用 local library 或 `agentdash-local machine-identity` 获取结果，不得维护第二套 machine identity 文件。
 - `backend_id`、`relay_ws_url` 和 relay token 必须来自 server ensure/claim 响应；Tauri/renderer 不允许自行拼接或发明 server 侧 runtime 身份。
 - `access_token` 可以为空。Personal auth / 本地开发模式下，server 仍可通过自身认证 provider 解析当前用户；Tauri 只有在 token 非空时才发送 Bearer header。
 - server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capability_slot` 定位 local backend。个人本机是 `scope.kind=user`、`visibility=private`；未来共享本机使用同一模型扩展 `project/system` scope。
-- server ensure API 必须把 `machine_label` 及其大小写/`.local` 变体纳入 legacy identity 候选；repository 命中 legacy backend 时应合并重复 local backend row，避免同一台机器在 Web/Tauri 登录后出现多个 personal runtime。
+- server ensure API 只能使用稳定 `machine_id` 与显式提交的 `legacy_machine_ids` 做身份匹配；`machine_label` / hostname 只用于展示与默认命名，不得自动成为 legacy identity 候选，避免两台同名机器被合并。repository 命中显式 legacy backend 时应合并重复 local backend row，并同步视图与 workspace binding 引用。
 - `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议。开发脚本必须通过 `agentdash-local machine-identity` 读取 local runtime 自己识别到的 `machine_id` 与 `machine_label`，不得直接调用 `/api/backends` 创建 local backend，也不得提供 `--backend-id` 让调用方绕过 server 生成规则。
 - 开发期 `scripts/dev-desktop.js` 不得注入 machine identity 路径；Tauri 壳应复用 `agentdash-local` crate 的机器身份逻辑，确保 Web 联合调试和桌面调试看到同一台 local runtime。
 - `device_id` 仅作为旧 profile/backend 的 legacy merge 输入存在；新前端/Tauri 请求不得生成或提交新的 `device_id`。

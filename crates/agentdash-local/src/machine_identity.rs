@@ -59,14 +59,8 @@ fn normalize_machine_identity(identity: LocalMachineIdentity) -> LocalMachineIde
     } else {
         machine_label.to_string()
     };
-    let legacy_machine_ids = normalize_legacy_machine_ids(
-        identity
-            .legacy_machine_ids
-            .into_iter()
-            .chain(machine_label_aliases(&machine_label))
-            .collect(),
-        &machine_id,
-    );
+    let legacy_machine_ids =
+        normalize_legacy_machine_ids(identity.legacy_machine_ids, &machine_id, &machine_label);
 
     LocalMachineIdentity {
         machine_id,
@@ -125,29 +119,34 @@ fn local_hostname() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn machine_label_aliases(value: &str) -> Vec<String> {
+fn machine_label_alias_keys(value: &str) -> std::collections::HashSet<String> {
     let label = value.trim();
     if label.is_empty() {
-        return Vec::new();
+        return std::collections::HashSet::new();
     }
 
     let lower = label.to_ascii_lowercase();
-    let mut aliases = vec![lower.clone()];
-    if label != lower {
-        aliases.push(label.to_string());
-    }
+    let mut aliases = std::collections::HashSet::from([lower.clone()]);
     if !lower.ends_with(".local") {
-        aliases.push(format!("{lower}.local"));
+        aliases.insert(format!("{lower}.local"));
     }
     aliases
 }
 
-fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
+fn normalize_legacy_machine_ids(
+    values: Vec<String>,
+    machine_id: &str,
+    machine_label: &str,
+) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
+    let machine_label_aliases = machine_label_alias_keys(machine_label);
     values
         .into_iter()
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && value != machine_id)
+        .filter(|value| {
+            let key = value.to_ascii_lowercase();
+            !value.is_empty() && value != machine_id && !machine_label_aliases.contains(&key)
+        })
         .filter(|value| seen.insert(value.to_ascii_lowercase()))
         .collect()
 }
@@ -157,30 +156,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_machine_identity_adds_hostname_aliases() {
+    fn normalize_machine_identity_preserves_explicit_legacy_ids() {
         let identity = normalize_machine_identity(LocalMachineIdentity {
             machine_id: "machine-a".to_string(),
             machine_label: "LIAOYIHAO-P".to_string(),
-            legacy_machine_ids: vec!["dev-local".to_string()],
+            legacy_machine_ids: vec![
+                "dev-local".to_string(),
+                "DEV-LOCAL".to_string(),
+                "liaoyihao-p".to_string(),
+                "liaoyihao-p.local".to_string(),
+            ],
         });
 
         assert_eq!(identity.machine_id, "machine-a");
         assert_eq!(identity.machine_label, "LIAOYIHAO-P");
-        assert!(
-            identity
-                .legacy_machine_ids
-                .contains(&"dev-local".to_string())
-        );
-        assert!(
-            identity
-                .legacy_machine_ids
-                .contains(&"liaoyihao-p".to_string())
-        );
-        assert!(
-            identity
-                .legacy_machine_ids
-                .contains(&"liaoyihao-p.local".to_string())
-        );
+        assert_eq!(identity.legacy_machine_ids, vec!["dev-local".to_string()]);
     }
 
     #[test]

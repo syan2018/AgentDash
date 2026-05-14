@@ -41,7 +41,6 @@ async function loadOrCreateAutoStartProfile(
 ): Promise<LocalRuntimeProfile> {
   const current = await client.profileLoad().catch(() => null);
   if (current) {
-    const shouldAutoStart = current.auto_start || !current.backend_id;
     const normalized = {
       ...current,
       access_token: accessToken,
@@ -50,7 +49,7 @@ async function loadOrCreateAutoStartProfile(
       machine_id: current.machine_id || '',
       machine_label: current.machine_label ?? null,
       legacy_machine_ids: current.legacy_machine_ids ?? [],
-      auto_start: shouldAutoStart,
+      auto_start: current.auto_start,
     };
     return client.profileSave(normalized);
   }

@@ -235,19 +235,13 @@ impl BackendRepository for PostgresBackendRepository {
                     )
                )
                AND capability_slot = $4
-               AND (
-                    b.machine_id = $1
-                    OR lower(COALESCE(b.machine_id, '')) IN (SELECT value FROM claim_ids)
-                    OR lower(COALESCE(b.device_id, '')) IN (SELECT value FROM claim_ids)
-                    OR lower(COALESCE(b.machine_label, '')) IN (SELECT value FROM claim_ids)
-                    OR (
-                        b.owner_user_id IS NULL
-                        AND COALESCE(b.share_scope_id, '') = ''
-                        AND lower(COALESCE(b.name, '')) IN (SELECT value FROM claim_ids)
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                          FROM jsonb_array_elements_text(
+                AND (
+                     b.machine_id = $1
+                     OR lower(COALESCE(b.machine_id, '')) IN (SELECT value FROM claim_ids)
+                     OR lower(COALESCE(b.device_id, '')) IN (SELECT value FROM claim_ids)
+                     OR EXISTS (
+                         SELECT 1
+                           FROM jsonb_array_elements_text(
                               COALESCE(b.legacy_machine_ids, '[]'::jsonb)
                           ) AS legacy(value)
                          WHERE lower(legacy.value) IN (SELECT value FROM claim_ids)
@@ -313,11 +307,10 @@ impl BackendRepository for PostgresBackendRepository {
                                          FROM jsonb_array_elements_text(
                                              COALESCE(backends.legacy_machine_ids, '[]'::jsonb)
                                          ) AS ids(value)
-                                       UNION ALL SELECT backends.machine_id
-                                       UNION ALL SELECT backends.device_id
-                                       UNION ALL SELECT backends.machine_label
-                                       UNION ALL SELECT value
-                                         FROM jsonb_array_elements_text($10) AS ids(value)
+                                        UNION ALL SELECT backends.machine_id
+                                        UNION ALL SELECT backends.device_id
+                                        UNION ALL SELECT value
+                                          FROM jsonb_array_elements_text($10) AS ids(value)
                                    ) raw(value)
                                   WHERE value IS NOT NULL
                                     AND btrim(value) <> ''
@@ -581,7 +574,6 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
 fn local_claim_identity_candidates(claim: &LocalBackendClaim) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     std::iter::once(claim.machine_id.as_str())
-        .chain(std::iter::once(claim.machine_label.as_str()))
         .chain(claim.legacy_machine_ids.iter().map(String::as_str))
         .flat_map(identity_aliases)
         .filter(|value| seen.insert(value.to_ascii_lowercase()))
@@ -606,9 +598,13 @@ async fn merge_duplicate_local_backend_rows(
     canonical_id: &str,
     duplicate_ids: &[String],
 ) -> Result<(), DomainError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
     let workspace_bindings_table: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('workspace_bindings')::text")
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
@@ -616,14 +612,51 @@ async fn merge_duplicate_local_backend_rows(
         sqlx::query("UPDATE workspace_bindings SET backend_id = $1 WHERE backend_id = ANY($2)")
             .bind(canonical_id)
             .bind(duplicate_ids)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
     }
 
+    sqlx::query(
+        r#"
+        UPDATE views
+           SET backend_ids = (
+               SELECT COALESCE(jsonb_agg(id ORDER BY first_seen)::text, '[]')
+                 FROM (
+                     SELECT id, MIN(ord) AS first_seen
+                       FROM (
+                           SELECT CASE
+                                      WHEN value = ANY($2) THEN $1
+                                      ELSE value
+                                  END AS id,
+                                  ord
+                             FROM jsonb_array_elements_text(backend_ids::jsonb)
+                                  WITH ORDINALITY AS items(value, ord)
+                       ) replaced
+                      WHERE btrim(id) <> ''
+                      GROUP BY id
+                 ) deduped
+           )
+         WHERE EXISTS (
+             SELECT 1
+               FROM jsonb_array_elements_text(backend_ids::jsonb) AS items(value)
+              WHERE value = ANY($2)
+         )
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(duplicate_ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
     sqlx::query("DELETE FROM backends WHERE id = ANY($1)")
         .bind(duplicate_ids)
-        .execute(pool)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    tx.commit()
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
@@ -827,15 +860,35 @@ mod tests {
             .await
             .expect("应能插入旧 dev backend");
 
-        let orphan_dev = backend("local-dev-1", Some("orphan-token"));
+        let mut orphan_dev = backend("local-dev-1", Some("orphan-token"));
+        orphan_dev.device_id = Some("legacy-orphan-device".to_string());
         repo.add_backend(&orphan_dev)
             .await
             .expect("应能插入旧手工 dev backend");
 
+        repo.save_view(&ViewConfig {
+            id: "view-local".to_string(),
+            name: "本机视图".to_string(),
+            backend_ids: vec![
+                "dev-old".to_string(),
+                "remote-a".to_string(),
+                "local-dev-1".to_string(),
+                "dev-old".to_string(),
+            ],
+            filters: serde_json::json!({}),
+            sort_by: None,
+        })
+        .await
+        .expect("应能保存引用旧 backend 的视图");
+
         let mut claim = local_claim();
         claim.machine_id = "shared-dev-machine".to_string();
         claim.machine_label = "liaoyihao-p".to_string();
-        claim.legacy_machine_ids = vec!["dev-local".to_string()];
+        claim.legacy_machine_ids = vec![
+            "old-desktop-machine".to_string(),
+            "old-dev-machine".to_string(),
+            "legacy-orphan-device".to_string(),
+        ];
         claim.backend_id = "local-new".to_string();
         claim.auth_token = "new-token".to_string();
 
@@ -861,6 +914,48 @@ mod tests {
         assert!(
             repo.get_backend("local-dev-1").await.is_err(),
             "旧手工 backend 应被合并清理"
+        );
+        let views = repo.list_views().await.expect("应能读取视图");
+        let view = views
+            .into_iter()
+            .find(|item| item.id == "view-local")
+            .expect("视图应仍然存在");
+        assert_eq!(
+            view.backend_ids,
+            vec!["desktop-old".to_string(), "remote-a".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_does_not_merge_by_machine_label_only() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut same_label = backend("same-label", Some("label-token"));
+        same_label.owner_user_id = Some("user-a".to_string());
+        same_label.profile_id = Some("desktop-local".to_string());
+        same_label.machine_id = Some("other-machine".to_string());
+        same_label.machine_label = Some("LIAOYIHAO-P".to_string());
+        same_label.share_scope_id = Some("user-a".to_string());
+        repo.add_backend(&same_label)
+            .await
+            .expect("应能插入同名机器 backend");
+
+        let mut claim = local_claim();
+        claim.machine_id = "current-machine".to_string();
+        claim.machine_label = "LIAOYIHAO-P".to_string();
+        claim.legacy_machine_ids = Vec::new();
+        claim.backend_id = "local-current".to_string();
+
+        let ensured = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("同名但不同 machine_id 应创建新 backend");
+
+        assert_eq!(ensured.id, "local-current");
+        assert!(
+            repo.get_backend("same-label").await.is_ok(),
+            "同名机器不应仅因展示标签被合并"
         );
     }
 }

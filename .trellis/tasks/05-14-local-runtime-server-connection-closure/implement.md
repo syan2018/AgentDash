@@ -210,8 +210,9 @@
 - 为 project/system shared backend 预留 `scope_kind=project/system`，并在 API handler 层做权限校验。
 - `backend_id` 从 `hash(owner_user_id, profile_id, device_id)` 迁移为 `hash(machine_id, scope_kind, scope_id, capability_slot)`。
 - 设计 legacy merge：
-  - 接收旧 hostname、`.local`、旧 per-profile device_id。
-  - 命中旧 backend row 时迁移 workspace bindings / runtime references，再记录 legacy id 并删除旧 row。
+  - 接收显式 legacy id，例如旧 per-profile device_id 或旧 profile 中保存的 machine_id。
+  - 不从当前 hostname / machine_label 自动推导 legacy id，避免同名机器误合并。
+  - 命中旧 backend row 时迁移 workspace bindings、views backend_ids / runtime references，再记录 legacy id 并删除旧 row。
 - Settings LocalRuntime 改成按 machine 聚合：
   - 本机设备标签与 machine id。
   - Personal scope 状态。
@@ -224,7 +225,7 @@
 - 同一台机器切换 server target 不污染另一个 server profile。
 - 同一台机器换用户后不会静默复用旧用户 token；personal scope 分离。
 - 同一 machine 可创建 personal 和 shared 两个 backend slot。
-- legacy hostname/device_id 行能被合并，关联 workspace bindings 不丢失。
+- 显式 legacy id 对应的旧 backend 行能被合并，关联 workspace bindings 与视图 backend_ids 不丢失。
 
 提交建议：
 

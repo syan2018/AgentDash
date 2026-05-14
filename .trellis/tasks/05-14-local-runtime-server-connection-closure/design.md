@@ -87,7 +87,7 @@ Content-Type: application/json
 核心原则：
 
 - `machine_id` 表示本地安装/物理机器身份，由 Desktop 本地生成并长期保存。它不应包含用户 ID，也不应按 server profile 重新生成。
-- `machine_label` / hostname 只用于展示和 legacy merge，不作为唯一身份。
+- `machine_label` / hostname 只用于展示、默认命名和用户可读诊断，不自动参与身份匹配。只有由旧 profile/device 明确提交到 `legacy_machine_ids` 的值才可用于 legacy merge。
 - `owner_user_id` 表示 personal backend 的拥有者或 shared backend 的创建/管理者，不是机器身份的一部分。
 - `profile_id` 表示 Desktop 连接的目标 server/profile，不是物理机器身份。
 - 一个 machine 可以有多个 backend slot：个人 slot、项目共享 slot、系统共享 slot。
@@ -136,7 +136,7 @@ Content-Type: application/json
 - 存在则更新 name/device/endpoint/enabled/last_claimed_at；auth_token 默认复用，除非请求显式 rotate。
 - 返回 relay websocket URL。对于 embedded desktop API，URL 来自当前 server origin 派生；对于远端 server，也是同一 server 的 `/ws/backend`。
 - 不直接写 `runtime_health` 为 online。online 仍由 WS register 成功后写入，避免 UI 误报。
-- 接收 `legacy_machine_ids` 后，server 可把旧 hostname/device_id 行合并到当前 machine row。合并必须重定向 workspace bindings / task runtime references 后再删除旧 row，避免历史关系丢失。
+- 接收 `legacy_machine_ids` 后，server 可把显式旧身份候选对应的 backend row 合并到当前 machine row。合并必须重定向 workspace bindings、views backend_ids 等引用后再删除旧 row，避免历史关系丢失。
 
 ### relay 注册约束
 
@@ -248,14 +248,14 @@ Dashboard 不做 desktop 专属复制。当前 `DashboardHost` 中等待 embedde
 可借鉴：
 
 - 桌面进程拥有独立 profile，profile 按目标 server host 派生，避免污染用户手工 CLI 配置。
-- 机器身份使用本地持久 UUID，而不是 hostname。hostname/device name 只做展示标签和 legacy merge 输入。
+- 机器身份使用本地持久 UUID，而不是 hostname。hostname/device name 只做展示标签；如果确有旧身份要合并，必须由本机端作为显式 legacy id 提交。
 - 个人 runtime 是机器上的 private binding，不等同于机器本身。shared runtime 用同一套 runtime row + visibility/scope 机制表达。
 - 桌面主进程负责 daemon/local runtime 生命周期，renderer 只通过 IPC 操作。
 - 启动时先同步 server URL/token，再启动 daemon。
 - 设置页展示 auto-start、auto-stop、diagnostics、logs。
 - UI 通过本地 IPC 状态加速反馈，但 server runtime row 仍是权威。
 - runtime deleted/gone 时，本机端能移除 stale ID 并重新注册。
-- server 注册时带 legacy IDs；server 负责合并旧身份对应的 runtime row，避免 hostname `.local`、大小写、profile 切换造成重复机器。
+- server 注册时带显式 legacy IDs；server 负责合并旧身份对应的 runtime row，但不能从当前 hostname / `.local` / 大小写变体自动推导身份，避免两台同名机器被误合并。
 
 不照搬：
 

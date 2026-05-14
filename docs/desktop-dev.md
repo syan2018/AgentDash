@@ -34,10 +34,7 @@ pnpm dev:desktop
 6. 等待 `http://127.0.0.1:5381` 就绪。
 7. 启动 `agentdash-local-tauri` 桌面壳，并通过 `AGENTDASH_DESKTOP_API_MODE=external` 复用外部 `agentdash-server`。
 
-窗口打开后，侧边栏包含两个入口：
-
-- `Runtime`：本机 runtime 管理页，通过 Tauri command 访问 `agentdash-local` library。
-- `Dashboard`：复用 Web Dashboard，开发期通过独立 `agentdash-server` 访问数据。
+窗口打开后会直接进入复用 Web Dashboard 的主应用体验。本机 runtime 管理能力不再作为桌面端顶层入口存在，而是出现在 Web 设置页的 desktop-only `本机运行时` scope 中，通过 Tauri command 访问 `agentdash-local` library。
 
 按 `Ctrl+C` 会停止独立后端、桌面前端和 Tauri 壳子进程。
 

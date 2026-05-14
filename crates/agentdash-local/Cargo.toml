@@ -8,6 +8,11 @@ license.workspace = true
 [[bin]]
 name = "agentdash-local"
 path = "src/main.rs"
+required-features = ["standalone"]
+
+[features]
+default = ["standalone"]
+standalone = []
 
 [dependencies]
 agentdash-relay.workspace = true

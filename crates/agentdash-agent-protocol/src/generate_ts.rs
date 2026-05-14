@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 fn main() {
     let out: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../frontend/src/generated/backbone-protocol.ts");
+        .join("../../packages/app-web/src/generated/backbone-protocol.ts");
 
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
 

@@ -40,10 +40,10 @@ use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
     PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
-    PostgresRoutineRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
-    PostgresSettingsRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
-    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
-    PostgresWorkspaceRepository,
+    PostgresRoutineRepository, PostgresRuntimeHealthRepository, PostgresSessionBindingRepository,
+    PostgresSessionRepository, PostgresSettingsRepository, PostgresSkillAssetRepository,
+    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
+    PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -137,6 +137,11 @@ impl AppState {
         let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
 
         let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
+        let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
+        runtime_health_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("runtime_health 表初始化失败: {e}"))?;
 
         let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
@@ -194,6 +199,7 @@ impl AppState {
             state_change_repo: state_change_repo.clone(),
             session_binding_repo: session_binding_repo.clone(),
             backend_repo: backend_repo.clone(),
+            runtime_health_repo: runtime_health_repo.clone(),
             auth_session_repo: auth_session_repo.clone(),
             user_directory_repo: user_directory_repo.clone(),
             settings_repo: settings_repo.clone(),

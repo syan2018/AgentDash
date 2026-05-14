@@ -9,7 +9,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::backend::{BackendConfig, BackendRepository};
+use agentdash_domain::backend::{BackendConfig, BackendRepository, RuntimeHealthOnlineUpdate};
 use agentdash_relay::*;
 
 use crate::app_state::AppState;
@@ -136,6 +136,33 @@ async fn handle_backend_connection(
         return;
     }
 
+    let connected_at = chrono::Utc::now();
+    if let Err(error) = state
+        .repos
+        .runtime_health_repo
+        .upsert_online(&RuntimeHealthOnlineUpdate {
+            backend_id: bid.clone(),
+            profile_id: authorized_backend.owner_user_id.clone(),
+            name: payload.name.clone(),
+            version: payload.version.clone(),
+            capabilities: serde_json::to_value(&payload.capabilities).unwrap_or_default(),
+            accessible_roots: payload.accessible_roots.clone(),
+            device: serde_json::json!({}),
+            connected_at,
+        })
+        .await
+    {
+        tracing::error!(backend_id = %bid, error = %error, "写入 runtime health 在线状态失败");
+        state.services.backend_registry.unregister(&bid).await;
+        let _ = send_relay_error(
+            &mut ws_tx,
+            reg_id,
+            RelayError::runtime_error("写入 runtime health 失败"),
+        )
+        .await;
+        return;
+    }
+
     // 发送 RegisterAck
     let ack = RelayMessage::RegisterAck {
         id: reg_id,
@@ -201,6 +228,18 @@ async fn handle_backend_connection(
     }
 
     state.services.backend_registry.unregister(&bid).await;
+    if let Err(error) = state
+        .repos
+        .runtime_health_repo
+        .mark_offline(
+            &bid,
+            chrono::Utc::now(),
+            Some("relay websocket disconnected".to_string()),
+        )
+        .await
+    {
+        tracing::warn!(backend_id = %bid, error = %error, "写入 runtime health 离线状态失败");
+    }
 
     // 标记该后端名下的所有终端为 Lost 并推送 platform event
     let lost_terminal_ids = state
@@ -246,6 +285,14 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
     match &msg {
         RelayMessage::Pong { .. } => {
             tracing::debug!(backend_id = %backend_id, "收到 pong");
+            if let Err(error) = state
+                .repos
+                .runtime_health_repo
+                .mark_seen(backend_id, chrono::Utc::now())
+                .await
+            {
+                tracing::warn!(backend_id = %backend_id, error = %error, "更新 runtime health last_seen 失败");
+            }
         }
         // 响应消息 → 分发到等待方
         response if is_pending_response_message(response) => {
@@ -327,6 +374,17 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .backend_registry
                 .update_capabilities(backend_id, payload.clone())
                 .await;
+            if let Err(error) = state
+                .repos
+                .runtime_health_repo
+                .update_capabilities(
+                    backend_id,
+                    serde_json::to_value(payload).unwrap_or_default(),
+                )
+                .await
+            {
+                tracing::warn!(backend_id = %backend_id, error = %error, "更新 runtime health capabilities 失败");
+            }
         }
         RelayMessage::EventToolShellOutput { payload, .. } => {
             if !state.services.shell_output_registry.route(payload) {

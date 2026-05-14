@@ -1,26 +1,9 @@
-mod handlers;
-mod local_backend_config;
-mod materialization;
-mod mcp_client_manager;
-mod terminal_manager;
-mod tool_executor;
-mod workspace_prepare;
-mod workspace_probe;
-mod ws_client;
-
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use agentdash_application::session::SessionHub;
-use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
-use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
-use agentdash_infrastructure::SqliteSessionRepository;
-use agentdash_spi::AgentConnector;
-use sqlx::sqlite::SqliteConnectOptions;
+use agentdash_local::{LocalRuntimeConfig, run_standalone};
 
 #[derive(Parser, Debug)]
 #[command(name = "agentdash-local", about = "AgentDash 本机后端")]
@@ -64,99 +47,14 @@ async fn main() -> anyhow::Result<()> {
         .backend_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let accessible_roots: Vec<PathBuf> = cli
-        .accessible_roots
-        .iter()
-        .map(|p| {
-            std::fs::canonicalize(p).unwrap_or_else(|_| {
-                tracing::warn!("无法规范化路径: {}", p.display());
-                p.clone()
-            })
-        })
-        .collect();
-
-    if accessible_roots.is_empty() {
-        tracing::warn!("未指定 --accessible-roots，将使用当前目录");
-    }
-
-    tracing::info!(
-        backend_id = %backend_id,
-        name = %cli.name,
-        cloud_url = %cli.cloud_url,
-        accessible_roots = ?accessible_roots,
-        "启动 AgentDash 本机后端"
+    let config = LocalRuntimeConfig::new(
+        cli.cloud_url,
+        cli.token,
+        backend_id,
+        cli.name,
+        cli.accessible_roots,
+        !cli.no_executor,
     );
 
-    let tool_exec = tool_executor::ToolExecutor::new(accessible_roots.clone());
-    let local_backend_config = local_backend_config::load_local_backend_config(&accessible_roots);
-
-    let mcp_config = local_backend_config.mcp_servers.clone();
-    let mcp_manager = if mcp_config.is_empty() {
-        None
-    } else {
-        Some(Arc::new(mcp_client_manager::McpClientManager::new(
-            mcp_config,
-        )))
-    };
-
-    let (session_hub, connector) = if !cli.no_executor {
-        let workspace_root = accessible_roots
-            .first()
-            .cloned()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-        let sub_connectors: Vec<Arc<dyn AgentConnector>> = vec![
-            Arc::new(VibeKanbanExecutorsConnector::new_with_exclusions(
-                workspace_root.clone(),
-                ["CODEX"],
-            )),
-            Arc::new(CodexBridgeConnector::new(workspace_root.clone())),
-        ];
-        let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let db_path = workspace_root.join(".agentdash").join("agentdash-local.db");
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let pool = sqlx::SqlitePool::connect_with(
-            SqliteConnectOptions::new()
-                .filename(&db_path)
-                .create_if_missing(true),
-        )
-        .await?;
-        let session_repo = Arc::new(SqliteSessionRepository::new(pool));
-        session_repo.initialize().await?;
-        let hub = SessionHub::new_with_hooks_and_persistence(
-            Some(agentdash_application::session::local_workspace_vfs(
-                &workspace_root,
-            )),
-            connector.clone(),
-            None,
-            session_repo,
-        );
-
-        // 启动恢复：将上次进程异常退出时残留的 running 状态修正为 interrupted
-        if let Err(e) = hub.recover_interrupted_sessions().await {
-            tracing::warn!("启动恢复 session 状态失败（非致命）: {e}");
-        }
-
-        tracing::info!("SessionHub 已初始化");
-        (Some(hub), Some(connector))
-    } else {
-        tracing::info!("SessionHub 已禁用（--no-executor）");
-        (None, None)
-    };
-
-    ws_client::run(ws_client::Config {
-        cloud_url: cli.cloud_url,
-        token: cli.token,
-        backend_id,
-        name: cli.name,
-        accessible_roots,
-        tool_executor: tool_exec,
-        session_hub,
-        connector,
-        mcp_manager,
-        workspace_contract_config: local_backend_config.workspace_contract,
-    })
-    .await
+    run_standalone(config).await
 }

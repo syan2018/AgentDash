@@ -1,0 +1,42 @@
+{
+  "id": "04-13-local-dashboard-ui",
+  "name": "04-13-local-dashboard-ui",
+  "title": "Local Backend 轻量管理界面",
+  "description": "为 agentdash-local 提供一个本地 Web 界面，支持快速配置和状态管理（MCP servers 配置、backend 连接状态、进程监控等）",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P3",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-13",
+  "completedAt": "2026-05-14",
+  "branch": "codex/tauri-desktop-local-runtime",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "create-pr"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "从 04-08-pi-agent-stdio-mcp-relay 讨论中拆出。MCP 配置管理是首要场景，但界面应设计为通用的 local backend 管理入口。\n\n2026-05-14 codex 作为 04-28-tauri-desktop-unified-architecture 子任务推进并完成：Local Runtime 管理页已迁入 app-tauri，并支持 runtime start/stop/restart、profile auto start、MCP servers load/save/probe、运行时日志与状态快照；Dashboard 入口已接入桌面壳，桌面端 API authority 已由 Tauri 进程托管。对应 GitHub issue: https://github.com/syan2018/AgentDash/issues/17。",
+  "parent": null
+}

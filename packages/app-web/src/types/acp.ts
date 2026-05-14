@@ -72,6 +72,8 @@ export interface BackendConfig {
   backend_type: BackendType;
   /** WebSocket 中继在线状态（由 API 附加） */
   online?: boolean;
+  /** 持久化 runtime health（cloud authority + registry online 合并） */
+  runtime_health?: RuntimeHealth | null;
   /** 在线后端的可访问根路径 */
   accessible_roots?: string[];
   /** 在线后端的执行器能力 */
@@ -85,6 +87,32 @@ export interface BackendConfig {
     supports_cancel: boolean;
     supports_discover_options: boolean;
   };
+}
+
+export type RuntimeHealthStatus =
+  | "online"
+  | "offline"
+  | "starting"
+  | "degraded"
+  | "stopping"
+  | "error";
+
+export interface RuntimeHealth {
+  backend_id: string;
+  profile_id: string | null;
+  name: string;
+  status: RuntimeHealthStatus;
+  online: boolean;
+  version: string | null;
+  capabilities: Record<string, unknown>;
+  accessible_roots: string[];
+  device: Record<string, unknown>;
+  connected_at: string | null;
+  last_seen_at: string | null;
+  disconnected_at: string | null;
+  disconnect_reason: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ViewConfig {

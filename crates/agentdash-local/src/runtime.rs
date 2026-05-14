@@ -1,0 +1,630 @@
+//! 本机 runtime 组装与生命周期管理。
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use agentdash_application::session::{SessionExecutionState, SessionHub};
+use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
+use agentdash_executor::connectors::composite::CompositeConnector;
+use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
+use agentdash_infrastructure::SqliteSessionRepository;
+use agentdash_spi::AgentConnector;
+use anyhow::Context;
+use serde::Serialize;
+use sqlx::sqlite::SqliteConnectOptions;
+use tokio::sync::{Mutex, watch};
+
+use crate::local_backend_config::{self, McpLocalServerEntry};
+use crate::mcp_client_manager::McpClientManager;
+use crate::tool_executor::ToolExecutor;
+use crate::ws_client;
+
+/// 本机 runtime 启动配置。
+#[derive(Debug, Clone)]
+pub struct LocalRuntimeConfig {
+    pub cloud_url: String,
+    pub token: String,
+    pub backend_id: String,
+    pub name: String,
+    pub accessible_roots: Vec<PathBuf>,
+    pub executor_enabled: bool,
+}
+
+impl LocalRuntimeConfig {
+    pub fn new(
+        cloud_url: String,
+        token: String,
+        backend_id: String,
+        name: String,
+        accessible_roots: Vec<PathBuf>,
+        executor_enabled: bool,
+    ) -> Self {
+        Self {
+            cloud_url,
+            token,
+            backend_id,
+            name,
+            accessible_roots: canonicalize_accessible_roots(accessible_roots),
+            executor_enabled,
+        }
+    }
+}
+
+/// 本机 runtime 生命周期状态。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalRuntimeState {
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Error,
+}
+
+/// Runtime 状态快照，用于 desktop command 或诊断 UI。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct LocalRuntimeStatus {
+    pub state: LocalRuntimeState,
+    pub backend_id: String,
+    pub name: String,
+    pub accessible_roots: Vec<String>,
+    pub executor_enabled: bool,
+    pub mcp_server_count: usize,
+    pub message: Option<String>,
+}
+
+pub type LocalRuntimeSnapshot = LocalRuntimeStatus;
+
+/// Desktop local 设置页展示的结构化日志事件。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LocalLogEvent {
+    pub sequence: u64,
+    pub timestamp: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
+/// 对已启动 runtime 的只读句柄。
+pub struct LocalRuntimeHandle {
+    pub backend_id: String,
+    pub status_rx: watch::Receiver<LocalRuntimeStatus>,
+}
+
+/// 停止 runtime 的原因。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    UserRequested,
+    Restart,
+    Shutdown,
+}
+
+/// MCP server 探测结果，用于桌面端设置页即时反馈。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct McpProbeResult {
+    pub ok: bool,
+    pub tool_count: usize,
+    pub message: String,
+}
+
+#[derive(Default, Clone)]
+pub struct LocalRuntimeManager {
+    inner: Arc<Mutex<Option<RunningRuntime>>>,
+    logs: Arc<Mutex<LocalLogBuffer>>,
+}
+
+struct RunningRuntime {
+    config: LocalRuntimeConfig,
+    session_hub: Option<SessionHub>,
+    shutdown_tx: watch::Sender<bool>,
+    status_tx: watch::Sender<LocalRuntimeStatus>,
+    status_rx: watch::Receiver<LocalRuntimeStatus>,
+    join: tokio::task::JoinHandle<anyhow::Result<()>>,
+}
+
+#[derive(Default)]
+struct LocalLogBuffer {
+    next_sequence: u64,
+    events: VecDeque<LocalLogEvent>,
+}
+
+const LOCAL_LOG_CAPACITY: usize = 500;
+
+impl LocalRuntimeManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn start(&self, config: LocalRuntimeConfig) -> anyhow::Result<LocalRuntimeHandle> {
+        let mut guard = self.inner.lock().await;
+        if guard.is_some() {
+            self.record_log("warn", "runtime", "本机 runtime 已经在运行")
+                .await;
+            anyhow::bail!("本机 runtime 已经在运行");
+        }
+
+        self.record_log(
+            "info",
+            "runtime",
+            format!(
+                "准备启动 runtime: backend={}, roots={}",
+                config.backend_id,
+                config.accessible_roots.len()
+            ),
+        )
+        .await;
+
+        let ws_config = build_ws_config(&config).await?;
+        let initial_status = status_from_config(&config, LocalRuntimeState::Starting, None);
+        let (status_tx, status_rx) = watch::channel(initial_status);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let backend_id = config.backend_id.clone();
+        let logs = Arc::clone(&self.logs);
+        let session_hub = ws_config.session_hub.clone();
+
+        let join = tokio::spawn({
+            let status_tx = status_tx.clone();
+            async move {
+                let running_status =
+                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None);
+                let _ = status_tx.send(running_status);
+                push_log(
+                    &logs,
+                    "info",
+                    "runtime",
+                    format!("runtime 已启动: backend={}", ws_config.backend_id),
+                )
+                .await;
+
+                let result = ws_client::run_until_shutdown(ws_config, shutdown_rx).await;
+                let final_status = match &result {
+                    Ok(()) => status_with_state(
+                        &status_tx.borrow(),
+                        LocalRuntimeState::Stopped,
+                        Some("runtime 已停止".to_string()),
+                    ),
+                    Err(error) => status_with_state(
+                        &status_tx.borrow(),
+                        LocalRuntimeState::Error,
+                        Some(error.to_string()),
+                    ),
+                };
+                let _ = status_tx.send(final_status);
+                match &result {
+                    Ok(()) => {
+                        push_log(&logs, "info", "runtime", "runtime 已停止").await;
+                    }
+                    Err(error) => {
+                        push_log(&logs, "error", "runtime", error.to_string()).await;
+                    }
+                }
+                result
+            }
+        });
+
+        let handle = LocalRuntimeHandle {
+            backend_id: backend_id.clone(),
+            status_rx: status_rx.clone(),
+        };
+
+        *guard = Some(RunningRuntime {
+            config,
+            session_hub,
+            shutdown_tx,
+            status_tx,
+            status_rx,
+            join,
+        });
+
+        Ok(handle)
+    }
+
+    pub async fn stop(&self, _reason: StopReason) -> anyhow::Result<()> {
+        let running = {
+            let mut guard = self.inner.lock().await;
+            guard.take()
+        };
+
+        let Some(running) = running else {
+            self.record_log("info", "runtime", "runtime 未运行，忽略停止请求")
+                .await;
+            return Ok(());
+        };
+
+        self.record_log("info", "runtime", "收到 runtime 停止请求")
+            .await;
+        let stopping_status = status_with_state(
+            &running.status_rx.borrow(),
+            LocalRuntimeState::Stopping,
+            Some("正在停止 runtime".to_string()),
+        );
+        let _ = running.status_tx.send(stopping_status);
+        let _ = running.shutdown_tx.send(true);
+
+        running
+            .join
+            .await
+            .map_err(|error| anyhow::anyhow!("runtime task join 失败: {error}"))??;
+
+        Ok(())
+    }
+
+    pub async fn restart(&self) -> anyhow::Result<LocalRuntimeSnapshot> {
+        let config = {
+            let guard = self.inner.lock().await;
+            let Some(running) = guard.as_ref() else {
+                anyhow::bail!("本机 runtime 未运行");
+            };
+
+            let active_sessions = count_active_sessions(running.session_hub.as_ref()).await?;
+            if active_sessions > 0 {
+                self.record_log(
+                    "warn",
+                    "runtime",
+                    format!("存在 {active_sessions} 个运行中的 session，已阻止 runtime 重启"),
+                )
+                .await;
+                anyhow::bail!("存在 {active_sessions} 个运行中的 session，暂不重启 runtime");
+            }
+
+            running.config.clone()
+        };
+
+        self.record_log("info", "runtime", "准备重启 runtime").await;
+        self.stop(StopReason::Restart).await?;
+        let handle = self.start(config).await?;
+        Ok(handle.status_rx.borrow().clone())
+    }
+
+    pub async fn record_log(
+        &self,
+        level: impl Into<String>,
+        target: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        push_log(&self.logs, level, target, message).await;
+    }
+
+    pub async fn logs_tail(&self, limit: usize) -> Vec<LocalLogEvent> {
+        let limit = limit.clamp(1, LOCAL_LOG_CAPACITY);
+        let guard = self.logs.lock().await;
+        guard
+            .events
+            .iter()
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
+    pub async fn logs_clear(&self) {
+        let mut guard = self.logs.lock().await;
+        guard.events.clear();
+    }
+
+    pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot> {
+        let guard = self.inner.lock().await;
+        guard
+            .as_ref()
+            .map(|running| running.status_rx.borrow().clone())
+    }
+}
+
+async fn push_log(
+    logs: &Arc<Mutex<LocalLogBuffer>>,
+    level: impl Into<String>,
+    target: impl Into<String>,
+    message: impl Into<String>,
+) {
+    let mut guard = logs.lock().await;
+    let event = LocalLogEvent {
+        sequence: guard.next_sequence,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        level: level.into(),
+        target: target.into(),
+        message: redact_log_message(&message.into()),
+    };
+    guard.next_sequence = guard.next_sequence.saturating_add(1);
+    guard.events.push_back(event);
+    while guard.events.len() > LOCAL_LOG_CAPACITY {
+        guard.events.pop_front();
+    }
+}
+
+async fn count_active_sessions(session_hub: Option<&SessionHub>) -> anyhow::Result<usize> {
+    let Some(session_hub) = session_hub else {
+        return Ok(0);
+    };
+
+    let sessions = session_hub.list_sessions().await?;
+    if sessions.is_empty() {
+        return Ok(0);
+    }
+
+    let ids = sessions
+        .into_iter()
+        .map(|session| session.id)
+        .collect::<Vec<_>>();
+    let states = session_hub.inspect_execution_states_bulk(&ids).await?;
+    Ok(states
+        .values()
+        .filter(|state| matches!(state, SessionExecutionState::Running { .. }))
+        .count())
+}
+
+/// standalone CLI 入口：保持原有无限重连行为。
+pub async fn run_standalone(config: LocalRuntimeConfig) -> anyhow::Result<()> {
+    let ws_config = build_ws_config(&config).await?;
+    ws_client::run(ws_config).await
+}
+
+pub fn canonicalize_accessible_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    roots
+        .into_iter()
+        .map(|path| {
+            std::fs::canonicalize(&path).unwrap_or_else(|_| {
+                tracing::warn!(path = %path.display(), "无法规范化路径");
+                path
+            })
+        })
+        .collect()
+}
+
+pub fn load_mcp_servers_for_root(root: PathBuf) -> anyhow::Result<Vec<McpLocalServerEntry>> {
+    let root = canonicalize_existing_root(root)?;
+    Ok(local_backend_config::load_local_backend_config_for_root(&root).mcp_servers)
+}
+
+pub fn save_mcp_servers_for_root(
+    root: PathBuf,
+    servers: Vec<McpLocalServerEntry>,
+) -> anyhow::Result<()> {
+    let root = canonicalize_existing_root(root)?;
+    let mut config = local_backend_config::load_local_backend_config_for_root(&root);
+    config.mcp_servers = servers;
+    local_backend_config::save_local_backend_config_for_root(&root, &config)
+}
+
+pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
+    if server.name.trim().is_empty() {
+        return McpProbeResult {
+            ok: false,
+            tool_count: 0,
+            message: "MCP server name 不能为空".to_string(),
+        };
+    }
+
+    let manager = McpClientManager::new(vec![server.clone()]);
+    match manager.list_tools(&server.name).await {
+        Ok(tools) => {
+            let tool_count = tools.len();
+            let _ = manager.close(&server.name).await;
+            McpProbeResult {
+                ok: true,
+                tool_count,
+                message: format!("连接成功，发现 {tool_count} 个工具"),
+            }
+        }
+        Err(error) => {
+            let _ = manager.close(&server.name).await;
+            McpProbeResult {
+                ok: false,
+                tool_count: 0,
+                message: error.to_string(),
+            }
+        }
+    }
+}
+
+async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
+    if config.accessible_roots.is_empty() {
+        tracing::warn!("未指定 accessible_roots，将使用当前目录作为 SessionHub 工作目录兜底");
+    }
+
+    tracing::info!(
+        backend_id = %config.backend_id,
+        name = %config.name,
+        cloud_url = %config.cloud_url,
+        accessible_roots = ?config.accessible_roots,
+        executor_enabled = config.executor_enabled,
+        "启动 AgentDash 本机 runtime"
+    );
+
+    let tool_executor = ToolExecutor::new(config.accessible_roots.clone());
+    let local_backend_config =
+        local_backend_config::load_local_backend_config(&config.accessible_roots);
+
+    let mcp_manager = if local_backend_config.mcp_servers.is_empty() {
+        None
+    } else {
+        Some(Arc::new(McpClientManager::new(
+            local_backend_config.mcp_servers.clone(),
+        )))
+    };
+
+    let (session_hub, connector) = if config.executor_enabled {
+        let workspace_root = config
+            .accessible_roots
+            .first()
+            .cloned()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let sub_connectors: Vec<Arc<dyn AgentConnector>> = vec![
+            Arc::new(VibeKanbanExecutorsConnector::new_with_exclusions(
+                workspace_root.clone(),
+                ["CODEX"],
+            )),
+            Arc::new(CodexBridgeConnector::new(workspace_root.clone())),
+        ];
+        let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
+        let db_path = workspace_root.join(".agentdash").join("agentdash-local.db");
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let pool = sqlx::SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true),
+        )
+        .await?;
+        let session_repo = Arc::new(SqliteSessionRepository::new(pool));
+        session_repo.initialize().await?;
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            Some(agentdash_application::session::local_workspace_vfs(
+                &workspace_root,
+            )),
+            connector.clone(),
+            None,
+            session_repo,
+        );
+
+        if let Err(error) = hub.recover_interrupted_sessions().await {
+            tracing::warn!(error = %error, "启动恢复 session 状态失败（非致命）");
+        }
+
+        tracing::info!("SessionHub 已初始化");
+        (Some(hub), Some(connector))
+    } else {
+        tracing::info!("SessionHub 已禁用");
+        (None, None)
+    };
+
+    Ok(ws_client::Config {
+        cloud_url: config.cloud_url.clone(),
+        token: config.token.clone(),
+        backend_id: config.backend_id.clone(),
+        name: config.name.clone(),
+        accessible_roots: config.accessible_roots.clone(),
+        tool_executor,
+        session_hub,
+        connector,
+        mcp_manager,
+        workspace_contract_config: local_backend_config.workspace_contract,
+    })
+}
+
+fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
+    let root = std::fs::canonicalize(&root)
+        .with_context(|| format!("accessible root 不存在或不可访问: {}", root.display()))?;
+    if !root.is_dir() {
+        anyhow::bail!("accessible root 不是目录: {}", root.display());
+    }
+    Ok(root)
+}
+
+fn redact_log_message(message: &str) -> String {
+    let mut redacted = message.to_string();
+    for marker in ["token=", "access_token=", "refresh_token="] {
+        redacted = redact_marker_value(&redacted, marker);
+    }
+    redacted
+}
+
+fn redact_marker_value(message: &str, marker: &str) -> String {
+    let mut output = String::with_capacity(message.len());
+    let mut rest = message;
+
+    while let Some(start) = rest.find(marker) {
+        let marker_end = start + marker.len();
+        output.push_str(&rest[..marker_end]);
+        output.push_str("***");
+
+        let after_marker = &rest[marker_end..];
+        let value_end = after_marker
+            .find(|ch: char| ch == '&' || ch.is_whitespace())
+            .unwrap_or(after_marker.len());
+        rest = &after_marker[value_end..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn status_from_config(
+    config: &LocalRuntimeConfig,
+    state: LocalRuntimeState,
+    message: Option<String>,
+) -> LocalRuntimeStatus {
+    LocalRuntimeStatus {
+        state,
+        backend_id: config.backend_id.clone(),
+        name: config.name.clone(),
+        accessible_roots: config
+            .accessible_roots
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect(),
+        executor_enabled: config.executor_enabled,
+        mcp_server_count: 0,
+        message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_logs_keep_recent_events_and_redact_tokens() {
+        let manager = LocalRuntimeManager::new();
+        manager
+            .record_log("info", "test", "connecting token=secret123&mode=test")
+            .await;
+
+        let logs = manager.logs_tail(10).await;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].sequence, 0);
+        assert_eq!(logs[0].message, "connecting token=***&mode=test");
+    }
+
+    #[tokio::test]
+    async fn runtime_logs_clear_removes_events() {
+        let manager = LocalRuntimeManager::new();
+        manager.record_log("info", "test", "one").await;
+        manager.logs_clear().await;
+
+        assert!(manager.logs_tail(10).await.is_empty());
+    }
+}
+
+fn status_from_ws_config(
+    config: &ws_client::Config,
+    state: LocalRuntimeState,
+    message: Option<String>,
+) -> LocalRuntimeStatus {
+    LocalRuntimeStatus {
+        state,
+        backend_id: config.backend_id.clone(),
+        name: config.name.clone(),
+        accessible_roots: config
+            .accessible_roots
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect(),
+        executor_enabled: config.session_hub.is_some(),
+        mcp_server_count: config
+            .mcp_manager
+            .as_ref()
+            .map(|manager| manager.capability_entries().len())
+            .unwrap_or(0),
+        message,
+    }
+}
+
+fn status_with_state(
+    previous: &LocalRuntimeStatus,
+    state: LocalRuntimeState,
+    message: Option<String>,
+) -> LocalRuntimeStatus {
+    LocalRuntimeStatus {
+        state,
+        message,
+        ..previous.clone()
+    }
+}

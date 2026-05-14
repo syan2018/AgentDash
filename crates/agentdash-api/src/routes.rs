@@ -363,8 +363,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(backends::list_backends).post(backends::add_backend),
         )
         .route(
+            "/backends/runtime-health",
+            get(backends::list_runtime_health),
+        )
+        .route(
             "/backends/{id}",
             get(backends::get_backend).delete(backends::remove_backend),
+        )
+        .route(
+            "/backends/{id}/runtime-health",
+            get(backends::get_runtime_health),
         )
         .route("/backends/online", get(backends::list_online_backends))
         .route(

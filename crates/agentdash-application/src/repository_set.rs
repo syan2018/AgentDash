@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
 use agentdash_domain::auth_session::AuthSessionRepository;
-use agentdash_domain::backend::BackendRepository;
+use agentdash_domain::backend::{BackendRepository, RuntimeHealthRepository};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
@@ -35,6 +35,7 @@ pub struct RepositorySet {
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
+    pub runtime_health_repo: Arc<dyn RuntimeHealthRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,

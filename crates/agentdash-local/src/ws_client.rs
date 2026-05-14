@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
@@ -18,6 +18,7 @@ use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::SessionHub;
 use agentdash_spi::AgentConnector;
 
+#[derive(Clone)]
 pub struct Config {
     pub cloud_url: String,
     pub token: String,
@@ -33,9 +34,23 @@ pub struct Config {
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+    run_until_shutdown(config, shutdown_rx).await
+}
+
+/// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连，直到收到 shutdown 信号。
+pub async fn run_until_shutdown(
+    config: Config,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
     let mut retry_count: u32 = 0;
 
     loop {
+        if *shutdown_rx.borrow() {
+            tracing::info!("收到 shutdown 信号，本机 relay 主循环停止");
+            return Ok(());
+        }
+
         let url = format!("{}?token={}", config.cloud_url, config.token);
 
         tracing::info!(retry = retry_count, "连接云端 WebSocket...");
@@ -45,7 +60,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 retry_count = 0;
                 tracing::info!("WebSocket 连接成功");
 
-                if let Err(e) = run_session(ws_stream, &config).await {
+                if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
                     tracing::error!(error = %e, "会话异常终止");
                 }
             }
@@ -56,7 +71,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
 
         let delay = reconnect_delay(retry_count);
         tracing::info!(delay_secs = delay.as_secs(), "等待重连...");
-        tokio::time::sleep(delay).await;
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("等待重连时收到 shutdown 信号");
+                    return Ok(());
+                }
+            }
+        }
         retry_count += 1;
     }
 }
@@ -65,6 +88,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
 async fn run_session(
     ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     config: &Config,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let (mut write, mut read) = ws_stream.split();
 
@@ -101,7 +125,17 @@ async fn run_session(
     tracing::info!("已发送注册消息");
 
     // 等待 register_ack
-    let ack_timeout = tokio::time::timeout(Duration::from_secs(10), read.next()).await;
+    let ack_timeout = loop {
+        tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(10), read.next()) => break result,
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("等待注册响应时收到 shutdown 信号");
+                    return Ok(());
+                }
+            }
+        }
+    };
     match ack_timeout {
         Ok(Some(Ok(msg))) => {
             if let Some(relay_msg) = parse_ws_message(&msg) {
@@ -167,6 +201,12 @@ async fn run_session(
             }
             _ = ping_interval.tick() => {
                 // 本机侧不主动发 ping，只响应云端的 ping
+            }
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    tracing::info!("消息循环收到 shutdown 信号");
+                    break;
+                }
             }
         }
     }

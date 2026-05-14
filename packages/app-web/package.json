@@ -1,8 +1,12 @@
 {
-  "name": "frontend",
+  "name": "app-web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": "./src/App.tsx",
+    "./styles.css": "./src/styles/index.css"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

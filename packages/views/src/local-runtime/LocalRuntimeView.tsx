@@ -17,7 +17,20 @@ import type {
   McpLocalServerEntry,
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
-import { Badge, Button, Card, CardHeader, Field, Select, Textarea, TextInput, cn } from '@agentdash/ui'
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  CheckboxField,
+  EmptyState,
+  Field,
+  Notice,
+  Select,
+  Textarea,
+  TextInput,
+  cn,
+} from '@agentdash/ui'
 
 export interface LocalRuntimeViewProps {
   client: LocalRuntimeClient
@@ -328,8 +341,8 @@ export function LocalRuntimeView({
           <CardHeader
             actions={
               <div className="flex flex-wrap items-center justify-end gap-3">
-                <RuntimeSwitch checked={executorEnabled} label="Executor" onChange={setExecutorEnabled} />
-                <RuntimeSwitch checked={autoStart} label="Auto start" onChange={setAutoStart} />
+                <CheckboxField checked={executorEnabled} label="Executor" onChange={(event) => setExecutorEnabled(event.target.checked)} />
+                <CheckboxField checked={autoStart} label="Auto start" onChange={(event) => setAutoStart(event.target.checked)} />
               </div>
             }
           >
@@ -373,8 +386,8 @@ export function LocalRuntimeView({
             </Field>
           </div>
 
-          {error ? <RuntimeMessage tone="danger">{error}</RuntimeMessage> : null}
-          {profileMessage ? <RuntimeMessage>{profileMessage}</RuntimeMessage> : null}
+          {error ? <Notice className="mt-3" tone="danger">{error}</Notice> : null}
+          {profileMessage ? <Notice className="mt-3">{profileMessage}</Notice> : null}
 
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim() || !accessToken.trim()}>
@@ -487,10 +500,10 @@ export function LocalRuntimeView({
                 </div>
               </Card>
             ))}
-            {mcpServers.length === 0 ? <RuntimeEmpty>当前 root 未配置 MCP servers</RuntimeEmpty> : null}
+            {mcpServers.length === 0 ? <EmptyState>当前 root 未配置 MCP servers</EmptyState> : null}
           </div>
 
-          {mcpMessage ? <RuntimeMessage>{mcpMessage}</RuntimeMessage> : null}
+          {mcpMessage ? <Notice className="mt-3">{mcpMessage}</Notice> : null}
         </Card>
 
         <Card className="xl:col-span-2">
@@ -533,7 +546,7 @@ export function LocalRuntimeView({
                 <p className="m-0 wrap-anywhere text-foreground">{log.message}</p>
               </div>
             ))}
-            {visibleLogs.length === 0 ? <RuntimeEmpty>暂无本机 runtime 日志</RuntimeEmpty> : null}
+            {visibleLogs.length === 0 ? <EmptyState>暂无本机 runtime 日志</EmptyState> : null}
           </div>
         </Card>
       </div>
@@ -546,55 +559,6 @@ function RuntimeStat({ label, value }: { label: string; value: string }) {
     <div className="grid gap-1">
       <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="m-0 text-sm text-foreground wrap-anywhere">{value}</dd>
-    </div>
-  )
-}
-
-function RuntimeSwitch({
-  checked,
-  label,
-  onChange,
-}: {
-  checked: boolean
-  label: string
-  onChange: (checked: boolean) => void
-}) {
-  return (
-    <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-      <input
-        checked={checked}
-        className="h-4 w-4 rounded border-border"
-        onChange={(event) => onChange(event.target.checked)}
-        type="checkbox"
-      />
-      <span>{label}</span>
-    </label>
-  )
-}
-
-function RuntimeMessage({
-  children,
-  tone = 'info',
-}: {
-  children: string
-  tone?: 'danger' | 'info'
-}) {
-  return (
-    <div
-      className={cn(
-        'mt-3 rounded-[8px] border px-3 py-2 text-sm wrap-anywhere',
-        tone === 'danger' ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-primary/25 bg-primary/10 text-primary',
-      )}
-    >
-      {children}
-    </div>
-  )
-}
-
-function RuntimeEmpty({ children }: { children: string }) {
-  return (
-    <div className="rounded-[8px] border border-dashed border-border px-3 py-2 text-center text-sm text-muted-foreground">
-      {children}
     </div>
   )
 }

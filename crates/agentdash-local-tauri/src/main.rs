@@ -14,6 +14,8 @@ use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
 const DESKTOP_API_PORT: u16 = 3001;
+const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
+const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
 
 #[derive(Clone)]
 struct DesktopState {
@@ -25,7 +27,7 @@ impl Default for DesktopState {
     fn default() -> Self {
         Self {
             runtime: LocalRuntimeManager::new(),
-            api: DesktopApiManager::default(),
+            api: DesktopApiManager::from_snapshot(default_desktop_api_snapshot()),
         }
     }
 }
@@ -287,7 +289,14 @@ fn main() {
         .manage(DesktopState::default())
         .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
-            start_desktop_api(state);
+            if let Some(origin) = external_desktop_api_origin() {
+                tracing::info!(
+                    origin = %origin,
+                    "Tauri 桌面端复用外部 Dashboard API"
+                );
+            } else {
+                start_desktop_api(state);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -356,6 +365,12 @@ async fn run_desktop_api(state: DesktopState) {
 }
 
 impl DesktopApiManager {
+    fn from_snapshot(snapshot: DesktopApiSnapshot) -> Self {
+        Self {
+            snapshot: Arc::new(Mutex::new(snapshot)),
+        }
+    }
+
     async fn snapshot(&self) -> DesktopApiSnapshot {
         self.snapshot.lock().await.clone()
     }
@@ -403,6 +418,38 @@ impl DesktopApiManager {
 
 fn desktop_api_origin(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
+}
+
+fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
+    if let Some(origin) = external_desktop_api_origin() {
+        return DesktopApiSnapshot {
+            state: DesktopApiState::Running,
+            origin: origin.clone(),
+            message: Some(format!("复用外部 Dashboard API: {origin}")),
+            database_url: None,
+        };
+    }
+    DesktopApiSnapshot::default()
+}
+
+fn external_desktop_api_origin() -> Option<String> {
+    let explicit_origin = std::env::var(DESKTOP_API_ORIGIN_ENV)
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    if explicit_origin.is_some() {
+        return explicit_origin;
+    }
+
+    let mode = std::env::var(DESKTOP_API_MODE_ENV)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if mode == "external" {
+        return Some(desktop_api_origin(DESKTOP_API_PORT));
+    }
+
+    None
 }
 
 fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {

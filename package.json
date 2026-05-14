@@ -11,6 +11,7 @@
     "dev:mono:skip-build": "node ./scripts/dev-joint.js --skip-local --skip-build",
     "dev:joint": "node ./scripts/dev-joint.js",
     "dev:joint:skip-build": "node ./scripts/dev-joint.js --skip-build",
+    "dev:desktop": "node ./scripts/dev-desktop.js",
     "dev:sccache": "node ./scripts/dev-joint.js --sccache",
     "dev:no-sccache": "node ./scripts/dev-joint.js --no-sccache",
     "dev:server": "cargo run --bin agentdash-server",

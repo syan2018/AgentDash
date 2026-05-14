@@ -27,6 +27,23 @@ use crate::workspace::BackendAvailability;
 
 use super::template::render_prompt_template;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RoutineAdmissionError {
+    Failed(String),
+    Skipped(String),
+}
+
+impl RoutineAdmissionError {
+    #[cfg(test)]
+    fn reason(&self) -> &str {
+        match self {
+            RoutineAdmissionError::Failed(reason) | RoutineAdmissionError::Skipped(reason) => {
+                reason
+            }
+        }
+    }
+}
+
 /// Routine 执行器 — 统一处理三种触发源的 session 创建 / prompt 发送。
 ///
 /// 执行流程：
@@ -160,10 +177,36 @@ impl RoutineExecutor {
             }
         };
 
-        let agent_context = self
-            .load_agent_context(&routine)
-            .await
-            .map_err(|err| format!("加载 Routine Agent 配置失败: {err}"))?;
+        let agent_context = match self.load_agent_context(&routine).await {
+            Ok(agent_context) => agent_context,
+            Err(err) => {
+                let reason = format!("加载 Routine Agent 配置失败: {err}");
+                execution.mark_failed(&reason);
+                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                return Err(reason);
+            }
+        };
+
+        if let Err(admission) = check_workspace_dispatch_admission(
+            self.availability.as_ref(),
+            agent_context.workspace.as_ref(),
+        )
+        .await
+        {
+            match admission {
+                RoutineAdmissionError::Failed(reason) => {
+                    execution.mark_failed(&reason);
+                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    return Err(reason);
+                }
+                RoutineAdmissionError::Skipped(reason) => {
+                    execution.mark_skipped(reason);
+                    let exec_id = execution.id;
+                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    return Ok(exec_id);
+                }
+            }
+        }
 
         match self
             .execute_with_session(&routine, &agent_context, &rendered, &mut execution)
@@ -538,13 +581,61 @@ async fn resolve_project_workspace(
     project: &Project,
 ) -> Result<Option<Workspace>, String> {
     match project.config.default_workspace_id {
-        Some(workspace_id) => repos
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|e| format!("查询默认 Workspace 失败: {e}")),
+        Some(workspace_id) => {
+            let workspace = repos
+                .workspace_repo
+                .get_by_id(workspace_id)
+                .await
+                .map_err(|e| format!("查询默认 Workspace 失败: {e}"))?
+                .ok_or_else(|| format!("默认 Workspace {workspace_id} 不存在"))?;
+            Ok(Some(workspace))
+        }
         None => Ok(None),
     }
+}
+
+async fn check_workspace_dispatch_admission(
+    availability: &dyn BackendAvailability,
+    workspace: Option<&Workspace>,
+) -> Result<(), RoutineAdmissionError> {
+    let Some(workspace) = workspace else {
+        return Ok(());
+    };
+    if workspace.bindings.is_empty() {
+        return Err(RoutineAdmissionError::Failed(format!(
+            "Workspace `{}` 当前没有配置 backend binding，Routine 无法派发",
+            workspace.name
+        )));
+    }
+
+    let backend_ids = workspace
+        .bindings
+        .iter()
+        .map(|binding| binding.backend_id.trim())
+        .filter(|backend_id| !backend_id.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if backend_ids.is_empty() {
+        return Err(RoutineAdmissionError::Failed(format!(
+            "Workspace `{}` 的 backend binding 缺少 backend_id，Routine 无法派发",
+            workspace.name
+        )));
+    }
+
+    for backend_id in &backend_ids {
+        if availability.is_online(backend_id).await {
+            return Ok(());
+        }
+    }
+
+    Err(RoutineAdmissionError::Skipped(format!(
+        "Workspace `{}` 当前没有在线 backend，Routine 本次触发已跳过：{}",
+        workspace.name,
+        backend_ids
+            .into_iter()
+            .map(|backend_id| format!("backend `{backend_id}` 离线"))
+            .collect::<Vec<_>>()
+            .join("；")
+    )))
 }
 
 fn project_agent_session_label(agent_id: Uuid) -> String {
@@ -573,7 +664,48 @@ fn resolve_json_path<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::workspace::{
+        WorkspaceBinding, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
+    };
+    use async_trait::async_trait;
     use serde_json::json;
+
+    struct MockAvailability {
+        online_backend_ids: Vec<String>,
+    }
+
+    #[async_trait]
+    impl BackendAvailability for MockAvailability {
+        async fn is_online(&self, backend_id: &str) -> bool {
+            self.online_backend_ids
+                .iter()
+                .any(|online| online == backend_id)
+        }
+    }
+
+    fn routine_workspace(bindings: Vec<WorkspaceBinding>) -> Workspace {
+        let mut workspace = Workspace::new(
+            Uuid::new_v4(),
+            "routine-ws".to_string(),
+            WorkspaceIdentityKind::LocalDir,
+            serde_json::json!({
+                "match_mode": "path_key",
+                "path_key": "routine-ws"
+            }),
+            WorkspaceResolutionPolicy::PreferOnline,
+        );
+        workspace.set_bindings(bindings);
+        workspace
+    }
+
+    fn workspace_binding(backend_id: &str) -> WorkspaceBinding {
+        WorkspaceBinding::new(
+            Uuid::new_v4(),
+            backend_id.to_string(),
+            "/workspace".to_string(),
+            serde_json::json!({ "binding_labels": {} }),
+        )
+    }
 
     #[test]
     fn test_resolve_json_path() {
@@ -587,5 +719,47 @@ mod tests {
     fn json_value_to_key_string_prefers_raw_string() {
         assert_eq!(json_value_to_key_string(&json!(" PR-123 ")), "PR-123");
         assert_eq!(json_value_to_key_string(&json!(42)), "42");
+    }
+
+    #[tokio::test]
+    async fn workspace_admission_allows_online_backend() {
+        let workspace = routine_workspace(vec![workspace_binding("backend-a")]);
+        let availability = MockAvailability {
+            online_backend_ids: vec!["backend-a".to_string()],
+        };
+
+        check_workspace_dispatch_admission(&availability, Some(&workspace))
+            .await
+            .expect("online workspace should be dispatchable");
+    }
+
+    #[tokio::test]
+    async fn workspace_admission_skips_when_all_backends_offline() {
+        let workspace = routine_workspace(vec![workspace_binding("backend-a")]);
+        let availability = MockAvailability {
+            online_backend_ids: Vec::new(),
+        };
+
+        let err = check_workspace_dispatch_admission(&availability, Some(&workspace))
+            .await
+            .expect_err("offline workspace should be skipped");
+
+        assert!(matches!(err, RoutineAdmissionError::Skipped(_)));
+        assert!(err.reason().contains("已跳过"));
+    }
+
+    #[tokio::test]
+    async fn workspace_admission_fails_when_binding_config_is_missing() {
+        let workspace = routine_workspace(Vec::new());
+        let availability = MockAvailability {
+            online_backend_ids: Vec::new(),
+        };
+
+        let err = check_workspace_dispatch_admission(&availability, Some(&workspace))
+            .await
+            .expect_err("missing binding is a configuration failure");
+
+        assert!(matches!(err, RoutineAdmissionError::Failed(_)));
+        assert!(err.reason().contains("没有配置 backend binding"));
     }
 }

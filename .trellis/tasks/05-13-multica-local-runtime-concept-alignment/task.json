@@ -18,7 +18,10 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "05-14-remote-skill-import-management",
+    "05-14-runtime-stability-admission-fixes"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

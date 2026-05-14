@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/research/learning-backlog.md", "reason": "来源 backlog：relay 错误分类、Routine skipped、provider adapter matrix"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/research/local-daemon-comparison.md", "reason": "本地连接、runtime recovery、task observability 与 workdir GC 对照结论"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/research/misc-insights.md", "reason": "零散启发：pending relay request 错误分类、artifact cleanup、provider adapter fixture"}
+{"file": "crates/agentdash-api/src/relay/registry.rs", "reason": "relay pending request 与 backend command 错误分类落点"}
+{"file": "crates/agentdash-application/src/routine/executor.rs", "reason": "RoutineExecution dispatch/skipped/failed 语义落点"}
+{"file": "crates/agentdash-executor/src/connectors/mod.rs", "reason": "provider adapter 行为矩阵测试入口"}

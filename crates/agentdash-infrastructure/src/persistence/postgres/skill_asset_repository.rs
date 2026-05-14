@@ -25,13 +25,16 @@ impl PostgresSkillAssetRepository {
                 description TEXT NOT NULL,
                 source TEXT NOT NULL,
                 builtin_key TEXT,
+                remote_source_url TEXT,
+                remote_imported_at TEXT,
+                remote_digest TEXT,
                 disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                CONSTRAINT skill_assets_source_check CHECK (source IN ('builtin_seed', 'user')),
+                CONSTRAINT skill_assets_source_check CHECK (source IN ('builtin_seed', 'user', 'github')),
                 CONSTRAINT skill_assets_builtin_key_consistency CHECK (
                     (source = 'builtin_seed' AND builtin_key IS NOT NULL)
-                    OR (source = 'user' AND builtin_key IS NULL)
+                    OR (source <> 'builtin_seed' AND builtin_key IS NULL)
                 )
             )
             "#,
@@ -78,7 +81,7 @@ impl PostgresSkillAssetRepository {
     }
 }
 
-const ASSET_COLS: &str = "id,project_id,key,display_name,description,source,builtin_key,disable_model_invocation,created_at,updated_at";
+const ASSET_COLS: &str = "id,project_id,key,display_name,description,source,builtin_key,remote_source_url,remote_imported_at,remote_digest,disable_model_invocation,created_at,updated_at";
 const FILE_COLS: &str = "id,skill_asset_id,path,content,kind,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -164,13 +167,16 @@ impl SkillAssetRepository for PostgresSkillAssetRepository {
     async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let result = sqlx::query(
-            "UPDATE skill_assets SET key=$1, display_name=$2, description=$3, source=$4, builtin_key=$5, disable_model_invocation=$6, updated_at=$7 WHERE id=$8",
+            "UPDATE skill_assets SET key=$1, display_name=$2, description=$3, source=$4, builtin_key=$5, remote_source_url=$6, remote_imported_at=$7, remote_digest=$8, disable_model_invocation=$9, updated_at=$10 WHERE id=$11",
         )
         .bind(&asset.key)
         .bind(&asset.display_name)
         .bind(&asset.description)
         .bind(asset.source.tag())
         .bind(asset.source.builtin_key())
+        .bind(remote_source_url(&asset.source))
+        .bind(remote_imported_at(&asset.source))
+        .bind(remote_digest(&asset.source))
         .bind(asset.disable_model_invocation)
         .bind(asset.updated_at.to_rfc3339())
         .bind(asset.id.to_string())
@@ -209,7 +215,7 @@ async fn insert_asset(
     asset: &SkillAsset,
 ) -> Result<(), DomainError> {
     sqlx::query(&format!(
-        "INSERT INTO skill_assets ({ASSET_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+        "INSERT INTO skill_assets ({ASSET_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
     ))
     .bind(asset.id.to_string())
     .bind(asset.project_id.to_string())
@@ -218,6 +224,9 @@ async fn insert_asset(
     .bind(&asset.description)
     .bind(asset.source.tag())
     .bind(asset.source.builtin_key())
+    .bind(remote_source_url(&asset.source))
+    .bind(remote_imported_at(&asset.source))
+    .bind(remote_digest(&asset.source))
     .bind(asset.disable_model_invocation)
     .bind(asset.created_at.to_rfc3339())
     .bind(asset.updated_at.to_rfc3339())
@@ -279,6 +288,9 @@ struct SkillAssetRow {
     description: String,
     source: String,
     builtin_key: Option<String>,
+    remote_source_url: Option<String>,
+    remote_imported_at: Option<String>,
+    remote_digest: Option<String>,
     disable_model_invocation: bool,
     created_at: String,
     updated_at: String,
@@ -291,6 +303,26 @@ impl SkillAssetRow {
                 key: self.builtin_key.clone().ok_or_else(|| {
                     DomainError::InvalidConfig(
                         "skill_assets.source=builtin_seed 但 builtin_key 为空".to_string(),
+                    )
+                })?,
+            },
+            "github" => SkillAssetSource::Github {
+                url: self.remote_source_url.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=github 但 remote_source_url 为空".to_string(),
+                    )
+                })?,
+                imported_at: super::parse_pg_timestamp_checked(
+                    self.remote_imported_at.as_deref().ok_or_else(|| {
+                        DomainError::InvalidConfig(
+                            "skill_assets.source=github 但 remote_imported_at 为空".to_string(),
+                        )
+                    })?,
+                    "skill_assets.remote_imported_at",
+                )?,
+                digest: self.remote_digest.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=github 但 remote_digest 为空".to_string(),
                     )
                 })?,
             },
@@ -371,6 +403,27 @@ fn parse_file_kind(raw: &str) -> Result<SkillAssetFileKind, DomainError> {
         other => Err(DomainError::InvalidConfig(format!(
             "skill_asset_files.kind 非法: {other}"
         ))),
+    }
+}
+
+fn remote_source_url(source: &SkillAssetSource) -> Option<&str> {
+    match source {
+        SkillAssetSource::Github { url, .. } => Some(url.as_str()),
+        SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
+    }
+}
+
+fn remote_imported_at(source: &SkillAssetSource) -> Option<String> {
+    match source {
+        SkillAssetSource::Github { imported_at, .. } => Some(imported_at.to_rfc3339()),
+        SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
+    }
+}
+
+fn remote_digest(source: &SkillAssetSource) -> Option<&str> {
+    match source {
+        SkillAssetSource::Github { digest, .. } => Some(digest.as_str()),
+        SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
     }
 }
 

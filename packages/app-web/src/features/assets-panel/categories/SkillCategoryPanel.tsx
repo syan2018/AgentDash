@@ -12,6 +12,7 @@ import {
   draftFromSkillAsset,
   dtoFilesFromDraft,
   fetchProjectSkillAssets,
+  importRemoteSkillAsset,
   normalizeSkillExtraPath,
   parseSkillMarkdown,
   resetSkillAssetFromBuiltin,
@@ -52,6 +53,7 @@ export function SkillCategoryPanel() {
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
+  const [remoteUrl, setRemoteUrl] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -199,6 +201,27 @@ export function SkillCategoryPanel() {
     }
   }, [currentProjectId, loadSkills]);
 
+  const handleRemoteImport = useCallback(async () => {
+    if (!currentProjectId) return;
+    const url = remoteUrl.trim();
+    if (!url) {
+      setError("请输入 GitHub Skill URL");
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      const imported = await importRemoteSkillAsset(currentProjectId, { url });
+      setMessage(`已导入 GitHub Skill：${imported.key}`);
+      setRemoteUrl("");
+      await loadSkills();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导入远端 Skill 失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [currentProjectId, loadSkills, remoteUrl]);
+
   const handleReset = useCallback(
     async (skill: SkillAssetDto) => {
       if (!currentProjectId) return;
@@ -234,7 +257,25 @@ export function SkillCategoryPanel() {
             {skills.length} 个 project Skill · Agent preset 可按 key 装载
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <form
+            className="flex min-w-[280px] flex-1 items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRemoteImport();
+            }}
+          >
+            <input
+              value={remoteUrl}
+              onChange={(event) => setRemoteUrl(event.target.value)}
+              disabled={isSaving}
+              className="agentdash-form-input h-9 min-w-0"
+              placeholder="https://github.com/org/repo/tree/main/skill"
+            />
+            <button type="submit" disabled={isSaving || !remoteUrl.trim()} className="agentdash-button-secondary">
+              GitHub 导入
+            </button>
+          </form>
           <input
             ref={zipInputRef}
             type="file"
@@ -373,8 +414,11 @@ function SkillGrid({
                 skills/{skill.key}/SKILL.md
               </p>
             </div>
-            <span className="shrink-0 rounded-[6px] border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-              {skill.source === "builtin_seed" ? "builtin" : "user"}
+            <span
+              title={skill.remote_source?.url ?? undefined}
+              className="shrink-0 rounded-[6px] border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+            >
+              {skill.source === "builtin_seed" ? "builtin" : skill.source}
             </span>
           </header>
 
@@ -389,6 +433,11 @@ function SkillGrid({
             {skill.disable_model_invocation && (
               <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
                 explicit
+              </span>
+            )}
+            {skill.remote_source && (
+              <span className="max-w-full truncate rounded-[6px] border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
+                {skill.remote_source.digest.slice(0, 18)}
               </span>
             )}
           </div>

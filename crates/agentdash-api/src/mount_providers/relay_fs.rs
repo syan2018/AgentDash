@@ -14,10 +14,10 @@ use agentdash_relay::{
 };
 use async_trait::async_trait;
 
-use crate::relay::registry::BackendRegistry;
+use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::runtime_bridge::relay_file_entries_to_runtime;
 
-fn map_relay_err(e: anyhow::Error) -> MountError {
+fn map_relay_err(e: BackendCommandError) -> MountError {
     MountError::OperationFailed(e.to_string())
 }
 

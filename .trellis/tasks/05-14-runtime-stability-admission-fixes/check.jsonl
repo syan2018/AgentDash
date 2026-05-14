@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "中文沟通与跨层思考要求"}
+{"file": "crates/agentdash-api/src/relay/registry.rs", "reason": "检查 relay 错误分类测试覆盖"}
+{"file": "crates/agentdash-application/src/routine/executor.rs", "reason": "检查 Routine skipped 与 completed 语义是否一致"}
+{"file": "crates/agentdash-executor/src/connectors/mod.rs", "reason": "检查 provider adapter 行为矩阵测试覆盖入口"}
+{"file": "crates/agentdash-executor/src/connectors/mod.rs", "reason": "检查 provider adapter 行为矩阵测试覆盖入口"}

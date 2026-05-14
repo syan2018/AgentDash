@@ -16,11 +16,21 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::app_state::AppState;
-use crate::relay::registry::BackendRegistry;
+use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::rpc::ApiError;
 
 pub use agentdash_application::workspace::WorkspaceDetectionResult;
 pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
+
+fn map_backend_command_error(error: BackendCommandError) -> TransportError {
+    match error {
+        BackendCommandError::Offline { backend_id } => TransportError::BackendOffline(backend_id),
+        BackendCommandError::Timeout { .. } => TransportError::Timeout,
+        BackendCommandError::SendFailed { .. } | BackendCommandError::ResponseDropped { .. } => {
+            TransportError::OperationFailed(error.to_string())
+        }
+    }
+}
 
 /// BackendRegistry 适配 BackendTransport trait —— API adapter 层
 #[async_trait]
@@ -50,7 +60,7 @@ impl BackendTransport for BackendRegistry {
         let resp = self
             .send_command(backend_id, cmd)
             .await
-            .map_err(|e| TransportError::OperationFailed(e.to_string()))?;
+            .map_err(map_backend_command_error)?;
 
         match resp {
             RelayMessage::ResponseWorkspaceDetect {
@@ -102,9 +112,15 @@ impl BackendTransport for BackendRegistry {
                 path: path.map(str::to_string),
             },
         };
-        let resp = self.send_command(backend_id, cmd).await.map_err(|e| {
-            TransportError::OperationFailed(format!("relay browse_directory 失败: {e}"))
-        })?;
+        let resp =
+            self.send_command(backend_id, cmd).await.map_err(
+                |e| match map_backend_command_error(e) {
+                    TransportError::OperationFailed(message) => TransportError::OperationFailed(
+                        format!("relay browse_directory 失败: {message}"),
+                    ),
+                    other => other,
+                },
+            )?;
 
         match resp {
             RelayMessage::ResponseBrowseDirectory {
@@ -169,10 +185,15 @@ impl RelayPromptTransport for BackendRegistry {
             }),
         };
 
-        let resp = self
-            .send_command(backend_id, cmd)
-            .await
-            .map_err(|e| TransportError::OperationFailed(format!("relay prompt 失败: {e}")))?;
+        let resp =
+            self.send_command(backend_id, cmd).await.map_err(
+                |e| match map_backend_command_error(e) {
+                    TransportError::OperationFailed(message) => {
+                        TransportError::OperationFailed(format!("relay prompt 失败: {message}"))
+                    }
+                    other => other,
+                },
+            )?;
 
         match resp {
             RelayMessage::ResponsePrompt {
@@ -200,10 +221,15 @@ impl RelayPromptTransport for BackendRegistry {
                 session_id: session_id.to_string(),
             },
         };
-        let resp = self
-            .send_command(backend_id, cmd)
-            .await
-            .map_err(|e| TransportError::OperationFailed(format!("relay cancel 失败: {e}")))?;
+        let resp =
+            self.send_command(backend_id, cmd).await.map_err(
+                |e| match map_backend_command_error(e) {
+                    TransportError::OperationFailed(message) => {
+                        TransportError::OperationFailed(format!("relay cancel 失败: {message}"))
+                    }
+                    other => other,
+                },
+            )?;
 
         match resp {
             RelayMessage::ResponseCancel { error: None, .. } => Ok(()),

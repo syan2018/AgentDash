@@ -91,6 +91,29 @@ impl SkillAsset {
         )
     }
 
+    pub fn new_github_import(
+        project_id: Uuid,
+        key: impl Into<String>,
+        display_name: impl Into<String>,
+        description: impl Into<String>,
+        disable_model_invocation: bool,
+        url: impl Into<String>,
+        digest: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            project_id,
+            key,
+            display_name,
+            description,
+            SkillAssetSource::Github {
+                url: url.into(),
+                imported_at: Utc::now(),
+                digest: digest.into(),
+            },
+            disable_model_invocation,
+        )
+    }
+
     fn new(
         project_id: Uuid,
         key: impl Into<String>,

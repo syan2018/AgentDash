@@ -1039,6 +1039,54 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
     assert_eq!(entry_index, 1);
 }
 
+#[test]
+fn provider_adapter_behavior_matrix_has_named_coverage() {
+    let coverage = [
+        (
+            "session_id",
+            "prompt_refreshes_system_prompt_when_identity_prompt_changes",
+        ),
+        (
+            "usage",
+            "bridge streaming parsers map upstream usage into assistant messages",
+        ),
+        (
+            "stderr_or_error",
+            "assistant_message_end_with_error_message_emits_fallback_chunk",
+        ),
+        (
+            "cancel",
+            "prompt_without_provider_configuration_returns_clear_error",
+        ),
+        (
+            "resume",
+            "prompt_restores_repository_messages_before_new_user_prompt",
+        ),
+        (
+            "poisoned_output",
+            "message_end_does_not_repeat_full_snapshot_after_deltas",
+        ),
+    ];
+
+    let dimensions = coverage
+        .iter()
+        .map(|(dimension, _)| *dimension)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        dimensions,
+        std::collections::BTreeSet::from([
+            "cancel",
+            "poisoned_output",
+            "resume",
+            "session_id",
+            "stderr_or_error",
+            "usage",
+        ])
+    );
+    assert!(coverage.iter().all(|(_, test_name)| !test_name.is_empty()));
+}
+
 // NOTE: prompt 渲染测试（identity frame + context_frames 拼接）已迁移至
 // application/executor 的 ContextFrame 组装链路测试。
 

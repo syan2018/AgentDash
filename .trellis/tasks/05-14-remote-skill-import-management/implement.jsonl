@@ -1,0 +1,17 @@
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/research/learning-backlog.md", "reason": "Skill Asset 与外部 skill 生态来源 backlog"}
+{"file": ".trellis/tasks/05-13-multica-local-runtime-concept-alignment/research/misc-insights.md", "reason": "skill list/detail payload、来源导入与管理交互观察"}
+{"file": "references/repositories.json", "reason": "确认 multica reference 来源与本地路径"}
+{"file": "references/multica/server/internal/handler/skill.go", "reason": "multica 远端 Skill 导入、来源识别、GitHub/skills.sh/ClawHub fetch 与限制"}
+{"file": "references/multica/server/internal/handler/skill_create.go", "reason": "multica skill + supporting files 写入事务"}
+{"file": "references/multica/packages/views/skills/components/create-skill-dialog.tsx", "reason": "multica 远端 URL 导入前端交互"}
+{"file": "references/multica/packages/views/skills/lib/origin.ts", "reason": "multica skill 来源 metadata 展示"}
+{"file": "references/multica/packages/core/api/client.ts", "reason": "multica importSkill API client 契约"}
+{"file": "crates/agentdash-domain/src/skill_asset/entity.rs", "reason": "Skill Asset 领域模型"}
+{"file": "crates/agentdash-application/src/skill_asset/service.rs", "reason": "Skill Asset 创建、导入、builtin seed 服务"}
+{"file": "crates/agentdash-application/src/vfs/provider_skill_asset.rs", "reason": "Skill Asset VFS projection"}
+{"file": "crates/agentdash-application/src/skill/loader.rs", "reason": "VFS/local skill discovery"}
+{"file": "crates/agentdash-application/src/session/assembler.rs", "reason": "agent_skill_asset_keys 注入 session VFS 的上下文"}
+{"file": "crates/agentdash-api/src/routes/project_agents.rs", "reason": "Pi Agent / ProjectAgentLink skill_asset_keys 配置与绑定体验入口"}
+{"file": "frontend/src/features/executor-selector/model/types.ts", "reason": "前端 executor/provider 类型边界，确认其它 provider 只作为退化适配入口"}
+{"file": "frontend/src/features/assets-panel/categories/SkillCategoryPanel.tsx", "reason": "Skill Asset 管理入口与远端导入交互"}
+{"file": "frontend/src/services/skillAsset.ts", "reason": "Skill Asset API client 契约"}

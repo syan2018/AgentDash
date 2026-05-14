@@ -51,7 +51,7 @@ pnpm dev:desktop
 4. 通过 `/api/local-runtime/ensure` 领取开发机的本机 runtime，拿到 server 颁发的 `backend_id`、relay token 和 WebSocket URL。
 5. 启动 Web 前端 `app-web`。
 
-`scripts/dev-joint.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。脚本只在仓库本地的 `.agentdash/dev-machine-identity.json` 保存开发机 `machine_id` 与展示标签；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。该文件位于已忽略的 `.agentdash/` 目录内，可在需要重置开发机身份时删除。
+`scripts/dev-joint.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。脚本会先调用 `agentdash-local machine-identity` 读取本机 runtime 自己识别和持久化的机器身份，再用该身份向 server ensure；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。开发脚本不拥有机器身份文件路径，也不生成机器身份。
 
 `pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-desktop.js`：
 
@@ -61,7 +61,7 @@ pnpm dev:desktop
 4. 启动桌面 renderer `app-tauri`。
 5. 启动 Tauri 壳 `agentdash-local-tauri`，并让它复用外部 `agentdash-server`。
 
-开发期 `pnpm dev` 与 `pnpm dev:desktop` 共用 `.agentdash/dev-machine-identity.json`。`dev:desktop` 会通过 `AGENTDASH_DESKTOP_MACHINE_IDENTITY_PATH` 把该身份文件传给 Tauri 壳，避免同一台机器在 Web 联合调试和桌面调试中被 server 识别成两个 personal local runtime。
+开发期 `pnpm dev` 与 `pnpm dev:desktop` 都复用 `agentdash-local` crate 的机器身份逻辑。Tauri 壳不再维护第二套开发态 machine identity，避免同一台机器在 Web 联合调试和桌面调试中被 server 识别成两个 personal local runtime。
 
 直接执行 `pnpm run dev:desktop-shell` 时不会自动设置 external 模式；这种方式会走 Tauri 壳的默认行为，由壳进程内托管 Dashboard API。需要调试独立后端时优先使用 `pnpm dev:desktop`。
 

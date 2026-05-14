@@ -4,6 +4,7 @@
 
 mod handlers;
 pub mod local_backend_config;
+mod machine_identity;
 mod materialization;
 mod mcp_client_manager;
 mod terminal_manager;
@@ -20,3 +21,5 @@ pub use runtime::{
     canonicalize_accessible_roots, load_mcp_servers_for_root, probe_mcp_server, run_standalone,
     save_mcp_servers_for_root,
 };
+
+pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};

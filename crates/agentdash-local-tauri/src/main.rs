@@ -5,7 +5,8 @@ use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
+    StopReason, load_mcp_servers_for_root, load_or_create_machine_identity, probe_mcp_server,
+    save_mcp_servers_for_root,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -13,11 +14,9 @@ use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
-const DESKTOP_MACHINE_FILE: &str = "desktop-machine-identity.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
-const DESKTOP_MACHINE_IDENTITY_PATH_ENV: &str = "AGENTDASH_DESKTOP_MACHINE_IDENTITY_PATH";
 const DEFAULT_PROFILE_ID: &str = "default";
 
 #[derive(Clone)]
@@ -117,15 +116,6 @@ struct LocalRuntimeProfile {
     auto_start: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct DesktopMachineIdentity {
-    machine_id: String,
-    machine_label: String,
-    #[serde(default)]
-    legacy_machine_ids: Vec<String>,
-}
-
 fn default_profile_id() -> String {
     DEFAULT_PROFILE_ID.to_string()
 }
@@ -159,7 +149,7 @@ async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, Str
     let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let profile = serde_json::from_str(&content)
         .map_err(|error| format!("读取桌面端 profile 失败: {error}"))?;
-    Ok(Some(normalize_profile(&app, profile)?))
+    Ok(Some(normalize_profile(profile)?))
 }
 
 #[tauri::command]
@@ -168,7 +158,7 @@ async fn profile_save(
     profile: LocalRuntimeProfile,
 ) -> Result<LocalRuntimeProfile, String> {
     let path = profile_path(&app)?;
-    let profile = normalize_profile(&app, profile)?;
+    let profile = normalize_profile(profile)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -188,11 +178,10 @@ async fn profile_delete(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn runtime_start(
-    app: AppHandle,
     state: State<'_, DesktopState>,
     request: RuntimeStartRequest,
 ) -> Result<LocalRuntimeSnapshot, String> {
-    start_runtime_from_request(&app, state.inner(), request, false)
+    start_runtime_from_request(state.inner(), request, false)
         .await
         .map_err(|error| error.to_string())
 }
@@ -366,7 +355,7 @@ async fn auto_start_profile(app: AppHandle, state: DesktopState) {
         )
         .await;
 
-    match start_runtime_from_request(&app, &state, request, true).await {
+    match start_runtime_from_request(&state, request, true).await {
         Ok(snapshot) => {
             state
                 .runtime
@@ -391,12 +380,11 @@ async fn auto_start_profile(app: AppHandle, state: DesktopState) {
 }
 
 async fn start_runtime_from_request(
-    app: &AppHandle,
     state: &DesktopState,
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
-    let request = normalize_start_request(app, request).map_err(anyhow::Error::msg)?;
+    let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
     let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
     let config = LocalRuntimeConfig::new(
         claim.relay_ws_url,
@@ -520,11 +508,8 @@ async fn post_local_runtime_claim(
         .map_err(|error| anyhow::anyhow!("解析本机 runtime 领取响应失败: {error}"))
 }
 
-fn normalize_profile(
-    app: &AppHandle,
-    profile: LocalRuntimeProfile,
-) -> Result<LocalRuntimeProfile, String> {
-    let identity = load_or_create_machine_identity(app)?;
+fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
+    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
     let mut legacy_machine_ids = profile.legacy_machine_ids;
     if !profile.legacy_device_id.trim().is_empty() {
         legacy_machine_ids.push(profile.legacy_device_id);
@@ -554,11 +539,8 @@ fn normalize_profile(
     })
 }
 
-fn normalize_start_request(
-    app: &AppHandle,
-    request: RuntimeStartRequest,
-) -> Result<RuntimeStartRequest, String> {
-    let identity = load_or_create_machine_identity(app)?;
+fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartRequest, String> {
+    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
     let machine_id = normalize_machine_id(request.machine_id, &identity.machine_id);
     let machine_label = request
         .machine_label
@@ -623,20 +605,6 @@ fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<St
         .collect()
 }
 
-fn machine_label_aliases(value: &str) -> Vec<String> {
-    let label = value.trim();
-    if label.is_empty() {
-        return Vec::new();
-    }
-
-    let lower = label.to_ascii_lowercase();
-    let mut aliases = vec![label.to_string(), lower.clone()];
-    if !lower.ends_with(".local") {
-        aliases.push(format!("{lower}.local"));
-    }
-    aliases
-}
-
 fn normalize_optional_text(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -661,65 +629,6 @@ fn local_hostname() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn load_or_create_machine_identity(app: &AppHandle) -> Result<DesktopMachineIdentity, String> {
-    let path = machine_identity_path(app)?;
-    if path.exists() {
-        let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let parsed: DesktopMachineIdentity = serde_json::from_str(&content)
-            .map_err(|error| format!("读取桌面端机器身份失败: {error}"))?;
-        let normalized = normalize_machine_identity(parsed);
-        save_machine_identity(&path, &normalized)?;
-        return Ok(normalized);
-    }
-
-    let identity = normalize_machine_identity(DesktopMachineIdentity {
-        machine_id: uuid::Uuid::new_v4().to_string(),
-        machine_label: local_hostname().unwrap_or_else(|| "AgentDash Desktop".to_string()),
-        legacy_machine_ids: Vec::new(),
-    });
-    save_machine_identity(&path, &identity)?;
-    Ok(identity)
-}
-
-fn normalize_machine_identity(identity: DesktopMachineIdentity) -> DesktopMachineIdentity {
-    let machine_id = identity.machine_id.trim();
-    let machine_id = if machine_id.is_empty() {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        machine_id.to_string()
-    };
-    let machine_label = identity.machine_label.trim();
-    let machine_label = if machine_label.is_empty() {
-        local_hostname().unwrap_or_else(|| "AgentDash Desktop".to_string())
-    } else {
-        machine_label.to_string()
-    };
-    let legacy_machine_ids = normalize_legacy_machine_ids(
-        identity
-            .legacy_machine_ids
-            .into_iter()
-            .chain(machine_label_aliases(&machine_label))
-            .collect(),
-        &machine_id,
-    );
-    DesktopMachineIdentity {
-        machine_id,
-        machine_label,
-        legacy_machine_ids,
-    }
-}
-
-fn save_machine_identity(
-    path: &std::path::Path,
-    identity: &DesktopMachineIdentity,
-) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(identity).map_err(|error| error.to_string())?;
-    std::fs::write(path, content).map_err(|error| error.to_string())
 }
 
 fn main() {
@@ -905,19 +814,5 @@ fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(DESKTOP_PROFILE_FILE))
-        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
-}
-
-fn machine_identity_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(path) = std::env::var(DESKTOP_MACHINE_IDENTITY_PATH_ENV) {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
-    }
-
-    app.path()
-        .app_config_dir()
-        .map(|dir| dir.join(DESKTOP_MACHINE_FILE))
         .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
 }

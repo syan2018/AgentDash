@@ -8,9 +8,7 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execSync, spawnSync } from 'node:child_process';
 import {
@@ -31,8 +29,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '..');
-const devMachineIdentityPath = path.join(root, '.agentdash', 'dev-machine-identity.json');
-const legacyDevRuntimeProfilePath = path.join(root, '.agentdash', 'dev-joint-runtime-profile.json');
 
 const config = parseArgs(process.argv.slice(2));
 
@@ -656,7 +652,7 @@ async function waitForLocalRegistration(port, backendId, maxAttempts, intervalMs
 }
 
 async function ensureDevLocalRuntimeClaim(port, options) {
-  const profile = loadOrCreateDevRuntimeProfile();
+  const profile = loadLocalMachineIdentity();
   const backend = await requestJson(port, 'POST', '/api/local-runtime/ensure', {
     machine_id: profile.machine_id,
     machine_label: profile.machine_label,
@@ -671,7 +667,6 @@ async function ensureDevLocalRuntimeClaim(port, options) {
     device: {
       app: 'agentdash-dev-joint',
       root,
-      hostname: os.hostname(),
       platform: process.platform,
       arch: process.arch,
       pid: process.pid
@@ -695,66 +690,51 @@ async function ensureDevLocalRuntimeClaim(port, options) {
     throw new Error(`本机运行时 ${backend.backend_id} 未返回 relay_ws_url`);
   }
 
-  saveDevRuntimeProfile({
-    ...profile,
-    machine_label: normalizeOptionalValue(backend.machine_label) || profile.machine_label
-  });
-
   console.log(
     `  [ready] 本机运行时已领取 (backend_id=${backend.backend_id}, machine=${backend.machine_label ?? profile.machine_label})`
   );
   return backend;
 }
 
-function loadOrCreateDevRuntimeProfile() {
-  const existing = readJsonFile(devMachineIdentityPath) || readJsonFile(legacyDevRuntimeProfilePath);
-  const machineId = normalizeOptionalValue(existing?.machine_id) || randomUUID();
-  const machineLabel = normalizeOptionalValue(existing?.machine_label)
-    || normalizeOptionalValue(os.hostname())
-    || 'dev-machine';
-  const legacyMachineIds = Array.isArray(existing?.legacy_machine_ids)
-    ? existing.legacy_machine_ids
-        .map((value) => normalizeOptionalValue(value))
-        .filter((value) => value && value !== machineId)
-    : [];
-  const profile = {
-    machine_id: machineId,
-    machine_label: machineLabel,
-    legacy_machine_ids: [...new Set(legacyMachineIds)]
-  };
-
-  if (JSON.stringify(existing) !== JSON.stringify(profile)) {
-    saveDevRuntimeProfile(profile);
+function loadLocalMachineIdentity() {
+  const result = spawnSync(localBinaryPath(), ['machine-identity'], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  if (result.status !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim() || `exit=${result.status}`;
+    throw new Error(`读取 agentdash-local 机器身份失败: ${message}`);
   }
-  return profile;
-}
 
-function readJsonFile(filePath) {
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-  const raw = fs.readFileSync(filePath, 'utf8');
   try {
-    return JSON.parse(raw);
+    const identity = JSON.parse(result.stdout);
+    if (!normalizeOptionalValue(identity?.machine_id)) {
+      throw new Error('缺少 machine_id');
+    }
+    if (!normalizeOptionalValue(identity?.machine_label)) {
+      throw new Error('缺少 machine_label');
+    }
+    return {
+      machine_id: identity.machine_id.trim(),
+      machine_label: identity.machine_label.trim(),
+      legacy_machine_ids: Array.isArray(identity.legacy_machine_ids)
+        ? identity.legacy_machine_ids.map((value) => String(value)).filter(Boolean)
+        : []
+    };
   } catch (error) {
-    throw new Error(`${filePath} 不是合法 JSON: ${error.message}`);
+    throw new Error(`agentdash-local machine-identity 输出不是合法身份 JSON: ${error.message}`);
   }
 }
 
-function saveDevRuntimeProfile(profile) {
-  fs.mkdirSync(path.dirname(devMachineIdentityPath), { recursive: true });
-  fs.writeFileSync(
-    devMachineIdentityPath,
-    `${JSON.stringify(profile, null, 2)}\n`,
-    'utf8'
-  );
+function localBinaryPath() {
+  return path.join(root, 'target', 'debug', isWindows ? 'agentdash-local.exe' : 'agentdash-local');
 }
 
 function devMachineLegacyIds(profile, options) {
   return [
     ...profile.legacy_machine_ids,
     ...machineLabelAliases(profile.machine_label),
-    ...machineLabelAliases(os.hostname()),
     options.backendName,
     'dev-local'
   ].filter((value) => value !== profile.machine_id);

@@ -3,18 +3,21 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use agentdash_local::{LocalRuntimeConfig, run_standalone};
+use agentdash_local::{LocalRuntimeConfig, load_or_create_machine_identity, run_standalone};
 
 #[derive(Parser, Debug)]
 #[command(name = "agentdash-local", about = "AgentDash 本机后端")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// 云端 WebSocket 地址
     #[arg(long)]
-    cloud_url: String,
+    cloud_url: Option<String>,
 
     /// 鉴权 token
     #[arg(long)]
-    token: String,
+    token: Option<String>,
 
     /// 本机可访问的工作空间目录（逗号分隔）
     #[arg(long, value_delimiter = ',')]
@@ -33,6 +36,12 @@ struct Cli {
     no_executor: bool,
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// 输出本机 runtime 识别到的机器身份
+    MachineIdentity,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -42,14 +51,24 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Command::MachineIdentity)) {
+        let identity = load_or_create_machine_identity()?;
+        println!("{}", serde_json::to_string_pretty(&identity)?);
+        return Ok(());
+    }
+
+    let cloud_url = cli
+        .cloud_url
+        .ok_or_else(|| anyhow::anyhow!("缺少 --cloud-url"))?;
+    let token = cli.token.ok_or_else(|| anyhow::anyhow!("缺少 --token"))?;
 
     let backend_id = cli
         .backend_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let config = LocalRuntimeConfig::new(
-        cli.cloud_url,
-        cli.token,
+        cloud_url,
+        token,
         backend_id,
         cli.name,
         cli.accessible_roots,

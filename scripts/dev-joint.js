@@ -8,7 +8,9 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execSync, spawnSync } from 'node:child_process';
 import {
@@ -29,6 +31,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '..');
+const devRuntimeProfilePath = path.join(root, '.agentdash', 'dev-joint-runtime-profile.json');
 
 const config = parseArgs(process.argv.slice(2));
 
@@ -93,17 +96,13 @@ async function main() {
   await waitForHttpReady(config.serverPort, '/api/health', 120);
 
   if (!config.skipLocal) {
-    const backend = await ensureLocalBackendConfig(
-      config.serverPort,
-      config.backendId,
-      config.backendName
-    );
+    const backend = await ensureDevLocalRuntimeClaim(config.serverPort, config);
     const localArgs = [
-      '--cloud-url', `ws://127.0.0.1:${config.serverPort}/ws/backend`,
+      '--cloud-url', backend.relay_ws_url,
       '--token', backend.auth_token,
       '--accessible-roots', config.accessibleRoots,
-      '--name', config.backendName,
-      '--backend-id', config.backendId
+      '--name', backend.name || config.backendName,
+      '--backend-id', backend.backend_id
     ];
     if (config.noExecutor) {
       localArgs.push('--no-executor');
@@ -114,7 +113,7 @@ async function main() {
       args: localArgs,
       label: 'agentdash-local',
     });
-    await waitForLocalRegistration(config.serverPort, config.backendId, 20, 500);
+    await waitForLocalRegistration(config.serverPort, backend.backend_id, 20, 500);
   } else {
     console.log('[3/4] 跳过 agentdash-local（--skip-local）');
   }
@@ -144,7 +143,6 @@ async function main() {
 function parseArgs(args) {
   const result = {
     accessibleRoots: root,
-    backendId: 'local-dev-1',
     backendName: 'dev-local',
     databaseUrl: process.env.DATABASE_URL || null,
     frontendMode: 'dev',
@@ -210,14 +208,6 @@ function parseArgs(args) {
     }
     if (arg === '--accessible-roots') {
       result.accessibleRoots = readNextValue(args, ++index, arg);
-      continue;
-    }
-    if (arg.startsWith('--backend-id=')) {
-      result.backendId = arg.slice('--backend-id='.length);
-      continue;
-    }
-    if (arg === '--backend-id') {
-      result.backendId = readNextValue(args, ++index, arg);
       continue;
     }
     if (arg.startsWith('--backend-name=')) {
@@ -321,8 +311,7 @@ function printHelp() {
   console.log('  --no-sccache              关闭自动 sccache 检测');
   console.log('  --sccache-dir <path>      指定 SCCACHE_DIR');
   console.log('  --accessible-roots <val>  指定 accessible roots');
-  console.log('  --backend-id <val>        指定 backend id');
-  console.log('  --backend-name <val>      指定 backend name');
+  console.log('  --backend-name <val>      指定本机运行时展示名称');
   console.log('  --database-url <val>      指定 DATABASE_URL');
   console.log('  --server-host <val>       指定后端绑定 host');
   console.log('  --server-port <port>      指定 server 端口');
@@ -338,7 +327,7 @@ function printBanner() {
   console.log('  ╚══════════════════════════════════════╝');
   console.log(`  root:       ${root}`);
   console.log(`  roots:      ${config.accessibleRoots}`);
-  console.log(`  backend_id: ${config.backendId}`);
+  console.log(`  runtime:    ${config.backendName}`);
   console.log(`  frontend:   ${config.frontendMode}`);
   console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
   console.log(`  rust cache: ${rustBuild.description}`);
@@ -665,24 +654,108 @@ async function waitForLocalRegistration(port, backendId, maxAttempts, intervalMs
   throw new Error(`local backend 未在预期时间内完成注册 (backend_id=${backendId})`);
 }
 
-async function ensureLocalBackendConfig(port, backendId, backendName) {
-  const backend = await requestJson(port, 'POST', '/api/backends', {
-    id: backendId,
-    name: backendName,
-    endpoint: '',
-    backend_type: 'local'
+async function ensureDevLocalRuntimeClaim(port, options) {
+  const profile = loadOrCreateDevRuntimeProfile();
+  const backend = await requestJson(port, 'POST', '/api/local-runtime/ensure', {
+    machine_id: profile.machine_id,
+    machine_label: profile.machine_label,
+    legacy_machine_ids: profile.legacy_machine_ids,
+    profile_id: formatDevRuntimeProfileId(options),
+    scope: { kind: 'user' },
+    capability_slot: 'default',
+    name: options.backendName,
+    accessible_roots: splitAccessibleRoots(options.accessibleRoots),
+    executor_enabled: !options.noExecutor,
+    client_version: 'dev-joint',
+    device: {
+      app: 'agentdash-dev-joint',
+      root,
+      hostname: os.hostname(),
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid
+    },
+    rotate_token: false
   });
 
   if (!backend || typeof backend !== 'object' || backend.__error__) {
     const message = backend?.message || '未知错误';
-    throw new Error(`确保本地 backend 失败: ${message}`);
+    throw new Error(`领取本机运行时失败: ${message}`);
   }
 
   const token = typeof backend.auth_token === 'string' ? backend.auth_token.trim() : '';
   if (!token) {
-    throw new Error(`backend ${backendId} 未返回可用 auth_token`);
+    throw new Error(`本机运行时 ${backend.backend_id ?? 'unknown'} 未返回可用 auth_token`);
+  }
+  if (typeof backend.backend_id !== 'string' || !backend.backend_id.trim()) {
+    throw new Error('本机运行时领取响应缺少 backend_id');
+  }
+  if (typeof backend.relay_ws_url !== 'string' || !backend.relay_ws_url.trim()) {
+    throw new Error(`本机运行时 ${backend.backend_id} 未返回 relay_ws_url`);
   }
 
-  console.log(`  [ready] backend 已确保 (backend_id=${backendId})`);
+  saveDevRuntimeProfile({
+    ...profile,
+    machine_label: normalizeOptionalValue(backend.machine_label) || profile.machine_label
+  });
+
+  console.log(
+    `  [ready] 本机运行时已领取 (backend_id=${backend.backend_id}, machine=${backend.machine_label ?? profile.machine_label})`
+  );
   return backend;
+}
+
+function loadOrCreateDevRuntimeProfile() {
+  const existing = readJsonFile(devRuntimeProfilePath);
+  const machineId = normalizeOptionalValue(existing?.machine_id) || randomUUID();
+  const machineLabel = normalizeOptionalValue(existing?.machine_label)
+    || normalizeOptionalValue(os.hostname())
+    || 'dev-machine';
+  const legacyMachineIds = Array.isArray(existing?.legacy_machine_ids)
+    ? existing.legacy_machine_ids
+        .map((value) => normalizeOptionalValue(value))
+        .filter((value) => value && value !== machineId)
+    : [];
+  const profile = {
+    machine_id: machineId,
+    machine_label: machineLabel,
+    legacy_machine_ids: [...new Set(legacyMachineIds)]
+  };
+
+  if (JSON.stringify(existing) !== JSON.stringify(profile)) {
+    saveDevRuntimeProfile(profile);
+  }
+  return profile;
+}
+
+function readJsonFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(filePath, 'utf8');
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${filePath} 不是合法 JSON: ${error.message}`);
+  }
+}
+
+function saveDevRuntimeProfile(profile) {
+  fs.mkdirSync(path.dirname(devRuntimeProfilePath), { recursive: true });
+  fs.writeFileSync(
+    devRuntimeProfilePath,
+    `${JSON.stringify(profile, null, 2)}\n`,
+    'utf8'
+  );
+}
+
+function splitAccessibleRoots(value) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatDevRuntimeProfileId(options) {
+  return `dev-joint:${options.serverHost}:${options.serverPort}`;
 }

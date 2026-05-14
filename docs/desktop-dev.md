@@ -48,8 +48,10 @@ pnpm dev:desktop
 1. 清理云端后端、本机后端和 Web 前端相关端口。
 2. 构建统一 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`。
 3. 启动云端后端 `agentdash-server`。
-4. 确保并启动本机后端 `agentdash-local`。
+4. 通过 `/api/local-runtime/ensure` 领取开发机的本机 runtime，拿到 server 颁发的 `backend_id`、relay token 和 WebSocket URL。
 5. 启动 Web 前端 `app-web`。
+
+`scripts/dev-joint.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。脚本只在仓库本地的 `.agentdash/dev-joint-runtime-profile.json` 保存开发机 `machine_id` 与展示标签；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。该文件位于已忽略的 `.agentdash/` 目录内，可在需要重置开发机身份时删除。
 
 `pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-desktop.js`：
 

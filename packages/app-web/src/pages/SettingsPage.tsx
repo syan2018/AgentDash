@@ -1820,7 +1820,7 @@ function ScopeTabs({
   onChange: (scope: SettingsPanel) => void;
 }) {
   const panels: SettingsPanel[] = includeLocalRuntime
-    ? ["local-runtime", "system", "user", "project"]
+    ? ["system", "user", "project", "local-runtime"]
     : ["system", "user", "project"];
   return (
     <div className="flex flex-wrap gap-2">
@@ -1996,9 +1996,7 @@ export function SettingsPage() {
   const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
   const { currentProjectId, projects } = useProjectStore();
-  const [activePanel, setActivePanel] = useState<SettingsPanel>(
-    getDesktopLocalRuntimeClient() ? "local-runtime" : "system",
-  );
+  const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
   const routeState = (location.state as SettingsNavigationState | null) ?? null;

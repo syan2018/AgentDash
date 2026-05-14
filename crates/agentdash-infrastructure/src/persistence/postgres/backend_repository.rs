@@ -100,7 +100,7 @@ impl BackendRepository for PostgresBackendRepository {
                 profile_id, device_id, machine_id, machine_label, legacy_machine_ids,
                 visibility, share_scope_kind, share_scope_id, capability_slot, device, last_claimed_at
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                endpoint = excluded.endpoint,

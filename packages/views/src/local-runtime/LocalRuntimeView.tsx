@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import {
   DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
@@ -18,11 +18,7 @@ import type {
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
 import {
-  Badge,
   Button,
-  Card,
-  CardHeader,
-  CheckboxField,
   EmptyState,
   Field,
   Notice,
@@ -321,272 +317,276 @@ export function LocalRuntimeView({
   const stateLabel = snapshot ? stateText(snapshot.state) : '未启动'
 
   return (
-    <section className="min-w-0 p-6">
-      <header className="mb-5 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-foreground">Local Runtime</h1>
-          <p className="mt-1 text-sm text-muted-foreground">机器身份由桌面端持久化，server 按 scope 领取本机 runtime</p>
-        </div>
-        <Badge variant={stateBadgeVariant(snapshot?.state)}>{stateLabel}</Badge>
-      </header>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.95fr)_minmax(420px,1.35fr)]">
-        <Card>
-          <CardHeader
-            actions={
-              <Button onClick={() => void client.runtimeSnapshot().then(setSnapshot)} disabled={isBusy}>
-                刷新
-              </Button>
-            }
-          >
-            <h2 className="text-sm font-semibold text-foreground">Runtime Snapshot</h2>
-          </CardHeader>
-
-          <dl className="grid gap-3">
-            <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
-            <RuntimeStat label="Name" value={snapshot?.name ?? backendName} />
-            <RuntimeStat label="Machine" value={machineLabel || machineId || '由桌面端自动生成'} />
-            <RuntimeStat label="Scope" value="Personal / private / default" />
-            <RuntimeStat label="Executors" value={snapshot ? (snapshot.executor_enabled ? 'enabled' : 'disabled') : '—'} />
-            <RuntimeStat label="MCP Servers" value={String(snapshot?.mcp_server_count ?? 0)} />
-          </dl>
-
-          <div className="mt-4 grid gap-2 border-t border-border pt-4">
-            {(snapshot?.accessible_roots.length ? snapshot.accessible_roots : roots).map((root) => (
-              <code key={root} className="rounded-[6px] bg-secondary px-2.5 py-2 text-xs text-muted-foreground wrap-anywhere">
-                {root}
-              </code>
-            ))}
-            {!snapshot?.accessible_roots.length && roots.length === 0 ? (
-              <span className="rounded-[6px] bg-secondary px-2.5 py-2 text-xs text-muted-foreground">未配置 accessible roots</span>
-            ) : null}
+    <section className="space-y-4">
+      <div className="rounded-[12px] border border-border bg-secondary/35 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">本机运行时</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              当前桌面端的本机执行环境，机器身份由 Tauri 持久化，服务端按个人 scope 领取 backend。
+            </p>
           </div>
-        </Card>
+          <span className={cn('rounded-full border px-2.5 py-1 text-xs', stateBadgeClass(snapshot?.state))}>
+            {stateLabel}
+          </span>
+        </div>
 
-        <Card as="form" onSubmit={handleStart}>
-          <CardHeader
-            actions={
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                <CheckboxField checked={executorEnabled} label="Executor" onChange={(event) => setExecutorEnabled(event.target.checked)} />
-                <CheckboxField checked={autoStart} label="Auto start" onChange={(event) => setAutoStart(event.target.checked)} />
-              </div>
-            }
-          >
-            <h2 className="text-sm font-semibold text-foreground">Start Runtime</h2>
-          </CardHeader>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
+          <RuntimeStat label="机器" value={machineLabel || machineId || '保存 profile 后生成'} />
+          <RuntimeStat label="Scope" value="Personal / private" />
+          <RuntimeStat label="能力" value={`${snapshot?.mcp_server_count ?? 0} MCP · ${snapshot?.executor_enabled ? 'Executor 开启' : 'Executor 关闭'}`} />
+        </div>
 
-          <div className="grid gap-3">
+        <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+          <Button onClick={() => void client.runtimeSnapshot().then(setSnapshot)} disabled={isBusy}>
+            刷新状态
+          </Button>
+          <Button variant="danger" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
+            停止
+          </Button>
+          <Button onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
+            重启
+          </Button>
+        </div>
+      </div>
+
+      <form className="rounded-[12px] border border-border bg-secondary/35 p-5" onSubmit={handleStart}>
+        <SectionHeader
+          title="连接与启动"
+          description="这里保存的是桌面端本地 profile；backend_id、relay token 和 websocket 地址始终以 server ensure 返回为准。"
+          actions={
+            <div className="flex flex-wrap items-center justify-end gap-3 text-xs text-muted-foreground">
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  checked={executorEnabled}
+                  className="h-4 w-4 rounded border-border accent-primary"
+                  type="checkbox"
+                  onChange={(event) => setExecutorEnabled(event.target.checked)}
+                />
+                Executor
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  checked={autoStart}
+                  className="h-4 w-4 rounded border-border accent-primary"
+                  type="checkbox"
+                  onChange={(event) => setAutoStart(event.target.checked)}
+                />
+                自动启动
+              </label>
+            </div>
+          }
+        />
+
+        <div className="mt-4 grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
             <Field label="Server URL">
               <TextInput value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
             </Field>
-
-            <Field label="Access Token (optional)">
+            <Field label="Access Token">
               <TextInput
                 autoComplete="current-password"
                 value={accessToken}
                 onChange={(event) => setAccessToken(event.target.value)}
+                placeholder="Personal auth 下可留空"
                 type="password"
               />
             </Field>
+          </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Profile ID">
-                <TextInput value={profileId} onChange={(event) => setProfileId(event.target.value)} />
-              </Field>
-
-              <Field label="Machine Label">
-                <TextInput value={machineLabel} onChange={(event) => setMachineLabel(event.target.value)} placeholder="默认使用本机 hostname" />
-              </Field>
-            </div>
-
-            <Field label="Machine ID">
-              <TextInput value={machineId || '保存 profile 后由桌面端生成'} readOnly />
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Profile ID">
+              <TextInput value={profileId} onChange={(event) => setProfileId(event.target.value)} />
             </Field>
+            <Field label="机器标签">
+              <TextInput
+                value={machineLabel}
+                onChange={(event) => setMachineLabel(event.target.value)}
+                placeholder="默认使用本机 hostname"
+              />
+            </Field>
+          </div>
 
+          <Field label="Machine ID">
+            <TextInput value={machineId || '保存 profile 后由桌面端生成'} readOnly />
+          </Field>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Backend 名称">
+              <TextInput value={backendName} onChange={(event) => setBackendName(event.target.value)} />
+            </Field>
             <Field label="Legacy Machine IDs">
               <Textarea
                 value={legacyMachineIds}
                 onChange={(event) => setLegacyMachineIds(event.target.value)}
-                placeholder="每行一个旧 hostname / device id，用于身份合并"
-              />
-            </Field>
-
-            <Field label="Backend Name">
-              <TextInput value={backendName} onChange={(event) => setBackendName(event.target.value)} />
-            </Field>
-
-            <Field label="Accessible Roots">
-              <Textarea
-                value={accessibleRoots}
-                onChange={(event) => setAccessibleRoots(event.target.value)}
-                placeholder="每行一个绝对路径"
+                placeholder="每行一个旧 hostname / device id"
               />
             </Field>
           </div>
 
-          {error ? <Notice className="mt-3" tone="danger">{error}</Notice> : null}
-          {profileMessage ? <Notice className="mt-3">{profileMessage}</Notice> : null}
+          <Field label="可访问根目录">
+            <Textarea
+              value={accessibleRoots}
+              onChange={(event) => setAccessibleRoots(event.target.value)}
+              placeholder="每行一个绝对路径"
+            />
+          </Field>
+        </div>
 
-          <div className="mt-4 flex flex-wrap justify-end gap-2">
-            <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim()}>
-              启动
+        {error ? <Notice className="mt-3" tone="danger">{error}</Notice> : null}
+        {profileMessage ? <Notice className="mt-3">{profileMessage}</Notice> : null}
+
+        <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+          <Button onClick={() => void handleLoadProfile()}>加载 profile</Button>
+          <Button onClick={() => void handleSaveProfile()} disabled={!serverUrl.trim()}>
+            保存 profile
+          </Button>
+          <Button variant="danger" onClick={() => void handleDeleteProfile()}>
+            删除 profile
+          </Button>
+          <Button type="submit" variant="primary" disabled={isBusy || !serverUrl.trim()}>
+            启动 runtime
+          </Button>
+        </div>
+      </form>
+
+      <div className="rounded-[12px] border border-border bg-secondary/35 p-5">
+        <SectionHeader
+          title="MCP Servers"
+          description="MCP 配置按 root 写入本机项目目录，随本机 runtime 暴露给会话执行面。"
+          actions={
+            <>
+              <Button onClick={() => addMcpServer('stdio')}>添加 stdio</Button>
+              <Button onClick={() => addMcpServer('http')}>添加 HTTP</Button>
+            </>
+          }
+        />
+
+        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(320px,1fr)_auto] md:items-end">
+          <Field label="Config Root">
+            <TextInput
+              value={mcpRoot}
+              onChange={(event) => setMcpRoot(event.target.value)}
+              placeholder="保存到 root/.agentdash/local-backend.json"
+            />
+          </Field>
+          <div className="flex gap-2">
+            <Button onClick={() => void handleLoadMcpServers()} disabled={!effectiveMcpRoot}>
+              加载
             </Button>
-            <Button variant="danger" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
-              停止
-            </Button>
-            <Button onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
-              重启
+            <Button variant="primary" onClick={() => void handleSaveMcpServers()} disabled={!effectiveMcpRoot}>
+              保存
             </Button>
           </div>
+        </div>
 
-          <div className="mt-2 flex flex-wrap justify-end gap-2">
-            <Button onClick={() => void handleLoadProfile()}>加载 profile</Button>
-            <Button onClick={() => void handleSaveProfile()} disabled={!serverUrl.trim()}>
-              保存 profile
-            </Button>
-            <Button variant="danger" onClick={() => void handleDeleteProfile()}>
-              删除 profile
-            </Button>
-          </div>
-        </Card>
+        <div className="mt-4 grid gap-2">
+          {mcpServers.map((server, index) => (
+            <div key={`${server.name}-${index}`} className="rounded-[10px] border border-border bg-background/80 p-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="grid gap-3 md:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.55fr)_repeat(2,minmax(180px,1fr))]">
+                  <Field label="Name">
+                    <TextInput value={server.name} onChange={(event) => updateMcpServer(index, { name: event.target.value })} />
+                  </Field>
 
-        <Card className="xl:col-span-2">
-          <CardHeader
-            actions={
-              <>
-                <Button onClick={() => addMcpServer('stdio')}>添加 stdio</Button>
-                <Button onClick={() => addMcpServer('http')}>添加 HTTP</Button>
-              </>
-            }
-          >
-            <h2 className="text-sm font-semibold text-foreground">MCP Servers</h2>
-          </CardHeader>
+                  <Field label="Transport">
+                    <Select
+                      value={server.transport}
+                      onChange={(event) => updateMcpServer(index, { transport: event.target.value as McpLocalServerEntry['transport'] })}
+                    >
+                      <option value="stdio">stdio</option>
+                      <option value="http">http</option>
+                      <option value="sse">sse</option>
+                    </Select>
+                  </Field>
 
-          <div className="mb-4 grid gap-3 md:grid-cols-[minmax(360px,1fr)_auto] md:items-end">
-            <Field label="Config Root">
-              <TextInput
-                value={mcpRoot}
-                onChange={(event) => setMcpRoot(event.target.value)}
-                placeholder="保存到 root/.agentdash/local-backend.json"
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button onClick={() => void handleLoadMcpServers()} disabled={!effectiveMcpRoot}>
-                加载
-              </Button>
-              <Button variant="primary" onClick={() => void handleSaveMcpServers()} disabled={!effectiveMcpRoot}>
-                保存
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            {mcpServers.map((server, index) => (
-              <Card as="article" className="bg-background/60" key={`${server.name}-${index}`}>
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className="grid gap-3 md:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.55fr)_repeat(2,minmax(180px,1fr))]">
-                    <Field label="Name">
-                      <TextInput value={server.name} onChange={(event) => updateMcpServer(index, { name: event.target.value })} />
-                    </Field>
-
-                    <Field label="Transport">
-                      <Select
-                        value={server.transport}
-                        onChange={(event) => updateMcpServer(index, { transport: event.target.value as McpLocalServerEntry['transport'] })}
-                      >
-                        <option value="stdio">stdio</option>
-                        <option value="http">http</option>
-                        <option value="sse">sse</option>
-                      </Select>
-                    </Field>
-
-                    {server.transport === 'stdio' ? (
-                      <>
-                        <Field label="Command" className="md:col-span-2">
-                          <TextInput value={server.command ?? ''} onChange={(event) => updateMcpServer(index, { command: event.target.value })} />
-                        </Field>
-                        <Field label="Args">
-                          <Textarea
-                            value={(server.args ?? []).join('\n')}
-                            onChange={(event) => updateMcpServer(index, { args: parseRuntimeLines(event.target.value) })}
-                            placeholder="每行一个参数"
-                          />
-                        </Field>
-                        <Field label="Env">
-                          <Textarea
-                            value={(server.env ?? []).map((entry) => `${entry.name}=${entry.value}`).join('\n')}
-                            onChange={(event) => updateMcpServer(index, { env: parseRuntimeEnv(event.target.value) })}
-                            placeholder="NAME=value"
-                          />
-                        </Field>
-                      </>
-                    ) : (
-                      <Field label="URL" className="md:col-span-2">
-                        <TextInput value={server.url ?? ''} onChange={(event) => updateMcpServer(index, { url: event.target.value })} />
+                  {server.transport === 'stdio' ? (
+                    <>
+                      <Field label="Command" className="md:col-span-2">
+                        <TextInput value={server.command ?? ''} onChange={(event) => updateMcpServer(index, { command: event.target.value })} />
                       </Field>
-                    )}
-                  </div>
-
-                  <div className="flex items-start gap-2">
-                    <Button onClick={() => void handleProbeMcpServer(index)} disabled={probingIndex === index}>
-                      {probingIndex === index ? '探测中' : '探测'}
-                    </Button>
-                    <Button variant="danger" onClick={() => removeMcpServer(index)}>
-                      删除
-                    </Button>
-                  </div>
+                      <Field label="Args">
+                        <Textarea
+                          value={(server.args ?? []).join('\n')}
+                          onChange={(event) => updateMcpServer(index, { args: parseRuntimeLines(event.target.value) })}
+                          placeholder="每行一个参数"
+                        />
+                      </Field>
+                      <Field label="Env">
+                        <Textarea
+                          value={(server.env ?? []).map((entry) => `${entry.name}=${entry.value}`).join('\n')}
+                          onChange={(event) => updateMcpServer(index, { env: parseRuntimeEnv(event.target.value) })}
+                          placeholder="NAME=value"
+                        />
+                      </Field>
+                    </>
+                  ) : (
+                    <Field label="URL" className="md:col-span-2">
+                      <TextInput value={server.url ?? ''} onChange={(event) => updateMcpServer(index, { url: event.target.value })} />
+                    </Field>
+                  )}
                 </div>
-              </Card>
-            ))}
-            {mcpServers.length === 0 ? <EmptyState>当前 root 未配置 MCP servers</EmptyState> : null}
-          </div>
 
-          {mcpMessage ? <Notice className="mt-3">{mcpMessage}</Notice> : null}
-        </Card>
-
-        <Card className="xl:col-span-2">
-          <CardHeader
-            actions={
-              <>
-                <Select value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
-                  <option value="all">全部</option>
-                  <option value="info">info</option>
-                  <option value="warn">warn</option>
-                  <option value="error">error</option>
-                </Select>
-                <Button onClick={() => void handleRefreshLogs()}>刷新</Button>
-                <Button onClick={() => void handleCopyLogs()} disabled={visibleLogs.length === 0}>
-                  复制
-                </Button>
-                <Button variant="danger" onClick={() => void handleClearLogs()}>
-                  清空
-                </Button>
-              </>
-            }
-          >
-            <h2 className="text-sm font-semibold text-foreground">Runtime Logs</h2>
-          </CardHeader>
-
-          <div className="grid gap-2">
-            {visibleLogs.map((log) => (
-              <div
-                className={cn(
-                  'grid gap-2 rounded-[8px] border-l-4 bg-secondary/35 px-3 py-2 text-xs md:grid-cols-[92px_58px_110px_minmax(0,1fr)]',
-                  log.level === 'warn' && 'border-l-warning bg-warning/5',
-                  log.level === 'error' && 'border-l-destructive bg-destructive/5',
-                  log.level === 'info' && 'border-l-muted-foreground/40',
-                )}
-                key={log.sequence}
-              >
-                <time className="text-muted-foreground">{formatTime(log.timestamp)}</time>
-                <span className="font-semibold uppercase text-muted-foreground">{log.level}</span>
-                <code className="text-muted-foreground">{log.target}</code>
-                <p className="m-0 wrap-anywhere text-foreground">{log.message}</p>
+                <div className="flex items-start gap-2">
+                  <Button onClick={() => void handleProbeMcpServer(index)} disabled={probingIndex === index}>
+                    {probingIndex === index ? '探测中' : '探测'}
+                  </Button>
+                  <Button variant="danger" onClick={() => removeMcpServer(index)}>
+                    删除
+                  </Button>
+                </div>
               </div>
-            ))}
-            {visibleLogs.length === 0 ? <EmptyState>暂无本机 runtime 日志</EmptyState> : null}
-          </div>
-        </Card>
+            </div>
+          ))}
+          {mcpServers.length === 0 ? <EmptyState>当前 root 未配置 MCP servers</EmptyState> : null}
+        </div>
+
+        {mcpMessage ? <Notice className="mt-3">{mcpMessage}</Notice> : null}
+      </div>
+
+      <div className="rounded-[12px] border border-border bg-secondary/35 p-5">
+        <SectionHeader
+          title="诊断日志"
+          description="日志来自桌面端本机 runtime manager，用于排查 ensure、注册和 MCP 探测。"
+          actions={
+            <>
+              <Select value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
+                <option value="all">全部</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </Select>
+              <Button onClick={() => void handleRefreshLogs()}>刷新</Button>
+              <Button onClick={() => void handleCopyLogs()} disabled={visibleLogs.length === 0}>
+                复制
+              </Button>
+              <Button variant="danger" onClick={() => void handleClearLogs()}>
+                清空
+              </Button>
+            </>
+          }
+        />
+
+        <div className="mt-4 grid gap-2">
+          {visibleLogs.map((log) => (
+            <div
+              className={cn(
+                'grid gap-2 rounded-[8px] border-l-4 bg-background/80 px-3 py-2 text-xs md:grid-cols-[92px_58px_110px_minmax(0,1fr)]',
+                log.level === 'warn' && 'border-l-warning bg-warning/5',
+                log.level === 'error' && 'border-l-destructive bg-destructive/5',
+                log.level === 'info' && 'border-l-muted-foreground/40',
+              )}
+              key={log.sequence}
+            >
+              <time className="text-muted-foreground">{formatTime(log.timestamp)}</time>
+              <span className="font-semibold uppercase text-muted-foreground">{log.level}</span>
+              <code className="text-muted-foreground">{log.target}</code>
+              <p className="m-0 wrap-anywhere text-foreground">{log.message}</p>
+            </div>
+          ))}
+          {visibleLogs.length === 0 ? <EmptyState>暂无本机 runtime 日志</EmptyState> : null}
+        </div>
       </div>
     </section>
   )
@@ -595,8 +595,28 @@ export function LocalRuntimeView({
 function RuntimeStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1">
-      <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dt className="text-[11px] font-semibold text-muted-foreground">{label}</dt>
       <dd className="m-0 text-sm text-foreground wrap-anywhere">{value}</dd>
+    </div>
+  )
+}
+
+function SectionHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string
+  description: string
+  actions?: ReactNode
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      </div>
+      {actions ? <div className="flex flex-wrap justify-end gap-2">{actions}</div> : null}
     </div>
   )
 }
@@ -640,18 +660,18 @@ function stateText(state: LocalRuntimeStatus['state']) {
   }
 }
 
-function stateBadgeVariant(state?: LocalRuntimeStatus['state']) {
+function stateBadgeClass(state?: LocalRuntimeStatus['state']) {
   switch (state) {
     case 'running':
-      return 'success'
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
     case 'starting':
     case 'stopping':
-      return 'primary'
+      return 'border-primary/30 bg-primary/10 text-primary'
     case 'error':
-      return 'danger'
+      return 'border-destructive/40 bg-destructive/10 text-destructive'
     case 'stopped':
     default:
-      return 'neutral'
+      return 'border-border bg-background text-muted-foreground'
   }
 }
 

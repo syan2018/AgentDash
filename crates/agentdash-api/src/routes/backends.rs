@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
-    BackendConfig, BackendRepository, BackendType, LocalBackendClaim, RuntimeHealth,
-    RuntimeHealthStatus,
+    BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
+    LocalBackendClaim, RuntimeHealth, RuntimeHealthStatus,
 };
 
 use crate::app_state::AppState;
@@ -35,8 +35,14 @@ pub struct CreateBackendRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct EnsureLocalRuntimeRequest {
-    pub device_id: String,
+    pub machine_id: String,
+    pub machine_label: Option<String>,
+    #[serde(default)]
+    pub legacy_machine_ids: Vec<String>,
     pub profile_id: String,
+    #[serde(default)]
+    pub scope: Option<LocalRuntimeScopeRequest>,
+    pub capability_slot: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
     pub accessible_roots: Vec<String>,
@@ -49,6 +55,12 @@ pub struct EnsureLocalRuntimeRequest {
     pub rotate_token: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LocalRuntimeScopeRequest {
+    pub kind: BackendShareScopeKind,
+    pub id: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct EnsureLocalRuntimeResponse {
     pub backend_id: String,
@@ -57,7 +69,12 @@ pub struct EnsureLocalRuntimeResponse {
     pub auth_token: String,
     pub backend_enabled: bool,
     pub profile_id: String,
-    pub device_id: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub visibility: BackendVisibility,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
 }
 
 #[derive(Serialize)]
@@ -149,6 +166,13 @@ pub async fn list_backends(
                 owner_user_id: None,
                 profile_id: None,
                 device_id: None,
+                machine_id: None,
+                machine_label: None,
+                legacy_machine_ids: Vec::new(),
+                visibility: BackendVisibility::Private,
+                share_scope_kind: BackendShareScopeKind::User,
+                share_scope_id: None,
+                capability_slot: "default".to_string(),
                 device: serde_json::json!({}),
                 last_claimed_at: None,
             },
@@ -279,6 +303,29 @@ pub async fn add_backend(
         owner_user_id: None, // TODO: 从 CurrentUser 提取
         profile_id: existing.as_ref().and_then(|item| item.profile_id.clone()),
         device_id: existing.as_ref().and_then(|item| item.device_id.clone()),
+        machine_id: existing.as_ref().and_then(|item| item.machine_id.clone()),
+        machine_label: existing
+            .as_ref()
+            .and_then(|item| item.machine_label.clone()),
+        legacy_machine_ids: existing
+            .as_ref()
+            .map(|item| item.legacy_machine_ids.clone())
+            .unwrap_or_default(),
+        visibility: existing
+            .as_ref()
+            .map(|item| item.visibility)
+            .unwrap_or_default(),
+        share_scope_kind: existing
+            .as_ref()
+            .map(|item| item.share_scope_kind)
+            .unwrap_or_default(),
+        share_scope_id: existing
+            .as_ref()
+            .and_then(|item| item.share_scope_id.clone()),
+        capability_slot: existing
+            .as_ref()
+            .map(|item| item.capability_slot.clone())
+            .unwrap_or_else(|| "default".to_string()),
         device: existing
             .as_ref()
             .map(|item| item.device.clone())
@@ -296,17 +343,38 @@ pub async fn ensure_local_runtime(
     Json(req): Json<EnsureLocalRuntimeRequest>,
 ) -> Result<Json<EnsureLocalRuntimeResponse>, ApiError> {
     let profile_id = normalize_required("profile_id", &req.profile_id)?;
-    let device_id = normalize_required("device_id", &req.device_id)?;
+    let machine_id = normalize_required("machine_id", &req.machine_id)?;
+    let machine_label = req
+        .machine_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_machine_label(&machine_id));
+    let capability_slot = req
+        .capability_slot
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "default".to_string());
+    let (share_scope_kind, share_scope_id, visibility) =
+        resolve_local_runtime_scope(req.scope, &current_user.user_id)?;
     let name = req
         .name
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| default_local_runtime_name(&device_id));
+        .unwrap_or_else(|| default_local_runtime_name(&machine_label, share_scope_kind));
 
     let relay_ws_url = relay_ws_url_from_headers(&headers);
-    let backend_id = stable_local_backend_id(&current_user.user_id, &profile_id, &device_id);
+    let backend_id = stable_local_backend_id(
+        &machine_id,
+        share_scope_kind,
+        share_scope_id.as_deref(),
+        &capability_slot,
+    );
     let mut device = normalize_device_payload(req.device)?;
     if let Some(client_version) = normalize_optional_string(req.client_version) {
         device["client_version"] = serde_json::Value::String(client_version);
@@ -318,7 +386,13 @@ pub async fn ensure_local_runtime(
     let claim = LocalBackendClaim {
         owner_user_id: current_user.user_id.clone(),
         profile_id: profile_id.clone(),
-        device_id: device_id.clone(),
+        machine_id: machine_id.clone(),
+        machine_label: machine_label.clone(),
+        legacy_machine_ids: normalize_legacy_machine_ids(req.legacy_machine_ids, &machine_id),
+        visibility,
+        share_scope_kind,
+        share_scope_id: share_scope_id.clone(),
+        capability_slot: capability_slot.clone(),
         backend_id,
         name,
         endpoint: relay_ws_url.clone(),
@@ -346,7 +420,12 @@ pub async fn ensure_local_runtime(
         auth_token,
         backend_enabled: backend.enabled,
         profile_id,
-        device_id,
+        machine_id,
+        machine_label,
+        visibility,
+        share_scope_kind,
+        share_scope_id,
+        capability_slot,
     }))
 }
 
@@ -398,22 +477,90 @@ fn normalize_device_payload(value: serde_json::Value) -> Result<serde_json::Valu
     }
 }
 
-fn default_local_runtime_name(device_id: &str) -> String {
-    let suffix = device_id
+fn resolve_local_runtime_scope(
+    scope: Option<LocalRuntimeScopeRequest>,
+    current_user_id: &str,
+) -> Result<(BackendShareScopeKind, Option<String>, BackendVisibility), ApiError> {
+    match scope {
+        Some(LocalRuntimeScopeRequest {
+            kind: BackendShareScopeKind::User,
+            id,
+        }) => {
+            let requested_user = id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(current_user_id);
+            if requested_user != current_user_id {
+                return Err(ApiError::Forbidden(
+                    "只能领取当前用户的个人本机 runtime".to_string(),
+                ));
+            }
+            Ok((
+                BackendShareScopeKind::User,
+                Some(current_user_id.to_string()),
+                BackendVisibility::Private,
+            ))
+        }
+        Some(LocalRuntimeScopeRequest {
+            kind: BackendShareScopeKind::Project | BackendShareScopeKind::System,
+            ..
+        }) => Err(ApiError::BadRequest(
+            "共享本机 runtime scope 尚未开放创建入口".to_string(),
+        )),
+        None => Ok((
+            BackendShareScopeKind::User,
+            Some(current_user_id.to_string()),
+            BackendVisibility::Private,
+        )),
+    }
+}
+
+fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != machine_id)
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn default_machine_label(machine_id: &str) -> String {
+    let suffix = machine_id
         .rsplit([':', '/', '\\'])
         .next()
         .filter(|value| !value.is_empty())
         .unwrap_or("desktop");
-    format!("AgentDash Desktop ({suffix})")
+    format!("Desktop {suffix}")
 }
 
-fn stable_local_backend_id(owner_user_id: &str, profile_id: &str, device_id: &str) -> String {
+fn default_local_runtime_name(
+    machine_label: &str,
+    share_scope_kind: BackendShareScopeKind,
+) -> String {
+    let scope_label = match share_scope_kind {
+        BackendShareScopeKind::User => "Personal",
+        BackendShareScopeKind::Project => "Project Shared",
+        BackendShareScopeKind::System => "System Shared",
+    };
+    format!("{machine_label} / {scope_label}")
+}
+
+fn stable_local_backend_id(
+    machine_id: &str,
+    share_scope_kind: BackendShareScopeKind,
+    share_scope_id: Option<&str>,
+    capability_slot: &str,
+) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(owner_user_id.as_bytes());
+    hasher.update(machine_id.as_bytes());
     hasher.update(b"\n");
-    hasher.update(profile_id.as_bytes());
+    hasher.update(share_scope_kind.as_str().as_bytes());
     hasher.update(b"\n");
-    hasher.update(device_id.as_bytes());
+    hasher.update(share_scope_id.unwrap_or("").as_bytes());
+    hasher.update(b"\n");
+    hasher.update(capability_slot.as_bytes());
     let digest = hasher.finalize();
     format!("local_{}", hex_prefix(&digest, 24))
 }
@@ -530,6 +677,13 @@ mod tests {
             owner_user_id: None,
             profile_id: None,
             device_id: None,
+            machine_id: None,
+            machine_label: None,
+            legacy_machine_ids: Vec::new(),
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
             device: serde_json::json!({}),
             last_claimed_at: None,
         }
@@ -582,12 +736,34 @@ mod tests {
 
     #[test]
     fn stable_local_backend_id_is_deterministic_and_scoped() {
-        let first = stable_local_backend_id("user-a", "profile-a", "device-a");
-        let again = stable_local_backend_id("user-a", "profile-a", "device-a");
-        let other_user = stable_local_backend_id("user-b", "profile-a", "device-a");
+        let first = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "default",
+        );
+        let again = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "default",
+        );
+        let other_user = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-b"),
+            "default",
+        );
+        let other_slot = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "tools",
+        );
 
         assert_eq!(first, again);
         assert_ne!(first, other_user);
+        assert_ne!(first, other_slot);
         assert!(first.starts_with("local_"));
     }
 

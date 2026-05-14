@@ -1634,6 +1634,8 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
           const availableExecs = executors.filter((e) => e.available);
           const runtimeHealth = backend.runtime_health;
           const roots = backend.accessible_roots ?? runtimeHealth?.accessible_roots ?? [];
+          const machineLabel = backend.machine_label || machineLabelFromDevice(backend.device) || backend.name;
+          const scopeLabel = formatBackendScope(backend);
 
           return (
             <div key={backend.id} className="rounded-[10px] border border-border bg-background/80">
@@ -1648,10 +1650,10 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{backend.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {backend.online
-                      ? `${availableExecs.length} 个执行器可用`
-                      : backend.backend_type === "local"
-                        ? "本机 · 离线"
+                    {backend.backend_type === "local"
+                      ? `${machineLabel} · ${scopeLabel}`
+                      : backend.online
+                        ? `${availableExecs.length} 个执行器可用`
                         : "远程 · 离线"}
                   </p>
                 </div>
@@ -1687,6 +1689,18 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                     </span>
                     <span className="text-muted-foreground">类型</span>
                     <span className="text-foreground">{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                    {backend.backend_type === "local" && (
+                      <>
+                        <span className="text-muted-foreground">机器</span>
+                        <span className="truncate text-foreground" title={backend.machine_id ?? undefined}>
+                          {machineLabel}
+                        </span>
+                        <span className="text-muted-foreground">Scope</span>
+                        <span className="text-foreground">{scopeLabel}</span>
+                        <span className="text-muted-foreground">能力槽</span>
+                        <span className="font-mono text-foreground">{backend.capability_slot || "default"}</span>
+                      </>
+                    )}
                     {runtimeHealth && (
                       <>
                         <span className="text-muted-foreground">Runtime</span>
@@ -1757,6 +1771,19 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
       </div>
     </SectionCard>
   );
+}
+
+function machineLabelFromDevice(device: BackendConfig["device"]) {
+  const hostname = device?.hostname;
+  return typeof hostname === "string" && hostname.trim() ? hostname.trim() : null;
+}
+
+function formatBackendScope(backend: BackendConfig) {
+  const kind = backend.share_scope_kind ?? "user";
+  const visibility = backend.visibility ?? "private";
+  if (kind === "user") return `Personal / ${visibility}`;
+  if (kind === "project") return `Project shared / ${visibility}`;
+  return `System shared / ${visibility}`;
 }
 
 function runtimeStatusLabel(status: NonNullable<BackendConfig["runtime_health"]>["status"]) {

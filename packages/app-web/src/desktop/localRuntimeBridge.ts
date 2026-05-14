@@ -47,18 +47,21 @@ async function loadOrCreateAutoStartProfile(
       access_token: accessToken,
       server_url: resolveDesktopServerUrl(current.server_url),
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
-      device_id: current.device_id || createDeviceId(),
+      machine_id: current.machine_id || '',
+      machine_label: current.machine_label ?? null,
+      legacy_machine_ids: current.legacy_machine_ids ?? [],
       auto_start: shouldAutoStart,
     };
-    await client.profileSave(normalized);
-    return normalized;
+    return client.profileSave(normalized);
   }
 
   const created: LocalRuntimeProfile = {
     server_url: resolveDesktopServerUrl(''),
     access_token: accessToken,
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
-    device_id: createDeviceId(),
+    machine_id: '',
+    machine_label: null,
+    legacy_machine_ids: [],
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     accessible_roots: [],
     executor_enabled: true,
@@ -66,19 +69,11 @@ async function loadOrCreateAutoStartProfile(
     backend_id: null,
     relay_ws_url: null,
   };
-  await client.profileSave(created);
-  return created;
+  return client.profileSave(created);
 }
 
 function resolveDesktopServerUrl(value: string): string {
   const explicit = value.trim().replace(/\/+$/, '');
   if (explicit) return explicit;
   return API_ORIGIN || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
-}
-
-function createDeviceId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

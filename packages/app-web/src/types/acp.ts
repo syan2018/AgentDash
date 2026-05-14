@@ -70,6 +70,18 @@ export interface BackendConfig {
   auth_token: string | null;
   enabled: boolean;
   backend_type: BackendType;
+  owner_user_id?: string | null;
+  profile_id?: string | null;
+  device_id?: string | null;
+  machine_id?: string | null;
+  machine_label?: string | null;
+  legacy_machine_ids?: string[];
+  visibility?: "private" | "shared" | "system";
+  share_scope_kind?: "user" | "project" | "system";
+  share_scope_id?: string | null;
+  capability_slot?: string;
+  device?: Record<string, unknown>;
+  last_claimed_at?: string | null;
   /** WebSocket 中继在线状态（由 API 附加） */
   online?: boolean;
   /** 持久化 runtime health（cloud authority + registry online 合并） */

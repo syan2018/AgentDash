@@ -51,7 +51,9 @@ export function LocalRuntimeView({
   const [serverUrl, setServerUrl] = useState(defaultServerUrl)
   const [accessToken, setAccessToken] = useState(defaultAccessToken)
   const [profileId, setProfileId] = useState(defaultProfileId)
-  const [deviceId, setDeviceId] = useState(() => createDeviceId())
+  const [machineId, setMachineId] = useState('')
+  const [machineLabel, setMachineLabel] = useState('')
+  const [legacyMachineIds, setLegacyMachineIds] = useState('')
   const [backendName, setBackendName] = useState(defaultBackendName)
   const [accessibleRoots, setAccessibleRoots] = useState('')
   const [executorEnabled, setExecutorEnabled] = useState(true)
@@ -120,7 +122,17 @@ export function LocalRuntimeView({
     setIsBusy(true)
     setError(null)
     try {
-      const request = buildStartRequest(serverUrl, accessToken, profileId, deviceId, backendName, roots, executorEnabled)
+      const request = buildStartRequest(
+        serverUrl,
+        accessToken,
+        profileId,
+        machineId,
+        machineLabel,
+        parseRuntimeLines(legacyMachineIds),
+        backendName,
+        roots,
+        executorEnabled,
+      )
       setSnapshot(await client.runtimeStart(request))
     } catch (err) {
       setError(formatError(err))
@@ -169,7 +181,9 @@ export function LocalRuntimeView({
     setServerUrl(profile.server_url)
     setAccessToken(profile.access_token || defaultAccessToken)
     setProfileId(profile.profile_id || defaultProfileId)
-    setDeviceId(profile.device_id || createDeviceId())
+    setMachineId(profile.machine_id || '')
+    setMachineLabel(profile.machine_label ?? '')
+    setLegacyMachineIds((profile.legacy_machine_ids ?? []).join('\n'))
     setBackendName(profile.name ?? defaultBackendName)
     setAccessibleRoots(profile.accessible_roots.join('\n'))
     setExecutorEnabled(profile.executor_enabled)
@@ -181,7 +195,17 @@ export function LocalRuntimeView({
 
   function buildProfile(): LocalRuntimeProfile {
     return {
-      ...buildStartRequest(serverUrl, accessToken, profileId, deviceId, backendName, roots, executorEnabled),
+      ...buildStartRequest(
+        serverUrl,
+        accessToken,
+        profileId,
+        machineId,
+        machineLabel,
+        parseRuntimeLines(legacyMachineIds),
+        backendName,
+        roots,
+        executorEnabled,
+      ),
       auto_start: autoStart,
       backend_id: snapshot?.backend_id ?? null,
     }
@@ -301,7 +325,7 @@ export function LocalRuntimeView({
       <header className="mb-5 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-foreground">Local Runtime</h1>
-          <p className="mt-1 text-sm text-muted-foreground">状态源：Tauri command → agentdash-local library</p>
+          <p className="mt-1 text-sm text-muted-foreground">机器身份由桌面端持久化，server 按 scope 领取本机 runtime</p>
         </div>
         <Badge variant={stateBadgeVariant(snapshot?.state)}>{stateLabel}</Badge>
       </header>
@@ -321,6 +345,8 @@ export function LocalRuntimeView({
           <dl className="grid gap-3">
             <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
             <RuntimeStat label="Name" value={snapshot?.name ?? backendName} />
+            <RuntimeStat label="Machine" value={machineLabel || machineId || '由桌面端自动生成'} />
+            <RuntimeStat label="Scope" value="Personal / private / default" />
             <RuntimeStat label="Executors" value={snapshot ? (snapshot.executor_enabled ? 'enabled' : 'disabled') : '—'} />
             <RuntimeStat label="MCP Servers" value={String(snapshot?.mcp_server_count ?? 0)} />
           </dl>
@@ -368,10 +394,22 @@ export function LocalRuntimeView({
                 <TextInput value={profileId} onChange={(event) => setProfileId(event.target.value)} />
               </Field>
 
-              <Field label="Device ID">
-                <TextInput value={deviceId} onChange={(event) => setDeviceId(event.target.value)} />
+              <Field label="Machine Label">
+                <TextInput value={machineLabel} onChange={(event) => setMachineLabel(event.target.value)} placeholder="默认使用本机 hostname" />
               </Field>
             </div>
+
+            <Field label="Machine ID">
+              <TextInput value={machineId || '保存 profile 后由桌面端生成'} readOnly />
+            </Field>
+
+            <Field label="Legacy Machine IDs">
+              <Textarea
+                value={legacyMachineIds}
+                onChange={(event) => setLegacyMachineIds(event.target.value)}
+                placeholder="每行一个旧 hostname / device id，用于身份合并"
+              />
+            </Field>
 
             <Field label="Backend Name">
               <TextInput value={backendName} onChange={(event) => setBackendName(event.target.value)} />
@@ -567,7 +605,9 @@ function buildStartRequest(
   serverUrl: string,
   accessToken: string,
   profileId: string,
-  deviceId: string,
+  machineId: string,
+  machineLabel: string,
+  legacyMachineIds: string[],
   backendName: string,
   roots: string[],
   executorEnabled: boolean,
@@ -576,18 +616,13 @@ function buildStartRequest(
     server_url: serverUrl.trim(),
     access_token: accessToken.trim(),
     profile_id: profileId.trim() || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
-    device_id: deviceId.trim() || createDeviceId(),
+    machine_id: machineId.trim(),
+    machine_label: machineLabel.trim() || null,
+    legacy_machine_ids: legacyMachineIds,
     name: backendName.trim() || undefined,
     accessible_roots: roots,
     executor_enabled: executorEnabled,
   }
-}
-
-function createDeviceId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function stateText(state: LocalRuntimeStatus['state']) {

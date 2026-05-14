@@ -658,7 +658,10 @@ impl IntoResponse for AuthResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::backend::{BackendType, LocalBackendClaim, UserPreferences, ViewConfig};
+    use agentdash_domain::backend::{
+        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim, UserPreferences,
+        ViewConfig,
+    };
 
     enum MockTokenResult {
         Ok(BackendConfig),
@@ -735,6 +738,13 @@ mod tests {
             owner_user_id: None,
             profile_id: None,
             device_id: None,
+            machine_id: None,
+            machine_label: None,
+            legacy_machine_ids: Vec::new(),
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
             device: serde_json::json!({}),
             last_claimed_at: None,
         }

@@ -176,6 +176,8 @@
 
 ## Phase 7: 机器身份与共享本机模型升级
 
+状态：已落地核心模型（本次提交）。共享 project/system scope 仍保留为 server row 模型与 API 权限边界，创建入口待后续项目权限面板承接。
+
 范围：
 
 - `crates/agentdash-domain/src/backend`

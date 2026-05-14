@@ -22,7 +22,9 @@ export interface RuntimeStartRequest {
   server_url: string
   access_token: string
   profile_id: string
-  device_id: string
+  machine_id: string
+  machine_label?: string | null
+  legacy_machine_ids: string[]
   name?: string
   accessible_roots: string[]
   executor_enabled: boolean

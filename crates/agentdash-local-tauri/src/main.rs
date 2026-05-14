@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
+const DESKTOP_MACHINE_FILE: &str = "desktop-machine-identity.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
@@ -74,7 +75,12 @@ struct RuntimeStartRequest {
     #[serde(default)]
     access_token: String,
     profile_id: String,
-    device_id: String,
+    #[serde(default)]
+    machine_id: String,
+    #[serde(default)]
+    machine_label: Option<String>,
+    #[serde(default)]
+    legacy_machine_ids: Vec<String>,
     name: Option<String>,
     accessible_roots: Vec<PathBuf>,
     executor_enabled: bool,
@@ -89,7 +95,13 @@ struct LocalRuntimeProfile {
     #[serde(default = "default_profile_id")]
     profile_id: String,
     #[serde(default)]
-    device_id: String,
+    machine_id: String,
+    #[serde(default)]
+    machine_label: Option<String>,
+    #[serde(default)]
+    legacy_machine_ids: Vec<String>,
+    #[serde(default, alias = "device_id", skip_serializing)]
+    legacy_device_id: String,
     #[serde(default)]
     backend_id: Option<String>,
     #[serde(default)]
@@ -102,6 +114,15 @@ struct LocalRuntimeProfile {
     executor_enabled: bool,
     #[serde(default)]
     auto_start: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DesktopMachineIdentity {
+    machine_id: String,
+    machine_label: String,
+    #[serde(default)]
+    legacy_machine_ids: Vec<String>,
 }
 
 fn default_profile_id() -> String {
@@ -118,7 +139,9 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
             server_url: profile.server_url,
             access_token: profile.access_token,
             profile_id: profile.profile_id,
-            device_id: profile.device_id,
+            machine_id: profile.machine_id,
+            machine_label: profile.machine_label,
+            legacy_machine_ids: profile.legacy_machine_ids,
             name: profile.name,
             accessible_roots: profile.accessible_roots,
             executor_enabled: profile.executor_enabled,
@@ -135,7 +158,7 @@ async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, Str
     let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let profile = serde_json::from_str(&content)
         .map_err(|error| format!("读取桌面端 profile 失败: {error}"))?;
-    Ok(Some(normalize_profile(profile)))
+    Ok(Some(normalize_profile(&app, profile)?))
 }
 
 #[tauri::command]
@@ -144,7 +167,7 @@ async fn profile_save(
     profile: LocalRuntimeProfile,
 ) -> Result<LocalRuntimeProfile, String> {
     let path = profile_path(&app)?;
-    let profile = normalize_profile(profile);
+    let profile = normalize_profile(&app, profile)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -164,10 +187,11 @@ async fn profile_delete(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn runtime_start(
+    app: AppHandle,
     state: State<'_, DesktopState>,
     request: RuntimeStartRequest,
 ) -> Result<LocalRuntimeSnapshot, String> {
-    start_runtime_from_request(state.inner(), request, false)
+    start_runtime_from_request(&app, state.inner(), request, false)
         .await
         .map_err(|error| error.to_string())
 }
@@ -279,14 +303,25 @@ async fn desktop_api_snapshot(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct EnsureLocalRuntimePayload {
-    device_id: String,
+    machine_id: String,
+    machine_label: Option<String>,
+    legacy_machine_ids: Vec<String>,
     profile_id: String,
+    scope: LocalRuntimeScopePayload,
+    capability_slot: String,
     name: Option<String>,
     accessible_roots: Vec<String>,
     executor_enabled: bool,
     client_version: Option<String>,
     device: serde_json::Value,
     rotate_token: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct LocalRuntimeScopePayload {
+    kind: String,
+    id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,6 +331,11 @@ struct EnsureLocalRuntimeResponse {
     name: String,
     relay_ws_url: String,
     auth_token: String,
+    machine_id: String,
+    machine_label: String,
+    share_scope_kind: String,
+    share_scope_id: Option<String>,
+    capability_slot: String,
 }
 
 async fn auto_start_profile(app: AppHandle, state: DesktopState) {
@@ -325,7 +365,7 @@ async fn auto_start_profile(app: AppHandle, state: DesktopState) {
         )
         .await;
 
-    match start_runtime_from_request(&state, request, true).await {
+    match start_runtime_from_request(&app, &state, request, true).await {
         Ok(snapshot) => {
             state
                 .runtime
@@ -350,11 +390,12 @@ async fn auto_start_profile(app: AppHandle, state: DesktopState) {
 }
 
 async fn start_runtime_from_request(
+    app: &AppHandle,
     state: &DesktopState,
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
-    let request = normalize_start_request(request);
+    let request = normalize_start_request(app, request).map_err(anyhow::Error::msg)?;
     let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
     let config = LocalRuntimeConfig::new(
         claim.relay_ws_url,
@@ -375,8 +416,15 @@ async fn claim_local_runtime(
 ) -> anyhow::Result<EnsureLocalRuntimeResponse> {
     let server_url = normalize_server_origin(&request.server_url);
     let payload = EnsureLocalRuntimePayload {
-        device_id: request.device_id.clone(),
+        machine_id: request.machine_id.clone(),
+        machine_label: request.machine_label.clone(),
+        legacy_machine_ids: request.legacy_machine_ids.clone(),
         profile_id: request.profile_id.clone(),
+        scope: LocalRuntimeScopePayload {
+            kind: "user".to_string(),
+            id: None,
+        },
+        capability_slot: "default".to_string(),
         name: request.name.clone(),
         accessible_roots: request
             .accessible_roots
@@ -393,7 +441,10 @@ async fn claim_local_runtime(
     loop {
         attempts += 1;
         match post_local_runtime_claim(&server_url, &request.access_token, &payload).await {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                validate_claim_response(&response, request)?;
+                return Ok(response);
+            }
             Err(error) if retry_until_server_ready && attempts < 30 => {
                 tracing::warn!(
                     attempt = attempts,
@@ -405,6 +456,36 @@ async fn claim_local_runtime(
             Err(error) => return Err(error),
         }
     }
+}
+
+fn validate_claim_response(
+    response: &EnsureLocalRuntimeResponse,
+    request: &RuntimeStartRequest,
+) -> anyhow::Result<()> {
+    if response.machine_id != request.machine_id {
+        anyhow::bail!(
+            "server 返回的 machine_id 与本机 profile 不一致: expected={}, actual={}",
+            request.machine_id,
+            response.machine_id
+        );
+    }
+    if response.machine_label.trim().is_empty() {
+        anyhow::bail!("server 返回的 machine_label 为空");
+    }
+    if response.share_scope_kind != "user" {
+        anyhow::bail!(
+            "当前桌面端只支持 personal runtime scope，server 返回: {}",
+            response.share_scope_kind
+        );
+    }
+    if response.capability_slot != "default" {
+        anyhow::bail!(
+            "当前桌面端只支持 default capability slot，server 返回: {}",
+            response.capability_slot
+        );
+    }
+    let _personal_scope = response.share_scope_id.as_deref().unwrap_or("current-user");
+    Ok(())
 }
 
 async fn post_local_runtime_claim(
@@ -438,31 +519,70 @@ async fn post_local_runtime_claim(
         .map_err(|error| anyhow::anyhow!("解析本机 runtime 领取响应失败: {error}"))
 }
 
-fn normalize_profile(profile: LocalRuntimeProfile) -> LocalRuntimeProfile {
-    LocalRuntimeProfile {
+fn normalize_profile(
+    app: &AppHandle,
+    profile: LocalRuntimeProfile,
+) -> Result<LocalRuntimeProfile, String> {
+    let identity = load_or_create_machine_identity(app)?;
+    let mut legacy_machine_ids = profile.legacy_machine_ids;
+    if !profile.legacy_device_id.trim().is_empty() {
+        legacy_machine_ids.push(profile.legacy_device_id);
+    }
+    legacy_machine_ids.extend(identity.legacy_machine_ids.clone());
+    let machine_id = normalize_machine_id(profile.machine_id, &identity.machine_id);
+    let machine_label = profile
+        .machine_label
+        .and_then(normalize_optional_text)
+        .unwrap_or(identity.machine_label);
+    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
+
+    Ok(LocalRuntimeProfile {
         server_url: normalize_server_origin(&profile.server_url),
         access_token: profile.access_token.trim().to_string(),
         profile_id: normalize_profile_id(profile.profile_id),
-        device_id: normalize_device_id(profile.device_id),
+        machine_id,
+        machine_label: Some(machine_label),
+        legacy_machine_ids,
+        legacy_device_id: String::new(),
         name: profile.name.and_then(normalize_optional_text),
         accessible_roots: profile.accessible_roots,
         executor_enabled: profile.executor_enabled,
         auto_start: profile.auto_start,
         backend_id: profile.backend_id.and_then(normalize_optional_text),
         relay_ws_url: profile.relay_ws_url.and_then(normalize_optional_text),
-    }
+    })
 }
 
-fn normalize_start_request(request: RuntimeStartRequest) -> RuntimeStartRequest {
-    RuntimeStartRequest {
+fn normalize_start_request(
+    app: &AppHandle,
+    request: RuntimeStartRequest,
+) -> Result<RuntimeStartRequest, String> {
+    let identity = load_or_create_machine_identity(app)?;
+    let machine_id = normalize_machine_id(request.machine_id, &identity.machine_id);
+    let machine_label = request
+        .machine_label
+        .and_then(normalize_optional_text)
+        .unwrap_or(identity.machine_label);
+    let legacy_machine_ids = normalize_legacy_machine_ids(
+        request
+            .legacy_machine_ids
+            .into_iter()
+            .chain(identity.legacy_machine_ids)
+            .collect(),
+        &machine_id,
+    );
+
+    Ok(RuntimeStartRequest {
         server_url: normalize_server_origin(&request.server_url),
         access_token: request.access_token.trim().to_string(),
         profile_id: normalize_profile_id(request.profile_id),
-        device_id: normalize_device_id(request.device_id),
+        machine_id,
+        machine_label: Some(machine_label),
+        legacy_machine_ids,
         name: request.name.and_then(normalize_optional_text),
         accessible_roots: request.accessible_roots,
         executor_enabled: request.executor_enabled,
-    }
+    })
 }
 
 fn normalize_server_origin(value: &str) -> String {
@@ -483,13 +603,23 @@ fn normalize_profile_id(value: String) -> String {
     }
 }
 
-fn normalize_device_id(value: String) -> String {
+fn normalize_machine_id(value: String, fallback: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        uuid::Uuid::new_v4().to_string()
+        fallback.to_string()
     } else {
         trimmed.to_string()
     }
+}
+
+fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != machine_id)
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 fn normalize_optional_text(value: String) -> Option<String> {
@@ -516,6 +646,58 @@ fn local_hostname() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn load_or_create_machine_identity(app: &AppHandle) -> Result<DesktopMachineIdentity, String> {
+    let path = machine_identity_path(app)?;
+    if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let parsed: DesktopMachineIdentity = serde_json::from_str(&content)
+            .map_err(|error| format!("读取桌面端机器身份失败: {error}"))?;
+        let normalized = normalize_machine_identity(parsed);
+        save_machine_identity(&path, &normalized)?;
+        return Ok(normalized);
+    }
+
+    let identity = DesktopMachineIdentity {
+        machine_id: uuid::Uuid::new_v4().to_string(),
+        machine_label: local_hostname().unwrap_or_else(|| "AgentDash Desktop".to_string()),
+        legacy_machine_ids: Vec::new(),
+    };
+    save_machine_identity(&path, &identity)?;
+    Ok(identity)
+}
+
+fn normalize_machine_identity(identity: DesktopMachineIdentity) -> DesktopMachineIdentity {
+    let machine_id = identity.machine_id.trim();
+    let machine_id = if machine_id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        machine_id.to_string()
+    };
+    let machine_label = identity.machine_label.trim();
+    let machine_label = if machine_label.is_empty() {
+        local_hostname().unwrap_or_else(|| "AgentDash Desktop".to_string())
+    } else {
+        machine_label.to_string()
+    };
+    let legacy_machine_ids = normalize_legacy_machine_ids(identity.legacy_machine_ids, &machine_id);
+    DesktopMachineIdentity {
+        machine_id,
+        machine_label,
+        legacy_machine_ids,
+    }
+}
+
+fn save_machine_identity(
+    path: &std::path::Path,
+    identity: &DesktopMachineIdentity,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(identity).map_err(|error| error.to_string())?;
+    std::fs::write(path, content).map_err(|error| error.to_string())
 }
 
 fn main() {
@@ -701,5 +883,12 @@ fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(DESKTOP_PROFILE_FILE))
+        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
+}
+
+fn machine_identity_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(DESKTOP_MACHINE_FILE))
         .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
 }

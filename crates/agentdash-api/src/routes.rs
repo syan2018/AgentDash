@@ -367,6 +367,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(backends::list_backends).post(backends::add_backend),
         )
         .route(
+            "/local-runtime/ensure",
+            post(backends::ensure_local_runtime),
+        )
+        .route(
             "/backends/runtime-health",
             get(backends::list_runtime_health),
         )

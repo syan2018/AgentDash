@@ -1,7 +1,8 @@
 use sqlx::PgPool;
 
 use agentdash_domain::backend::{
-    BackendConfig, BackendRepository, BackendType, UserPreferences, ViewConfig,
+    BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
+    LocalBackendClaim, UserPreferences, ViewConfig,
 };
 use agentdash_domain::common::error::DomainError;
 
@@ -25,6 +26,17 @@ impl PostgresBackendRepository {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 backend_type TEXT NOT NULL DEFAULT 'local',
                 owner_user_id TEXT,
+                profile_id TEXT,
+                device_id TEXT,
+                machine_id TEXT,
+                machine_label TEXT,
+                legacy_machine_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                visibility TEXT NOT NULL DEFAULT 'private',
+                share_scope_kind TEXT NOT NULL DEFAULT 'user',
+                share_scope_id TEXT,
+                capability_slot TEXT NOT NULL DEFAULT 'default',
+                device JSONB NOT NULL DEFAULT '{}'::jsonb,
+                last_claimed_at TIMESTAMPTZ,
                 created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
             );
 
@@ -41,6 +53,34 @@ impl PostgresBackendRepository {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS profile_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS machine_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS machine_label TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS legacy_machine_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS share_scope_kind TEXT NOT NULL DEFAULT 'user';
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS share_scope_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS capability_slot TEXT NOT NULL DEFAULT 'default';
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device JSONB NOT NULL DEFAULT '{}'::jsonb;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS last_claimed_at TIMESTAMPTZ;
+
+            DROP INDEX IF EXISTS idx_backends_local_owner_profile_device;
+
+            UPDATE backends
+               SET machine_id = COALESCE(machine_id, device_id),
+                   machine_label = COALESCE(machine_label, name),
+                   share_scope_id = COALESCE(share_scope_id, owner_user_id)
+             WHERE backend_type = 'local';
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_backends_local_machine_scope_slot
+                ON backends (machine_id, share_scope_kind, COALESCE(share_scope_id, ''), capability_slot)
+                WHERE backend_type = 'local'
+                  AND machine_id IS NOT NULL
+                  AND share_scope_kind IS NOT NULL
+                  AND capability_slot IS NOT NULL;
             "#,
         )
         .execute(&self.pool)
@@ -55,15 +95,30 @@ impl PostgresBackendRepository {
 impl BackendRepository for PostgresBackendRepository {
     async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type, owner_user_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO backends (
+                id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                profile_id, device_id, machine_id, machine_label, legacy_machine_ids,
+                visibility, share_scope_kind, share_scope_id, capability_slot, device, last_claimed_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                endpoint = excluded.endpoint,
                auth_token = excluded.auth_token,
                enabled = excluded.enabled,
                backend_type = excluded.backend_type,
-               owner_user_id = excluded.owner_user_id",
+               owner_user_id = excluded.owner_user_id,
+               profile_id = excluded.profile_id,
+               device_id = excluded.device_id,
+               machine_id = excluded.machine_id,
+               machine_label = excluded.machine_label,
+               legacy_machine_ids = excluded.legacy_machine_ids,
+               visibility = excluded.visibility,
+               share_scope_kind = excluded.share_scope_kind,
+               share_scope_id = excluded.share_scope_id,
+               capability_slot = excluded.capability_slot,
+               device = excluded.device,
+               last_claimed_at = excluded.last_claimed_at",
         )
         .bind(&config.id)
         .bind(&config.name)
@@ -72,6 +127,17 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(config.enabled)
         .bind(serde_json::to_string(&config.backend_type)?.trim_matches('"'))
         .bind(&config.owner_user_id)
+        .bind(&config.profile_id)
+        .bind(&config.device_id)
+        .bind(&config.machine_id)
+        .bind(&config.machine_label)
+        .bind(serde_json::json!(&config.legacy_machine_ids))
+        .bind(config.visibility.as_str())
+        .bind(config.share_scope_kind.as_str())
+        .bind(&config.share_scope_id)
+        .bind(&config.capability_slot)
+        .bind(&config.device)
+        .bind(config.last_claimed_at)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
@@ -81,7 +147,12 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn list_backends(&self) -> Result<Vec<BackendConfig>, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends ORDER BY name",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, machine_id, machine_label,
+                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
+                    visibility, share_scope_kind, share_scope_id, capability_slot,
+                    COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -92,20 +163,33 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn get_backend(&self, id: &str) -> Result<BackendConfig, DomainError> {
         let row = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE id = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, machine_id, machine_label,
+                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
+                    visibility, share_scope_kind, share_scope_id, capability_slot,
+                    COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
-        .ok_or_else(|| DomainError::NotFound { entity: "backend", id: id.to_string() })?;
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "backend",
+            id: id.to_string(),
+        })?;
 
         row.try_into()
     }
 
     async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE auth_token = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, machine_id, machine_label,
+                    COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
+                    visibility, share_scope_kind, share_scope_id, capability_slot,
+                    COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends WHERE auth_token = $1",
         )
         .bind(token)
         .fetch_all(&self.pool)
@@ -126,6 +210,181 @@ impl BackendRepository for PostgresBackendRepository {
                 "检测到重复 backend auth_token 配置".to_string(),
             )),
         }
+    }
+
+    async fn ensure_local_backend(
+        &self,
+        claim: &LocalBackendClaim,
+    ) -> Result<BackendConfig, DomainError> {
+        let identity_candidates = local_claim_identity_candidates(claim);
+        let candidate_rows = sqlx::query_as::<_, (String,)>(
+            r#"
+            WITH claim_ids AS (
+                SELECT lower(value) AS value
+                  FROM unnest($5::text[]) AS ids(value)
+            )
+            SELECT id
+              FROM backends AS b
+             WHERE b.backend_type = 'local'
+               AND b.share_scope_kind = $2
+               AND (
+                    COALESCE(b.share_scope_id, '') = COALESCE($3, '')
+                    OR (
+                        COALESCE(b.share_scope_id, '') = ''
+                        AND b.owner_user_id IS NULL
+                    )
+               )
+               AND capability_slot = $4
+                AND (
+                     b.machine_id = $1
+                     OR lower(COALESCE(b.machine_id, '')) IN (SELECT value FROM claim_ids)
+                     OR lower(COALESCE(b.device_id, '')) IN (SELECT value FROM claim_ids)
+                     OR EXISTS (
+                         SELECT 1
+                           FROM jsonb_array_elements_text(
+                              COALESCE(b.legacy_machine_ids, '[]'::jsonb)
+                          ) AS legacy(value)
+                         WHERE lower(legacy.value) IN (SELECT value FROM claim_ids)
+                    )
+               )
+             ORDER BY CASE
+                    WHEN machine_id = $1 THEN 0
+                    WHEN lower(COALESCE(machine_label, '')) = lower($7) THEN 1
+                    WHEN id = $6 THEN 2
+                    ELSE 3
+               END,
+               last_claimed_at DESC NULLS LAST,
+               created_at DESC,
+               id ASC
+            "#,
+        )
+        .bind(&claim.machine_id)
+        .bind(claim.share_scope_kind.as_str())
+        .bind(&claim.share_scope_id)
+        .bind(&claim.capability_slot)
+        .bind(&identity_candidates)
+        .bind(&claim.backend_id)
+        .bind(&claim.machine_label)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let mut candidate_ids: Vec<String> = candidate_rows.into_iter().map(|(id,)| id).collect();
+        candidate_ids.dedup();
+        let existing_id = candidate_ids.first().cloned();
+
+        let row = if let Some(existing_id) = existing_id {
+            let duplicate_ids: Vec<String> = candidate_ids
+                .into_iter()
+                .filter(|id| id != &existing_id)
+                .collect();
+            if !duplicate_ids.is_empty() {
+                merge_duplicate_local_backend_rows(&self.pool, &existing_id, &duplicate_ids)
+                    .await?;
+            }
+
+            sqlx::query_as::<_, BackendRow>(
+                r#"
+                UPDATE backends
+                   SET name = $2,
+                       endpoint = $3,
+                       auth_token = CASE
+                           WHEN $4 THEN $5
+                           ELSE COALESCE(auth_token, $5)
+                       END,
+                       enabled = TRUE,
+                       backend_type = 'local',
+                       owner_user_id = $6,
+                       profile_id = $7,
+                       machine_id = $8,
+                       machine_label = $9,
+                       legacy_machine_ids = (
+                           SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
+                             FROM (
+                                 SELECT DISTINCT value
+                                   FROM (
+                                       SELECT value
+                                         FROM jsonb_array_elements_text(
+                                             COALESCE(backends.legacy_machine_ids, '[]'::jsonb)
+                                         ) AS ids(value)
+                                        UNION ALL SELECT backends.machine_id
+                                        UNION ALL SELECT backends.device_id
+                                        UNION ALL SELECT value
+                                          FROM jsonb_array_elements_text($10) AS ids(value)
+                                   ) raw(value)
+                                  WHERE value IS NOT NULL
+                                    AND btrim(value) <> ''
+                                    AND value <> $8
+                             ) merged
+                       ),
+                       visibility = $11,
+                       share_scope_kind = $12,
+                       share_scope_id = $13,
+                       capability_slot = $14,
+                       device = $15,
+                       last_claimed_at = now()
+                 WHERE id = $1
+                 RETURNING id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                           profile_id, device_id, machine_id, machine_label,
+                           COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
+                           visibility, share_scope_kind, share_scope_id, capability_slot,
+                           COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+                "#,
+            )
+            .bind(existing_id)
+            .bind(&claim.name)
+            .bind(&claim.endpoint)
+            .bind(claim.rotate_token)
+            .bind(&claim.auth_token)
+            .bind(&claim.owner_user_id)
+            .bind(&claim.profile_id)
+            .bind(&claim.machine_id)
+            .bind(&claim.machine_label)
+            .bind(serde_json::json!(&claim.legacy_machine_ids))
+            .bind(claim.visibility.as_str())
+            .bind(claim.share_scope_kind.as_str())
+            .bind(&claim.share_scope_id)
+            .bind(&claim.capability_slot)
+            .bind(&claim.device)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+        } else {
+            sqlx::query_as::<_, BackendRow>(
+                r#"
+                INSERT INTO backends (
+                    id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, machine_id, machine_label, legacy_machine_ids,
+                    visibility, share_scope_kind, share_scope_id, capability_slot, device, last_claimed_at
+                )
+                VALUES ($1, $2, $3, $4, TRUE, 'local', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+                RETURNING id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                          profile_id, device_id, machine_id, machine_label,
+                          COALESCE(legacy_machine_ids, '[]'::jsonb) AS legacy_machine_ids,
+                          visibility, share_scope_kind, share_scope_id, capability_slot,
+                          COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+                "#,
+            )
+            .bind(&claim.backend_id)
+            .bind(&claim.name)
+            .bind(&claim.endpoint)
+            .bind(&claim.auth_token)
+            .bind(&claim.owner_user_id)
+            .bind(&claim.profile_id)
+            .bind(&claim.machine_id)
+            .bind(&claim.machine_label)
+            .bind(serde_json::json!(&claim.legacy_machine_ids))
+            .bind(claim.visibility.as_str())
+            .bind(claim.share_scope_kind.as_str())
+            .bind(&claim.share_scope_id)
+            .bind(&claim.capability_slot)
+            .bind(&claim.device)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+        };
+
+        row.try_into()
     }
 
     async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
@@ -209,6 +468,17 @@ struct BackendRow {
     enabled: bool,
     backend_type: String,
     owner_user_id: Option<String>,
+    profile_id: Option<String>,
+    device_id: Option<String>,
+    machine_id: Option<String>,
+    machine_label: Option<String>,
+    legacy_machine_ids: serde_json::Value,
+    visibility: String,
+    share_scope_kind: String,
+    share_scope_id: Option<String>,
+    capability_slot: String,
+    device: serde_json::Value,
+    last_claimed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl TryFrom<BackendRow> for BackendConfig {
@@ -223,6 +493,17 @@ impl TryFrom<BackendRow> for BackendConfig {
             enabled: row.enabled,
             backend_type: parse_backend_type(&row.backend_type)?,
             owner_user_id: row.owner_user_id,
+            profile_id: row.profile_id,
+            device_id: row.device_id,
+            machine_id: row.machine_id,
+            machine_label: row.machine_label,
+            legacy_machine_ids: serde_json::from_value(row.legacy_machine_ids)?,
+            visibility: parse_backend_visibility(&row.visibility)?,
+            share_scope_kind: parse_backend_share_scope_kind(&row.share_scope_kind)?,
+            share_scope_id: row.share_scope_id,
+            capability_slot: row.capability_slot,
+            device: row.device,
+            last_claimed_at: row.last_claimed_at,
         })
     }
 }
@@ -260,12 +541,126 @@ fn parse_backend_type(raw: &str) -> Result<BackendType, DomainError> {
     }
 }
 
+fn parse_backend_visibility(raw: &str) -> Result<BackendVisibility, DomainError> {
+    match raw {
+        "private" => Ok(BackendVisibility::Private),
+        "shared" => Ok(BackendVisibility::Shared),
+        "system" => Ok(BackendVisibility::System),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "backends.visibility: 未知值 `{raw}`"
+        ))),
+    }
+}
+
+fn parse_backend_share_scope_kind(raw: &str) -> Result<BackendShareScopeKind, DomainError> {
+    match raw {
+        "user" => Ok(BackendShareScopeKind::User),
+        "project" => Ok(BackendShareScopeKind::Project),
+        "system" => Ok(BackendShareScopeKind::System),
+        _ => Err(DomainError::InvalidConfig(format!(
+            "backends.share_scope_kind: 未知值 `{raw}`"
+        ))),
+    }
+}
+
 fn parse_json_column<T: serde::de::DeserializeOwned>(
     raw: &str,
     field: &str,
 ) -> Result<T, DomainError> {
     serde_json::from_str(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn local_claim_identity_candidates(claim: &LocalBackendClaim) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    std::iter::once(claim.machine_id.as_str())
+        .chain(claim.legacy_machine_ids.iter().map(String::as_str))
+        .flat_map(identity_aliases)
+        .filter(|value| seen.insert(value.to_ascii_lowercase()))
+        .collect()
+}
+
+fn identity_aliases(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let mut aliases = vec![trimmed.to_string(), lower.clone()];
+    if !lower.ends_with(".local") {
+        aliases.push(format!("{lower}.local"));
+    }
+    aliases
+}
+
+async fn merge_duplicate_local_backend_rows(
+    pool: &PgPool,
+    canonical_id: &str,
+    duplicate_ids: &[String],
+) -> Result<(), DomainError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    let workspace_bindings_table: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('workspace_bindings')::text")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    if workspace_bindings_table.is_some() {
+        sqlx::query("UPDATE workspace_bindings SET backend_id = $1 WHERE backend_id = ANY($2)")
+            .bind(canonical_id)
+            .bind(duplicate_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE views
+           SET backend_ids = (
+               SELECT COALESCE(jsonb_agg(id ORDER BY first_seen)::text, '[]')
+                 FROM (
+                     SELECT id, MIN(ord) AS first_seen
+                       FROM (
+                           SELECT CASE
+                                      WHEN value = ANY($2) THEN $1
+                                      ELSE value
+                                  END AS id,
+                                  ord
+                             FROM jsonb_array_elements_text(backend_ids::jsonb)
+                                  WITH ORDINALITY AS items(value, ord)
+                       ) replaced
+                      WHERE btrim(id) <> ''
+                      GROUP BY id
+                 ) deduped
+           )
+         WHERE EXISTS (
+             SELECT 1
+               FROM jsonb_array_elements_text(backend_ids::jsonb) AS items(value)
+              WHERE value = ANY($2)
+         )
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(duplicate_ids)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    sqlx::query("DELETE FROM backends WHERE id = ANY($1)")
+        .bind(duplicate_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -282,6 +677,37 @@ mod tests {
             enabled: true,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            machine_id: None,
+            machine_label: None,
+            legacy_machine_ids: Vec::new(),
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
+            device: serde_json::json!({}),
+            last_claimed_at: None,
+        }
+    }
+
+    fn local_claim() -> LocalBackendClaim {
+        LocalBackendClaim {
+            owner_user_id: "user-a".to_string(),
+            profile_id: "desktop-local".to_string(),
+            machine_id: "machine-a".to_string(),
+            machine_label: "Desktop A".to_string(),
+            legacy_machine_ids: vec!["device-a".to_string()],
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: Some("user-a".to_string()),
+            capability_slot: "default".to_string(),
+            backend_id: "local-first".to_string(),
+            name: "Desktop A".to_string(),
+            endpoint: "ws://localhost/ws/backend".to_string(),
+            auth_token: "token-a".to_string(),
+            device: serde_json::json!({ "os": "windows" }),
+            rotate_token: false,
         }
     }
 
@@ -354,5 +780,182 @@ mod tests {
 
         assert_eq!(found.name, "renamed");
         assert_eq!(found.auth_token.as_deref(), Some("secret-b"));
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_reuses_existing_machine_scope_token() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let claim = local_claim();
+        let first = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("首次 ensure 应创建 backend");
+        assert_eq!(first.id, "local-first");
+        assert_eq!(first.auth_token.as_deref(), Some("token-a"));
+
+        let mut second_claim = claim.clone();
+        second_claim.backend_id = "local-second".to_string();
+        second_claim.auth_token = "token-b".to_string();
+        second_claim.name = "Desktop A renamed".to_string();
+        let second = repo
+            .ensure_local_backend(&second_claim)
+            .await
+            .expect("同一 machine/scope 应复用 backend");
+
+        assert_eq!(second.id, "local-first");
+        assert_eq!(second.name, "Desktop A renamed");
+        assert_eq!(second.auth_token.as_deref(), Some("token-a"));
+        assert_eq!(second.owner_user_id.as_deref(), Some("user-a"));
+        assert_eq!(second.profile_id.as_deref(), Some("desktop-local"));
+        assert_eq!(second.machine_id.as_deref(), Some("machine-a"));
+        assert_eq!(second.share_scope_id.as_deref(), Some("user-a"));
+        assert_eq!(second.legacy_machine_ids, vec!["device-a".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_can_rotate_token() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut claim = local_claim();
+        claim.device = serde_json::json!({});
+        repo.ensure_local_backend(&claim)
+            .await
+            .expect("首次 ensure 应创建 backend");
+
+        claim.auth_token = "token-b".to_string();
+        claim.rotate_token = true;
+        let rotated = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("显式 rotate 应替换 token");
+
+        assert_eq!(rotated.auth_token.as_deref(), Some("token-b"));
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_merges_legacy_machine_candidates() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut desktop_old = backend("desktop-old", Some("desktop-token"));
+        desktop_old.owner_user_id = Some("user-a".to_string());
+        desktop_old.profile_id = Some("desktop-local".to_string());
+        desktop_old.machine_id = Some("old-desktop-machine".to_string());
+        desktop_old.machine_label = Some("LIAOYIHAO-P".to_string());
+        desktop_old.share_scope_id = Some("user-a".to_string());
+        repo.add_backend(&desktop_old)
+            .await
+            .expect("应能插入旧桌面端 backend");
+
+        let mut dev_old = backend("dev-old", Some("dev-token"));
+        dev_old.owner_user_id = Some("user-a".to_string());
+        dev_old.profile_id = Some("dev-joint".to_string());
+        dev_old.machine_id = Some("old-dev-machine".to_string());
+        dev_old.machine_label = Some("dev-local".to_string());
+        dev_old.share_scope_id = Some("user-a".to_string());
+        repo.add_backend(&dev_old)
+            .await
+            .expect("应能插入旧 dev backend");
+
+        let mut orphan_dev = backend("local-dev-1", Some("orphan-token"));
+        orphan_dev.device_id = Some("legacy-orphan-device".to_string());
+        repo.add_backend(&orphan_dev)
+            .await
+            .expect("应能插入旧手工 dev backend");
+
+        repo.save_view(&ViewConfig {
+            id: "view-local".to_string(),
+            name: "本机视图".to_string(),
+            backend_ids: vec![
+                "dev-old".to_string(),
+                "remote-a".to_string(),
+                "local-dev-1".to_string(),
+                "dev-old".to_string(),
+            ],
+            filters: serde_json::json!({}),
+            sort_by: None,
+        })
+        .await
+        .expect("应能保存引用旧 backend 的视图");
+
+        let mut claim = local_claim();
+        claim.machine_id = "shared-dev-machine".to_string();
+        claim.machine_label = "liaoyihao-p".to_string();
+        claim.legacy_machine_ids = vec![
+            "old-desktop-machine".to_string(),
+            "old-dev-machine".to_string(),
+            "legacy-orphan-device".to_string(),
+        ];
+        claim.backend_id = "local-new".to_string();
+        claim.auth_token = "new-token".to_string();
+
+        let merged = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("legacy machine label 应合并旧 backend");
+
+        assert_ne!(merged.id, "local-new");
+        assert_eq!(merged.machine_id.as_deref(), Some("shared-dev-machine"));
+        assert_eq!(merged.machine_label.as_deref(), Some("liaoyihao-p"));
+        assert_eq!(merged.auth_token.as_deref(), Some("desktop-token"));
+        assert!(
+            merged
+                .legacy_machine_ids
+                .iter()
+                .any(|value| value == "old-desktop-machine")
+        );
+        assert!(
+            repo.get_backend("dev-old").await.is_err(),
+            "重复 legacy backend 应被合并清理"
+        );
+        assert!(
+            repo.get_backend("local-dev-1").await.is_err(),
+            "旧手工 backend 应被合并清理"
+        );
+        let views = repo.list_views().await.expect("应能读取视图");
+        let view = views
+            .into_iter()
+            .find(|item| item.id == "view-local")
+            .expect("视图应仍然存在");
+        assert_eq!(
+            view.backend_ids,
+            vec!["desktop-old".to_string(), "remote-a".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_does_not_merge_by_machine_label_only() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut same_label = backend("same-label", Some("label-token"));
+        same_label.owner_user_id = Some("user-a".to_string());
+        same_label.profile_id = Some("desktop-local".to_string());
+        same_label.machine_id = Some("other-machine".to_string());
+        same_label.machine_label = Some("LIAOYIHAO-P".to_string());
+        same_label.share_scope_id = Some("user-a".to_string());
+        repo.add_backend(&same_label)
+            .await
+            .expect("应能插入同名机器 backend");
+
+        let mut claim = local_claim();
+        claim.machine_id = "current-machine".to_string();
+        claim.machine_label = "LIAOYIHAO-P".to_string();
+        claim.legacy_machine_ids = Vec::new();
+        claim.backend_id = "local-current".to_string();
+
+        let ensured = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("同名但不同 machine_id 应创建新 backend");
+
+        assert_eq!(ensured.id, "local-current");
+        assert!(
+            repo.get_backend("same-label").await.is_ok(),
+            "同名机器不应仅因展示标签被合并"
+        );
     }
 }

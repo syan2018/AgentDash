@@ -1,5 +1,6 @@
 use super::entity::{
-    BackendConfig, RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
+    BackendConfig, LocalBackendClaim, RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences,
+    ViewConfig,
 };
 use crate::common::error::DomainError;
 
@@ -10,6 +11,10 @@ pub trait BackendRepository: Send + Sync {
     async fn list_backends(&self) -> Result<Vec<BackendConfig>, DomainError>;
     async fn get_backend(&self, id: &str) -> Result<BackendConfig, DomainError>;
     async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError>;
+    async fn ensure_local_backend(
+        &self,
+        claim: &LocalBackendClaim,
+    ) -> Result<BackendConfig, DomainError>;
     async fn remove_backend(&self, id: &str) -> Result<(), DomainError>;
     async fn list_views(&self) -> Result<Vec<ViewConfig>, DomainError>;
     async fn save_view(&self, view: &ViewConfig) -> Result<(), DomainError>;

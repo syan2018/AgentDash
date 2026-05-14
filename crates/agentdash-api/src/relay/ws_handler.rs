@@ -142,12 +142,12 @@ async fn handle_backend_connection(
         .runtime_health_repo
         .upsert_online(&RuntimeHealthOnlineUpdate {
             backend_id: bid.clone(),
-            profile_id: authorized_backend.owner_user_id.clone(),
+            profile_id: authorized_backend.profile_id.clone(),
             name: payload.name.clone(),
             version: payload.version.clone(),
             capabilities: serde_json::to_value(&payload.capabilities).unwrap_or_default(),
             accessible_roots: payload.accessible_roots.clone(),
-            device: serde_json::json!({}),
+            device: authorized_backend.device.clone(),
             connected_at,
         })
         .await
@@ -658,7 +658,10 @@ impl IntoResponse for AuthResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::backend::{BackendType, UserPreferences, ViewConfig};
+    use agentdash_domain::backend::{
+        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim, UserPreferences,
+        ViewConfig,
+    };
 
     enum MockTokenResult {
         Ok(BackendConfig),
@@ -696,6 +699,13 @@ mod tests {
             }
         }
 
+        async fn ensure_local_backend(
+            &self,
+            _claim: &LocalBackendClaim,
+        ) -> Result<BackendConfig, DomainError> {
+            unreachable!("测试未使用");
+        }
+
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
@@ -726,6 +736,17 @@ mod tests {
             enabled,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            machine_id: None,
+            machine_label: None,
+            legacy_machine_ids: Vec::new(),
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
+            device: serde_json::json!({}),
+            last_claimed_at: None,
         }
     }
 

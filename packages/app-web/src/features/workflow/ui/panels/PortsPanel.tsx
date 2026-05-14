@@ -6,8 +6,8 @@
  *   - view 态展示 key + 描述 + 策略标签，并提供编辑/删除按钮
  *   - edit 态展示完整表单 + 完成按钮回到 view 态
  *
- * 导出 `OutputPortItem` / `InputPortItem` / `PortViewCard` / `GATE_LABEL` /
- * `CTX_LABEL` 供 step-inspector Overview 复用，避免重复实现端口卡片。
+ * 导出 `OutputPortItem` / `InputPortItem` / `PortViewCard`
+ * 供 step-inspector Overview 复用，避免重复实现端口卡片。
  */
 
 import { useState } from "react";
@@ -19,12 +19,12 @@ import type {
   OutputPortDefinition,
 } from "../../../../types";
 
-export const GATE_LABEL: Record<GateStrategy, string> = {
+const GATE_LABEL: Record<GateStrategy, string> = {
   existence: "文件存在",
   schema: "Schema（预留）",
   llm_judge: "LLM（预留）",
 };
-export const CTX_LABEL: Record<ContextStrategy, string> = {
+const CTX_LABEL: Record<ContextStrategy, string> = {
   full: "完整",
   summary: "摘要（预留）",
   metadata_only: "元信息（预留）",

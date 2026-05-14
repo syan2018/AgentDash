@@ -34,10 +34,7 @@ pnpm dev:desktop
 6. 等待 `http://127.0.0.1:5381` 就绪。
 7. 启动 `agentdash-local-tauri` 桌面壳，并通过 `AGENTDASH_DESKTOP_API_MODE=external` 复用外部 `agentdash-server`。
 
-窗口打开后，侧边栏包含两个入口：
-
-- `Runtime`：本机 runtime 管理页，通过 Tauri command 访问 `agentdash-local` library。
-- `Dashboard`：复用 Web Dashboard，开发期通过独立 `agentdash-server` 访问数据。
+窗口打开后会直接进入复用 Web Dashboard 的主应用体验。本机 runtime 管理能力不再作为桌面端顶层入口存在，而是出现在 Web 设置页的 desktop-only `本机运行时` scope 中，通过 Tauri command 访问 `agentdash-local` library。
 
 按 `Ctrl+C` 会停止独立后端、桌面前端和 Tauri 壳子进程。
 
@@ -48,8 +45,10 @@ pnpm dev:desktop
 1. 清理云端后端、本机后端和 Web 前端相关端口。
 2. 构建统一 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`。
 3. 启动云端后端 `agentdash-server`。
-4. 确保并启动本机后端 `agentdash-local`。
+4. 通过 `/api/local-runtime/ensure` 领取开发机的本机 runtime，拿到 server 颁发的 `backend_id`、relay token 和 WebSocket URL。
 5. 启动 Web 前端 `app-web`。
+
+`scripts/dev-joint.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。脚本会先调用 `agentdash-local machine-identity` 读取本机 runtime 自己识别和持久化的机器身份，再用该身份向 server ensure；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。开发脚本不拥有机器身份文件路径，也不生成机器身份。
 
 `pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-desktop.js`：
 
@@ -58,6 +57,8 @@ pnpm dev:desktop
 3. 启动独立 `agentdash-server`，用于后端日志、断点和 API 调试。
 4. 启动桌面 renderer `app-tauri`。
 5. 启动 Tauri 壳 `agentdash-local-tauri`，并让它复用外部 `agentdash-server`。
+
+开发期 `pnpm dev` 与 `pnpm dev:desktop` 都复用 `agentdash-local` crate 的机器身份逻辑。Tauri 壳不再维护第二套开发态 machine identity，避免同一台机器在 Web 联合调试和桌面调试中被 server 识别成两个 personal local runtime。
 
 直接执行 `pnpm run dev:desktop-shell` 时不会自动设置 external 模式；这种方式会走 Tauri 壳的默认行为，由壳进程内托管 Dashboard API。需要调试独立后端时优先使用 `pnpm dev:desktop`。
 

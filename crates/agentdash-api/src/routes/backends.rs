@@ -2,15 +2,19 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
-    BackendConfig, BackendRepository, BackendType, RuntimeHealth, RuntimeHealthStatus,
+    BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
+    LocalBackendClaim, RuntimeHealth, RuntimeHealthStatus,
 };
 
 use crate::app_state::AppState;
+use crate::auth::CurrentUser;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
 use agentdash_application::runtime_gateway::{
@@ -27,6 +31,50 @@ pub struct CreateBackendRequest {
     pub endpoint: String,
     pub auth_token: Option<String>,
     pub backend_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnsureLocalRuntimeRequest {
+    pub machine_id: String,
+    pub machine_label: Option<String>,
+    #[serde(default)]
+    pub legacy_machine_ids: Vec<String>,
+    pub profile_id: String,
+    #[serde(default)]
+    pub scope: Option<LocalRuntimeScopeRequest>,
+    pub capability_slot: Option<String>,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub accessible_roots: Vec<String>,
+    #[serde(default)]
+    pub executor_enabled: bool,
+    pub client_version: Option<String>,
+    #[serde(default)]
+    pub device: serde_json::Value,
+    #[serde(default)]
+    pub rotate_token: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LocalRuntimeScopeRequest {
+    pub kind: BackendShareScopeKind,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnsureLocalRuntimeResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub relay_ws_url: String,
+    pub auth_token: String,
+    pub backend_enabled: bool,
+    pub profile_id: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub visibility: BackendVisibility,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
 }
 
 #[derive(Serialize)]
@@ -116,6 +164,17 @@ pub async fn list_backends(
                 enabled: true,
                 backend_type: BackendType::Remote,
                 owner_user_id: None,
+                profile_id: None,
+                device_id: None,
+                machine_id: None,
+                machine_label: None,
+                legacy_machine_ids: Vec::new(),
+                visibility: BackendVisibility::Private,
+                share_scope_kind: BackendShareScopeKind::User,
+                share_scope_id: None,
+                capability_slot: "default".to_string(),
+                device: serde_json::json!({}),
+                last_claimed_at: None,
             },
         });
     }
@@ -242,9 +301,134 @@ pub async fn add_backend(
             _ => BackendType::Local,
         },
         owner_user_id: None, // TODO: 从 CurrentUser 提取
+        profile_id: existing.as_ref().and_then(|item| item.profile_id.clone()),
+        device_id: existing.as_ref().and_then(|item| item.device_id.clone()),
+        machine_id: existing.as_ref().and_then(|item| item.machine_id.clone()),
+        machine_label: existing
+            .as_ref()
+            .and_then(|item| item.machine_label.clone()),
+        legacy_machine_ids: existing
+            .as_ref()
+            .map(|item| item.legacy_machine_ids.clone())
+            .unwrap_or_default(),
+        visibility: existing
+            .as_ref()
+            .map(|item| item.visibility)
+            .unwrap_or_default(),
+        share_scope_kind: existing
+            .as_ref()
+            .map(|item| item.share_scope_kind)
+            .unwrap_or_default(),
+        share_scope_id: existing
+            .as_ref()
+            .and_then(|item| item.share_scope_id.clone()),
+        capability_slot: existing
+            .as_ref()
+            .map(|item| item.capability_slot.clone())
+            .unwrap_or_else(|| "default".to_string()),
+        device: existing
+            .as_ref()
+            .map(|item| item.device.clone())
+            .unwrap_or_else(|| serde_json::json!({})),
+        last_claimed_at: existing.as_ref().and_then(|item| item.last_claimed_at),
     };
     state.repos.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
+}
+
+pub async fn ensure_local_runtime(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    headers: HeaderMap,
+    Json(req): Json<EnsureLocalRuntimeRequest>,
+) -> Result<Json<EnsureLocalRuntimeResponse>, ApiError> {
+    let profile_id = normalize_required("profile_id", &req.profile_id)?;
+    let machine_id = normalize_required("machine_id", &req.machine_id)?;
+    let machine_label = req
+        .machine_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_machine_label(&machine_id));
+    let capability_slot = req
+        .capability_slot
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "default".to_string());
+    let (share_scope_kind, share_scope_id, visibility) =
+        resolve_local_runtime_scope(req.scope, &current_user.user_id)?;
+    let name = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_local_runtime_name(&machine_label, share_scope_kind));
+
+    let relay_ws_url = relay_ws_url_from_headers(&headers);
+    let backend_id = stable_local_backend_id(
+        &machine_id,
+        share_scope_kind,
+        share_scope_id.as_deref(),
+        &capability_slot,
+    );
+    let mut device = normalize_device_payload(req.device)?;
+    if let Some(client_version) = normalize_optional_string(req.client_version) {
+        device["client_version"] = serde_json::Value::String(client_version);
+    }
+    device["executor_enabled"] = serde_json::Value::Bool(req.executor_enabled);
+    device["accessible_root_count"] =
+        serde_json::Value::Number(serde_json::Number::from(req.accessible_roots.len() as u64));
+
+    let legacy_machine_ids = normalize_legacy_machine_ids(req.legacy_machine_ids, &machine_id);
+
+    let claim = LocalBackendClaim {
+        owner_user_id: current_user.user_id.clone(),
+        profile_id: profile_id.clone(),
+        machine_id: machine_id.clone(),
+        machine_label: machine_label.clone(),
+        legacy_machine_ids,
+        visibility,
+        share_scope_kind,
+        share_scope_id: share_scope_id.clone(),
+        capability_slot: capability_slot.clone(),
+        backend_id,
+        name,
+        endpoint: relay_ws_url.clone(),
+        auth_token: generate_backend_auth_token(),
+        device,
+        rotate_token: req.rotate_token,
+    };
+
+    let backend = state
+        .repos
+        .backend_repo
+        .ensure_local_backend(&claim)
+        .await?;
+    let auth_token = normalize_optional_string(backend.auth_token.clone()).ok_or_else(|| {
+        ApiError::Internal(format!(
+            "本机 backend `{}` 缺少 server 颁发的 relay token",
+            backend.id
+        ))
+    })?;
+
+    Ok(Json(EnsureLocalRuntimeResponse {
+        backend_id: backend.id,
+        name: backend.name,
+        relay_ws_url: backend.endpoint,
+        auth_token,
+        backend_enabled: backend.enabled,
+        profile_id,
+        machine_id,
+        machine_label,
+        visibility,
+        share_scope_kind,
+        share_scope_id,
+        capability_slot,
+    }))
 }
 
 async fn resolve_backend_auth_token(
@@ -275,6 +459,149 @@ async fn resolve_backend_auth_token(
 
 fn generate_backend_auth_token() -> String {
     Uuid::new_v4().to_string()
+}
+
+fn normalize_required(field: &str, raw: &str) -> Result<String, ApiError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!("{field} 不能为空")));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_device_payload(value: serde_json::Value) -> Result<serde_json::Value, ApiError> {
+    match value {
+        serde_json::Value::Null => Ok(serde_json::json!({})),
+        serde_json::Value::Object(_) => Ok(value),
+        _ => Err(ApiError::BadRequest(
+            "device 必须是 JSON object 或 null".to_string(),
+        )),
+    }
+}
+
+fn resolve_local_runtime_scope(
+    scope: Option<LocalRuntimeScopeRequest>,
+    current_user_id: &str,
+) -> Result<(BackendShareScopeKind, Option<String>, BackendVisibility), ApiError> {
+    match scope {
+        Some(LocalRuntimeScopeRequest {
+            kind: BackendShareScopeKind::User,
+            id,
+        }) => {
+            let requested_user = id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(current_user_id);
+            if requested_user != current_user_id {
+                return Err(ApiError::Forbidden(
+                    "只能领取当前用户的个人本机 runtime".to_string(),
+                ));
+            }
+            Ok((
+                BackendShareScopeKind::User,
+                Some(current_user_id.to_string()),
+                BackendVisibility::Private,
+            ))
+        }
+        Some(LocalRuntimeScopeRequest {
+            kind: BackendShareScopeKind::Project | BackendShareScopeKind::System,
+            ..
+        }) => Err(ApiError::BadRequest(
+            "共享本机 runtime scope 尚未开放创建入口".to_string(),
+        )),
+        None => Ok((
+            BackendShareScopeKind::User,
+            Some(current_user_id.to_string()),
+            BackendVisibility::Private,
+        )),
+    }
+}
+
+fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != machine_id)
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn default_machine_label(machine_id: &str) -> String {
+    let suffix = machine_id
+        .rsplit([':', '/', '\\'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("desktop");
+    format!("Desktop {suffix}")
+}
+
+fn default_local_runtime_name(
+    machine_label: &str,
+    share_scope_kind: BackendShareScopeKind,
+) -> String {
+    let scope_label = match share_scope_kind {
+        BackendShareScopeKind::User => "Personal",
+        BackendShareScopeKind::Project => "Project Shared",
+        BackendShareScopeKind::System => "System Shared",
+    };
+    format!("{machine_label} / {scope_label}")
+}
+
+fn stable_local_backend_id(
+    machine_id: &str,
+    share_scope_kind: BackendShareScopeKind,
+    share_scope_id: Option<&str>,
+    capability_slot: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(machine_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(share_scope_kind.as_str().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(share_scope_id.unwrap_or("").as_bytes());
+    hasher.update(b"\n");
+    hasher.update(capability_slot.as_bytes());
+    let digest = hasher.finalize();
+    format!("local_{}", hex_prefix(&digest, 24))
+}
+
+fn hex_prefix(bytes: &[u8], chars: usize) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(chars);
+    for byte in bytes {
+        if out.len() >= chars {
+            break;
+        }
+        out.push(HEX[(byte >> 4) as usize] as char);
+        if out.len() >= chars {
+            break;
+        }
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn relay_ws_url_from_headers(headers: &HeaderMap) -> String {
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("127.0.0.1:3001");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(',').next().unwrap_or(value).trim())
+        .unwrap_or("http");
+    let ws_scheme = if proto.eq_ignore_ascii_case("https") {
+        "wss"
+    } else {
+        "ws"
+    };
+    format!("{ws_scheme}://{host}/ws/backend")
 }
 
 #[cfg(test)]
@@ -313,6 +640,13 @@ mod tests {
             unreachable!("测试未使用");
         }
 
+        async fn ensure_local_backend(
+            &self,
+            _claim: &LocalBackendClaim,
+        ) -> Result<BackendConfig, DomainError> {
+            unreachable!("测试未使用");
+        }
+
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
@@ -343,6 +677,17 @@ mod tests {
             enabled: true,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            machine_id: None,
+            machine_label: None,
+            legacy_machine_ids: Vec::new(),
+            visibility: BackendVisibility::Private,
+            share_scope_kind: BackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
+            device: serde_json::json!({}),
+            last_claimed_at: None,
         }
     }
 
@@ -389,6 +734,57 @@ mod tests {
 
         assert!(!token.trim().is_empty());
         assert_ne!(token, "persisted-token");
+    }
+
+    #[test]
+    fn stable_local_backend_id_is_deterministic_and_scoped() {
+        let first = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "default",
+        );
+        let again = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "default",
+        );
+        let other_user = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-b"),
+            "default",
+        );
+        let other_slot = stable_local_backend_id(
+            "machine-a",
+            BackendShareScopeKind::User,
+            Some("user-a"),
+            "tools",
+        );
+
+        assert_eq!(first, again);
+        assert_ne!(first, other_user);
+        assert_ne!(first, other_slot);
+        assert!(first.starts_with("local_"));
+    }
+
+    #[test]
+    fn relay_ws_url_prefers_forwarded_https() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-host", "dash.example.com".parse().unwrap());
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+
+        assert_eq!(
+            relay_ws_url_from_headers(&headers),
+            "wss://dash.example.com/ws/backend"
+        );
+    }
+
+    #[test]
+    fn normalize_device_payload_rejects_non_object() {
+        assert!(normalize_device_payload(serde_json::json!("windows")).is_err());
+        assert!(normalize_device_payload(serde_json::json!({ "os": "windows" })).is_ok());
     }
 }
 

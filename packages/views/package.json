@@ -8,11 +8,11 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./local-runtime": "./src/local-runtime/index.ts",
-    "./local-runtime.css": "./src/local-runtime/LocalRuntimeView.css"
+    "./local-runtime": "./src/local-runtime/index.ts"
   },
   "dependencies": {
     "@agentdash/core": "workspace:*",
+    "@agentdash/ui": "workspace:*",
     "react": "^19.2.0"
   },
   "devDependencies": {

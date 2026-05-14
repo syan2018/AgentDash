@@ -266,10 +266,7 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
   const otherProjects = projects.filter((p) => p.id !== currentProjectId);
 
   useEffect(() => {
-    if (!open) {
-      setPopupPos(null);
-      return;
-    }
+    if (!open) return;
     const update = () => {
       if (!switchBtnRef.current) return;
       const rect = switchBtnRef.current.getBoundingClientRect();
@@ -492,24 +489,27 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
 
   // 测量每行实际高度（记录到 id → height 的 Map）；DOM 变动时重算
   useEffect(() => {
-    const map = new Map<string, number>();
-    rowsRef.current.forEach((el, id) => {
-      map.set(id, el.offsetHeight);
-    });
-    setRowHeights((prev) => {
-      // 仅当有差异时才 setState，避免无意义重渲染
-      if (prev.size === map.size) {
-        let same = true;
-        for (const [k, v] of map) {
-          if (prev.get(k) !== v) {
-            same = false;
-            break;
+    const frame = window.requestAnimationFrame(() => {
+      const map = new Map<string, number>();
+      rowsRef.current.forEach((el, id) => {
+        map.set(id, el.offsetHeight);
+      });
+      setRowHeights((prev) => {
+        // 仅当有差异时才 setState，避免无意义重渲染
+        if (prev.size === map.size) {
+          let same = true;
+          for (const [k, v] of map) {
+            if (prev.get(k) !== v) {
+              same = false;
+              break;
+            }
           }
+          if (same) return prev;
         }
-        if (same) return prev;
-      }
-      return map;
+        return map;
+      });
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [sorted]);
 
   // 用已知行高 + 容器高度决定可见数量；未知行用保守估算
@@ -672,10 +672,7 @@ function SidebarFooter({
   const [anchor, setAnchor] = useState<{ top: number; left: number; right: number } | null>(null);
 
   useEffect(() => {
-    if (!activePanel) {
-      setAnchor(null);
-      return;
-    }
+    if (!activePanel) return;
     const update = () => {
       if (!footerRef.current) return;
       const rect = footerRef.current.getBoundingClientRect();

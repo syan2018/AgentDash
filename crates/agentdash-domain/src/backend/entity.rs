@@ -16,6 +16,28 @@ pub struct BackendConfig {
     pub backend_type: BackendType,
     /// 注册此后端的用户标识（None 表示共享/系统级后端）
     pub owner_user_id: Option<String>,
+    /// Desktop / runtime profile 标识，用于区分同一用户在不同 server/profile 下的本机端。
+    pub profile_id: Option<String>,
+    /// 旧版稳定设备标识，仅作为 legacy merge 输入保留，不再作为本机唯一身份。
+    pub device_id: Option<String>,
+    /// 机器级稳定身份，由 Desktop 本地生成并长期保存。
+    pub machine_id: Option<String>,
+    /// 机器展示标签，通常来自 hostname 或用户命名，不作为唯一键。
+    pub machine_label: Option<String>,
+    /// 旧机器身份候选，用于从 hostname / 旧 device_id 合并到 machine_id。
+    pub legacy_machine_ids: Vec<String>,
+    /// 本机 backend 可见性。个人本机为 private，共享本机使用 shared / system。
+    pub visibility: BackendVisibility,
+    /// backend scope 类型。personal runtime 使用 user。
+    pub share_scope_kind: BackendShareScopeKind,
+    /// scope id。user/project scope 填具体 id，system scope 为空。
+    pub share_scope_id: Option<String>,
+    /// 同一 machine/scope 下的能力槽位，默认 default。
+    pub capability_slot: String,
+    /// 设备元信息（OS、arch、app version 等），仅用于诊断与展示。
+    pub device: serde_json::Value,
+    /// 最近一次由 Desktop ensure/claim 的时间。
+    pub last_claimed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -23,6 +45,54 @@ pub struct BackendConfig {
 pub enum BackendType {
     Local,
     Remote,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendVisibility {
+    Private,
+    Shared,
+    System,
+}
+
+impl BackendVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Shared => "shared",
+            Self::System => "system",
+        }
+    }
+}
+
+impl Default for BackendVisibility {
+    fn default() -> Self {
+        Self::Private
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendShareScopeKind {
+    User,
+    Project,
+    System,
+}
+
+impl BackendShareScopeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+            Self::System => "system",
+        }
+    }
+}
+
+impl Default for BackendShareScopeKind {
+    fn default() -> Self {
+        Self::User
+    }
 }
 
 /// 视图配置
@@ -43,6 +113,26 @@ pub struct UserPreferences {
     pub default_view_id: Option<String>,
     pub theme: Option<String>,
     pub sidebar_collapsed: bool,
+}
+
+/// Desktop 本机 runtime 领取/确保 local backend 的输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalBackendClaim {
+    pub owner_user_id: String,
+    pub profile_id: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub legacy_machine_ids: Vec<String>,
+    pub visibility: BackendVisibility,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
+    pub backend_id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub auth_token: String,
+    pub device: serde_json::Value,
+    pub rotate_token: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

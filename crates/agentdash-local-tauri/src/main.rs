@@ -5,7 +5,8 @@ use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, load_mcp_servers_for_root, probe_mcp_server, save_mcp_servers_for_root,
+    StopReason, load_mcp_servers_for_root, load_or_create_machine_identity, probe_mcp_server,
+    save_mcp_servers_for_root,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -16,6 +17,7 @@ const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
+const DEFAULT_PROFILE_ID: &str = "default";
 
 #[derive(Clone)]
 struct DesktopState {
@@ -69,9 +71,16 @@ impl Default for DesktopApiSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct RuntimeStartRequest {
-    cloud_url: String,
-    token: String,
-    backend_id: Option<String>,
+    server_url: String,
+    #[serde(default)]
+    access_token: String,
+    profile_id: String,
+    #[serde(default)]
+    machine_id: String,
+    #[serde(default)]
+    machine_label: Option<String>,
+    #[serde(default)]
+    legacy_machine_ids: Vec<String>,
     name: Option<String>,
     accessible_roots: Vec<PathBuf>,
     executor_enabled: bool,
@@ -80,10 +89,23 @@ struct RuntimeStartRequest {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct LocalRuntimeProfile {
-    cloud_url: String,
-    token: String,
+    server_url: String,
+    #[serde(default)]
+    access_token: String,
+    #[serde(default = "default_profile_id")]
+    profile_id: String,
+    #[serde(default)]
+    machine_id: String,
+    #[serde(default)]
+    machine_label: Option<String>,
+    #[serde(default)]
+    legacy_machine_ids: Vec<String>,
+    #[serde(default, alias = "device_id", skip_serializing)]
+    legacy_device_id: String,
     #[serde(default)]
     backend_id: Option<String>,
+    #[serde(default)]
+    relay_ws_url: Option<String>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -94,6 +116,10 @@ struct LocalRuntimeProfile {
     auto_start: bool,
 }
 
+fn default_profile_id() -> String {
+    DEFAULT_PROFILE_ID.to_string()
+}
+
 fn default_executor_enabled() -> bool {
     true
 }
@@ -101,9 +127,12 @@ fn default_executor_enabled() -> bool {
 impl From<LocalRuntimeProfile> for RuntimeStartRequest {
     fn from(profile: LocalRuntimeProfile) -> Self {
         Self {
-            cloud_url: profile.cloud_url,
-            token: profile.token,
-            backend_id: profile.backend_id,
+            server_url: profile.server_url,
+            access_token: profile.access_token,
+            profile_id: profile.profile_id,
+            machine_id: profile.machine_id,
+            machine_label: profile.machine_label,
+            legacy_machine_ids: profile.legacy_machine_ids,
             name: profile.name,
             accessible_roots: profile.accessible_roots,
             executor_enabled: profile.executor_enabled,
@@ -118,9 +147,9 @@ async fn profile_load(app: AppHandle) -> Result<Option<LocalRuntimeProfile>, Str
         return Ok(None);
     }
     let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content)
-        .map(Some)
-        .map_err(|error| format!("读取桌面端 profile 失败: {error}"))
+    let profile = serde_json::from_str(&content)
+        .map_err(|error| format!("读取桌面端 profile 失败: {error}"))?;
+    Ok(Some(normalize_profile(profile)?))
 }
 
 #[tauri::command]
@@ -129,6 +158,7 @@ async fn profile_save(
     profile: LocalRuntimeProfile,
 ) -> Result<LocalRuntimeProfile, String> {
     let path = profile_path(&app)?;
+    let profile = normalize_profile(profile)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -151,27 +181,9 @@ async fn runtime_start(
     state: State<'_, DesktopState>,
     request: RuntimeStartRequest,
 ) -> Result<LocalRuntimeSnapshot, String> {
-    let backend_id = request
-        .backend_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let config = LocalRuntimeConfig::new(
-        request.cloud_url,
-        request.token,
-        backend_id,
-        request
-            .name
-            .unwrap_or_else(|| "desktop-local-backend".to_string()),
-        request.accessible_roots,
-        request.executor_enabled,
-    );
-
-    let handle = state
-        .runtime
-        .start(config)
+    start_runtime_from_request(state.inner(), request, false)
         .await
-        .map_err(|error| error.to_string())?;
-
-    Ok(handle.status_rx.borrow().clone())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -278,6 +290,343 @@ async fn desktop_api_snapshot(
     Ok(state.api.snapshot().await)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct EnsureLocalRuntimePayload {
+    machine_id: String,
+    machine_label: Option<String>,
+    legacy_machine_ids: Vec<String>,
+    profile_id: String,
+    scope: LocalRuntimeScopePayload,
+    capability_slot: String,
+    name: Option<String>,
+    accessible_roots: Vec<String>,
+    executor_enabled: bool,
+    client_version: Option<String>,
+    device: serde_json::Value,
+    rotate_token: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct LocalRuntimeScopePayload {
+    kind: String,
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct EnsureLocalRuntimeResponse {
+    backend_id: String,
+    name: String,
+    relay_ws_url: String,
+    auth_token: String,
+    machine_id: String,
+    machine_label: String,
+    share_scope_kind: String,
+    share_scope_id: Option<String>,
+    capability_slot: String,
+}
+
+async fn auto_start_profile(app: AppHandle, state: DesktopState) {
+    let profile = match profile_load(app.clone()).await {
+        Ok(Some(profile)) if profile.auto_start => profile,
+        Ok(_) => return,
+        Err(error) => {
+            state
+                .runtime
+                .record_log(
+                    "warn",
+                    "profile",
+                    format!("加载 auto-start profile 失败: {error}"),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let request = RuntimeStartRequest::from(profile);
+    state
+        .runtime
+        .record_log(
+            "info",
+            "profile",
+            "检测到 auto-start profile，准备连接 server",
+        )
+        .await;
+
+    match start_runtime_from_request(&state, request, true).await {
+        Ok(snapshot) => {
+            state
+                .runtime
+                .record_log(
+                    "info",
+                    "profile",
+                    format!("auto-start runtime 已启动: backend={}", snapshot.backend_id),
+                )
+                .await;
+        }
+        Err(error) => {
+            state
+                .runtime
+                .record_log(
+                    "error",
+                    "profile",
+                    format!("auto-start runtime 失败: {error}"),
+                )
+                .await;
+        }
+    }
+}
+
+async fn start_runtime_from_request(
+    state: &DesktopState,
+    request: RuntimeStartRequest,
+    retry_until_server_ready: bool,
+) -> anyhow::Result<LocalRuntimeSnapshot> {
+    let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
+    let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
+    let config = LocalRuntimeConfig::new(
+        claim.relay_ws_url,
+        claim.auth_token,
+        claim.backend_id,
+        claim.name,
+        request.accessible_roots,
+        request.executor_enabled,
+    );
+
+    let handle = state.runtime.start(config).await?;
+    Ok(handle.status_rx.borrow().clone())
+}
+
+async fn claim_local_runtime(
+    request: &RuntimeStartRequest,
+    retry_until_server_ready: bool,
+) -> anyhow::Result<EnsureLocalRuntimeResponse> {
+    let server_url = normalize_server_origin(&request.server_url);
+    let payload = EnsureLocalRuntimePayload {
+        machine_id: request.machine_id.clone(),
+        machine_label: request.machine_label.clone(),
+        legacy_machine_ids: request.legacy_machine_ids.clone(),
+        profile_id: request.profile_id.clone(),
+        scope: LocalRuntimeScopePayload {
+            kind: "user".to_string(),
+            id: None,
+        },
+        capability_slot: "default".to_string(),
+        name: request.name.clone(),
+        accessible_roots: request
+            .accessible_roots
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect(),
+        executor_enabled: request.executor_enabled,
+        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        device: local_device_payload(),
+        rotate_token: false,
+    };
+
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match post_local_runtime_claim(&server_url, &request.access_token, &payload).await {
+            Ok(response) => {
+                validate_claim_response(&response, request)?;
+                return Ok(response);
+            }
+            Err(error) if retry_until_server_ready && attempts < 30 => {
+                tracing::warn!(
+                    attempt = attempts,
+                    error = %error,
+                    "领取本机 runtime 失败，等待 server 就绪后重试"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn validate_claim_response(
+    response: &EnsureLocalRuntimeResponse,
+    request: &RuntimeStartRequest,
+) -> anyhow::Result<()> {
+    if response.machine_id != request.machine_id {
+        anyhow::bail!(
+            "server 返回的 machine_id 与本机 profile 不一致: expected={}, actual={}",
+            request.machine_id,
+            response.machine_id
+        );
+    }
+    if response.machine_label.trim().is_empty() {
+        anyhow::bail!("server 返回的 machine_label 为空");
+    }
+    if response.share_scope_kind != "user" {
+        anyhow::bail!(
+            "当前桌面端只支持 personal runtime scope，server 返回: {}",
+            response.share_scope_kind
+        );
+    }
+    if response.capability_slot != "default" {
+        anyhow::bail!(
+            "当前桌面端只支持 default capability slot，server 返回: {}",
+            response.capability_slot
+        );
+    }
+    let _personal_scope = response.share_scope_id.as_deref().unwrap_or("current-user");
+    Ok(())
+}
+
+async fn post_local_runtime_claim(
+    server_url: &str,
+    access_token: &str,
+    payload: &EnsureLocalRuntimePayload,
+) -> anyhow::Result<EnsureLocalRuntimeResponse> {
+    let endpoint = format!("{server_url}/api/local-runtime/ensure");
+    let client = reqwest::Client::new();
+    let mut request = client.post(&endpoint);
+    let access_token = access_token.trim();
+    if !access_token.is_empty() {
+        request = request.bearer_auth(access_token);
+    }
+
+    let response = request
+        .json(payload)
+        .send()
+        .await
+        .map_err(|error| anyhow::anyhow!("请求本机 runtime 领取接口失败: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("本机 runtime 领取失败: HTTP {status} {text}");
+    }
+
+    response
+        .json::<EnsureLocalRuntimeResponse>()
+        .await
+        .map_err(|error| anyhow::anyhow!("解析本机 runtime 领取响应失败: {error}"))
+}
+
+fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
+    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
+    let mut legacy_machine_ids = profile.legacy_machine_ids;
+    if let Some(profile_machine_id) = normalize_optional_text(profile.machine_id) {
+        if profile_machine_id != identity.machine_id {
+            legacy_machine_ids.push(profile_machine_id);
+        }
+    }
+    if !profile.legacy_device_id.trim().is_empty() {
+        legacy_machine_ids.push(profile.legacy_device_id);
+    }
+    legacy_machine_ids.extend(identity.legacy_machine_ids.clone());
+    let machine_id = identity.machine_id;
+    let machine_label = profile
+        .machine_label
+        .and_then(normalize_optional_text)
+        .unwrap_or(identity.machine_label);
+    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
+
+    Ok(LocalRuntimeProfile {
+        server_url: normalize_server_origin(&profile.server_url),
+        access_token: profile.access_token.trim().to_string(),
+        profile_id: normalize_profile_id(profile.profile_id),
+        machine_id,
+        machine_label: Some(machine_label),
+        legacy_machine_ids,
+        legacy_device_id: String::new(),
+        name: profile.name.and_then(normalize_optional_text),
+        accessible_roots: profile.accessible_roots,
+        executor_enabled: profile.executor_enabled,
+        auto_start: profile.auto_start,
+        backend_id: profile.backend_id.and_then(normalize_optional_text),
+        relay_ws_url: profile.relay_ws_url.and_then(normalize_optional_text),
+    })
+}
+
+fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartRequest, String> {
+    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
+    let mut legacy_machine_ids = request.legacy_machine_ids;
+    if let Some(request_machine_id) = normalize_optional_text(request.machine_id) {
+        if request_machine_id != identity.machine_id {
+            legacy_machine_ids.push(request_machine_id);
+        }
+    }
+    legacy_machine_ids.extend(identity.legacy_machine_ids);
+    let machine_id = identity.machine_id;
+    let machine_label = request
+        .machine_label
+        .and_then(normalize_optional_text)
+        .unwrap_or(identity.machine_label);
+    let legacy_machine_ids = normalize_legacy_machine_ids(legacy_machine_ids, &machine_id);
+
+    Ok(RuntimeStartRequest {
+        server_url: normalize_server_origin(&request.server_url),
+        access_token: request.access_token.trim().to_string(),
+        profile_id: normalize_profile_id(request.profile_id),
+        machine_id,
+        machine_label: Some(machine_label),
+        legacy_machine_ids,
+        name: request.name.and_then(normalize_optional_text),
+        accessible_roots: request.accessible_roots,
+        executor_enabled: request.executor_enabled,
+    })
+}
+
+fn normalize_server_origin(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        desktop_api_origin(DESKTOP_API_PORT)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_profile_id(value: String) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        DEFAULT_PROFILE_ID.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_legacy_machine_ids(values: Vec<String>, machine_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != machine_id)
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn normalize_optional_text(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn local_device_payload() -> serde_json::Value {
+    serde_json::json!({
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "hostname": local_hostname(),
+    })
+}
+
+fn local_hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -297,6 +646,11 @@ fn main() {
             } else {
                 start_desktop_api(state);
             }
+            let app_handle = app.handle().clone();
+            let state = app.state::<DesktopState>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                auto_start_profile(app_handle, state).await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

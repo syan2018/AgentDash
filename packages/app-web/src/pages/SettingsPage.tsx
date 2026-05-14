@@ -9,9 +9,13 @@ import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
+import { getStoredToken } from "../api/client";
+import { API_ORIGIN } from "../api/origin";
 import { llmProvidersApi } from "../api/llmProviders";
 import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
+import { LocalRuntimeView } from "@agentdash/views/local-runtime";
+import { getDesktopLocalRuntimeClient } from "../desktop/localRuntimeBridge";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,6 +61,7 @@ function parseStringList(value: unknown): string[] {
 }
 
 type SettingsScopeKind = SettingsScopeRequest["scope"];
+type SettingsPanel = SettingsScopeKind | "local-runtime";
 
 interface SettingsNavigationState {
   return_to?: string;
@@ -66,6 +71,11 @@ const SETTINGS_SCOPE_LABELS: Record<SettingsScopeKind, string> = {
   system: "系统",
   user: "我的设置",
   project: "当前项目",
+};
+
+const SETTINGS_PANEL_LABELS: Record<SettingsPanel, string> = {
+  "local-runtime": "本机运行时",
+  ...SETTINGS_SCOPE_LABELS,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,6 +129,19 @@ function Field({
       {desc && <p className="text-xs text-muted-foreground">{desc}</p>}
       {children}
     </label>
+  );
+}
+
+function DesktopLocalRuntimePanel() {
+  const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
+  if (!client) return null;
+
+  return (
+    <LocalRuntimeView
+      client={client}
+      defaultAccessToken={getStoredToken() ?? ""}
+      defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
+    />
   );
 }
 
@@ -1611,6 +1634,8 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
           const availableExecs = executors.filter((e) => e.available);
           const runtimeHealth = backend.runtime_health;
           const roots = backend.accessible_roots ?? runtimeHealth?.accessible_roots ?? [];
+          const machineLabel = backend.machine_label || machineLabelFromDevice(backend.device) || backend.name;
+          const scopeLabel = formatBackendScope(backend);
 
           return (
             <div key={backend.id} className="rounded-[10px] border border-border bg-background/80">
@@ -1625,10 +1650,10 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{backend.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {backend.online
-                      ? `${availableExecs.length} 个执行器可用`
-                      : backend.backend_type === "local"
-                        ? "本机 · 离线"
+                    {backend.backend_type === "local"
+                      ? `${machineLabel} · ${scopeLabel}`
+                      : backend.online
+                        ? `${availableExecs.length} 个执行器可用`
                         : "远程 · 离线"}
                   </p>
                 </div>
@@ -1664,6 +1689,18 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                     </span>
                     <span className="text-muted-foreground">类型</span>
                     <span className="text-foreground">{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                    {backend.backend_type === "local" && (
+                      <>
+                        <span className="text-muted-foreground">机器</span>
+                        <span className="truncate text-foreground" title={backend.machine_id ?? undefined}>
+                          {machineLabel}
+                        </span>
+                        <span className="text-muted-foreground">Scope</span>
+                        <span className="text-foreground">{scopeLabel}</span>
+                        <span className="text-muted-foreground">能力槽</span>
+                        <span className="font-mono text-foreground">{backend.capability_slot || "default"}</span>
+                      </>
+                    )}
                     {runtimeHealth && (
                       <>
                         <span className="text-muted-foreground">Runtime</span>
@@ -1736,6 +1773,19 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
   );
 }
 
+function machineLabelFromDevice(device: BackendConfig["device"]) {
+  const hostname = device?.hostname;
+  return typeof hostname === "string" && hostname.trim() ? hostname.trim() : null;
+}
+
+function formatBackendScope(backend: BackendConfig) {
+  const kind = backend.share_scope_kind ?? "user";
+  const visibility = backend.visibility ?? "private";
+  if (kind === "user") return `Personal / ${visibility}`;
+  if (kind === "project") return `Project shared / ${visibility}`;
+  return `System shared / ${visibility}`;
+}
+
 function runtimeStatusLabel(status: NonNullable<BackendConfig["runtime_health"]>["status"]) {
   switch (status) {
     case "online":
@@ -1761,26 +1811,31 @@ function formatRuntimeTimestamp(value: string | null | undefined) {
 }
 
 function ScopeTabs({
-  activeScope,
+  activePanel,
+  includeLocalRuntime,
   onChange,
 }: {
-  activeScope: SettingsScopeKind;
-  onChange: (scope: SettingsScopeKind) => void;
+  activePanel: SettingsPanel;
+  includeLocalRuntime: boolean;
+  onChange: (scope: SettingsPanel) => void;
 }) {
+  const panels: SettingsPanel[] = includeLocalRuntime
+    ? ["system", "user", "project", "local-runtime"]
+    : ["system", "user", "project"];
   return (
     <div className="flex flex-wrap gap-2">
-      {(Object.keys(SETTINGS_SCOPE_LABELS) as SettingsScopeKind[]).map((scope) => (
+      {panels.map((scope) => (
         <button
           key={scope}
           type="button"
           onClick={() => onChange(scope)}
           className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-            activeScope === scope
+            activePanel === scope
               ? "border-primary/30 bg-primary/10 text-foreground"
               : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
           }`}
         >
-          {SETTINGS_SCOPE_LABELS[scope]}
+          {SETTINGS_PANEL_LABELS[scope]}
         </button>
       ))}
     </div>
@@ -1941,26 +1996,30 @@ export function SettingsPage() {
   const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
   const { currentProjectId, projects } = useProjectStore();
-  const [activeScope, setActiveScope] = useState<SettingsScopeKind>("system");
+  const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
   const routeState = (location.state as SettingsNavigationState | null) ?? null;
   const returnTarget = routeState?.return_to?.trim() || "/dashboard/agent";
+  const includeLocalRuntime = !!getDesktopLocalRuntimeClient();
 
   const currentProject = projects.find((project) => project.id === currentProjectId) ?? null;
   const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
   const scopeRequest = useMemo<SettingsScopeRequest | null>(() => {
-    if (activeScope === "system") {
+    if (activePanel === "local-runtime") {
+      return null;
+    }
+    if (activePanel === "system") {
       return canManageSystemScope ? { scope: "system" } : null;
     }
-    if (activeScope === "user") {
+    if (activePanel === "user") {
       return { scope: "user" };
     }
     if (!currentProjectId) {
       return null;
     }
     return { scope: "project", project_id: currentProjectId };
-  }, [activeScope, canManageSystemScope, currentProjectId]);
+  }, [activePanel, canManageSystemScope, currentProjectId]);
 
   useEffect(() => {
     void fetchBackends();
@@ -2011,7 +2070,7 @@ export function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-2xl space-y-6 px-6 py-8">
+      <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="space-y-3">
           <button
             type="button"
@@ -2042,16 +2101,19 @@ export function SettingsPage() {
         </div>
 
         <SectionCard title="Scope">
-          <ScopeTabs activeScope={activeScope} onChange={setActiveScope} />
+          <ScopeTabs activePanel={activePanel} includeLocalRuntime={includeLocalRuntime} onChange={setActivePanel} />
           <div className="space-y-1 text-xs text-muted-foreground">
-            <p>当前 scope：{SETTINGS_SCOPE_LABELS[activeScope]}</p>
-            {activeScope === "system" && (
+            <p>当前 scope：{SETTINGS_PANEL_LABELS[activePanel]}</p>
+            {activePanel === "local-runtime" && (
+              <p>本机运行时是 desktop-only scope，只管理当前桌面端与目标 server 的本机连接、根目录、能力和诊断日志。</p>
+            )}
+            {activePanel === "system" && (
               <p>system scope 仅 personal 模式或管理员可访问，适合放全局执行器、LLM Provider 和系统级 Agent 配置。</p>
             )}
-            {activeScope === "user" && (
+            {activePanel === "user" && (
               <p>user scope 绑定当前登录用户，适合放个人偏好、个体协作策略和不会影响他人的私有配置。</p>
             )}
-            {activeScope === "project" && (
+            {activePanel === "project" && (
               <p>
                 project scope 绑定当前选中 Project。
                 {currentProject ? ` 当前项目：${currentProject.name}` : " 请先在侧边栏选择一个 Project。"}
@@ -2066,13 +2128,15 @@ export function SettingsPage() {
           </div>
         )}
 
-        {activeScope === "system" && !canManageSystemScope && (
+        {activePanel === "local-runtime" && <DesktopLocalRuntimePanel />}
+
+        {activePanel === "system" && !canManageSystemScope && (
           <div className="rounded-[10px] border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             当前企业身份不是管理员，system scope 设置已被收口。你仍然可以查看和维护 user / project scope。
           </div>
         )}
 
-        {activeScope === "system" && canManageSystemScope && (
+        {activePanel === "system" && canManageSystemScope && (
           <>
             <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
             <LlmProvidersSection
@@ -2084,7 +2148,7 @@ export function SettingsPage() {
           </>
         )}
 
-        {activeScope === "user" && scopeRequest && (
+        {activePanel === "user" && scopeRequest && (
           <RawScopedSettingsSection
             title="我的设置"
             description="这里是当前用户自己的设置层。它不会影响其他用户，也不应该承担 system 级或 Project 级共享配置。"
@@ -2095,13 +2159,13 @@ export function SettingsPage() {
           />
         )}
 
-        {activeScope === "project" && !scopeRequest && (
+        {activePanel === "project" && !scopeRequest && (
           <div className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
             还没有选中的 Project，暂时无法进入 project scope。
           </div>
         )}
 
-        {activeScope === "project" && scopeRequest && currentProject && (
+        {activePanel === "project" && scopeRequest && currentProject && (
           <RawScopedSettingsSection
             title={`项目设置 · ${currentProject.name}`}
             description="project scope 适合放某个 Project 自己的协作策略或局部配置。写入时会受当前用户对该 Project 的编辑权限约束。"

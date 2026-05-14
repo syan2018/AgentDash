@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import WebDashboardApp from 'app-web'
-import { LocalRuntimeView } from '@agentdash/views/local-runtime'
 import { Button, Card, cn } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
 import { createTauriLocalRuntimeClient } from './runtimeApi'
+import type { LocalRuntimeClient } from '@agentdash/core/local-runtime'
 
-type DesktopView = 'runtime' | 'dashboard'
 type DashboardApiState = 'checking' | 'ready' | 'unavailable'
 type DesktopApiSnapshot = {
   state: 'starting' | 'running' | 'error' | 'stopped'
@@ -15,45 +14,26 @@ type DesktopApiSnapshot = {
 }
 
 const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
-const ACCESS_TOKEN_KEY = 'agentdash_access_token'
+
+declare global {
+  interface Window {
+    __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient
+  }
+}
 
 function App() {
   const client = useMemo(() => createTauriLocalRuntimeClient(), [])
-  const [activeView, setActiveView] = useState<DesktopView>('runtime')
+
+  useEffect(() => {
+    window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = client
+    return () => {
+      delete window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__
+    }
+  }, [client])
 
   return (
-    <main className="grid min-h-screen min-w-[960px] grid-cols-[232px_minmax(0,1fr)] bg-background text-foreground">
-      <aside className="border-r border-border bg-slate-950 px-4 py-5 text-white">
-        <div className="mb-7 text-base font-semibold">AgentDash</div>
-        <nav className="grid gap-1.5" aria-label="桌面端导航">
-          <button
-            className={desktopNavClass(activeView === 'runtime')}
-            type="button"
-            onClick={() => setActiveView('runtime')}
-          >
-            Runtime
-          </button>
-          <button
-            className={desktopNavClass(activeView === 'dashboard')}
-            type="button"
-            onClick={() => setActiveView('dashboard')}
-          >
-            Dashboard
-          </button>
-        </nav>
-      </aside>
-
-      <section className="min-h-screen min-w-0 overflow-hidden">
-        {activeView === 'runtime' ? (
-          <LocalRuntimeView
-            client={client}
-            defaultAccessToken={readStoredAccessToken()}
-            defaultServerUrl={API_ORIGIN || 'http://127.0.0.1:3001'}
-          />
-        ) : (
-          <DashboardHost />
-        )}
-      </section>
+    <main className="min-h-screen min-w-[960px] bg-background text-foreground">
+      <DashboardHost />
     </main>
   )
 }
@@ -139,15 +119,6 @@ function normalizeApiOrigin(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
-function desktopNavClass(active: boolean): string {
-  return cn(
-    'min-h-9 rounded-[6px] border px-2.5 text-left text-sm transition-colors',
-    active
-      ? 'border-slate-700 bg-slate-800 text-white'
-      : 'border-transparent text-slate-300 hover:bg-slate-900 hover:text-white',
-  )
-}
-
 function dashboardHostDotClass(state: DashboardApiState): string {
   switch (state) {
     case 'checking':
@@ -157,11 +128,6 @@ function dashboardHostDotClass(state: DashboardApiState): string {
     case 'unavailable':
       return 'bg-destructive'
   }
-}
-
-function readStoredAccessToken(): string {
-  if (typeof localStorage === 'undefined') return ''
-  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? ''
 }
 
 export default App

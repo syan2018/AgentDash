@@ -9,9 +9,13 @@ import { useProjectStore } from "../stores/projectStore";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../features/executor-selector";
 import type { ModelInfo } from "../features/executor-selector/model/types";
 import type { SettingEntry, SettingUpdate, SettingsScopeRequest } from "../api/settings";
+import { getStoredToken } from "../api/client";
+import { API_ORIGIN } from "../api/origin";
 import { llmProvidersApi } from "../api/llmProviders";
 import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
+import { LocalRuntimeView } from "@agentdash/views/local-runtime";
+import { getDesktopLocalRuntimeClient } from "../desktop/localRuntimeBridge";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -119,6 +123,19 @@ function Field({
       {desc && <p className="text-xs text-muted-foreground">{desc}</p>}
       {children}
     </label>
+  );
+}
+
+function DesktopLocalRuntimePanel() {
+  const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
+  if (!client) return null;
+
+  return (
+    <LocalRuntimeView
+      client={client}
+      defaultAccessToken={getStoredToken() ?? ""}
+      defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
+    />
   );
 }
 
@@ -2011,7 +2028,7 @@ export function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-2xl space-y-6 px-6 py-8">
+      <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <div className="space-y-3">
           <button
             type="button"
@@ -2065,6 +2082,8 @@ export function SettingsPage() {
             {error}
           </div>
         )}
+
+        <DesktopLocalRuntimePanel />
 
         {activeScope === "system" && !canManageSystemScope && (
           <div className="rounded-[10px] border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800">

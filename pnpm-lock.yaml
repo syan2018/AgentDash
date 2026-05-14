@@ -79,9 +79,15 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.14.1
         version: 0.14.1(zod@4.3.6)
+      '@agentdash/core':
+        specifier: workspace:*
+        version: link:../core
       '@agentdash/ui':
         specifier: workspace:*
         version: link:../ui
+      '@agentdash/views':
+        specifier: workspace:*
+        version: link:../views
       '@codemirror/commands':
         specifier: ^6.10.3
         version: 6.10.3

@@ -19,7 +19,5 @@ export {
   OutputPortItem,
   InputPortItem,
   PortViewCard,
-  GATE_LABEL,
-  CTX_LABEL,
 } from "./PortsPanel";
 export type { PortsPanelProps } from "./PortsPanel";

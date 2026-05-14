@@ -30,6 +30,9 @@ importers:
       '@agentdash/core':
         specifier: workspace:*
         version: link:../core
+      '@agentdash/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@agentdash/views':
         specifier: workspace:*
         version: link:../views
@@ -76,6 +79,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.14.1
         version: 0.14.1(zod@4.3.6)
+      '@agentdash/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@codemirror/commands':
         specifier: ^6.10.3
         version: 6.10.3
@@ -228,11 +234,48 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
+  packages/ui:
+    dependencies:
+      '@streamdown/cjk':
+        specifier: ^1.0.3
+        version: 1.0.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2)(react@19.2.4)(unified@11.0.5)
+      '@streamdown/code':
+        specifier: ^1.1.1
+        version: 1.1.1(react@19.2.4)
+      '@streamdown/math':
+        specifier: ^1.0.2
+        version: 1.0.2(react@19.2.4)
+      '@streamdown/mermaid':
+        specifier: ^1.0.2
+        version: 1.0.2(react@19.2.4)
+      katex:
+        specifier: ^0.16.45
+        version: 0.16.45
+      streamdown:
+        specifier: ^2.5.0
+        version: 2.5.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      tailwindcss:
+        specifier: ^4.2.1
+        version: 4.2.1
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
   packages/views:
     dependencies:
       '@agentdash/core':
         specifier: workspace:*
         version: link:../core
+      '@agentdash/ui':
+        specifier: workspace:*
+        version: link:../ui
       react:
         specifier: ^19.2.0
         version: 19.2.4

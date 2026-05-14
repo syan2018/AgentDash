@@ -1,10 +1,17 @@
 @import "tailwindcss";
 
-@source "../../node_modules/streamdown/dist/*.js";
-@source "../../node_modules/@streamdown/code/dist/*.js";
-@source "../../node_modules/@streamdown/math/dist/*.js";
-@source "../../node_modules/@streamdown/mermaid/dist/*.js";
-@source "../../node_modules/@streamdown/cjk/dist/*.js";
+@import "streamdown/styles.css";
+@import "katex/dist/katex.min.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../../app-web/src/**/*.{ts,tsx}";
+@source "../../app-tauri/src/**/*.{ts,tsx}";
+@source "../../views/src/**/*.{ts,tsx}";
+@source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@streamdown/code/dist/*.js";
+@source "../../../node_modules/@streamdown/math/dist/*.js";
+@source "../../../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../../../node_modules/@streamdown/cjk/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 

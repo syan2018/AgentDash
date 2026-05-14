@@ -83,7 +83,8 @@ export interface LocalRuntimeClient {
 - DashboardHost 必须优先读取 `desktop_api_snapshot().origin`，再请求 `${origin}/api/health`，确认 ready 后才渲染 Web Dashboard。
 - `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`，字段使用 snake_case，包含 `cloud_url`、`token`、`backend_id`、`name`、`accessible_roots`、`executor_enabled`、`auto_start`。
 - Local Runtime UI 不直接 import Tauri API；它只依赖 `@agentdash/core` 的 `LocalRuntimeClient` port。`app-tauri` 负责把 `invoke()` 适配成 client。
-- `packages/app-web` 导出 `App` 和 `styles.css`，`packages/app-tauri` 复用该入口作为 Dashboard 页，不能复制 Web Dashboard 组件树。
+- `packages/app-web` 只导出 `App`，`packages/app-tauri` 复用该入口作为 Dashboard 页，不能复制 Web Dashboard 组件树。
+- `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口，承载 Tailwind v4 theme、base layer、component layer 和第三方渲染样式；`app-web`、`app-tauri`、`views` 不能再各自维护全局壳样式。
 - 桌面打包入口必须可复现：`pnpm run desktop:build` 生成 release exe，`pnpm run desktop:bundle` 生成 Windows NSIS installer。
 
 ### 4. Validation & Error Matrix
@@ -104,15 +105,18 @@ export interface LocalRuntimeClient {
 
 - Good: `agentdash-api` 抽出 `build_server`，Tauri 只选择 host/port/service_name，不复制 Axum route/DI/migration。
 - Good: 桌面 Local Runtime 页通过 `LocalRuntimeClient` 适配 Tauri commands，后续 Web/测试环境可替换 client。
+- Good: Web 与 Tauri 只 import `@agentdash/ui/styles.css` 作为全局 CSS，组件视觉差异通过共享 UI primitives 和 Tailwind token 消除。
 - Good: `tauri.conf.json` 的 `beforeBuildCommand` 构建 `packages/app-tauri`，避免 bundle 使用过期 dist。
 - Base: Dashboard 在 Tauri 中仍使用 HTTP API，这是 Dashboard 数据 authority；Local Runtime 设置才使用 process-local command。
 - Bad: 在 `app-tauri` 复制 `packages/app-web/src` 下的 Dashboard 组件。
+- Bad: 从 `app-web` 导出样式给桌面端，或在 `app-tauri` / `views` 追加全局 CSS 来修补桌面样式。
 - Bad: Dashboard 直接读取 `LocalRuntimeManager` 或通过 Tauri command 绕过 `agentdash-api` 的 Repository/API 契约。
 - Bad: 依赖本机全局 `cargo tauri`；仓库脚本应使用 `pnpm exec tauri`。
 
 ### 6. Tests Required
 
 - Typecheck: `pnpm run desktop:check`。
+- Frontend build: `pnpm --filter app-web build`。
 - Frontend build: `pnpm --filter app-tauri build`。
 - Rust check: `cargo check -p agentdash-infrastructure -p agentdash-api -p agentdash-local-tauri`。
 - Desktop release build: `pnpm run desktop:build`。

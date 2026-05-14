@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import WebDashboardApp from 'app-web'
 import { LocalRuntimeView } from '@agentdash/views/local-runtime'
+import { Button, Card, cn } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
 import { createTauriLocalRuntimeClient } from './runtimeApi'
 
@@ -20,19 +21,19 @@ function App() {
   const [activeView, setActiveView] = useState<DesktopView>('runtime')
 
   return (
-    <main className="desktop-shell">
-      <aside className="sidebar">
-        <div className="brand">AgentDash</div>
-        <nav className="nav-list" aria-label="桌面端导航">
+    <main className="grid min-h-screen min-w-[960px] grid-cols-[232px_minmax(0,1fr)] bg-background text-foreground">
+      <aside className="border-r border-border bg-slate-950 px-4 py-5 text-white">
+        <div className="mb-7 text-base font-semibold">AgentDash</div>
+        <nav className="grid gap-1.5" aria-label="桌面端导航">
           <button
-            className={`nav-item ${activeView === 'runtime' ? 'active' : ''}`}
+            className={desktopNavClass(activeView === 'runtime')}
             type="button"
             onClick={() => setActiveView('runtime')}
           >
             Runtime
           </button>
           <button
-            className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
+            className={desktopNavClass(activeView === 'dashboard')}
             type="button"
             onClick={() => setActiveView('dashboard')}
           >
@@ -41,7 +42,7 @@ function App() {
         </nav>
       </aside>
 
-      <section className="desktop-content">
+      <section className="min-h-screen min-w-0 overflow-hidden">
         {activeView === 'runtime' ? <LocalRuntimeView client={client} /> : <DashboardHost />}
       </section>
     </main>
@@ -95,17 +96,17 @@ function DashboardHost() {
   }
 
   return (
-    <div className="dashboard-host-state">
-      <div className="dashboard-host-panel">
-        <span className={`dashboard-host-dot ${state}`} />
+    <div className="grid min-h-screen place-items-center bg-background p-6">
+      <Card className="grid w-full max-w-[520px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5">
+        <span className={cn('h-2.5 w-2.5 rounded-full bg-muted-foreground', dashboardHostDotClass(state))} />
         <div>
-          <h1>Dashboard API</h1>
-          <p>{dashboardApiMessage(state, apiSnapshot)}</p>
+          <h1 className="text-base font-semibold text-foreground">Dashboard API</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{dashboardApiMessage(state, apiSnapshot)}</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => setAttempt((value) => value + 1)}>
+        <Button onClick={() => setAttempt((value) => value + 1)}>
           重试
-        </button>
-      </div>
+        </Button>
+      </Card>
     </div>
   )
 }
@@ -127,6 +128,26 @@ function dashboardApiMessage(state: DashboardApiState, snapshot: DesktopApiSnaps
 
 function normalizeApiOrigin(value: string): string {
   return value.replace(/\/+$/, '')
+}
+
+function desktopNavClass(active: boolean): string {
+  return cn(
+    'min-h-9 rounded-[6px] border px-2.5 text-left text-sm transition-colors',
+    active
+      ? 'border-slate-700 bg-slate-800 text-white'
+      : 'border-transparent text-slate-300 hover:bg-slate-900 hover:text-white',
+  )
+}
+
+function dashboardHostDotClass(state: DashboardApiState): string {
+  switch (state) {
+    case 'checking':
+      return 'bg-warning'
+    case 'ready':
+      return 'bg-success'
+    case 'unavailable':
+      return 'bg-destructive'
+  }
 }
 
 export default App

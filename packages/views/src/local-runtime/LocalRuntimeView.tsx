@@ -16,6 +16,7 @@ import type {
   McpLocalServerEntry,
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
+import { Badge, Button, Card, CardHeader, Field, Select, Textarea, TextInput, cn } from '@agentdash/ui'
 
 export interface LocalRuntimeViewProps {
   client: LocalRuntimeClient
@@ -273,260 +274,308 @@ export function LocalRuntimeView({
   const stateLabel = snapshot ? stateText(snapshot.state) : '未启动'
 
   return (
-      <section className="workspace local-runtime-workspace">
-        <header className="topbar">
-          <div>
-            <h1>Local Runtime</h1>
-            <p>状态源：Tauri command → agentdash-local library</p>
-          </div>
-          <div className={`status-pill state-${snapshot?.state ?? 'stopped'}`}>{stateLabel}</div>
-        </header>
+    <section className="min-w-0 p-6">
+      <header className="mb-5 flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal text-foreground">Local Runtime</h1>
+          <p className="mt-1 text-sm text-muted-foreground">状态源：Tauri command → agentdash-local library</p>
+        </div>
+        <Badge variant={stateBadgeVariant(snapshot?.state)}>{stateLabel}</Badge>
+      </header>
 
-        <div className="content-grid">
-          <section className="panel runtime-panel">
-            <div className="panel-header">
-              <h2>Runtime Snapshot</h2>
-              <button className="secondary-button" type="button" onClick={() => void client.runtimeSnapshot().then(setSnapshot)} disabled={isBusy}>
+      <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.95fr)_minmax(420px,1.35fr)]">
+        <Card>
+          <CardHeader
+            actions={
+              <Button onClick={() => void client.runtimeSnapshot().then(setSnapshot)} disabled={isBusy}>
                 刷新
-              </button>
-            </div>
-            <dl className="status-list">
-              <div>
-                <dt>Backend</dt>
-                <dd>{snapshot?.backend_id ?? '—'}</dd>
-              </div>
-              <div>
-                <dt>Name</dt>
-                <dd>{snapshot?.name ?? backendName}</dd>
-              </div>
-              <div>
-                <dt>Executors</dt>
-                <dd>{snapshot ? (snapshot.executor_enabled ? 'enabled' : 'disabled') : '—'}</dd>
-              </div>
-              <div>
-                <dt>MCP Servers</dt>
-                <dd>{snapshot?.mcp_server_count ?? 0}</dd>
-              </div>
-            </dl>
-            <div className="roots-box">
-              {(snapshot?.accessible_roots.length ? snapshot.accessible_roots : roots).map((root) => (
-                <code key={root}>{root}</code>
-              ))}
-              {!snapshot?.accessible_roots.length && roots.length === 0 ? <span>未配置 accessible roots</span> : null}
-            </div>
-          </section>
+              </Button>
+            }
+          >
+            <h2 className="text-sm font-semibold text-foreground">Runtime Snapshot</h2>
+          </CardHeader>
 
-          <form className="panel control-panel" onSubmit={handleStart}>
-            <div className="panel-header">
-              <h2>Start Runtime</h2>
-              <div className="switch-group">
-                <label className="switch">
-                  <input
-                    checked={executorEnabled}
-                    onChange={(event) => setExecutorEnabled(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>Executor</span>
-                </label>
-                <label className="switch">
-                  <input
-                    checked={autoStart}
-                    onChange={(event) => setAutoStart(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>Auto start</span>
-                </label>
+          <dl className="grid gap-3">
+            <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
+            <RuntimeStat label="Name" value={snapshot?.name ?? backendName} />
+            <RuntimeStat label="Executors" value={snapshot ? (snapshot.executor_enabled ? 'enabled' : 'disabled') : '—'} />
+            <RuntimeStat label="MCP Servers" value={String(snapshot?.mcp_server_count ?? 0)} />
+          </dl>
+
+          <div className="mt-4 grid gap-2 border-t border-border pt-4">
+            {(snapshot?.accessible_roots.length ? snapshot.accessible_roots : roots).map((root) => (
+              <code key={root} className="rounded-[6px] bg-secondary px-2.5 py-2 text-xs text-muted-foreground wrap-anywhere">
+                {root}
+              </code>
+            ))}
+            {!snapshot?.accessible_roots.length && roots.length === 0 ? (
+              <span className="rounded-[6px] bg-secondary px-2.5 py-2 text-xs text-muted-foreground">未配置 accessible roots</span>
+            ) : null}
+          </div>
+        </Card>
+
+        <Card as="form" onSubmit={handleStart}>
+          <CardHeader
+            actions={
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <RuntimeSwitch checked={executorEnabled} label="Executor" onChange={setExecutorEnabled} />
+                <RuntimeSwitch checked={autoStart} label="Auto start" onChange={setAutoStart} />
               </div>
-            </div>
+            }
+          >
+            <h2 className="text-sm font-semibold text-foreground">Start Runtime</h2>
+          </CardHeader>
 
-            <label className="field">
-              <span>Cloud WebSocket URL</span>
-              <input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} />
-            </label>
+          <div className="grid gap-3">
+            <Field label="Cloud WebSocket URL">
+              <TextInput value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} />
+            </Field>
 
-            <label className="field">
-              <span>Backend Token</span>
-              <input
+            <Field label="Backend Token">
+              <TextInput
                 autoComplete="current-password"
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 type="password"
               />
-            </label>
+            </Field>
 
-            <label className="field">
-              <span>Backend Name</span>
-              <input value={backendName} onChange={(event) => setBackendName(event.target.value)} />
-            </label>
+            <Field label="Backend Name">
+              <TextInput value={backendName} onChange={(event) => setBackendName(event.target.value)} />
+            </Field>
 
-            <label className="field">
-              <span>Accessible Roots</span>
-              <textarea
+            <Field label="Accessible Roots">
+              <Textarea
                 value={accessibleRoots}
                 onChange={(event) => setAccessibleRoots(event.target.value)}
                 placeholder="每行一个绝对路径"
               />
-            </label>
+            </Field>
+          </div>
 
-            {error ? <div className="error-box">{error}</div> : null}
-            {profileMessage ? <div className="message-box profile-message">{profileMessage}</div> : null}
+          {error ? <RuntimeMessage tone="danger">{error}</RuntimeMessage> : null}
+          {profileMessage ? <RuntimeMessage>{profileMessage}</RuntimeMessage> : null}
 
-            <div className="actions">
-              <button className="primary-button" type="submit" disabled={isBusy || !cloudUrl.trim() || !token.trim()}>
-                启动
-              </button>
-              <button className="danger-button" type="button" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
-                停止
-              </button>
-              <button className="secondary-button" type="button" onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
-                重启
-              </button>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button type="submit" variant="primary" disabled={isBusy || !cloudUrl.trim() || !token.trim()}>
+              启动
+            </Button>
+            <Button variant="danger" onClick={() => void handleStop()} disabled={isBusy || !snapshot}>
+              停止
+            </Button>
+            <Button onClick={() => void handleRestart()} disabled={isBusy || snapshot?.state !== 'running'}>
+              重启
+            </Button>
+          </div>
+
+          <div className="mt-2 flex flex-wrap justify-end gap-2">
+            <Button onClick={() => void handleLoadProfile()}>加载 profile</Button>
+            <Button onClick={() => void handleSaveProfile()} disabled={!cloudUrl.trim() || !token.trim()}>
+              保存 profile
+            </Button>
+            <Button variant="danger" onClick={() => void handleDeleteProfile()}>
+              删除 profile
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="xl:col-span-2">
+          <CardHeader
+            actions={
+              <>
+                <Button onClick={() => addMcpServer('stdio')}>添加 stdio</Button>
+                <Button onClick={() => addMcpServer('http')}>添加 HTTP</Button>
+              </>
+            }
+          >
+            <h2 className="text-sm font-semibold text-foreground">MCP Servers</h2>
+          </CardHeader>
+
+          <div className="mb-4 grid gap-3 md:grid-cols-[minmax(360px,1fr)_auto] md:items-end">
+            <Field label="Config Root">
+              <TextInput
+                value={mcpRoot}
+                onChange={(event) => setMcpRoot(event.target.value)}
+                placeholder="保存到 root/.agentdash/local-backend.json"
+              />
+            </Field>
+            <div className="flex gap-2">
+              <Button onClick={() => void handleLoadMcpServers()} disabled={!effectiveMcpRoot}>
+                加载
+              </Button>
+              <Button variant="primary" onClick={() => void handleSaveMcpServers()} disabled={!effectiveMcpRoot}>
+                保存
+              </Button>
             </div>
-            <div className="actions profile-actions">
-              <button className="secondary-button" type="button" onClick={() => void handleLoadProfile()}>
-                加载 profile
-              </button>
-              <button className="secondary-button" type="button" onClick={() => void handleSaveProfile()} disabled={!cloudUrl.trim() || !token.trim()}>
-                保存 profile
-              </button>
-              <button className="danger-button" type="button" onClick={() => void handleDeleteProfile()}>
-                删除 profile
-              </button>
-            </div>
-          </form>
+          </div>
 
-          <section className="panel mcp-panel">
-            <div className="panel-header">
-              <h2>MCP Servers</h2>
-              <div className="inline-actions">
-                <button className="secondary-button" type="button" onClick={() => addMcpServer('stdio')}>
-                  添加 stdio
-                </button>
-                <button className="secondary-button" type="button" onClick={() => addMcpServer('http')}>
-                  添加 HTTP
-                </button>
-              </div>
-            </div>
+          <div className="grid gap-3">
+            {mcpServers.map((server, index) => (
+              <Card as="article" className="bg-background/60" key={`${server.name}-${index}`}>
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                  <div className="grid gap-3 md:grid-cols-[minmax(140px,0.8fr)_minmax(110px,0.55fr)_repeat(2,minmax(180px,1fr))]">
+                    <Field label="Name">
+                      <TextInput value={server.name} onChange={(event) => updateMcpServer(index, { name: event.target.value })} />
+                    </Field>
 
-            <div className="mcp-toolbar">
-              <label className="field compact-field">
-                <span>Config Root</span>
-                <input value={mcpRoot} onChange={(event) => setMcpRoot(event.target.value)} placeholder="保存到 root/.agentdash/local-backend.json" />
-              </label>
-              <div className="actions toolbar-actions">
-                <button className="secondary-button" type="button" onClick={() => void handleLoadMcpServers()} disabled={!effectiveMcpRoot}>
-                  加载
-                </button>
-                <button className="primary-button" type="button" onClick={() => void handleSaveMcpServers()} disabled={!effectiveMcpRoot}>
-                  保存
-                </button>
-              </div>
-            </div>
-
-            <div className="server-list">
-              {mcpServers.map((server, index) => (
-                <article className="server-row" key={`${server.name}-${index}`}>
-                  <div className="server-fields">
-                    <label className="field compact-field">
-                      <span>Name</span>
-                      <input value={server.name} onChange={(event) => updateMcpServer(index, { name: event.target.value })} />
-                    </label>
-
-                    <label className="field compact-field">
-                      <span>Transport</span>
-                      <select
+                    <Field label="Transport">
+                      <Select
                         value={server.transport}
                         onChange={(event) => updateMcpServer(index, { transport: event.target.value as McpLocalServerEntry['transport'] })}
                       >
                         <option value="stdio">stdio</option>
                         <option value="http">http</option>
                         <option value="sse">sse</option>
-                      </select>
-                    </label>
+                      </Select>
+                    </Field>
 
                     {server.transport === 'stdio' ? (
                       <>
-                        <label className="field compact-field wide-field">
-                          <span>Command</span>
-                          <input value={server.command ?? ''} onChange={(event) => updateMcpServer(index, { command: event.target.value })} />
-                        </label>
-                        <label className="field compact-field">
-                          <span>Args</span>
-                          <textarea
+                        <Field label="Command" className="md:col-span-2">
+                          <TextInput value={server.command ?? ''} onChange={(event) => updateMcpServer(index, { command: event.target.value })} />
+                        </Field>
+                        <Field label="Args">
+                          <Textarea
                             value={(server.args ?? []).join('\n')}
                             onChange={(event) => updateMcpServer(index, { args: parseRuntimeLines(event.target.value) })}
                             placeholder="每行一个参数"
                           />
-                        </label>
-                        <label className="field compact-field">
-                          <span>Env</span>
-                          <textarea
+                        </Field>
+                        <Field label="Env">
+                          <Textarea
                             value={(server.env ?? []).map((entry) => `${entry.name}=${entry.value}`).join('\n')}
                             onChange={(event) => updateMcpServer(index, { env: parseRuntimeEnv(event.target.value) })}
                             placeholder="NAME=value"
                           />
-                        </label>
+                        </Field>
                       </>
                     ) : (
-                      <label className="field compact-field wide-field">
-                        <span>URL</span>
-                        <input value={server.url ?? ''} onChange={(event) => updateMcpServer(index, { url: event.target.value })} />
-                      </label>
+                      <Field label="URL" className="md:col-span-2">
+                        <TextInput value={server.url ?? ''} onChange={(event) => updateMcpServer(index, { url: event.target.value })} />
+                      </Field>
                     )}
                   </div>
 
-                  <div className="server-actions">
-                    <button className="secondary-button" type="button" onClick={() => void handleProbeMcpServer(index)} disabled={probingIndex === index}>
+                  <div className="flex items-start gap-2">
+                    <Button onClick={() => void handleProbeMcpServer(index)} disabled={probingIndex === index}>
                       {probingIndex === index ? '探测中' : '探测'}
-                    </button>
-                    <button className="danger-button" type="button" onClick={() => removeMcpServer(index)}>
+                    </Button>
+                    <Button variant="danger" onClick={() => removeMcpServer(index)}>
                       删除
-                    </button>
+                    </Button>
                   </div>
-                </article>
-              ))}
-              {mcpServers.length === 0 ? <div className="empty-state">当前 root 未配置 MCP servers</div> : null}
-            </div>
+                </div>
+              </Card>
+            ))}
+            {mcpServers.length === 0 ? <RuntimeEmpty>当前 root 未配置 MCP servers</RuntimeEmpty> : null}
+          </div>
 
-            {mcpMessage ? <div className="message-box">{mcpMessage}</div> : null}
-          </section>
+          {mcpMessage ? <RuntimeMessage>{mcpMessage}</RuntimeMessage> : null}
+        </Card>
 
-          <section className="panel logs-panel">
-            <div className="panel-header">
-              <h2>Runtime Logs</h2>
-              <div className="inline-actions">
-                <select className="compact-select" value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
+        <Card className="xl:col-span-2">
+          <CardHeader
+            actions={
+              <>
+                <Select value={logLevel} onChange={(event) => setLogLevel(event.target.value)}>
                   <option value="all">全部</option>
                   <option value="info">info</option>
                   <option value="warn">warn</option>
                   <option value="error">error</option>
-                </select>
-                <button className="secondary-button" type="button" onClick={() => void handleRefreshLogs()}>
-                  刷新
-                </button>
-                <button className="secondary-button" type="button" onClick={() => void handleCopyLogs()} disabled={visibleLogs.length === 0}>
+                </Select>
+                <Button onClick={() => void handleRefreshLogs()}>刷新</Button>
+                <Button onClick={() => void handleCopyLogs()} disabled={visibleLogs.length === 0}>
                   复制
-                </button>
-                <button className="danger-button" type="button" onClick={() => void handleClearLogs()}>
+                </Button>
+                <Button variant="danger" onClick={() => void handleClearLogs()}>
                   清空
-                </button>
-              </div>
-            </div>
+                </Button>
+              </>
+            }
+          >
+            <h2 className="text-sm font-semibold text-foreground">Runtime Logs</h2>
+          </CardHeader>
 
-            <div className="log-list">
-              {visibleLogs.map((log) => (
-                <div className={`log-row log-${log.level}`} key={log.sequence}>
-                  <time>{formatTime(log.timestamp)}</time>
-                  <span>{log.level}</span>
-                  <code>{log.target}</code>
-                  <p>{log.message}</p>
-                </div>
-              ))}
-              {visibleLogs.length === 0 ? <div className="empty-state">暂无本机 runtime 日志</div> : null}
-            </div>
-          </section>
-        </div>
-      </section>
+          <div className="grid gap-2">
+            {visibleLogs.map((log) => (
+              <div
+                className={cn(
+                  'grid gap-2 rounded-[8px] border-l-4 bg-secondary/35 px-3 py-2 text-xs md:grid-cols-[92px_58px_110px_minmax(0,1fr)]',
+                  log.level === 'warn' && 'border-l-warning bg-warning/5',
+                  log.level === 'error' && 'border-l-destructive bg-destructive/5',
+                  log.level === 'info' && 'border-l-muted-foreground/40',
+                )}
+                key={log.sequence}
+              >
+                <time className="text-muted-foreground">{formatTime(log.timestamp)}</time>
+                <span className="font-semibold uppercase text-muted-foreground">{log.level}</span>
+                <code className="text-muted-foreground">{log.target}</code>
+                <p className="m-0 wrap-anywhere text-foreground">{log.message}</p>
+              </div>
+            ))}
+            {visibleLogs.length === 0 ? <RuntimeEmpty>暂无本机 runtime 日志</RuntimeEmpty> : null}
+          </div>
+        </Card>
+      </div>
+    </section>
+  )
+}
+
+function RuntimeStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1">
+      <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="m-0 text-sm text-foreground wrap-anywhere">{value}</dd>
+    </div>
+  )
+}
+
+function RuntimeSwitch({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean
+  label: string
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+      <input
+        checked={checked}
+        className="h-4 w-4 rounded border-border"
+        onChange={(event) => onChange(event.target.checked)}
+        type="checkbox"
+      />
+      <span>{label}</span>
+    </label>
+  )
+}
+
+function RuntimeMessage({
+  children,
+  tone = 'info',
+}: {
+  children: string
+  tone?: 'danger' | 'info'
+}) {
+  return (
+    <div
+      className={cn(
+        'mt-3 rounded-[8px] border px-3 py-2 text-sm wrap-anywhere',
+        tone === 'danger' ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-primary/25 bg-primary/10 text-primary',
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+function RuntimeEmpty({ children }: { children: string }) {
+  return (
+    <div className="rounded-[8px] border border-dashed border-border px-3 py-2 text-center text-sm text-muted-foreground">
+      {children}
+    </div>
   )
 }
 
@@ -558,6 +607,21 @@ function stateText(state: LocalRuntimeStatus['state']) {
       return '错误'
     case 'stopped':
       return '已停止'
+  }
+}
+
+function stateBadgeVariant(state?: LocalRuntimeStatus['state']) {
+  switch (state) {
+    case 'running':
+      return 'success'
+    case 'starting':
+    case 'stopping':
+      return 'primary'
+    case 'error':
+      return 'danger'
+    case 'stopped':
+    default:
+      return 'neutral'
   }
 }
 

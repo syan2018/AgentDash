@@ -81,7 +81,10 @@ export interface LocalRuntimeClient {
 - Desktop API 默认使用 `ApiServerOptions::desktop_localhost(3001)`，绑定 `127.0.0.1:3001`，`service_name = "agentdash_desktop_api"`。
 - `desktop_api_snapshot` 响应使用 snake_case：`state`、`origin`、`message`、`database_url`。`state` 只能是 `starting | running | error | stopped`。
 - DashboardHost 必须优先读取 `desktop_api_snapshot().origin`，再请求 `${origin}/api/health`，确认 ready 后才渲染 Web Dashboard。
-- `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`，字段使用 snake_case，包含 `cloud_url`、`token`、`backend_id`、`name`、`accessible_roots`、`executor_enabled`、`auto_start`。
+- `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`，字段使用 snake_case，包含 `server_url`、`access_token`、`profile_id`、`device_id`、`backend_id`、`relay_ws_url`、`name`、`accessible_roots`、`executor_enabled`、`auto_start`。
+- `backend_id`、`relay_ws_url` 和 relay token 必须来自 server ensure/claim 响应；Tauri/renderer 不允许自行拼接或发明 server 侧 runtime 身份。
+- `access_token` 可以为空。Personal auth / 本地开发模式下，server 仍可通过自身认证 provider 解析当前用户；Tauri 只有在 token 非空时才发送 Bearer header。
+- `device_id` 是当前第一版字段。后续应演进为机器级 `machine_id`：本地生成一次并长期保存，hostname 只做 `machine_label` 展示，不作为唯一身份。个人本机和共享本机应通过 `scope/visibility` 表达，而不是把用户 ID 写入机器身份。
 - Local Runtime UI 不直接 import Tauri API；它只依赖 `@agentdash/core` 的 `LocalRuntimeClient` port。`app-tauri` 负责把 `invoke()` 适配成 client。
 - `packages/app-web` 只导出 `App`，`packages/app-tauri` 复用该入口作为 Dashboard 页，不能复制 Web Dashboard 组件树。
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口，承载 Tailwind v4 theme、base layer、component layer 和第三方渲染样式；`app-web`、`app-tauri`、`views` 不能再各自维护全局壳样式。
@@ -111,6 +114,7 @@ export interface LocalRuntimeClient {
 - Bad: 在 `app-tauri` 复制 `packages/app-web/src` 下的 Dashboard 组件。
 - Bad: 从 `app-web` 导出样式给桌面端，或在 `app-tauri` / `views` 追加全局 CSS 来修补桌面样式。
 - Bad: Dashboard 直接读取 `LocalRuntimeManager` 或通过 Tauri command 绕过 `agentdash-api` 的 Repository/API 契约。
+- Bad: 用 hostname、随机 UUID 或当前登录用户直接拼 `backend_id`。server 侧 backend 身份必须由 ensure API 根据稳定 machine/scope 决定。
 - Bad: 依赖本机全局 `cargo tauri`；仓库脚本应使用 `pnpm exec tauri`。
 
 ### 6. Tests Required

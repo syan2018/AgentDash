@@ -80,32 +80,63 @@ Content-Type: application/json
 
 命名可以在实现时按现有 routes 风格调整，但语义必须保持“一次 ensure 返回启动 runtime 所需的一切”。
 
-### 身份与唯一性
+### 身份与唯一性（修订）
 
-推荐唯一键：
+第一版实现用 `owner_user_id + profile_id + device_id` 作为 ensure 唯一键，能解决“当前用户的桌面端自动上线”，但这不是最终模型。参考 multica 后期从 hostname 迁移到机器级 UUID 的策略后，AgentDash 应把“机器身份”“个人绑定”“共享 Scope”拆开。
+
+核心原则：
+
+- `machine_id` 表示本地安装/物理机器身份，由 Desktop 本地生成并长期保存。它不应包含用户 ID，也不应按 server profile 重新生成。
+- `machine_label` / hostname 只用于展示和 legacy merge，不作为唯一身份。
+- `owner_user_id` 表示 personal backend 的拥有者或 shared backend 的创建/管理者，不是机器身份的一部分。
+- `profile_id` 表示 Desktop 连接的目标 server/profile，不是物理机器身份。
+- 一个 machine 可以有多个 backend slot：个人 slot、项目共享 slot、系统共享 slot。
+
+最终唯一键建议：
+
+- `machine_id + share_scope_kind + COALESCE(share_scope_id, '') + capability_slot`
+
+其中：
+
+- personal backend：`share_scope_kind = user`，`share_scope_id = owner_user_id`，默认 `visibility = private`。
+- project shared backend：`share_scope_kind = project`，`share_scope_id = project_id`，默认 `visibility = shared`。
+- system shared backend：`share_scope_kind = system`，`share_scope_id = null`，默认 `visibility = system`。
+
+当前已落地的唯一键：
 
 - `owner_user_id + profile_id + device_id`
-- 或在 `backends` 增加 `profile_id`、`device_id` 后设唯一约束。
 
-当前 `backends` 已有 `owner_user_id`，`runtime_health` 已有 `profile_id`。若不补迁移，`profile_id/device_id` 只能塞进 endpoint 或 name，这会让后续查询和重置很脏。因此建议一步到位：
+这个键可以作为 Phase 1/2 的临时闭环，但后续应演进为 `machine_id + scope`。迁移时需要保留旧 `device_id` 作为 `legacy_machine_ids` 候选，避免已有 backend 变成孤儿。
+
+当前 `backends` 已有 `owner_user_id`，`runtime_health` 已有 `profile_id`。若不补迁移，`profile_id/device_id` 只能塞进 endpoint 或 name，这会让后续查询和重置很脏。因此建议继续补齐并进一步扩展：
 
 - 迁移 `backends` 增加：
   - `profile_id TEXT`
-  - `device_id TEXT`
+  - `device_id TEXT`（短期兼容字段，后续语义迁移为 legacy）
+  - `machine_id TEXT`
+  - `machine_label TEXT`
+  - `legacy_machine_ids JSONB NOT NULL DEFAULT '[]'`
+  - `visibility TEXT NOT NULL DEFAULT 'private'`
+  - `share_scope_kind TEXT NOT NULL DEFAULT 'user'`
+  - `share_scope_id TEXT`
+  - `capability_slot TEXT NOT NULL DEFAULT 'default'`
   - `device JSONB NOT NULL DEFAULT '{}'`
   - `last_claimed_at TIMESTAMPTZ`
-  - 唯一索引 `(owner_user_id, profile_id, device_id)`，仅 local backend 生效。
+  - 临时唯一索引 `(owner_user_id, profile_id, device_id)`，仅 local backend 生效。
+  - 目标唯一索引 `(machine_id, share_scope_kind, COALESCE(share_scope_id, ''), capability_slot)`，仅 local backend 生效。
 - 保留 `auth_token` 明文现状不扩大本 task 范围；若要安全升级，单独 task 做 token hash 化。预研期也可以一并做，但会扩大影响面到 relay 鉴权和测试。
 
 ### ensure 行为
 
 - 校验用户已登录。
-- 归一化 `profile_id/device_id/name/roots`。
-- 查找当前用户同 profile/device 的 local backend。
+- 归一化 `machine_id/machine_label/profile_id/scope/name/roots`。
+- 短期兼容 `device_id`；长期由 `machine_id + scope` 定位 local backend。
+- 查找同 machine/scope/slot 的 local backend。personal scope 下 `scope_id` 等于当前用户；shared scope 下必须校验当前用户拥有对应 project/system 管理权限。
 - 不存在则创建 backend，生成 `backend_id` 和 `auth_token`。
 - 存在则更新 name/device/endpoint/enabled/last_claimed_at；auth_token 默认复用，除非请求显式 rotate。
 - 返回 relay websocket URL。对于 embedded desktop API，URL 来自当前 server origin 派生；对于远端 server，也是同一 server 的 `/ws/backend`。
 - 不直接写 `runtime_health` 为 online。online 仍由 WS register 成功后写入，避免 UI 误报。
+- 接收 `legacy_machine_ids` 后，server 可把旧 hostname/device_id 行合并到当前 machine row。合并必须重定向 workspace bindings / task runtime references 后再删除旧 row，避免历史关系丢失。
 
 ### relay 注册约束
 
@@ -217,17 +248,28 @@ Dashboard 不做 desktop 专属复制。当前 `DashboardHost` 中等待 embedde
 可借鉴：
 
 - 桌面进程拥有独立 profile，profile 按目标 server host 派生，避免污染用户手工 CLI 配置。
+- 机器身份使用本地持久 UUID，而不是 hostname。hostname/device name 只做展示标签和 legacy merge 输入。
+- 个人 runtime 是机器上的 private binding，不等同于机器本身。shared runtime 用同一套 runtime row + visibility/scope 机制表达。
 - 桌面主进程负责 daemon/local runtime 生命周期，renderer 只通过 IPC 操作。
 - 启动时先同步 server URL/token，再启动 daemon。
 - 设置页展示 auto-start、auto-stop、diagnostics、logs。
 - UI 通过本地 IPC 状态加速反馈，但 server runtime row 仍是权威。
 - runtime deleted/gone 时，本机端能移除 stale ID 并重新注册。
+- server 注册时带 legacy IDs；server 负责合并旧身份对应的 runtime row，避免 hostname `.local`、大小写、profile 切换造成重复机器。
 
 不照搬：
 
 - multica 的 runtime 是 workspace/provider 维度的 `agent_runtime`，AgentDash 当前是 backend 维度的 `backends + runtime_health`。
 - multica daemon 会轮询 workspace/task；AgentDash local runtime 主要通过 relay ws 执行后端任务与工具调用。
 - multica 使用 Electron CLI sidecar；AgentDash 已经把 local runtime crate 嵌入 Tauri，可以直接调用 Rust manager。
+
+转化为 AgentDash 决策：
+
+- `device_id` 重命名/升级为 `machine_id`，且本地按安装保存，不按用户或 server target 生成。
+- `profile_id` 只用于连接目标 server/profile 的配置隔离，不参与物理机器身份。
+- `owner_user_id` 不再参与最终 `backend_id` 的机器部分；它只是 personal scope 的 `share_scope_id`。
+- `visibility/share_scope` 进入 server row，让“个人本机”和“共用本机”共用一套模型。
+- Settings 中以机器标签聚合展示 runtime scopes，而不是直接以 backend row 平铺。
 
 ## 测试策略
 

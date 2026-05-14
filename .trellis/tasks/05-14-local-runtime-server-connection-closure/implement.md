@@ -174,6 +174,60 @@
 
 - `docs(spec): 更新桌面本机运行时闭环规范`
 
+## Phase 7: 机器身份与共享本机模型升级
+
+范围：
+
+- `crates/agentdash-domain/src/backend`
+- `crates/agentdash-infrastructure/migrations`
+- `crates/agentdash-infrastructure/src/persistence/postgres/backend_repository.rs`
+- `crates/agentdash-api/src/routes/backends.rs`
+- `crates/agentdash-local-tauri/src/main.rs`
+- `packages/app-web` Settings / backend selector
+- `packages/core` local runtime shared types
+
+背景：
+
+- Phase 1/2 的 `owner_user_id + profile_id + device_id` 解决了个人本机自动连接，但会把“机器身份”和“个人绑定”混在一起。
+- 参考 multica 的后期修正，AgentDash 需要把 machine identity、personal binding、shared scope 拆开，为后续共用本机做准备。
+
+工作：
+
+- 本地生成并保存机器级 `machine_id`，不再按用户/server profile 生成新的物理机器身份。
+- 保留 `machine_label` / hostname 作为展示标签，不作为唯一键。
+- `ensure` 请求增加 `machine_id/machine_label/legacy_machine_ids/scope/capability_slot`。
+- `backends` 增加：
+  - `machine_id`
+  - `machine_label`
+  - `legacy_machine_ids`
+  - `visibility`
+  - `share_scope_kind`
+  - `share_scope_id`
+  - `capability_slot`
+- 将 personal backend 表达为 `scope_kind=user, scope_id=current_user_id, visibility=private`。
+- 为 project/system shared backend 预留 `scope_kind=project/system`，并在 API handler 层做权限校验。
+- `backend_id` 从 `hash(owner_user_id, profile_id, device_id)` 迁移为 `hash(machine_id, scope_kind, scope_id, capability_slot)`。
+- 设计 legacy merge：
+  - 接收旧 hostname、`.local`、旧 per-profile device_id。
+  - 命中旧 backend row 时迁移 workspace bindings / runtime references，再记录 legacy id 并删除旧 row。
+- Settings LocalRuntime 改成按 machine 聚合：
+  - 本机设备标签与 machine id。
+  - Personal scope 状态。
+  - 未来 shared scope 列表。
+  - 不再让用户直接面对 backend id。
+
+验证：
+
+- 同一台机器同一用户重启后复用同一 personal backend。
+- 同一台机器切换 server target 不污染另一个 server profile。
+- 同一台机器换用户后不会静默复用旧用户 token；personal scope 分离。
+- 同一 machine 可创建 personal 和 shared 两个 backend slot。
+- legacy hostname/device_id 行能被合并，关联 workspace bindings 不丢失。
+
+提交建议：
+
+- `refactor(runtime): 拆分机器身份与本机运行时归属`
+
 ## 风险与注意事项
 
 - 不要在 Tauri 侧自造 token 或 backend_id；这会绕过 server 权威，继续制造当前问题。

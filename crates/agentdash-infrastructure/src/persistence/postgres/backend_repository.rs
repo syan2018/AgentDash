@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 
 use agentdash_domain::backend::{
-    BackendConfig, BackendRepository, BackendType, UserPreferences, ViewConfig,
+    BackendConfig, BackendRepository, BackendType, LocalBackendClaim, UserPreferences, ViewConfig,
 };
 use agentdash_domain::common::error::DomainError;
 
@@ -25,6 +25,10 @@ impl PostgresBackendRepository {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 backend_type TEXT NOT NULL DEFAULT 'local',
                 owner_user_id TEXT,
+                profile_id TEXT,
+                device_id TEXT,
+                device JSONB NOT NULL DEFAULT '{}'::jsonb,
+                last_claimed_at TIMESTAMPTZ,
                 created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
             );
 
@@ -41,6 +45,19 @@ impl PostgresBackendRepository {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS profile_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device_id TEXT;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device JSONB NOT NULL DEFAULT '{}'::jsonb;
+            ALTER TABLE backends ADD COLUMN IF NOT EXISTS last_claimed_at TIMESTAMPTZ;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_backends_local_owner_profile_device
+                ON backends (owner_user_id, profile_id, device_id)
+                WHERE backend_type = 'local'
+                  AND owner_user_id IS NOT NULL
+                  AND profile_id IS NOT NULL
+                  AND device_id IS NOT NULL;
             "#,
         )
         .execute(&self.pool)
@@ -55,15 +72,22 @@ impl PostgresBackendRepository {
 impl BackendRepository for PostgresBackendRepository {
     async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO backends (id, name, endpoint, auth_token, enabled, backend_type, owner_user_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO backends (
+                id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                profile_id, device_id, device, last_claimed_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                endpoint = excluded.endpoint,
                auth_token = excluded.auth_token,
                enabled = excluded.enabled,
                backend_type = excluded.backend_type,
-               owner_user_id = excluded.owner_user_id",
+               owner_user_id = excluded.owner_user_id,
+               profile_id = excluded.profile_id,
+               device_id = excluded.device_id,
+               device = excluded.device,
+               last_claimed_at = excluded.last_claimed_at",
         )
         .bind(&config.id)
         .bind(&config.name)
@@ -72,6 +96,10 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(config.enabled)
         .bind(serde_json::to_string(&config.backend_type)?.trim_matches('"'))
         .bind(&config.owner_user_id)
+        .bind(&config.profile_id)
+        .bind(&config.device_id)
+        .bind(&config.device)
+        .bind(config.last_claimed_at)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
@@ -81,7 +109,9 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn list_backends(&self) -> Result<Vec<BackendConfig>, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends ORDER BY name",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -92,20 +122,27 @@ impl BackendRepository for PostgresBackendRepository {
 
     async fn get_backend(&self, id: &str) -> Result<BackendConfig, DomainError> {
         let row = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE id = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
-        .ok_or_else(|| DomainError::NotFound { entity: "backend", id: id.to_string() })?;
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "backend",
+            id: id.to_string(),
+        })?;
 
         row.try_into()
     }
 
     async fn get_backend_by_auth_token(&self, token: &str) -> Result<BackendConfig, DomainError> {
         let rows = sqlx::query_as::<_, BackendRow>(
-            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id FROM backends WHERE auth_token = $1",
+            "SELECT id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                    profile_id, device_id, COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+             FROM backends WHERE auth_token = $1",
         )
         .bind(token)
         .fetch_all(&self.pool)
@@ -126,6 +163,53 @@ impl BackendRepository for PostgresBackendRepository {
                 "检测到重复 backend auth_token 配置".to_string(),
             )),
         }
+    }
+
+    async fn ensure_local_backend(
+        &self,
+        claim: &LocalBackendClaim,
+    ) -> Result<BackendConfig, DomainError> {
+        let row = sqlx::query_as::<_, BackendRow>(
+            r#"
+            INSERT INTO backends (
+                id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                profile_id, device_id, device, last_claimed_at
+            )
+            VALUES ($1, $2, $3, $4, TRUE, 'local', $5, $6, $7, $8, now())
+            ON CONFLICT (owner_user_id, profile_id, device_id)
+                WHERE backend_type = 'local'
+                  AND owner_user_id IS NOT NULL
+                  AND profile_id IS NOT NULL
+                  AND device_id IS NOT NULL
+            DO UPDATE SET
+                name = EXCLUDED.name,
+                endpoint = EXCLUDED.endpoint,
+                auth_token = CASE
+                    WHEN $9 THEN EXCLUDED.auth_token
+                    ELSE COALESCE(backends.auth_token, EXCLUDED.auth_token)
+                END,
+                enabled = TRUE,
+                backend_type = 'local',
+                device = EXCLUDED.device,
+                last_claimed_at = now()
+            RETURNING id, name, endpoint, auth_token, enabled, backend_type, owner_user_id,
+                      profile_id, device_id, COALESCE(device, '{}'::jsonb) AS device, last_claimed_at
+            "#,
+        )
+        .bind(&claim.backend_id)
+        .bind(&claim.name)
+        .bind(&claim.endpoint)
+        .bind(&claim.auth_token)
+        .bind(&claim.owner_user_id)
+        .bind(&claim.profile_id)
+        .bind(&claim.device_id)
+        .bind(&claim.device)
+        .bind(claim.rotate_token)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        row.try_into()
     }
 
     async fn remove_backend(&self, id: &str) -> Result<(), DomainError> {
@@ -209,6 +293,10 @@ struct BackendRow {
     enabled: bool,
     backend_type: String,
     owner_user_id: Option<String>,
+    profile_id: Option<String>,
+    device_id: Option<String>,
+    device: serde_json::Value,
+    last_claimed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl TryFrom<BackendRow> for BackendConfig {
@@ -223,6 +311,10 @@ impl TryFrom<BackendRow> for BackendConfig {
             enabled: row.enabled,
             backend_type: parse_backend_type(&row.backend_type)?,
             owner_user_id: row.owner_user_id,
+            profile_id: row.profile_id,
+            device_id: row.device_id,
+            device: row.device,
+            last_claimed_at: row.last_claimed_at,
         })
     }
 }
@@ -282,6 +374,10 @@ mod tests {
             enabled: true,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            device: serde_json::json!({}),
+            last_claimed_at: None,
         }
     }
 
@@ -354,5 +450,75 @@ mod tests {
 
         assert_eq!(found.name, "renamed");
         assert_eq!(found.auth_token.as_deref(), Some("secret-b"));
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_reuses_existing_profile_device_token() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let claim = LocalBackendClaim {
+            owner_user_id: "user-a".to_string(),
+            profile_id: "desktop-local".to_string(),
+            device_id: "device-a".to_string(),
+            backend_id: "local-first".to_string(),
+            name: "Desktop A".to_string(),
+            endpoint: "ws://localhost/ws/backend".to_string(),
+            auth_token: "token-a".to_string(),
+            device: serde_json::json!({ "os": "windows" }),
+            rotate_token: false,
+        };
+        let first = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("首次 ensure 应创建 backend");
+        assert_eq!(first.id, "local-first");
+        assert_eq!(first.auth_token.as_deref(), Some("token-a"));
+
+        let mut second_claim = claim.clone();
+        second_claim.backend_id = "local-second".to_string();
+        second_claim.auth_token = "token-b".to_string();
+        second_claim.name = "Desktop A renamed".to_string();
+        let second = repo
+            .ensure_local_backend(&second_claim)
+            .await
+            .expect("同一 profile/device 应复用 backend");
+
+        assert_eq!(second.id, "local-first");
+        assert_eq!(second.name, "Desktop A renamed");
+        assert_eq!(second.auth_token.as_deref(), Some("token-a"));
+        assert_eq!(second.owner_user_id.as_deref(), Some("user-a"));
+        assert_eq!(second.profile_id.as_deref(), Some("desktop-local"));
+        assert_eq!(second.device_id.as_deref(), Some("device-a"));
+    }
+
+    #[tokio::test]
+    async fn ensure_local_backend_can_rotate_token() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut claim = LocalBackendClaim {
+            owner_user_id: "user-a".to_string(),
+            profile_id: "desktop-local".to_string(),
+            device_id: "device-a".to_string(),
+            backend_id: "local-first".to_string(),
+            name: "Desktop A".to_string(),
+            endpoint: "ws://localhost/ws/backend".to_string(),
+            auth_token: "token-a".to_string(),
+            device: serde_json::json!({}),
+            rotate_token: false,
+        };
+        repo.ensure_local_backend(&claim)
+            .await
+            .expect("首次 ensure 应创建 backend");
+
+        claim.auth_token = "token-b".to_string();
+        claim.rotate_token = true;
+        let rotated = repo
+            .ensure_local_backend(&claim)
+            .await
+            .expect("显式 rotate 应替换 token");
+
+        assert_eq!(rotated.auth_token.as_deref(), Some("token-b"));
     }
 }

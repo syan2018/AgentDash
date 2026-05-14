@@ -2,15 +2,19 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
-    BackendConfig, BackendRepository, BackendType, RuntimeHealth, RuntimeHealthStatus,
+    BackendConfig, BackendRepository, BackendType, LocalBackendClaim, RuntimeHealth,
+    RuntimeHealthStatus,
 };
 
 use crate::app_state::AppState;
+use crate::auth::CurrentUser;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
 use agentdash_application::runtime_gateway::{
@@ -27,6 +31,33 @@ pub struct CreateBackendRequest {
     pub endpoint: String,
     pub auth_token: Option<String>,
     pub backend_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnsureLocalRuntimeRequest {
+    pub device_id: String,
+    pub profile_id: String,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub accessible_roots: Vec<String>,
+    #[serde(default)]
+    pub executor_enabled: bool,
+    pub client_version: Option<String>,
+    #[serde(default)]
+    pub device: serde_json::Value,
+    #[serde(default)]
+    pub rotate_token: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnsureLocalRuntimeResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub relay_ws_url: String,
+    pub auth_token: String,
+    pub backend_enabled: bool,
+    pub profile_id: String,
+    pub device_id: String,
 }
 
 #[derive(Serialize)]
@@ -116,6 +147,10 @@ pub async fn list_backends(
                 enabled: true,
                 backend_type: BackendType::Remote,
                 owner_user_id: None,
+                profile_id: None,
+                device_id: None,
+                device: serde_json::json!({}),
+                last_claimed_at: None,
             },
         });
     }
@@ -242,9 +277,77 @@ pub async fn add_backend(
             _ => BackendType::Local,
         },
         owner_user_id: None, // TODO: 从 CurrentUser 提取
+        profile_id: existing.as_ref().and_then(|item| item.profile_id.clone()),
+        device_id: existing.as_ref().and_then(|item| item.device_id.clone()),
+        device: existing
+            .as_ref()
+            .map(|item| item.device.clone())
+            .unwrap_or_else(|| serde_json::json!({})),
+        last_claimed_at: existing.as_ref().and_then(|item| item.last_claimed_at),
     };
     state.repos.backend_repo.add_backend(&config).await?;
     Ok(Json(config))
+}
+
+pub async fn ensure_local_runtime(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    headers: HeaderMap,
+    Json(req): Json<EnsureLocalRuntimeRequest>,
+) -> Result<Json<EnsureLocalRuntimeResponse>, ApiError> {
+    let profile_id = normalize_required("profile_id", &req.profile_id)?;
+    let device_id = normalize_required("device_id", &req.device_id)?;
+    let name = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_local_runtime_name(&device_id));
+
+    let relay_ws_url = relay_ws_url_from_headers(&headers);
+    let backend_id = stable_local_backend_id(&current_user.user_id, &profile_id, &device_id);
+    let mut device = normalize_device_payload(req.device)?;
+    if let Some(client_version) = normalize_optional_string(req.client_version) {
+        device["client_version"] = serde_json::Value::String(client_version);
+    }
+    device["executor_enabled"] = serde_json::Value::Bool(req.executor_enabled);
+    device["accessible_root_count"] =
+        serde_json::Value::Number(serde_json::Number::from(req.accessible_roots.len() as u64));
+
+    let claim = LocalBackendClaim {
+        owner_user_id: current_user.user_id.clone(),
+        profile_id: profile_id.clone(),
+        device_id: device_id.clone(),
+        backend_id,
+        name,
+        endpoint: relay_ws_url.clone(),
+        auth_token: generate_backend_auth_token(),
+        device,
+        rotate_token: req.rotate_token,
+    };
+
+    let backend = state
+        .repos
+        .backend_repo
+        .ensure_local_backend(&claim)
+        .await?;
+    let auth_token = normalize_optional_string(backend.auth_token.clone()).ok_or_else(|| {
+        ApiError::Internal(format!(
+            "本机 backend `{}` 缺少 server 颁发的 relay token",
+            backend.id
+        ))
+    })?;
+
+    Ok(Json(EnsureLocalRuntimeResponse {
+        backend_id: backend.id,
+        name: backend.name,
+        relay_ws_url: backend.endpoint,
+        auth_token,
+        backend_enabled: backend.enabled,
+        profile_id,
+        device_id,
+    }))
 }
 
 async fn resolve_backend_auth_token(
@@ -275,6 +378,81 @@ async fn resolve_backend_auth_token(
 
 fn generate_backend_auth_token() -> String {
     Uuid::new_v4().to_string()
+}
+
+fn normalize_required(field: &str, raw: &str) -> Result<String, ApiError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!("{field} 不能为空")));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_device_payload(value: serde_json::Value) -> Result<serde_json::Value, ApiError> {
+    match value {
+        serde_json::Value::Null => Ok(serde_json::json!({})),
+        serde_json::Value::Object(_) => Ok(value),
+        _ => Err(ApiError::BadRequest(
+            "device 必须是 JSON object 或 null".to_string(),
+        )),
+    }
+}
+
+fn default_local_runtime_name(device_id: &str) -> String {
+    let suffix = device_id
+        .rsplit([':', '/', '\\'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("desktop");
+    format!("AgentDash Desktop ({suffix})")
+}
+
+fn stable_local_backend_id(owner_user_id: &str, profile_id: &str, device_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(owner_user_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(profile_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(device_id.as_bytes());
+    let digest = hasher.finalize();
+    format!("local_{}", hex_prefix(&digest, 24))
+}
+
+fn hex_prefix(bytes: &[u8], chars: usize) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(chars);
+    for byte in bytes {
+        if out.len() >= chars {
+            break;
+        }
+        out.push(HEX[(byte >> 4) as usize] as char);
+        if out.len() >= chars {
+            break;
+        }
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn relay_ws_url_from_headers(headers: &HeaderMap) -> String {
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("127.0.0.1:3001");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(',').next().unwrap_or(value).trim())
+        .unwrap_or("http");
+    let ws_scheme = if proto.eq_ignore_ascii_case("https") {
+        "wss"
+    } else {
+        "ws"
+    };
+    format!("{ws_scheme}://{host}/ws/backend")
 }
 
 #[cfg(test)]
@@ -313,6 +491,13 @@ mod tests {
             unreachable!("测试未使用");
         }
 
+        async fn ensure_local_backend(
+            &self,
+            _claim: &LocalBackendClaim,
+        ) -> Result<BackendConfig, DomainError> {
+            unreachable!("测试未使用");
+        }
+
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
@@ -343,6 +528,10 @@ mod tests {
             enabled: true,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            device: serde_json::json!({}),
+            last_claimed_at: None,
         }
     }
 
@@ -389,6 +578,35 @@ mod tests {
 
         assert!(!token.trim().is_empty());
         assert_ne!(token, "persisted-token");
+    }
+
+    #[test]
+    fn stable_local_backend_id_is_deterministic_and_scoped() {
+        let first = stable_local_backend_id("user-a", "profile-a", "device-a");
+        let again = stable_local_backend_id("user-a", "profile-a", "device-a");
+        let other_user = stable_local_backend_id("user-b", "profile-a", "device-a");
+
+        assert_eq!(first, again);
+        assert_ne!(first, other_user);
+        assert!(first.starts_with("local_"));
+    }
+
+    #[test]
+    fn relay_ws_url_prefers_forwarded_https() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-host", "dash.example.com".parse().unwrap());
+        headers.insert("x-forwarded-proto", "https".parse().unwrap());
+
+        assert_eq!(
+            relay_ws_url_from_headers(&headers),
+            "wss://dash.example.com/ws/backend"
+        );
+    }
+
+    #[test]
+    fn normalize_device_payload_rejects_non_object() {
+        assert!(normalize_device_payload(serde_json::json!("windows")).is_err());
+        assert!(normalize_device_payload(serde_json::json!({ "os": "windows" })).is_ok());
     }
 }
 

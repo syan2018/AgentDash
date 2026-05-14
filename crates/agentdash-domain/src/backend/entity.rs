@@ -16,6 +16,14 @@ pub struct BackendConfig {
     pub backend_type: BackendType,
     /// 注册此后端的用户标识（None 表示共享/系统级后端）
     pub owner_user_id: Option<String>,
+    /// Desktop / runtime profile 标识，用于区分同一用户在不同 server/profile 下的本机端。
+    pub profile_id: Option<String>,
+    /// 稳定设备标识，由 Desktop 生成并按 server profile 隔离保存。
+    pub device_id: Option<String>,
+    /// 设备元信息（OS、arch、app version 等），仅用于诊断与展示。
+    pub device: serde_json::Value,
+    /// 最近一次由 Desktop ensure/claim 的时间。
+    pub last_claimed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,6 +51,20 @@ pub struct UserPreferences {
     pub default_view_id: Option<String>,
     pub theme: Option<String>,
     pub sidebar_collapsed: bool,
+}
+
+/// Desktop 本机 runtime 领取/确保 local backend 的输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalBackendClaim {
+    pub owner_user_id: String,
+    pub profile_id: String,
+    pub device_id: String,
+    pub backend_id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub auth_token: String,
+    pub device: serde_json::Value,
+    pub rotate_token: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -658,7 +658,7 @@ impl IntoResponse for AuthResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::backend::{BackendType, UserPreferences, ViewConfig};
+    use agentdash_domain::backend::{BackendType, LocalBackendClaim, UserPreferences, ViewConfig};
 
     enum MockTokenResult {
         Ok(BackendConfig),
@@ -696,6 +696,13 @@ mod tests {
             }
         }
 
+        async fn ensure_local_backend(
+            &self,
+            _claim: &LocalBackendClaim,
+        ) -> Result<BackendConfig, DomainError> {
+            unreachable!("测试未使用");
+        }
+
         async fn remove_backend(&self, _id: &str) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
@@ -726,6 +733,10 @@ mod tests {
             enabled,
             backend_type: BackendType::Local,
             owner_user_id: None,
+            profile_id: None,
+            device_id: None,
+            device: serde_json::json!({}),
+            last_claimed_at: None,
         }
     }
 

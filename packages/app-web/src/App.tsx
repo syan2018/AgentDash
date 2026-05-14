@@ -8,6 +8,7 @@ import { useCurrentUserStore } from "./stores/currentUserStore";
 import { useAuthStore } from "./stores/authStore";
 import { getStoredToken, clearStoredToken, type ApiHttpError } from "./api/client";
 import { LoginPage } from "./pages/LoginPage";
+import { ensureDesktopLocalRuntimeStarted, getDesktopLocalRuntimeClient } from "./desktop/localRuntimeBridge";
 
 // ─── 懒加载页面组件 ────────────────────────────────────
 
@@ -175,6 +176,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     });
   }, [metadata, isMetadataLoading, needsLogin, hasToken, hasLoadedCurrentUser, isLoadingCurrentUser, fetchCurrentUser]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    const token = getStoredToken();
+    if (!token || !getDesktopLocalRuntimeClient()) return;
+    ensureDesktopLocalRuntimeStarted(token).catch((error: unknown) => {
+      console.warn("desktop local runtime auto-start failed", error);
+    });
+  }, [currentUser]);
+
   // ── 渲染状态机 ──
 
   if (isMetadataLoading || !metadata) {
@@ -221,10 +231,19 @@ function AppContent() {
   const { fetchProjects, currentProjectId } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect, disconnect } = useEventStore();
+  const hasDesktopLocalRuntime = !!getDesktopLocalRuntimeClient();
 
   useEffect(() => {
     void Promise.allSettled([fetchBackends(), fetchProjects()]);
   }, [fetchBackends, fetchProjects]);
+
+  useEffect(() => {
+    if (!hasDesktopLocalRuntime) return;
+    const timer = window.setInterval(() => {
+      void fetchBackends();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [fetchBackends, hasDesktopLocalRuntime]);
 
   useEffect(() => {
     if (!currentProjectId) {

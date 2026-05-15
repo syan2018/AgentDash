@@ -89,17 +89,12 @@ impl<'a> SessionLaunchExecutor<'a> {
         command: &LaunchCommand,
         reason: &str,
     ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
-        match self.hub.current_prompt_augmenter().await {
-            Some(augmenter) => augmenter.augment(session_id, command).await,
-            None => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    reason = %reason,
-                    "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
-                );
-                Ok(relaxed_command_to_launch_seed(command))
-            }
-        }
+        let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
+            return Err(ConnectorError::Runtime(format!(
+                "prompt_augmenter 未注入，拒绝 relaxed launch: {reason}"
+            )));
+        };
+        augmenter.augment(session_id, command).await
     }
 
     #[cfg(test)]
@@ -573,18 +568,6 @@ impl<'a> SessionLaunchExecutor<'a> {
             meta.title = title_hint.to_string();
         }
     }
-}
-
-fn relaxed_command_to_launch_seed(
-    command: &LaunchCommand,
-) -> (UserPromptInput, SessionConstructionSeed) {
-    let construction_seed = SessionConstructionSeed {
-        mcp_servers: command.local_relay_mcp_declarations().to_vec(),
-        local_relay_workspace_root: command.local_relay_workspace_root().map(ToOwned::to_owned),
-        identity: command.identity(),
-        ..Default::default()
-    };
-    (command.user_input().clone(), construction_seed)
 }
 
 impl SessionHub {

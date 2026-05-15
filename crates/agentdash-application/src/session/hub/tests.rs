@@ -2066,6 +2066,36 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
 }
 
 #[tokio::test]
+async fn launch_prompt_relaxed_requires_prompt_augmenter() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub.create_session("relaxed-launch").await.expect("create");
+
+    let error = hub
+        .launch_command(
+            &session.id,
+            super::super::launch::LaunchCommand::local_relay_prompt_input(
+                UserPromptInput::from_text("hello"),
+                Vec::new(),
+                workspace.path().to_path_buf(),
+            ),
+        )
+        .await
+        .expect_err("relaxed launch 应在 augmenter 缺失时失败");
+
+    match error {
+        ConnectorError::Runtime(message) => {
+            assert!(
+                message.contains("拒绝 relaxed launch"),
+                "错误信息应提示 relaxed launch 被拒绝，实际为: {message}"
+            );
+        }
+        other => panic!("期望 Runtime 错误，实际为: {other}"),
+    }
+}
+
+#[tokio::test]
 async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -20,6 +20,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
 - [x] `SessionConstructionSeed` 不再从 `session::mod` 顶层 re-export，外层引用必须显式进入 construction 模块。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed，只保留 workspace root 作为来源事实，由 planner/construction 解析。
+- [x] relaxed launch 缺 augmenter 时不再回退裸 construction seed。
 - [x] `UserPromptInput.working_dir` 移出 prompt input；`working_dir_input` 已归零，launch summary/input 不再携带 working dir hint；当前过渡事实只留在 `SessionConstructionSeed.working_dir_hint`，后续迁入 construction。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
 - [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；API bootstrap 不再创建内存 handler，也不再生成 `TerminalHookEffectBinding`；task binding 由 story step assembler 产出 durable 描述。

@@ -61,7 +61,7 @@ LaunchCommand
 - Routine executor：构造 `LaunchCommand::routine_executor_input`，系统身份必须来自 `AuthIdentity::system_routine(routine.id)`。
 - Companion dispatch / parent resume：构造对应 `LaunchCommand`，只携带 parent session / dispatch / slice / target binding 等策略 payload；父 session VFS / MCP / context snapshot 必须由 construction 从 parent facts 解析，不得先拼出 prompt projection。
 - Hook auto-resume：必须 strict 复用主 construction/augment 路径；augmenter 缺失时失败，不做裸请求 fallback。
-- Local relay：允许携带本机 relay 请求中的 workspace root 与 MCP declaration；VFS、resolved MCP、capability、working dir 与 connector input 仍必须由 construction/launch 投影生成，不能作为已组装事实塞进 `LaunchCommand`。
+- Local relay：允许携带本机 relay 请求中的 workspace root 与 MCP declaration；VFS、resolved MCP、capability、working dir 与 connector input 仍必须由 construction/launch 投影生成，不能作为已组装事实塞进 `LaunchCommand`。augmenter 缺失时必须失败，不允许回退到裸 construction seed。
 
 新增入口不得：
 

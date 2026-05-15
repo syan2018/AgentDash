@@ -106,7 +106,8 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 - context endpoint 仍在 route 层按 Task / Story / Project 分支重建 VFS / context / capability。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
 - `LaunchExecution.construction` 当前大多仍为 `None`，说明执行链路没有真正消费 construction fact。
-- API route 的 `augment_prompt_request_for_owner` 仍是事实上的 owner/context/composition planner。
+- `augment_prompt_request_for_owner` 已从 API route 移到 `bootstrap/session_launch_augmenter.rs`，route 文件不再承载 prompt launch composition 主分支。
+- `bootstrap/session_launch_augmenter.rs` 仍返回 `PreparedLaunchPrompt`，还不是最终 `SessionConstructionPlanner`。
 
 目标：
 
@@ -322,7 +323,8 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [x] 删除 `finalize_request`。
 - [x] 删除 `LaunchCommand::*_prepared`。
 - [x] 删除 `LaunchCommand` 已组装 prompt 分支。
-- [ ] 删除 route-local `augment_prompt_request_for_owner` 业务分支，或移动为 application use case 并返回 construction/launch plan。
+- [x] 从 route 文件删除 `augment_prompt_request_for_owner` 业务分支；当前集中到 `bootstrap/session_launch_augmenter.rs`。
+- [ ] 将 `bootstrap/session_launch_augmenter.rs` 输出从 `PreparedLaunchPrompt` 改为 construction/launch plan。
 - [ ] 删除 `PreparedLaunchPrompt` 或退化成 launch executor 私有 connector projection。
 - [ ] 删除 `start_prompt_with_follow_up` planner 职责。
 

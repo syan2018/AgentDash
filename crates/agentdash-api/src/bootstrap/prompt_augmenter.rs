@@ -16,7 +16,7 @@ use agentdash_application::session::{PromptAugmentInput, PromptRequestAugmenter}
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
-use crate::routes::acp_sessions::augment_prompt_request_for_owner;
+use crate::bootstrap::session_launch_augmenter::augment_prompt_request_for_owner;
 use crate::rpc::ApiError;
 
 /// 使用 `Arc<AppState>` 的主通道增强器。在 AppState 初始化完成后通过

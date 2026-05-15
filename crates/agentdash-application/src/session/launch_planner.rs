@@ -23,7 +23,7 @@ use super::launch::{
 use super::path_policy::resolve_working_dir;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    PendingCapabilityStateTransition, ResolvedPromptPayload, SessionLaunchPlan, SessionMeta,
+    AugmentedLaunchInput, PendingCapabilityStateTransition, ResolvedPromptPayload, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
 };
 
@@ -39,7 +39,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
-    pub request: SessionLaunchPlan,
+    pub request: AugmentedLaunchInput,
 }
 
 pub(super) struct PlannedSessionLaunch {

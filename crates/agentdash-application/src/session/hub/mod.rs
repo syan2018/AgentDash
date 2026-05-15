@@ -44,7 +44,7 @@ pub(crate) use runtime_context_transition::{
 
 #[derive(Clone)]
 pub struct SessionHub {
-    /// 当 `SessionLaunchPlan.vfs` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
+    /// 当 `AugmentedLaunchInput.vfs` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
     pub(super) default_vfs: Option<Vfs>,
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
@@ -61,7 +61,7 @@ pub struct SessionHub {
     pub(super) hook_effect_handler_registry: Arc<
         tokio::sync::RwLock<Option<super::post_turn_handler::DynTerminalHookEffectHandlerRegistry>>,
     >,
-    /// 将"裸" SessionLaunchPlan 增强成与 HTTP 主通道一致的完整请求。
+    /// 将"裸" AugmentedLaunchInput 增强成与 HTTP 主通道一致的完整请求。
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) prompt_augmenter: Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,

@@ -32,7 +32,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: SessionLaunchPlan,
+        req: AugmentedLaunchInput,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());

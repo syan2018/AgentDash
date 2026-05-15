@@ -365,7 +365,7 @@ impl SessionHub {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        req: SessionLaunchPlan,
+        req: AugmentedLaunchInput,
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
             .execute(session_id, None, req)
@@ -456,7 +456,7 @@ impl SessionHub {
         session_id: &str,
         input: super::super::augmenter::PromptAugmentInput,
         reason: &str,
-    ) -> Result<SessionLaunchPlan, ConnectorError> {
+    ) -> Result<AugmentedLaunchInput, ConnectorError> {
         match self.current_prompt_augmenter().await {
             Some(augmenter) => augmenter.augment(session_id, input).await,
             None => {
@@ -465,7 +465,7 @@ impl SessionHub {
                     reason = %reason,
                     "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
                 );
-                Ok(input.into_launch_plan())
+                Ok(input.into_augmented_launch_input())
             }
         }
     }

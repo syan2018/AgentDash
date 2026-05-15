@@ -29,8 +29,8 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionBootstrapState,
-    SessionExecutionState, SessionLaunchPlan, UserPromptInput,
+    AugmentedLaunchInput, HookSnapshotReloadTrigger, PendingCapabilityStateTransition,
+    SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -47,8 +47,8 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> SessionLaunchPlan {
-    let mut plan = SessionLaunchPlan::from_user_input(UserPromptInput {
+fn simple_prompt_request(prompt: &str) -> AugmentedLaunchInput {
+    let mut plan = AugmentedLaunchInput::from_user_input(UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     });
@@ -56,7 +56,7 @@ fn simple_prompt_request(prompt: &str) -> SessionLaunchPlan {
     plan
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionLaunchPlan {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> AugmentedLaunchInput {
     let mut req = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
@@ -2151,8 +2151,8 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             &self,
             _session_id: &str,
             input: PromptAugmentInput,
-        ) -> Result<SessionLaunchPlan, ConnectorError> {
-            let req = input.into_launch_plan();
+        ) -> Result<AugmentedLaunchInput, ConnectorError> {
+            let req = input.into_augmented_launch_input();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = req
                 .user_input

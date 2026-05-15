@@ -17,7 +17,7 @@ use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
 use super::post_turn_handler::DynPostTurnHandler;
-use super::types::{SessionLaunchPlan, UserPromptInput};
+use super::types::{AugmentedLaunchInput, UserPromptInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptAugmentTaskPhase {
@@ -54,8 +54,8 @@ pub struct PromptAugmentCompanionInput {
 /// 需要进入 owner/context/capability augment 的原始 prompt 输入。
 ///
 /// 它是 `LaunchCommand` 与 API 层 augmenter 之间的窄协议；不承载 composition
-/// 产物，也不表达 launch source。输出仍暂时是 prompt pipeline 消费的
-/// `SessionLaunchPlan`，后续 pipeline 收口时再删除这一内部 request 形态。
+/// 产物，也不表达 launch source。输出是当前 prompt pipeline 消费的
+/// `AugmentedLaunchInput`；该输出不能被解释为 launch plan。
 pub struct PromptAugmentInput {
     pub user_input: UserPromptInput,
     pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -67,8 +67,8 @@ pub struct PromptAugmentInput {
 }
 
 impl PromptAugmentInput {
-    pub fn into_launch_plan(self) -> SessionLaunchPlan {
-        let mut prompt = SessionLaunchPlan::from_user_input(self.user_input);
+    pub fn into_augmented_launch_input(self) -> AugmentedLaunchInput {
+        let mut prompt = AugmentedLaunchInput::from_user_input(self.user_input);
         prompt.mcp_servers = self.request_mcp_servers;
         prompt.vfs = self.existing_vfs;
         prompt.identity = self.identity;
@@ -77,7 +77,7 @@ impl PromptAugmentInput {
     }
 }
 
-/// 用于把原始 prompt 输入增强成与主通道一致的完整 pipeline request。
+/// 用于把原始 prompt 输入增强成与主通道一致的 augmented launch input。
 #[async_trait]
 pub trait PromptRequestAugmenter: Send + Sync {
     /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
@@ -87,7 +87,7 @@ pub trait PromptRequestAugmenter: Send + Sync {
         &self,
         session_id: &str,
         input: PromptAugmentInput,
-    ) -> Result<SessionLaunchPlan, ConnectorError>;
+    ) -> Result<AugmentedLaunchInput, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

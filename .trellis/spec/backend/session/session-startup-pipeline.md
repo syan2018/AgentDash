@@ -33,7 +33,7 @@ LaunchCommand
 
 `PreparedLaunchPrompt` 已删除，不能重新引入。
 
-当前仍存在的迁移边界是 `SessionLaunchPlan`：
+当前仍存在的迁移边界是 `AugmentedLaunchInput`：
 
 - 它只能承载跨 crate launch 输入，不是 session 构建事实源；
 - 必须携带 owner/source 种子并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
@@ -59,7 +59,7 @@ LaunchCommand
 
 新增入口不得：
 
-- 直接构造 `SessionLaunchPlan`；
+- 直接构造 `AugmentedLaunchInput`；
 - 直接调用 `start_prompt_with_follow_up`；
 - 直接修改 prompt projection 字段来表达 owner/context/capability；
 - 在 route 层重建 Task / Story / Project 的 context 主线。
@@ -162,11 +162,11 @@ connector.prompt 失败时不得标记 applied；下一轮必须仍可恢复。
 rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedSessionInputs|finalize_request|LaunchCommand::.*_prepared|PromptSessionRequest|SessionLaunchIntent" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedLaunchPrompt" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-rg -n "SessionLaunchPlan" crates/agentdash-api/src/routes crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine
+rg -n "AugmentedLaunchInput" crates/agentdash-api/src/routes crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine
 cargo check -p agentdash-application
 cargo check -p agentdash-api
 cargo test -p agentdash-application session::launch
 cargo test -p agentdash-application session::construction
 ```
 
-`PreparedLaunchPrompt` 必须保持归零。`SessionLaunchPlan` 在最终态不能作为公共主链路边界；迁移期若仍有命中，必须仅位于本 spec 的“当前迁移边界”内，并在 task tracker 中列出删除点。
+`PreparedLaunchPrompt` 必须保持归零。`AugmentedLaunchInput` 在最终态不能作为公共主链路边界；迁移期若仍有命中，必须仅位于本 spec 的“当前迁移边界”内，并在 task tracker 中列出删除点。

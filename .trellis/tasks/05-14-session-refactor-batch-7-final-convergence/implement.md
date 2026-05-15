@@ -9,7 +9,8 @@
 - [x] 拆出 session persistence store 能力边界。
 - [x] 收窄 AppState / SessionHub ready 初始化边界。
 - [x] 更新 parent task notes，记录当前状态与剩余真实风险。
-- [ ] 继续删除 `SessionLaunchPlan` 跨 crate handoff 与 bootstrap 输出。
+- [x] 删除 `SessionLaunchPlan` 代码实体与“plan”语义命名，避免它继续伪装成最终 launch plan。
+- [ ] 继续删除 `AugmentedLaunchInput` 跨 crate handoff 与 bootstrap 输出。
 - [x] 将 `bootstrap/session_context_query.rs` 与 launch construction planner 合流。
   - Task / Story / Project 的 VFS、capability、context snapshot projection 已迁入 `SessionConstructionPlanner`。
   - API 侧仅保留权限校验、session meta 读取、DTO 投影与 `runtime_surface` 展示态补全。
@@ -43,4 +44,4 @@ Known warning: `crates/agentdash-application/src/canvas/management.rs` still has
 
 - 分支可 review。
 - 本轮已执行 batch 的事实、验证和剩余风险都在 Trellis task 中可追溯。
-- 只要 `SessionLaunchPlan`、`SessionHub` 或 context query 仍是生产主线差池，本 Batch 只能保持 `in_progress`。
+- 只要 `AugmentedLaunchInput`、`SessionHub` 或 context query 仍是生产主线差池，本 Batch 只能保持 `in_progress`。

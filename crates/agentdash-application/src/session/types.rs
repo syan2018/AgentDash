@@ -27,13 +27,13 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// 一次 launch 的入口计划。
+/// owner/context/capability augment 之后的 launch 输入。
 ///
-/// 它不是 session 构建事实源：owner/source 只作为 construction planner 的输入种子，
-/// VFS/MCP/capability/context 会在进入 `LaunchExecution` 前被投影为
-/// `SessionConstructionPlan`。保留这个类型只是为了让 API 层 augmenter 与
-/// application launch executor 跨 crate 传递同一次 launch 的输入。
-pub struct SessionLaunchPlan {
+/// 它不是 plan，也不是 session 构建事实源：owner/source 只作为 construction
+/// planner 的输入种子，VFS/MCP/capability/context 会在进入 `LaunchExecution`
+/// 前被投影为 `SessionConstructionPlan`。该类型只表达 augmenter 的当前输出，
+/// 不能扩展成新的长期架构边界。
+pub struct AugmentedLaunchInput {
     pub user_input: UserPromptInput,
     pub construction_owner: Option<ResolvedSessionOwner>,
     pub source_contract: SourceContractPlan,
@@ -59,8 +59,8 @@ pub struct SessionLaunchPlan {
     pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
 }
 
-impl SessionLaunchPlan {
-    /// 从 `UserPromptInput` 构造最小 launch plan，后端注入字段全部为空。
+impl AugmentedLaunchInput {
+    /// 从 `UserPromptInput` 构造最小 augmented input，后端注入字段全部为空。
     pub fn from_user_input(input: UserPromptInput) -> Self {
         Self {
             user_input: input,

@@ -42,6 +42,6 @@ pub use run::{
 pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label};
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
-    agent_mcp_entries_from_servers, apply_to_prompt_request, build_capability_state_for_activation,
+    agent_mcp_entries_from_servers, build_capability_state_for_activation,
     capability_delta_directives, capability_keys_sorted, empty_presets, tool_directives_from_keys,
 };

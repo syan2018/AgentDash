@@ -63,6 +63,7 @@ LaunchCommand
 - `LaunchCommand` 仍通过 `PromptAugmentInput` 间接携带 task / companion 等 composition hint。
 - `PromptAugmentInput` 到 `SessionLaunchPlan` 的输出仍保留 API augmenter 与 application pipeline 之间的跨 crate 中间层；它不是最终边界。
 - Local relay relaxed fallback 仍可把 `PromptAugmentInput` 投影成裸 prompt；这是本机 relay 的临时运行路径，不能扩大到 HTTP / Task / Workflow / Routine / Companion / Hook。
+- workflow step activation 已删除公开 `apply_to_prompt_request` applier，不再暴露把 activation 直接写入 `SessionLaunchPlan` 的生产接口。
 
 目标：
 

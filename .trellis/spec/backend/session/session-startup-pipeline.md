@@ -3,8 +3,8 @@
 > **主题**：session 构建与 prompt launch 的唯一数据流。
 >
 > 当前重构目标由 `.trellis/tasks/05-14-session-launch-refactor-assessment`
-> 约束。本 spec 不再把历史 `SessionAssemblyBuilder -> PreparedLaunchPrompt`
-> 节拍描述为目标态；它只记录当前允许的迁移边界和必须继续删除的旧投影。
+> 约束。本 spec 不再把历史 prompt projection 节拍描述为目标态；它只记录
+> 当前允许的迁移边界和必须继续删除的中间层。
 
 ## 目标主线
 
@@ -31,14 +31,17 @@ LaunchCommand
 
 ## 当前迁移边界
 
-`PreparedLaunchPrompt` 仍存在，但只允许作为待删除的内部 prompt pipeline projection：
+`PreparedLaunchPrompt` 已删除，不能重新引入。
 
+当前仍存在的迁移边界是 `SessionLaunchPlan`：
+
+- 它只能承载跨 crate launch 输入，不是 session 构建事实源；
+- 必须携带 owner/source 种子并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
+- 不允许被 `LaunchCommand` 持有；
 - 不允许从 `session::mod` 顶层 re-export；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造；
-- 不允许被包进 `LaunchCommand`；
-- 不允许作为新 service / route / adapter 的公开契约；
-- 只能集中存在于 `session::types`、assembler、API augmenter、hub pipeline 和测试；
-- 每次相关提交都必须带 `rg "PreparedLaunchPrompt"` 检查结果，并说明剩余命中是否仍在待删除边界内。
+- 不允许作为新的长期 service / route / adapter 公开契约；
+- 后续必须继续收缩到 `SessionConstructionPlanner / SessionLaunchPlanner / SessionLaunchExecutor` 内部，或删除。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -56,7 +59,7 @@ LaunchCommand
 
 新增入口不得：
 
-- 直接调用 `PreparedLaunchPrompt::from_user_input`；
+- 直接构造 `SessionLaunchPlan`；
 - 直接调用 `start_prompt_with_follow_up`；
 - 直接修改 prompt projection 字段来表达 owner/context/capability；
 - 在 route 层重建 Task / Story / Project 的 context 主线。
@@ -155,10 +158,11 @@ connector.prompt 失败时不得标记 applied；下一轮必须仍可恢复。
 rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedSessionInputs|finalize_request|LaunchCommand::.*_prepared|PromptSessionRequest|SessionLaunchIntent" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedLaunchPrompt" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "SessionLaunchPlan" crates/agentdash-api/src/routes crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine
 cargo check -p agentdash-application
 cargo check -p agentdash-api
 cargo test -p agentdash-application session::launch
 cargo test -p agentdash-application session::construction
 ```
 
-`PreparedLaunchPrompt` 在最终态必须归零；迁移期若仍有命中，必须仅位于本 spec 的“当前迁移边界”内，并在 task tracker 中列出删除点。
+`PreparedLaunchPrompt` 必须保持归零。`SessionLaunchPlan` 在最终态不能作为公共主链路边界；迁移期若仍有命中，必须仅位于本 spec 的“当前迁移边界”内，并在 task tracker 中列出删除点。

@@ -318,7 +318,7 @@ impl From<TurnTerminalKind> for super::types::ExecutionStatus {
 }
 
 /// 从 SessionMeta 的持久化字段派生 SessionExecutionState。
-pub(super) fn meta_to_execution_state(
+pub(crate) fn meta_to_execution_state(
     meta: &SessionMeta,
     session_id: &str,
 ) -> io::Result<SessionExecutionState> {

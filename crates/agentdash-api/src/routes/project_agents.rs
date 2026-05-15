@@ -217,7 +217,7 @@ pub async fn open_project_agent_session(
         if let Some(binding) = existing_binding
             && let Some(meta) = state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(&binding.session_id)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -250,7 +250,7 @@ pub async fn open_project_agent_session(
     {
         let session_alive = state
             .services
-            .session_hub
+            .session_core
             .get_session_meta(&binding.session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -268,7 +268,7 @@ pub async fn open_project_agent_session(
 
     let meta = state
         .services
-        .session_hub
+        .session_core
         .create_session("")
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -287,7 +287,7 @@ pub async fn open_project_agent_session(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     state
         .services
-        .session_hub
+        .session_core
         .mark_owner_bootstrap_pending(&meta.id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -431,7 +431,7 @@ async fn find_project_agent_session(
 
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -472,7 +472,7 @@ pub async fn list_project_agent_sessions(
     for binding in matching {
         let meta = state
             .services
-            .session_hub
+            .session_core
             .get_session_meta(&binding.session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;

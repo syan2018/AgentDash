@@ -45,7 +45,7 @@ pub(crate) async fn build_session_construction_for_launch(
 ) -> Result<SessionConstructionPlan, ApiError> {
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -523,7 +523,7 @@ async fn build_continuation_context_frame_for_session(
 ) -> Result<Option<ContextFrame>, ApiError> {
     let transcript = state
         .services
-        .session_hub
+        .session_eventing
         .build_projected_transcript(session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;

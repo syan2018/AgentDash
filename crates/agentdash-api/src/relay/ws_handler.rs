@@ -421,7 +421,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
                 if let Err(e) = state
                     .services
-                    .session_hub
+                    .session_eventing
                     .inject_notification(&term_state.session_id, envelope)
                     .await
                 {
@@ -482,7 +482,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
                 if let Err(e) = state
                     .services
-                    .session_hub
+                    .session_eventing
                     .inject_notification(&term_state.session_id, envelope)
                     .await
                 {

@@ -19,6 +19,40 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, Vfs};
 
 impl SessionHub {
+    pub fn core_service(&self) -> super::super::core::SessionCoreService {
+        super::super::core::SessionCoreService::new(
+            self.stores.clone(),
+            self.runtime_registry.clone(),
+            self.connector.clone(),
+        )
+    }
+
+    pub fn eventing_service(&self) -> super::super::eventing::SessionEventingService {
+        super::super::eventing::SessionEventingService::new(
+            self.stores.clone(),
+            self.runtime_registry.clone(),
+            self.connector.clone(),
+        )
+    }
+
+    pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
+        super::super::runtime_control::SessionRuntimeService::new(
+            self.stores.clone(),
+            self.turn_supervisor.clone(),
+            self.eventing_service(),
+            self.connector.clone(),
+        )
+    }
+
+    pub fn control_service(&self) -> super::super::control::SessionControlService {
+        super::super::control::SessionControlService::new(
+            self.stores.clone(),
+            self.eventing_service(),
+            self.companion_wait_registry.clone(),
+            self.connector.clone(),
+        )
+    }
+
     pub fn new_with_hooks_and_persistence(
         default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,

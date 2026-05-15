@@ -91,7 +91,7 @@ pub async fn list_story_sessions(
         let mut resp = SessionBindingResponse::from_binding(binding);
         if let Ok(Some(meta)) = state
             .services
-            .session_hub
+            .session_core
             .get_session_meta(&binding.session_id)
             .await
         {
@@ -137,7 +137,7 @@ pub async fn get_story_session(
 
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -294,7 +294,7 @@ pub async fn create_story_session(
         (Some(sid), None) => {
             state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(&sid)
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -305,7 +305,7 @@ pub async fn create_story_session(
             let title = title.unwrap_or_else(|| "Story 伴随会话".to_string());
             let meta = state
                 .services
-                .session_hub
+                .session_core
                 .create_session(&title)
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -323,7 +323,7 @@ pub async fn create_story_session(
     if created_new_session {
         state
             .services
-            .session_hub
+            .session_core
             .mark_owner_bootstrap_pending(&session_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -332,7 +332,7 @@ pub async fn create_story_session(
     let mut resp = SessionBindingResponse::from_binding(&binding);
     if let Ok(Some(meta)) = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&session_id)
         .await
     {

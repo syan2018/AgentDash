@@ -26,7 +26,6 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, Vfs};
 
 mod cancel;
-mod compaction;
 mod facade;
 mod factory;
 mod hook_dispatch;

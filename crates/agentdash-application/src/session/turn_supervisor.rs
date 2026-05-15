@@ -6,7 +6,7 @@ use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_processor::TurnEvent;
 use agentdash_spi::ConnectorError;
 
-pub(super) struct CancelTurnSnapshot {
+pub(crate) struct CancelTurnSnapshot {
     pub running: bool,
     pub current_turn_id: Option<String>,
     pub tx: broadcast::Sender<PersistedSessionEvent>,
@@ -14,7 +14,7 @@ pub(super) struct CancelTurnSnapshot {
 }
 
 #[derive(Clone)]
-pub(super) struct TurnSupervisor {
+pub(crate) struct TurnSupervisor {
     registry: SessionRuntimeRegistry,
 }
 

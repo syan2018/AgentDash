@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use super::hub::SessionHub;
+use super::runtime_control::SessionRuntimeService;
 
 /// 系统默认 stall 超时：5 分钟
 pub const DEFAULT_STALL_TIMEOUT_MS: u64 = 300_000;
@@ -19,7 +19,7 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(30);
 /// `stall_timeout_ms` 为 0 时不启动检测。
 /// 返回 `JoinHandle` 供调用方在需要时取消。
 pub fn spawn_stall_detector(
-    session_hub: SessionHub,
+    session_runtime: SessionRuntimeService,
     stall_timeout_ms: u64,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -38,7 +38,9 @@ pub fn spawn_stall_detector(
         loop {
             interval.tick().await;
 
-            let stalled = session_hub.find_stalled_sessions(stall_timeout_ms).await;
+            let stalled = session_runtime
+                .find_stalled_sessions(stall_timeout_ms)
+                .await;
             if stalled.is_empty() {
                 continue;
             }
@@ -50,7 +52,7 @@ pub fn spawn_stall_detector(
             );
 
             for session_id in stalled {
-                if let Err(err) = session_hub.cancel(&session_id).await {
+                if let Err(err) = session_runtime.cancel(&session_id).await {
                     tracing::warn!(
                         session_id = %session_id,
                         error = %err,

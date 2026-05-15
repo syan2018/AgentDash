@@ -49,7 +49,7 @@ pub(crate) async fn build_session_context_plan(
             let session_meta = if let Some(session_id) = result.session_id.as_deref() {
                 state
                     .services
-                    .session_hub
+                    .session_core
                     .get_session_meta(session_id)
                     .await
                     .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -82,7 +82,7 @@ pub(crate) async fn build_session_context_plan(
             .await?;
             let session_meta = state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(session_id)
                 .await
                 .map_err(|error| {
@@ -116,7 +116,7 @@ pub(crate) async fn build_session_context_plan(
             .await?;
             let session_meta = state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(session_id)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?

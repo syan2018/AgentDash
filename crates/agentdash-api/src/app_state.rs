@@ -22,7 +22,10 @@ use agentdash_application::runtime_gateway::{
     WorkspaceDetectProvider,
 };
 use agentdash_application::scheduling::CronSchedulerHandle;
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::{
+    SessionControlService, SessionCoreService, SessionEventingService, SessionHub,
+    SessionRuntimeService,
+};
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::RelayVfsService;
@@ -51,6 +54,10 @@ use agentdash_plugin_api::AuthMode;
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub session_hub: SessionHub,
+    pub session_core: SessionCoreService,
+    pub session_eventing: SessionEventingService,
+    pub session_runtime: SessionRuntimeService,
+    pub session_control: SessionControlService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -364,6 +371,11 @@ impl AppState {
 
         session_hub_handle.set(session_hub.clone()).await;
 
+        let session_core = session_hub.core_service();
+        let session_eventing = session_hub.eventing_service();
+        let session_runtime = session_hub.runtime_service();
+        let session_control = session_hub.control_service();
+
         let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> = Arc::new(session_hub.clone());
         let runtime_gateway = Arc::new(
             RuntimeGateway::new()
@@ -396,7 +408,7 @@ impl AppState {
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
-                session_hub: session_hub.clone(),
+                session_runtime: session_runtime.clone(),
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
@@ -428,14 +440,14 @@ impl AppState {
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
-                session_hub.clone(),
+                session_runtime.clone(),
                 story_repo_port.clone(),
                 repos.session_binding_repo.clone(),
             ),
         );
 
         let dispatcher =
-            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
+            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_runtime.clone());
 
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         session_hub.set_context_audit_bus(audit_bus.clone()).await;
@@ -452,6 +464,10 @@ impl AppState {
             repos,
             services: ServiceSet {
                 session_hub,
+                session_core,
+                session_eventing,
+                session_runtime,
+                session_control,
                 connector,
                 vfs_service,
                 backend_registry,
@@ -530,7 +546,7 @@ impl AppState {
 
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
-            state.services.session_hub.clone(),
+            state.services.session_runtime.clone(),
             agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
         );
 

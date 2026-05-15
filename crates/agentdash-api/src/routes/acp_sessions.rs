@@ -80,7 +80,7 @@ pub async fn list_sessions(
         for binding in &bindings {
             if let Ok(Some(meta)) = state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(&binding.session_id)
                 .await
             {
@@ -92,7 +92,7 @@ pub async fn list_sessions(
 
     let mut sessions = state
         .services
-        .session_hub
+        .session_core
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -142,7 +142,7 @@ pub async fn create_session(
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
     let meta = state
         .services
-        .session_hub
+        .session_core
         .create_session(&title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -163,7 +163,7 @@ pub async fn get_session(
     .await?;
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -282,7 +282,7 @@ pub async fn get_session_state(
     .await?;
     state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -290,7 +290,7 @@ pub async fn get_session_state(
 
     let execution_state = state
         .services
-        .session_hub
+        .session_core
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -349,7 +349,7 @@ pub async fn list_session_events(
     let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
     let page = state
         .services
-        .session_hub
+        .session_eventing
         .list_event_page(&session_id, after_seq, limit)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -709,7 +709,7 @@ pub async fn delete_session(
     .await?;
     state
         .services
-        .session_hub
+        .session_core
         .delete_session(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -774,14 +774,14 @@ pub async fn cancel_session(
     .await?;
     state
         .services
-        .session_hub
+        .session_runtime
         .cancel(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let execution_state = state
         .services
-        .session_hub
+        .session_core
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -829,7 +829,7 @@ pub async fn approve_tool_call(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .approve_tool_call(&session_id, &tool_call_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -856,7 +856,7 @@ pub async fn reject_tool_call(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -888,7 +888,7 @@ pub async fn respond_companion_request(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .respond_companion_request(&session_id, &request_id, req.payload)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -927,7 +927,7 @@ pub async fn acp_session_stream_sse(
 
     let subscription = state
         .services
-        .session_hub
+        .session_eventing
         .subscribe_after(&session_id, last_event_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -1010,7 +1010,7 @@ pub async fn acp_session_stream_ndjson(
 
     let subscription = state
         .services
-        .session_hub
+        .session_eventing
         .subscribe_after(&session_id, resume_from)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;

@@ -175,7 +175,7 @@ impl CommandHandler {
         };
 
         tracing::info!(session_id = %payload.session_id, "收到 command.cancel");
-        match hub.cancel(&payload.session_id).await {
+        match hub.runtime_service().cancel(&payload.session_id).await {
             Ok(()) => RelayMessage::ResponseCancel {
                 id,
                 payload: Some(ResponseCancelPayload {
@@ -225,7 +225,7 @@ async fn forward_session_notifications(
     _turn_id: &str,
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 ) {
-    let mut rx = hub.ensure_session(session_id).await;
+    let mut rx = hub.eventing_service().ensure_session(session_id).await;
 
     loop {
         match rx.recv().await {

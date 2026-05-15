@@ -8,7 +8,7 @@
 2. `.trellis/tasks/05-14-session-launch-refactor-assessment/design.md`
 3. 本文件
 
-然后执行当前第一个未完成 commit slice。不要重新解释目标，不要追加旁路计划，不要把已经删除的旧结构作为迁移基础复活。
+然后执行第一个状态不是“已完成”的 commit slice。不要创建 child task，不要重新开一份计划，不要把已经删除的旧结构作为迁移基础复活。
 
 终态只认这一条生产主链路：
 
@@ -18,207 +18,157 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 `LaunchCommand` 只表达 source intent。`SessionConstructionPlan` 是 owner / workspace / VFS / MCP / capability / context / identity / projection / trace 的事实源。`LaunchExecution` 是本次 prompt、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input 的执行计划。`ExecutionContext` 只在 connector 边界投影。
 
-## Commit Slices
+## Commit Map
 
-本 batch 固定为 6 次提交完成。除非编译错误迫使同一 slice 内补修，不再拆更小提交。
+本 batch 总计 7 次提交完成。前 4 次已经落地；剩余 3 次必须按顺序一次性推进，不再拆更小提交。
 
-重新领取任务时的执行规则：
+| Commit | Status | Message | Scope |
+|---|---|---|---|
+| 1 | 已完成 | `refactor(session): 校准 launch source 与 construction provider 边界` | 删除旧 augmenter/seed 命名，校准 source intent 与 construction provider 边界 |
+| 2 | 已完成 | `refactor(session): 删除 construction facts 生产传递层` | 删除 `SessionConstructionFacts` production handoff，provider 直接返回 `SessionConstructionPlan` |
+| 3 | 已完成 | `refactor(session): 统一 context 查询与 construction plan 投影` | context/query/audit/inspector 不再拥有 route-local construction 主线 |
+| 4 | 已完成 | `refactor(session): 将 prompt pipeline 收缩为 launch execution 执行器` | pipeline 只执行 `LaunchExecution`，connector accepted 后才提交成功副作用 |
+| 5 | 已完成 | `refactor(session): 拆分 session 业务能力服务` | 拆出 core / eventing / runtime / control 等能力服务，并迁移 API/local 的直接调用点 |
+| 6 | 未开始 | `refactor(session): 删除 session hub 业务门面` | 把 launch/cancel/hooks/effects/pending/tool approval/companion 迁出 Hub，调用点依赖具体服务；Hub 只剩装配壳或删除 |
+| 7 | 未开始 | `refactor(session): 完成 effects pending persistence 收口验证` | durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
 
-- 从本节找到第一个状态不是“已完成”的 commit slice。
-- 只执行该 slice 的代码和文档，不创建 child task。
-- 该 slice 验证通过后立即提交，再进入下一个 slice。
-- 不新增过渡 payload、wrapper 或双主线；发现前一 slice 遗留错误时，在当前 slice 内直接删掉。
+## Execution Rules
+
+- 每次重新领取任务时，从 Commit Map 找第一个未完成项继续。
+- 一个 commit slice 内可以“大刀”改完同一能力边界，不要为了显得谨慎拆成多个细碎提交。
+- 该 slice 验证通过后立即提交，再进入下一 slice。
+- 发现前一 slice 遗留错误时，在当前 slice 内直接修正，不新增旁路、不保留双主线。
+- 不创建 subagent。
+- 不做兼容旧内部 API 的双主线。
+- 不新增只转发旧 payload 的 wrapper。
+- 不把 resolved VFS / MCP / capability / context / hook / effect / working_dir 塞进 `LaunchCommand`。
+- 不把 `SessionHub` 包一层继续当业务 facade 使用。
+
+## Completed Slices
 
 ### Commit 1: 校准 source intent 与 construction provider 边界
 
-状态：已完成。
+完成事实：
 
-提交信息：
-
-```text
-refactor(session): 校准 launch source 与 construction provider 边界
-```
-
-本次提交只做边界校准，不宣称终态完成：
-
-- `PromptRequestAugmenter` / prompt augmenter 命名彻底替换为 `SessionConstructionProvider`。
-- `SessionConstructionSeed` 类型名彻底删除；当时仍存在的 provider handoff 不得从 `session::mod` 顶层导出。
+- `PromptRequestAugmenter` / prompt augmenter 命名替换为 `SessionConstructionProvider`。
+- `SessionConstructionSeed` 类型名删除。
 - task / companion source payload 命名脱离 `PromptAugment*`。
 - API bootstrap 文件名脱离 `prompt_augmenter` / `session_launch_augmenter`。
-- `SessionLaunchPlannerInput` 接收 `LaunchCommand` 原件；source contract、identity、follow-up、local relay workspace root、local relay MCP declarations 只能由 planner 从 command 投影，`prompt_pipeline` 不再重组这些 source facts。
-- 文档只记录真实剩余阻塞，不把任何 provider handoff 写成终态边界。
-
-退出检查：
-
-```powershell
-cargo fmt --check
-cargo check -p agentdash-application
-cargo check -p agentdash-api
-cargo check -p agentdash-local
-rg -n "SessionConstructionSeed|PromptRequestAugmenter|SharedPromptRequestAugmenter|PromptAugment|prompt_augmenter|session_launch_augmenter|decode_augmented|construction_seed|requires_augment|execute_launch_seed|SpyAugmenter|session::provider" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-git diff --check
-```
-
-完成定义：
-
-- 旧 augmenter/seed 命名在生产代码归零。
-- 当前未提交的 provider rename 和 planner source intent 收口可编译。
-- tracker 不再把 `SessionConstructionSeed` 写成当前代码事实。
+- `SessionLaunchPlannerInput` 接收 `LaunchCommand` 原件。
+- `prompt_pipeline` 不再重组 source contract、identity、follow-up、local relay workspace root、local relay MCP declarations。
 
 ### Commit 2: 删除 `SessionConstructionFacts` production handoff
 
-状态：已完成。
-
-提交信息：
-
-```text
-refactor(session): 删除 construction facts 生产传递层
-```
-
-一次性完成，不再继续换名：
-
-- `SessionConstructionProvider::build_construction` 返回 `SessionConstructionPlan` 所需的 construction 结果，不再返回 `(UserPromptInput, SessionConstructionFacts)`。
-- assembler 不再把 VFS / MCP / capability / context / effect binding 写入 facts；这些字段直接进入 `SessionConstructionPlan` 或其 planner input。
-- prompt payload 不再通过被 provider 改写的 `UserPromptInput` 传递。provider 产出的 context prompt blocks / executor profile 必须进入 construction projection，launch planner 再从 `LaunchCommand + SessionConstructionPlan` 生成 resolved prompt payload。
-- `SessionLaunchPlannerInput` 删除 `construction_facts`。
-- `SessionConstructionFacts` 类型删除。
-
-实际完成事实：
+完成事实：
 
 - `SessionConstructionProvider::build_construction` 直接返回 `SessionConstructionPlan`。
-- `SessionConstructionPlan.prompt` 承载 prompt blocks / env projection，executor profile 进入 `execution_profile`。
+- `SessionConstructionPlan.prompt` 承载 prompt blocks / env projection。
+- executor profile 进入 `execution_profile`。
 - API bootstrap、assembler、pipeline、planner 不再传递 facts tuple。
 - companion dispatch 使用本次 child session construction plan，parent session 只作为 source policy 解析 parent facts。
 
-退出检查：
-
-```powershell
-rg -n "SessionConstructionFacts" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-rg -n "Result<\\(UserPromptInput, SessionConstruction" crates/agentdash-application/src crates/agentdash-api/src
-cargo check -p agentdash-application
-cargo check -p agentdash-api
-cargo check -p agentdash-local
-```
-
-完成定义：
-
-- 生产主链路已经是 `LaunchCommand + SessionConstructionPlan + runtime facts -> LaunchExecution`。
-- provider handoff 不存在。
-- prompt/context/executor mutation 不再藏在 `UserPromptInput` 回传中。
-
 ### Commit 3: 让 context/query/audit/inspector 与 launch 同源
 
-状态：已完成。
-
-提交信息：
-
-```text
-refactor(session): 统一 context 查询与 construction plan 投影
-```
-
-本次提交关闭“两路但测试同步”的风险：
-
-- context endpoint 只调用 construction query/use case，投影 `SessionConstructionPlan`。
-- route/bootstrap 删除 task/story/project context response 主线重建分支。
-- audit / inspector 所需字段进入 `ConstructionProjections`。
-- owner 排序只来自 `SessionOwnerResolver`，launch、context query、权限展示不再各自解释 owner。
-
-实际完成事实：
+完成事实：
 
 - Task / Story / Project session detail 入口改为调用 `build_session_context_plan`。
 - 详情入口不再直接调用 `SessionConstructionPlanner`、`SessionOwnerResolver` 或 `build_surface_summary`。
 - runtime surface、VFS、context snapshot 均从 `SessionConstructionPlan.context_projection` 投影。
 
-退出检查：
-
-```powershell
-rg -n "build_task_session_context|build_story_session_context_response|build_project_session_context_response|finalize_augmented_request" crates/agentdash-api/src/routes crates/agentdash-api/src/bootstrap
-cargo test -p agentdash-application session::construction
-cargo check -p agentdash-api
-```
-
-完成定义：
-
-- launch/query/audit/inspector 不再各自组装 VFS / MCP / capability / context。
-- context endpoint 和 launch 共享同一 construction plan projection。
-
 ### Commit 4: 收缩 `prompt_pipeline` 为执行器
 
-状态：已完成。
-
-提交信息：
-
-```text
-refactor(session): 将 prompt pipeline 收缩为 launch execution 执行器
-```
-
-本次提交只处理 launch 执行边界：
-
-- `SessionLaunchPlanner` 输出完整 `LaunchExecution`。
-- `prompt_pipeline` 只做 claim / activate、event append、connector.prompt、accepted 后 meta/pending/title 提交、processor supervision。
-- connector.prompt 失败不得提交 bootstrap completed、pending applied、title generation 等成功副作用。
-- hook session、runtime delegate、restore state、terminal effect handler 的解析归入 launch/effects 边界，不在 pipeline 里临时 fallback。
-
-实际完成事实：
+完成事实：
 
 - pending runtime context transition 改为先生成待应用结果，不在 connector.prompt 前持久化 applied 事件或 context frame。
 - connector.prompt 接受后再持久化 pending capability events、context frames、bootstrap meta、pending applied 与 title generation。
 - connector.prompt 失败路径保持清理 turn、写 failed terminal，不提交 bootstrap/pending/title 成功副作用。
 
+## Remaining Slices
+
+### Commit 5: 拆分 session 业务能力服务
+
+状态：已完成。
+
+本提交先把“业务入口不再都从 Hub 进”的骨架一次性拆出来，避免继续在 `SessionHub` facade 里堆职责。
+
+必须完成：
+
+- 新建或补齐具体能力服务：
+  - `SessionCoreService`：meta CRUD、execution projection、owner bootstrap state、startup recovery 查询。
+  - `SessionEventingService`：event append、history/page、broadcast、compaction enrichment、transcript projection。
+  - `SessionRuntimeService` 或等价服务：active turn 查询、stall detection、cancel control、connector live session 区分。
+  - `SessionControlService` 或等价服务：tool approval / rejection、companion response 这类 connector/control plane 操作。
+- API / local route handler 不再通过 `state.services.session_hub` 访问 core/eventing/runtime/control 能力。
+- Application 外围服务若只需要 core/eventing/runtime/control，也改依赖具体服务；只有 launch、hook、effects 尚未迁出前可以临时持有 Hub。
+- 删除 Hub facade 中已迁出的业务实现；若保留同名方法，只允许测试或尚未迁移的内部旧调用临时存在，并必须在 tracker 标成 Commit 6 删除项。
+- 更新 `SessionHub` 模块注释，不能再宣称它是职责门面。
+
 退出检查：
 
 ```powershell
-rg -n "req\\.vfs|req\\.mcp_servers|req\\.capability_state|req\\.context_bundle|req\\.hook_snapshot_reload|req\\.post_turn_handler" crates/agentdash-application/src/session/prompt_pipeline.rs crates/agentdash-application/src/session/launch_planner.rs
-cargo test -p agentdash-application session::launch
+rg -n "session_hub\\s*\\.\\s*(get_session_meta|get_session_metas_bulk|create_session|create_session_with_title_source|list_sessions|inspect_execution_states_bulk|inspect_session_execution_state|delete_session|mark_owner_bootstrap_pending|inject_notification|subscribe_after|subscribe_with_history|list_event_page|build_projected_transcript|cancel|approve_tool_call|reject_tool_call|respond_companion_request|recover_interrupted_sessions|find_stalled_sessions)" crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-application/src
+rg -n "impl SessionHub|pub struct SessionHub" crates/agentdash-application/src/session
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
 cargo test -p agentdash-application session::hub
+git diff --check
 ```
 
 完成定义：
 
-- pipeline 不再 planning。
-- connector failure 不再写成功副作用。
+- API/local 的 CRUD、stream/event、state query、cancel、tool approval、companion response 不再经 Hub；application 的 boot reconcile、terminal cancel、stall detector 也不再经 Hub 执行 cancel/recovery。
+- Hub 剩余命中只属于 launch/hook/effects/pending/tool-builder 装配或测试，且全部列入 Commit 6 删除清单。
+- 不用 facade 包一层冒充拆分。
 
-### Commit 5: 拆掉有职责 `SessionHub`
+### Commit 6: 删除 session hub 业务门面
 
-提交信息：
+本提交把剩余业务职责从 Hub 中移出。完成后 `SessionHub` 若仍存在，只能是依赖装配对象、测试 handle 或被具体服务内部短暂持有的依赖集合；它不再是调用方可见的业务能力入口。
 
-```text
-refactor(session): 拆分 session hub 业务职责
-```
+必须完成：
 
-本次提交拆业务入口，不保留有职责 facade：
-
-- 拆出 core / ownership / construction / launch / runtime / eventing / hooks / effects / pending / adapters 能力服务。
-- `SessionHub` 若仍存在，只能作为短期依赖装配壳或测试 handle，不承载业务判断。
-- 新调用点依赖具体能力服务，不再通过 hub 读写跨职责状态。
+- `SessionLaunchService`：接管 `launch_command` / `launch_command_with_outcome` / test-only constructed launch。
+- `SessionHookService`：接管 hook runtime rebuild、hook trigger dispatch、hook auto-resume scheduling、context update injections。
+- `SessionRuntimeService`：接管 cancel、stall scan、active turn control、runtime MCP/capability hot update。
+- `SessionEffectsService`：接管 terminal effect outbox enqueue/replay/dispatch handler resolution。
+- `SessionPendingService`：接管 runtime command enqueue/apply/fail/projection 查询。
+- `SessionControlService`：接管 approve/reject tool call、push notification、companion wait response。
+- workflow / routine / task / reconcile / local runtime 只依赖所需具体服务，不再保存有职责 `SessionHub`。
+- `impl SessionHub` 中除 factory/ready-gate/test handle 外的业务方法删除。
+- 如果 `SessionHub` 类型仍存在，字段与方法名称必须表达 assembly/dependency container，而不是业务 facade；若无法保持无职责，就删除该类型并以 services struct 替代。
 
 退出检查：
 
 ```powershell
 rg -n "impl SessionHub|pub struct SessionHub" crates/agentdash-application/src/session
+rg -n "session_hub" crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine crates/agentdash-application/src/reconcile crates/agentdash-application/src/session
+cargo fmt --check
 cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
+cargo test -p agentdash-application session::launch
 cargo test -p agentdash-application session::hub
+git diff --check
 ```
 
 完成定义：
 
-- 每个 `impl SessionHub` 命中要么删除，要么在 tracker 标记为无业务判断装配壳。
-- 不能用 facade 包一层继续过关。
+- `SessionHub` 不再是业务能力入口。
+- 调用点按能力依赖具体服务。
+- 剩余 `session_hub` 命中若存在，只能是装配期变量名或测试 fixture；不得承载业务判断。
 
-### Commit 6: Effects / pending / persistence 最终验证
+### Commit 7: Effects / pending / persistence 最终验证
 
-提交信息：
+本提交不再重构入口形态，只做运行语义、迁移、测试与文档收口。
 
-```text
-refactor(session): 完成 effects pending persistence 收口验证
-```
-
-本次提交只收尾运行语义和文档：
+必须完成：
 
 - terminal event 先落库，effect 进入 durable outbox；handler 有 durable identity 或 typed handler。
+- effect 支持 retry、dead-letter、replay 与审计。
 - pending runtime command 覆盖 requested / applied / failed，具备 apply-once 和失败恢复测试。
 - 新增业务逻辑依赖 meta / event / outbox / runtime-command store 边界，不再扩张大 `SessionPersistence`。
-- PostgreSQL / SQLite migration 通过。
+- PostgreSQL / SQLite migration 覆盖旧字段删除/迁移。
 - 父任务 tracker、closure checklist、session startup spec 与代码事实一致。
 
 最终验证：
@@ -247,12 +197,3 @@ git diff --check
 - 父任务 closure checklist 全部通过。
 - final convergence tracker 中没有“过渡边界仍在生产主线”的未完成项。
 - 可以标记父任务完成。
-
-## Rules During Execution
-
-- 每个 slice 完成后立即提交，不跨 slice 混合提交。
-- 发现前一 slice 方向错误时，先修正当前 slice 文档和代码事实，再继续；不得在后续 slice 偷偷绕开。
-- 不创建 subagent。
-- 不做兼容旧内部 API 的双主线。
-- 不新增只转发旧 payload 的 wrapper。
-- 不把 resolved VFS / MCP / capability / context / hook / effect / working_dir 塞进 `LaunchCommand`。

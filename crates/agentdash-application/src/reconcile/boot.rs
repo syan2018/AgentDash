@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use crate::session::SessionHub;
+use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
@@ -21,7 +21,7 @@ use agentdash_domain::workflow::LifecycleRunRepository;
 /// M2-c：Task view 改为"从 LifecycleRun/step state 反投影"（Scheme A）。
 /// projector 通过 Story session binding 找到 Story，再以 `Task.lifecycle_step_key` 定位 Task。
 pub struct BootReconcileDeps {
-    pub session_hub: SessionHub,
+    pub session_runtime: SessionRuntimeService,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
@@ -63,7 +63,7 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
     let mut phases = Vec::with_capacity(3);
 
     // ── Phase 1: Session Reconcile ──────────────────────────
-    let session_report = run_session_reconcile(&deps.session_hub).await;
+    let session_report = run_session_reconcile(&deps.session_runtime).await;
     phases.push(session_report);
 
     // ── Phase 2: Task View Projection ───────────────────────
@@ -89,8 +89,8 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
     report
 }
 
-async fn run_session_reconcile(session_hub: &SessionHub) -> PhaseReport {
-    match session_hub.recover_interrupted_sessions().await {
+async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> PhaseReport {
+    match session_runtime.recover_interrupted_sessions().await {
         Ok(()) => {
             tracing::info!("Phase 1 (Session Recovery) 完成");
             PhaseReport {

@@ -12,7 +12,10 @@ pub mod construction_provider;
 pub mod context;
 mod context_frame;
 pub mod continuation;
+pub mod control;
+pub mod core;
 pub(crate) mod dimension;
+pub mod eventing;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;
@@ -32,6 +35,7 @@ pub mod post_turn_handler;
 mod prompt_pipeline;
 mod prompt_vfs;
 pub mod runtime_commands;
+pub mod runtime_control;
 mod runtime_registry;
 pub mod stall_detector;
 pub mod terminal_cache;
@@ -57,6 +61,9 @@ pub use construction_provider::{
     SharedSessionConstructionProvider, TaskLaunchPhase, TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
+pub use control::SessionControlService;
+pub use core::SessionCoreService;
+pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
@@ -74,6 +81,7 @@ pub use post_turn_handler::{
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
+pub use runtime_control::SessionRuntimeService;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };

@@ -64,9 +64,11 @@ use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::construction::SessionConstructionSeed;
 use crate::session::context::apply_workspace_defaults;
+use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::session::types::UserPromptInput;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
+use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
 use crate::vfs::{
     RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
@@ -1375,9 +1377,24 @@ impl<'a> SessionRequestAssembler<'a> {
         construction_seed: SessionConstructionSeed,
         spec: StoryStepSpec<'_>,
     ) -> Result<(UserPromptInput, SessionConstructionSeed), TaskExecutionError> {
-        self.compose_story_step(spec)
-            .await
-            .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
+        let task_id = spec.task.id;
+        let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
+        self.compose_story_step(spec).await.map(|prepared| {
+            let (user_input, mut construction_seed) =
+                apply_session_assembly(user_input, construction_seed, prepared);
+            construction_seed.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
+                handler: serde_json::json!({
+                    "kind": "task",
+                    "task_id": task_id,
+                    "backend_id": backend_id,
+                }),
+                supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
+                    .iter()
+                    .map(|kind| (*kind).to_string())
+                    .collect(),
+            });
+            (user_input, construction_seed)
+        })
     }
 
     pub async fn compose_lifecycle_node_prompt(

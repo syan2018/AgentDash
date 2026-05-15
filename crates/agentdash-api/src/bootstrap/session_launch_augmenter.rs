@@ -18,13 +18,9 @@ use agentdash_application::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
     OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    TerminalHookEffectBinding, compose_lifecycle_node_prompt_with_audit,
-    resolve_session_prompt_lifecycle,
+    compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
 };
-use agentdash_application::task::gateway::{
-    effect_executor::TaskHookEffectExecutor, resolve_effective_task_workspace,
-    resolve_task_backend_id,
-};
+use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
 use agentdash_domain::{
@@ -602,7 +598,7 @@ async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
     user_input: UserPromptInput,
-    mut construction_seed: SessionConstructionSeed,
+    construction_seed: SessionConstructionSeed,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
@@ -636,24 +632,6 @@ async fn build_task_owner_prompt_request(
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
         .map_err(task_execution::map_task_execution_error)?;
-    let backend_id = resolve_task_backend_id(
-        &state.repos,
-        state.services.backend_registry.as_ref(),
-        &task,
-    )
-    .await
-    .map_err(task_execution::map_task_execution_error)?;
-    construction_seed.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
-        handler: serde_json::json!({
-            "kind": "task",
-            "task_id": task_id,
-            "backend_id": backend_id,
-        }),
-        supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
-            .iter()
-            .map(|kind| (*kind).to_string())
-            .collect(),
-    });
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),

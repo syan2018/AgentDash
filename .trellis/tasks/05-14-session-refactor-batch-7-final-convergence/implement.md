@@ -10,7 +10,9 @@
 - [x] 收窄 AppState / SessionHub ready 初始化边界。
 - [x] 更新 parent task notes，记录当前状态与剩余真实风险。
 - [ ] 继续删除 `SessionLaunchPlan` 跨 crate handoff 与 bootstrap 输出。
-- [ ] 将 `bootstrap/session_context_query.rs` 与 launch construction planner 合流。
+- [x] 将 `bootstrap/session_context_query.rs` 与 launch construction planner 合流。
+  - Task / Story / Project 的 VFS、capability、context snapshot projection 已迁入 `SessionConstructionPlanner`。
+  - API 侧仅保留权限校验、session meta 读取、DTO 投影与 `runtime_surface` 展示态补全。
 - [ ] 将 `SessionHub` 业务方法拆到 construction / launch / runtime / effects / pending 服务，删除有职责 facade。
 - [ ] 运行最终验证矩阵。
 - [ ] 标记 Batch 7 与 parent task 完成。

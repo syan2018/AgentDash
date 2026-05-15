@@ -1,14 +1,11 @@
 //! Session context query use case.
 //!
-//! Route 层只负责权限与 DTO 投影；Task / Story / Project 的 context 查询分支
-//! 集中在这里返回 `SessionConstructionPlan`。这一步仍复用现有 context builder，
-//! 后续需要继续与 launch construction planner 合流为同一事实源。
+//! Route 层只负责权限与 DTO 投影；Task / Story / Project 的 context projection
+//! 由 application 层 `SessionConstructionPlanner` 产出。
 
 use std::sync::Arc;
 
-use agentdash_application::session::construction::{
-    SessionConstructionContextProjection, SessionConstructionPlan,
-};
+use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -19,8 +16,8 @@ use crate::auth::{
     ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
     load_task_story_project_with_permission,
 };
+use crate::routes::task_execution;
 use crate::routes::vfs_surfaces::build_surface_summary;
-use crate::routes::{project_sessions, story_sessions, task_execution};
 use crate::rpc::ApiError;
 
 pub(crate) async fn build_session_context_plan(
@@ -59,46 +56,20 @@ pub(crate) async fn build_session_context_plan(
             } else {
                 None
             };
-            let built_context =
-                agentdash_application::task::context_builder::build_task_session_context(
-                    &state.repos,
-                    &state.services.vfs_service,
-                    &state.config.platform_config,
-                    task_id,
-                    session_meta.as_ref(),
-                )
-                .await;
-            let resolved_vfs = built_context
-                .as_ref()
-                .and_then(|context| context.vfs.clone());
-            let capabilities =
-                try_build_session_capabilities(state, session_id, resolved_vfs.as_ref()).await;
-            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.to_string(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            SessionConstructionPlanner::plan_context(
+            let mut plan = SessionConstructionPlanner::plan_task_context_query(
+                &state.repos,
+                &state.services.vfs_service,
+                &state.config.platform_config,
                 session_id.to_string(),
                 owner,
-                SessionConstructionContextProjection {
-                    workspace_id: task.workspace_id,
-                    agent_binding: Some(result.agent_binding),
-                    vfs: resolved_vfs,
-                    runtime_surface,
-                    context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                    session_capabilities: capabilities,
-                },
+                task_id,
+                task.workspace_id,
+                result.agent_binding,
+                session_meta.as_ref(),
             )
+            .await;
+            attach_runtime_surface(state, session_id, &mut plan).await?;
+            plan
         }
         SessionOwnerType::Story => {
             let story_id = owner.owner_id;
@@ -109,40 +80,30 @@ pub(crate) async fn build_session_context_plan(
                 ProjectPermission::View,
             )
             .await?;
-            let built_context =
-                story_sessions::build_story_session_context_response(state, &story, session_id)
-                    .await?;
-            let resolved_vfs = built_context
-                .as_ref()
-                .and_then(|context| context.vfs.clone());
-            let capabilities =
-                try_build_session_capabilities(state, session_id, resolved_vfs.as_ref()).await;
-            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.to_string(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            SessionConstructionPlanner::plan_context(
+            let session_meta = state
+                .services
+                .session_hub
+                .get_session_meta(session_id)
+                .await
+                .map_err(|error| {
+                    ApiError::Internal(format!("读取 story session meta 失败: {error}"))
+                })?;
+            let Some(mut plan) = SessionConstructionPlanner::plan_story_context_query(
+                &state.repos,
+                &state.services.vfs_service,
+                &state.config.platform_config,
                 session_id.to_string(),
                 owner,
-                SessionConstructionContextProjection {
-                    workspace_id: None,
-                    agent_binding: None,
-                    vfs: resolved_vfs,
-                    runtime_surface,
-                    context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                    session_capabilities: capabilities,
-                },
+                &story,
+                session_meta.as_ref(),
             )
+            .await
+            .map_err(ApiError::Internal)?
+            else {
+                return Ok(None);
+            };
+            attach_runtime_surface(state, session_id, &mut plan).await?;
+            plan
         }
         SessionOwnerType::Project => {
             let project_id = owner.owner_id;
@@ -153,65 +114,60 @@ pub(crate) async fn build_session_context_plan(
                 ProjectPermission::View,
             )
             .await?;
-            let built_context = project_sessions::build_project_session_context_response(
-                state,
-                &project,
-                session_id,
-                &owner.label,
-            )
-            .await?;
-            let capabilities =
-                try_build_session_capabilities(state, session_id, built_context.vfs.as_ref()).await;
-            let runtime_surface = if let Some(space) = built_context.vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.to_string(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            SessionConstructionPlanner::plan_context(
+            let session_meta = state
+                .services
+                .session_hub
+                .get_session_meta(session_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
+            let binding_label = owner.label.clone();
+            let mut plan = SessionConstructionPlanner::plan_project_context_query(
+                &state.repos,
+                &state.services.vfs_service,
+                &state.config.platform_config,
                 session_id.to_string(),
                 owner,
-                SessionConstructionContextProjection {
-                    workspace_id: None,
-                    agent_binding: None,
-                    vfs: built_context.vfs,
-                    runtime_surface,
-                    context_snapshot: built_context.context_snapshot,
-                    session_capabilities: capabilities,
-                },
+                &project,
+                &binding_label,
+                &session_meta,
             )
+            .await
+            .map_err(|error| {
+                if error.starts_with("无效的项目 Agent session label")
+                    || error.starts_with("Project Agent `")
+                {
+                    ApiError::NotFound(error)
+                } else {
+                    ApiError::Internal(error)
+                }
+            })?;
+            attach_runtime_surface(state, session_id, &mut plan).await?;
+            plan
         }
     };
 
     Ok(Some(plan))
 }
 
-async fn try_build_session_capabilities(
-    state: &AppState,
-    _session_id: &str,
-    vfs: Option<&agentdash_spi::Vfs>,
-) -> Option<agentdash_spi::SessionBaselineCapabilities> {
-    let skills = if let Some(space) = vfs {
-        let result =
-            agentdash_application::skill::load_skills_from_vfs(&state.services.vfs_service, space)
-                .await;
-        result.skills
-    } else {
-        Vec::new()
+async fn attach_runtime_surface(
+    state: &Arc<AppState>,
+    session_id: &str,
+    plan: &mut SessionConstructionPlan,
+) -> Result<(), ApiError> {
+    let Some(vfs) = plan.context_projection.vfs.as_ref() else {
+        return Ok(());
     };
-
-    let caps =
-        agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities(
-            &skills,
-        );
-
-    if caps.is_empty() { None } else { Some(caps) }
+    let runtime_surface = build_surface_summary(
+        state,
+        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
+            session_id: session_id.to_string(),
+        },
+        vfs,
+    )
+    .await?;
+    plan.context_projection.runtime_surface = Some(runtime_surface.clone());
+    plan.projections.context.runtime_surface = Some(runtime_surface.clone());
+    plan.surface.runtime_surface = Some(runtime_surface);
+    Ok(())
 }

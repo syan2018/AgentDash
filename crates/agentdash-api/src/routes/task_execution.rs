@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::task::context_builder::build_task_session_context;
+use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::task::execution::{
     ExecutionPhase, TaskExecutionCommand, TaskExecutionError,
 };
@@ -198,18 +199,37 @@ pub async fn get_task_session(
         None
     };
 
-    let built_context = build_task_session_context(
-        &state.repos,
-        &state.services.vfs_service,
-        &state.config.platform_config,
-        task_id,
-        session_meta.as_ref(),
-    )
-    .await;
+    let plan = if let Some(session_id) = result.session_id.as_ref() {
+        let bindings = state
+            .repos
+            .session_binding_repo
+            .list_by_session(session_id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        let owner = SessionOwnerResolver::resolve_primary(&bindings).ok_or_else(|| {
+            ApiError::NotFound(format!("Session `{session_id}` 未绑定 Task owner"))
+        })?;
+        Some(
+            SessionConstructionPlanner::plan_task_context_query(
+                &state.repos,
+                &state.services.vfs_service,
+                &state.config.platform_config,
+                session_id.clone(),
+                owner,
+                task_id,
+                task.workspace_id,
+                result.agent_binding.clone(),
+                session_meta.as_ref(),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
 
-    let resolved_vfs = built_context
+    let resolved_vfs = plan
         .as_ref()
-        .and_then(|context| context.vfs.clone());
+        .and_then(|plan| plan.context_projection.vfs.clone());
     let runtime_surface = if let Some(session_id) = result.session_id.as_ref() {
         if let Some(space) = resolved_vfs.as_ref() {
             Some(
@@ -229,6 +249,8 @@ pub async fn get_task_session(
         None
     };
 
+    let context_snapshot = plan.and_then(|plan| plan.context_projection.context_snapshot);
+
     Ok(Json(TaskSessionResponse {
         task_id: result.task_id,
         workspace_id: task.workspace_id,
@@ -240,7 +262,7 @@ pub async fn get_task_session(
         last_activity: result.last_activity,
         vfs: resolved_vfs,
         runtime_surface,
-        context_snapshot: built_context.and_then(|context| context.context_snapshot),
+        context_snapshot,
     }))
 }
 

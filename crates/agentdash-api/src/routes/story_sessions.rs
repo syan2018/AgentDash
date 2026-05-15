@@ -7,51 +7,17 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::session::bootstrap::{
-    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
-    derive_session_context_snapshot,
-};
-use agentdash_application::session::context::{
-    SessionContextSnapshot, extract_story_overrides, normalize_optional_string,
-};
-use agentdash_application::workflow::{
-    ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
-};
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
+use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_application::session::ownership::SessionOwnerResolver;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
-    routes::project_agents::resolve_project_workspace,
     routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
-    runtime_bridge::session_mcp_servers_to_runtime,
 };
-use agentdash_application::vfs::SessionMountTarget;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-
-/// 加载 story 所属 project 的 MCP Preset map，供 resolver 解析 `mcp:<X>` 能力。
-async fn load_story_project_presets(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-) -> agentdash_application::capability::AvailableMcpPresets {
-    match state
-        .repos
-        .mcp_preset_repo
-        .list_by_project(project_id)
-        .await
-    {
-        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
-        Err(error) => {
-            tracing::warn!(
-                project_id = %project_id,
-                error = %error,
-                "story_sessions: 加载 MCP Preset 列表失败"
-            );
-            Default::default()
-        }
-    }
-}
 
 #[derive(Debug, Serialize)]
 pub struct StorySessionDetailResponse {
@@ -184,7 +150,7 @@ pub async fn get_story_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let built_context =
-        build_story_session_context_response(&state, &story, &binding.session_id).await?;
+        story_session_context_projection(&state, &story, &binding.session_id).await?;
     let response_session_id = binding.session_id.clone();
 
     Ok(Json(StorySessionDetailResponse {
@@ -432,25 +398,19 @@ pub async fn unbind_story_session(
     })))
 }
 
-pub(crate) async fn build_story_session_context_response(
+async fn story_session_context_projection(
     state: &Arc<AppState>,
     story: &agentdash_domain::story::Story,
     session_id: &str,
 ) -> Result<Option<BuiltStorySessionContextResponse>, ApiError> {
-    let project = state
+    let bindings = state
         .repos
-        .project_repo
-        .get_by_id(story.project_id)
+        .session_binding_repo
+        .list_by_session(session_id)
         .await
-        .map_err(|error| ApiError::Internal(format!("读取 story 所属 project 失败: {error}")))?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("Story 所属 Project {} 不存在", story.project_id))
-        })?;
-    let workspace = resolve_project_workspace(state, &project)
-        .await
-        .map_err(|error| {
-            ApiError::Internal(format!("解析 story session workspace 失败: {error}"))
-        })?;
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let owner = SessionOwnerResolver::resolve_primary(&bindings)
+        .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 未绑定 Story owner")))?;
     let session_meta = state
         .services
         .session_hub
@@ -460,126 +420,22 @@ pub(crate) async fn build_story_session_context_response(
     let Some(session_meta) = session_meta else {
         return Ok(None);
     };
-
-    let connector_config = session_meta.executor_config.clone();
-    let resolved_config = connector_config.clone();
-    let default_agent_type = normalize_optional_string(project.config.default_agent_type.clone());
-    let effective_agent_type = resolved_config
-        .as_ref()
-        .and_then(|c| normalize_optional_string(Some(c.executor.clone())))
-        .or(default_agent_type.clone());
-    let use_vfs = connector_config
-        .as_ref()
-        .is_some_and(|c| c.is_cloud_native())
-        || (resolved_config.is_none() && default_agent_type.is_some());
-    let active_workflow = resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.session_binding_repo.as_ref(),
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
+    let Some(plan) = SessionConstructionPlanner::plan_story_context_query(
+        &state.repos,
+        &state.services.vfs_service,
+        &state.config.platform_config,
+        session_id.to_string(),
+        owner,
+        story,
+        Some(&session_meta),
     )
     .await
-    .map_err(ApiError::Internal)?;
-    let mut vfs = if use_vfs {
-        Some(
-            state
-                .services
-                .vfs_service
-                .build_vfs(
-                    &project,
-                    Some(story),
-                    workspace.as_ref(),
-                    SessionMountTarget::Story,
-                    effective_agent_type.as_deref(),
-                )
-                .map_err(|error| ApiError::Internal(error.to_string()))?,
-        )
-    } else {
-        None
+    .map_err(ApiError::Internal)?
+    else {
+        return Ok(None);
     };
-    vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
-    if let Some(vfs) = vfs.as_mut() {
-        append_visible_canvas_mounts(
-            state.repos.canvas_repo.as_ref(),
-            project.id,
-            vfs,
-            &session_meta.visible_canvas_mount_ids,
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-    // ── 解析 Story session 的 workflow 上下文 ──
-    let workflow_tool = agentdash_application::capability::resolve_session_workflow_context(
-        agentdash_application::capability::SessionWorkflowRepos {
-            agent_link: state.repos.agent_link_repo.as_ref(),
-            lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
-            workflow_def: state.repos.workflow_definition_repo.as_ref(),
-        },
-        agentdash_application::capability::SessionWorkflowOwner::Story {
-            project_id: story.project_id,
-        },
-    )
-    .await;
-
-    // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
-    let mut contributions = Vec::new();
-    if let Some(wf_tool) = workflow_tool {
-        contributions.push(agentdash_application::capability::ContextContributions {
-            source: agentdash_application::capability::ContextContributionSource::Workflow,
-            tool: Some(wf_tool),
-            companion: None,
-        });
-    }
-    let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
-        &agentdash_application::capability::CapabilityResolverInput {
-            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Story {
-                project_id: story.project_id,
-                story_id: story.id,
-            },
-            contributions,
-            mcp_candidates: agentdash_application::capability::McpCandidates {
-                presets: load_story_project_presets(state, story.project_id).await,
-                agent_servers: vec![],
-            },
-        },
-        &state.config.platform_config,
-    );
-    let effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.tool.mcp_servers.clone();
-
-    let executor_source = if session_meta.executor_config.is_some() {
-        "session.meta.executor_config"
-    } else if effective_agent_type.is_some() {
-        "project.config.default_agent_type"
-    } else {
-        "unresolved"
-    };
-
-    let story_overrides = extract_story_overrides(story);
-
-    let runtime_vfs = vfs.clone();
-
-    let plan = build_bootstrap_plan(BootstrapPlanInput {
-        project,
-        story: Some(story.clone()),
-        workspace,
-        resolved_config,
-        vfs: runtime_vfs,
-        mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
-        working_dir: None,
-        executor_preset_name: None,
-        executor_resolution: agentdash_application::session::ExecutorResolution::resolved(
-            executor_source,
-        ),
-        owner_variant: BootstrapOwnerVariant::Story { story_overrides },
-        workflow: active_workflow,
-    });
-
-    let snapshot = derive_session_context_snapshot(&plan);
-
     Ok(Some(BuiltStorySessionContextResponse {
-        vfs: plan.vfs.clone(),
-        context_snapshot: Some(snapshot),
+        vfs: plan.context_projection.vfs,
+        context_snapshot: plan.context_projection.context_snapshot,
     }))
 }

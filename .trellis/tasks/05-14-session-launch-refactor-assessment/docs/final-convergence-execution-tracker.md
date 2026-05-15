@@ -111,8 +111,9 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 
 - 当前 `SessionConstructionPlan` 字段仍不完整。
 - context endpoint route 已只调用 `bootstrap/session_context_query.rs` 并投影 `SessionConstructionPlan`。
-- `bootstrap/session_context_query.rs` 仍按 Task / Story / Project 分支重建 VFS / context / capability，且复用 route context builder；还没有与 launch construction 合流。
-- `bootstrap/session_context_query.rs` 已通过 `SessionConstructionPlanner::plan_context` 生成 `SessionConstructionPlan`，但 projection 构建仍是独立分支。
+- `bootstrap/session_context_query.rs` 已改为调用 `SessionConstructionPlanner::plan_task_context_query` / `plan_story_context_query` / `plan_project_context_query`，Task / Story / Project 的 VFS、capability、context snapshot projection 不再由 query use case 独立重建。
+- task/story/project session detail route 也改为通过 `SessionConstructionPlanner` 投影 context，route 层不再直接调用 context builder 主线。
+- API 侧仍保留 `runtime_surface` 展示态补全，因为它需要 backend online / inline file count 等 HTTP inspector 读模型；这不是 construction fact 的权威来源，但后续若要让 inspector 完全同源，需要把该读模型也定义为 construction projection adapter。
 - canvas runtime snapshot 与 VFS surface inspector 的 session runtime VFS 查询已改为调用 `build_session_context_plan`，不再在这些 route 内直接按 Task / Story / Project 重建 context。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
 - owner launch 主线会把 `construction_owner/source_contract` 投入 pipeline，并在最终 VFS/MCP/capability/context 解析后生成 `SessionConstructionPlan` 挂入 `LaunchExecution.construction`。
@@ -365,15 +366,16 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 
 ### Phase 4：Context 同源
 
-- [ ] context endpoint 只投影 `SessionConstructionPlan`。
+- [x] context endpoint 只投影 `SessionConstructionPlan`。
 - [x] `GET /sessions/{id}/context` route 只调用 context query use case 并投影 `SessionConstructionPlan`。
 - [ ] audit / inspector 只投影 `SessionConstructionPlan`。
-- [ ] route 层不再重建 task/story/project VFS/capability/context。
+- [x] route 层不再重建 task/story/project VFS/capability/context。
 - [x] `acp_sessions.rs` route 层不再直接重建 task/story/project VFS/capability/context。
+- [x] `task_execution.rs` / `story_sessions.rs` / `project_sessions.rs` session detail 路径改为通过 `SessionConstructionPlanner` 投影 context。
 - [x] `canvases.rs` / `vfs_surfaces.rs` session runtime inspector 路径不再直接重建 task/story/project VFS/capability/context，改投影 `SessionConstructionPlan`。
-- [ ] `bootstrap/session_context_query.rs` 与 launch construction planner 合流，删除独立重建主线。
+- [x] `bootstrap/session_context_query.rs` 与 launch construction planner 合流，删除独立重建主线。
 - [x] `SessionConstructionPlanner` 同时作为 launch 与 context query 的 plan 生成入口。
-- [ ] Task / Story / Project 的 construction projection 构建迁入 `SessionConstructionPlanner`，不再由 context query 独立重建。
+- [x] Task / Story / Project 的 construction projection 构建迁入 `SessionConstructionPlanner`，不再由 context query 独立重建。
 - [ ] launch 与 context endpoint 一致性测试覆盖 Task / Story / Project。
 
 ### Phase 5：Effects / Pending / Persistence 收尾

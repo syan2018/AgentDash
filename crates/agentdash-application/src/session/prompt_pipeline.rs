@@ -9,11 +9,13 @@ use agentdash_spi::hooks::{
 };
 
 use super::assignment_context_frame::build_assignment_context_frame;
+use super::augmenter::PromptAugmentInput;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
+use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
 use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
 pub use super::types::*;
@@ -27,12 +29,94 @@ impl<'a> SessionLaunchExecutor<'a> {
         Self { hub }
     }
 
-    /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
-    pub async fn execute(
+    pub async fn execute_command(
+        &self,
+        session_id: &str,
+        command: LaunchCommand,
+    ) -> Result<LaunchCommandOutcome, ConnectorError> {
+        let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
+        let continuation_context_frame = command.continuation_context_frame();
+        let reason = command.reason_tag();
+        let strictness = command.strictness();
+        let input = command.into_augment_input();
+        let mut req = match strictness {
+            LaunchStrictness::Strict => {
+                let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
+                    return Err(ConnectorError::Runtime(format!(
+                        "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
+                    )));
+                };
+                augmenter.augment(session_id, input).await?
+            }
+            LaunchStrictness::Relaxed => {
+                self.augment_relaxed_input(session_id, input, reason)
+                    .await?
+            }
+        };
+        if continuation_context_frame.is_some() {
+            req.continuation_context_frame = continuation_context_frame;
+        }
+        req.source_contract.launch_source = Some(reason.to_string());
+        req.source_contract.strictness = Some(
+            match strictness {
+                LaunchStrictness::Strict => "strict",
+                LaunchStrictness::Relaxed => "relaxed",
+            }
+            .to_string(),
+        );
+        let context_sources = req
+            .context_bundle
+            .as_ref()
+            .map(|bundle| {
+                bundle
+                    .iter_fragments()
+                    .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let turn_id = self
+            .execute_augmented_input(session_id, follow_up_session_id.as_deref(), req)
+            .await?;
+        Ok(LaunchCommandOutcome {
+            turn_id,
+            context_sources,
+        })
+    }
+
+    async fn augment_relaxed_input(
+        &self,
+        session_id: &str,
+        input: super::augmenter::PromptAugmentInput,
+        reason: &str,
+    ) -> Result<PromptAugmentInput, ConnectorError> {
+        match self.hub.current_prompt_augmenter().await {
+            Some(augmenter) => augmenter.augment(session_id, input).await,
+            None => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    reason = %reason,
+                    "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
+                );
+                Ok(input)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn execute_augmented_input_for_test(
+        &self,
+        session_id: &str,
+        req: PromptAugmentInput,
+    ) -> Result<String, ConnectorError> {
+        self.execute_augmented_input(session_id, None, req).await
+    }
+
+    /// 已完成 augment 的执行段。生产入口只能从 `execute_command` 进入。
+    async fn execute_augmented_input(
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: AugmentedLaunchInput,
+        req: PromptAugmentInput,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -698,8 +782,8 @@ fn notice_to_context_frame(notice: HookTurnStartNotice) -> Option<ContextFrame> 
         message_role: "user".to_string(),
         rendered_text: content.to_string(),
         sections: vec![ContextFrameSection::SystemNotice {
-            title: "Legacy TurnStart Notice".to_string(),
-            summary: "历史 notice 已桥接为 ContextFrame。".to_string(),
+            title: "TurnStart Notice".to_string(),
+            summary: "TurnStart notice 已桥接为 ContextFrame。".to_string(),
             body: Some(content.to_string()),
         }],
         created_at_ms: notice.created_at_ms,

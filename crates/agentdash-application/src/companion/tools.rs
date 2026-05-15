@@ -2244,7 +2244,6 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::session::types::AugmentedLaunchInput;
     use crate::session::{
         CompanionSessionContext, MemorySessionPersistence, PromptAugmentInput,
         PromptRequestAugmenter, SessionHub, local_workspace_vfs,
@@ -2546,8 +2545,8 @@ mod companion_tests {
             &self,
             _session_id: &str,
             input: PromptAugmentInput,
-        ) -> Result<AugmentedLaunchInput, ConnectorError> {
-            let req = input.into_augmented_launch_input();
+        ) -> Result<PromptAugmentInput, ConnectorError> {
+            let req = input;
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = req
                 .user_input

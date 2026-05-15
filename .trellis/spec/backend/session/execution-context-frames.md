@@ -32,8 +32,8 @@ pub struct ExecutionContext {
 }
 ```
 
-- 构造权威：`crates/agentdash-application/src/session/prompt_pipeline.rs::start_prompt_with_follow_up`
-  是**唯一**构造 `ExecutionContext` 的路径；其余代码只读 / clone。
+- 构造权威：`SessionLaunchExecutor::execute_command` 进入的 launch pipeline
+  是**唯一**构造 connector `ExecutionContext` 的生产路径；其余代码只读 / clone。
 - 热更路径（phase 切换 / MCP 热更）通过 `hub/tool_builder.rs` 基于
   `TurnExecution.session_frame` 重建一次性的 `ExecutionContext`，用来调
   `RuntimeToolProvider::build_tools`；这条路径**不**把重建的 context 传给
@@ -172,7 +172,7 @@ pub(super) struct TurnExecution {
   `processor_tx`。
 - `session_frame`：`ExecutionSessionFrame` 的 clone，供 MCP 热更 /
   `replace_runtime_mcp_servers` 重建 `ExecutionContext` 使用，避免回读 wire
-  `PreparedLaunchPrompt`。
+  prompt payload。
 - `capability_state`：per-turn 唯一能力状态，作为 MCP / 工具集 / VFS diff 重建时的入参。
 - `context_bundle`：当前 turn 的 Bundle 主数据面 clone。运行期 hook
   injections 由 `SessionRuntimeHookInjectionSink` 追加到
@@ -199,7 +199,7 @@ hub.replace_runtime_mcp_servers(session_id, new_mcp_servers)
      （保持 per-turn 一致）
 ```
 
-- 关键约束：热更路径**不**改写 `PreparedLaunchPrompt`，也**不**构造 "ghost"
+- 关键约束：热更路径**不**改写 prompt payload，也**不**构造 "ghost"
   `ExecutionContext` 传给 connector.prompt；仅仅是为了调用
   `RuntimeToolProvider::build_tools` 传入一个结构化上下文。
 - 热更触发源：Workflow PhaseNode 切换 / MCP Preset 变更 / 能力变更 hook。

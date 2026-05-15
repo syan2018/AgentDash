@@ -1,7 +1,7 @@
 //! Session launch construction use case.
 //!
 //! 这个模块承接原本挂在 `routes/acp_sessions.rs` 里的 owner/context/capability
-//! 组装逻辑。它返回 augmenter 输出 `AugmentedLaunchInput`，其中 owner/source
+//! 组装逻辑。它返回 augmenter 输出 `PromptAugmentInput`，其中 owner/source
 //! 只作为 `SessionConstructionPlan` 的输入种子；route 层不再承载 launch
 //! composition 主分支。
 
@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::ownership::SessionOwnerResolver;
-use agentdash_application::session::types::AugmentedLaunchInput;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, HookSnapshotReloadTrigger,
     LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
@@ -39,10 +38,10 @@ pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
     input: PromptAugmentInput,
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     let task_input = input.task.clone();
     let companion_input = input.companion.clone();
-    let mut req = input.into_augmented_launch_input();
+    let mut req = input;
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(state, req, companion).await;
     }
@@ -176,11 +175,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
 }
 
 fn apply_plain_lifecycle_request(
-    mut req: AugmentedLaunchInput,
+    mut req: PromptAugmentInput,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
@@ -196,14 +195,14 @@ fn apply_plain_lifecycle_request(
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: AugmentedLaunchInput,
+    mut req: PromptAugmentInput,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -283,13 +282,13 @@ async fn build_story_owner_prompt_request(
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: AugmentedLaunchInput,
+    mut req: PromptAugmentInput,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -392,9 +391,9 @@ async fn build_project_owner_prompt_request(
 async fn build_lifecycle_node_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: AugmentedLaunchInput,
+    req: PromptAugmentInput,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -460,9 +459,9 @@ async fn build_lifecycle_node_prompt_request(
 
 async fn build_companion_dispatch_prompt_request(
     state: &Arc<AppState>,
-    req: AugmentedLaunchInput,
+    req: PromptAugmentInput,
     companion: PromptAugmentCompanionInput,
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     if let Some(workflow) = companion.workflow {
         compose_companion_with_workflow_prompt(
             req,
@@ -577,13 +576,13 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: AugmentedLaunchInput,
+    req: PromptAugmentInput,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<PromptAugmentTaskInput>,
-) -> Result<AugmentedLaunchInput, ApiError> {
+) -> Result<PromptAugmentInput, ApiError> {
     let story = state
         .repos
         .story_repo

@@ -14,10 +14,12 @@ use agentdash_agent_protocol::{
 };
 use tokio::sync::broadcast;
 
+#[cfg(test)]
+use super::super::PromptAugmentInput;
 use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
-use super::super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
+use super::super::launch::{LaunchCommand, LaunchCommandOutcome};
 use super::super::prompt_pipeline::SessionLaunchExecutor;
 use super::super::types::*;
 use super::SessionHub;
@@ -365,10 +367,10 @@ impl SessionHub {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        req: AugmentedLaunchInput,
+        req: PromptAugmentInput,
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
-            .execute(session_id, None, req)
+            .execute_augmented_input_for_test(session_id, req)
             .await
     }
 
@@ -382,7 +384,8 @@ impl SessionHub {
         command: LaunchCommand,
     ) -> Result<String, ConnectorError> {
         Ok(self
-            .launch_command_with_outcome(session_id, command)
+            .launch_executor()
+            .execute_command(session_id, command)
             .await?
             .turn_id)
     }
@@ -392,82 +395,13 @@ impl SessionHub {
         session_id: &str,
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
-        let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
-        let continuation_context_frame = command.continuation_context_frame();
-        let reason = command.reason_tag();
-        let strictness = command.strictness();
-        let mut req = match strictness {
-            LaunchStrictness::Strict => {
-                let Some(augmenter) = self.current_prompt_augmenter().await else {
-                    return Err(ConnectorError::Runtime(format!(
-                        "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
-                    )));
-                };
-                augmenter
-                    .augment(session_id, command.into_augment_input())
-                    .await?
-            }
-            LaunchStrictness::Relaxed => {
-                self.augment_prompt_request(session_id, command.into_augment_input(), reason)
-                    .await?
-            }
-        };
-        if continuation_context_frame.is_some() {
-            req.continuation_context_frame = continuation_context_frame;
-        }
-        req.source_contract.launch_source = Some(reason.to_string());
-        req.source_contract.strictness = Some(
-            match strictness {
-                LaunchStrictness::Strict => "strict",
-                LaunchStrictness::Relaxed => "relaxed",
-            }
-            .to_string(),
-        );
-        let context_sources = req
-            .context_bundle
-            .as_ref()
-            .map(|bundle| {
-                bundle
-                    .iter_fragments()
-                    .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let turn_id = self
-            .launch_executor()
-            .execute(session_id, follow_up_session_id.as_deref(), req)
-            .await?;
-        Ok(LaunchCommandOutcome {
-            turn_id,
-            context_sources,
-        })
+        self.launch_executor()
+            .execute_command(session_id, command)
+            .await
     }
 
     fn launch_executor(&self) -> SessionLaunchExecutor<'_> {
         SessionLaunchExecutor::new(self)
-    }
-
-    /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。
-    ///
-    /// 没有注入 augmenter 的测试/嵌入场景保留旧行为，但正式 AppState
-    /// 应始终注入 augmenter，避免 owner / MCP / flow 上下文漂移。
-    pub(crate) async fn augment_prompt_request(
-        &self,
-        session_id: &str,
-        input: super::super::augmenter::PromptAugmentInput,
-        reason: &str,
-    ) -> Result<AugmentedLaunchInput, ConnectorError> {
-        match self.current_prompt_augmenter().await {
-            Some(augmenter) => augmenter.augment(session_id, input).await,
-            None => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    reason = %reason,
-                    "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
-                );
-                Ok(input.into_augmented_launch_input())
-            }
-        }
     }
 
     pub async fn subscribe_with_history(

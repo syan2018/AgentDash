@@ -8,6 +8,7 @@ use agentdash_spi::{
     SessionContextBundle,
 };
 
+use super::augmenter::PromptAugmentInput;
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
@@ -23,8 +24,8 @@ use super::launch::{
 use super::path_policy::resolve_working_dir;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    AugmentedLaunchInput, PendingCapabilityStateTransition, ResolvedPromptPayload, SessionMeta,
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
+    PendingCapabilityStateTransition, ResolvedPromptPayload, SessionMeta, SessionPromptLifecycle,
+    SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
 };
 
 pub(super) struct SessionLaunchPlanner<'a> {
@@ -39,7 +40,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
-    pub request: AugmentedLaunchInput,
+    pub request: PromptAugmentInput,
 }
 
 pub(super) struct PlannedSessionLaunch {

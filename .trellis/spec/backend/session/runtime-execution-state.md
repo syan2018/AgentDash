@@ -3,8 +3,8 @@
 ## 核心规则
 
 Session 启动后的"当前实际在跑什么"归属 `SessionRuntime.active_execution`。
-`PreparedLaunchPrompt` 是入口装配产物，`ExecutionContext` 是连接器投影，
-二者都不是运行态真相容器。
+`PromptAugmentInput` 是当前迁移期入口 augment payload，`ExecutionContext`
+是连接器投影，二者都不是运行态真相容器。
 
 2026-05 重构后，运行态事实按以下边界拆分：
 
@@ -47,7 +47,7 @@ Workflow phase / lifecycle hot update 必须从 `SessionRuntime.active_execution
 Hub 内部构造的 follow-up prompt（例如 hook auto-resume、companion parent
 resume）必须经过 `PromptRequestAugmenter` 或等价的 assembler/envelope 路径，
 以补齐 owner、VFS、MCP、CapabilityState、context bundle 等运行时字段。
-禁止在特化路径中手写半裸 `PreparedLaunchPrompt` 并手工拷贝部分状态。
+禁止在特化路径中手写半裸 prompt payload 并手工拷贝部分状态。
 
 ## Terminal Effects
 

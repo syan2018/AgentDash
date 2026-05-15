@@ -22,6 +22,7 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
+use super::super::PromptAugmentInput;
 use super::super::RuntimeCommandStatus;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
@@ -29,8 +30,8 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    AugmentedLaunchInput, HookSnapshotReloadTrigger, PendingCapabilityStateTransition,
-    SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionBootstrapState,
+    SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -47,8 +48,8 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> AugmentedLaunchInput {
-    let mut plan = AugmentedLaunchInput::from_user_input(UserPromptInput {
+fn simple_prompt_request(prompt: &str) -> PromptAugmentInput {
+    let mut plan = PromptAugmentInput::from_user_input(UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     });
@@ -56,7 +57,7 @@ fn simple_prompt_request(prompt: &str) -> AugmentedLaunchInput {
     plan
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> AugmentedLaunchInput {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PromptAugmentInput {
     let mut req = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
@@ -2151,8 +2152,8 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             &self,
             _session_id: &str,
             input: PromptAugmentInput,
-        ) -> Result<AugmentedLaunchInput, ConnectorError> {
-            let req = input.into_augmented_launch_input();
+        ) -> Result<PromptAugmentInput, ConnectorError> {
+            let req = input;
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = req
                 .user_input

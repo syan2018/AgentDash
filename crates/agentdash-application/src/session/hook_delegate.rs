@@ -911,7 +911,7 @@ fn format_turn_start_notice_frame(notice: &HookTurnStartNotice, content: &str) -
         );
     }
     format!(
-        "[CTX Legacy Notice]\nnotice_id: {}\nsource: {}\n\n{}",
+        "[CTX Notice]\nnotice_id: {}\nsource: {}\n\n{}",
         notice.id,
         notice.source.as_key(),
         content

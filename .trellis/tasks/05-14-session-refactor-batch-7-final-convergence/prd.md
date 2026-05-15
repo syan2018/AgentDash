@@ -12,7 +12,7 @@
 - 收窄 AppState / SessionHub 初始化中的延迟注入：ready state 返回前必须完成 prompt augmenter、audit bus、terminal callback、tool provider 等必要绑定；文档和类型上不得再把未 ready 状态暴露为正常运行态。
 - 将 `SessionHub` 剩余 public surface 明确分流到 core / runtime / effects / pending store 边界；只要 public shell 仍承载业务判断，本 Batch 就不能作为最终收口完成。
 - 运行最终验证矩阵，至少覆盖 application/api/infrastructure/local 的编译与核心 session tests。
-- 父任务只记录已完成代码收口和真实剩余风险；在 `AugmentedLaunchInput` 跨 crate、`SessionHub` 仍是业务入口、最终验证矩阵未通过前，不得记录最终完成状态。
+- 父任务只记录已完成代码收口和真实剩余风险；在 `PromptAugmentInput` 仍承载 construction / launch 产物、`SessionHub` 仍是业务入口、最终验证矩阵未通过前，不得记录最终完成状态。
 
 ## Acceptance Criteria
 

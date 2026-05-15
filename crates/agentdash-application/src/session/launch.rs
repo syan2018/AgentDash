@@ -107,18 +107,29 @@ impl LaunchCommand {
 
     fn requires_augment_input(input: UserPromptInput, source: LaunchSource) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
-                identity: None,
-                post_turn_handler: None,
-                task: None,
-                companion: None,
-            },
+            PromptAugmentInput::from_user_input(input),
             source,
             LaunchStrictness::Strict,
         )
+    }
+
+    fn augment_input_with(
+        input: UserPromptInput,
+        mcp_servers: Vec<SessionMcpServer>,
+        vfs: Option<Vfs>,
+        identity: Option<agentdash_spi::AuthIdentity>,
+        post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
+        task: Option<PromptAugmentTaskInput>,
+        companion: Option<PromptAugmentCompanionInput>,
+    ) -> PromptAugmentInput {
+        let mut augment_input = PromptAugmentInput::from_user_input(input);
+        augment_input.mcp_servers = mcp_servers;
+        augment_input.vfs = vfs;
+        augment_input.identity = identity;
+        augment_input.post_turn_handler = post_turn_handler;
+        augment_input.task = task;
+        augment_input.companion = companion;
+        augment_input
     }
 
     pub fn http_prompt_input(
@@ -126,15 +137,7 @@ impl LaunchCommand {
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
-                identity,
-                post_turn_handler: None,
-                task: None,
-                companion: None,
-            },
+            Self::augment_input_with(input, Vec::new(), None, identity, None, None, None),
             LaunchSource::HttpPrompt,
             LaunchStrictness::Strict,
         )
@@ -153,15 +156,7 @@ impl LaunchCommand {
         companion: PromptAugmentCompanionInput,
     ) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
-                identity: None,
-                post_turn_handler: None,
-                task: None,
-                companion: Some(companion),
-            },
+            Self::augment_input_with(input, Vec::new(), None, None, None, None, Some(companion)),
             LaunchSource::CompanionDispatch,
             LaunchStrictness::Strict,
         )
@@ -176,15 +171,7 @@ impl LaunchCommand {
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
-                identity,
-                post_turn_handler: None,
-                task: None,
-                companion: None,
-            },
+            Self::augment_input_with(input, Vec::new(), None, identity, None, None, None),
             LaunchSource::RoutineExecutor,
             LaunchStrictness::Strict,
         )
@@ -199,19 +186,19 @@ impl LaunchCommand {
         additional_prompt: Option<String>,
     ) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
+            Self::augment_input_with(
+                input,
+                Vec::new(),
+                None,
                 identity,
                 post_turn_handler,
-                task: Some(PromptAugmentTaskInput {
+                Some(PromptAugmentTaskInput {
                     phase: Some(phase),
                     override_prompt,
                     additional_prompt,
                 }),
-                companion: None,
-            },
+                None,
+            ),
             LaunchSource::TaskService,
             LaunchStrictness::Strict,
         )
@@ -223,15 +210,7 @@ impl LaunchCommand {
         vfs: Vfs,
     ) -> Self {
         Self::new(
-            PromptAugmentInput {
-                user_input: input,
-                request_mcp_servers: mcp_servers,
-                existing_vfs: Some(vfs),
-                identity: None,
-                post_turn_handler: None,
-                task: None,
-                companion: None,
-            },
+            Self::augment_input_with(input, mcp_servers, Some(vfs), None, None, None, None),
             LaunchSource::LocalRelayPrompt,
             LaunchStrictness::Relaxed,
         )

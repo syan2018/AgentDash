@@ -120,7 +120,7 @@ impl SessionHub {
 
     /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
     ///
-    /// **何时必须注入**：只要 SessionHub 会在内部构造 `AugmentedLaunchInput`（如
+    /// **何时必须注入**：只要 SessionHub 会在内部构造 `PromptAugmentInput`（如
     /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此增强器——否则
     /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
     ///
@@ -130,7 +130,7 @@ impl SessionHub {
     }
 
     /// 取出当前已注入的增强器（主要用于 hub 内部调用与测试检查）。
-    pub(super) async fn current_prompt_augmenter(&self) -> Option<SharedPromptRequestAugmenter> {
+    pub(crate) async fn current_prompt_augmenter(&self) -> Option<SharedPromptRequestAugmenter> {
         self.prompt_augmenter.read().await.clone()
     }
 

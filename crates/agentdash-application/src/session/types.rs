@@ -5,12 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
-use agentdash_spi::hooks::ContextFrame;
-use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
+use agentdash_spi::PromptPayload;
 use uuid::Uuid;
-
-use super::construction::SourceContractPlan;
-use super::ownership::ResolvedSessionOwner;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -25,57 +21,6 @@ pub struct UserPromptInput {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<agentdash_spi::AgentConfig>,
-}
-
-/// owner/context/capability augment 之后的 launch 输入。
-///
-/// 它不是 plan，也不是 session 构建事实源：owner/source 只作为 construction
-/// planner 的输入种子，VFS/MCP/capability/context 会在进入 `LaunchExecution`
-/// 前被投影为 `SessionConstructionPlan`。该类型只表达 augmenter 的当前输出，
-/// 不能扩展成新的长期架构边界。
-pub struct AugmentedLaunchInput {
-    pub user_input: UserPromptInput,
-    pub construction_owner: Option<ResolvedSessionOwner>,
-    pub source_contract: SourceContractPlan,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<agentdash_spi::CapabilityState>,
-    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
-    pub context_bundle: Option<SessionContextBundle>,
-    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
-    pub continuation_context_frame: Option<ContextFrame>,
-    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
-    ///
-    /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
-    /// route / frontend 只传原始用户输入。与 `SessionMeta.bootstrap_state` 不同 —
-    /// 后者是**持久化**的 session bootstrap 阶段标记（Plain/Pending/Bootstrapped），
-    /// 本字段仅是本轮 prompt 级别的 hook 触发器。
-    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
-    /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
-    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-    /// Turn 事件回调（替代 TurnMonitor）。
-    /// 由 task 执行层注入，在 session pipeline 事件流和终态时回调。
-    /// 为 None 时不执行任何回调（普通 session prompt 场景）。
-    pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
-}
-
-impl AugmentedLaunchInput {
-    /// 从 `UserPromptInput` 构造最小 augmented input，后端注入字段全部为空。
-    pub fn from_user_input(input: UserPromptInput) -> Self {
-        Self {
-            user_input: input,
-            construction_owner: None,
-            source_contract: SourceContractPlan::default(),
-            mcp_servers: Vec::new(),
-            vfs: None,
-            capability_state: None,
-            context_bundle: None,
-            continuation_context_frame: None,
-            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-            identity: None,
-            post_turn_handler: None,
-        }
-    }
 }
 
 /// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。

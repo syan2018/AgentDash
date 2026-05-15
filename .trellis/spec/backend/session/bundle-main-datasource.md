@@ -379,7 +379,7 @@ sequenceDiagram
 ### 相关 spec
 
 - [`session-startup-pipeline.md`](./session-startup-pipeline.md) — Bundle 如
-  何在装配阶段产出；`PreparedLaunchPrompt.context_bundle` 的唯一写入点。
+  何在装配阶段产出，以及迁移期 `PromptAugmentInput.context_bundle` 的删除约束。
 - [`execution-context-frames.md`](./execution-context-frames.md) —
   `TurnFrame.context_bundle` 的生命周期与 PiAgent 按 `bundle_id` 热更的消费
   流程。

@@ -33,15 +33,16 @@ LaunchCommand
 
 `PreparedLaunchPrompt` 已删除，不能重新引入。
 
-当前仍存在的迁移边界是 `AugmentedLaunchInput`：
+`AugmentedLaunchInput` 已删除，不能重新引入。
 
-- 它只能承载跨 crate launch 输入，不是 session 构建事实源；
-- 必须携带 owner/source 种子并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
-- 不允许被 `LaunchCommand` 持有；
-- 不允许从 `session::mod` 顶层 re-export；
-- 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造；
-- 不允许作为新的长期 service / route / adapter 公开契约；
-- 后续必须继续收缩到 `SessionConstructionPlanner / SessionLaunchPlanner / SessionLaunchExecutor` 内部，或删除。
+当前仍存在的迁移边界是 `PromptAugmentInput` 承载过多语义：
+
+- 它是 `LaunchCommand` 到 augmenter 的同一个 payload，不再允许拆出第二段跨 crate handoff；
+- 它可以暂时携带 owner/source 种子，并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
+- 它不是 session 构建事实源，也不是 launch plan；
+- 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
+- 不允许作为新的长期 service / route / adapter 公开契约扩张；
+- 后续必须把 construction / context / hook / post-turn 字段继续拆入 `SessionConstructionPlanner` / `LaunchExecution`，让 `PromptAugmentInput` 退回 source adapter 到 augmenter 的窄输入。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -59,7 +60,7 @@ LaunchCommand
 
 新增入口不得：
 
-- 直接构造 `AugmentedLaunchInput`；
+- 直接构造 `PromptAugmentInput` 或任何已增强 prompt payload；
 - 直接调用 `start_prompt_with_follow_up`；
 - 直接修改 prompt projection 字段来表达 owner/context/capability；
 - 在 route 层重建 Task / Story / Project 的 context 主线。
@@ -162,11 +163,14 @@ connector.prompt 失败时不得标记 applied；下一轮必须仍可恢复。
 rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedSessionInputs|finalize_request|LaunchCommand::.*_prepared|PromptSessionRequest|SessionLaunchIntent" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "PreparedLaunchPrompt" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-rg -n "AugmentedLaunchInput" crates/agentdash-api/src/routes crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine
+rg -n "AugmentedLaunchInput|into_augmented_launch_input" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "PromptAugmentInput" crates/agentdash-api/src/routes crates/agentdash-local/src crates/agentdash-application/src/task crates/agentdash-application/src/workflow crates/agentdash-application/src/routine
 cargo check -p agentdash-application
 cargo check -p agentdash-api
 cargo test -p agentdash-application session::launch
 cargo test -p agentdash-application session::construction
 ```
 
-`PreparedLaunchPrompt` 必须保持归零。`AugmentedLaunchInput` 在最终态不能作为公共主链路边界；迁移期若仍有命中，必须仅位于本 spec 的“当前迁移边界”内，并在 task tracker 中列出删除点。
+`PreparedLaunchPrompt` 与 `AugmentedLaunchInput` 必须保持归零。`PromptAugmentInput`
+在最终态不能承载 construction / launch 产物；迁移期若入口层仍有命中，必须在
+task tracker 中列出删除点。

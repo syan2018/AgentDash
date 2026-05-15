@@ -15,15 +15,17 @@
 //! 5 条路径共享 4 个"策略轴":owner scope mount / context bundle 生成 /
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
-//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口只返回
-//! `AugmentedLaunchInput`，不再暴露半成品 request 类型:
+//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口暂时合入
+//! `PromptAugmentInput` 这个迁移 payload:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → AugmentedLaunchInput
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → PromptAugmentInput
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
 //! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
+//! 后续必须继续把这些字段拆入 `SessionConstructionPlan` / `LaunchExecution`，
+//! 不能把 `PromptAugmentInput` 当作最终主链路边界。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -59,9 +61,10 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
+use crate::session::PromptAugmentInput;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{AugmentedLaunchInput, HookSnapshotReloadTrigger, UserPromptInput};
+use crate::session::types::{HookSnapshotReloadTrigger, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -77,7 +80,7 @@ use crate::workspace::BackendAvailability;
 // SECTION 1:内部 builder prompt 投影
 // ═══════════════════════════════════════════════════════════════════
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进一个 base `AugmentedLaunchInput`。
+/// 把 `SessionAssemblyBuilder` 的累积声明合并进一个 base `PromptAugmentInput`。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -101,9 +104,9 @@ use crate::workspace::BackendAvailability;
 /// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
 /// `with_post_turn_handler` 注入，`apply_session_assembly` 统一合入，单一装配节拍保证不漏。
 fn apply_session_assembly(
-    base: AugmentedLaunchInput,
+    base: PromptAugmentInput,
     prepared: SessionAssemblyBuilder,
-) -> AugmentedLaunchInput {
+) -> PromptAugmentInput {
     let mut req = base;
     if let Some(blocks) = prepared.prompt_blocks {
         req.user_input.prompt_blocks = Some(blocks);
@@ -149,7 +152,7 @@ fn apply_session_assembly(
 /// 声明式 session 装配 builder。
 ///
 /// 将 session 启动拆为 6 个正交关注点（VFS / 能力 / MCP / 系统上下文 / Prompt / 工作流），
-/// 每个关注点通过独立的 `with_*` 方法注入，最终只投影为 `AugmentedLaunchInput`。
+/// 每个关注点通过独立的 `with_*` 方法注入，最终只投影为 `PromptAugmentInput`。
 ///
 /// ## 设计原则
 ///
@@ -1126,9 +1129,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_owner_bootstrap_prompt(
         &self,
-        base: AugmentedLaunchInput,
+        base: PromptAugmentInput,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<AugmentedLaunchInput, String> {
+    ) -> Result<PromptAugmentInput, String> {
         self.compose_owner_bootstrap(spec)
             .await
             .map(|prepared| apply_session_assembly(base, prepared))
@@ -1145,7 +1148,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// `AugmentedLaunchInput` 后交 `session_hub.start_prompt` 派发。
+    /// `PromptAugmentInput` 后交 launch executor 派发。
     async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -1392,9 +1395,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_story_step_prompt(
         &self,
-        base: AugmentedLaunchInput,
+        base: PromptAugmentInput,
         spec: StoryStepSpec<'_>,
-    ) -> Result<AugmentedLaunchInput, TaskExecutionError> {
+    ) -> Result<PromptAugmentInput, TaskExecutionError> {
         self.compose_story_step(spec)
             .await
             .map(|prepared| apply_session_assembly(base, prepared))
@@ -1402,9 +1405,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_lifecycle_node_prompt(
         &self,
-        base: AugmentedLaunchInput,
+        base: PromptAugmentInput,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<AugmentedLaunchInput, String> {
+    ) -> Result<PromptAugmentInput, String> {
         compose_lifecycle_node_prompt_with_audit(
             base,
             self.repos,
@@ -1418,30 +1421,30 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub fn compose_companion_prompt(
         &self,
-        base: AugmentedLaunchInput,
+        base: PromptAugmentInput,
         spec: CompanionSpec<'_>,
-    ) -> AugmentedLaunchInput {
+    ) -> PromptAugmentInput {
         compose_companion_prompt(base, spec)
     }
 }
 
 pub async fn compose_lifecycle_node_prompt(
-    base: AugmentedLaunchInput,
+    base: PromptAugmentInput,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
-) -> Result<AugmentedLaunchInput, String> {
+) -> Result<PromptAugmentInput, String> {
     compose_lifecycle_node_prompt_with_audit(base, repos, platform_config, spec, None, None).await
 }
 
 pub async fn compose_lifecycle_node_prompt_with_audit(
-    base: AugmentedLaunchInput,
+    base: PromptAugmentInput,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<AugmentedLaunchInput, String> {
+) -> Result<PromptAugmentInput, String> {
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
         .map(|prepared| apply_session_assembly(base, prepared))
@@ -1645,9 +1648,9 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
 }
 
 pub fn compose_companion_prompt(
-    base: AugmentedLaunchInput,
+    base: PromptAugmentInput,
     spec: CompanionSpec<'_>,
-) -> AugmentedLaunchInput {
+) -> PromptAugmentInput {
     apply_session_assembly(base, compose_companion(spec))
 }
 
@@ -1872,11 +1875,11 @@ async fn compose_companion_with_workflow(
 }
 
 pub async fn compose_companion_with_workflow_prompt(
-    base: AugmentedLaunchInput,
+    base: PromptAugmentInput,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<AugmentedLaunchInput, String> {
+) -> Result<PromptAugmentInput, String> {
     compose_companion_with_workflow(repos, platform_config, spec)
         .await
         .map(|prepared| apply_session_assembly(base, prepared))
@@ -2352,8 +2355,8 @@ mod tests {
             )
         }
 
-        fn base_req() -> AugmentedLaunchInput {
-            AugmentedLaunchInput::from_user_input(UserPromptInput::from_text("ping"))
+        fn base_req() -> PromptAugmentInput {
+            PromptAugmentInput::from_user_input(UserPromptInput::from_text("ping"))
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {

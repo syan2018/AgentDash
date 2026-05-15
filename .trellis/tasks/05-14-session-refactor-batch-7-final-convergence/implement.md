@@ -10,7 +10,11 @@
 - [x] 收窄 AppState / SessionHub ready 初始化边界。
 - [x] 更新 parent task notes，记录当前状态与剩余真实风险。
 - [x] 删除 `SessionLaunchPlan` 代码实体与“plan”语义命名，避免它继续伪装成最终 launch plan。
-- [ ] 继续删除 `AugmentedLaunchInput` 跨 crate handoff 与 bootstrap 输出。
+- [x] 将 `LaunchCommand` augment/dispatch 分支从 `SessionHub` facade 移入 `SessionLaunchExecutor::execute_command`。
+- [x] 删除 `AugmentedLaunchInput` 代码实体、跨 crate handoff 与 bootstrap 输出。
+  - `PromptAugmentInput` 现在是 `LaunchCommand` 到 augmenter 的同一 payload，不再存在 `PromptAugmentInput -> AugmentedLaunchInput` 二段 handoff。
+  - 这不是最终态：`PromptAugmentInput` 仍临时承载 construction seed、context bundle、hook trigger 与 post-turn handler，后续必须继续拆入 `SessionConstructionPlan` / `LaunchExecution`。
+  - `SessionLaunchExecutor` 生产入口已收缩为 `execute_command(LaunchCommand)`；已完成 augment 的执行段只保留私有方法与测试专用 wrapper。
 - [x] 将 `bootstrap/session_context_query.rs` 与 launch construction planner 合流。
   - Task / Story / Project 的 VFS、capability、context snapshot projection 已迁入 `SessionConstructionPlanner`。
   - API 侧仅保留权限校验、session meta 读取、DTO 投影与 `runtime_surface` 展示态补全。
@@ -44,4 +48,4 @@ Known warning: `crates/agentdash-application/src/canvas/management.rs` still has
 
 - 分支可 review。
 - 本轮已执行 batch 的事实、验证和剩余风险都在 Trellis task 中可追溯。
-- 只要 `AugmentedLaunchInput`、`SessionHub` 或 context query 仍是生产主线差池，本 Batch 只能保持 `in_progress`。
+- 只要 `PromptAugmentInput` 仍承载 construction / launch 产物、`SessionHub` 仍是业务入口，或最终验证矩阵未通过，本 Batch 只能保持 `in_progress`。

@@ -15,12 +15,12 @@ use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::SessionHub;
 use crate::session::types::{
-    PromptSessionRequest, SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
+    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
 };
 use crate::session::{
-    AgentLevelMcp, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionRequestAssembler,
-    finalize_request,
+    AgentLevelMcp, LaunchCommand, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+    SessionRequestAssembler,
 };
 use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
@@ -241,7 +241,7 @@ impl RoutineExecutor {
             .resolve_session_id(routine, execution)
             .await
             .map_err(|err| format!("解析 Routine session 失败: {err}"))?;
-        let req = self
+        let command = self
             .build_project_agent_prompt_request(&session_id, routine, agent_context, prompt)
             .await?;
 
@@ -250,7 +250,7 @@ impl RoutineExecutor {
 
         let _turn_id = self
             .session_hub
-            .launch_routine_prompt(&session_id, req)
+            .launch_command(&session_id, command)
             .await
             .map_err(|e| format!("发送 prompt 失败: {e}"))?;
 
@@ -474,19 +474,23 @@ impl RoutineExecutor {
         routine: &Routine,
         agent_context: &RoutineAgentContext,
         prompt: &str,
-    ) -> Result<PromptSessionRequest, String> {
+    ) -> Result<LaunchCommand, String> {
         let meta = self
             .session_hub
             .get_session_meta(session_id)
             .await
             .map_err(|e| format!("读取 session meta 失败: {e}"))?
             .ok_or_else(|| format!("session {session_id} 不存在"))?;
-        let has_live_runtime = self.session_hub.has_live_runtime(session_id).await;
+        let has_live_executor_session =
+            self.session_hub.has_live_executor_session(session_id).await;
         let supports_repository_restore = self
             .connector
             .supports_repository_restore(agent_context.executor_config.executor.as_str());
-        let kind =
-            resolve_session_prompt_lifecycle(&meta, has_live_runtime, supports_repository_restore);
+        let kind = resolve_session_prompt_lifecycle(
+            &meta,
+            has_live_executor_session,
+            supports_repository_restore,
+        );
 
         // Routine 的 prompt 是纯文本模板渲染结果 —— 包成单 text block 作为 user_prompt_blocks
         let user_prompt_blocks = vec![serde_json::json!({
@@ -536,7 +540,6 @@ impl RoutineExecutor {
             assembler = assembler.with_audit_bus(bus.clone());
         }
 
-        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(prompt));
         let mut prepared = assembler
             .compose_owner_bootstrap(OwnerBootstrapSpec {
                 owner: OwnerScope::Project {
@@ -570,9 +573,10 @@ impl RoutineExecutor {
             routine.id,
         ));
 
-        let mut req = finalize_request(base, prepared);
-        req.continuation_context_frame = continuation_context_frame;
-        Ok(req)
+        Ok(
+            LaunchCommand::routine_executor_prepared(UserPromptInput::from_text(prompt), prepared)
+                .with_continuation_context_frame(continuation_context_frame),
+        )
     }
 }
 

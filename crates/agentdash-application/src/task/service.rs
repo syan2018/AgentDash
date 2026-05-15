@@ -15,8 +15,8 @@ use crate::canvas::append_visible_canvas_mounts;
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
-    StoryStepPhase, StoryStepSpec, UserPromptInput, finalize_request,
+    LaunchCommand, SessionExecutionState, SessionHub, SessionRequestAssembler, StoryStepPhase,
+    StoryStepSpec, UserPromptInput,
 };
 use crate::task::lock::TaskLockMap;
 use crate::vfs::RelayVfsService;
@@ -264,7 +264,6 @@ impl StoryStepActivationService {
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
         }
 
-        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
         let context_sources = prepared.source_summary.clone();
         // PR 1 Phase 1d：identity / post_turn_handler 从"finalize 后手工赋值"迁移到
         // "PreparedSessionInputs 前置赋值"，由 finalize_request 统一合入 req，
@@ -279,9 +278,10 @@ impl StoryStepActivationService {
             },
         )
             as crate::session::post_turn_handler::DynPostTurnHandler);
-        let req = finalize_request(base, prepared);
+        let command =
+            LaunchCommand::task_service_prepared(UserPromptInput::from_text(""), prepared);
 
-        let turn_id = match self.hub.launch_task_prompt(&session_id, req).await {
+        let turn_id = match self.hub.launch_command(&session_id, command).await {
             Ok(turn_id) => turn_id,
             Err(err) => {
                 if phase == ExecutionPhase::Start {

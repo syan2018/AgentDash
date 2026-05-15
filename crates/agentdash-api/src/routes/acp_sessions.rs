@@ -18,12 +18,17 @@ use tokio::time::MissedTickBehavior;
 use crate::bootstrap::prompt_augmenter::decode_augmented_runtime_error;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::canvas::append_visible_canvas_mounts;
+use agentdash_application::session::construction::{
+    SessionConstructionContextProjection, SessionConstructionPlan,
+};
 use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
-    AgentLevelMcp, HookSnapshotReloadTrigger, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    PromptSessionRequest, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    UserPromptInput, finalize_request, resolve_session_prompt_lifecycle,
+    AgentLevelMcp, HookSnapshotReloadTrigger, LaunchCommand, OwnerBootstrapSpec,
+    OwnerPromptLifecycle, OwnerScope, PreparedLaunchPrompt, PromptAugmentInput,
+    SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, UserPromptInput, finalize_request,
+    resolve_session_prompt_lifecycle,
 };
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
@@ -437,7 +442,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Pending,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -463,7 +467,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -495,7 +498,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -521,7 +523,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -529,6 +530,42 @@ mod tests {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             )
+        );
+    }
+
+    #[test]
+    fn pick_primary_session_binding_uses_unified_task_story_project_priority() {
+        let project_id = uuid::Uuid::new_v4();
+        let session_id = "sess-owner-priority".to_string();
+        let task_binding = agentdash_domain::session_binding::SessionBinding::new(
+            project_id,
+            session_id.clone(),
+            SessionOwnerType::Task,
+            uuid::Uuid::new_v4(),
+            "task",
+        );
+        let story_binding = agentdash_domain::session_binding::SessionBinding::new(
+            project_id,
+            session_id.clone(),
+            SessionOwnerType::Story,
+            uuid::Uuid::new_v4(),
+            "story",
+        );
+        let project_binding = agentdash_domain::session_binding::SessionBinding::new(
+            project_id,
+            session_id,
+            SessionOwnerType::Project,
+            uuid::Uuid::new_v4(),
+            "project",
+        );
+
+        let bindings = vec![task_binding, story_binding, project_binding];
+        let primary = pick_primary_session_binding(&bindings).expect("primary binding");
+
+        assert_eq!(
+            primary.owner_type,
+            SessionOwnerType::Task,
+            "context query 应与 launch augment 共用 Task -> Story -> Project owner priority"
         );
     }
 }
@@ -586,7 +623,7 @@ pub async fn get_session_context(
     )
     .await?;
 
-    let Some(primary) = pick_primary_session_binding(&bindings) else {
+    let Some(owner) = SessionOwnerResolver::resolve_primary(&bindings) else {
         return Ok(Json(SessionContextResponse {
             workspace_id: None,
             agent_binding: None,
@@ -597,9 +634,9 @@ pub async fn get_session_context(
         }));
     };
 
-    match primary.owner_type {
+    let plan = match owner.owner_type {
         SessionOwnerType::Task => {
-            let task_id = primary.owner_id;
+            let task_id = owner.owner_id;
             let (task, _, _) = load_task_story_project_with_permission(
                 state.as_ref(),
                 &current_user,
@@ -651,17 +688,21 @@ pub async fn get_session_context(
             } else {
                 None
             };
-            Ok(Json(SessionContextResponse {
-                workspace_id: task.workspace_id.map(|id| id.to_string()),
-                agent_binding: Some(result.agent_binding),
-                vfs: resolved_vfs,
-                runtime_surface,
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                session_capabilities: capabilities,
-            }))
+            SessionConstructionPlan::new(
+                session_id,
+                owner,
+                SessionConstructionContextProjection {
+                    workspace_id: task.workspace_id,
+                    agent_binding: Some(result.agent_binding),
+                    vfs: resolved_vfs,
+                    runtime_surface,
+                    context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                    session_capabilities: capabilities,
+                },
+            )
         }
         SessionOwnerType::Story => {
-            let story_id = primary.owner_id;
+            let story_id = owner.owner_id;
             let (story, _) = load_story_and_project_with_permission(
                 state.as_ref(),
                 &current_user,
@@ -691,17 +732,21 @@ pub async fn get_session_context(
             } else {
                 None
             };
-            Ok(Json(SessionContextResponse {
-                workspace_id: None,
-                agent_binding: None,
-                vfs: resolved_vfs,
-                runtime_surface,
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                session_capabilities: capabilities,
-            }))
+            SessionConstructionPlan::new(
+                session_id,
+                owner,
+                SessionConstructionContextProjection {
+                    workspace_id: None,
+                    agent_binding: None,
+                    vfs: resolved_vfs,
+                    runtime_surface,
+                    context_snapshot: built_context.and_then(|context| context.context_snapshot),
+                    session_capabilities: capabilities,
+                },
+            )
         }
         SessionOwnerType::Project => {
-            let project_id = primary.owner_id;
+            let project_id = owner.owner_id;
             let project = load_project_with_permission(
                 state.as_ref(),
                 &current_user,
@@ -713,7 +758,7 @@ pub async fn get_session_context(
                 &state,
                 &project,
                 &session_id,
-                &primary.label,
+                &owner.label,
             )
             .await?;
             let capabilities =
@@ -733,14 +778,34 @@ pub async fn get_session_context(
             } else {
                 None
             };
-            Ok(Json(SessionContextResponse {
-                workspace_id: None,
-                agent_binding: None,
-                vfs: built_context.vfs.clone(),
-                runtime_surface,
-                context_snapshot: built_context.context_snapshot,
-                session_capabilities: capabilities,
-            }))
+            SessionConstructionPlan::new(
+                session_id,
+                owner,
+                SessionConstructionContextProjection {
+                    workspace_id: None,
+                    agent_binding: None,
+                    vfs: built_context.vfs,
+                    runtime_surface,
+                    context_snapshot: built_context.context_snapshot,
+                    session_capabilities: capabilities,
+                },
+            )
+        }
+    };
+
+    Ok(Json(SessionContextResponse::from_construction_plan(plan)))
+}
+
+impl SessionContextResponse {
+    fn from_construction_plan(plan: SessionConstructionPlan) -> Self {
+        let projection = plan.context_projection;
+        Self {
+            workspace_id: projection.workspace_id.map(|id| id.to_string()),
+            agent_binding: projection.agent_binding,
+            vfs: projection.vfs,
+            runtime_surface: projection.runtime_surface,
+            context_snapshot: projection.context_snapshot,
+            session_capabilities: projection.session_capabilities,
         }
     }
 }
@@ -748,21 +813,7 @@ pub async fn get_session_context(
 pub(crate) fn pick_primary_session_binding(
     bindings: &[agentdash_domain::session_binding::SessionBinding],
 ) -> Option<&agentdash_domain::session_binding::SessionBinding> {
-    // 与 `SessionPage.tsx` 中 `sessionOwnerBinding` 一致：project → story → task → 首个
-    bindings
-        .iter()
-        .find(|b| b.owner_type == SessionOwnerType::Project)
-        .or_else(|| {
-            bindings
-                .iter()
-                .find(|b| b.owner_type == SessionOwnerType::Story)
-        })
-        .or_else(|| {
-            bindings
-                .iter()
-                .find(|b| b.owner_type == SessionOwnerType::Task)
-        })
-        .or_else(|| bindings.first())
+    SessionOwnerResolver::select_primary_binding(bindings)
 }
 
 pub async fn get_session_bindings(
@@ -927,12 +978,13 @@ pub async fn prompt_session(
     // PR 1 Phase 1d：identity 前置注入到 base req —— augment 内部 build_*_owner_prompt_request
     // 通过 `mut req` 透传，finalize_request 因 `prepared.identity=None` 自然保留 base.identity，
     // 无需修改 augment trait 签名或跨函数 identity 形参链。
-    let mut base_req = PromptSessionRequest::from_user_input(user_input);
-    base_req.identity = Some(current_user);
     let turn_id = state
         .services
         .session_hub
-        .launch_http_prompt(&session_id, base_req)
+        .launch_command(
+            &session_id,
+            LaunchCommand::http_prompt_input(user_input, Some(current_user)),
+        )
         .await
         .map_err(|e| match e {
             agentdash_spi::ConnectorError::InvalidConfig(msg) => ApiError::BadRequest(msg),
@@ -950,8 +1002,9 @@ pub async fn prompt_session(
 pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
-    req: PromptSessionRequest,
-) -> Result<PromptSessionRequest, ApiError> {
+    input: PromptAugmentInput,
+) -> Result<PreparedLaunchPrompt, ApiError> {
+    let req = input.into_prepared_prompt();
     let meta = state
         .services
         .session_hub
@@ -971,10 +1024,10 @@ pub(crate) async fn augment_prompt_request_for_owner(
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
-    let has_live_runtime = state
+    let has_live_executor_session = state
         .services
         .session_hub
-        .has_live_runtime(session_id)
+        .has_live_executor_session(session_id)
         .await;
     let supports_repository_restore = effective_executor.as_ref().is_some_and(|config| {
         state
@@ -982,82 +1035,84 @@ pub(crate) async fn augment_prompt_request_for_owner(
             .connector
             .supports_repository_restore(config.executor.as_str())
     });
-    let lifecycle_kind =
-        resolve_session_prompt_lifecycle(&meta, has_live_runtime, supports_repository_restore);
+    let lifecycle_kind = resolve_session_prompt_lifecycle(
+        &meta,
+        has_live_executor_session,
+        supports_repository_restore,
+    );
 
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Task)
-    {
-        return build_task_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            binding.owner_id,
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
-    }
+    if let Some(binding) = SessionOwnerResolver::select_primary_binding(&bindings) {
+        match binding.owner_type {
+            SessionOwnerType::Task => {
+                return build_task_owner_prompt_request(
+                    state,
+                    session_id,
+                    req,
+                    binding.owner_id,
+                    &meta,
+                    lifecycle_kind,
+                    &visible_canvas_mount_ids,
+                )
+                .await;
+            }
+            SessionOwnerType::Story => {
+                let story = state
+                    .repos
+                    .story_repo
+                    .get_by_id(binding.owner_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .ok_or_else(|| {
+                        ApiError::NotFound(format!("Story {} 不存在", binding.owner_id))
+                    })?;
+                let project = state
+                    .repos
+                    .project_repo
+                    .get_by_id(story.project_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .ok_or_else(|| {
+                        ApiError::NotFound(format!("Project {} 不存在", story.project_id))
+                    })?;
+                let workspace = resolve_project_workspace(state, &project).await?;
 
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Story)
-    {
-        let story = state
-            .repos
-            .story_repo
-            .get_by_id(binding.owner_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
-        let project = state
-            .repos
-            .project_repo
-            .get_by_id(story.project_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
-        let workspace = resolve_project_workspace(state, &project).await?;
+                return build_story_owner_prompt_request(
+                    state,
+                    session_id,
+                    req,
+                    &story,
+                    &project,
+                    workspace.as_ref(),
+                    &meta,
+                    lifecycle_kind,
+                    &visible_canvas_mount_ids,
+                )
+                .await;
+            }
+            SessionOwnerType::Project => {
+                let project = state
+                    .repos
+                    .project_repo
+                    .get_by_id(binding.owner_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .ok_or_else(|| {
+                        ApiError::NotFound(format!("Project {} 不存在", binding.owner_id))
+                    })?;
 
-        return build_story_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            &story,
-            &project,
-            workspace.as_ref(),
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
-    }
-
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Project)
-    {
-        let project = state
-            .repos
-            .project_repo
-            .get_by_id(binding.owner_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", binding.owner_id)))?;
-
-        return build_project_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            &project,
-            &binding.label,
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
+                return build_project_owner_prompt_request(
+                    state,
+                    session_id,
+                    req,
+                    &project,
+                    &binding.label,
+                    &meta,
+                    lifecycle_kind,
+                    &visible_canvas_mount_ids,
+                )
+                .await;
+            }
+        }
     }
 
     if let SessionPromptLifecycle::RepositoryRehydrate(
@@ -1078,7 +1133,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
 }
 
 fn finalize_augmented_request(
-    req: &mut PromptSessionRequest,
+    req: &mut PreparedLaunchPrompt,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
     prompt_blocks: Vec<serde_json::Value>,
@@ -1102,11 +1157,11 @@ fn finalize_augmented_request(
 }
 
 fn apply_plain_lifecycle_request(
-    mut req: PromptSessionRequest,
+    mut req: PreparedLaunchPrompt,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<PromptSessionRequest, ApiError> {
+) -> Result<PreparedLaunchPrompt, ApiError> {
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
@@ -1122,14 +1177,14 @@ fn apply_plain_lifecycle_request(
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptSessionRequest,
+    mut req: PreparedLaunchPrompt,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
+) -> Result<PreparedLaunchPrompt, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -1210,13 +1265,13 @@ async fn build_story_owner_prompt_request(
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptSessionRequest,
+    mut req: PreparedLaunchPrompt,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
+) -> Result<PreparedLaunchPrompt, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -1390,12 +1445,12 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptSessionRequest,
+    mut req: PreparedLaunchPrompt,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
+) -> Result<PreparedLaunchPrompt, ApiError> {
     // M1-b：Task 查询经 Story aggregate
     let story = state
         .repos

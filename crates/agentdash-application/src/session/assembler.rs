@@ -18,7 +18,7 @@
 //! 因此设计上采用**组合器+平坦末端**而非 sum type:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → PreparedSessionInputs(平坦) → finalize_request → PromptSessionRequest
+//! 4 个 compose fn(各自 Spec) → PreparedSessionInputs(平坦) → finalize_request → PreparedLaunchPrompt
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -60,7 +60,7 @@ use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{HookSnapshotReloadTrigger, PromptSessionRequest, UserPromptInput};
+use crate::session::types::{HookSnapshotReloadTrigger, PreparedLaunchPrompt, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -76,7 +76,7 @@ use crate::workspace::BackendAvailability;
 // SECTION 1:末端统一结构 PreparedSessionInputs + finalize_request
 // ═══════════════════════════════════════════════════════════════════
 
-/// compose 函数对 `PromptSessionRequest` 的全部后端注入字段的平坦表示。
+/// compose 函数对 `PreparedLaunchPrompt` 的全部后端注入字段的平坦表示。
 ///
 /// ## 字段分组
 ///
@@ -115,7 +115,7 @@ pub struct PreparedSessionInputs {
     pub source_summary: Vec<String>,
 }
 
-/// 把 `PreparedSessionInputs` 合并进一个 base `PromptSessionRequest`。
+/// 把 `PreparedSessionInputs` 合并进一个 base `PreparedLaunchPrompt`。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -139,9 +139,9 @@ pub struct PreparedSessionInputs {
 /// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
 /// `with_post_turn_handler` 注入，`finalize_request` 统一合入，单一装配节拍保证不漏。
 pub fn finalize_request(
-    base: PromptSessionRequest,
+    base: PreparedLaunchPrompt,
     prepared: PreparedSessionInputs,
-) -> PromptSessionRequest {
+) -> PreparedLaunchPrompt {
     let mut req = base;
     if let Some(blocks) = prepared.prompt_blocks {
         req.user_input.prompt_blocks = Some(blocks);
@@ -1195,7 +1195,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `PreparedSessionInputs`；调用方通过 `finalize_request` 合入 base
-    /// `PromptSessionRequest` 后交 `session_hub.start_prompt` 派发。
+    /// `PreparedLaunchPrompt` 后交 `session_hub.start_prompt` 派发。
     pub async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -2351,6 +2351,31 @@ mod tests {
             Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
         };
         use agentdash_spi::Vfs;
+        use std::sync::Arc;
+
+        struct NoopPostTurnHandler;
+
+        #[async_trait::async_trait]
+        impl crate::session::post_turn_handler::PostTurnHandler for NoopPostTurnHandler {
+            async fn on_event(
+                &self,
+                _session_id: &str,
+                _envelope: &agentdash_agent_protocol::BackboneEnvelope,
+            ) {
+            }
+
+            async fn execute_effects(
+                &self,
+                _session_id: &str,
+                _turn_id: &str,
+                _effects: &[agentdash_spi::hooks::HookEffect],
+            ) {
+            }
+
+            fn supported_effect_kinds(&self) -> &[&str] {
+                &[]
+            }
+        }
 
         fn minimal_workspace() -> Workspace {
             Workspace::new(
@@ -2362,8 +2387,8 @@ mod tests {
             )
         }
 
-        fn base_req() -> PromptSessionRequest {
-            PromptSessionRequest::from_user_input(UserPromptInput::from_text("ping"))
+        fn base_req() -> PreparedLaunchPrompt {
+            PreparedLaunchPrompt::from_user_input(UserPromptInput::from_text("ping"))
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
@@ -2605,6 +2630,50 @@ mod tests {
                 result.identity.as_ref().map(|i| i.user_id.as_str()),
                 Some("alice"),
                 "prepared.identity=None 时 base.identity 应被保留"
+            );
+        }
+
+        #[test]
+        fn post_turn_handler_prepared_overrides_base() {
+            let mut base = base_req();
+            let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
+                Arc::new(NoopPostTurnHandler);
+            base.post_turn_handler = Some(base_handler.clone());
+            let prepared_handler: crate::session::post_turn_handler::DynPostTurnHandler =
+                Arc::new(NoopPostTurnHandler);
+            let prepared = PreparedSessionInputs {
+                post_turn_handler: Some(prepared_handler.clone()),
+                ..Default::default()
+            };
+
+            let result = finalize_request(base, prepared);
+            let result_handler = result
+                .post_turn_handler
+                .expect("prepared handler should be present");
+            assert!(
+                Arc::ptr_eq(&result_handler, &prepared_handler),
+                "prepared.post_turn_handler=Some 时应覆盖 base handler"
+            );
+            assert!(
+                !Arc::ptr_eq(&result_handler, &base_handler),
+                "base handler 不应在 prepared handler 存在时保留"
+            );
+        }
+
+        #[test]
+        fn post_turn_handler_prepared_none_preserves_base() {
+            let mut base = base_req();
+            let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
+                Arc::new(NoopPostTurnHandler);
+            base.post_turn_handler = Some(base_handler.clone());
+
+            let result = finalize_request(base, PreparedSessionInputs::default());
+            let result_handler = result
+                .post_turn_handler
+                .expect("base handler should be preserved");
+            assert!(
+                Arc::ptr_eq(&result_handler, &base_handler),
+                "prepared.post_turn_handler=None 时应保留 base handler"
             );
         }
 

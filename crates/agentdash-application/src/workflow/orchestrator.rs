@@ -21,8 +21,7 @@ use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::hub::PendingRuntimeContextTransitionInput;
 use crate::session::{
-    LifecycleNodeSpec, PromptSessionRequest, UserPromptInput, compose_lifecycle_node_with_audit,
-    finalize_request,
+    LaunchCommand, LifecycleNodeSpec, UserPromptInput, compose_lifecycle_node_with_audit,
 };
 
 use super::session_association::{
@@ -839,11 +838,11 @@ impl LifecycleOrchestrator {
         )
         .await?;
 
-        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
-        let req = finalize_request(base, prepared);
+        let command =
+            LaunchCommand::workflow_orchestrator_prepared(UserPromptInput::from_text(""), prepared);
 
         self.session_hub
-            .launch_workflow_prompt(session_id, req)
+            .launch_command(session_id, command)
             .await
             .map_err(|e| format!("自动启动 node session prompt 失败: {e}"))?;
         Ok(())

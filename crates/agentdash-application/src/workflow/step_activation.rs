@@ -3,7 +3,7 @@
 //! 把分散在 `plan_builder` / `session_runtime_inputs` / `turn_context` /
 //! `orchestrator` / `advance_node` 五处的"查 workflow → 算 capabilities →
 //! 调 Resolver → 拼 MCP list → 拼 kickoff prompt → 构建 lifecycle mount"收敛
-//! 到同一纯函数,消费者通过 applier 把产物写入不同目标(`PromptSessionRequest` /
+//! 到同一纯函数,消费者通过 applier 把产物写入不同目标(`PreparedLaunchPrompt` /
 //! 新 session bootstrap / 热更新运行中 session)。
 //!
 //! ## 设计原则
@@ -305,14 +305,14 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 //
 // 当前已提供 A / C；B 仍待后续把 orchestrator 的 session 创建流程进一步收口。
 
-/// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PromptSessionRequest`。
+/// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PreparedLaunchPrompt`。
 ///
 /// 调用方负责提供 base `req`(携带 user input + executor_config 等);本函数只写
 /// `vfs / capability_state / mcp_servers` 字段。
 /// kickoff_prompt 由调用方按需调 `activation.kickoff_prompt.to_default_prompt()` 拼进 user input。
 pub fn apply_to_prompt_request(
     activation: &StepActivation,
-    req: &mut crate::session::PromptSessionRequest,
+    req: &mut crate::session::PreparedLaunchPrompt,
 ) {
     req.vfs = Some(compose_vfs_with_overlay_and_directives(
         req.vfs.as_ref(),

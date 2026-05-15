@@ -757,5 +757,4 @@ pub trait AgentConnector: Send + Sync {
             self.connector_id()
         )))
     }
-
 }

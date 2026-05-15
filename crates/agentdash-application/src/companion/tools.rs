@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::session::{
-    CompanionSessionContext, PromptSessionRequest, SessionHub, UserPromptInput,
-    build_hook_trace_envelope,
+    CompanionSessionContext, LaunchCommand, SessionHub, UserPromptInput, build_hook_trace_envelope,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -367,15 +366,14 @@ impl CompanionRequestTool {
         let active_mcp = self.active_mcp_servers().await;
         let execution_slice =
             build_companion_execution_slice(self.vfs.as_ref(), &active_mcp, slice_mode);
-        // PR 1 Phase 1d：收敛 struct-literal 构造为 from_user_input 工厂 + builder 风格字段注入。
         // Companion 继承父 session 的 working_dir，identity/post_turn_handler 保持 None
         // （子 session 的 identity 从父 session 运行时继承，不在此处注入）。
-        let base_req = PromptSessionRequest::from_user_input(UserPromptInput {
+        let base_input = UserPromptInput {
             prompt_blocks: None,
             working_dir: Some(self.working_dir.clone()),
             env: std::collections::HashMap::new(),
             executor_config: None,
-        });
+        };
 
         let companion_spec = crate::session::CompanionSpec {
             parent_vfs: self.vfs.as_ref(),
@@ -398,12 +396,9 @@ impl CompanionRequestTool {
             crate::session::compose_companion(companion_spec)
         };
 
+        let command = LaunchCommand::companion_dispatch_prepared(base_input, prepared);
         let turn_id = match session_hub
-            .launch_companion_dispatch_prompt_with_follow_up(
-                &target_binding.session_id,
-                None,
-                crate::session::finalize_request(base_req, prepared),
-            )
+            .launch_command(&target_binding.session_id, command)
             .await
         {
             Ok(turn_id) => turn_id,
@@ -1500,7 +1495,7 @@ impl CompanionRespondTool {
             // wait=false path: parent is not blocking on this dispatch.
             // Resume the parent session with the companion result as a follow-up.
             let parent_running = session_hub
-                .has_live_runtime(&companion_context.parent_session_id)
+                .has_live_executor_session(&companion_context.parent_session_id)
                 .await;
             if !parent_running {
                 let resume_prompt = format!(
@@ -1522,9 +1517,8 @@ impl CompanionRespondTool {
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
                 tokio::spawn(async move {
-                    // PR 1 Phase 1d：收敛 struct-literal → from_user_input 工厂；
                     // parent resume 路径通过 strict launch 复用主通道 augment 逻辑。
-                    let bare_req = PromptSessionRequest::from_user_input(UserPromptInput {
+                    let command = LaunchCommand::companion_parent_resume_input(UserPromptInput {
                         prompt_blocks: Some(vec![serde_json::json!({
                             "type": "text",
                             "text": resume_prompt,
@@ -1533,10 +1527,7 @@ impl CompanionRespondTool {
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
                     });
-                    if let Err(error) = hub_clone
-                        .launch_companion_parent_resume_prompt(&parent_sid, bare_req)
-                        .await
-                    {
+                    if let Err(error) = hub_clone.launch_command(&parent_sid, command).await {
                         tracing::warn!(
                             parent_session_id = %parent_sid,
                             error = %error,
@@ -1729,7 +1720,7 @@ async fn record_subagent_trace(
     // so inject_notification would cause duplicate event cards.
     if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id) {
         let session_id = hook_session.session_id();
-        let has_live = session_hub.has_live_runtime(session_id).await;
+        let has_live = session_hub.has_live_executor_session(session_id).await;
         if !has_live {
             let notification =
                 build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace);
@@ -2275,8 +2266,8 @@ mod companion_tests {
     use uuid::Uuid;
 
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter,
-        PromptSessionRequest, SessionHub, local_workspace_vfs,
+        CompanionSessionContext, MemorySessionPersistence, PreparedLaunchPrompt,
+        PromptAugmentInput, PromptRequestAugmenter, SessionHub, local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 
@@ -2574,8 +2565,9 @@ mod companion_tests {
         async fn augment(
             &self,
             _session_id: &str,
-            req: PromptSessionRequest,
-        ) -> Result<PromptSessionRequest, ConnectorError> {
+            input: PromptAugmentInput,
+        ) -> Result<PreparedLaunchPrompt, ConnectorError> {
+            let req = input.into_prepared_prompt();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = req
                 .user_input

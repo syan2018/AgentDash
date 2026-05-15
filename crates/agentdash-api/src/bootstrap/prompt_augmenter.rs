@@ -1,6 +1,6 @@
 //! `PromptRequestAugmenter` 的 API 层实现。
 //!
-//! 把"裸" `PromptSessionRequest` 代入与 HTTP 主通道同一条 `augment_prompt_request_for_owner`
+//! 把原始 prompt 输入代入与 HTTP 主通道同一条 `augment_prompt_request_for_owner`
 //! 路径，使 hub auto-resume 与用户手动 prompt 完全对齐。
 //!
 //! 为什么放这里：augment 逻辑依赖 `Arc<AppState>`（repos、services、platform_config），
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::{PromptRequestAugmenter, PromptSessionRequest};
+use agentdash_application::session::{PromptAugmentInput, PromptRequestAugmenter};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -75,9 +75,9 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
     async fn augment(
         &self,
         session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<PromptSessionRequest, ConnectorError> {
-        augment_prompt_request_for_owner(&self.state, session_id, req)
+        input: PromptAugmentInput,
+    ) -> Result<agentdash_application::session::PreparedLaunchPrompt, ConnectorError> {
+        augment_prompt_request_for_owner(&self.state, session_id, input)
             .await
             .map_err(api_error_to_connector)
     }

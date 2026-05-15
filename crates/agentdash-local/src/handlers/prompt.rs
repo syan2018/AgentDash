@@ -3,7 +3,7 @@
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
-use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
+use agentdash_application::session::{LaunchCommand, SessionHub, UserPromptInput};
 
 use super::CommandHandler;
 use super::relay_mcp_servers::parse_relay_mcp_servers;
@@ -105,20 +105,23 @@ impl CommandHandler {
 
         let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
 
-        let mut req = PromptSessionRequest::from_user_input(UserPromptInput {
-            prompt_blocks: payload.prompt_blocks.map(|v| {
-                if let serde_json::Value::Array(arr) = v {
-                    arr
-                } else {
-                    vec![v]
-                }
-            }),
-            working_dir: payload.working_dir.clone(),
-            env: payload.env,
-            executor_config,
-        });
-        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers);
-        req.vfs = Some(vfs);
+        let command = LaunchCommand::local_relay_prompt_input(
+            UserPromptInput {
+                prompt_blocks: payload.prompt_blocks.map(|v| {
+                    if let serde_json::Value::Array(arr) = v {
+                        arr
+                    } else {
+                        vec![v]
+                    }
+                }),
+                working_dir: payload.working_dir.clone(),
+                env: payload.env,
+                executor_config,
+            },
+            parse_relay_mcp_servers(&payload.mcp_servers),
+            vfs,
+        )
+        .with_follow_up(follow_up.clone());
 
         tracing::info!(
             session_id = %session_id,
@@ -128,10 +131,7 @@ impl CommandHandler {
 
         let event_tx = self.event_tx.clone();
 
-        match hub
-            .launch_local_relay_prompt_with_follow_up(&session_id, follow_up.as_deref(), req)
-            .await
-        {
+        match hub.launch_command(&session_id, command).await {
             Ok(turn_id) => {
                 let hub_clone = hub.clone();
                 let sid = session_id.clone();

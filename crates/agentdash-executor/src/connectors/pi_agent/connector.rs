@@ -20,11 +20,11 @@ use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
 };
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -603,21 +603,24 @@ impl AgentConnector for PiAgentConnector {
 
 fn extract_identity_prompt(frames: &[ContextFrame]) -> Option<String> {
     let identity_frame = frames.iter().find(|frame| frame.kind == "identity")?;
-    if let Some(prompt) = identity_frame.sections.iter().find_map(|section| match section {
-        ContextFrameSection::Identity {
-            effective_prompt, ..
-        } => {
-            let prompt = effective_prompt.trim();
-            (!prompt.is_empty()).then(|| prompt.to_string())
-        }
-        _ => None,
-    }) {
+    if let Some(prompt) = identity_frame
+        .sections
+        .iter()
+        .find_map(|section| match section {
+            ContextFrameSection::Identity {
+                effective_prompt, ..
+            } => {
+                let prompt = effective_prompt.trim();
+                (!prompt.is_empty()).then(|| prompt.to_string())
+            }
+            _ => None,
+        })
+    {
         return Some(prompt);
     }
     let rendered = identity_frame.rendered_text.trim();
     (!rendered.is_empty()).then(|| rendered.to_string())
 }
-
 
 async fn emit_pending_hook_trace_envelopes(
     hook_trace_rx: &mut Option<tokio::sync::broadcast::Receiver<agentdash_spi::HookTraceEntry>>,

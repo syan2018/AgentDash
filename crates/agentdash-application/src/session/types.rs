@@ -24,10 +24,11 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
+/// 已补齐的 launch prompt — 包含用户输入 + 后端注入的运行时上下文。
 ///
-/// 由 session bootstrap 代码组合 `UserPromptInput` + 后端注入字段构造。
-pub struct PromptSessionRequest {
+/// 由 `LaunchCommand` adapter / augmenter / assembler 组合 `UserPromptInput`
+/// 与后端注入字段构造，作为 prompt pipeline 进入 `LaunchExecution` 前的输入投影。
+pub struct PreparedLaunchPrompt {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
@@ -51,8 +52,8 @@ pub struct PromptSessionRequest {
     pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
 }
 
-impl PromptSessionRequest {
-    /// 从 `UserPromptInput` 构造，后端注入字段全部为空。
+impl PreparedLaunchPrompt {
+    /// 从 `UserPromptInput` 构造最小 prompt，后端注入字段全部为空。
     pub fn from_user_input(input: UserPromptInput) -> Self {
         Self {
             user_input: input,
@@ -68,10 +69,10 @@ impl PromptSessionRequest {
     }
 }
 
-/// PhaseNode 已激活但当前没有 live turn 可热更新时，暂存在 session meta 中的切换。
+/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费这些 transition，把最后一个 state
-/// 作为本轮生效状态，并清空队列。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 pending commands，把最后一个 state
+/// 作为本轮生效状态，并将 command 标记为 applied。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCapabilityStateTransition {
@@ -154,7 +155,7 @@ pub enum SessionPromptLifecycle {
 /// 3. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
 pub fn resolve_session_prompt_lifecycle(
     meta: &SessionMeta,
-    has_live_runtime: bool,
+    has_live_executor_session: bool,
     supports_repository_restore: bool,
 ) -> SessionPromptLifecycle {
     // P1: 未完成 owner bootstrap 的 session 必须走初始化流程
@@ -172,7 +173,7 @@ pub fn resolve_session_prompt_lifecycle(
     //   - 进程内没有该 session 的 live connector runtime
     //   - session 有历史事件（last_event_seq > 0 表示曾经执行过）
     //   - 执行器侧没有可复用的 follow-up session（否则直接 Plain 续跑）
-    if !has_live_runtime && meta.last_event_seq > 0 && !has_executor_follow_up {
+    if !has_live_executor_session && meta.last_event_seq > 0 && !has_executor_follow_up {
         return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
             SessionRepositoryRehydrateMode::ExecutorState
         } else {
@@ -289,8 +290,6 @@ pub struct SessionMeta {
     pub visible_canvas_mount_ids: Vec<String>,
     #[serde(default)]
     pub bootstrap_state: SessionBootstrapState,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pending_capability_state_transitions: Vec<PendingCapabilityStateTransition>,
 }
 
 /// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。

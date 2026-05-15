@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "运行态 truth owner 与 active execution 边界。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Batch 3 后 launch/pipeline 输入边界。"}

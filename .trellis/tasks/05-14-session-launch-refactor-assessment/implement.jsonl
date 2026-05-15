@@ -1,0 +1,7 @@
+{"file": "docs/reviews/AgentDash_session_refactor_plan.md", "reason": "外部 session 重构 review 基线"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "现有 session 装配节拍与 finalize 契约"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "SessionRuntime 与 TurnExecution 当前职责边界"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionContext 分层契约"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "VFS 与本机路径安全边界"}
+{"file": ".trellis/tasks/archive/2026-05/05-02-session-launchservice-single-entry/prd.md", "reason": "前置 LaunchService 单入口任务范围"}
+{"file": ".trellis/tasks/archive/2026-05/05-02-session-launchservice-single-entry/session-module-map.md", "reason": "session 模块入口与主线基线"}

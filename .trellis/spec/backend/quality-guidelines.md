@@ -157,12 +157,16 @@ store.write_meta(&session_meta).await?;
 
 **禁止**：在 `prompt_blocks` 中放 instruction text block；在用户消息文本中暴露技术 slot 标识。
 
-### PromptSessionRequest 新增字段
+### LaunchCommand / PreparedLaunchPrompt 字段变更
 
-`PromptSessionRequest` 跨多个 crate，新增字段后必须同步：
-1. `ExecutionContext` 添加字段
-2. `hub.rs::start_prompt_with_follow_up` 填充
-3. 所有 `PromptSessionRequest { ... }` 字面量构造处补充（api / executor 测试 / local）
+旧 `PromptSessionRequest` 已从生产主链路删除。新增启动字段时必须同步：
+
+1. 入口 adapter 的 `LaunchCommand` source payload。
+2. 装配阶段的 `PreparedLaunchPrompt` / `PromptAugmentInput`。
+3. `LaunchExecution` summary / connector-facing `ExecutionContext` 投影。
+4. HTTP / local relay / task / workflow / routine / companion / hook auto-resume 入口测试。
+
+禁止通过恢复 `PromptSessionRequest` 字面量或新增半成品 request 壳绕过主链路。
 
 ---
 

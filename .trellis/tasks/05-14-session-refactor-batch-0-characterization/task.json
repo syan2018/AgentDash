@@ -1,0 +1,33 @@
+{
+  "id": "session-refactor-batch-0-characterization",
+  "name": "session-refactor-batch-0-characterization",
+  "title": "Session refactor batch 0 characterization",
+  "description": "为 session 系统性重构建立 Batch 0 characterization 测试护栏，固定现有入口、fallback、失败路径与待迁移行为，不改变生产架构。",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "session-refactor-characterization",
+  "package": "agentdash-application",
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "codex/session-refactor-task-review",
+  "base_branch": "codex/session-refactor-task-review",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-14-session-launch-refactor-assessment",
+  "relatedFiles": [
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/implement.md",
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/docs/current-to-target-migration.md",
+    "crates/agentdash-application/src/session/assembler.rs",
+    "crates/agentdash-application/src/session/path_policy.rs",
+    "crates/agentdash-application/src/session/hub/tests.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs"
+  ],
+  "notes": "Batch 0 已完成 characterization 与安全护栏测试：finalize_request post_turn_handler 合并语义、context query owner priority、resolve_working_dir 当前不安全语义，以及既有 pending/connector failure 关键路径验证；未引入目标架构生产类型。",
+  "meta": {}
+}

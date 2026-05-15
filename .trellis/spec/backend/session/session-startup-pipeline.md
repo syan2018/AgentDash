@@ -1,7 +1,7 @@
 # Session Startup Pipeline
 
 > **主题**：一个 prompt 从各种入口进入 `SessionHub` 之前，在 session 装配阶段
-> 是如何被组装成 `PromptSessionRequest` 的。
+> 是如何被组装成 `PreparedLaunchPrompt` 的。
 >
 > 本 spec 只描述装配阶段（entry → builder → finalize）的目标契约；
 > 装配完成后进入 `prompt_pipeline` 构造 `ExecutionContext` 的部分由
@@ -15,15 +15,16 @@
   What / How / Trigger）每条都由 builder 的 first-class 方法承载，调用方不再
   靠调用顺序或额外赋值语句保证不漏字段。
 - 6 条入口（HTTP / Task / Workflow / Companion / Routine / Auto-resume）全部
-  聚拢到同一个 `compose → finalize_request` 节拍；`identity` /
-  `post_turn_handler` / `env` 等跨轴字段由 entry 通过 `with_identity` /
-  `with_post_turn_handler` / `with_user_input` 注入，不再在 `finalize_request`
-  之后手工 `req.identity = ...`。
+  先进入 `LaunchCommand` source adapter；需要 owner/context/capability 补齐的
+  路径投影为 `PromptAugmentInput`，预组装路径投影为 `PreparedLaunchPrompt`。
+  `identity` / `post_turn_handler` / `env` 等跨轴字段由 builder 或 adapter 注入，
+  不再由外围入口手工写 prompt 字段。
 - `finalize_request` 的合并规则显式：`capability_state` 整体替换，`mcp_servers`
   作为 state 的 wire 投影整体替换；`vfs` 优先取 prepared，`apply_workspace_defaults` 先于覆盖；
   `identity` / `post_turn_handler` 仅在 prepared 非空时覆盖 base。
-- 装配阶段是**单一写入节拍**：除了 `from_user_input` 与 `finalize_request`，
-  业务代码不得直接写 `PromptSessionRequest` 的字段。
+- 装配阶段是**单一写入节拍**：外围业务入口不得直接构造或改写
+  `PreparedLaunchPrompt`；字段写入集中在 `LaunchCommand` adapter、
+  `PromptAugmentInput::into_prepared_prompt` 与 `finalize_request`。
 
 ## 1. 五条正交轴
 
@@ -32,9 +33,9 @@ Session 启动输入按以下五条轴分组；每一轴有唯一权威承载字
 
 | 轴 | 职责 | 权威承载 | 备注 |
 |---|---|---|---|
-| **Who** | 发起人身份 / owner 归属 | `PromptSessionRequest.identity` | `AuthIdentity::system_routine(id)` 承载定时任务等系统身份 |
-| **Where** | 执行环境 | `PromptSessionRequest.user_input.working_dir` / `vfs` / `user_input.env` | workspace_defaults 用于兜底 VFS / working_dir |
-| **What** | 业务上下文 | `PromptSessionRequest.context_bundle`（`SessionContextBundle`） | 详见 `bundle-main-datasource.md` |
+| **Who** | 发起人身份 / owner 归属 | `PreparedLaunchPrompt.identity` | `AuthIdentity::system_routine(id)` 承载定时任务等系统身份 |
+| **Where** | 执行环境 | `PreparedLaunchPrompt.user_input.working_dir` / `vfs` / `user_input.env` | workspace_defaults 用于兜底 VFS / working_dir |
+| **What** | 业务上下文 | `PreparedLaunchPrompt.context_bundle`（`SessionContextBundle`） | 详见 `bundle-main-datasource.md` |
 | **How** | 能力 & 工具 | `capability_state` / `mcp_servers` | `capability_state` 是唯一运行态能力状态；`mcp_servers` 是给 session frame / relay wire 使用的投影 |
 | **Trigger** | 本轮触发输入 | `user_input.prompt_blocks` + `hook_snapshot_reload: HookSnapshotReloadTrigger` + `post_turn_handler` | `HookSnapshotReloadTrigger` 仅表达"是否需要本轮重载 hook snapshot" |
 
@@ -60,15 +61,15 @@ pub struct UserPromptInput {
 - 仅用于前端 HTTP 反序列化；不承载任何后端注入字段。
 - 通过 `SessionAssemblyBuilder::with_user_input(input)` 一次性消化，进入
   builder 的 `prompt_blocks` / `executor_config` / `working_dir` / `env` 字段。
-- 非 HTTP 入口（task / routine / auto-resume 等）也会先 `from_user_input(...)`
-  构造一个 base `PromptSessionRequest`，再把真实 `UserPromptInput` 喂给 builder。
+- 非 HTTP 入口（task / routine / auto-resume 等）也只构造 `UserPromptInput`
+  或 `PreparedSessionInputs`，再交给对应 `LaunchCommand` adapter。
 
-### 2.2 `PromptSessionRequest`（装配产物 wire 面）
+### 2.2 `PreparedLaunchPrompt`（prompt pipeline 输入投影）
 
 定义位置：`crates/agentdash-application/src/session/types.rs`。
 
 ```rust
-pub struct PromptSessionRequest {
+pub struct PreparedLaunchPrompt {
     pub user_input: UserPromptInput,
     pub mcp_servers: Vec<McpServer>,
     pub vfs: Option<Vfs>,
@@ -80,15 +81,37 @@ pub struct PromptSessionRequest {
 }
 ```
 
-- 按 **D1（prd.md · Decisions）**：`PromptSessionRequest` 继续作为 wire DTO
-  存在，hub 内部路径直接消费它；plugin / relay 协议仍可序列化整体快照。
-- **唯一允许的构造点**是 `PromptSessionRequest::from_user_input(input)`；
-  业务代码不得裸构造 struct 字面量；这是为了保证 "每个字段都至少在 builder
-  阶段被显式触碰一次" 的不变式（参见 target-architecture.md §I3）。
-- 唯一允许的写入点是 `finalize_request(base, prepared)` 与 hub auto-resume
-  augmenter；其他函数只应 clone / move。
+- `PreparedLaunchPrompt` 不是外部 request / DTO；它是 prompt pipeline 进入
+  `LaunchExecution` 前的内部输入投影。
+- 生产入口不得直接调用 `PreparedLaunchPrompt::from_user_input` 或裸构造字段；
+  它们必须使用 `LaunchCommand::http_prompt_input`、
+  `LaunchCommand::*_prepared`、`LaunchCommand::hook_auto_resume_input` 等
+  source adapter。
+- 允许的内部写入点只有 `LaunchCommand` adapter、
+  `PromptAugmentInput::into_prepared_prompt`、`finalize_request(base, prepared)`。
+- 旧 `PromptSessionRequest` 与 `SessionLaunchIntent` 已从生产主链路删除；新增入口
+  必须先进入 `LaunchCommand`，不得恢复半收敛 request / intent 壳。
 
-### 2.3 `HookSnapshotReloadTrigger`（Trigger 轴子结构）
+### 2.3 `PromptAugmentInput`（augment 输入协议）
+
+定义位置：`crates/agentdash-application/src/session/augmenter.rs`。
+
+```rust
+pub struct PromptAugmentInput {
+    pub user_input: UserPromptInput,
+    pub request_mcp_servers: Vec<SessionMcpServer>,
+    pub existing_vfs: Option<Vfs>,
+    pub identity: Option<AuthIdentity>,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
+}
+```
+
+- 仅用于 `LaunchCommand` → `PromptRequestAugmenter` 的跨层输入协议。
+- 不承载 context bundle、capability_state、hook reload 等 composition 产物。
+- `PromptRequestAugmenter::augment(session_id, input)` 输出
+  `PreparedLaunchPrompt`，由 API 层 owner/context/capability compose 路径补齐。
+
+### 2.4 `HookSnapshotReloadTrigger`（Trigger 轴子结构）
 
 定义位置：`crates/agentdash-application/src/session/types.rs`。
 
@@ -108,7 +131,7 @@ pub enum HookSnapshotReloadTrigger {
   - `compose_story_step` / `compose_lifecycle_node` / `compose_companion` → `None`
   - HTTP `RepositoryRehydrate(SystemContext)` 路径视重建需要可能写 `Reload`
 
-### 2.4 `SessionAssemblyBuilder`
+### 2.5 `SessionAssemblyBuilder`
 
 定义位置：`crates/agentdash-application/src/session/assembler.rs`。
 
@@ -143,24 +166,23 @@ SessionAssemblyBuilder::new()
     .with_post_turn_handler(handler)          // 可选
     // ── compose 函数内部调用 .with_* / .apply_* ──
     .build()                                   // → PreparedSessionInputs
-    |> finalize_request(base, prepared)       // → PromptSessionRequest
-    |> SessionHub.start_prompt(...)
+    |> LaunchCommand::*_prepared(...)          // 或 strict augment path
+    |> SessionHub.launch_command(...)
 ```
 
 | # | 入口 | compose 函数 | builder 承载要点 |
 |---|---|---|---|
-| 1 | HTTP `POST /sessions/:id/prompt` | `augment_prompt_request_for_owner` → `compose_owner_bootstrap` / `compose_story_step` | `identity` 来自 HTTP session；对 `RepositoryRehydrate(SystemContext)` 路径通过 `apply_plain_lifecycle_request` 写 continuation bundle |
+| 1 | HTTP `POST /sessions/:id/prompt` | `LaunchCommand::http_prompt_input` → `PromptAugmentInput` → `augment_prompt_request_for_owner` → `compose_owner_bootstrap` / `compose_story_step` | `identity` 来自 HTTP session；对 `RepositoryRehydrate(SystemContext)` 路径通过 `apply_plain_lifecycle_request` 写 continuation bundle |
 | 2 | Task service `start_task` / `continue_task` | `compose_story_step` | builder `.with_identity(task_identity)` + `.with_post_turn_handler(task_callback)` |
 | 3 | Workflow orchestrator `start_agent_node_prompt` | `compose_lifecycle_node_with_audit` | 通过 `SessionAssemblyBuilder::apply_lifecycle_activation` 吸收 lifecycle activation 结果 |
 | 4 | Companion tools `dispatch` | `compose_companion` / `compose_companion_with_workflow` | 通过 `apply_companion_slice` 一次性装配父 session 切片 |
 | 5 | Routine executor `execute_with_session` | `compose_owner_bootstrap` | 依 **E1**：`AuthIdentity::system_routine(routine.id)` 注入；不再漏 identity（见 `crates/agentdash-application/src/routine/executor.rs:493-523`） |
-| 6 | Hub auto-resume `schedule_hook_auto_resume` | `SharedPromptRequestAugmenter::augment` → 走回入口 1 节拍 | 通过 augmenter 重建完整 `PromptSessionRequest` |
+| 6 | Hub auto-resume `schedule_hook_auto_resume` | `LaunchCommand::hook_auto_resume_input` → `PromptAugmentInput` → `SharedPromptRequestAugmenter::augment` | 通过 augmenter 重建完整 `PreparedLaunchPrompt` |
 
-**Base `PromptSessionRequest` 的来源约束**：非 HTTP 入口先
-`PromptSessionRequest::from_user_input(UserPromptInput)` 得到 base；HTTP 入口
-直接在 `augment_prompt_request_for_owner` 内部用 HTTP handler 传入的 DTO 作为
-base。**禁止**在入口代码中裸 `PromptSessionRequest { user_input: ..., mcp_servers: vec![...], ... }`
-字面量构造（见 target-architecture.md §I3）。
+**入口约束**：HTTP / Local relay / Task / Workflow / Routine / Companion /
+Hook auto-resume 入口只允许构造 `LaunchCommand`，不允许直接构造
+`PreparedLaunchPrompt`。`grep -r "PreparedLaunchPrompt::from_user_input" crates/`
+应只命中 `LaunchCommand` / `PromptAugmentInput` / 测试。
 
 ## 4. `finalize_request` 合并语义
 
@@ -218,7 +240,7 @@ sequenceDiagram
     Builder-->>Compose: PreparedSessionInputs
     Compose-->>Entry: PreparedSessionInputs
     Entry->>Final: finalize_request(base, prepared)
-    Final-->>Entry: PromptSessionRequest
+    Final-->>Entry: PreparedLaunchPrompt
     Entry->>Hub: start_prompt(session_id, req)
 ```
 
@@ -249,23 +271,32 @@ sequenceDiagram
 
 - 入口：`hub.schedule_hook_auto_resume`（由 `turn_processor` 侦测到 hook
   `BeforeStop == continue` 后触发）。
-- 内部路径：构造一个最小 `PromptSessionRequest::from_user_input(
+- 内部路径：构造 `LaunchCommand::hook_auto_resume_input(
   UserPromptInput::from_text(AUTO_RESUME_PROMPT))` → 调
   `SharedPromptRequestAugmenter::augment`（AppState 注入的实现是
   `AppStatePromptAugmenter`，内部调 `augment_prompt_request_for_owner`） →
   与 HTTP 主通道共享同一条 compose + finalize 节拍。
 - Auto-resume 限流（`hook_auto_resume_count < 2`）目标态由 `hub/hook_dispatch`
   承担（见 `execution-context-frames.md` §4）；入口契约保持不变。
+- Auto-resume 的终态触发不由 `SessionTurnProcessor` 直接调用；终态 event 先落库，
+  `hook_auto_resume` effect 写入 terminal effect outbox 后由 dispatcher 执行。
 
 ### 6.4 基本不变式（必须可验证）
 
-- `grep -r "PromptSessionRequest { " crates/` 在业务代码中零命中（仅 `from_user_input`
-  与测试）；
-- `routine/executor.rs` 产出的 `PromptSessionRequest.identity` 在任何执行路径
+- `rg "PromptSessionRequest" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src`
+  零命中；
+- `grep -r "PreparedLaunchPrompt { " crates/` 在业务代码中零命中；
+- `routine/executor.rs` 产出的 `PreparedLaunchPrompt.identity` 在任何执行路径
   上都是 `Some(AuthIdentity::system_routine(...))`；
 - `finalize_request` 的 4 项关键规则（capability_state 整体替换、mcp_servers 投影替换、
   vfs prefer_base、workspace_defaults 顺序、identity /
   post_turn_handler 在 base 非空时保留）有对应单测（PR 1 已覆盖）。
+- `working_dir` 只允许 mount root 内的相对路径。空值或空白值解析为 mount root；
+  绝对路径、根路径、Windows prefix、`..` parent segment 必须拒绝，并由
+  `session::path_policy` 单测覆盖。
+- 云端 `AppState::new_with_plugins` 返回前必须通过 `SessionHub::assert_ready_for_app_state`
+  校验 prompt augmenter、context audit bus、terminal callback、runtime tool provider、
+  MCP relay provider 已绑定；不得把缺必要依赖的 hub 暴露为 ready state。
 
 ## 7. 相关 spec / PRD / code 锚点
 
@@ -296,7 +327,7 @@ sequenceDiagram
   - `SessionAssemblyBuilder`（~205 行起）
   - `compose_owner_bootstrap` / `compose_story_step` / `compose_lifecycle_node_with_audit`
     / `compose_companion` / `compose_companion_with_workflow`
-- `crates/agentdash-application/src/session/types.rs` — `PromptSessionRequest`
+- `crates/agentdash-application/src/session/types.rs` — `PreparedLaunchPrompt`
   / `UserPromptInput` / `HookSnapshotReloadTrigger`
 - `crates/agentdash-application/src/session/context/mod.rs` —
   `apply_workspace_defaults`

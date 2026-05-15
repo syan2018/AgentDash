@@ -1,0 +1,33 @@
+{
+  "id": "session-refactor-batch-1-owner-construction",
+  "name": "session-refactor-batch-1-owner-construction",
+  "title": "Session refactor batch 1 owner construction",
+  "description": "统一 session owner 解析并引入最小 SessionConstructionPlan 事实源，让 context query 与 launch construction 收敛到同一上游。",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "session-refactor-owner-construction",
+  "package": "agentdash-application",
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "codex/session-refactor-task-review",
+  "base_branch": "codex/session-refactor-task-review",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-14-session-launch-refactor-assessment",
+  "relatedFiles": [
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/implement.md",
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/docs/current-to-target-migration.md",
+    "crates/agentdash-application/src/session/ownership.rs",
+    "crates/agentdash-application/src/session/construction.rs",
+    "crates/agentdash-application/src/session/assembler.rs",
+    "crates/agentdash-api/src/routes/acp_sessions.rs"
+  ],
+  "notes": "Batch 1 已完成 owner resolver 与最小 construction fact/projection：context query 与 HTTP launch augment 共用 Task -> Story -> Project owner priority，context endpoint 通过 SessionConstructionPlan projection 输出。project/story/task 现有 context builder 暂留迁移 adapter，后续单独下沉。",
+  "meta": {}
+}

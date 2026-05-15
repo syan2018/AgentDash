@@ -443,12 +443,9 @@ impl AppState {
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
             hub: session_hub.clone(),
-            vfs_service: vfs_service.clone(),
-            platform_config: platform_config.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
-            audit_bus: Some(audit_bus.clone()),
         });
 
         let state = Self {

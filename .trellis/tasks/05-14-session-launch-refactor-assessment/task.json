@@ -3,7 +3,7 @@
   "name": "session-launch-refactor-assessment",
   "title": "Session 体系系统性重构架构规划",
   "description": "围绕 session 及外围 owner/task/workflow/routine/companion/local relay/prompt 拉起流程做系统性架构重构规划，审慎评估外部 review 建议的可实现性，形成可执行迁移计划和最终收口点清单。",
-  "status": "done",
+  "status": "in_progress",
   "dev_type": "backend",
   "scope": "session-systemic-architecture-refactor",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-05-14",
-  "completedAt": "2026-05-15",
+  "completedAt": null,
   "branch": "codex/session-refactor-task-review",
   "base_branch": "main",
   "worktree_path": null,
@@ -31,6 +31,7 @@
   ],
   "parent": null,
   "relatedFiles": [
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/docs/final-convergence-execution-tracker.md",
     "docs/reviews/AgentDash_session_refactor_plan.md",
     "crates/agentdash-application/src/session/launch_intent.rs",
     "crates/agentdash-application/src/session/prompt_pipeline.rs",
@@ -49,6 +50,6 @@
     "crates/agentdash-application/src/companion/tools.rs",
     "crates/agentdash-local/src/handlers/prompt.rs"
   ],
-  "notes": "本轮 session 启动与运行态系统性重构已按 Batch 0-7 完成，并已纠正此前 Batch 7 纯文档收口的问题。最终状态：PromptSessionRequest 与 SessionLaunchIntent 从生产主链路删除；context 查询与 launch 共享 construction/launch 事实源；runtime registry / turn supervisor 承接运行态；terminal event 先落库且 terminal effects 进入 durable outbox；pending runtime transition 进入 runtime command store，SessionMeta 与 repository 主线不再承载 legacy pending queue；working_dir 拒绝绝对路径/root/prefix/.. 越界输入；persistence 暴露 meta/event/terminal-effect/runtime-command store 边界；AppState 返回前校验 SessionHub 必要依赖 ready。SessionHub 类型仍作为 public call-site 迁移壳存在，但新增主路径已按能力服务/store 分流，不再作为新增业务职责容器。",
+  "notes": "2026-05-15 重新 review 原始 PRD 与当前代码后纠正状态：Batch 0-7 只完成迁移基础和局部语义修复，未满足最终目标态。当前必须按 docs/final-convergence-execution-tracker.md 继续收口：剃除 PreparedSessionInputs/finalize_request/PreparedLaunchPrompt 主链路，建立 LaunchCommand -> SessionConstructionPlan -> LaunchExecution 唯一数据流，删除 route-local construction 与 SessionHub 业务 facade，补齐 durable outbox / pending command / context 同源验证后才能重新标记 done。2026-05-15 继续收口：生产入口不再直接调用 start_prompt，start_prompt 已改为 cfg(test)，start_prompt_with_follow_up 已收为 crate 内部，PreparedLaunchPrompt 已从 session 顶层 re-export 移除；剩余阻塞明确为 PromptAugmentInput->PreparedLaunchPrompt 输出、route-local augment_prompt_request_for_owner、prompt_pipeline planner 与 SessionHub facade。",
   "meta": {}
 }

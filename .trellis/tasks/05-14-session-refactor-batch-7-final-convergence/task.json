@@ -3,7 +3,7 @@
   "name": "session-refactor-batch-7-final-convergence",
   "title": "Session refactor batch 7 final convergence",
   "description": "补齐本轮 session 重构原始 Batch 7 代码收口：working_dir 策略、legacy pending 映射、persistence store 边界、AppState/SessionHub ready 初始化与迁移壳边界。",
-  "status": "done",
+  "status": "in_progress",
   "dev_type": "backend",
   "scope": "session-refactor-final-convergence",
   "package": "agentdash-application",
@@ -11,7 +11,7 @@
   "creator": "codex-agent",
   "assignee": "codex-agent",
   "createdAt": "2026-05-14",
-  "completedAt": "2026-05-15",
+  "completedAt": null,
   "branch": "codex/session-refactor-task-review",
   "base_branch": "codex/session-refactor-task-review",
   "worktree_path": null,
@@ -21,6 +21,7 @@
   "children": [],
   "parent": "05-14-session-launch-refactor-assessment",
   "relatedFiles": [
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/docs/final-convergence-execution-tracker.md",
     ".trellis/tasks/05-14-session-refactor-batch-7-final-convergence/prd.md",
     ".trellis/tasks/05-14-session-refactor-batch-7-final-convergence/design.md",
     ".trellis/tasks/05-14-session-refactor-batch-7-final-convergence/implement.md",
@@ -36,6 +37,6 @@
     "crates/agentdash-infrastructure/src/persistence/postgres/session_repository.rs",
     "crates/agentdash-infrastructure/migrations/0036_drop_legacy_session_pending_capability_transitions.sql"
   ],
-  "notes": "Batch 7 已完成纠偏后的代码收口：working_dir 现在拒绝绝对路径/root/prefix/.. 越界输入；repository 主线不再读写 legacy pending_capability_state_transitions_json，并新增 0036 drop migration；SessionPersistence 暴露 meta/event/terminal-effect/runtime-command store 边界，Hub 主路径开始按能力 store 访问；AppState 返回前通过 SessionHub ready gate 校验 prompt augmenter、audit bus、terminal callback、runtime tool provider、MCP relay provider 已绑定。最终验证矩阵通过；剩余工作仅为提交历史整理与 force-push。",
+  "notes": "2026-05-15 重新判定：Batch 7 不能视为最终收口完成。working_dir、legacy pending 字段、store adapter、ready gate 等是迁移基础，但 PreparedSessionInputs/finalize_request/PreparedLaunchPrompt、route-local construction、prompt_pipeline planner 与 SessionHub 业务 facade 仍未删除。后续按父任务 final-convergence-execution-tracker.md 执行，完成前不得重新标记 done。2026-05-15 继续收口：生产入口不再直接调用 start_prompt，start_prompt 已改为 cfg(test)，start_prompt_with_follow_up 已收为 crate 内部，PreparedLaunchPrompt 已从 session 顶层 re-export 移除；剩余阻塞明确为 PromptAugmentInput->PreparedLaunchPrompt 输出、route-local augment_prompt_request_for_owner、prompt_pipeline planner 与 SessionHub facade。",
   "meta": {}
 }

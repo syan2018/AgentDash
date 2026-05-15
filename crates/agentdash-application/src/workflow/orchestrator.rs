@@ -20,9 +20,7 @@ use uuid::Uuid;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::hub::PendingRuntimeContextTransitionInput;
-use crate::session::{
-    LaunchCommand, LifecycleNodeSpec, UserPromptInput, compose_lifecycle_node_with_audit,
-};
+use crate::session::{LaunchCommand, UserPromptInput};
 
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
@@ -799,10 +797,10 @@ impl LifecycleOrchestrator {
     async fn start_agent_node_prompt(
         &self,
         session_id: &str,
-        run: &LifecycleRun,
-        lifecycle: &LifecycleDefinition,
-        project_id: Uuid,
-        step_def: &LifecycleStepDefinition,
+        _run: &LifecycleRun,
+        _lifecycle: &LifecycleDefinition,
+        _project_id: Uuid,
+        _step_def: &LifecycleStepDefinition,
         executor_config: Option<agentdash_spi::AgentConfig>,
     ) -> Result<(), String> {
         self.session_hub
@@ -810,37 +808,9 @@ impl LifecycleOrchestrator {
             .await
             .map_err(|e| format!("标记 owner bootstrap pending 失败: {e}"))?;
 
-        // 解析 step.workflow_key → WorkflowDefinition,作为 activate_step 的 workflow input
-        let workflow = match step_def.effective_workflow_key() {
-            Some(key) => self
-                .repos
-                .workflow_definition_repo
-                .get_by_project_and_key(project_id, key)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-
-        let audit_bus = self.session_hub.current_context_audit_bus().await;
-        let prepared = compose_lifecycle_node_with_audit(
-            &self.repos,
-            &self.platform_config,
-            LifecycleNodeSpec {
-                run,
-                lifecycle,
-                step: step_def,
-                workflow: workflow.as_ref(),
-                inherited_executor_config: executor_config,
-            },
-            audit_bus,
-            Some(session_id),
-        )
-        .await?;
-
-        let command =
-            LaunchCommand::workflow_orchestrator_prepared(UserPromptInput::from_text(""), prepared);
-
+        let mut user_input = UserPromptInput::from_text("");
+        user_input.executor_config = executor_config;
+        let command = LaunchCommand::workflow_orchestrator_input(user_input);
         self.session_hub
             .launch_command(session_id, command)
             .await

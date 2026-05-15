@@ -6,22 +6,14 @@ use uuid::Uuid;
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::hooks::ContextFrame;
-use agentdash_spi::{AgentConfig, AgentConnector};
+use agentdash_spi::AgentConnector;
 
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
+use crate::session::LaunchCommand;
 use crate::session::SessionHub;
-use crate::session::types::{
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
-    resolve_session_prompt_lifecycle,
-};
-use crate::session::{
-    AgentLevelMcp, LaunchCommand, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionRequestAssembler,
-};
+use crate::session::types::UserPromptInput;
 use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 
@@ -56,39 +48,26 @@ impl RoutineAdmissionError {
 pub struct RoutineExecutor {
     repos: RepositorySet,
     session_hub: SessionHub,
-    vfs_service: Arc<RelayVfsService>,
-    connector: Arc<dyn AgentConnector>,
-    platform_config: crate::platform_config::SharedPlatformConfig,
     availability: Arc<dyn BackendAvailability>,
     audit_bus: Option<SharedContextAuditBus>,
 }
 
 struct RoutineAgentContext {
-    project: Project,
     workspace: Option<Workspace>,
-    executor_config: AgentConfig,
-    agent_tool_directives: Vec<ToolCapabilityDirective>,
-    agent_skill_asset_keys: Vec<String>,
-    display_name: String,
-    preset_name: Option<String>,
-    preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
 }
 
 impl RoutineExecutor {
     pub fn new(
         repos: RepositorySet,
         session_hub: SessionHub,
-        vfs_service: Arc<RelayVfsService>,
-        connector: Arc<dyn AgentConnector>,
-        platform_config: crate::platform_config::SharedPlatformConfig,
+        _vfs_service: Arc<RelayVfsService>,
+        _connector: Arc<dyn AgentConnector>,
+        _platform_config: crate::platform_config::SharedPlatformConfig,
         availability: Arc<dyn BackendAvailability>,
     ) -> Self {
         Self {
             repos,
             session_hub,
-            vfs_service,
-            connector,
-            platform_config,
             availability,
             audit_bus: None,
         }
@@ -209,7 +188,7 @@ impl RoutineExecutor {
         }
 
         match self
-            .execute_with_session(&routine, &agent_context, &rendered, &mut execution)
+            .execute_with_session(&routine, &rendered, &mut execution)
             .await
         {
             Ok(()) => {
@@ -233,7 +212,6 @@ impl RoutineExecutor {
     async fn execute_with_session(
         &self,
         routine: &Routine,
-        agent_context: &RoutineAgentContext,
         prompt: &str,
         execution: &mut RoutineExecution,
     ) -> Result<(), String> {
@@ -241,9 +219,12 @@ impl RoutineExecutor {
             .resolve_session_id(routine, execution)
             .await
             .map_err(|err| format!("解析 Routine session 失败: {err}"))?;
-        let command = self
-            .build_project_agent_prompt_request(&session_id, routine, agent_context, prompt)
-            .await?;
+        let command = LaunchCommand::routine_executor_input(
+            UserPromptInput::from_text(prompt),
+            Some(agentdash_spi::platform::auth::AuthIdentity::system_routine(
+                routine.id,
+            )),
+        );
 
         execution.mark_running(&session_id, prompt.to_string());
         let _ = self.repos.routine_execution_repo.update(execution).await;
@@ -291,40 +272,10 @@ impl RoutineExecutor {
                 )
             })?;
 
-        let preset_config = link
-            .merged_preset_config(&agent)
+        link.merged_preset_config(&agent)
             .map_err(|error| error.to_string())?;
-        let executor_config = preset_config.to_agent_config(&agent.agent_type);
-        let agent_tool_directives = preset_config
-            .capability_directives
-            .clone()
-            .unwrap_or_default();
-        let agent_skill_asset_keys = preset_config.skill_asset_keys.clone().unwrap_or_default();
-        let display_name = preset_config
-            .display_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(agent.name.as_str())
-            .to_string();
-        let preset_mcp_servers = crate::mcp_preset::resolve_preset_mcp_refs(
-            self.repos.mcp_preset_repo.as_ref(),
-            project.id,
-            preset_config.mcp_preset_keys.as_deref().unwrap_or_default(),
-        )
-        .await
-        .map_err(|err| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {err}", agent.id))?;
 
-        Ok(RoutineAgentContext {
-            project,
-            workspace,
-            executor_config,
-            agent_tool_directives,
-            agent_skill_asset_keys,
-            display_name,
-            preset_name: Some(agent.name.clone()),
-            preset_mcp_servers,
-        })
+        Ok(RoutineAgentContext { workspace })
     }
 
     async fn resolve_session_id(
@@ -466,117 +417,6 @@ impl RoutineExecutor {
             .await
             .map_err(|e| format!("标记 Project Agent bootstrap 失败: {e}"))?;
         Ok(meta.id)
-    }
-
-    async fn build_project_agent_prompt_request(
-        &self,
-        session_id: &str,
-        routine: &Routine,
-        agent_context: &RoutineAgentContext,
-        prompt: &str,
-    ) -> Result<LaunchCommand, String> {
-        let meta = self
-            .session_hub
-            .get_session_meta(session_id)
-            .await
-            .map_err(|e| format!("读取 session meta 失败: {e}"))?
-            .ok_or_else(|| format!("session {session_id} 不存在"))?;
-        let has_live_executor_session =
-            self.session_hub.has_live_executor_session(session_id).await;
-        let supports_repository_restore = self
-            .connector
-            .supports_repository_restore(agent_context.executor_config.executor.as_str());
-        let kind = resolve_session_prompt_lifecycle(
-            &meta,
-            has_live_executor_session,
-            supports_repository_restore,
-        );
-
-        // Routine 的 prompt 是纯文本模板渲染结果 —— 包成单 text block 作为 user_prompt_blocks
-        let user_prompt_blocks = vec![serde_json::json!({
-            "type": "text",
-            "text": prompt,
-        })];
-
-        // RepositoryRehydrate(SystemContext) 需要预查 continuation frame
-        let mut continuation_context_frame: Option<ContextFrame> = None;
-        let lifecycle = match kind {
-            SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::SystemContext,
-            ) => {
-                let transcript = self
-                    .session_hub
-                    .build_projected_transcript(session_id)
-                    .await
-                    .map_err(|e| format!("构建 continuation context 失败: {e}"))?;
-                continuation_context_frame =
-                    crate::session::continuation::build_continuation_context_frame(
-                        &transcript,
-                        None,
-                    );
-                OwnerPromptLifecycle::RepositoryRehydrate {
-                    prebuilt_continuation_bundle: None,
-                    include_owner_bundle: false,
-                }
-            }
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState,
-            ) => OwnerPromptLifecycle::RepositoryRehydrate {
-                prebuilt_continuation_bundle: None,
-                include_owner_bundle: true,
-            },
-            SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
-        };
-
-        let mut assembler = SessionRequestAssembler::new(
-            self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
-            self.availability.as_ref(),
-            &self.repos,
-            &self.platform_config,
-        );
-        if let Some(bus) = self.audit_bus.as_ref() {
-            assembler = assembler.with_audit_bus(bus.clone());
-        }
-
-        let mut prepared = assembler
-            .compose_owner_bootstrap(OwnerBootstrapSpec {
-                owner: OwnerScope::Project {
-                    project: &agent_context.project,
-                    workspace: agent_context.workspace.as_ref(),
-                    agent_id: Some(routine.agent_id),
-                    agent_display_name: agent_context.display_name.clone(),
-                    preset_name: agent_context.preset_name.clone(),
-                },
-                executor_config: agent_context.executor_config.clone(),
-                user_prompt_blocks,
-                agent_mcp: AgentLevelMcp {
-                    preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
-                },
-                agent_tool_directives: agent_context.agent_tool_directives.clone(),
-                agent_skill_asset_keys: agent_context.agent_skill_asset_keys.clone(),
-                request_mcp_servers: Vec::new(),
-                existing_vfs: None,
-                visible_canvas_mount_ids: meta.visible_canvas_mount_ids.clone(),
-                active_workflow: None,
-                lifecycle,
-                audit_session_key: Some(session_id.to_string()),
-                caller_agent_id: Some(routine.agent_id),
-            })
-            .await?;
-
-        // PRD Decisions · E1：routine 合成 system identity，保证审计链路可归属。
-        // AuthIdentity::system_routine 前缀 user_id = "system:routine:<id>"、is_admin=false、
-        // provider = Some("system.routine")，避免企业权限策略误匹配。
-        prepared.identity = Some(agentdash_spi::platform::auth::AuthIdentity::system_routine(
-            routine.id,
-        ));
-
-        Ok(
-            LaunchCommand::routine_executor_prepared(UserPromptInput::from_text(prompt), prepared)
-                .with_continuation_context_frame(continuation_context_frame),
-        )
     }
 }
 

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::session::{
-    CompanionSessionContext, LaunchCommand, SessionHub, UserPromptInput, build_hook_trace_envelope,
+    CompanionSessionContext, LaunchCommand, PromptAugmentCompanionInput,
+    PromptAugmentCompanionWorkflowInput, SessionHub, UserPromptInput, build_hook_trace_envelope,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -64,7 +65,6 @@ pub struct CompanionRequestTool {
     agent_repo: Arc<dyn AgentRepository>,
     agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     repos: crate::repository_set::RepositorySet,
-    platform_config: crate::platform_config::SharedPlatformConfig,
     session_hub_handle: SharedSessionHubHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
@@ -80,7 +80,6 @@ impl CompanionRequestTool {
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         repos: crate::repository_set::RepositorySet,
-        platform_config: crate::platform_config::SharedPlatformConfig,
         session_hub_handle: SharedSessionHubHandle,
         context: &ExecutionContext,
     ) -> Self {
@@ -89,7 +88,6 @@ impl CompanionRequestTool {
             agent_repo,
             agent_link_repo,
             repos,
-            platform_config,
             session_hub_handle,
             current_session_id: context
                 .turn
@@ -384,19 +382,27 @@ impl CompanionRequestTool {
             dispatch_prompt: final_prompt,
         };
 
-        let prepared = if let Some(wf_key) = workflow_key {
-            self.setup_companion_workflow(
-                hook_session.as_ref(),
-                &target_binding,
-                &companion_spec,
-                wf_key,
+        let workflow = if let Some(wf_key) = workflow_key {
+            Some(
+                self.setup_companion_workflow(hook_session.as_ref(), &target_binding, wf_key)
+                    .await?,
             )
-            .await?
         } else {
-            crate::session::compose_companion(companion_spec)
+            None
         };
+        let command = LaunchCommand::companion_dispatch_input(
+            base_input.clone(),
+            PromptAugmentCompanionInput {
+                parent_vfs: companion_spec.parent_vfs.cloned(),
+                parent_mcp_servers: companion_spec.parent_mcp_servers.to_vec(),
+                parent_context_bundle: companion_spec.parent_context_bundle.cloned(),
+                slice_mode: companion_spec.slice_mode,
+                companion_executor_config: companion_spec.companion_executor_config.clone(),
+                dispatch_prompt: companion_spec.dispatch_prompt.clone(),
+                workflow,
+            },
+        );
 
-        let command = LaunchCommand::companion_dispatch_prepared(base_input, prepared);
         let turn_id = match session_hub
             .launch_command(&target_binding.session_id, command)
             .await
@@ -834,9 +840,8 @@ impl CompanionRequestTool {
         &self,
         hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
         target_binding: &SessionBinding,
-        companion_spec: &crate::session::CompanionSpec<'_>,
         workflow_key: &str,
-    ) -> Result<crate::session::PreparedSessionInputs, AgentToolError> {
+    ) -> Result<PromptAugmentCompanionWorkflowInput, AgentToolError> {
         let snapshot = hook_session.snapshot();
         let project_id = snapshot
             .owners
@@ -900,38 +905,12 @@ impl CompanionRequestTool {
             )));
         }
 
-        let output = crate::session::compose_companion_with_workflow(
-            &self.repos,
-            &self.platform_config,
-            crate::session::CompanionWorkflowSpec {
-                companion: crate::session::CompanionSpec {
-                    parent_vfs: companion_spec.parent_vfs,
-                    parent_mcp_servers: companion_spec.parent_mcp_servers,
-                    parent_context_bundle: companion_spec.parent_context_bundle,
-                    slice_mode: companion_spec.slice_mode,
-                    companion_executor_config: companion_spec.companion_executor_config.clone(),
-                    dispatch_prompt: companion_spec.dispatch_prompt.clone(),
-                },
-                run: &run,
-                lifecycle: &lifecycle,
-                step: &entry_step,
-                workflow: Some(&workflow),
-            },
-        )
-        .await;
-
-        let output = match output {
-            Ok(output) => output,
-            Err(error) => {
-                let _ = self.session_binding_repo.delete(lifecycle_binding.id).await;
-                let _ = self.repos.lifecycle_run_repo.delete(run.id).await;
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "compose companion+workflow 失败: {error}"
-                )));
-            }
-        };
-
-        Ok(output.prepared)
+        Ok(PromptAugmentCompanionWorkflowInput {
+            run,
+            lifecycle,
+            step: entry_step,
+            workflow: Some(workflow),
+        })
     }
 
     /// 在项目的 lifecycle 定义中搜索第一个 entry step 绑定到指定 workflow 的 lifecycle。
@@ -2265,9 +2244,10 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use crate::session::types::PreparedLaunchPrompt;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PreparedLaunchPrompt,
-        PromptAugmentInput, PromptRequestAugmenter, SessionHub, local_workspace_vfs,
+        CompanionSessionContext, MemorySessionPersistence, PromptAugmentInput,
+        PromptRequestAugmenter, SessionHub, local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 

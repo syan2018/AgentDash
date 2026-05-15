@@ -312,7 +312,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// kickoff_prompt 由调用方按需调 `activation.kickoff_prompt.to_default_prompt()` 拼进 user input。
 pub fn apply_to_prompt_request(
     activation: &StepActivation,
-    req: &mut crate::session::PreparedLaunchPrompt,
+    req: &mut crate::session::types::PreparedLaunchPrompt,
 ) {
     req.vfs = Some(compose_vfs_with_overlay_and_directives(
         req.vfs.as_ref(),

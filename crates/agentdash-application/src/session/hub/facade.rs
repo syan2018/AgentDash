@@ -17,7 +17,7 @@ use tokio::sync::broadcast;
 use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
-use super::super::launch::{LaunchCommand, LaunchPreparation, LaunchStrictness};
+use super::super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
 use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
@@ -357,12 +357,11 @@ impl SessionHub {
         Ok(build_projected_transcript_from_events(&events))
     }
 
-    /// 低层启动入口：跳过 augment，直接进入 prompt pipeline。
+    /// 测试专用入口：跳过 augment，直接进入 prompt pipeline。
     ///
-    /// 外部应通过 `launch_command` 或其具名包装启动，
-    /// 此方法仅供测试或已预组装的路径调用。
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) async fn start_prompt(
+    /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
+    #[cfg(test)]
+    pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
         req: PreparedLaunchPrompt,
@@ -380,29 +379,56 @@ impl SessionHub {
         session_id: &str,
         command: LaunchCommand,
     ) -> Result<String, ConnectorError> {
+        Ok(self
+            .launch_command_with_outcome(session_id, command)
+            .await?
+            .turn_id)
+    }
+
+    pub async fn launch_command_with_outcome(
+        &self,
+        session_id: &str,
+        command: LaunchCommand,
+    ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
+        let continuation_context_frame = command.continuation_context_frame();
         let reason = command.reason_tag();
-        let req = match command.preparation() {
-            LaunchPreparation::RequiresAugment => match command.strictness() {
-                LaunchStrictness::Strict => {
-                    let Some(augmenter) = self.current_prompt_augmenter().await else {
-                        return Err(ConnectorError::Runtime(format!(
-                            "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
-                        )));
-                    };
-                    augmenter
-                        .augment(session_id, command.into_augment_input())
-                        .await?
-                }
-                LaunchStrictness::Relaxed => {
-                    self.augment_prompt_request(session_id, command.into_augment_input(), reason)
-                        .await?
-                }
-            },
-            LaunchPreparation::PreAssembled => command.into_prepared_prompt(),
+        let mut req = match command.strictness() {
+            LaunchStrictness::Strict => {
+                let Some(augmenter) = self.current_prompt_augmenter().await else {
+                    return Err(ConnectorError::Runtime(format!(
+                        "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
+                    )));
+                };
+                augmenter
+                    .augment(session_id, command.into_augment_input())
+                    .await?
+            }
+            LaunchStrictness::Relaxed => {
+                self.augment_prompt_request(session_id, command.into_augment_input(), reason)
+                    .await?
+            }
         };
-        self.start_prompt_with_follow_up(session_id, follow_up_session_id.as_deref(), req)
-            .await
+        if continuation_context_frame.is_some() {
+            req.continuation_context_frame = continuation_context_frame;
+        }
+        let context_sources = req
+            .context_bundle
+            .as_ref()
+            .map(|bundle| {
+                bundle
+                    .iter_fragments()
+                    .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let turn_id = self
+            .start_prompt_with_follow_up(session_id, follow_up_session_id.as_deref(), req)
+            .await?;
+        Ok(LaunchCommandOutcome {
+            turn_id,
+            context_sources,
+        })
     }
 
     /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。

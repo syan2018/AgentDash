@@ -40,14 +40,17 @@ mod turn_supervisor;
 pub mod types;
 
 pub use assembler::{
-    AgentLevelMcp, CompanionSpec, CompanionWorkflowOutput, CompanionWorkflowSpec,
-    LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, PreparedSessionInputs,
-    SessionAssemblyBuilder, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    compose_companion, compose_companion_with_workflow, compose_lifecycle_node,
-    compose_lifecycle_node_with_audit, extract_agent_mcp_entries, finalize_request,
-    load_available_presets,
+    AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec,
+    OwnerPromptLifecycle, OwnerScope, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
+    compose_companion_prompt, compose_companion_with_workflow_prompt,
+    compose_lifecycle_node_prompt, compose_lifecycle_node_prompt_with_audit,
+    extract_agent_mcp_entries, load_available_presets,
 };
-pub use augmenter::{PromptAugmentInput, PromptRequestAugmenter, SharedPromptRequestAugmenter};
+pub use augmenter::{
+    PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentInput,
+    PromptAugmentTaskInput, PromptAugmentTaskPhase, PromptRequestAugmenter,
+    SharedPromptRequestAugmenter,
+};
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
@@ -59,8 +62,8 @@ pub use hook_runtime::HookSessionRuntime;
 pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{
-    LaunchCapabilitySource, LaunchCommand, LaunchExecution, LaunchExecutionInput,
-    LaunchFollowUpSource, LaunchMcpSource, LaunchPreparation, LaunchRestoreMode, LaunchSource,
+    LaunchCapabilitySource, LaunchCommand, LaunchCommandOutcome, LaunchExecution,
+    LaunchExecutionInput, LaunchFollowUpSource, LaunchMcpSource, LaunchRestoreMode, LaunchSource,
     LaunchStrictness, LaunchSummary, LaunchVfsSource,
 };
 pub use memory_persistence::MemorySessionPersistence;
@@ -77,7 +80,7 @@ pub use title_generator::SessionTitleGenerator;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     CapabilityState, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,
-    PendingCapabilityStateTransition, PreparedLaunchPrompt, ResolvedPromptPayload,
-    SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
+    PendingCapabilityStateTransition, ResolvedPromptPayload, SessionBootstrapState,
+    SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
 };

@@ -9,11 +9,11 @@ use agentdash_spi::{
     RestoredSessionState, SessionMcpServer, Vfs,
 };
 
-use super::assembler::{PreparedSessionInputs, finalize_request};
-use super::augmenter::PromptAugmentInput;
-use super::types::{
-    HookSnapshotReloadTrigger, PreparedLaunchPrompt, SessionPromptLifecycle, UserPromptInput,
+use super::augmenter::{
+    PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
+use super::construction::SessionConstructionPlan;
+use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
@@ -33,33 +33,32 @@ pub enum LaunchStrictness {
     Relaxed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchPreparation {
-    RequiresAugment,
-    PreAssembled,
-}
-
 pub struct LaunchCommand {
-    prepared_prompt: PreparedLaunchPrompt,
+    augment_input: PromptAugmentInput,
     source: LaunchSource,
     strictness: LaunchStrictness,
-    preparation: LaunchPreparation,
     follow_up_session_id: Option<String>,
+    continuation_context_frame: Option<ContextFrame>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaunchCommandOutcome {
+    pub turn_id: String,
+    pub context_sources: Vec<String>,
 }
 
 impl LaunchCommand {
     fn new(
-        prepared_prompt: PreparedLaunchPrompt,
+        augment_input: PromptAugmentInput,
         source: LaunchSource,
         strictness: LaunchStrictness,
-        preparation: LaunchPreparation,
     ) -> Self {
         Self {
-            prepared_prompt,
+            augment_input,
             source,
             strictness,
-            preparation,
             follow_up_session_id: None,
+            continuation_context_frame: None,
         }
     }
 
@@ -69,16 +68,16 @@ impl LaunchCommand {
     }
 
     pub fn with_continuation_context_frame(mut self, frame: Option<ContextFrame>) -> Self {
-        self.prepared_prompt.continuation_context_frame = frame;
+        self.continuation_context_frame = frame;
         self
     }
 
-    pub fn into_prepared_prompt(self) -> PreparedLaunchPrompt {
-        self.prepared_prompt
+    pub fn into_augment_input(self) -> PromptAugmentInput {
+        self.augment_input
     }
 
-    pub fn into_augment_input(self) -> PromptAugmentInput {
-        PromptAugmentInput::from_prepared_prompt(self.prepared_prompt)
+    pub fn continuation_context_frame(&self) -> Option<ContextFrame> {
+        self.continuation_context_frame.clone()
     }
 
     pub fn source(&self) -> LaunchSource {
@@ -87,10 +86,6 @@ impl LaunchCommand {
 
     pub fn strictness(&self) -> LaunchStrictness {
         self.strictness
-    }
-
-    pub fn preparation(&self) -> LaunchPreparation {
-        self.preparation
     }
 
     pub fn follow_up_session_id(&self) -> Option<&str> {
@@ -112,10 +107,17 @@ impl LaunchCommand {
 
     fn requires_augment_input(input: UserPromptInput, source: LaunchSource) -> Self {
         Self::new(
-            PreparedLaunchPrompt::from_user_input(input),
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                identity: None,
+                post_turn_handler: None,
+                task: None,
+                companion: None,
+            },
             source,
             LaunchStrictness::Strict,
-            LaunchPreparation::RequiresAugment,
         )
     }
 
@@ -123,13 +125,18 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        let mut request = PreparedLaunchPrompt::from_user_input(input);
-        request.identity = identity;
         Self::new(
-            request,
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                identity,
+                post_turn_handler: None,
+                task: None,
+                companion: None,
+            },
             LaunchSource::HttpPrompt,
             LaunchStrictness::Strict,
-            LaunchPreparation::RequiresAugment,
         )
     }
 
@@ -141,42 +148,73 @@ impl LaunchCommand {
         Self::requires_augment_input(input, LaunchSource::CompanionParentResume)
     }
 
-    pub fn companion_dispatch_prepared(
+    pub fn companion_dispatch_input(
         input: UserPromptInput,
-        prepared: PreparedSessionInputs,
-    ) -> Self {
-        Self::preassembled_input(input, prepared, LaunchSource::CompanionDispatch)
-    }
-
-    fn preassembled_input(
-        input: UserPromptInput,
-        prepared: PreparedSessionInputs,
-        source: LaunchSource,
+        companion: PromptAugmentCompanionInput,
     ) -> Self {
         Self::new(
-            finalize_request(PreparedLaunchPrompt::from_user_input(input), prepared),
-            source,
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                identity: None,
+                post_turn_handler: None,
+                task: None,
+                companion: Some(companion),
+            },
+            LaunchSource::CompanionDispatch,
             LaunchStrictness::Strict,
-            LaunchPreparation::PreAssembled,
         )
     }
 
-    pub fn task_service_prepared(input: UserPromptInput, prepared: PreparedSessionInputs) -> Self {
-        Self::preassembled_input(input, prepared, LaunchSource::TaskService)
+    pub fn workflow_orchestrator_input(input: UserPromptInput) -> Self {
+        Self::requires_augment_input(input, LaunchSource::WorkflowOrchestrator)
     }
 
-    pub fn workflow_orchestrator_prepared(
+    pub fn routine_executor_input(
         input: UserPromptInput,
-        prepared: PreparedSessionInputs,
+        identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::preassembled_input(input, prepared, LaunchSource::WorkflowOrchestrator)
+        Self::new(
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                identity,
+                post_turn_handler: None,
+                task: None,
+                companion: None,
+            },
+            LaunchSource::RoutineExecutor,
+            LaunchStrictness::Strict,
+        )
     }
 
-    pub fn routine_executor_prepared(
+    pub fn task_service_input(
         input: UserPromptInput,
-        prepared: PreparedSessionInputs,
+        identity: Option<agentdash_spi::AuthIdentity>,
+        post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
+        phase: PromptAugmentTaskPhase,
+        override_prompt: Option<String>,
+        additional_prompt: Option<String>,
     ) -> Self {
-        Self::preassembled_input(input, prepared, LaunchSource::RoutineExecutor)
+        Self::new(
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: Vec::new(),
+                existing_vfs: None,
+                identity,
+                post_turn_handler,
+                task: Some(PromptAugmentTaskInput {
+                    phase: Some(phase),
+                    override_prompt,
+                    additional_prompt,
+                }),
+                companion: None,
+            },
+            LaunchSource::TaskService,
+            LaunchStrictness::Strict,
+        )
     }
 
     pub fn local_relay_prompt_input(
@@ -184,24 +222,18 @@ impl LaunchCommand {
         mcp_servers: Vec<SessionMcpServer>,
         vfs: Vfs,
     ) -> Self {
-        let mut request = PreparedLaunchPrompt::from_user_input(input);
-        request.mcp_servers = mcp_servers;
-        request.vfs = Some(vfs);
         Self::new(
-            request,
+            PromptAugmentInput {
+                user_input: input,
+                request_mcp_servers: mcp_servers,
+                existing_vfs: Some(vfs),
+                identity: None,
+                post_turn_handler: None,
+                task: None,
+                companion: None,
+            },
             LaunchSource::LocalRelayPrompt,
-            LaunchStrictness::Strict,
-            LaunchPreparation::PreAssembled,
-        )
-    }
-
-    #[cfg(test)]
-    fn local_relay_prompt(prompt: PreparedLaunchPrompt) -> Self {
-        Self::new(
-            prompt,
-            LaunchSource::LocalRelayPrompt,
-            LaunchStrictness::Strict,
-            LaunchPreparation::PreAssembled,
+            LaunchStrictness::Relaxed,
         )
     }
 }
@@ -265,12 +297,68 @@ pub struct LaunchSummary {
     pub capability_keys: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LifecycleLaunchPlan {
+    pub lifecycle: SessionPromptLifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreLaunchPlan {
+    pub mode: LaunchRestoreMode,
+    pub restored_executor_state: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookLaunchPlan {
+    pub snapshot_reload: HookSnapshotReloadTrigger,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCommandLaunchPlan {
+    pub pending_transition_count: usize,
+    pub apply_after_connector_accept: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalEffectPlan {
+    pub terminal_event_first: bool,
+    pub durable_outbox_required: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectorInputPlan {
+    pub working_directory: PathBuf,
+    pub executor_config: AgentConfig,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub has_vfs: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaunchExecutionTrace {
+    pub entries: Vec<LaunchExecutionTraceEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchExecutionTraceEntry {
+    pub stage: &'static str,
+    pub source: String,
+}
+
 pub struct LaunchExecution {
+    pub construction: Option<SessionConstructionPlan>,
+    pub lifecycle: LifecycleLaunchPlan,
+    pub restore: RestoreLaunchPlan,
+    pub hooks: HookLaunchPlan,
+    pub runtime_commands: RuntimeCommandLaunchPlan,
+    pub terminal_effects: TerminalEffectPlan,
+    pub connector_input: ConnectorInputPlan,
+    pub trace: LaunchExecutionTrace,
     pub context: ExecutionContext,
     pub summary: LaunchSummary,
 }
 
 pub struct LaunchExecutionInput {
+    pub construction: Option<SessionConstructionPlan>,
     pub session_id: String,
     pub turn_id: String,
     pub lifecycle: SessionPromptLifecycle,
@@ -298,6 +386,7 @@ pub struct LaunchExecutionInput {
 
 impl LaunchExecution {
     pub fn build(input: LaunchExecutionInput) -> Self {
+        let restored_executor_state = input.restored_session_state.is_some();
         let capability_keys = input
             .capability_state
             .capability_keys()
@@ -307,7 +396,7 @@ impl LaunchExecution {
             session_id: input.session_id,
             turn_id: input.turn_id.clone(),
             lifecycle: input.lifecycle,
-            restore_mode: input.restore_mode,
+            restore_mode: input.restore_mode.clone(),
             hook_snapshot_reload: input.hook_snapshot_reload,
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
@@ -320,8 +409,53 @@ impl LaunchExecution {
             working_directory: input.working_directory.clone(),
             has_vfs: input.vfs.is_some(),
             mcp_server_count: input.mcp_servers.len(),
-            restored_executor_state: input.restored_session_state.is_some(),
+            restored_executor_state,
             capability_keys,
+        };
+        let lifecycle = LifecycleLaunchPlan {
+            lifecycle: input.lifecycle,
+        };
+        let restore = RestoreLaunchPlan {
+            mode: input.restore_mode,
+            restored_executor_state,
+        };
+        let hooks = HookLaunchPlan {
+            snapshot_reload: input.hook_snapshot_reload,
+        };
+        let runtime_commands = RuntimeCommandLaunchPlan {
+            pending_transition_count: input.pending_transition_count,
+            apply_after_connector_accept: true,
+        };
+        let terminal_effects = TerminalEffectPlan {
+            terminal_event_first: true,
+            durable_outbox_required: true,
+        };
+        let connector_input = ConnectorInputPlan {
+            working_directory: input.working_directory.clone(),
+            executor_config: input.executor_config.clone(),
+            mcp_servers: input.mcp_servers.clone(),
+            has_vfs: input.vfs.is_some(),
+        };
+        let trace = LaunchExecutionTrace {
+            entries: vec![
+                LaunchExecutionTraceEntry {
+                    stage: "construction",
+                    source: "SessionConstructionPlan".to_string(),
+                },
+                LaunchExecutionTraceEntry {
+                    stage: "runtime_command",
+                    source: if input.pending_transition_count > 0 {
+                        "pending_projection"
+                    } else {
+                        "none"
+                    }
+                    .to_string(),
+                },
+                LaunchExecutionTraceEntry {
+                    stage: "terminal_effect",
+                    source: "durable_outbox".to_string(),
+                },
+            ],
         };
         let session = ExecutionSessionFrame {
             turn_id: input.turn_id,
@@ -341,6 +475,14 @@ impl LaunchExecution {
             assembled_tools: Vec::new(),
         };
         Self {
+            construction: input.construction,
+            lifecycle,
+            restore,
+            hooks,
+            runtime_commands,
+            terminal_effects,
+            connector_input,
+            trace,
             context: ExecutionContext { session, turn },
             summary,
         }
@@ -349,15 +491,31 @@ impl LaunchExecution {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+
+    use super::super::construction::{
+        SessionConstructionContextProjection, SessionConstructionPlan,
+    };
+    use super::super::ownership::SessionOwnerResolver;
     use super::super::types::UserPromptInput;
     use super::*;
 
-    fn request() -> PreparedLaunchPrompt {
-        PreparedLaunchPrompt::from_user_input(UserPromptInput::from_text("ping"))
-    }
-
     fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchExecutionInput {
+        let binding = SessionBinding::new(
+            uuid::Uuid::new_v4(),
+            "sess-launch".to_string(),
+            SessionOwnerType::Project,
+            uuid::Uuid::new_v4(),
+            "execution",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let construction = SessionConstructionPlan::new(
+            "sess-launch",
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
         LaunchExecutionInput {
+            construction: Some(construction),
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
             lifecycle,
@@ -417,16 +575,28 @@ mod tests {
         );
         assert!(!execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);
+        assert_eq!(
+            execution
+                .construction
+                .as_ref()
+                .map(|plan| plan.session_id.as_str()),
+            Some("sess-launch")
+        );
+        assert!(execution.runtime_commands.apply_after_connector_accept);
+        assert!(execution.terminal_effects.durable_outbox_required);
     }
 
     #[test]
     fn launch_command_carries_source_policy_and_follow_up() {
-        let command =
-            LaunchCommand::local_relay_prompt(request()).with_follow_up(Some("follow-up-1"));
+        let command = LaunchCommand::local_relay_prompt_input(
+            UserPromptInput::from_text("ping"),
+            Vec::new(),
+            Vfs::default(),
+        )
+        .with_follow_up(Some("follow-up-1"));
 
         assert_eq!(command.source(), LaunchSource::LocalRelayPrompt);
-        assert_eq!(command.strictness(), LaunchStrictness::Strict);
-        assert_eq!(command.preparation(), LaunchPreparation::PreAssembled);
+        assert_eq!(command.strictness(), LaunchStrictness::Relaxed);
         assert_eq!(command.follow_up_session_id(), Some("follow-up-1"));
         assert_eq!(command.reason_tag(), "local_relay_prompt");
     }

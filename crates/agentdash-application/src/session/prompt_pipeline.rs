@@ -29,7 +29,7 @@ pub use super::types::*;
 
 impl SessionHub {
     /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
-    pub async fn start_prompt_with_follow_up(
+    pub(crate) async fn start_prompt_with_follow_up(
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
@@ -287,6 +287,7 @@ impl SessionHub {
             })
             .unwrap_or((None, LaunchFollowUpSource::None));
         let launch_execution = LaunchExecution::build(LaunchExecutionInput {
+            construction: None,
             session_id: sid.clone(),
             turn_id: turn_id.clone(),
             lifecycle: prompt_lifecycle,
@@ -384,16 +385,10 @@ impl SessionHub {
                 .await;
         }
 
-        Self::apply_turn_start_meta(
-            &mut session_meta,
-            now,
-            &turn_id,
-            &context.session.executor_config,
-            is_owner_bootstrap,
-            &title_hint,
-        );
-        let _ = meta_store.save_session_meta(&session_meta).await;
-
+        let pending_command_ids = pending_runtime_commands
+            .iter()
+            .map(|command| command.id)
+            .collect::<Vec<_>>();
         let pending_transition_frames = if !pending_capability_transitions.is_empty() {
             let frames = self
                 .apply_pending_runtime_context_transitions_on_turn(
@@ -405,36 +400,10 @@ impl SessionHub {
                     &context.turn.assembled_tools,
                 )
                 .await;
-            let command_ids = pending_runtime_commands
-                .iter()
-                .map(|command| command.id)
-                .collect::<Vec<_>>();
-            if let Err(error) = runtime_command_store
-                .mark_runtime_commands_applied(&command_ids)
-                .await
-            {
-                tracing::warn!(
-                    session_id = %sid,
-                    error = %error,
-                    "标记 pending runtime commands applied 失败"
-                );
-            }
             frames
         } else {
             Vec::new()
         };
-
-        // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成
-        let is_first_turn = session_meta.last_event_seq <= 1;
-        if is_first_turn
-            && session_meta.title_source != super::types::TitleSource::User
-            && self.title_generator.is_some()
-        {
-            self.spawn_title_generation(
-                session_id.to_string(),
-                resolved_payload.text_prompt.clone(),
-            );
-        }
 
         let connector_type = match self.connector.connector_type() {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
@@ -551,6 +520,7 @@ impl SessionHub {
             hook_session.as_ref(),
             &context.turn.context_frames,
         );
+        let executor_config_for_meta = context.session.executor_config.clone();
 
         let mut stream = match self
             .connector
@@ -576,6 +546,41 @@ impl SessionHub {
                 return Err(error);
             }
         };
+
+        Self::apply_turn_start_meta(
+            &mut session_meta,
+            now,
+            &turn_id,
+            &executor_config_for_meta,
+            is_owner_bootstrap,
+            &title_hint,
+        );
+        let _ = meta_store.save_session_meta(&session_meta).await;
+
+        if !pending_command_ids.is_empty()
+            && let Err(error) = runtime_command_store
+                .mark_runtime_commands_applied(&pending_command_ids)
+                .await
+        {
+            tracing::warn!(
+                session_id = %sid,
+                error = %error,
+                "标记 pending runtime commands applied 失败"
+            );
+        }
+
+        // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成。
+        // connector.prompt 已接受后再触发，避免启动失败时产生额外副作用。
+        let is_first_turn = session_meta.last_event_seq <= 1;
+        if is_first_turn
+            && session_meta.title_source != super::types::TitleSource::User
+            && self.title_generator.is_some()
+        {
+            self.spawn_title_generation(
+                session_id.to_string(),
+                resolved_payload.text_prompt.clone(),
+            );
+        }
         let session_id = session_id.to_string();
 
         // 创建 SessionTurnProcessor — cloud-native 和 relay 共用的事件处理核心

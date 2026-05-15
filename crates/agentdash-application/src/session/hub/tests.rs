@@ -1830,6 +1830,103 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
 }
 
 #[tokio::test]
+async fn connector_setup_failure_does_not_commit_bootstrap_or_pending_commands() {
+    struct FailingConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for FailingConnector {
+        fn connector_id(&self) -> &'static str {
+            "failing"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+        async fn discover_options_stream(
+            &self,
+            _: &str,
+            _: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn prompt(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: &PromptPayload,
+            _: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            Err(ConnectorError::Runtime(
+                "connector setup failed".to_string(),
+            ))
+        }
+        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
+    let session = hub.create_session("test").await.expect("create session");
+    hub.mark_owner_bootstrap_pending(&session.id)
+        .await
+        .expect("should mark pending");
+    hub.enqueue_pending_capability_state_transition(
+        &session.id,
+        PendingCapabilityStateTransition {
+            id: "transition-fail".to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "review".to_string(),
+            capability_keys: std::collections::BTreeSet::new(),
+            state: agentdash_spi::CapabilityState::default(),
+            created_at: 1,
+            source_turn_id: None,
+        },
+    )
+    .await
+    .expect("enqueue pending transition");
+
+    let error = hub
+        .start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
+        .await
+        .expect_err("prompt should fail");
+    assert!(error.to_string().contains("connector setup failed"));
+
+    let meta = hub
+        .get_session_meta(&session.id)
+        .await
+        .expect("meta should load")
+        .expect("session should exist");
+    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Pending);
+
+    let pending_commands = hub
+        .persistence
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Pending], 10)
+        .await
+        .expect("runtime commands should load");
+    assert_eq!(pending_commands.len(), 1);
+    assert_eq!(pending_commands[0].transition_id, "transition-fail");
+}
+
+#[tokio::test]
 async fn cancel_marks_running_turn_interrupted() {
     #[derive(Default)]
     struct CancelAwareConnector {

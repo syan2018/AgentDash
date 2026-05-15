@@ -10,11 +10,46 @@
 
 use std::sync::Arc;
 
+use agentdash_domain::workflow::{
+    LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowDefinition,
+};
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
 use super::post_turn_handler::DynPostTurnHandler;
 use super::types::{PreparedLaunchPrompt, UserPromptInput};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptAugmentTaskPhase {
+    Start,
+    Continue,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PromptAugmentTaskInput {
+    pub phase: Option<PromptAugmentTaskPhase>,
+    pub override_prompt: Option<String>,
+    pub additional_prompt: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct PromptAugmentCompanionWorkflowInput {
+    pub run: LifecycleRun,
+    pub lifecycle: LifecycleDefinition,
+    pub step: LifecycleStepDefinition,
+    pub workflow: Option<WorkflowDefinition>,
+}
+
+#[derive(Clone)]
+pub struct PromptAugmentCompanionInput {
+    pub parent_vfs: Option<agentdash_spi::Vfs>,
+    pub parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub parent_context_bundle: Option<agentdash_spi::SessionContextBundle>,
+    pub slice_mode: agentdash_spi::CompanionSliceMode,
+    pub companion_executor_config: agentdash_spi::AgentConfig,
+    pub dispatch_prompt: String,
+    pub workflow: Option<PromptAugmentCompanionWorkflowInput>,
+}
 
 /// 需要进入 owner/context/capability augment 的原始 prompt 输入。
 ///
@@ -27,19 +62,11 @@ pub struct PromptAugmentInput {
     pub existing_vfs: Option<agentdash_spi::Vfs>,
     pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
+    pub task: Option<PromptAugmentTaskInput>,
+    pub companion: Option<PromptAugmentCompanionInput>,
 }
 
 impl PromptAugmentInput {
-    pub fn from_prepared_prompt(prompt: PreparedLaunchPrompt) -> Self {
-        Self {
-            user_input: prompt.user_input,
-            request_mcp_servers: prompt.mcp_servers,
-            existing_vfs: prompt.vfs,
-            identity: prompt.identity,
-            post_turn_handler: prompt.post_turn_handler,
-        }
-    }
-
     pub fn into_prepared_prompt(self) -> PreparedLaunchPrompt {
         let mut prompt = PreparedLaunchPrompt::from_user_input(self.user_input);
         prompt.mcp_servers = self.request_mcp_servers;

@@ -9,15 +9,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::session::SessionExecutionState;
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::session::ownership::SessionOwnerResolver;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    bootstrap::session_context_query::build_session_context_plan,
     routes::project_agents::parse_project_agent_session_label,
-    routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -36,12 +34,6 @@ pub struct ProjectSessionDetailResponse {
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
-#[derive(Debug)]
-pub(crate) struct BuiltProjectSessionContextResponse {
-    pub(crate) vfs: Option<agentdash_spi::Vfs>,
-    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
-}
-
 pub async fn get_project_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -52,7 +44,7 @@ pub async fn get_project_session(
     let binding_uuid = Uuid::parse_str(&binding_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let project = load_project_with_permission(
+    let _project = load_project_with_permission(
         state.as_ref(),
         &current_user,
         project_uuid,
@@ -79,9 +71,20 @@ pub async fn get_project_session(
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let built_context =
-        project_session_context_projection(&state, &project, &binding.session_id, &binding.label)
-            .await?;
+    let context_bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(&binding.session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let context_projection = build_session_context_plan(
+        &state,
+        &current_user,
+        &binding.session_id,
+        &context_bindings,
+    )
+    .await?
+    .map(|plan| plan.context_projection);
     let response_session_id = binding.session_id.clone();
 
     Ok(Json(ProjectSessionDetailResponse {
@@ -90,72 +93,14 @@ pub async fn get_project_session(
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
-        vfs: built_context.vfs.clone(),
-        runtime_surface: if let Some(space) = built_context.vfs.as_ref() {
-            Some(
-                build_surface_summary(
-                    &state,
-                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                        session_id: response_session_id,
-                    },
-                    space,
-                )
-                .await?,
-            )
-        } else {
-            None
-        },
-        context_snapshot: built_context.context_snapshot,
+        vfs: context_projection
+            .as_ref()
+            .and_then(|projection| projection.vfs.clone()),
+        runtime_surface: context_projection
+            .as_ref()
+            .and_then(|projection| projection.runtime_surface.clone()),
+        context_snapshot: context_projection.and_then(|projection| projection.context_snapshot),
     }))
-}
-
-async fn project_session_context_projection(
-    state: &Arc<AppState>,
-    project: &agentdash_domain::project::Project,
-    session_id: &str,
-    binding_label: &str,
-) -> Result<BuiltProjectSessionContextResponse, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let owner = SessionOwnerResolver::resolve_primary(&bindings).ok_or_else(|| {
-        ApiError::NotFound(format!("Session `{session_id}` 未绑定 Project owner"))
-    })?;
-    let session_meta = state
-        .services
-        .session_hub
-        .get_session_meta(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
-    let plan = SessionConstructionPlanner::plan_project_context_query(
-        &state.repos,
-        &state.services.vfs_service,
-        &state.config.platform_config,
-        session_id.to_string(),
-        owner,
-        project,
-        binding_label,
-        &session_meta,
-    )
-    .await
-    .map_err(|error| {
-        if error.starts_with("无效的项目 Agent session label")
-            || error.starts_with("Project Agent `")
-        {
-            ApiError::NotFound(error)
-        } else {
-            ApiError::Internal(error)
-        }
-    })?;
-
-    Ok(BuiltProjectSessionContextResponse {
-        vfs: plan.context_projection.vfs,
-        context_snapshot: plan.context_projection.context_snapshot,
-    })
 }
 
 // ─── Project Sessions 聚合 API ────────────────────────────────────────────────

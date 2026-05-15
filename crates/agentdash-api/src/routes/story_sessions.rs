@@ -7,14 +7,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::session::ownership::SessionOwnerResolver;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
-    routes::vfs_surfaces::build_surface_summary,
+    bootstrap::session_context_query::build_session_context_plan,
     rpc::ApiError,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -32,12 +30,6 @@ pub struct StorySessionDetailResponse {
     pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<SessionContextSnapshot>,
-}
-
-#[derive(Debug)]
-pub(crate) struct BuiltStorySessionContextResponse {
-    pub(crate) vfs: Option<agentdash_spi::Vfs>,
-    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
 }
 
 /// 返回给前端的 Session 绑定信息（含 Session 元数据）
@@ -125,7 +117,7 @@ pub async fn get_story_session(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let (story, _) = load_story_and_project_with_permission(
+    let (_story, _) = load_story_and_project_with_permission(
         state.as_ref(),
         &current_user,
         story_uuid,
@@ -149,8 +141,20 @@ pub async fn get_story_session(
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let built_context =
-        story_session_context_projection(&state, &story, &binding.session_id).await?;
+    let context_bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(&binding.session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let context_projection = build_session_context_plan(
+        &state,
+        &current_user,
+        &binding.session_id,
+        &context_bindings,
+    )
+    .await?
+    .map(|plan| plan.context_projection);
     let response_session_id = binding.session_id.clone();
 
     Ok(Json(StorySessionDetailResponse {
@@ -159,27 +163,13 @@ pub async fn get_story_session(
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
-        vfs: built_context
+        vfs: context_projection
             .as_ref()
-            .and_then(|context| context.vfs.clone()),
-        runtime_surface: if let Some(space) = built_context
+            .and_then(|projection| projection.vfs.clone()),
+        runtime_surface: context_projection
             .as_ref()
-            .and_then(|context| context.vfs.as_ref())
-        {
-            Some(
-                build_surface_summary(
-                    &state,
-                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                        session_id: response_session_id,
-                    },
-                    space,
-                )
-                .await?,
-            )
-        } else {
-            None
-        },
-        context_snapshot: built_context.and_then(|context| context.context_snapshot),
+            .and_then(|projection| projection.runtime_surface.clone()),
+        context_snapshot: context_projection.and_then(|projection| projection.context_snapshot),
     }))
 }
 
@@ -396,46 +386,4 @@ pub async fn unbind_story_session(
         "unbound": true,
         "binding_id": binding_id,
     })))
-}
-
-async fn story_session_context_projection(
-    state: &Arc<AppState>,
-    story: &agentdash_domain::story::Story,
-    session_id: &str,
-) -> Result<Option<BuiltStorySessionContextResponse>, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let owner = SessionOwnerResolver::resolve_primary(&bindings)
-        .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 未绑定 Story owner")))?;
-    let session_meta = state
-        .services
-        .session_hub
-        .get_session_meta(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(format!("读取 story session meta 失败: {error}")))?;
-    let Some(session_meta) = session_meta else {
-        return Ok(None);
-    };
-    let Some(plan) = SessionConstructionPlanner::plan_story_context_query(
-        &state.repos,
-        &state.services.vfs_service,
-        &state.config.platform_config,
-        session_id.to_string(),
-        owner,
-        story,
-        Some(&session_meta),
-    )
-    .await
-    .map_err(ApiError::Internal)?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(BuiltStorySessionContextResponse {
-        vfs: plan.context_projection.vfs,
-        context_snapshot: plan.context_projection.context_snapshot,
-    }))
 }

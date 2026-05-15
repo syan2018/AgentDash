@@ -108,6 +108,8 @@ cargo check -p agentdash-local
 
 ### Commit 3: 让 context/query/audit/inspector 与 launch 同源
 
+状态：已完成。
+
 提交信息：
 
 ```text
@@ -120,6 +122,12 @@ refactor(session): 统一 context 查询与 construction plan 投影
 - route/bootstrap 删除 task/story/project context response 主线重建分支。
 - audit / inspector 所需字段进入 `ConstructionProjections`。
 - owner 排序只来自 `SessionOwnerResolver`，launch、context query、权限展示不再各自解释 owner。
+
+实际完成事实：
+
+- Task / Story / Project session detail 入口改为调用 `build_session_context_plan`。
+- 详情入口不再直接调用 `SessionConstructionPlanner`、`SessionOwnerResolver` 或 `build_surface_summary`。
+- runtime surface、VFS、context snapshot 均从 `SessionConstructionPlan.context_projection` 投影。
 
 退出检查：
 

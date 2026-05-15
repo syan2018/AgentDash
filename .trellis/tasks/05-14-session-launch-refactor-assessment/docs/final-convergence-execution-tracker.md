@@ -20,7 +20,7 @@ LaunchCommand
 |---|---|---|
 | Commit 1 | 已完成 | source intent、provider 命名、旧 augmenter/seed 壳删除 |
 | Commit 2 | 已完成 | `SessionConstructionFacts` production handoff 删除，provider 直接返回 `SessionConstructionPlan` |
-| Commit 3 | 未开始 | context/query/audit/inspector 与 launch 同源 |
+| Commit 3 | 已完成 | context/query/audit/inspector 与 launch 同源 |
 | Commit 4 | 未开始 | `prompt_pipeline` 收缩为 `LaunchExecution` 执行器 |
 | Commit 5 | 未开始 | 拆掉有职责 `SessionHub` |
 | Commit 6 | 未开始 | effects / pending / persistence 最终验证与任务收口 |
@@ -31,9 +31,9 @@ LaunchCommand
 |---|---|---|
 | Entry | 生产入口进入 `LaunchCommand`；`LaunchCommand` 不携带 resolved VFS/MCP/capability/context/hook/effect/working_dir；`UserPromptInput.working_dir` 已移除；task handler、companion parent snapshot、local relay resolved VFS 已迁出 command | 继续保持 source payload 只能由 command 进入 construction/launch，不能新增半成品 handoff |
 | Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`、`SessionConstructionSeed`、`SessionConstructionFacts` 已从生产代码删除 | 后续任何同类 wrapper / payload 命中都视为回归 |
-| Construction | `SessionConstructionProvider` 直接返回 `SessionConstructionPlan`；assembler 将 VFS、MCP、capability、context bundle/frame、executor profile、prompt projection、task effect binding 写入 plan；companion dispatch 使用本次 child session plan，parent session 只作为 source policy 解析 parent facts | context endpoint、audit、inspector 还没有全部改为同一 construction projection；companion context bundle / audit projection 仍需最终核对 |
+| Construction | `SessionConstructionProvider` 直接返回 `SessionConstructionPlan`；assembler 将 VFS、MCP、capability、context bundle/frame、executor profile、prompt projection、task effect binding 写入 plan；Task / Story / Project session detail 与 `/sessions/{id}/context` 均投影同一 `build_session_context_plan`；companion dispatch 使用本次 child session plan，parent session 只作为 source policy 解析 parent facts | audit/inspector projection 仍需最终核对，companion context bundle 仍需在最终验证中确认 |
 | Launch | `SessionLaunchPlannerInput` 已是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`LaunchExecution` 强制持有 construction，承载 resolved prompt、runtime commands、terminal effects、connector input projection | planner 后续只能处理 per-launch 策略；不能回到 owner/surface/context 重建 |
-| API/bootstrap | bootstrap 不再返回 `UserPromptInput + SessionConstructionFacts`；route 层不再持有旧 prompt envelope | context/query 相关 route/bootstrap 仍需按 Commit 3 清理独立重建路径 |
+| API/bootstrap | bootstrap 不再返回 `UserPromptInput + SessionConstructionFacts`；route 层不再持有旧 prompt envelope；Task / Story / Project session detail 不再独立调用 construction planner 或自行构造 runtime surface | 后续重点转入 pipeline execution 和 Hub 拆分 |
 | Runtime/Pipeline | pipeline 已从 provider 获取 construction plan，不再拆 facts | pipeline 仍承担部分 execution setup/fallback，Commit 4 需要收缩为执行器 |
 | Runtime/Hub | registry / supervisor 已拆出一部分，live executor session 与 active turn 命名已分离 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
 | Effects/Pending | terminal effect outbox、runtime command store 已有基础；task effect binding 已是 durable 描述 | effect handler 幂等语义、pending apply-once、失败恢复和 migration 仍需最终验证 |

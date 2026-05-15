@@ -27,7 +27,7 @@
 - [ ] working dir 由 construction 根据 owner/workspace/agent/lifecycle/local relay root 解析。
 - [ ] launch、context endpoint、权限展示、audit/inspector 使用同一 owner 语义。
 - [ ] context endpoint、audit、inspector 只投影 `SessionConstructionPlan`。
-- [ ] route/bootstrap 不保留 task/story/project context 主线重建。
+- [x] route/bootstrap 不保留 task/story/project context 主线重建。
 - [ ] launch 与 context endpoint 的 VFS/capability/context 有一致性测试。
 
 ## Runtime / Pipeline

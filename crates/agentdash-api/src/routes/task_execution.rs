@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::task::execution::{
     ExecutionPhase, TaskExecutionCommand, TaskExecutionError,
 };
@@ -17,8 +15,8 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
+    bootstrap::session_context_query::build_session_context_plan,
     dto::TaskResponse,
-    routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
 };
 
@@ -188,68 +186,27 @@ pub async fn get_task_session(
         .get_task_session(task_id)
         .await
         .map_err(map_task_execution_error)?;
-    let session_meta = if let Some(session_id) = result.session_id.as_deref() {
-        state
-            .services
-            .session_hub
-            .get_session_meta(session_id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    } else {
-        None
-    };
-
-    let plan = if let Some(session_id) = result.session_id.as_ref() {
+    let context_projection = if let Some(session_id) = result.session_id.as_ref() {
         let bindings = state
             .repos
             .session_binding_repo
             .list_by_session(session_id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        let owner = SessionOwnerResolver::resolve_primary(&bindings).ok_or_else(|| {
-            ApiError::NotFound(format!("Session `{session_id}` 未绑定 Task owner"))
-        })?;
-        Some(
-            SessionConstructionPlanner::plan_task_context_query(
-                &state.repos,
-                &state.services.vfs_service,
-                &state.config.platform_config,
-                session_id.clone(),
-                owner,
-                task_id,
-                task.workspace_id,
-                result.agent_binding.clone(),
-                session_meta.as_ref(),
-            )
-            .await,
-        )
+        build_session_context_plan(&state, &current_user, session_id, &bindings)
+            .await?
+            .map(|plan| plan.context_projection)
     } else {
         None
     };
 
-    let resolved_vfs = plan
+    let resolved_vfs = context_projection
         .as_ref()
-        .and_then(|plan| plan.context_projection.vfs.clone());
-    let runtime_surface = if let Some(session_id) = result.session_id.as_ref() {
-        if let Some(space) = resolved_vfs.as_ref() {
-            Some(
-                build_surface_summary(
-                    &state,
-                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                        session_id: session_id.clone(),
-                    },
-                    space,
-                )
-                .await?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let context_snapshot = plan.and_then(|plan| plan.context_projection.context_snapshot);
+        .and_then(|projection| projection.vfs.clone());
+    let runtime_surface = context_projection
+        .as_ref()
+        .and_then(|projection| projection.runtime_surface.clone());
+    let context_snapshot = context_projection.and_then(|projection| projection.context_snapshot);
 
     Ok(Json(TaskSessionResponse {
         task_id: result.task_id,

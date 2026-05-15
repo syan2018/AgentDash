@@ -37,7 +37,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] local relay workspace root 作为 source fact 进入 construction 解析，并记录 VFS 来源。
 - [x] construction 持有 task effect durable binding，并通过 effects registry 解析即时 handler / replay handler。
 - [ ] construction 持有 context frame plan、audit projection、inspector projection。
-- [ ] launch、context endpoint、audit、inspector 都投影同一 construction。
+- [x] Task / Story / Project session detail 与 session context endpoint 均投影同一 construction query plan。
+- [ ] audit、inspector 都投影同一 construction。
 
 ### 3. Collapse `LaunchExecution`
 

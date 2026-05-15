@@ -37,6 +37,6 @@
     "crates/agentdash-api/src/bootstrap/session_construction_bootstrap.rs",
     "crates/agentdash-api/src/bootstrap/session_construction_provider.rs"
   ],
-  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed、LaunchAugmentation alias 与 SessionConstructionSeed 已从生产代码删除，SessionConstructionProvider/prompt_pipeline/API bootstrap 不再返回或接收旧 payload/envelope，ContextPlan 已保留完整 SessionContextBundle 与 continuation context frame。剩余阻塞是 SessionConstructionFacts 仍是 bootstrap 到 planner 的 provider handoff，SessionConstructionPlan 仍未成为完整 frame/audit/inspector 事实源，SessionHub 仍承载业务方法。执行以 implement.md 的 6 个 commit slice 为准。",
+  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed、LaunchAugmentation alias、SessionConstructionSeed 与 SessionConstructionFacts 已从生产代码删除。SessionConstructionProvider/API bootstrap 直接返回 SessionConstructionPlan，SessionLaunchPlanner 消费 LaunchCommand + SessionConstructionPlan + runtime facts。剩余阻塞是 context/query/audit/inspector 尚未完全投影同一 construction，prompt_pipeline 仍有执行 setup/fallback，SessionHub 仍承载业务方法，effects/pending/persistence 仍需最终验证。执行以 implement.md 的 6 个 commit slice 为准。",
   "meta": {}
 }

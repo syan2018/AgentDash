@@ -2204,10 +2204,10 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::session::construction::SessionConstructionFacts;
+    use crate::session::construction::SessionConstructionPlan;
     use crate::session::{
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider, SessionHub,
-        UserPromptInput, local_workspace_vfs,
+        local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 
@@ -2506,7 +2506,7 @@ mod companion_tests {
             &self,
             _session_id: &str,
             command: &crate::session::LaunchCommand,
-        ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
+        ) -> Result<SessionConstructionPlan, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = command
                 .user_input()

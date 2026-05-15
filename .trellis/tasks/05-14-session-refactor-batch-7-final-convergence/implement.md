@@ -22,9 +22,16 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 本 batch 固定为 6 次提交完成。除非编译错误迫使同一 slice 内补修，不再拆更小提交。
 
+重新领取任务时的执行规则：
+
+- 从本节找到第一个状态不是“已完成”的 commit slice。
+- 只执行该 slice 的代码和文档，不创建 child task。
+- 该 slice 验证通过后立即提交，再进入下一个 slice。
+- 不新增过渡 payload、wrapper 或双主线；发现前一 slice 遗留错误时，在当前 slice 内直接删掉。
+
 ### Commit 1: 校准 source intent 与 construction provider 边界
 
-状态：进行中。
+状态：已完成。
 
 提交信息：
 
@@ -35,11 +42,11 @@ refactor(session): 校准 launch source 与 construction provider 边界
 本次提交只做边界校准，不宣称终态完成：
 
 - `PromptRequestAugmenter` / prompt augmenter 命名彻底替换为 `SessionConstructionProvider`。
-- `SessionConstructionSeed` 类型名彻底删除，当前过渡 handoff 明确叫 `SessionConstructionFacts`，且不得从 `session::mod` 顶层导出。
+- `SessionConstructionSeed` 类型名彻底删除；当时仍存在的 provider handoff 不得从 `session::mod` 顶层导出。
 - task / companion source payload 命名脱离 `PromptAugment*`。
 - API bootstrap 文件名脱离 `prompt_augmenter` / `session_launch_augmenter`。
 - `SessionLaunchPlannerInput` 接收 `LaunchCommand` 原件；source contract、identity、follow-up、local relay workspace root、local relay MCP declarations 只能由 planner 从 command 投影，`prompt_pipeline` 不再重组这些 source facts。
-- 文档只记录真实剩余阻塞：`SessionConstructionFacts` 仍是 provider handoff，不是终态边界。
+- 文档只记录真实剩余阻塞，不把任何 provider handoff 写成终态边界。
 
 退出检查：
 
@@ -60,6 +67,8 @@ git diff --check
 
 ### Commit 2: 删除 `SessionConstructionFacts` production handoff
 
+状态：已完成。
+
 提交信息：
 
 ```text
@@ -73,6 +82,13 @@ refactor(session): 删除 construction facts 生产传递层
 - prompt payload 不再通过被 provider 改写的 `UserPromptInput` 传递。provider 产出的 context prompt blocks / executor profile 必须进入 construction projection，launch planner 再从 `LaunchCommand + SessionConstructionPlan` 生成 resolved prompt payload。
 - `SessionLaunchPlannerInput` 删除 `construction_facts`。
 - `SessionConstructionFacts` 类型删除。
+
+实际完成事实：
+
+- `SessionConstructionProvider::build_construction` 直接返回 `SessionConstructionPlan`。
+- `SessionConstructionPlan.prompt` 承载 prompt blocks / env projection，executor profile 进入 `execution_profile`。
+- API bootstrap、assembler、pipeline、planner 不再传递 facts tuple。
+- companion dispatch 使用本次 child session construction plan，parent session 只作为 source policy 解析 parent facts。
 
 退出检查：
 

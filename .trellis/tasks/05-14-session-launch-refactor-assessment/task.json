@@ -46,6 +46,6 @@
     "crates/agentdash-api/src/bootstrap/session_context_query.rs",
     "crates/agentdash-api/src/app_state.rs"
   ],
-  "notes": "2026-05-15 状态校准：此前 batch 只完成迁移基础，父任务仍 in_progress。PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed、LaunchAugmentation alias 与 SessionConstructionSeed 已从生产代码删除，但最终目标不得被 SessionConstructionFacts provider handoff、SessionHub facade、bootstrap construction 逻辑或 planner fallback 稀释。当前剩余主线是按 Batch 7 的 6 个 commit slice 删除 SessionConstructionFacts 生产 handoff，补全 SessionConstructionPlan 作为 launch/query/audit/inspector 同源事实源，收敛 LaunchExecution，拆除有职责 SessionHub，并完成 effects/pending/persistence 验证。权威追踪见 docs/final-convergence-execution-tracker.md。",
+  "notes": "2026-05-15 状态校准：此前 batch 只完成迁移基础，父任务仍 in_progress。PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed、LaunchAugmentation alias、SessionConstructionSeed 与 SessionConstructionFacts 已从生产代码删除。当前剩余主线是按 Batch 7 的 6 个固定 commit slice 推进：Commit 3 统一 context/query/audit/inspector 与 launch construction projection，Commit 4 收缩 prompt_pipeline 为 LaunchExecution 执行器，Commit 5 拆掉有职责 SessionHub，Commit 6 完成 effects/pending/persistence 验证。权威追踪见 docs/final-convergence-execution-tracker.md。",
   "meta": {}
 }

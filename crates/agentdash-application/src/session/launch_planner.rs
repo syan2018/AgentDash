@@ -5,7 +5,7 @@ use agentdash_spi::{ConnectorError, RestoredSessionState};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
-use super::construction::{SessionConstructionFacts, SourceContractPlan};
+use super::construction::{SessionConstructionPlan, SourceContractPlan};
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -20,7 +20,7 @@ use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    UserPromptInput, resolve_session_prompt_lifecycle,
+    resolve_session_prompt_lifecycle,
 };
 
 pub(super) struct SessionLaunchPlanner<'a> {
@@ -35,8 +35,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
-    pub user_input: UserPromptInput,
-    pub construction_facts: SessionConstructionFacts,
+    pub construction: SessionConstructionPlan,
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
@@ -61,18 +60,26 @@ impl<'a> SessionLaunchPlanner<'a> {
                 .to_string(),
             ),
         };
-        let SessionConstructionFacts {
-            owner: construction_owner,
-            mcp_servers: construction_mcp_servers,
-            vfs: construction_vfs,
-            capability_state: construction_capability_state,
-            context_bundle,
-            continuation_context_frame,
-            terminal_hook_effect_binding,
-        } = input.construction_facts;
-        let mut context_bundle = context_bundle;
-        let resolved_payload = input
-            .user_input
+        let construction = input.construction;
+        let construction_owner = Some(construction.owner.clone());
+        let construction_mcp_servers = construction.projections.mcp_servers.clone();
+        let construction_vfs = construction.surface.vfs.clone();
+        let construction_capability_state = construction.projections.capability_state.clone();
+        let mut context_bundle = construction.context.bundle.clone();
+        let continuation_context_frame = construction.context.continuation_context_frame.clone();
+        let terminal_hook_effect_binding =
+            construction.effects.terminal_hook_effect_binding.clone();
+        let mut prompt_input = command.user_input().clone();
+        if let Some(blocks) = construction.prompt.prompt_blocks.clone() {
+            prompt_input.prompt_blocks = Some(blocks);
+        }
+        if let Some(config) = construction.execution_profile.executor_config.clone() {
+            prompt_input.executor_config = Some(config);
+        }
+        if !construction.prompt.environment_variables.is_empty() {
+            prompt_input.env = construction.prompt.environment_variables.clone();
+        }
+        let resolved_payload = prompt_input
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
         let pending_capability_transitions = input
@@ -121,10 +128,11 @@ impl<'a> SessionLaunchPlanner<'a> {
             })?;
         let working_directory = default_mount_root.clone();
 
-        let executor_config = input
-            .user_input
+        let executor_config = construction
+            .execution_profile
             .executor_config
             .clone()
+            .or_else(|| input.command.user_input().executor_config.clone())
             .or_else(|| input.session_meta.executor_config.clone())
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig(
@@ -347,7 +355,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             pending_vfs_overlay_applied,
             mcp_source,
             capability_source,
-            environment_variables: input.user_input.env.clone(),
+            environment_variables: prompt_input.env.clone(),
             hook_session: hook_session.clone(),
             capability_state: capability_state.clone(),
             runtime_delegate,

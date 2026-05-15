@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
@@ -12,33 +13,8 @@ use uuid::Uuid;
 use super::context::SessionContextSnapshot;
 use super::ownership::ResolvedSessionOwner;
 use super::post_turn_handler::TerminalHookEffectBinding;
+use super::types::UserPromptInput;
 use crate::vfs::ResolvedVfsSurface;
-
-pub struct SessionConstructionFacts {
-    pub owner: Option<ResolvedSessionOwner>,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<CapabilityState>,
-    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
-    pub context_bundle: Option<SessionContextBundle>,
-    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
-    pub continuation_context_frame: Option<ContextFrame>,
-    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
-}
-
-impl Default for SessionConstructionFacts {
-    fn default() -> Self {
-        Self {
-            owner: None,
-            mcp_servers: Vec::new(),
-            vfs: None,
-            capability_state: None,
-            context_bundle: None,
-            continuation_context_frame: None,
-            terminal_hook_effect_binding: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct SessionConstructionPlan {
@@ -50,6 +26,7 @@ pub struct SessionConstructionPlan {
     pub execution_profile: ExecutionProfilePlan,
     pub surface: SessionSurfacePlan,
     pub context: ContextPlan,
+    pub prompt: ConstructionPromptPlan,
     pub identity: IdentityPlan,
     pub effects: ConstructionEffectPlan,
     pub projections: ConstructionProjections,
@@ -93,6 +70,12 @@ pub struct ContextPlan {
     pub continuation_context_frame: Option<ContextFrame>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub bootstrap_fragment_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConstructionPromptPlan {
+    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub environment_variables: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -207,6 +190,7 @@ impl SessionConstructionPlan {
                 context_snapshot: context_projection.context_snapshot.clone(),
                 ..Default::default()
             },
+            prompt: ConstructionPromptPlan::default(),
             identity: IdentityPlan::default(),
             effects: ConstructionEffectPlan::default(),
             projections,
@@ -269,6 +253,7 @@ impl SessionConstructionPlan {
                 context_snapshot: input.context_snapshot,
                 bootstrap_fragment_count,
             },
+            prompt: ConstructionPromptPlan::default(),
             identity: IdentityPlan {
                 identity: input.identity,
             },
@@ -286,6 +271,22 @@ impl SessionConstructionPlan {
                 entries: trace_entries,
             },
         }
+    }
+
+    pub fn from_source_input(
+        session_id: impl Into<String>,
+        owner: ResolvedSessionOwner,
+        user_input: &UserPromptInput,
+    ) -> Self {
+        let mut plan = Self::new(
+            session_id,
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
+        plan.prompt.prompt_blocks = user_input.prompt_blocks.clone();
+        plan.prompt.environment_variables = user_input.env.clone();
+        plan.execution_profile.executor_config = user_input.executor_config.clone();
+        plan
     }
 }
 

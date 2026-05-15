@@ -2,7 +2,7 @@
 
 ## Conclusion
 
-本重构还没有完成。当前分支完成了一批迁移基础，但生产主链路仍未达到目标：
+本重构仍未最终完成，但主链路已经推进到目标形态的前半段：
 
 ```text
 LaunchCommand
@@ -12,109 +12,96 @@ LaunchCommand
   -> SessionEvent / TerminalEffectOutbox
 ```
 
-后续执行按 `.trellis/tasks/05-14-session-refactor-batch-7-final-convergence/implement.md`
-中的 6 个 commit slice 推进。每次上下文压缩后只从该文件领取第一个未完成 slice，
-不得再临时拆小提交或重新解释目标。
+当前唯一执行计划是 `.trellis/tasks/05-14-session-refactor-batch-7-final-convergence/implement.md` 的 6 个固定 commit slice。每次上下文压缩或重新领取任务时，只找第一个未完成 slice 继续执行，不再创建 child task，不再重写方向。
 
-后续执行必须继续向唯一数据流收敛。`PromptAugmentInput`、`SessionLaunchRequest` 与 `SessionConstructionSeed` 都已从代码主线删除，但这不等于终态：当前仍有 `SessionConstructionFacts` 作为 API/bootstrap → launch planner 的显式 provider handoff。它已不再从 `session::mod` 顶层 re-export，`prompt_pipeline` 也不再拆 facts 字段；`working_dir_input` / `working_dir_hint` 已归零，launch summary/input 与 construction facts 不再携带 working dir hint；source contract、source identity、follow-up、local relay workspace root、local relay MCP declarations 已改为由 `LaunchCommand` 原件进入 planner。下一步不能继续扩张 facts，必须把剩余 construction facts 直接沉入 `SessionConstructionPlan`，把 hook/effect/launch 策略沉入 `LaunchExecution`。
+## Commit Slice State
+
+| Slice | Status | Scope |
+|---|---|---|
+| Commit 1 | 已完成 | source intent、provider 命名、旧 augmenter/seed 壳删除 |
+| Commit 2 | 已完成 | `SessionConstructionFacts` production handoff 删除，provider 直接返回 `SessionConstructionPlan` |
+| Commit 3 | 未开始 | context/query/audit/inspector 与 launch 同源 |
+| Commit 4 | 未开始 | `prompt_pipeline` 收缩为 `LaunchExecution` 执行器 |
+| Commit 5 | 未开始 | 拆掉有职责 `SessionHub` |
+| Commit 6 | 未开始 | effects / pending / persistence 最终验证与任务收口 |
 
 ## Current Code Facts
 
 | Area | Done | Blocking Gaps |
 |---|---|---|
-| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；`LaunchCommand::to_augment_input()` 已删除；source contract 与 source identity 不再写入 provider facts；local relay 不再把已组装 `Vfs` 塞进 command 或 facts，只传 workspace root source fact；local relay MCP 已收窄为 declaration source payload，且不再由 API construction provider 塞进 facts；relaxed launch 不再允许缺 construction provider 时回退裸 facts；`UserPromptInput.working_dir` 已移除；`working_dir_input` / `working_dir_hint` 已归零；task `post_turn_handler` 不再穿过 command；task terminal hook effect binding 不再由 API/bootstrap 生成；companion command 不再携带 parent VFS/MCP/context snapshot；API/bootstrap 不再投影 companion parent VFS/MCP，只把 parent session id 交给 application assembler 的 parent facts provider；未使用的 command continuation context frame 通道已删除 | `SessionConstructionFacts` 仍是 provider handoff，尚未由 construction provider 直接产出 `SessionConstructionPlan` |
-| Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`、`SessionConstructionSeed` 已删除；旧 payload 不再从 `session::mod` re-export，也不再出现在 `crates/agentdash-application/src` / `crates/agentdash-api/src` / `crates/agentdash-local/src`；`SessionConstructionFacts` 也已撤出 `session::mod` 顶层导出，只能显式从 construction 模块引用 | `LaunchAugmentation` tuple alias 已删除；当前仅剩 `SessionConstructionFacts` 承接 API/bootstrap 到 construction planner 的过渡事实 |
-| Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle` 与 continuation context frame；`UserPromptInput` 不再承载 working dir；working directory 由 effective VFS default mount / local relay workspace root 解析进入 construction workspace plan，launch execution 只保留解析后的 `working_directory`；local relay workspace root 由 command source payload 显式传入 planner/construction，`SessionLaunchPlanner` 解析为 VFS 并在 construction trace 标记来源；source identity 已由 command 投影进入 construction identity plan，不再从 assembly facts 旁路覆盖；task effect binding 已从 API bootstrap 的内存 handler改为 construction assembler 产出的 `TerminalHookEffectBinding` durable 描述，并进入 `SessionConstructionFacts` / `SessionConstructionPlan.effects`；companion parent facts 的 VFS/MCP 投影已从 API bootstrap 迁入 `SessionRequestAssembler` 的 parent facts provider；construction planner 缺 owner 时返回显式错误，不再用 `Option` 隐式丢 plan；`LaunchExecutionInput` 不再并排传递 working directory / executor config / MCP / VFS / identity，这些 connector facts 只能从 `SessionConstructionPlan` 投影 | MCP/capability/context/effect binding 仍先进入 `SessionConstructionFacts` 再被 planner 拆入 construction；executor profile、companion context bundle、audit/inspector projection 仍未完整归入 construction |
-| Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput`，并改为接收 `LaunchCommand` 原件与 `SessionConstructionFacts`；source contract、source identity、follow-up、local relay workspace root、local relay MCP declarations 不再由 `prompt_pipeline` 重组，而是由 planner 从 command 投影；`prompt_pipeline` 不再拆 owner/VFS/MCP/capability/context/effect 字段；`LaunchExecution` 不再允许缺失 construction plan，缺 owner 时会在 planner 阶段失败；resolved prompt payload 与 title hint 已进入 `LaunchExecution`；pending runtime commands、pending capability transitions、base capability state 已进入 `LaunchExecution.runtime_commands`；follow-up id 从 `LaunchExecution.summary` 投影；post-turn handler 已进入 `LaunchExecution.terminal_effects`；hook session 与 effective capability state 从 `LaunchExecution.context` 投影；`PlannedSessionLaunch` 已删除，planner 直接返回 `LaunchExecution`；`LaunchExecution` / `LaunchExecutionInput` / launch source summary enum 已收为 session 内部计划类型，不再从 `session::mod` re-export | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；facts 仍是 planner 输入，construction 字段仍未直接由 construction provider 产出 |
-| API/bootstrap | route 层部分 launch composition 已迁到 bootstrap；bootstrap 不再返回 `PromptAugmentInput` / `SessionLaunchRequest` / `LaunchExecutionSeed`，也不再构造 task `DynPostTurnHandler`；task effect binding 不再在 bootstrap 生成；companion dispatch 不再在 bootstrap 层读取 parent capability state 并拆出 VFS/MCP；API session construction provider 不再把 command identity、local relay root、local relay MCP declaration 预填进 facts | bootstrap 仍返回 `UserPromptInput + SessionConstructionFacts`，尚未直接输出 construction/launch 显式计划 |
-| Runtime/Hub | registry / supervisor 已拆出，live executor session 与 active turn 命名已有区分 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
-| Effects/Pending | terminal effect outbox、runtime command store 已有基础；task post-turn handler 不再作为 command trait object 传递；task effect binding 已是 durable handler 描述，planner 通过 registry 解析即时 handler，outbox replay 复用同一 payload | effect handler 幂等语义、pending apply-once、失败恢复和 migration 仍需最终验证 |
+| Entry | 生产入口进入 `LaunchCommand`；`LaunchCommand` 不携带 resolved VFS/MCP/capability/context/hook/effect/working_dir；`UserPromptInput.working_dir` 已移除；task handler、companion parent snapshot、local relay resolved VFS 已迁出 command | 继续保持 source payload 只能由 command 进入 construction/launch，不能新增半成品 handoff |
+| Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`、`SessionConstructionSeed`、`SessionConstructionFacts` 已从生产代码删除 | 后续任何同类 wrapper / payload 命中都视为回归 |
+| Construction | `SessionConstructionProvider` 直接返回 `SessionConstructionPlan`；assembler 将 VFS、MCP、capability、context bundle/frame、executor profile、prompt projection、task effect binding 写入 plan；companion dispatch 使用本次 child session plan，parent session 只作为 source policy 解析 parent facts | context endpoint、audit、inspector 还没有全部改为同一 construction projection；companion context bundle / audit projection 仍需最终核对 |
+| Launch | `SessionLaunchPlannerInput` 已是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`LaunchExecution` 强制持有 construction，承载 resolved prompt、runtime commands、terminal effects、connector input projection | planner 后续只能处理 per-launch 策略；不能回到 owner/surface/context 重建 |
+| API/bootstrap | bootstrap 不再返回 `UserPromptInput + SessionConstructionFacts`；route 层不再持有旧 prompt envelope | context/query 相关 route/bootstrap 仍需按 Commit 3 清理独立重建路径 |
+| Runtime/Pipeline | pipeline 已从 provider 获取 construction plan，不再拆 facts | pipeline 仍承担部分 execution setup/fallback，Commit 4 需要收缩为执行器 |
+| Runtime/Hub | registry / supervisor 已拆出一部分，live executor session 与 active turn 命名已分离 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
+| Effects/Pending | terminal effect outbox、runtime command store 已有基础；task effect binding 已是 durable 描述 | effect handler 幂等语义、pending apply-once、失败恢复和 migration 仍需最终验证 |
 | Persistence/AppState | store adapter、ready gate、working_dir 策略已有阶段性收口 | `SessionPersistence` 底层仍是大组合接口；AppState/Hub 拆分未达到最终架构 |
 
 ## Non-Negotiable Boundaries
 
 - `LaunchCommand` 只表达来源意图和引用：source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
 - `LaunchCommand` 不携带 resolved VFS / MCP / capability / context / hook trigger / effect handler / working_dir / connector input。
-- `UserPromptInput` 不包含 `working_dir`；`SessionConstructionFacts` 也不包含 working dir hint。working directory 只能由 construction 从 project / story / task / agent / lifecycle / local relay workspace root 与 VFS default mount 解析，launch summary/input 不得重新携带 working dir hint。
-- `SessionConstructionFacts` 不包含 source contract、source identity、local relay workspace root、local relay MCP declarations；这些都只能从 `LaunchCommand` 进入 planner/construction。
+- `UserPromptInput` 不包含 `working_dir`；prompt projection 由 `SessionConstructionPlan.prompt` 承接，不通过 provider 改写 `UserPromptInput` 回传。
 - task `post_turn_handler` 不能作为 command trait object 传递；task effect 只能以 durable binding 描述进入 construction/effects，再由 registry 解析即时 handler 与 replay handler。
-- companion dispatch 不传 parent VFS/MCP/context snapshot；最终由 construction 从 parent session facts 解析 companion slice。当前 bootstrap 仍有临时投影。
-- local relay workspace root 是来源事实；当前由 planner/construction 解析为 VFS，不再由 adapter 或 provider 预组装。MCP 只有作为原始 declaration 才可留在 source payload，不能被命名或使用为 resolved MCP surface。
-- relaxed launch 也必须经过 construction provider 路径；缺失 construction provider 时失败，不能降级成裸 facts。
+- companion dispatch 不传 parent VFS/MCP/context snapshot；construction 从 parent session facts 解析 companion slice。
+- local relay workspace root 是来源事实；MCP 只有作为原始 declaration 才可留在 source payload，不能命名或使用为 resolved MCP。
+- relaxed launch 也必须经过 construction provider 路径；缺失 construction provider 时失败，不能降级成裸 plan。
 
 ## Remaining Execution Order
 
-### 1. Correct Entry Intent Boundary
+### Commit 3: Context / Query / Audit / Inspector 同源
 
-- Keep `UserPromptInput` 与 `SessionConstructionFacts` free of `working_dir` / `working_dir_hint`.
-- Continue moving `TerminalHookEffectBinding` creation out of API bootstrap into construction provider. 当前 task effect binding 已迁入 story step assembler；剩余是彻底删除 facts handoff 后让 effects plan 直接来自 construction。
-- Move the current API bootstrap companion parent capability projection into construction provider. 当前 API/bootstrap 侧 VFS/MCP 投影已迁入 application assembler；后续还需把 companion context bundle / audit projection 也并入 construction。
-- Keep local relay MCP input as declaration source payload; it must enter planner/construction explicitly from `LaunchCommand`, not through `SessionConstructionFacts`.
+- context endpoint 只调用 construction query/use case，投影 `SessionConstructionPlan`。
+- route/bootstrap 删除 task/story/project context response 主线重建分支。
+- audit / inspector 所需字段进入 `ConstructionProjections`。
+- owner 排序只来自 `SessionOwnerResolver`。
 
-Exit checks:
-
-```powershell
-rg -n "working_dir" crates/agentdash-application/src/session/types.rs crates/agentdash-application/src/session/launch_planner.rs crates/agentdash-application/src/session/assembler.rs crates/agentdash-local/src/handlers/prompt.rs
-rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-```
-
-### 2. Complete `SessionConstructionPlan`
-
-- Put working dir plan, VFS, MCP declaration resolution, capability state, executor profile, source trace into construction; source identity already enters construction from command and must not move back into provider facts.
-- Put task effect binding, companion slice, local relay workspace root resolution into construction providers. 当前 task effect binding 与 companion parent VFS/MCP projection 已由 assembler 承接；companion context bundle 仍待并入。
-- Put context frame plan, audit projection, inspector projection into construction.
-- Make launch/query/audit/inspector project the same construction.
-
-Exit check:
+退出检查：
 
 ```powershell
 rg -n "build_task_session_context|build_story_session_context_response|build_project_session_context_response|finalize_augmented_request" crates/agentdash-api/src/routes crates/agentdash-api/src/bootstrap
+cargo test -p agentdash-application session::construction
+cargo check -p agentdash-api
 ```
 
-### 3. Collapse Launch Execution
+### Commit 4: `prompt_pipeline` 收缩为执行器
 
-- `SessionLaunchPlanner` consumes `LaunchCommand + SessionConstructionPlan + runtime facts`. 当前已消费 `LaunchCommand` 原件，但 construction 仍来自 `SessionConstructionFacts` handoff。
-- `LaunchExecution` owns prompt payload, construction, lifecycle, restore, hook plan, follow-up plan, runtime command plan, terminal effect plan, connector input, trace. 当前代码已要求 `LaunchExecution` 必须持有 `SessionConstructionPlan`，不再允许 `Option` construction；resolved prompt payload、pending runtime command plan、base/effective capability、hook session、follow-up id 与 terminal post-turn handler 已并入 `LaunchExecution`；connector input 的 working directory / executor config / MCP / VFS / identity 只能由 construction plan 投影；`PlannedSessionLaunch` 已删除。
-- `prompt_pipeline` executes the plan only. 当前代码已停止在 planner 输入处拆 construction facts 字段，但仍负责 turn/context frame 执行细节。
+- `SessionLaunchPlanner` 输出完整 `LaunchExecution`。
+- `prompt_pipeline` 只做 claim / activate、event append、connector.prompt、accepted 后 meta/pending/title 提交、processor supervision。
+- connector.prompt 失败不得提交 bootstrap completed、pending applied、title generation 等成功副作用。
+- hook session、runtime delegate、restore state、terminal effect handler 的解析归入 launch/effects 边界。
 
-Exit check:
+退出检查：
 
 ```powershell
-rg -n "req\\.vfs|req\\.mcp_servers|req\\.capability_state|req\\.context_bundle|req\\.hook_snapshot_reload|req\\.post_turn_handler" crates/agentdash-application/src/session/prompt_pipeline.rs crates/agentdash-application/src/session/launch_planner.rs
+rg -n "req\.vfs|req\.mcp_servers|req\.capability_state|req\.context_bundle|req\.hook_snapshot_reload|req\.post_turn_handler" crates/agentdash-application/src/session/prompt_pipeline.rs crates/agentdash-application/src/session/launch_planner.rs
+cargo test -p agentdash-application session::launch
+cargo test -p agentdash-application session::hub
 ```
 
-### 4. Delete `PromptAugmentInput` Production Handoff
+### Commit 5: 拆掉有职责 `SessionHub`
 
-- API/bootstrap no longer returns `PromptAugmentInput`.
-- Keep API construction provider / relaxed pipeline free of `PromptAugmentInput`.
-- `prompt_pipeline` no longer receives `PromptAugmentInput`.
-- Do not stop at `SessionConstructionFacts`; construction fields must be consumed by `SessionConstructionPlanner`, and launch/effect fields must move into `LaunchExecution` / effects boundary.
+- 拆出 core / ownership / construction / launch / runtime / eventing / hooks / effects / pending / adapters 能力服务。
+- `SessionHub` 若仍存在，只能作为依赖装配壳或测试 handle，不承载业务判断。
+- 新调用点依赖具体能力服务，不再通过 hub 读写跨职责状态。
 
-Exit check:
-
-```powershell
-rg -n "PromptAugmentInput" crates/agentdash-api/src/bootstrap crates/agentdash-application/src/session/launch.rs crates/agentdash-application/src/session/launch_planner.rs crates/agentdash-application/src/session/prompt_pipeline.rs
-```
-
-Production mainline must have zero hits.
-
-### 5. Remove Business `SessionHub`
-
-- Split construction / launch / runtime / eventing / hooks / effects / pending / adapters into explicit services.
-- If `SessionHub` remains in an intermediate commit, it must not be marked final.
-
-Exit check:
+退出检查：
 
 ```powershell
 rg -n "impl SessionHub|pub struct SessionHub" crates/agentdash-application/src/session
+cargo check -p agentdash-application
+cargo test -p agentdash-application session::hub
 ```
 
-### 6. Finish Effects / Pending / Persistence Verification
+### Commit 6: Effects / Pending / Persistence 最终验证
 
-- Terminal effects have durable identity or typed handlers.
-- Pending runtime command has requested/applied/failed audit, apply-once, failure recovery.
-- New business logic depends on meta/event/outbox/runtime-command store boundaries.
-- PostgreSQL / SQLite migrations are verified.
+- terminal event 先落库，effect 进入 durable outbox；handler 有 durable identity 或 typed handler。
+- pending runtime command 覆盖 requested / applied / failed，具备 apply-once 和失败恢复测试。
+- 新增业务逻辑依赖 meta / event / outbox / runtime-command store 边界。
+- PostgreSQL / SQLite migration 通过。
+- 父任务 tracker、closure checklist、session startup spec 与代码事实一致。
 
 ## Final Validation Matrix
 
@@ -132,7 +119,7 @@ cargo test -p agentdash-application session::runtime_commands
 cargo test -p agentdash-application session::memory_persistence
 cargo test -p agentdash-application session::path_policy
 cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions
-rg -n "PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|LaunchCommand::.*_prepared" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|LaunchCommand::.*_prepared|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src
 git diff --check
 ```
@@ -143,6 +130,7 @@ git diff --check
 - [x] `UserPromptInput` does not carry working dir.
 - [x] `PromptAugmentInput` is not a production handoff, planner input, or augmented output.
 - [x] `SessionLaunchRequest` is not a production handoff.
+- [x] `SessionConstructionFacts` is not a production handoff.
 - [ ] `SessionConstructionPlan` is the launch/query/audit/inspector fact source.
 - [ ] `LaunchExecution` is the only per-launch strategy plan.
 - [ ] `prompt_pipeline` executes a plan instead of planning/fallback.

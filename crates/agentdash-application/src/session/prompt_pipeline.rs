@@ -9,7 +9,7 @@ use agentdash_spi::hooks::{
 };
 
 use super::assignment_context_frame::build_assignment_context_frame;
-use super::construction::SessionConstructionFacts;
+use super::construction::SessionConstructionPlan;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
@@ -36,7 +36,7 @@ impl<'a> SessionLaunchExecutor<'a> {
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let reason = command.reason_tag();
         let strictness = command.strictness();
-        let (user_input, construction_facts) = match strictness {
+        let construction = match strictness {
             LaunchStrictness::Strict => {
                 let Some(provider) = self.hub.current_session_construction_provider().await else {
                     return Err(ConnectorError::Runtime(format!(
@@ -50,8 +50,9 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .await?
             }
         };
-        let context_sources = construction_facts
-            .context_bundle
+        let context_sources = construction
+            .context
+            .bundle
             .as_ref()
             .map(|bundle| {
                 bundle
@@ -61,7 +62,7 @@ impl<'a> SessionLaunchExecutor<'a> {
             })
             .unwrap_or_default();
         let turn_id = self
-            .execute_constructed_launch(session_id, &command, user_input, construction_facts)
+            .execute_constructed_launch(session_id, &command, construction)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -74,7 +75,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         session_id: &str,
         command: &LaunchCommand,
         reason: &str,
-    ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
+    ) -> Result<SessionConstructionPlan, ConnectorError> {
         let Some(provider) = self.hub.current_session_construction_provider().await else {
             return Err(ConnectorError::Runtime(format!(
                 "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
@@ -87,21 +88,24 @@ impl<'a> SessionLaunchExecutor<'a> {
     pub(crate) async fn execute_constructed_launch_for_test(
         &self,
         session_id: &str,
-        user_input: UserPromptInput,
-        construction_facts: SessionConstructionFacts,
+        construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
-        let command = LaunchCommand::http_prompt_input(user_input.clone(), None);
-        self.execute_constructed_launch(session_id, &command, user_input, construction_facts)
+        let user_input = UserPromptInput {
+            prompt_blocks: construction.prompt.prompt_blocks.clone(),
+            env: construction.prompt.environment_variables.clone(),
+            executor_config: construction.execution_profile.executor_config.clone(),
+        };
+        let command = LaunchCommand::http_prompt_input(user_input, None);
+        self.execute_constructed_launch(session_id, &command, construction)
             .await
     }
 
-    /// 已完成 construction facts 准备后的执行段。生产入口只能从 `execute_command` 进入。
+    /// 已完成 construction plan 准备后的执行段。生产入口只能从 `execute_command` 进入。
     async fn execute_constructed_launch(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-        user_input: UserPromptInput,
-        construction_facts: SessionConstructionFacts,
+        construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -143,8 +147,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 cached_continuation,
                 session_meta: &session_meta,
                 pending_runtime_commands,
-                user_input,
-                construction_facts,
+                construction,
             })
             .await?;
         let resolved_payload = launch_execution.resolved_payload.clone();

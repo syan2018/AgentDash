@@ -8,7 +8,7 @@
 - [x] 生产主链路不存在 `PromptSessionRequest`、`PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`。
 - [x] `PromptAugmentInput` 不作为跨 crate handoff、planner 输入或增强后输出存在。
 - [x] `SessionLaunchRequest` 过渡 envelope 已删除。
-- [ ] `SessionConstructionFacts` provider handoff 已删除，construction / launch / effects 字段分别进入目标边界。
+- [x] `SessionConstructionFacts` provider handoff 已删除，construction / launch / effects 字段分别进入目标边界。
 - [ ] `SessionConstructionPlan` 是 owner/workspace/VFS/MCP/capability/executor/context/identity 的唯一事实源。
 - [ ] `LaunchExecution` 是 lifecycle/restore/hook/follow-up/runtime-command/terminal-effect/connector-input 的唯一 per-launch 计划。
 - [ ] `ExecutionContext` 只在 connector 边界投影生成。
@@ -32,7 +32,7 @@
 
 ## Runtime / Pipeline
 
-- [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+- [x] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 - [ ] `prompt_pipeline` 只负责执行计划：turn claim/activate、event append、connector.prompt、accepted 后提交、processor supervision。
 - [ ] connector.prompt 失败不会提交 bootstrap、pending applied、title generation 等成功副作用。
 - [ ] runtime registry 与 turn supervisor 是 active turn / cancel / stall 的入口。

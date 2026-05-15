@@ -16,9 +16,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
-use super::construction::SessionConstructionFacts;
+use super::construction::SessionConstructionPlan;
 use super::launch::LaunchCommand;
-use super::types::UserPromptInput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLaunchPhase {
@@ -50,7 +49,7 @@ pub struct CompanionLaunchSource {
     pub workflow: Option<CompanionLaunchWorkflowSource>,
 }
 
-/// 用于把原始 prompt 输入构建成与主通道一致的 construction facts。
+/// 用于把 source command 构建成与主通道一致的 construction plan。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
     /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
@@ -59,7 +58,7 @@ pub trait SessionConstructionProvider: Send + Sync {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError>;
+    ) -> Result<SessionConstructionPlan, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

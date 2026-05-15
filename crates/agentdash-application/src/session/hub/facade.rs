@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 use super::super::compaction_context_frame::build_compaction_context_frame;
 #[cfg(test)]
-use super::super::construction::SessionConstructionFacts;
+use super::super::construction::SessionConstructionPlan;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch::{LaunchCommand, LaunchCommandOutcome};
@@ -367,10 +367,10 @@ impl SessionHub {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        (user_input, construction_facts): (UserPromptInput, SessionConstructionFacts),
+        construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
-            .execute_constructed_launch_for_test(session_id, user_input, construction_facts)
+            .execute_constructed_launch_for_test(session_id, construction)
             .await
     }
 

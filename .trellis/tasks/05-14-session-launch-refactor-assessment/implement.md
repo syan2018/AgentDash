@@ -30,8 +30,10 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 ### 2. Complete `SessionConstructionPlan`
 
 - [x] `ContextPlan` 承载完整 `SessionContextBundle` 与 continuation context frame。
-- [ ] construction 持有 working dir plan、VFS、MCP declaration resolution、capability、executor profile、identity、workspace、owner、source trace。
-- [ ] construction 持有 companion slice。
+- [x] construction provider 直接返回 `SessionConstructionPlan`，不再返回 `UserPromptInput + SessionConstructionFacts`。
+- [x] assembler 将 VFS、MCP、capability、context、executor profile、prompt projection、task effect binding 写入 `SessionConstructionPlan`。
+- [ ] construction 持有完整 working dir plan、MCP declaration resolution、identity、workspace、owner、source trace。
+- [ ] construction 持有完整 companion slice / context bundle / audit projection / inspector projection。
 - [x] local relay workspace root 作为 source fact 进入 construction 解析，并记录 VFS 来源。
 - [x] construction 持有 task effect durable binding，并通过 effects registry 解析即时 handler / replay handler。
 - [ ] construction 持有 context frame plan、audit projection、inspector projection。
@@ -39,7 +41,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 ### 3. Collapse `LaunchExecution`
 
-- [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+- [x] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 - [ ] `LaunchExecution` 在 connector.prompt 前完整包含 prompt、construction、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input、trace。
 - [ ] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
 - [ ] `prompt_pipeline` 只执行计划，不再读取 request/meta/profile 做策略 fallback。
@@ -48,12 +50,12 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 ### 4. Delete `PromptAugmentInput` Production Handoff
 
 - [x] `SessionConstructionProvider` 不再返回增强后的 `PromptAugmentInput`。
-- [ ] API bootstrap 输出 construction 事实或 construction planner input；当前已删除 generalized `LaunchAugmentation` alias，但仍返回 `UserPromptInput + SessionConstructionFacts` 过渡 tuple。
+- [x] API bootstrap 输出 `SessionConstructionPlan`，不再返回 `UserPromptInput + SessionConstructionFacts` 过渡 tuple。
 - [x] 删除 `LaunchCommand::to_augment_input()`。
 - [x] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
 - [x] `PromptAugmentInput` 最终代码中不能作为 production helper、跨 crate handoff、planner input 或 augmented output 保留。
 - [x] 删除当前 `SessionLaunchRequest` 过渡 envelope。
-- [ ] 删除当前 `SessionConstructionFacts` provider handoff。
+- [x] 删除当前 `SessionConstructionFacts` provider handoff。
 
 ### 5. Remove Business `SessionHub`
 

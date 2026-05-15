@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::construction::SessionConstructionFacts;
-use agentdash_application::session::{LaunchCommand, SessionConstructionProvider, UserPromptInput};
+use agentdash_application::session::construction::SessionConstructionPlan;
+use agentdash_application::session::{LaunchCommand, SessionConstructionProvider};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -77,12 +77,11 @@ impl SessionConstructionProvider for AppStateSessionConstructionProvider {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
+    ) -> Result<SessionConstructionPlan, ConnectorError> {
         build_session_construction_for_launch(
             &self.state,
             session_id,
-            command.user_input().clone(),
-            SessionConstructionFacts::default(),
+            command.user_input(),
             command.task_hint(),
             command.companion_hint(),
             command.local_relay_mcp_declarations().to_vec(),

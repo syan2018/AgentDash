@@ -3,7 +3,7 @@
 //! 职责：当某个 lifecycle node 的 session 终止后，评估后继 node 的可达性，
 //! 为 AgentNode 类型的后继创建独立 session 并启动 prompt。
 //!
-//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / SessionBinding / SessionHub。
+//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / SessionBinding / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
 //!
 //! 实现 `SessionTerminalCallback`，由 `SessionHub` 在 session 完全终止后自动调用。
@@ -25,8 +25,10 @@ use crate::session::{LaunchCommand, UserPromptInput};
 use super::session_association::{
     LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
 };
-use crate::session::SessionHub;
 use crate::session::SessionTerminalCallback;
+use crate::session::{
+    SessionCapabilityService, SessionCoreService, SessionHookService, SessionLaunchService,
+};
 use crate::workflow::step_activation::apply_to_running_session;
 use crate::workflow::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
@@ -95,19 +97,28 @@ pub struct AdvanceCurrentNodeResult {
 }
 
 pub struct LifecycleOrchestrator {
-    session_hub: SessionHub,
+    session_core: SessionCoreService,
+    session_launch: SessionLaunchService,
+    session_hooks: SessionHookService,
+    session_capability: SessionCapabilityService,
     repos: RepositorySet,
     platform_config: SharedPlatformConfig,
 }
 
 impl LifecycleOrchestrator {
     pub fn new(
-        session_hub: SessionHub,
+        session_core: SessionCoreService,
+        session_launch: SessionLaunchService,
+        session_hooks: SessionHookService,
+        session_capability: SessionCapabilityService,
         repos: RepositorySet,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
-            session_hub,
+            session_core,
+            session_launch,
+            session_hooks,
+            session_capability,
             repos,
             platform_config,
         }
@@ -166,13 +177,13 @@ impl LifecycleOrchestrator {
         }
 
         if self
-            .session_hub
+            .session_capability
             .get_current_capability_state(&run.session_id)
             .await
             .is_some()
         {
             return match self
-                .session_hub
+                .session_hooks
                 .ensure_hook_session_runtime(&run.session_id, turn_id)
                 .await
             {
@@ -195,7 +206,7 @@ impl LifecycleOrchestrator {
         }
 
         let owner_ctx = self
-            .session_hub
+            .session_hooks
             .get_hook_session_runtime(&run.session_id)
             .await
             .map(|hook_session| resolve_owner_scope(&hook_session.snapshot(), run.project_id))
@@ -544,7 +555,7 @@ impl LifecycleOrchestrator {
             crate::session::load_available_presets(&self.repos, run.project_id).await;
 
         let mut runtime_mcp_servers = self
-            .session_hub
+            .session_capability
             .get_runtime_mcp_servers(hook_session.session_id())
             .await;
 
@@ -574,7 +585,7 @@ impl LifecycleOrchestrator {
             match apply_to_running_session(
                 &activation,
                 hook_session,
-                &self.session_hub,
+                &self.session_capability,
                 turn_id,
                 &phase.node_key,
                 Some(run.id),
@@ -616,7 +627,7 @@ impl LifecycleOrchestrator {
         let available_presets =
             crate::session::load_available_presets(&self.repos, run.project_id).await;
         let mut base_surface = self
-            .session_hub
+            .session_capability
             .get_latest_capability_state(&run.session_id)
             .await;
         let mut warnings = Vec::new();
@@ -646,7 +657,7 @@ impl LifecycleOrchestrator {
             );
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
             if let Err(error) = self
-                .session_hub
+                .session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     session_id: run.session_id.clone(),
                     turn_id: turn_id.map(ToString::to_string),
@@ -688,7 +699,7 @@ impl LifecycleOrchestrator {
 
         let session_title = format!("[{lifecycle_key}] {node_key}");
         let meta = self
-            .session_hub
+            .session_core
             .create_session(&session_title)
             .await
             .map_err(|e| format!("创建 session 失败: {e}"))?;
@@ -748,13 +759,13 @@ impl LifecycleOrchestrator {
             .map_err(|e| format!("更新 lifecycle run 失败: {e}"))?;
 
         let parent_executor_config = self
-            .session_hub
+            .session_core
             .get_session_meta(parent_session_id)
             .await
             .map_err(|e| format!("读取父 session meta 失败: {e}"))?
             .and_then(|meta| meta.executor_config);
         if let Some(executor_config) = parent_executor_config.clone() {
-            self.session_hub
+            self.session_core
                 .update_session_meta(&session_id, move |meta| {
                     meta.executor_config = Some(executor_config.clone());
                 })
@@ -803,7 +814,7 @@ impl LifecycleOrchestrator {
         _step_def: &LifecycleStepDefinition,
         executor_config: Option<agentdash_spi::AgentConfig>,
     ) -> Result<(), String> {
-        self.session_hub
+        self.session_core
             .mark_owner_bootstrap_pending(session_id)
             .await
             .map_err(|e| format!("标记 owner bootstrap pending 失败: {e}"))?;
@@ -811,7 +822,7 @@ impl LifecycleOrchestrator {
         let mut user_input = UserPromptInput::from_text("");
         user_input.executor_config = executor_config;
         let command = LaunchCommand::workflow_orchestrator_input(user_input);
-        self.session_hub
+        self.session_launch
             .launch_command(session_id, command)
             .await
             .map_err(|e| format!("自动启动 node session prompt 失败: {e}"))?;

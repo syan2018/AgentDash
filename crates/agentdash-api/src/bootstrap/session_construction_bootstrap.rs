@@ -63,7 +63,7 @@ pub(crate) async fn build_session_construction_for_launch(
         .or_else(|| meta.executor_config.clone());
     let has_live_executor_session = state
         .services
-        .session_hub
+        .session_core
         .has_live_executor_session(session_id)
         .await;
     let supports_repository_restore = effective_executor.as_ref().is_some_and(|config| {
@@ -514,7 +514,7 @@ fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_>
         &state.config.platform_config,
     )
     .with_audit_bus(state.services.audit_bus.clone())
-    .with_companion_parent_facts_provider(&state.services.session_hub)
+    .with_companion_parent_facts_provider(&state.services.session_capability)
 }
 
 async fn build_continuation_context_frame_for_session(

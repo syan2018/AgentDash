@@ -248,7 +248,10 @@ pub async fn start_lifecycle_run(
         })
         .await?;
     let orchestrator = LifecycleOrchestrator::new(
-        state.services.session_hub.clone(),
+        state.services.session_core.clone(),
+        state.services.session_launch.clone(),
+        state.services.session_hooks.clone(),
+        state.services.session_capability.clone(),
         state.repos.clone(),
         state.config.platform_config.clone(),
     );

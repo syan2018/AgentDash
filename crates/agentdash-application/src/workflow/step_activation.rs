@@ -34,7 +34,7 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
-use crate::session::{SessionHub, compose_vfs_with_overlay_and_directives};
+use crate::session::{SessionCapabilityService, compose_vfs_with_overlay_and_directives};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -311,13 +311,13 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 pub(crate) async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
-    session_hub: &SessionHub,
+    session_capability: &SessionCapabilityService,
     turn_id: Option<&str>,
     phase_node_key: &str,
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
-    let base_surface = session_hub
+    let base_surface = session_capability
         .get_current_capability_state(hook_session.session_id())
         .await;
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
@@ -326,7 +326,7 @@ pub(crate) async fn apply_to_running_session(
         &activation.capability_keys,
     );
 
-    session_hub
+    session_capability
         .apply_live_runtime_context_transition(
             hook_session,
             LiveRuntimeContextTransitionInput {

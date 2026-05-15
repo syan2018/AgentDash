@@ -438,7 +438,7 @@ pub trait CompanionParentFactsProvider: Send + Sync {
 }
 
 #[async_trait]
-impl CompanionParentFactsProvider for crate::session::hub::SessionHub {
+impl CompanionParentFactsProvider for crate::session::SessionCapabilityService {
     async fn latest_companion_parent_capability_state(
         &self,
         parent_session_id: &str,

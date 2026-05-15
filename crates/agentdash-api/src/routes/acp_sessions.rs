@@ -185,7 +185,7 @@ pub async fn get_session_hook_runtime(
     .await?;
     let runtime = state
         .services
-        .session_hub
+        .session_hooks
         .ensure_hook_session_runtime(&session_id, None)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -686,7 +686,7 @@ pub async fn update_session_meta(
 
     let meta = state
         .services
-        .session_hub
+        .session_title
         .set_user_title(&session_id, title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -741,7 +741,7 @@ pub async fn prompt_session(
     .await?;
     let turn_id = state
         .services
-        .session_hub
+        .session_launch
         .launch_command(
             &session_id,
             LaunchCommand::http_prompt_input(user_input, Some(current_user)),

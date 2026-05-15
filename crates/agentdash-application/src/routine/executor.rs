@@ -11,9 +11,8 @@ use agentdash_spi::AgentConnector;
 
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
-use crate::session::LaunchCommand;
-use crate::session::SessionHub;
 use crate::session::types::UserPromptInput;
+use crate::session::{LaunchCommand, SessionCoreService, SessionLaunchService};
 use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 
@@ -47,7 +46,8 @@ impl RoutineAdmissionError {
 /// 6. 记录 RoutineExecution
 pub struct RoutineExecutor {
     repos: RepositorySet,
-    session_hub: SessionHub,
+    session_core: SessionCoreService,
+    session_launch: SessionLaunchService,
     availability: Arc<dyn BackendAvailability>,
     audit_bus: Option<SharedContextAuditBus>,
 }
@@ -59,7 +59,8 @@ struct RoutineAgentContext {
 impl RoutineExecutor {
     pub fn new(
         repos: RepositorySet,
-        session_hub: SessionHub,
+        session_core: SessionCoreService,
+        session_launch: SessionLaunchService,
         _vfs_service: Arc<RelayVfsService>,
         _connector: Arc<dyn AgentConnector>,
         _platform_config: crate::platform_config::SharedPlatformConfig,
@@ -67,7 +68,8 @@ impl RoutineExecutor {
     ) -> Self {
         Self {
             repos,
-            session_hub,
+            session_core,
+            session_launch,
             availability,
             audit_bus: None,
         }
@@ -230,7 +232,7 @@ impl RoutineExecutor {
         let _ = self.repos.routine_execution_repo.update(execution).await;
 
         let _turn_id = self
-            .session_hub
+            .session_launch
             .launch_command(&session_id, command)
             .await
             .map_err(|e| format!("发送 prompt 失败: {e}"))?;
@@ -319,7 +321,7 @@ impl RoutineExecutor {
                         .map_err(|e| format!("查询 entity session 失败: {e}"))?
                     && let Some(session_id) = existing.session_id
                     && self
-                        .session_hub
+                        .session_core
                         .get_session_meta(&session_id)
                         .await
                         .map_err(|e| format!("读取 session meta 失败: {e}"))?
@@ -344,7 +346,7 @@ impl RoutineExecutor {
         label: &str,
     ) -> Result<String, String> {
         let meta = self
-            .session_hub
+            .session_core
             .create_session(title)
             .await
             .map_err(|e| format!("创建 session 失败: {e}"))?;
@@ -360,7 +362,7 @@ impl RoutineExecutor {
             .create(&binding)
             .await
             .map_err(|e| format!("创建 session binding 失败: {e}"))?;
-        self.session_hub
+        self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
             .map_err(|e| format!("标记 owner bootstrap 失败: {e}"))?;
@@ -381,7 +383,7 @@ impl RoutineExecutor {
             .map_err(|e| format!("查询 session binding 失败: {e}"))?
         {
             let meta = self
-                .session_hub
+                .session_core
                 .get_session_meta(&binding.session_id)
                 .await
                 .map_err(|e| format!("读取 session meta 失败: {e}"))?;
@@ -396,7 +398,7 @@ impl RoutineExecutor {
         }
 
         let meta = self
-            .session_hub
+            .session_core
             .create_session("")
             .await
             .map_err(|e| format!("创建 Project Agent session 失败: {e}"))?;
@@ -412,7 +414,7 @@ impl RoutineExecutor {
             .create(&binding)
             .await
             .map_err(|e| format!("创建 Project Agent session binding 失败: {e}"))?;
-        self.session_hub
+        self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
             .map_err(|e| format!("标记 Project Agent bootstrap 失败: {e}"))?;

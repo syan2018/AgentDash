@@ -13,7 +13,8 @@ use agentdash_domain::{
 
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    LaunchCommand, SessionExecutionState, SessionHub, TaskLaunchPhase, UserPromptInput,
+    LaunchCommand, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionLaunchService, TaskLaunchPhase, UserPromptInput,
 };
 use crate::task::lock::TaskLockMap;
 use crate::workflow::{
@@ -41,11 +42,13 @@ pub trait TurnDispatcher: Send + Sync {
 
 /// Story step activation service — Application 层编排 step child session 的启动/续跑/取消。
 ///
-/// 持有所有必要的 Application 层依赖（repos / hub / context services），
+/// 持有所有必要的 Application 层依赖（repos / session services / context services），
 /// 仅通过 `TurnDispatcher` trait 依赖基础设施层的分发能力。
 pub struct StoryStepActivationService {
     pub repos: RepositorySet,
-    pub hub: SessionHub,
+    pub session_core: SessionCoreService,
+    pub session_eventing: SessionEventingService,
+    pub session_launch: SessionLaunchService,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub lock_map: Arc<TaskLockMap>,
@@ -91,7 +94,7 @@ impl StoryStepActivationService {
     /// 3. 根据 step_key 定位 `LifecycleStepDefinition`；再从 Story aggregate 中找到
     ///    `Task.lifecycle_step_key == step_key` 的 Task
     /// 4. `compose_story_step_prompt(StoryStepSpec { ... })` 产出 prompt pipeline 输入
-    /// 5. `session_hub.launch_command` 派发
+    /// 5. `SessionLaunchService::launch_command` 派发
     ///
     /// [M5 注]：由于当前 `start_task_inner` 仍负责 session 创建 / binding / 状态写入的
     /// 全流程，本方法目前作为分层预留入口，实际调用仍由 `start_task_inner` 与
@@ -142,7 +145,7 @@ impl StoryStepActivationService {
                     ));
                 }
 
-                let session_meta = gw_create_task_session(&self.hub, &task).await?;
+                let session_meta = gw_create_task_session(&self.session_core, &task).await?;
                 let session_id = session_meta.id;
                 self.bind_session_to_owner(&session_id, "task", task.id, "execution")
                     .await?;
@@ -211,7 +214,7 @@ impl StoryStepActivationService {
             additional_prompt.map(str::to_string),
         );
         let launch_outcome = match self
-            .hub
+            .session_launch
             .launch_command_with_outcome(&session_id, command)
             .await
         {
@@ -393,13 +396,13 @@ impl StoryStepActivationService {
 
         let (session_title, last_activity, session_execution_status) =
             if let Some(sid) = session_id.as_deref() {
-                match gw_get_session_overview(&self.hub, sid).await? {
+                match gw_get_session_overview(&self.session_core, sid).await? {
                     Some(meta) => {
-                        let execution_state =
-                            self.hub
-                                .inspect_session_execution_state(sid)
-                                .await
-                                .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+                        let execution_state = self
+                            .session_core
+                            .inspect_session_execution_state(sid)
+                            .await
+                            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
                         (
                             Some(meta.title),
                             Some(meta.updated_at),
@@ -697,7 +700,7 @@ impl StoryStepActivationService {
             .create(&binding)
             .await
             .map_err(map_domain_error)?;
-        self.hub
+        self.session_core
             .mark_owner_bootstrap_pending(session_id)
             .await
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
@@ -714,7 +717,11 @@ impl StoryStepActivationService {
     ) {
         let envelope =
             bridge_task_status_event_to_envelope(session_id, turn_id, event_type, message, data);
-        if let Err(err) = self.hub.inject_notification(session_id, envelope).await {
+        if let Err(err) = self
+            .session_eventing
+            .inject_notification(session_id, envelope)
+            .await
+        {
             tracing::warn!(
                 session_id, turn_id, event_type, error = %err,
                 "桥接 Task 生命周期事件到 session 流失败"
@@ -724,7 +731,7 @@ impl StoryStepActivationService {
 
     async fn is_task_session_running(&self, session_id: &str) -> Result<bool, TaskExecutionError> {
         let execution_state = self
-            .hub
+            .session_core
             .inspect_session_execution_state(session_id)
             .await
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;

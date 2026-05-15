@@ -126,11 +126,11 @@ struct EnqueuedTerminalEffect {
 }
 
 #[derive(Default)]
-pub(super) struct EnqueuedTerminalEffects {
+pub(crate) struct EnqueuedTerminalEffects {
     effects: Vec<EnqueuedTerminalEffect>,
 }
 
-pub(super) struct TerminalEffectDispatchInput {
+pub(crate) struct TerminalEffectDispatchInput {
     pub session_id: String,
     pub turn_id: String,
     pub terminal_event_seq: u64,
@@ -141,7 +141,7 @@ pub(super) struct TerminalEffectDispatchInput {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
-pub(super) struct SessionTerminalEffectDispatcher<'a> {
+pub(crate) struct SessionTerminalEffectDispatcher<'a> {
     hub: &'a SessionHub,
 }
 

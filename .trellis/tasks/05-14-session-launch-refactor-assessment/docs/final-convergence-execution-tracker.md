@@ -23,8 +23,8 @@ LaunchCommand
 | Commit 3 | 已完成 | context/query/audit/inspector 与 launch 同源 |
 | Commit 4 | 已完成 | `prompt_pipeline` 收缩为 `LaunchExecution` 执行器 |
 | Commit 5 | 已完成 | 拆分 core / eventing / runtime / control 能力服务，迁移 API/local 直接调用点 |
-| Commit 6 | 未开始 | 删除有职责 `SessionHub` 业务门面，launch/hook/effects/pending 等调用点迁出 |
-| Commit 7 | 未开始 | effects / pending / persistence 最终验证与任务收口 |
+| Commit 6 | 已完成 | launch/hook/effects/capability 调用点迁入具体服务 |
+| Commit 7 | 未开始 | Hub 内部业务残留、effects / pending / persistence 最终验证与任务收口 |
 
 ## Current Code Facts
 
@@ -36,7 +36,7 @@ LaunchCommand
 | Launch | `SessionLaunchPlannerInput` 已是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`LaunchExecution` 强制持有 construction，承载 resolved prompt、runtime commands、terminal effects、connector input projection | planner 后续只能处理 per-launch 策略；不能回到 owner/surface/context 重建 |
 | Runtime/Pipeline | pipeline 已从 provider 获取 construction plan，不再拆 facts；connector.prompt 接受后才提交 pending capability applied event、context frames、bootstrap meta、pending applied 与 title generation；失败路径只清理 turn 并写 failed terminal | 需要继续把 launch/hook/effects/pending/control 从 Hub 业务门面迁出 |
 | Service Split | `SessionCoreService`、`SessionEventingService`、`SessionRuntimeService`、`SessionControlService` 已抽出；API/local 的 core/eventing/cancel/control 调用点已迁移到具体服务；boot reconcile、terminal cancel、stall detector 也改依赖 runtime service | Commit 6 必须继续迁出 launch/hook/effects/pending/tool-builder |
-| SessionHub | registry / supervisor 已拆出一部分，live executor session 与 active turn 命名已分离；Hub 的 core/eventing/runtime/control 兼容方法已退化为服务转发 | `SessionHub` 仍有 launch、hook dispatch、tool builder、terminal effects、pending runtime command 等业务入口；Commit 6 必须删除这些职责 |
+| SessionHub | registry / supervisor 已拆出一部分，live executor session 与 active turn 命名已分离；API/task/routine/workflow orchestrator 的 launch/hook/effects/capability 主调用已迁入具体服务；Hub 的 core/eventing/runtime/control 兼容方法已退化为服务转发 | `SessionHub` 仍在 AppState/local 装配、runtime tool provider handle、advance-node 工具服务定位与 session 内部实现中残留；Commit 7 必须删除内部业务依赖或收缩为装配对象 |
 | Effects/Pending | terminal effect outbox、runtime command store 已有基础；task effect binding 已是 durable 描述 | effect handler 幂等语义、pending apply-once、失败恢复和 migration 仍需最终验证 |
 | Persistence/AppState | store adapter、ready gate、working_dir 策略已有阶段性收口 | `SessionPersistence` 底层仍是大组合接口；AppState service set 需要按最终能力服务暴露 |
 
@@ -72,15 +72,13 @@ cargo test -p agentdash-application session::hub
 git diff --check
 ```
 
-### Commit 6: 删除 session hub 业务门面
+### Commit 6: 迁移 session launch 调用至能力服务
 
-- `SessionLaunchService` 接管 launch。
-- `SessionHookService` 接管 hook runtime/dispatch/auto-resume。
-- `SessionRuntimeService` 接管 cancel、stall、runtime MCP/capability hot update。
-- `SessionEffectsService` 接管 terminal effect outbox。
-- `SessionPendingService` 接管 runtime command。
-- `SessionControlService` 接管 approval、push notification、companion response。
-- workflow / routine / task / reconcile / local runtime 不再保存有职责 `SessionHub`。
+- `SessionLaunchService` 接管 API/task/routine/workflow/local prompt 的 launch 调用。
+- `SessionHookService` 接管 API/workflow 的 hook runtime 读取与确保。
+- `SessionEffectsService` 接管 AppState 启动期 outbox replay。
+- `SessionCapabilityService` 接管 workflow phase apply、runtime MCP/capability 查询与 construction parent facts。
+- task / routine / workflow orchestrator 不再保存 `SessionHub` 字段。
 
 退出检查：
 
@@ -96,8 +94,10 @@ cargo test -p agentdash-application session::hub
 git diff --check
 ```
 
-### Commit 7: Effects / Pending / Persistence 最终验证
+### Commit 7: Hub / Effects / Pending / Persistence 最终收口
 
+- 删除 Hub 内部业务残留；Hub 若保留只能是装配对象。
+- `SessionLaunchExecutor` / planner / terminal effect dispatcher 不再以 Hub 作为依赖参数。
 - terminal event 先落库，effect 进入 durable outbox；handler 有 durable identity 或 typed handler。
 - pending runtime command 覆盖 requested / applied / failed，具备 apply-once 和失败恢复测试。
 - 新增业务逻辑依赖 meta / event / outbox / runtime-command store 边界。

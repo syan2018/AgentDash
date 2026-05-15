@@ -3,6 +3,7 @@ mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
 pub mod bootstrap;
+pub mod capability_service;
 pub mod capability_state;
 mod compaction_context_frame;
 pub mod companion_wait;
@@ -15,16 +16,19 @@ pub mod continuation;
 pub mod control;
 pub mod core;
 pub(crate) mod dimension;
+pub mod effects_service;
 pub mod eventing;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;
 pub mod hook_runtime;
+pub mod hooks_service;
 pub mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
 mod launch_planner;
+pub mod launch_service;
 mod memory_persistence;
 pub mod ownership;
 pub(crate) mod path_policy;
@@ -41,6 +45,7 @@ pub mod stall_detector;
 pub mod terminal_cache;
 pub mod terminal_effects;
 pub mod title_generator;
+pub mod title_service;
 pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
@@ -52,6 +57,7 @@ pub use assembler::{
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
     compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
+pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
@@ -63,13 +69,16 @@ pub use construction_provider::{
 pub use context::ExecutorResolution;
 pub use control::SessionControlService;
 pub use core::SessionCoreService;
+pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
+pub use hooks_service::SessionHookService;
 pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, LaunchStrictness};
+pub use launch_service::SessionLaunchService;
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
@@ -86,6 +95,7 @@ pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
 pub use title_generator::SessionTitleGenerator;
+pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     CapabilityState, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,

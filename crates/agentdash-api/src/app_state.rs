@@ -23,8 +23,9 @@ use agentdash_application::runtime_gateway::{
 };
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionControlService, SessionCoreService, SessionEventingService, SessionHub,
-    SessionRuntimeService,
+    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
+    SessionEventingService, SessionHookService, SessionHub, SessionLaunchService,
+    SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
@@ -58,6 +59,11 @@ pub struct ServiceSet {
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
     pub session_control: SessionControlService,
+    pub session_launch: SessionLaunchService,
+    pub session_hooks: SessionHookService,
+    pub session_capability: SessionCapabilityService,
+    pub session_effects: SessionEffectsService,
+    pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -358,11 +364,24 @@ impl AppState {
                 crate::title_generator::LlmTitleGenerator::new(bridge),
             ));
         }
+        let session_core = session_hub.core_service();
+        let session_eventing = session_hub.eventing_service();
+        let session_runtime = session_hub.runtime_service();
+        let session_control = session_hub.control_service();
+        let session_launch = session_hub.launch_service();
+        let session_hooks = session_hub.hook_service();
+        let session_capability = session_hub.capability_service();
+        let session_effects = session_hub.effects_service();
+        let session_title = session_hub.title_service();
+
         // Lifecycle DAG Orchestrator — 在 session 终态后评估后继 node 并启动新 session
         {
             let orchestrator =
                 Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
-                    session_hub.clone(),
+                    session_core.clone(),
+                    session_launch.clone(),
+                    session_hooks.clone(),
+                    session_capability.clone(),
                     repos.clone(),
                     platform_config.clone(),
                 ));
@@ -371,12 +390,8 @@ impl AppState {
 
         session_hub_handle.set(session_hub.clone()).await;
 
-        let session_core = session_hub.core_service();
-        let session_eventing = session_hub.eventing_service();
-        let session_runtime = session_hub.runtime_service();
-        let session_control = session_hub.control_service();
-
-        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> = Arc::new(session_hub.clone());
+        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
+            Arc::new(session_capability.clone());
         let runtime_gateway = Arc::new(
             RuntimeGateway::new()
                 .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
@@ -454,7 +469,9 @@ impl AppState {
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
-            hub: session_hub.clone(),
+            session_core: session_core.clone(),
+            session_eventing: session_eventing.clone(),
+            session_launch: session_launch.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
@@ -468,6 +485,11 @@ impl AppState {
                 session_eventing,
                 session_runtime,
                 session_control,
+                session_launch,
+                session_hooks,
+                session_capability,
+                session_effects,
+                session_title,
                 connector,
                 vfs_service,
                 backend_registry,
@@ -531,7 +553,7 @@ impl AppState {
 
         match state
             .services
-            .session_hub
+            .session_effects
             .replay_terminal_effect_outbox(100)
             .await
         {
@@ -555,7 +577,8 @@ impl AppState {
             let routine_executor = Arc::new(
                 RoutineExecutor::new(
                     state.repos.clone(),
-                    state.services.session_hub.clone(),
+                    state.services.session_core.clone(),
+                    state.services.session_launch.clone(),
                     state.services.vfs_service.clone(),
                     state.services.connector.clone(),
                     state.config.platform_config.clone(),

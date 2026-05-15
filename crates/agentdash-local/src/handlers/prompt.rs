@@ -128,7 +128,11 @@ impl CommandHandler {
 
         let event_tx = self.event_tx.clone();
 
-        match hub.launch_command(&session_id, command).await {
+        match hub
+            .launch_service()
+            .launch_command(&session_id, command)
+            .await
+        {
             Ok(turn_id) => {
                 let hub_clone = hub.clone();
                 let sid = session_id.clone();

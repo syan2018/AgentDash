@@ -112,7 +112,10 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
         let orchestrator = LifecycleOrchestrator::new(
-            session_hub,
+            session_hub.core_service(),
+            session_hub.launch_service(),
+            session_hub.hook_service(),
+            session_hub.capability_service(),
             self.repos.clone(),
             self.platform_config.clone(),
         );

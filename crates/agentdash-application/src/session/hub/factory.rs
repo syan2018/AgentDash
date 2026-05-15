@@ -53,6 +53,26 @@ impl SessionHub {
         )
     }
 
+    pub fn launch_service(&self) -> super::super::launch_service::SessionLaunchService {
+        super::super::launch_service::SessionLaunchService::new(self.clone())
+    }
+
+    pub fn hook_service(&self) -> super::super::hooks_service::SessionHookService {
+        super::super::hooks_service::SessionHookService::new(self.clone())
+    }
+
+    pub fn effects_service(&self) -> super::super::effects_service::SessionEffectsService {
+        super::super::effects_service::SessionEffectsService::new(self.clone())
+    }
+
+    pub fn title_service(&self) -> super::super::title_service::SessionTitleService {
+        super::super::title_service::SessionTitleService::new(self.clone())
+    }
+
+    pub fn capability_service(&self) -> super::super::capability_service::SessionCapabilityService {
+        super::super::capability_service::SessionCapabilityService::new(self.clone())
+    }
+
     pub fn new_with_hooks_and_persistence(
         default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,

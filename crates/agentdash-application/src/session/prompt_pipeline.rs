@@ -163,6 +163,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 pending_runtime_commands,
                 user_input,
                 working_dir_input: construction_seed.working_dir_input,
+                local_relay_workspace_root: construction_seed.local_relay_workspace_root,
                 construction_owner: construction_seed.owner,
                 source_contract: construction_seed.source_contract,
                 mcp_servers: construction_seed.mcp_servers,
@@ -580,9 +581,7 @@ fn relaxed_command_to_launch_seed(
 ) -> (UserPromptInput, SessionConstructionSeed) {
     let construction_seed = SessionConstructionSeed {
         mcp_servers: command.local_relay_mcp_declarations().to_vec(),
-        vfs: command
-            .local_relay_workspace_root()
-            .map(super::local_workspace_vfs),
+        local_relay_workspace_root: command.local_relay_workspace_root().map(ToOwned::to_owned),
         identity: command.identity(),
         ..Default::default()
     };

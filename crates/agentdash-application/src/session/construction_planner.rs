@@ -65,6 +65,7 @@ pub(super) struct SessionConstructionPlannerInput {
     pub owner: Option<ResolvedSessionOwner>,
     pub source: super::construction::SourceContractPlan,
     pub working_dir_input: Option<String>,
+    pub local_relay_workspace_root: Option<PathBuf>,
     pub working_directory: PathBuf,
     pub executor_config: agentdash_domain::common::AgentConfig,
     pub vfs: Option<agentdash_spi::Vfs>,
@@ -460,6 +461,26 @@ impl SessionConstructionPlanner {
         input: SessionConstructionPlannerInput,
     ) -> Option<SessionConstructionPlan> {
         let owner = input.owner?;
+        let mut trace_entries = vec![
+            SessionConstructionTraceEntry {
+                stage: "launch_lifecycle",
+                source: format!("{:?}", input.prompt_lifecycle),
+            },
+            SessionConstructionTraceEntry {
+                stage: "capability_source",
+                source: format!("{:?}", input.capability_source),
+            },
+            SessionConstructionTraceEntry {
+                stage: "vfs_source",
+                source: format!("{:?}", input.vfs_source),
+            },
+        ];
+        if let Some(root) = input.local_relay_workspace_root.as_ref() {
+            trace_entries.push(SessionConstructionTraceEntry {
+                stage: "local_relay_workspace_root",
+                source: root.to_string_lossy().replace('\\', "/"),
+            });
+        }
         Some(SessionConstructionPlan::from_launch(
             SessionConstructionLaunchInput {
                 session_id: input.session_id,
@@ -479,20 +500,7 @@ impl SessionConstructionPlanner {
                 mcp_servers: input.mcp_servers,
                 capability_state: input.capability_state,
                 session_capabilities: Some(input.session_capabilities),
-                trace_entries: vec![
-                    SessionConstructionTraceEntry {
-                        stage: "launch_lifecycle",
-                        source: format!("{:?}", input.prompt_lifecycle),
-                    },
-                    SessionConstructionTraceEntry {
-                        stage: "capability_source",
-                        source: format!("{:?}", input.capability_source),
-                    },
-                    SessionConstructionTraceEntry {
-                        stage: "vfs_source",
-                        source: format!("{:?}", input.vfs_source),
-                    },
-                ],
+                trace_entries,
             },
         ))
     }

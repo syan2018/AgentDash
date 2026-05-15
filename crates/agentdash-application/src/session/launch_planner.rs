@@ -45,6 +45,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub user_input: UserPromptInput,
     pub working_dir_input: Option<String>,
+    pub local_relay_workspace_root: Option<PathBuf>,
     pub construction_owner: Option<ResolvedSessionOwner>,
     pub source_contract: SourceContractPlan,
     pub mcp_servers: Vec<SessionMcpServer>,
@@ -104,6 +105,11 @@ impl<'a> SessionLaunchPlanner<'a> {
 
         let (base_effective_vfs, vfs_source) = if let Some(vfs) = input.vfs.clone() {
             (vfs, LaunchVfsSource::Request)
+        } else if let Some(root) = input.local_relay_workspace_root.as_ref() {
+            (
+                super::local_workspace_vfs(root),
+                LaunchVfsSource::LocalRelayWorkspaceRoot,
+            )
         } else if let Some(vfs) = input
             .cached_continuation
             .as_ref()
@@ -324,6 +330,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 owner: input.construction_owner.clone(),
                 source: input.source_contract.clone(),
                 working_dir_input: input.working_dir_input.clone(),
+                local_relay_workspace_root: input.local_relay_workspace_root.clone(),
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),

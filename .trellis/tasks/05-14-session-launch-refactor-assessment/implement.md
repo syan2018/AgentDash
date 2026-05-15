@@ -20,7 +20,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `PromptRequestAugmenter` 不再接收 `PromptAugmentInput` 作为输入。
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再从 `session::mod` re-export。
-- [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`。
+- [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed；只传 workspace root source fact，由 planner/construction 解析。
 - [x] `UserPromptInput.working_dir` 移出 prompt input。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
 - [x] task `post_turn_handler` trait object 迁出 command；API bootstrap 不再创建内存 handler，只写入 durable `TerminalHookEffectBinding`，后续继续把 binding 生成迁入 construction provider。
@@ -31,7 +31,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 - [x] `ContextPlan` 承载完整 `SessionContextBundle` 与 continuation context frame。
 - [ ] construction 持有 working dir plan、VFS、MCP declaration resolution、capability、executor profile、identity、workspace、owner、source trace。
-- [ ] construction 持有 companion slice、local relay workspace root resolution。
+- [ ] construction 持有 companion slice。
+- [x] local relay workspace root 作为 source fact 进入 construction 解析，并记录 VFS 来源。
 - [x] construction 持有 task effect durable binding，并通过 effects registry 解析即时 handler / replay handler。
 - [ ] construction 持有 context frame plan、audit projection、inspector projection。
 - [ ] launch、context endpoint、audit、inspector 都投影同一 construction。

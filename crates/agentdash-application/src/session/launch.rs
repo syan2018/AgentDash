@@ -237,6 +237,7 @@ impl LaunchCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchVfsSource {
     Request,
+    LocalRelayWorkspaceRoot,
     CachedSessionProfile,
     HubDefault,
 }

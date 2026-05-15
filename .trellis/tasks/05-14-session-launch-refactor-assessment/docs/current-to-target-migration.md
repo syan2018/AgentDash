@@ -17,9 +17,9 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 | Boundary | Current State | Required Move |
 |---|---|---|
-| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；`to_augment_input()` 已删除；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 把 API augmenter / relaxed pipeline 中的 source payload 投影迁入 construction/launch 显式边界 |
+| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；`to_augment_input()` 已删除；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 把 API augmenter / relaxed pipeline 中剩余 source payload 投影迁入 construction/launch 显式边界 |
 | `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `SessionConstructionSeed.working_dir_input`，需迁入 construction |
-| Source adapters | 多数入口已构造 command；task handler 与 companion parent VFS/MCP/context snapshot 已移出 command；task effect binding 已改为 durable `TerminalHookEffectBinding` | adapters 只能交出请求意图、来源引用和特殊来源策略 payload；bootstrap 上的 companion 临时投影需迁入 construction provider，task binding 生成也需继续从 API bootstrap 下沉 |
+| Source adapters | 多数入口已构造 command；task handler 与 companion parent VFS/MCP/context snapshot 已移出 command；local relay workspace root 已作为 source fact 进入 planner/construction 解析；task effect binding 已改为 durable `TerminalHookEffectBinding` | adapters 只能交出请求意图、来源引用和特殊来源策略 payload；bootstrap 上的 companion 临时投影需迁入 construction provider，task binding 生成也需继续从 API bootstrap 下沉 |
 | `PromptAugmentInput` | 已删除，不再跨 API/bootstrap/application 传递 | 保持归零 |
 | `SessionLaunchRequest` | 已删除，不再作为生产 handoff | 保持归零；剩余 `SessionConstructionSeed` 不能扩张，需继续拆入 construction/launch/effects |
 | `SessionConstructionPlan` | 已有类型；context plan 已保留完整 bundle | 补齐 working dir、VFS、MCP、capability、executor、identity、task effect binding、companion slice、audit/inspector projection |
@@ -37,7 +37,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 - Keep `LaunchCommand` limited to source, actor, target ids, prompt, executor override, follow-up hint, source policy payload.
 - Keep task `post_turn_handler` out of `LaunchCommand`; keep task effects as durable construction/effects binding and move binding generation out of API bootstrap.
 - Keep companion parent VFS/MCP/context snapshots out of `LaunchCommand`; move the current bootstrap parent capability projection into construction provider.
-- Keep local relay workspace root as source fact; keep MCP only as declaration.
+- Keep local relay workspace root as source fact and let construction/launch resolve VFS; keep MCP only as declaration.
 
 ### Step 2: Complete Construction
 

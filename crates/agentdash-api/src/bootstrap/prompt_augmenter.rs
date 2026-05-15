@@ -94,9 +94,7 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
 fn command_to_launch_seed(command: &LaunchCommand) -> (UserPromptInput, SessionConstructionSeed) {
     let construction_seed = SessionConstructionSeed {
         mcp_servers: command.local_relay_mcp_declarations().to_vec(),
-        vfs: command
-            .local_relay_workspace_root()
-            .map(agentdash_application::session::local_workspace_vfs),
+        local_relay_workspace_root: command.local_relay_workspace_root().map(ToOwned::to_owned),
         identity: command.identity(),
         ..Default::default()
     };

@@ -9,7 +9,13 @@ use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
-use super::types::{ExecutionStatus, SessionBootstrapState, SessionMeta};
+use super::runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
+use super::terminal_effects::{
+    NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
+};
+use super::types::{
+    ExecutionStatus, PendingCapabilityStateTransition, SessionBootstrapState, SessionMeta,
+};
 
 #[derive(Clone, Default)]
 pub struct MemorySessionPersistence {
@@ -20,6 +26,8 @@ pub struct MemorySessionPersistence {
 struct MemorySessionPersistenceState {
     metas: HashMap<String, SessionMeta>,
     events: HashMap<String, Vec<PersistedSessionEvent>>,
+    terminal_effects: Vec<TerminalEffectRecord>,
+    runtime_commands: Vec<PendingRuntimeCommandRecord>,
 }
 
 #[async_trait::async_trait]
@@ -59,6 +67,12 @@ impl SessionPersistence for MemorySessionPersistence {
         let mut guard = self.inner.lock().await;
         guard.metas.remove(session_id);
         guard.events.remove(session_id);
+        guard
+            .terminal_effects
+            .retain(|effect| effect.session_id != session_id);
+        guard
+            .runtime_commands
+            .retain(|command| command.session_id != session_id);
         Ok(())
     }
 
@@ -192,6 +206,235 @@ impl SessionPersistence for MemorySessionPersistence {
             })?
             .clone())
     }
+
+    async fn insert_terminal_effect(
+        &self,
+        effect: NewTerminalEffectRecord,
+    ) -> io::Result<TerminalEffectRecord> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(&effect.session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {} 不存在", effect.session_id),
+            ));
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let record = TerminalEffectRecord {
+            id: uuid::Uuid::new_v4(),
+            session_id: effect.session_id,
+            turn_id: effect.turn_id,
+            terminal_event_seq: effect.terminal_event_seq,
+            effect_type: effect.effect_type,
+            payload: effect.payload,
+            status: TerminalEffectStatus::Pending,
+            attempt_count: 0,
+            created_at_ms: now,
+            updated_at_ms: now,
+            last_error: None,
+        };
+        guard.terminal_effects.push(record.clone());
+        Ok(record)
+    }
+
+    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+        self.update_terminal_effect(effect_id, |effect, now| {
+            effect.status = TerminalEffectStatus::Running;
+            effect.attempt_count = effect.attempt_count.saturating_add(1);
+            effect.updated_at_ms = now;
+            effect.last_error = None;
+        })
+        .await
+    }
+
+    async fn mark_terminal_effect_succeeded(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+        self.update_terminal_effect(effect_id, |effect, now| {
+            effect.status = TerminalEffectStatus::Succeeded;
+            effect.updated_at_ms = now;
+            effect.last_error = None;
+        })
+        .await
+    }
+
+    async fn mark_terminal_effect_failed(
+        &self,
+        effect_id: uuid::Uuid,
+        error: String,
+    ) -> io::Result<()> {
+        self.update_terminal_effect(effect_id, |effect, now| {
+            effect.status = TerminalEffectStatus::Failed;
+            effect.updated_at_ms = now;
+            effect.last_error = Some(error);
+        })
+        .await
+    }
+
+    async fn list_terminal_effects_by_status(
+        &self,
+        statuses: &[TerminalEffectStatus],
+        limit: u32,
+    ) -> io::Result<Vec<TerminalEffectRecord>> {
+        let guard = self.inner.lock().await;
+        let limit = usize::try_from(limit.max(1))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+        let mut records = guard
+            .terminal_effects
+            .iter()
+            .filter(|effect| statuses.contains(&effect.status))
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|effect| (effect.updated_at_ms, effect.created_at_ms));
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    async fn upsert_pending_runtime_command(
+        &self,
+        session_id: &str,
+        transition: PendingCapabilityStateTransition,
+    ) -> io::Result<PendingRuntimeCommandRecord> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            ));
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        for command in guard.runtime_commands.iter_mut().filter(|command| {
+            command.session_id == session_id
+                && command.phase_node == transition.phase_node
+                && command.status == RuntimeCommandStatus::Pending
+        }) {
+            command.status = RuntimeCommandStatus::Failed;
+            command.updated_at_ms = now;
+            command.failed_at_ms = Some(now);
+            command.last_error = Some("superseded_by_new_pending_command".to_string());
+        }
+        let record = PendingRuntimeCommandRecord {
+            id: uuid::Uuid::new_v4(),
+            session_id: session_id.to_string(),
+            transition_id: transition.id.clone(),
+            phase_node: transition.phase_node.clone(),
+            status: RuntimeCommandStatus::Pending,
+            transition,
+            created_at_ms: now,
+            updated_at_ms: now,
+            applied_at_ms: None,
+            failed_at_ms: None,
+            last_error: None,
+        };
+        guard.runtime_commands.push(record.clone());
+        Ok(record)
+    }
+
+    async fn list_pending_runtime_commands(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+        let guard = self.inner.lock().await;
+        let mut records = guard
+            .runtime_commands
+            .iter()
+            .filter(|command| {
+                command.session_id == session_id && command.status == RuntimeCommandStatus::Pending
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|command| command.created_at_ms);
+        Ok(records)
+    }
+
+    async fn mark_runtime_commands_applied(&self, command_ids: &[uuid::Uuid]) -> io::Result<()> {
+        self.update_runtime_commands(command_ids, RuntimeCommandStatus::Applied, None)
+            .await
+    }
+
+    async fn mark_runtime_commands_failed(
+        &self,
+        command_ids: &[uuid::Uuid],
+        error: String,
+    ) -> io::Result<()> {
+        self.update_runtime_commands(command_ids, RuntimeCommandStatus::Failed, Some(error))
+            .await
+    }
+
+    async fn list_runtime_commands_by_status(
+        &self,
+        statuses: &[RuntimeCommandStatus],
+        limit: u32,
+    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+        let guard = self.inner.lock().await;
+        let limit = usize::try_from(limit.max(1))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+        let mut records = guard
+            .runtime_commands
+            .iter()
+            .filter(|command| statuses.contains(&command.status))
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|command| (command.updated_at_ms, command.created_at_ms));
+        records.truncate(limit);
+        Ok(records)
+    }
+}
+
+impl MemorySessionPersistence {
+    async fn update_terminal_effect(
+        &self,
+        effect_id: uuid::Uuid,
+        update: impl FnOnce(&mut TerminalEffectRecord, i64),
+    ) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let effect = guard
+            .terminal_effects
+            .iter_mut()
+            .find(|effect| effect.id == effect_id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("terminal effect {effect_id} 不存在"),
+                )
+            })?;
+        update(effect, now);
+        Ok(())
+    }
+
+    async fn update_runtime_commands(
+        &self,
+        command_ids: &[uuid::Uuid],
+        status: RuntimeCommandStatus,
+        error: Option<String>,
+    ) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        for command_id in command_ids {
+            let command = guard
+                .runtime_commands
+                .iter_mut()
+                .find(|command| command.id == *command_id)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("runtime command {command_id} 不存在"),
+                    )
+                })?;
+            command.status = status;
+            command.updated_at_ms = now;
+            match status {
+                RuntimeCommandStatus::Applied => {
+                    command.applied_at_ms = Some(now);
+                    command.last_error = None;
+                }
+                RuntimeCommandStatus::Failed => {
+                    command.failed_at_ms = Some(now);
+                    command.last_error = error.clone();
+                }
+                RuntimeCommandStatus::Pending => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 fn build_persisted_event(
@@ -232,8 +475,6 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_session_id = incoming.executor_session_id.clone();
     current.companion_context = incoming.companion_context.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
-    current.pending_capability_state_transitions =
-        incoming.pending_capability_state_transitions.clone();
     if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
         current.bootstrap_state = incoming.bootstrap_state;
     }
@@ -282,6 +523,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
 #[cfg(test)]
 mod tests {
+    use super::super::TerminalEffectType;
     use super::super::types::TitleSource;
     use super::*;
     use agentdash_agent_protocol::{
@@ -335,7 +577,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_state_transitions: Vec::new(),
         };
         persistence
             .create_session(&meta)
@@ -373,6 +614,148 @@ mod tests {
         assert_eq!(merged.last_event_seq, 1);
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
         assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
+    }
+
+    #[tokio::test]
+    async fn terminal_effect_outbox_tracks_attempt_status_and_delete() {
+        let persistence = MemorySessionPersistence::default();
+        let meta = SessionMeta {
+            id: "sess-effects".to_string(),
+            title: "测试".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        };
+        persistence
+            .create_session(&meta)
+            .await
+            .expect("应能创建 session");
+
+        let record = persistence
+            .insert_terminal_effect(NewTerminalEffectRecord {
+                session_id: "sess-effects".to_string(),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 1,
+                effect_type: TerminalEffectType::HookAutoResume,
+                payload: serde_json::json!({ "reason": "test" }),
+            })
+            .await
+            .expect("应能写入 outbox");
+        assert_eq!(record.status, TerminalEffectStatus::Pending);
+        assert_eq!(record.attempt_count, 0);
+
+        persistence
+            .mark_terminal_effect_running(record.id)
+            .await
+            .expect("应能标记 running");
+        let running = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Running], 10)
+            .await
+            .expect("应能查询 running");
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].attempt_count, 1);
+
+        persistence
+            .mark_terminal_effect_failed(record.id, "boom".to_string())
+            .await
+            .expect("应能标记 failed");
+        let failed = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Failed], 10)
+            .await
+            .expect("应能查询 failed");
+        assert_eq!(failed[0].last_error.as_deref(), Some("boom"));
+
+        persistence
+            .delete_session("sess-effects")
+            .await
+            .expect("应能删除 session");
+        let remaining = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Failed], 10)
+            .await
+            .expect("应能查询 outbox");
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_command_store_supersedes_and_marks_applied() {
+        let persistence = MemorySessionPersistence::default();
+        let meta = SessionMeta {
+            id: "sess-runtime-command".to_string(),
+            title: "测试".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        };
+        persistence
+            .create_session(&meta)
+            .await
+            .expect("应能创建 session");
+
+        let transition = |id: &str| PendingCapabilityStateTransition {
+            id: id.to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "review".to_string(),
+            capability_keys: std::collections::BTreeSet::new(),
+            state: super::super::CapabilityState::default(),
+            created_at: 1,
+            source_turn_id: None,
+        };
+        let first = persistence
+            .upsert_pending_runtime_command("sess-runtime-command", transition("cmd-1"))
+            .await
+            .expect("应能写入第一条 command");
+        let second = persistence
+            .upsert_pending_runtime_command("sess-runtime-command", transition("cmd-2"))
+            .await
+            .expect("应能写入第二条 command");
+
+        let pending = persistence
+            .list_pending_runtime_commands("sess-runtime-command")
+            .await
+            .expect("应能查询 pending command");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, second.id);
+
+        let failed = persistence
+            .list_runtime_commands_by_status(&[RuntimeCommandStatus::Failed], 10)
+            .await
+            .expect("应能查询 failed command");
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].id, first.id);
+        assert_eq!(
+            failed[0].last_error.as_deref(),
+            Some("superseded_by_new_pending_command")
+        );
+
+        persistence
+            .mark_runtime_commands_applied(&[second.id])
+            .await
+            .expect("应能标记 applied");
+        let applied = persistence
+            .list_runtime_commands_by_status(&[RuntimeCommandStatus::Applied], 10)
+            .await
+            .expect("应能查询 applied command");
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].transition_id, "cmd-2");
     }
 }
 

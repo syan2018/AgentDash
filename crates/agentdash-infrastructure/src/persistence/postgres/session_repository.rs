@@ -3,8 +3,12 @@ use std::io;
 use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use agentdash_application::session::{
-    ExecutionStatus, PersistedSessionEvent, SessionBootstrapState, SessionEventBacklog,
-    SessionEventPage, SessionMeta, SessionPersistence, TitleSource,
+    ExecutionStatus, PendingRuntimeCommandRecord, PersistedSessionEvent, RuntimeCommandStatus,
+    SessionBootstrapState, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
+    TerminalEffectRecord, TerminalEffectStatus, TitleSource,
+};
+use agentdash_application::session::{
+    NewTerminalEffectRecord, PendingCapabilityStateTransition, TerminalEffectType,
 };
 use sqlx::{PgPool, Row};
 
@@ -34,8 +38,7 @@ impl PostgresSessionRepository {
                 executor_session_id TEXT,
                 companion_context_json TEXT,
                 visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
-                bootstrap_state TEXT NOT NULL DEFAULT 'plain',
-                pending_capability_state_transitions_json TEXT NOT NULL DEFAULT '[]'
+                bootstrap_state TEXT NOT NULL DEFAULT 'plain'
             )
             "#,
             r#"
@@ -64,6 +67,58 @@ impl PostgresSessionRepository {
             r#"
             CREATE INDEX IF NOT EXISTS idx_session_events_session_tool
                 ON session_events(session_id, tool_call_id)
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS session_terminal_effects (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                terminal_event_seq INTEGER NOT NULL,
+                effect_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                last_error TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            "#,
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_status_updated
+                ON session_terminal_effects(status, updated_at_ms)
+            "#,
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_session_turn
+                ON session_terminal_effects(session_id, turn_id)
+            "#,
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_terminal_event
+                ON session_terminal_effects(session_id, terminal_event_seq)
+            "#,
+            r#"
+            CREATE TABLE IF NOT EXISTS session_runtime_commands (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                transition_id TEXT NOT NULL,
+                phase_node TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                applied_at_ms INTEGER,
+                failed_at_ms INTEGER,
+                last_error TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            "#,
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_session_runtime_commands_status_updated
+                ON session_runtime_commands(status, updated_at_ms)
+            "#,
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_session_runtime_commands_session_status
+                ON session_runtime_commands(session_id, status)
             "#,
         ] {
             sqlx::query(statement)
@@ -118,16 +173,6 @@ impl PostgresSessionRepository {
                 row.get::<String, _>("bootstrap_state"),
                 "sessions.bootstrap_state",
             )?,
-            pending_capability_state_transitions: parse_optional_json_column(
-                row.get::<Option<String>, _>("pending_capability_state_transitions_json"),
-                "pending_capability_state_transitions_json",
-            )?
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "缺少 pending_capability_state_transitions_json",
-                )
-            })?,
         })
     }
 
@@ -152,6 +197,150 @@ impl PostgresSessionRepository {
             tool_call_id: row.get::<Option<String>, _>("tool_call_id"),
             notification,
         })
+    }
+
+    fn terminal_effect_from_row(row: &sqlx::postgres::PgRow) -> io::Result<TerminalEffectRecord> {
+        let id_raw = row.get::<String, _>("id");
+        let id = uuid::Uuid::parse_str(&id_raw)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        let terminal_event_seq = parse_non_negative_u64(
+            row.get::<i64, _>("terminal_event_seq"),
+            "session_terminal_effects.terminal_event_seq",
+        )?;
+        let attempt_count = parse_non_negative_u32(
+            row.get::<i64, _>("attempt_count"),
+            "session_terminal_effects.attempt_count",
+        )?;
+        let payload_json = row.get::<String, _>("payload_json");
+        let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        Ok(TerminalEffectRecord {
+            id,
+            session_id: row.get::<String, _>("session_id"),
+            turn_id: row.get::<String, _>("turn_id"),
+            terminal_event_seq,
+            effect_type: parse_terminal_effect_type(
+                row.get::<String, _>("effect_type"),
+                "session_terminal_effects.effect_type",
+            )?,
+            payload,
+            status: parse_terminal_effect_status(
+                row.get::<String, _>("status"),
+                "session_terminal_effects.status",
+            )?,
+            attempt_count,
+            created_at_ms: row.get::<i64, _>("created_at_ms"),
+            updated_at_ms: row.get::<i64, _>("updated_at_ms"),
+            last_error: row.get::<Option<String>, _>("last_error"),
+        })
+    }
+
+    async fn update_terminal_effect_status(
+        &self,
+        effect_id: uuid::Uuid,
+        status: TerminalEffectStatus,
+        updated_at_ms: i64,
+        increment_attempt: bool,
+        last_error: Option<String>,
+    ) -> io::Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE session_terminal_effects
+            SET status = $1,
+                attempt_count = attempt_count + $2,
+                updated_at_ms = $3,
+                last_error = $4
+            WHERE id = $5
+            "#,
+        )
+        .bind(status.as_str())
+        .bind(if increment_attempt { 1_i64 } else { 0_i64 })
+        .bind(updated_at_ms)
+        .bind(last_error)
+        .bind(effect_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        if result.rows_affected() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("terminal effect {effect_id} 不存在"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn runtime_command_from_row(
+        row: &sqlx::postgres::PgRow,
+    ) -> io::Result<PendingRuntimeCommandRecord> {
+        let id_raw = row.get::<String, _>("id");
+        let id = uuid::Uuid::parse_str(&id_raw)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        let payload_json = row.get::<String, _>("payload_json");
+        let transition = serde_json::from_str::<PendingCapabilityStateTransition>(&payload_json)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        Ok(PendingRuntimeCommandRecord {
+            id,
+            session_id: row.get::<String, _>("session_id"),
+            transition_id: row.get::<String, _>("transition_id"),
+            phase_node: row.get::<String, _>("phase_node"),
+            status: parse_runtime_command_status(
+                row.get::<String, _>("status"),
+                "session_runtime_commands.status",
+            )?,
+            transition,
+            created_at_ms: row.get::<i64, _>("created_at_ms"),
+            updated_at_ms: row.get::<i64, _>("updated_at_ms"),
+            applied_at_ms: row.get::<Option<i64>, _>("applied_at_ms"),
+            failed_at_ms: row.get::<Option<i64>, _>("failed_at_ms"),
+            last_error: row.get::<Option<String>, _>("last_error"),
+        })
+    }
+
+    async fn update_runtime_commands_status(
+        &self,
+        command_ids: &[uuid::Uuid],
+        status: RuntimeCommandStatus,
+        error: Option<String>,
+    ) -> io::Result<()> {
+        if command_ids.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        for command_id in command_ids {
+            let (applied_at_ms, failed_at_ms, last_error) = match status {
+                RuntimeCommandStatus::Applied => (Some(now), None, None),
+                RuntimeCommandStatus::Failed => (None, Some(now), error.clone()),
+                RuntimeCommandStatus::Pending => (None, None, None),
+            };
+            let result = sqlx::query(
+                r#"
+                UPDATE session_runtime_commands
+                SET status = $1,
+                    updated_at_ms = $2,
+                    applied_at_ms = COALESCE($3, applied_at_ms),
+                    failed_at_ms = COALESCE($4, failed_at_ms),
+                    last_error = $5
+                WHERE id = $6
+                "#,
+            )
+            .bind(status.as_str())
+            .bind(now)
+            .bind(applied_at_ms)
+            .bind(failed_at_ms)
+            .bind(last_error)
+            .bind(command_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(sqlx_to_io)?;
+            if result.rows_affected() == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("runtime command {command_id} 不存在"),
+                ));
+            }
+        }
+        Ok(())
     }
 
     async fn require_snapshot_seq(&self, session_id: &str) -> io::Result<u64> {
@@ -179,18 +368,14 @@ impl SessionPersistence for PostgresSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
-        let pending_capability_state_transitions_json = json_string(
-            &meta.pending_capability_state_transitions,
-            "pending_capability_state_transitions_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state, pending_capability_state_transitions_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                bootstrap_state
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(&meta.id)
@@ -207,7 +392,6 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
-        .bind(pending_capability_state_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -220,7 +404,7 @@ impl SessionPersistence for PostgresSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state, pending_capability_state_transitions_json
+                   bootstrap_state
             FROM sessions
             WHERE id = $1
             "#,
@@ -238,7 +422,7 @@ impl SessionPersistence for PostgresSessionRepository {
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                   bootstrap_state, pending_capability_state_transitions_json
+                   bootstrap_state
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -259,18 +443,14 @@ impl SessionPersistence for PostgresSessionRepository {
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
         )?;
-        let pending_capability_state_transitions_json = json_string(
-            &meta.pending_capability_state_transitions,
-            "pending_capability_state_transitions_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
-                bootstrap_state, pending_capability_state_transitions_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                bootstrap_state
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -300,8 +480,7 @@ impl SessionPersistence for PostgresSessionRepository {
                     WHEN sessions.bootstrap_state = 'bootstrapped'
                         THEN sessions.bootstrap_state
                     ELSE excluded.bootstrap_state
-                END,
-                pending_capability_state_transitions_json = excluded.pending_capability_state_transitions_json
+                END
             "#,
         )
         .bind(&meta.id)
@@ -318,7 +497,6 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(companion_context_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
-        .bind(pending_capability_state_transitions_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -328,6 +506,16 @@ impl SessionPersistence for PostgresSessionRepository {
     async fn delete_session(&self, session_id: &str) -> io::Result<()> {
         let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
         sqlx::query("DELETE FROM session_events WHERE session_id = $1")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        sqlx::query("DELETE FROM session_terminal_effects WHERE session_id = $1")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        sqlx::query("DELETE FROM session_runtime_commands WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
@@ -537,6 +725,260 @@ impl SessionPersistence for PostgresSessionRepository {
         }
         Ok(events)
     }
+
+    async fn insert_terminal_effect(
+        &self,
+        effect: NewTerminalEffectRecord,
+    ) -> io::Result<TerminalEffectRecord> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let record = TerminalEffectRecord {
+            id: uuid::Uuid::new_v4(),
+            session_id: effect.session_id,
+            turn_id: effect.turn_id,
+            terminal_event_seq: effect.terminal_event_seq,
+            effect_type: effect.effect_type,
+            payload: effect.payload,
+            status: TerminalEffectStatus::Pending,
+            attempt_count: 0,
+            created_at_ms: now,
+            updated_at_ms: now,
+            last_error: None,
+        };
+        let terminal_event_seq = encode_u64_as_i64(
+            record.terminal_event_seq,
+            "session_terminal_effects.terminal_event_seq",
+        )?;
+        let payload_json = json_string(&record.payload, "session_terminal_effects.payload_json")?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_terminal_effects (
+                id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
+                status, attempt_count, created_at_ms, updated_at_ms, last_error
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+        )
+        .bind(record.id.to_string())
+        .bind(&record.session_id)
+        .bind(&record.turn_id)
+        .bind(terminal_event_seq)
+        .bind(record.effect_type.as_str())
+        .bind(payload_json)
+        .bind(record.status.as_str())
+        .bind(i64::from(record.attempt_count))
+        .bind(record.created_at_ms)
+        .bind(record.updated_at_ms)
+        .bind(&record.last_error)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        Ok(record)
+    }
+
+    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.update_terminal_effect_status(
+            effect_id,
+            TerminalEffectStatus::Running,
+            now,
+            true,
+            None,
+        )
+        .await
+    }
+
+    async fn mark_terminal_effect_succeeded(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.update_terminal_effect_status(
+            effect_id,
+            TerminalEffectStatus::Succeeded,
+            now,
+            false,
+            None,
+        )
+        .await
+    }
+
+    async fn mark_terminal_effect_failed(
+        &self,
+        effect_id: uuid::Uuid,
+        error: String,
+    ) -> io::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.update_terminal_effect_status(
+            effect_id,
+            TerminalEffectStatus::Failed,
+            now,
+            false,
+            Some(error),
+        )
+        .await
+    }
+
+    async fn list_terminal_effects_by_status(
+        &self,
+        statuses: &[TerminalEffectStatus],
+        limit: u32,
+    ) -> io::Result<Vec<TerminalEffectRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
+                   status, attempt_count, created_at_ms, updated_at_ms, last_error
+            FROM session_terminal_effects
+            ORDER BY updated_at_ms ASC, created_at_ms ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        let limit = usize::try_from(limit.max(1))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+        let mut records = Vec::new();
+        for row in rows {
+            let record = Self::terminal_effect_from_row(&row)?;
+            if statuses.contains(&record.status) {
+                records.push(record);
+                if records.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(records)
+    }
+
+    async fn upsert_pending_runtime_command(
+        &self,
+        session_id: &str,
+        transition: PendingCapabilityStateTransition,
+    ) -> io::Result<PendingRuntimeCommandRecord> {
+        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            r#"
+            UPDATE session_runtime_commands
+            SET status = $1,
+                updated_at_ms = $2,
+                failed_at_ms = $3,
+                last_error = $4
+            WHERE session_id = $5 AND phase_node = $6 AND status = $7
+            "#,
+        )
+        .bind(RuntimeCommandStatus::Failed.as_str())
+        .bind(now)
+        .bind(now)
+        .bind("superseded_by_new_pending_command")
+        .bind(session_id)
+        .bind(&transition.phase_node)
+        .bind(RuntimeCommandStatus::Pending.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
+
+        let record = PendingRuntimeCommandRecord {
+            id: uuid::Uuid::new_v4(),
+            session_id: session_id.to_string(),
+            transition_id: transition.id.clone(),
+            phase_node: transition.phase_node.clone(),
+            status: RuntimeCommandStatus::Pending,
+            transition,
+            created_at_ms: now,
+            updated_at_ms: now,
+            applied_at_ms: None,
+            failed_at_ms: None,
+            last_error: None,
+        };
+        let payload_json =
+            json_string(&record.transition, "session_runtime_commands.payload_json")?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_runtime_commands (
+                id, session_id, transition_id, phase_node, status, payload_json,
+                created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#,
+        )
+        .bind(record.id.to_string())
+        .bind(&record.session_id)
+        .bind(&record.transition_id)
+        .bind(&record.phase_node)
+        .bind(record.status.as_str())
+        .bind(payload_json)
+        .bind(record.created_at_ms)
+        .bind(record.updated_at_ms)
+        .bind(record.applied_at_ms)
+        .bind(record.failed_at_ms)
+        .bind(&record.last_error)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
+        tx.commit().await.map_err(sqlx_to_io)?;
+        Ok(record)
+    }
+
+    async fn list_pending_runtime_commands(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, session_id, transition_id, phase_node, status, payload_json,
+                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
+            FROM session_runtime_commands
+            WHERE session_id = $1 AND status = $2
+            ORDER BY created_at_ms ASC
+            "#,
+        )
+        .bind(session_id)
+        .bind(RuntimeCommandStatus::Pending.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::runtime_command_from_row).collect()
+    }
+
+    async fn mark_runtime_commands_applied(&self, command_ids: &[uuid::Uuid]) -> io::Result<()> {
+        self.update_runtime_commands_status(command_ids, RuntimeCommandStatus::Applied, None)
+            .await
+    }
+
+    async fn mark_runtime_commands_failed(
+        &self,
+        command_ids: &[uuid::Uuid],
+        error: String,
+    ) -> io::Result<()> {
+        self.update_runtime_commands_status(command_ids, RuntimeCommandStatus::Failed, Some(error))
+            .await
+    }
+
+    async fn list_runtime_commands_by_status(
+        &self,
+        statuses: &[RuntimeCommandStatus],
+        limit: u32,
+    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, session_id, transition_id, phase_node, status, payload_json,
+                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
+            FROM session_runtime_commands
+            ORDER BY updated_at_ms ASC, created_at_ms ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        let limit = usize::try_from(limit.max(1))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+        let mut records = Vec::new();
+        for row in rows {
+            let record = Self::runtime_command_from_row(&row)?;
+            if statuses.contains(&record.status) {
+                records.push(record);
+                if records.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(records)
+    }
 }
 
 fn json_string<T: serde::Serialize>(value: &T, column: &str) -> io::Result<String> {
@@ -574,6 +1016,21 @@ fn parse_execution_status(value: String, field: &str) -> io::Result<ExecutionSta
             format!("{field} 非法: {other}"),
         )),
     }
+}
+
+fn parse_terminal_effect_type(value: String, field: &str) -> io::Result<TerminalEffectType> {
+    TerminalEffectType::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+}
+
+fn parse_terminal_effect_status(value: String, field: &str) -> io::Result<TerminalEffectStatus> {
+    TerminalEffectStatus::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+}
+
+fn parse_runtime_command_status(value: String, field: &str) -> io::Result<RuntimeCommandStatus> {
+    RuntimeCommandStatus::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
 }
 
 fn parse_title_source(value: String, field: &str) -> io::Result<TitleSource> {
@@ -849,7 +1306,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_state_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -915,7 +1371,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_state_transitions: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

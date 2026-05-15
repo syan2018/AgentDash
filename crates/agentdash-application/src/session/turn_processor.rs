@@ -8,12 +8,12 @@ use agentdash_agent_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::hooks::{HookTraceTrigger, HookTrigger, SharedHookSessionRuntime};
+use agentdash_spi::hooks::SharedHookSessionRuntime;
 
-use super::hub::HookTriggerInput;
 use super::hub::SessionHub;
 use super::hub_support::*;
 use super::post_turn_handler::DynPostTurnHandler;
+use super::terminal_effects::{SessionTerminalEffectDispatcher, TerminalEffectDispatchInput};
 
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
@@ -74,8 +74,6 @@ impl SessionTurnProcessor {
             post_turn_handler,
         } = config;
 
-        let sessions = hub.sessions.clone();
-
         let mut terminal_kind = TurnTerminalKind::Completed;
         let mut terminal_message: Option<String> = None;
         let mut received_terminal = false;
@@ -97,22 +95,13 @@ impl SessionTurnProcessor {
 
         // channel 关闭但没收到显式 Terminal → 检测 cancel 状态
         if !received_terminal {
-            let (cancel_requested, live_turn_matches) = {
-                let guard = sessions.lock().await;
-                match guard
-                    .get(&session_id)
-                    .and_then(|rt| rt.turn_state.active_turn())
-                {
-                    Some(turn) => (
-                        turn.cancel_requested,
-                        turn.turn_id.as_str() == turn_id.as_str(),
-                    ),
-                    None => (false, false),
-                }
-            };
-            if cancel_requested && live_turn_matches {
-                terminal_kind = TurnTerminalKind::Interrupted;
-                terminal_message = Some("执行已取消".to_string());
+            if let Some((kind, message)) = hub
+                .turn_supervisor
+                .cancel_interrupted_terminal(&session_id, &turn_id)
+                .await
+            {
+                terminal_kind = kind;
+                terminal_message = message;
             }
         }
 
@@ -124,88 +113,42 @@ impl SessionTurnProcessor {
             terminal_kind,
             terminal_message.clone(),
         );
-        let _ = hub
+        let terminal_event = hub
             .persist_notification(&session_id, terminal_notification)
             .await;
-
-        // Hook 评估（SessionTerminal trigger）
-        let terminal_effects = if let Some(hs) = hook_session.as_ref() {
-            hub.emit_session_hook_trigger(
-                hs.as_ref(),
-                &HookTriggerInput {
-                    session_id: &session_id,
-                    turn_id: Some(&turn_id),
-                    trigger: HookTrigger::SessionTerminal,
-                    payload: Some(serde_json::json!({
-                        "terminal_state": terminal_kind.state_tag(),
-                        "message": terminal_message,
-                    })),
-                    refresh_reason: "trigger:session_terminal",
-                    source: source.clone(),
-                },
-            )
-            .await
-            .effects
-        } else {
-            Vec::new()
+        let terminal_event_seq = match terminal_event {
+            Ok(event) => event.event_seq,
+            Err(error) => {
+                tracing::error!(
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    error = %error,
+                    "Turn terminal event 持久化失败，跳过 terminal effect outbox"
+                );
+                return;
+            }
         };
 
-        // PostTurnHandler effect 执行
-        if let Some(handler) = post_turn_handler.as_ref() {
-            if !terminal_effects.is_empty() {
-                let supported = handler.supported_effect_kinds();
-                if !supported.is_empty() {
-                    for eff in &terminal_effects {
-                        if !supported.contains(&eff.kind.as_str()) {
-                            tracing::warn!(
-                                session_id = %session_id,
-                                effect_kind = %eff.kind,
-                                supported = ?supported,
-                                "Hook 产出了 handler 未声明支持的 effect kind"
-                            );
-                        }
-                    }
-                }
-                handler
-                    .execute_effects(&session_id, &turn_id, &terminal_effects)
-                    .await;
-            }
-        }
-
-        // Hook auto-resume 请求检测：processor 只判断"是否需要 auto-resume"，
-        // 限流（计数 + 上限）由 `hub.request_hook_auto_resume` 统一决定。
-        let should_auto_resume = matches!(terminal_kind, TurnTerminalKind::Completed)
-            && hook_session.as_ref().is_some_and(|hs| {
-                let trace = hs.trace();
-                trace
-                    .iter()
-                    .rev()
-                    .find(|t| matches!(t.trigger, HookTraceTrigger::BeforeStop))
-                    .is_some_and(|t| t.decision == "continue")
-            });
+        let dispatcher = SessionTerminalEffectDispatcher::new(&hub);
+        let terminal_effects = dispatcher
+            .enqueue_terminal_effects(TerminalEffectDispatchInput {
+                session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                terminal_event_seq,
+                terminal_kind,
+                terminal_message: terminal_message.clone(),
+                source,
+                hook_session,
+                post_turn_handler,
+            })
+            .await;
 
         // 清理 turn 状态 — 回到 Idle。
-        // 注意：auto-resume 计数不再在这里递增，交给 `request_hook_auto_resume`
-        // 在"确认可以续跑"的临界区内与 cap check 一起原子处理。
-        {
-            let mut guard = sessions.lock().await;
-            if let Some(runtime) = guard.get_mut(&session_id) {
-                runtime.turn_state = TurnState::Idle;
-            }
-        }
+        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
+        // 会被当前 terminal turn 拦住。
+        hub.turn_supervisor.clear_active_turn(&session_id).await;
 
-        // SessionTerminalCallback — 平台级 session 终态回调（如 LifecycleOrchestrator）
-        {
-            let cb_guard = hub.terminal_callback.read().await;
-            if let Some(cb) = cb_guard.as_ref() {
-                let state_tag = terminal_kind.state_tag();
-                cb.on_session_terminal(&session_id, state_tag).await;
-            }
-        }
-
-        if should_auto_resume {
-            hub.request_hook_auto_resume(session_id).await;
-        }
+        dispatcher.execute_enqueued(terminal_effects).await;
     }
 
     /// 处理单条 notification：on_event → persist。

@@ -1,15 +1,57 @@
-use std::path::{Path, PathBuf};
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 /// 将请求级 working_dir 解析成执行级工作目录。
-///
-/// 本轮仅收口重复实现，不改变既有语义：非空输入直接按 `Path::join`
-/// 处理，因此绝对路径与 `..` 的策略仍保持现状，后续由独立任务收紧。
-pub fn resolve_working_dir(mount_root: &Path, requested: Option<&str>) -> PathBuf {
-    match requested {
-        Some(rel) if !rel.trim().is_empty() => mount_root.join(rel),
-        _ => mount_root.to_path_buf(),
+pub fn resolve_working_dir(
+    mount_root: &Path,
+    requested: Option<&str>,
+) -> Result<PathBuf, WorkingDirPolicyError> {
+    let Some(raw) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(mount_root.to_path_buf());
+    };
+
+    let requested_path = Path::new(raw);
+    let mut relative = PathBuf::new();
+    for component in requested_path.components() {
+        match component {
+            Component::Normal(segment) => relative.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(WorkingDirPolicyError::ParentSegment {
+                    requested: raw.to_string(),
+                });
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(WorkingDirPolicyError::AbsoluteOrRoot {
+                    requested: raw.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(mount_root.join(relative))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkingDirPolicyError {
+    AbsoluteOrRoot { requested: String },
+    ParentSegment { requested: String },
+}
+
+impl fmt::Display for WorkingDirPolicyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AbsoluteOrRoot { requested } => {
+                write!(f, "working_dir `{requested}` 不能是绝对路径或根路径")
+            }
+            Self::ParentSegment { requested } => {
+                write!(f, "working_dir `{requested}` 不能包含 `..` 越界片段")
+            }
+        }
     }
 }
+
+impl std::error::Error for WorkingDirPolicyError {}
 
 /// 将执行级工作目录投影为相对 mount root 的 working_dir。
 ///
@@ -46,11 +88,11 @@ mod tests {
     #[test]
     fn resolve_working_dir_defaults_to_mount_root() {
         assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), None),
+            resolve_working_dir(Path::new("/workspace/repo"), None).unwrap(),
             PathBuf::from("/workspace/repo")
         );
         assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), Some(" ")),
+            resolve_working_dir(Path::new("/workspace/repo"), Some(" ")).unwrap(),
             PathBuf::from("/workspace/repo")
         );
     }
@@ -58,9 +100,45 @@ mod tests {
     #[test]
     fn resolve_working_dir_joins_relative_path() {
         assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), Some("crates/app")),
+            resolve_working_dir(Path::new("/workspace/repo"), Some("crates/app")).unwrap(),
             PathBuf::from("/workspace/repo").join("crates/app")
         );
+        assert_eq!(
+            resolve_working_dir(Path::new("/workspace/repo"), Some("./crates/app")).unwrap(),
+            PathBuf::from("/workspace/repo").join("crates/app")
+        );
+    }
+
+    #[test]
+    fn resolve_working_dir_rejects_parent_segments() {
+        let error = resolve_working_dir(Path::new("/workspace/repo"), Some("../outside"))
+            .expect_err("parent segment must be rejected");
+        assert!(matches!(error, WorkingDirPolicyError::ParentSegment { .. }));
+    }
+
+    #[test]
+    fn resolve_working_dir_rejects_absolute_paths() {
+        #[cfg(windows)]
+        let outside = r"C:\outside";
+        #[cfg(not(windows))]
+        let outside = "/tmp/outside";
+
+        let error = resolve_working_dir(Path::new("/workspace/repo"), Some(outside))
+            .expect_err("absolute path must be rejected");
+        assert!(matches!(
+            error,
+            WorkingDirPolicyError::AbsoluteOrRoot { .. }
+        ));
+    }
+
+    #[test]
+    fn resolve_working_dir_rejects_rooted_paths() {
+        let error = resolve_working_dir(Path::new("/workspace/repo"), Some("/outside"))
+            .expect_err("rooted path must be rejected");
+        assert!(matches!(
+            error,
+            WorkingDirPolicyError::AbsoluteOrRoot { .. }
+        ));
     }
 
     #[test]

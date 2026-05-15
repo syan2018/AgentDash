@@ -494,6 +494,13 @@ impl AppState {
                 .await;
         }
 
+        state
+            .services
+            .session_hub
+            .assert_ready_for_app_state()
+            .await
+            .map_err(|err| anyhow::anyhow!("AppState session 依赖未 ready: {err}"))?;
+
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
             state.services.session_hub.clone(),

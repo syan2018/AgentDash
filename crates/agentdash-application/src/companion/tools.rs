@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::session::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, CompanionSessionContext, LaunchCommand,
-    SessionHub, UserPromptInput, build_hook_trace_envelope,
+    UserPromptInput, build_hook_trace_envelope,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::vfs::tools::provider::SharedSessionHubHandle;
+use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -65,7 +65,7 @@ pub struct CompanionRequestTool {
     agent_repo: Arc<dyn AgentRepository>,
     agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
     repos: crate::repository_set::RepositorySet,
-    session_hub_handle: SharedSessionHubHandle,
+    session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
     current_executor_config: AgentConfig,
@@ -79,7 +79,7 @@ impl CompanionRequestTool {
         agent_repo: Arc<dyn AgentRepository>,
         agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
         repos: crate::repository_set::RepositorySet,
-        session_hub_handle: SharedSessionHubHandle,
+        session_services_handle: SharedSessionToolServicesHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
@@ -87,7 +87,7 @@ impl CompanionRequestTool {
             agent_repo,
             agent_link_repo,
             repos,
-            session_hub_handle,
+            session_services_handle,
             current_session_id: context
                 .turn
                 .hook_session
@@ -106,11 +106,11 @@ impl CompanionRequestTool {
             Some(sid) => sid.clone(),
             None => return Vec::new(),
         };
-        let hub = match self.session_hub_handle.get().await {
+        let services = match self.session_services_handle.get().await {
             Some(hub) => hub,
             None => return Vec::new(),
         };
-        hub.capability_service().get_runtime_mcp_servers(&sid).await
+        services.capability.get_runtime_mcp_servers(&sid).await
     }
 }
 
@@ -271,16 +271,16 @@ impl CompanionRequestTool {
         .await
         .map_err(AgentToolError::ExecutionFailed)?;
 
-        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
+        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "SessionHub 尚未完成初始化，无法执行 companion request".to_string(),
+                "Session services 尚未完成初始化，无法执行 companion request".to_string(),
             )
         })?;
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
                 hook_session.as_ref(),
-                Some(&session_hub),
+                Some(&session_services),
                 Some(self.current_turn_id.as_str()),
                 HookTrigger::BeforeSubagentDispatch,
                 "deny",
@@ -306,7 +306,7 @@ impl CompanionRequestTool {
         );
         record_subagent_trace(
             hook_session.as_ref(),
-            Some(&session_hub),
+            Some(&session_services),
             Some(self.current_turn_id.as_str()),
             HookTrigger::BeforeSubagentDispatch,
             "allow",
@@ -346,12 +346,14 @@ impl CompanionRequestTool {
             inherited_constraint_keys: dispatch_plan.slice.inherited_constraint_keys.clone(),
             agent_name: agent_key.map(|s| s.to_string()),
         };
-        let previous_companion_context = session_hub
+        let previous_companion_context = session_services
+            .core
             .get_session_meta(&target_binding.session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
             .and_then(|meta| meta.companion_context);
-        let _ = session_hub
+        let _ = session_services
+            .core
             .update_session_meta(&target_binding.session_id, |meta| {
                 meta.companion_context = Some(companion_context.clone());
             })
@@ -389,14 +391,15 @@ impl CompanionRequestTool {
             },
         );
 
-        let turn_id = match session_hub
-            .launch_service()
+        let turn_id = match session_services
+            .launch
             .launch_command(&target_binding.session_id, command)
             .await
         {
             Ok(turn_id) => turn_id,
             Err(error) => {
-                let _ = session_hub
+                let _ = session_services
+                    .core
                     .update_session_meta(&target_binding.session_id, |meta| {
                         meta.companion_context = previous_companion_context.clone();
                     })
@@ -426,7 +429,8 @@ impl CompanionRequestTool {
                 }).unwrap_or_default(),
             }),
         );
-        let _ = session_hub
+        let _ = session_services
+            .eventing
             .inject_notification(&target_binding.session_id, child_notification)
             .await;
 
@@ -450,7 +454,7 @@ impl CompanionRequestTool {
         .map_err(AgentToolError::ExecutionFailed)?;
         record_subagent_trace(
             hook_session.as_ref(),
-            Some(&session_hub),
+            Some(&session_services),
             Some(self.current_turn_id.as_str()),
             HookTrigger::AfterSubagentDispatch,
             "dispatched",
@@ -461,7 +465,7 @@ impl CompanionRequestTool {
 
         if wait {
             // wait=true: register in companion_wait_registry then block until result
-            let rx = session_hub
+            let rx = session_services
                 .companion_wait_registry
                 .register(
                     &current_session_id,
@@ -474,7 +478,7 @@ impl CompanionRequestTool {
             let wait_result = tokio::select! {
                 result = rx => result.ok(),
                 _ = cancel.cancelled() => {
-                    session_hub.companion_wait_registry.remove(&dispatch_plan.dispatch_id).await;
+                    session_services.companion_wait_registry.remove(&dispatch_plan.dispatch_id).await;
                     return Err(AgentToolError::ExecutionFailed("companion wait 被取消".to_string()));
                 }
             };
@@ -576,12 +580,15 @@ impl CompanionRequestTool {
                 "当前 session 没有可识别的上下文，无法向上提审".to_string(),
             )
         })?;
-        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed("SessionHub 尚未完成初始化，无法向上提审".to_string())
+        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "Session services 尚未完成初始化，无法向上提审".to_string(),
+            )
         })?;
 
         // 获取 companion context 以找到父 session
-        let session_meta = session_hub
+        let session_meta = session_services
+            .core
             .get_session_meta(&current_session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
@@ -610,7 +617,8 @@ impl CompanionRequestTool {
             "wait": wait,
         });
 
-        if let Some(parent_hook_session) = session_hub
+        if let Some(parent_hook_session) = session_services
+            .hooks
             .ensure_hook_session_runtime(
                 &companion_context.parent_session_id,
                 Some(companion_context.parent_turn_id.as_str()),
@@ -637,7 +645,7 @@ impl CompanionRequestTool {
             }
             record_subagent_trace(
                 parent_hook_session.as_ref(),
-                Some(&session_hub),
+                Some(&session_services),
                 Some(companion_context.parent_turn_id.as_str()),
                 HookTrigger::CompanionResult,
                 "review_request",
@@ -658,7 +666,8 @@ impl CompanionRequestTool {
             ),
             review_payload,
         );
-        let _ = session_hub
+        let _ = session_services
+            .eventing
             .inject_notification(&companion_context.parent_session_id, notification)
             .await;
 
@@ -718,11 +727,11 @@ impl CompanionRequestTool {
         if wait {
             // 工具不返回 → agent loop 卡在这个 tool call → session 挂起
             // respond_companion_request 找到 sender 发回来 → 工具返回 → session 恢复
-            let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("SessionHub 尚未初始化".to_string())
+            let session_services = self.session_services_handle.get().await.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("Session services 尚未初始化".to_string())
             })?;
             let request_type = (!payload_type.is_empty()).then(|| payload_type.to_string());
-            let rx = session_hub
+            let rx = session_services
                 .companion_wait_registry
                 .register(
                     &current_session_id,
@@ -745,11 +754,12 @@ impl CompanionRequestTool {
                     "payload_type": payload_type,
                 }),
             );
-            if let Err(error) = session_hub
+            if let Err(error) = session_services
+                .eventing
                 .inject_notification(&current_session_id, notification)
                 .await
             {
-                session_hub
+                session_services
                     .companion_wait_registry
                     .remove(&request_id)
                     .await;
@@ -760,7 +770,7 @@ impl CompanionRequestTool {
 
             let response_payload = tokio::select! {
                 _ = cancel.cancelled() => {
-                    session_hub.companion_wait_registry.remove(&request_id).await;
+                    session_services.companion_wait_registry.remove(&request_id).await;
                     return Err(AgentToolError::ExecutionFailed(
                         "等待用户回应时被取消".to_string(),
                     ));
@@ -786,7 +796,7 @@ impl CompanionRequestTool {
                 })),
             })
         } else {
-            if let Some(session_hub) = self.session_hub_handle.get().await {
+            if let Some(session_services) = self.session_services_handle.get().await {
                 let notification = build_companion_event_notification(
                     &current_session_id,
                     &self.current_turn_id,
@@ -800,7 +810,8 @@ impl CompanionRequestTool {
                         "payload_type": payload_type,
                     }),
                 );
-                let _ = session_hub
+                let _ = session_services
+                    .eventing
                     .inject_notification(&current_session_id, notification)
                     .await;
             }
@@ -1027,12 +1038,13 @@ impl CompanionRequestTool {
             )
         })?;
         let project_id = companion_project_id_for_owner(&snapshot, owner_type, owner_id)?;
-        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
+        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "SessionHub 尚未完成初始化，无法创建 companion session".to_string(),
+                "Session services 尚未完成初始化，无法创建 companion session".to_string(),
             )
         })?;
-        let meta = session_hub
+        let meta = session_services
+            .core
             .create_session(
                 title
                     .as_deref()
@@ -1047,7 +1059,8 @@ impl CompanionRequestTool {
             .create(&binding)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        session_hub
+        session_services
+            .core
             .mark_owner_bootstrap_pending(&binding.session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -1067,16 +1080,19 @@ pub struct CompanionRespondParams {
 
 #[derive(Clone)]
 pub struct CompanionRespondTool {
-    session_hub_handle: SharedSessionHubHandle,
+    session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
 }
 
 impl CompanionRespondTool {
-    pub fn new(session_hub_handle: SharedSessionHubHandle, context: &ExecutionContext) -> Self {
+    pub fn new(
+        session_services_handle: SharedSessionToolServicesHandle,
+        context: &ExecutionContext,
+    ) -> Self {
         Self {
-            session_hub_handle,
+            session_services_handle,
             current_session_id: context
                 .turn
                 .hook_session
@@ -1201,10 +1217,11 @@ impl CompanionRespondTool {
         &self,
         current_session_id: &str,
     ) -> Result<Option<String>, AgentToolError> {
-        let Some(session_hub) = self.session_hub_handle.get().await else {
+        let Some(session_services) = self.session_services_handle.get().await else {
             return Ok(None);
         };
-        let session_meta = session_hub
+        let session_meta = session_services
+            .core
             .get_session_meta(current_session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -1264,13 +1281,14 @@ impl CompanionRespondTool {
                 ))
             })?;
 
-        if let Some(session_hub) = self.session_hub_handle.get().await {
+        if let Some(session_services) = self.session_services_handle.get().await {
             let notification = build_hook_action_resolved_notification(
                 current_session_id,
                 &self.current_turn_id,
                 &action,
             );
-            let _ = session_hub
+            let _ = session_services
+                .eventing
                 .inject_notification(current_session_id, notification)
                 .await;
         }
@@ -1303,11 +1321,12 @@ impl CompanionRespondTool {
         current_session_id: &str,
         payload: &serde_json::Value,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let session_hub = match self.session_hub_handle.get().await {
+        let session_services = match self.session_services_handle.get().await {
             Some(hub) => hub,
             None => return Ok(None),
         };
-        let session_meta = match session_hub
+        let session_meta = match session_services
+            .core
             .get_session_meta(current_session_id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
@@ -1383,7 +1402,8 @@ impl CompanionRespondTool {
             "artifact_refs": artifact_refs,
         });
 
-        if let Some(parent_hook_session) = session_hub
+        if let Some(parent_hook_session) = session_services
+            .hooks
             .ensure_hook_session_runtime(
                 &companion_context.parent_session_id,
                 Some(companion_context.parent_turn_id.as_str()),
@@ -1410,7 +1430,7 @@ impl CompanionRespondTool {
             }
             record_subagent_trace(
                 parent_hook_session.as_ref(),
-                Some(&session_hub),
+                Some(&session_services),
                 Some(companion_context.parent_turn_id.as_str()),
                 HookTrigger::CompanionResult,
                 "result_returned",
@@ -1431,7 +1451,8 @@ impl CompanionRespondTool {
             format!("Companion `{result_agent_display}` 已回传结果，等待主 session 采纳",),
             hook_payload.clone(),
         );
-        session_hub
+        session_services
+            .eventing
             .inject_notification(&companion_context.parent_session_id, parent_notification)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -1443,12 +1464,13 @@ impl CompanionRespondTool {
             "已将当前 companion 结果回传到主 session".to_string(),
             hook_payload.clone(),
         );
-        let _ = session_hub
+        let _ = session_services
+            .eventing
             .inject_notification(current_session_id, child_notification)
             .await;
 
         // Unblock wait=true callers or resume idle parent sessions
-        let wait_resolved = session_hub
+        let wait_resolved = session_services
             .companion_wait_registry
             .resolve(
                 &companion_context.parent_session_id,
@@ -1460,7 +1482,8 @@ impl CompanionRespondTool {
         if wait_resolved.is_none() {
             // wait=false path: parent is not blocking on this dispatch.
             // Resume the parent session with the companion result as a follow-up.
-            let parent_running = session_hub
+            let parent_running = session_services
+                .core
                 .has_live_executor_session(&companion_context.parent_session_id)
                 .await;
             if !parent_running {
@@ -1470,7 +1493,8 @@ impl CompanionRespondTool {
                 );
 
                 // Read parent session meta for executor config
-                let parent_meta = session_hub
+                let parent_meta = session_services
+                    .core
                     .get_session_meta(&companion_context.parent_session_id)
                     .await
                     .ok()
@@ -1481,7 +1505,7 @@ impl CompanionRespondTool {
                     .unwrap_or_else(|| AgentConfig::new("PI_AGENT"));
 
                 let parent_sid = companion_context.parent_session_id.clone();
-                let hub_clone = session_hub.clone();
+                let hub_clone = session_services.clone();
                 tokio::spawn(async move {
                     // parent resume 路径通过 strict launch 复用主通道 construction 逻辑。
                     let command = LaunchCommand::companion_parent_resume_input(UserPromptInput {
@@ -1492,10 +1516,7 @@ impl CompanionRespondTool {
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
                     });
-                    if let Err(error) = hub_clone
-                        .launch_service()
-                        .launch_command(&parent_sid, command)
-                        .await
+                    if let Err(error) = hub_clone.launch.launch_command(&parent_sid, command).await
                     {
                         tracing::warn!(
                             parent_session_id = %parent_sid,
@@ -1631,7 +1652,7 @@ async fn evaluate_subagent_hook(
 
 async fn record_subagent_trace(
     hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-    session_hub: Option<&SessionHub>,
+    session_services: Option<&SessionToolServices>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
     decision: &str,
@@ -1662,13 +1683,17 @@ async fn record_subagent_trace(
     // Only inject notification when the session has NO active connector.
     // Active connectors already receive traces via trace_broadcast → hook_trace_rx,
     // so inject_notification would cause duplicate event cards.
-    if let (Some(session_hub), Some(turn_id)) = (session_hub, turn_id) {
+    if let (Some(session_services), Some(turn_id)) = (session_services, turn_id) {
         let session_id = hook_session.session_id();
-        let has_live = session_hub.has_live_executor_session(session_id).await;
+        let has_live = session_services
+            .core
+            .has_live_executor_session(session_id)
+            .await;
         if !has_live {
             let notification =
                 build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace);
-            let _ = session_hub
+            let _ = session_services
+                .eventing
                 .inject_notification(session_id, notification)
                 .await;
         }
@@ -2214,7 +2239,7 @@ mod companion_tests {
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider, SessionHub,
         local_workspace_vfs,
     };
-    use crate::vfs::tools::provider::SharedSessionHubHandle;
+    use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
@@ -2541,32 +2566,42 @@ mod companion_tests {
             None,
             Arc::new(MemorySessionPersistence::default()),
         );
-        let handle = SharedSessionHubHandle::default();
+        let handle = SharedSessionToolServicesHandle::default();
         handle.set(hub.clone()).await;
 
-        let parent = hub.create_session("parent").await.expect("parent session");
-        let child = hub.create_session("child").await.expect("child session");
-        hub.update_session_meta(&parent.id, |meta| {
-            meta.executor_config = Some(AgentConfig::new("PI_AGENT"));
-        })
-        .await
-        .expect("update parent meta");
-        hub.update_session_meta(&child.id, |meta| {
-            meta.companion_context = Some(CompanionSessionContext {
-                dispatch_id: "dispatch-1".to_string(),
-                parent_session_id: parent.id.clone(),
-                parent_turn_id: "turn-parent".to_string(),
-                companion_label: "reviewer".to_string(),
-                slice_mode: "compact".to_string(),
-                adoption_mode: "suggestion".to_string(),
-                request_type: Some("task".to_string()),
-                inherited_fragment_labels: Vec::new(),
-                inherited_constraint_keys: Vec::new(),
-                agent_name: Some("reviewer".to_string()),
-            });
-        })
-        .await
-        .expect("update child meta");
+        let parent = hub
+            .core_service()
+            .create_session("parent")
+            .await
+            .expect("parent session");
+        let child = hub
+            .core_service()
+            .create_session("child")
+            .await
+            .expect("child session");
+        hub.core_service()
+            .update_session_meta(&parent.id, |meta| {
+                meta.executor_config = Some(AgentConfig::new("PI_AGENT"));
+            })
+            .await
+            .expect("update parent meta");
+        hub.core_service()
+            .update_session_meta(&child.id, |meta| {
+                meta.companion_context = Some(CompanionSessionContext {
+                    dispatch_id: "dispatch-1".to_string(),
+                    parent_session_id: parent.id.clone(),
+                    parent_turn_id: "turn-parent".to_string(),
+                    companion_label: "reviewer".to_string(),
+                    slice_mode: "compact".to_string(),
+                    adoption_mode: "suggestion".to_string(),
+                    request_type: Some("task".to_string()),
+                    inherited_fragment_labels: Vec::new(),
+                    inherited_constraint_keys: Vec::new(),
+                    agent_name: Some("reviewer".to_string()),
+                });
+            })
+            .await
+            .expect("update child meta");
 
         let calls = Arc::new(AtomicUsize::new(0));
         let captured_prompt = Arc::new(TokioMutex::new(None));
@@ -2579,7 +2614,7 @@ mod companion_tests {
         .await;
 
         let tool = CompanionRespondTool {
-            session_hub_handle: handle,
+            session_services_handle: handle,
             current_session_id: Some(child.id.clone()),
             current_turn_id: "turn-child".to_string(),
             hook_session: None,

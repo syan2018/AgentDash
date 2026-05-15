@@ -25,8 +25,9 @@ LaunchCommand
 | Commit 5 | 已完成 | 拆分 core / eventing / runtime / control 能力服务，迁移 API/local 直接调用点 |
 | Commit 6 | 已完成 | launch/hook/effects/capability 调用点迁入具体服务 |
 | Commit 7 | 已完成 | 删除 Hub facade 调用残留，迁移 companion / hook auto-resume / tests / title 到具体服务 |
-| Commit 8 | 未开始 | 解除 launch planner/executor、terminal effects、runtime tool provider、advance-node 与 Hub 服务定位器依赖 |
-| Commit 9 | 未开始 | effects / pending / persistence 语义验证、migration 核验与父任务文档最终收口 |
+| Commit 8 | 已完成 | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle，删除 Hub handle 服务定位器 |
+| Commit 9 | 未开始 | 解除 launch planner/executor、terminal effects 与 Hub 执行期参数依赖 |
+| Commit 10 | 未开始 | effects / pending / persistence 语义验证、migration 核验与父任务文档最终收口 |
 
 ## Current Code Facts
 
@@ -115,14 +116,31 @@ cargo check -p agentdash-local
 git diff --check
 ```
 
-### Commit 8: 解除 launch / effects / runtime tools 与 Hub 依赖
+### Commit 8: 移除 runtime tools 的 Hub 服务定位器
+
+- `SharedSessionHubHandle` 删除，替换为 `SharedSessionToolServicesHandle`。
+- `RelayRuntimeToolProvider` 不再保存 Hub，只保存 core / eventing / control / launch / hooks / capability / companion wait registry bundle。
+- companion / canvas / workflow runtime tools 不再持有 Hub。
+- `RuntimeSessionMcpAccess` 的实现从 Hub 移到 `SessionCapabilityService`。
+
+退出检查：
+
+```powershell
+rg -n "SharedSessionHubHandle|session_hub_handle|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
+git diff --check
+```
+
+### Commit 9: 解除 launch / effects 与 Hub 依赖
 
 - `SessionLaunchService` 持有明确 launch deps；`SessionLaunchExecutor` / planner 不再接收 Hub。
 - hook runtime 解析、hook trigger dispatch、auto-resume 调度进入 hook service/deps。
 - runtime capability / MCP / live transition / pending transition 进入 capability service/deps。
 - `SessionTerminalEffectDispatcher` 由 effects service/deps 驱动，不再读取 Hub。
 - `SessionTurnProcessor` 依赖 eventing/runtime/effects 等明确服务或 deps，不再持有 Hub。
-- `RelayRuntimeToolProvider`、companion tools、`CompleteLifecycleNodeTool` 不再通过 `SharedSessionHubHandle` / Hub 现取业务服务。
 
 退出检查：
 
@@ -138,7 +156,7 @@ cargo test -p agentdash-application session::hub
 git diff --check
 ```
 
-### Commit 9: Effects / Pending / Persistence 验证与任务收口
+### Commit 10: Effects / Pending / Persistence 验证与任务收口
 
 - terminal event 先落库，effect 进入 durable outbox；handler 有 durable identity 或 typed handler。
 - effect 支持 retry、dead-letter、replay 与审计。

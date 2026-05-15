@@ -20,7 +20,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 ## Commit Map
 
-本 batch 总计 9 次提交完成。前 6 次已经落地；剩余 3 次必须按顺序一次性推进，不再拆更小提交，也不创建 child task。
+本 batch 总计 10 次提交完成。前 8 次已经落地；剩余 2 次必须按顺序一次性推进，不再拆更小提交，也不创建 child task。
 
 | Commit | Status | Message | Scope |
 |---|---|---|---|
@@ -31,8 +31,9 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 | 5 | 已完成 | `refactor(session): 拆分 session 业务能力服务` | 拆出 core / eventing / runtime / control 等能力服务，并迁移 API/local 的直接调用点 |
 | 6 | 已完成 | `refactor(session): 迁移 session launch 调用至能力服务` | 把 API/task/routine/workflow 的 launch/hook/effects/capability 调用迁到具体服务；Hub 只在装配、runtime tool handle 与内部实现中残留 |
 | 7 | 已完成 | `refactor(session): 删除 hub facade 调用残留` | 删除已迁出的 Hub facade 方法，迁移 companion / hook auto-resume / tests / title 调用点到具体能力服务 |
-| 8 | 未开始 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects、runtime tool provider、advance-node 依赖明确服务/依赖包，不再把 Hub 当服务定位器 |
-| 9 | 未开始 | `refactor(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
+| 8 | 已完成 | `refactor(session): 移除 runtime tools 的 hub 服务定位器` | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle |
+| 9 | 未开始 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects 依赖明确服务/依赖包，不再以 Hub 作为执行期参数 |
+| 10 | 未开始 | `refactor(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
 
 ## Execution Rules
 
@@ -190,7 +191,38 @@ git diff --check
 - 对外 route / task / routine / workflow / companion 的调用目标是具体 service。
 - 剩余 `SessionHub` 命中全部列入 Commit 8 的“内部实现去 Hub”范围。
 
-### Commit 8: 解除 launch / effects / runtime tools 与 Hub 依赖
+### Commit 8: 移除 runtime tools 的 Hub 服务定位器
+
+状态：已完成。
+
+本提交删除 runtime tool provider 里的 Hub handle，不再把 Hub 延迟塞进 companion / canvas / workflow runtime tools。工具层只接收具体 `SessionToolServices` bundle：core / eventing / control / launch / hooks / capability / companion wait registry。
+
+完成事实：
+
+- `SharedSessionHubHandle` 删除，替换为 `SharedSessionToolServicesHandle`。
+- `RelayRuntimeToolProvider` 不再保存 Hub，只保存 service bundle handle。
+- `CompleteLifecycleNodeTool` 直接接收 `SessionToolServices`，不再通过 Hub 现取 orchestrator 依赖。
+- companion tools 使用 core/eventing/control/launch/hooks/capability/companion wait registry。
+- canvas tools 使用 core/eventing 更新 session meta 与事件，不再读取 Hub。
+- `RuntimeSessionMcpAccess` 的实现从 Hub 移到 `SessionCapabilityService`。
+
+退出检查：
+
+```powershell
+rg -n "SharedSessionHubHandle|session_hub_handle|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
+git diff --check
+```
+
+完成定义：
+
+- runtime tool provider 不再是 Hub 服务定位器。
+- companion/canvas/workflow runtime tools 不再持有 Hub。
+
+### Commit 9: 解除 launch / effects 与 Hub 依赖
 
 本提交处理真正的架构收口：把 Hub 从“内部业务实现参数”降为装配阶段依赖来源。不是把 `SessionHub` 改名成另一个 service locator，而是让每条业务主线拿到自己需要的依赖包或具体服务。
 
@@ -202,8 +234,6 @@ git diff --check
 - runtime capability / MCP / live transition / pending transition 进入 `SessionCapabilityService`，不再通过 Hub 方法转发。
 - `SessionTerminalEffectDispatcher` 由 `SessionEffectsService` 创建并接收 effects deps；不再读取 Hub。
 - `SessionTurnProcessor` 依赖 eventing/runtime/effects 等明确服务或 deps，不再持有 Hub。
-- `RelayRuntimeToolProvider` 不再保存 `SharedSessionHubHandle`；companion/workflow tool 构造只拿需要的 service bundle。
-- `CompleteLifecycleNodeTool` 不再通过 Hub 现取 core/launch/hooks/capability services。
 - local relay 的长期 runtime holder 如果仍需保存装配对象，必须命名为 assembly/runtime handle，并且 handler 立即投影为具体 services。
 
 退出检查：
@@ -226,7 +256,7 @@ git diff --check
 - `LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext projection` 的生产主线没有旁路 payload。
 - Context 查询、launch、companion、local relay、hook auto-resume 都从同一 construction fact source 投影。
 
-### Commit 9: Effects / pending / persistence 验证与任务收口
+### Commit 10: Effects / pending / persistence 验证与任务收口
 
 本提交不再新增架构壳，只做最终语义确认、测试补齐、迁移核验和文档闭环。若 Commit 8 发现缺口，必须先在 Commit 8 修掉，不能在 Commit 9 写兼容旁路。
 

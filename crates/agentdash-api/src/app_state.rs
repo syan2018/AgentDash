@@ -31,7 +31,7 @@ use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionHubHandle,
+    RelayRuntimeToolProvider, SessionToolServices, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_domain::llm_provider::LlmProviderRepository;
@@ -258,7 +258,7 @@ impl AppState {
         let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
         let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
-        let session_hub_handle = SharedSessionHubHandle::default();
+        let session_services_handle = SharedSessionToolServicesHandle::default();
 
         let inline_persister: Arc<
             dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
@@ -294,7 +294,7 @@ impl AppState {
                 RelayRuntimeToolProvider::new(
                     vfs_service.clone(),
                     repos.clone(),
-                    session_hub_handle.clone(),
+                    session_services_handle.clone(),
                     Some(inline_persister),
                     platform_config.clone(),
                 )
@@ -388,7 +388,17 @@ impl AppState {
             session_hub.set_terminal_callback(orchestrator).await;
         }
 
-        session_hub_handle.set(session_hub.clone()).await;
+        session_services_handle
+            .set(SessionToolServices {
+                core: session_core.clone(),
+                eventing: session_eventing.clone(),
+                control: session_control.clone(),
+                launch: session_launch.clone(),
+                hooks: session_hooks.clone(),
+                capability: session_capability.clone(),
+                companion_wait_registry: session_hub.companion_wait_registry.clone(),
+            })
+            .await;
 
         let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
             Arc::new(session_capability.clone());

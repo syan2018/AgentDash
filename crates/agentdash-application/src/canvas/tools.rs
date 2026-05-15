@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
-use crate::vfs::tools::provider::SharedSessionHubHandle;
+use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
 
 #[derive(Clone)]
 pub struct ListCanvasesTool {
@@ -39,7 +39,7 @@ pub struct StartCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
     vfs: SharedRuntimeVfs,
-    session_hub_handle: SharedSessionHubHandle,
+    session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: Option<String>,
 }
 
@@ -48,14 +48,14 @@ impl StartCanvasTool {
         canvas_repo: Arc<dyn CanvasRepository>,
         project_id: Uuid,
         vfs: SharedRuntimeVfs,
-        session_hub_handle: SharedSessionHubHandle,
+        session_services_handle: SharedSessionToolServicesHandle,
         current_session_id: Option<String>,
     ) -> Self {
         Self {
             canvas_repo,
             project_id,
             vfs,
-            session_hub_handle,
+            session_services_handle,
             current_session_id,
         }
     }
@@ -97,7 +97,7 @@ pub struct BindCanvasDataParams {
 #[derive(Clone)]
 pub struct PresentCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
-    session_hub_handle: SharedSessionHubHandle,
+    session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: String,
     current_turn_id: String,
     project_id: Uuid,
@@ -106,14 +106,14 @@ pub struct PresentCanvasTool {
 impl PresentCanvasTool {
     pub fn new(
         canvas_repo: Arc<dyn CanvasRepository>,
-        session_hub_handle: SharedSessionHubHandle,
+        session_services_handle: SharedSessionToolServicesHandle,
         current_session_id: String,
         current_turn_id: String,
         project_id: Uuid,
     ) -> Self {
         Self {
             canvas_repo,
-            session_hub_handle,
+            session_services_handle,
             current_session_id,
             current_turn_id,
             project_id,
@@ -336,7 +336,7 @@ impl AgentTool for StartCanvasTool {
 
         expose_canvas_to_session(
             &self.vfs,
-            &self.session_hub_handle,
+            &self.session_services_handle,
             self.current_session_id.as_deref(),
             &canvas,
         )
@@ -475,10 +475,11 @@ impl AgentTool for PresentCanvasTool {
             &self.current_turn_id,
             &canvas,
         )?;
-        let session_hub = self.session_hub_handle.get().await.ok_or_else(|| {
-            AgentToolError::ExecutionFailed("SessionHub 尚未完成初始化".to_string())
+        let session_services = self.session_services_handle.get().await.ok_or_else(|| {
+            AgentToolError::ExecutionFailed("Session services 尚未完成初始化".to_string())
         })?;
-        session_hub
+        session_services
+            .eventing
             .inject_notification(&self.current_session_id, notification)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -536,16 +537,17 @@ fn ensure_canvas_project(
 
 async fn expose_canvas_to_session(
     vfs: &SharedRuntimeVfs,
-    session_hub_handle: &SharedSessionHubHandle,
+    session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
     vfs.append_canvas_mount(canvas).await;
-    if let Some(session_hub) = session_hub_handle.get().await
+    if let Some(session_services) = session_services_handle.get().await
         && let Some(session_id) = current_session_id
     {
         let mount_id = canvas.mount_id.clone();
-        session_hub
+        session_services
+            .core
             .update_session_meta(session_id, move |meta| {
                 if !meta
                     .visible_canvas_mount_ids
@@ -702,7 +704,7 @@ mod tests {
             canvas_repo.clone(),
             project_id,
             shared_vfs.clone(),
-            SharedSessionHubHandle::default(),
+            SharedSessionToolServicesHandle::default(),
             Some("sess-test".to_string()),
         );
         let patch_tool = FsApplyPatchTool::new(service.clone(), shared_vfs.clone(), None, None);
@@ -803,7 +805,7 @@ mod tests {
             canvas_repo,
             project_id,
             shared_vfs.clone(),
-            SharedSessionHubHandle::default(),
+            SharedSessionToolServicesHandle::default(),
             Some("sess-test".to_string()),
         );
 
@@ -907,7 +909,7 @@ mod tests {
             canvas_repo.clone(),
             project_id,
             shared_vfs,
-            SharedSessionHubHandle::default(),
+            SharedSessionToolServicesHandle::default(),
             Some("sess-test".to_string()),
         );
 

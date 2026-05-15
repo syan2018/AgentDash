@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
     ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState,
     SessionContextBundle,
@@ -47,13 +45,9 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
 
 pub(super) struct PlannedSessionLaunch {
     pub launch_execution: LaunchExecution,
-    pub hook_session: Option<SharedHookSessionRuntime>,
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
     pub context_bundle: Option<SessionContextBundle>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub base_capability_state: agentdash_spi::CapabilityState,
-    pub capability_state: agentdash_spi::CapabilityState,
-    pub capability_keys: BTreeSet<String>,
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
@@ -295,7 +289,6 @@ impl<'a> SessionLaunchPlanner<'a> {
             } else {
                 (base_capability_state.clone(), base_capability_source)
             };
-        let capability_keys = capability_state.capability_keys();
         let (resolved_follow_up_session_id, follow_up_source) = input
             .follow_up_session_id
             .as_deref()
@@ -354,6 +347,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             follow_up_source,
             pending_runtime_commands: input.pending_runtime_commands,
             pending_capability_transitions,
+            base_capability_state: base_capability_state.clone(),
             vfs_source,
             pending_vfs_overlay_applied,
             mcp_source,
@@ -374,13 +368,9 @@ impl<'a> SessionLaunchPlanner<'a> {
 
         Ok(PlannedSessionLaunch {
             launch_execution,
-            hook_session,
             hook_snapshot_contribution,
             context_bundle,
             discovered_guidelines,
-            base_capability_state,
-            capability_state: capability_state.clone(),
-            capability_keys,
         })
     }
 

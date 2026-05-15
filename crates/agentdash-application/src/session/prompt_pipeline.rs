@@ -170,13 +170,16 @@ impl<'a> SessionLaunchExecutor<'a> {
         let title_hint = launch_execution.title_hint.clone();
         let resolved_follow_up_session_id = launch_execution.summary.follow_up_session_id.clone();
         let post_turn_handler = launch_execution.terminal_effects.post_turn_handler.clone();
-        let hook_session = planned_launch.hook_session;
+        let hook_session = launch_execution.context.turn.hook_session.clone();
         let hook_snapshot_contribution = planned_launch.hook_snapshot_contribution;
         let context_bundle = planned_launch.context_bundle;
         let discovered_guidelines = planned_launch.discovered_guidelines;
-        let base_capability_state = planned_launch.base_capability_state;
-        let capability_state = planned_launch.capability_state;
-        let capability_keys = planned_launch.capability_keys;
+        let base_capability_state = launch_execution
+            .runtime_commands
+            .base_capability_state
+            .clone();
+        let capability_state = launch_execution.context.turn.capability_state.clone();
+        let capability_keys = capability_state.capability_keys();
         let is_owner_bootstrap =
             launch_execution.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         tracing::debug!(

@@ -319,6 +319,7 @@ pub struct HookLaunchPlan {
 pub struct RuntimeCommandLaunchPlan {
     pub pending_commands: Vec<PendingRuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
+    pub base_capability_state: CapabilityState,
     pub apply_after_connector_accept: bool,
 }
 
@@ -374,6 +375,7 @@ pub struct LaunchExecutionInput {
     pub follow_up_source: LaunchFollowUpSource,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
+    pub base_capability_state: CapabilityState,
     pub vfs_source: LaunchVfsSource,
     pub pending_vfs_overlay_applied: bool,
     pub mcp_source: LaunchMcpSource,
@@ -440,6 +442,7 @@ impl LaunchExecution {
         let runtime_commands = RuntimeCommandLaunchPlan {
             pending_commands: input.pending_runtime_commands,
             pending_capability_transitions: input.pending_capability_transitions,
+            base_capability_state: input.base_capability_state,
             apply_after_connector_accept: true,
         };
         let terminal_effects = TerminalEffectPlan {
@@ -569,6 +572,7 @@ mod tests {
                     source_turn_id: None,
                 },
             ],
+            base_capability_state: CapabilityState::default(),
             vfs_source: LaunchVfsSource::Request,
             pending_vfs_overlay_applied: false,
             mcp_source: LaunchMcpSource::Request,

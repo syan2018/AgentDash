@@ -60,7 +60,7 @@ route/bootstrap 不得保留独立 owner / VFS / capability / context 主线。
 - [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 - [x] `LaunchExecution` 不再允许 `construction: Option<_>`；缺 owner / construction plan 会在 planner 阶段失败。
 - [x] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
-- [x] `LaunchExecution` 显式包含 resolved prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace；`working_dir_input` 已从 launch execution/summary 删除，connector input 只接收解析后的 `working_directory`。
+- [x] `LaunchExecution` 显式包含 resolved prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace；`working_dir_input` 已从 launch execution/summary 删除，connector input 的 working directory / executor config / MCP / VFS / identity 只从 `SessionConstructionPlan` 投影。
 - [x] pending runtime commands 与 pending capability transitions 不再作为 `PlannedSessionLaunch` 旁路字段，改由 `LaunchExecution.runtime_commands` 承载。
 - [x] follow-up id 从 `LaunchExecution.summary` 投影；post-turn handler 从 `LaunchExecution.terminal_effects` 投影，不再挂在 `PlannedSessionLaunch`。
 - [x] base/effective capability 与 hook session 从 `LaunchExecution.runtime_commands` / `LaunchExecution.context` 投影，不再挂在 `PlannedSessionLaunch`。

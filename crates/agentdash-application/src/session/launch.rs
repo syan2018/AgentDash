@@ -6,7 +6,7 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame,
-    ExecutionTurnFrame, RestoredSessionState, SessionMcpServer, Vfs,
+    ExecutionTurnFrame, RestoredSessionState, SessionMcpServer,
 };
 
 use super::augmenter::{
@@ -381,12 +381,7 @@ pub struct LaunchExecutionInput {
     pub pending_vfs_overlay_applied: bool,
     pub mcp_source: LaunchMcpSource,
     pub capability_source: LaunchCapabilitySource,
-    pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
-    pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub identity: Option<agentdash_spi::AuthIdentity>,
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
@@ -397,6 +392,23 @@ pub struct LaunchExecutionInput {
 
 impl LaunchExecution {
     pub fn build(input: LaunchExecutionInput) -> Self {
+        let working_directory = input
+            .construction
+            .workspace
+            .working_directory
+            .clone()
+            .expect("SessionConstructionPlan.workspace.working_directory 必须在 launch 前解析");
+        let executor_config = input
+            .construction
+            .execution_profile
+            .executor_config
+            .clone()
+            .expect(
+                "SessionConstructionPlan.execution_profile.executor_config 必须在 launch 前解析",
+            );
+        let mcp_servers = input.construction.projections.mcp_servers.clone();
+        let vfs = input.construction.surface.vfs.clone();
+        let identity = input.construction.identity.identity.clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -423,9 +435,9 @@ impl LaunchExecution {
             pending_vfs_overlay_applied: input.pending_vfs_overlay_applied,
             mcp_source: input.mcp_source,
             capability_source: input.capability_source,
-            working_directory: input.working_directory.clone(),
-            has_vfs: input.vfs.is_some(),
-            mcp_server_count: input.mcp_servers.len(),
+            working_directory: working_directory.clone(),
+            has_vfs: vfs.is_some(),
+            mcp_server_count: mcp_servers.len(),
             restored_executor_state,
             capability_keys,
         };
@@ -452,10 +464,10 @@ impl LaunchExecution {
             post_turn_handler: input.post_turn_handler,
         };
         let connector_input = ConnectorInputPlan {
-            working_directory: input.working_directory.clone(),
-            executor_config: input.executor_config.clone(),
-            mcp_servers: input.mcp_servers.clone(),
-            has_vfs: input.vfs.is_some(),
+            working_directory: working_directory.clone(),
+            executor_config: executor_config.clone(),
+            mcp_servers: mcp_servers.clone(),
+            has_vfs: vfs.is_some(),
         };
         let trace = LaunchExecutionTrace {
             entries: vec![
@@ -480,12 +492,12 @@ impl LaunchExecution {
         };
         let session = ExecutionSessionFrame {
             turn_id: input.turn_id,
-            working_directory: input.working_directory,
+            working_directory,
             environment_variables: input.environment_variables,
-            executor_config: input.executor_config,
-            mcp_servers: input.mcp_servers,
-            vfs: input.vfs,
-            identity: input.identity,
+            executor_config,
+            mcp_servers,
+            vfs,
+            identity,
         };
         let turn = ExecutionTurnFrame {
             hook_session: input.hook_session,
@@ -518,7 +530,7 @@ mod tests {
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
     use super::super::construction::{
-        SessionConstructionContextProjection, SessionConstructionPlan,
+        SessionConstructionLaunchInput, SessionConstructionPlan, SourceContractPlan,
     };
     use super::super::ownership::SessionOwnerResolver;
     use super::super::types::UserPromptInput;
@@ -533,11 +545,30 @@ mod tests {
             "execution",
         );
         let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
-        let construction = SessionConstructionPlan::new(
-            "sess-launch",
+        let construction = SessionConstructionPlan::from_launch(SessionConstructionLaunchInput {
+            session_id: "sess-launch".to_string(),
             owner,
-            SessionConstructionContextProjection::default(),
-        );
+            source: SourceContractPlan {
+                launch_source: Some("test".to_string()),
+                preparation: None,
+                strictness: Some("strict".to_string()),
+            },
+            workspace_id: None,
+            working_dir_hint: Some("project".to_string()),
+            working_directory: PathBuf::from("/workspace/project"),
+            executor_config: AgentConfig::new("PI_AGENT"),
+            vfs: None,
+            runtime_surface: None,
+            context_bundle: None,
+            continuation_context_frame: None,
+            context_snapshot: None,
+            identity: None,
+            terminal_hook_effect_binding: None,
+            mcp_servers: Vec::new(),
+            capability_state: CapabilityState::default(),
+            session_capabilities: None,
+            trace_entries: Vec::new(),
+        });
         let resolved_payload = UserPromptInput::from_text("hello")
             .resolve_prompt_payload()
             .expect("resolved payload");
@@ -580,12 +611,7 @@ mod tests {
             pending_vfs_overlay_applied: false,
             mcp_source: LaunchMcpSource::Request,
             capability_source: LaunchCapabilitySource::Request,
-            working_directory: PathBuf::from("/workspace/project"),
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
-            executor_config: AgentConfig::new("PI_AGENT"),
-            mcp_servers: Vec::new(),
-            vfs: None,
-            identity: None,
             hook_session: None,
             capability_state: CapabilityState::default(),
             runtime_delegate: None,

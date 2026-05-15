@@ -129,6 +129,8 @@ hook session、effective capability state、base capability state 也必须由 `
 的 context / runtime command plan 投影，不能继续挂在 parallel planner result。
 working dir hint 只能属于 construction workspace plan；`LaunchExecution` / launch summary
 只保留解析后的 `working_directory`，不得重新携带 `working_dir_input` 或等价字段。
+connector input 的 working directory / executor config / MCP / VFS / identity 必须由
+`SessionConstructionPlan` 投影，不得作为 `LaunchExecutionInput` 的并行事实再次传入。
 `SessionLaunchPlanner::plan` 应直接返回 `LaunchExecution`，不得重新引入只用于并行携带
 launch 字段的 planner result 壳。
 

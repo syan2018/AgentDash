@@ -9,13 +9,14 @@ use agentdash_spi::hooks::{
 };
 
 use super::assignment_context_frame::build_assignment_context_frame;
-use super::augmenter::SessionLaunchRequest;
+use super::augmenter::LaunchAugmentation;
+use super::construction::SessionConstructionSeed;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
-use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
+use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchExecutionSeed, LaunchStrictness};
 use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
 pub use super::types::*;
@@ -37,7 +38,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
         let reason = command.reason_tag();
         let strictness = command.strictness();
-        let mut req = match strictness {
+        let (launch_seed, mut construction_seed) = match strictness {
             LaunchStrictness::Strict => {
                 let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
                     return Err(ConnectorError::Runtime(format!(
@@ -51,16 +52,15 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .await?
             }
         };
-        req.construction.source_contract.launch_source = Some(reason.to_string());
-        req.construction.source_contract.strictness = Some(
+        construction_seed.source_contract.launch_source = Some(reason.to_string());
+        construction_seed.source_contract.strictness = Some(
             match strictness {
                 LaunchStrictness::Strict => "strict",
                 LaunchStrictness::Relaxed => "relaxed",
             }
             .to_string(),
         );
-        let context_sources = req
-            .construction
+        let context_sources = construction_seed
             .context_bundle
             .as_ref()
             .map(|bundle| {
@@ -71,7 +71,12 @@ impl<'a> SessionLaunchExecutor<'a> {
             })
             .unwrap_or_default();
         let turn_id = self
-            .execute_augmented_input(session_id, follow_up_session_id.as_deref(), req)
+            .execute_launch_seed(
+                session_id,
+                follow_up_session_id.as_deref(),
+                launch_seed,
+                construction_seed,
+            )
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -84,7 +89,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         session_id: &str,
         command: &LaunchCommand,
         reason: &str,
-    ) -> Result<SessionLaunchRequest, ConnectorError> {
+    ) -> Result<LaunchAugmentation, ConnectorError> {
         match self.hub.current_prompt_augmenter().await {
             Some(augmenter) => augmenter.augment(session_id, command).await,
             None => {
@@ -93,26 +98,29 @@ impl<'a> SessionLaunchExecutor<'a> {
                     reason = %reason,
                     "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
                 );
-                Ok(relaxed_command_to_launch_request(command))
+                Ok(relaxed_command_to_launch_seed(command))
             }
         }
     }
 
     #[cfg(test)]
-    pub(crate) async fn execute_augmented_input_for_test(
+    pub(crate) async fn execute_launch_seed_for_test(
         &self,
         session_id: &str,
-        req: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
     ) -> Result<String, ConnectorError> {
-        self.execute_augmented_input(session_id, None, req).await
+        self.execute_launch_seed(session_id, None, launch_seed, construction_seed)
+            .await
     }
 
-    /// 已完成 augment 的执行段。生产入口只能从 `execute_command` 进入。
-    async fn execute_augmented_input(
+    /// 已完成 launch/construction seed 准备后的执行段。生产入口只能从 `execute_command` 进入。
+    async fn execute_launch_seed(
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -154,18 +162,18 @@ impl<'a> SessionLaunchExecutor<'a> {
                 cached_continuation,
                 session_meta: &session_meta,
                 pending_runtime_commands,
-                user_input: req.user_input,
-                working_dir_input: req.construction.working_dir_input,
-                construction_owner: req.construction.owner,
-                source_contract: req.construction.source_contract,
-                mcp_servers: req.construction.mcp_servers,
-                vfs: req.construction.vfs,
-                capability_state: req.construction.capability_state,
-                context_bundle: req.construction.context_bundle,
-                continuation_context_frame: req.construction.continuation_context_frame,
-                hook_snapshot_reload: req.hook_snapshot_reload,
-                identity: req.construction.identity,
-                post_turn_handler: req.post_turn_handler,
+                user_input: launch_seed.user_input,
+                working_dir_input: construction_seed.working_dir_input,
+                construction_owner: construction_seed.owner,
+                source_contract: construction_seed.source_contract,
+                mcp_servers: construction_seed.mcp_servers,
+                vfs: construction_seed.vfs,
+                capability_state: construction_seed.capability_state,
+                context_bundle: construction_seed.context_bundle,
+                continuation_context_frame: construction_seed.continuation_context_frame,
+                hook_snapshot_reload: launch_seed.hook_snapshot_reload,
+                identity: construction_seed.identity,
+                post_turn_handler: launch_seed.post_turn_handler,
             })
             .await?;
         let resolved_payload = planned_launch.resolved_payload;
@@ -569,14 +577,17 @@ impl<'a> SessionLaunchExecutor<'a> {
     }
 }
 
-fn relaxed_command_to_launch_request(command: &LaunchCommand) -> SessionLaunchRequest {
-    let mut input = SessionLaunchRequest::from_user_input(command.user_input().clone());
-    input.construction.mcp_servers = command.local_relay_mcp_declarations().to_vec();
-    input.construction.vfs = command
-        .local_relay_workspace_root()
-        .map(super::local_workspace_vfs);
-    input.construction.identity = command.identity();
-    input
+fn relaxed_command_to_launch_seed(command: &LaunchCommand) -> LaunchAugmentation {
+    let launch_seed = LaunchExecutionSeed::from_user_input(command.user_input().clone());
+    let construction_seed = SessionConstructionSeed {
+        mcp_servers: command.local_relay_mcp_declarations().to_vec(),
+        vfs: command
+            .local_relay_workspace_root()
+            .map(super::local_workspace_vfs),
+        identity: command.identity(),
+        ..Default::default()
+    };
+    (launch_seed, construction_seed)
 }
 
 impl SessionHub {

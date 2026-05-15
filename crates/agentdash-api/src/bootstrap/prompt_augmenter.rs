@@ -11,8 +11,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::augmenter::SessionLaunchRequest;
-use agentdash_application::session::{LaunchCommand, PromptRequestAugmenter};
+use agentdash_application::session::augmenter::LaunchAugmentation;
+use agentdash_application::session::{
+    LaunchCommand, LaunchExecutionSeed, PromptRequestAugmenter, SessionConstructionSeed,
+};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -77,11 +79,11 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<SessionLaunchRequest, ConnectorError> {
+    ) -> Result<LaunchAugmentation, ConnectorError> {
         augment_prompt_request_for_owner(
             &self.state,
             session_id,
-            command_to_launch_request(command),
+            command_to_launch_seed(command),
             command.task_hint(),
             command.companion_hint(),
         )
@@ -90,14 +92,17 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
     }
 }
 
-fn command_to_launch_request(command: &LaunchCommand) -> SessionLaunchRequest {
-    let mut input = SessionLaunchRequest::from_user_input(command.user_input().clone());
-    input.construction.mcp_servers = command.local_relay_mcp_declarations().to_vec();
-    input.construction.vfs = command
-        .local_relay_workspace_root()
-        .map(agentdash_application::session::local_workspace_vfs);
-    input.construction.identity = command.identity();
-    input
+fn command_to_launch_seed(command: &LaunchCommand) -> LaunchAugmentation {
+    let launch_seed = LaunchExecutionSeed::from_user_input(command.user_input().clone());
+    let construction_seed = SessionConstructionSeed {
+        mcp_servers: command.local_relay_mcp_declarations().to_vec(),
+        vfs: command
+            .local_relay_workspace_root()
+            .map(agentdash_application::session::local_workspace_vfs),
+        identity: command.identity(),
+        ..Default::default()
+    };
+    (launch_seed, construction_seed)
 }
 
 #[cfg(test)]

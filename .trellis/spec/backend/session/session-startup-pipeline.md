@@ -37,13 +37,15 @@ LaunchCommand
 
 `PromptAugmentInput` 已删除，不能重新引入。
 
-当前仍存在的迁移边界是 `SessionLaunchRequest` 过渡 envelope：
+`SessionLaunchRequest` 已删除，不能重新引入。
 
-- 它按 `user_input` / `construction` / hook/effect 字段分组，只用于承接 API/bootstrap 到 launch pipeline 的暂存；
-- 它不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
+当前仍存在的迁移边界是 `SessionConstructionSeed` / `LaunchExecutionSeed`：
+
+- 它们只用于承接 API/bootstrap 到 launch pipeline 的暂存；
+- 它们不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许继续扩张成新的长期 service / route / adapter 公开契约；
-- 后续必须把 working dir / VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`，把 hook / post-turn / terminal effect 字段拆入 `LaunchExecution` / effects outbox，然后删除这个过渡 envelope。
+- 后续必须把 working dir / VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`，把 hook / post-turn / terminal effect 字段拆入 `LaunchExecution` / effects outbox，然后删除这些过渡 seed。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -177,6 +179,7 @@ cargo test -p agentdash-application session::launch
 cargo test -p agentdash-application session::construction
 ```
 
-`PreparedLaunchPrompt`、`AugmentedLaunchInput`、`PromptAugmentInput` 必须保持归零。
-`SessionLaunchRequest` 若仍存在，必须只作为删除中的过渡 envelope，并在 task tracker
-中列出下一步拆入 construction / launch / effects 的删除点。
+`PreparedLaunchPrompt`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`
+必须保持归零。`SessionConstructionSeed` / `LaunchExecutionSeed` 若仍存在，必须只作为
+删除中的过渡 seed，并在 task tracker 中列出下一步拆入 construction / launch / effects
+的删除点。

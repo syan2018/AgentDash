@@ -37,6 +37,6 @@
     "crates/agentdash-api/src/bootstrap/session_launch_augmenter.rs",
     "crates/agentdash-api/src/bootstrap/prompt_augmenter.rs"
   ],
-  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput 已从生产代码删除，PromptRequestAugmenter/prompt_pipeline/API bootstrap 不再返回或接收旧 payload，ContextPlan 已保留完整 SessionContextBundle 与 continuation context frame。剩余阻塞是 SessionLaunchRequest 仍是 bootstrap 到 pipeline 的过渡 envelope，SessionConstructionPlan 仍未成为完整 frame/audit/inspector 事实源，task effect/companion parent facts 仍在 bootstrap 临时绑定，SessionHub 仍承载业务方法。执行以父任务 tracker 为准。",
+  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput 与 SessionLaunchRequest 已从生产代码删除，PromptRequestAugmenter/prompt_pipeline/API bootstrap 不再返回或接收旧 payload/envelope，ContextPlan 已保留完整 SessionContextBundle 与 continuation context frame。剩余阻塞是 SessionConstructionSeed / LaunchExecutionSeed 仍是 bootstrap 到 pipeline 的过渡 seed，SessionConstructionPlan 仍未成为完整 frame/audit/inspector 事实源，task effect/companion parent facts 仍在 bootstrap 临时绑定，SessionHub 仍承载业务方法。执行以父任务 tracker 为准。",
   "meta": {}
 }

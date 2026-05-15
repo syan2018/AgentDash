@@ -15,7 +15,7 @@
 ## 可行收口路径
 
 1. 保持 `LaunchCommand` 纯入口意图，并保持 `PromptAugmentInput` 归零。
-2. 将 API/bootstrap/assembler 当前写入 `SessionLaunchRequest` 的增强结果迁入 `SessionConstructionPlan`，不再返回 launch envelope。
+2. 将 API/bootstrap/assembler 当前写入 `SessionConstructionSeed` / `LaunchExecutionSeed` 的增强结果迁入 `SessionConstructionPlan` / `LaunchExecution`，不再返回 seed。
 3. 补全 `SessionConstructionPlan` 的 context bundle/frame、MCP、capability、identity、trace 字段。
 4. 将 `SessionLaunchPlanner` 输入改为 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 5. 将 connector input 作为 `LaunchExecution` 内部字段投影为 `ExecutionContext`。
@@ -26,13 +26,13 @@
 ## 风险
 
 - API bootstrap 目前依赖 repos/AppState，直接生成完整 construction 会触碰 application/API 分层。需要把依赖方向设计清楚，避免把 AppState 继续藏进 augmenter。
-- assembler 仍把多类 composition 结果写回 `SessionLaunchRequest.construction`。删除该 envelope 时要一次性迁移 task/story/project/companion/lifecycle 几条路径，否则会出现新旧两套主线。
+- assembler 仍把多类 composition 结果写回 `SessionConstructionSeed` / `LaunchExecutionSeed`。删除 seed 时要一次性迁移 task/story/project/companion/lifecycle 几条路径，否则会出现新旧两套主线。
 - `SessionConstructionPlan` 当前 context 字段过薄。若不先补全字段，`LaunchExecution` 仍会从别处读 bundle/frame。
 - `SessionHub` 拆除会触碰测试和大量 helper。拆之前要先确保 launch/runtime/effects/pending 服务有清晰依赖边界。
 
 ## 不可接受方案
 
-- 将 `SessionLaunchRequest` 当成最终边界继续传递。
+- 将 `SessionConstructionSeed` / `LaunchExecutionSeed` 当成最终边界继续传递。
 - 新增只转发旧 payload 的 launch service。
 - 让 route/context query 与 launch 各自构造 VFS/capability/context，再用测试维持一致。
 - 用 wrapper 解释有业务判断的 `SessionHub`。

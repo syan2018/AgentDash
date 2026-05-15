@@ -46,6 +46,6 @@
     "crates/agentdash-api/src/bootstrap/session_context_query.rs",
     "crates/agentdash-api/src/app_state.rs"
   ],
-  "notes": "2026-05-15 状态校准：此前 batch 只完成迁移基础，父任务仍 in_progress。PromptAugmentInput 已从生产代码删除，但最终目标不得被 SessionLaunchRequest 过渡 envelope、SessionHub facade、bootstrap 增强逻辑或 planner fallback 稀释。当前剩余主线是删除 SessionLaunchRequest 生产 handoff，补全 SessionConstructionPlan 作为 launch/query/audit/inspector 同源事实源，收敛 LaunchExecution，并拆除有职责 SessionHub。权威追踪见 docs/final-convergence-execution-tracker.md。",
+  "notes": "2026-05-15 状态校准：此前 batch 只完成迁移基础，父任务仍 in_progress。PromptAugmentInput 与 SessionLaunchRequest 已从生产代码删除，但最终目标不得被 SessionConstructionSeed / LaunchExecutionSeed 过渡 seed、SessionHub facade、bootstrap 增强逻辑或 planner fallback 稀释。当前剩余主线是删除这些 seed 的生产 handoff，补全 SessionConstructionPlan 作为 launch/query/audit/inspector 同源事实源，收敛 LaunchExecution，并拆除有职责 SessionHub。权威追踪见 docs/final-convergence-execution-tracker.md。",
   "meta": {}
 }

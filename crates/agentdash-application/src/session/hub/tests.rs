@@ -21,9 +21,11 @@ use serde_json::json;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
+use super::super::LaunchExecutionSeed;
 use super::super::MemorySessionPersistence;
 use super::super::RuntimeCommandStatus;
-use super::super::augmenter::SessionLaunchRequest;
+use super::super::augmenter::LaunchAugmentation;
+use super::super::construction::SessionConstructionSeed;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -48,25 +50,25 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> SessionLaunchRequest {
-    let mut plan = SessionLaunchRequest::from_user_input(UserPromptInput {
+fn simple_prompt_request(prompt: &str) -> LaunchAugmentation {
+    let mut launch_seed = LaunchExecutionSeed::from_user_input(UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     });
-    plan.hook_snapshot_reload = HookSnapshotReloadTrigger::None;
-    plan
+    launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::None;
+    (launch_seed, SessionConstructionSeed::default())
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionLaunchRequest {
-    let mut req = simple_prompt_request(prompt);
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> LaunchAugmentation {
+    let (mut launch_seed, mut construction_seed) = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
-    req.construction.context_bundle =
+    construction_seed.context_bundle =
         Some(crate::context::build_continuation_bundle_from_markdown(
             bundle_session_id,
             system_context.to_string(),
         ));
-    req.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
-    req
+    launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
+    (launch_seed, construction_seed)
 }
 
 #[derive(Default)]
@@ -180,10 +182,10 @@ async fn start_prompt_records_current_turn_state() {
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Workflow]);
 
     let mut req = simple_prompt_request("hello");
-    req.construction.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.construction.working_dir_input = Some("src".to_string());
-    req.construction.mcp_servers = vec![session_mcp.clone()];
-    req.construction.capability_state = Some(flow_caps.clone());
+    req.1.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.1.working_dir_input = Some("src".to_string());
+    req.1.mcp_servers = vec![session_mcp.clone()];
+    req.1.capability_state = Some(flow_caps.clone());
 
     hub.start_prompt(&session.id, req)
         .await
@@ -481,8 +483,8 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
     let mut req = simple_prompt_request("hello");
-    req.construction.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.construction.capability_state = Some(initial_flow);
+    req.1.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.1.capability_state = Some(initial_flow);
 
     hub.start_prompt(&session.id, req)
         .await
@@ -2137,7 +2139,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
 
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::augmenter::SessionLaunchRequest;
+    use crate::session::augmenter::LaunchAugmentation;
     use crate::session::{LaunchCommand, PromptRequestAugmenter};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2153,7 +2155,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             &self,
             _session_id: &str,
             command: &LaunchCommand,
-        ) -> Result<SessionLaunchRequest, ConnectorError> {
+        ) -> Result<LaunchAugmentation, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = command
                 .user_input()

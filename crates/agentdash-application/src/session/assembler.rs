@@ -16,10 +16,10 @@
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
 //! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口合入按目标边界分组的
-//! `SessionLaunchRequest`:
+//! launch seed 与 construction seed:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → SessionLaunchRequest
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → (LaunchExecutionSeed, SessionConstructionSeed)
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -60,9 +60,11 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
-use crate::session::augmenter::SessionLaunchRequest;
+use crate::session::augmenter::LaunchAugmentation;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
+use crate::session::construction::SessionConstructionSeed;
 use crate::session::context::apply_workspace_defaults;
+use crate::session::launch::LaunchExecutionSeed;
 use crate::session::types::{HookSnapshotReloadTrigger, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
@@ -79,7 +81,7 @@ use crate::workspace::BackendAvailability;
 // SECTION 1:内部 builder prompt 投影
 // ═══════════════════════════════════════════════════════════════════
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进一个 base `SessionLaunchRequest`。
+/// 把 `SessionAssemblyBuilder` 的累积声明合并进 launch seed 与 construction seed。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -103,45 +105,45 @@ use crate::workspace::BackendAvailability;
 /// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
 /// `with_post_turn_handler` 注入，`apply_session_assembly` 统一合入，单一装配节拍保证不漏。
 fn apply_session_assembly(
-    base: SessionLaunchRequest,
+    mut launch_seed: LaunchExecutionSeed,
+    mut construction_seed: SessionConstructionSeed,
     prepared: SessionAssemblyBuilder,
-) -> SessionLaunchRequest {
-    let mut req = base;
+) -> LaunchAugmentation {
     if let Some(blocks) = prepared.prompt_blocks {
-        req.user_input.prompt_blocks = Some(blocks);
+        launch_seed.user_input.prompt_blocks = Some(blocks);
     }
     if let Some(cfg) = prepared.executor_config {
-        req.user_input.executor_config = Some(cfg);
+        launch_seed.user_input.executor_config = Some(cfg);
     }
-    req.construction.context_bundle = prepared.context_bundle;
-    req.hook_snapshot_reload = prepared.hook_snapshot_reload;
+    construction_seed.context_bundle = prepared.context_bundle;
+    launch_seed.hook_snapshot_reload = prepared.hook_snapshot_reload;
 
     apply_workspace_defaults(
-        &mut req.construction.working_dir_input,
-        &mut req.construction.vfs,
+        &mut construction_seed.working_dir_input,
+        &mut construction_seed.vfs,
         prepared.workspace_defaults.as_ref(),
     );
     if let Some(wd) = prepared.working_dir {
-        req.construction.working_dir_input = Some(wd);
+        construction_seed.working_dir_input = Some(wd);
     }
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
     // mount 组合会覆盖前端透传的 vfs，是刻意为之。
     if prepared.vfs.is_some() {
-        req.construction.vfs = prepared.vfs;
+        construction_seed.vfs = prepared.vfs;
     }
-    req.construction.mcp_servers = prepared.mcp_servers;
-    req.construction.capability_state = prepared.capability_state;
+    construction_seed.mcp_servers = prepared.mcp_servers;
+    construction_seed.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
-        req.user_input.env = prepared.env;
+        launch_seed.user_input.env = prepared.env;
     }
     if prepared.identity.is_some() {
-        req.construction.identity = prepared.identity;
+        construction_seed.identity = prepared.identity;
     }
     if prepared.post_turn_handler.is_some() {
-        req.post_turn_handler = prepared.post_turn_handler;
+        launch_seed.post_turn_handler = prepared.post_turn_handler;
     }
-    req
+    (launch_seed, construction_seed)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1125,12 +1127,13 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_owner_bootstrap_prompt(
         &self,
-        base: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<SessionLaunchRequest, String> {
+    ) -> Result<LaunchAugmentation, String> {
         self.compose_owner_bootstrap(spec)
             .await
-            .map(|prepared| apply_session_assembly(base, prepared))
+            .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
     }
 
     /// Story step activation 场景下组装 child session。
@@ -1144,7 +1147,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// `SessionLaunchRequest` 后交 launch executor 派发。
+    /// launch seed / construction seed 后交 launch executor 派发。
     async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -1391,21 +1394,24 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_story_step_prompt(
         &self,
-        base: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
         spec: StoryStepSpec<'_>,
-    ) -> Result<SessionLaunchRequest, TaskExecutionError> {
+    ) -> Result<LaunchAugmentation, TaskExecutionError> {
         self.compose_story_step(spec)
             .await
-            .map(|prepared| apply_session_assembly(base, prepared))
+            .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
     }
 
     pub async fn compose_lifecycle_node_prompt(
         &self,
-        base: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<SessionLaunchRequest, String> {
+    ) -> Result<LaunchAugmentation, String> {
         compose_lifecycle_node_prompt_with_audit(
-            base,
+            launch_seed,
+            construction_seed,
             self.repos,
             self.platform_config,
             spec,
@@ -1417,33 +1423,45 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub fn compose_companion_prompt(
         &self,
-        base: SessionLaunchRequest,
+        launch_seed: LaunchExecutionSeed,
+        construction_seed: SessionConstructionSeed,
         spec: CompanionSpec<'_>,
-    ) -> SessionLaunchRequest {
-        compose_companion_prompt(base, spec)
+    ) -> LaunchAugmentation {
+        compose_companion_prompt(launch_seed, construction_seed, spec)
     }
 }
 
 pub async fn compose_lifecycle_node_prompt(
-    base: SessionLaunchRequest,
+    launch_seed: LaunchExecutionSeed,
+    construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
-) -> Result<SessionLaunchRequest, String> {
-    compose_lifecycle_node_prompt_with_audit(base, repos, platform_config, spec, None, None).await
+) -> Result<LaunchAugmentation, String> {
+    compose_lifecycle_node_prompt_with_audit(
+        launch_seed,
+        construction_seed,
+        repos,
+        platform_config,
+        spec,
+        None,
+        None,
+    )
+    .await
 }
 
 pub async fn compose_lifecycle_node_prompt_with_audit(
-    base: SessionLaunchRequest,
+    launch_seed: LaunchExecutionSeed,
+    construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<SessionLaunchRequest, String> {
+) -> Result<LaunchAugmentation, String> {
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
-        .map(|prepared| apply_session_assembly(base, prepared))
+        .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
 }
 
 async fn compose_lifecycle_node_with_audit(
@@ -1644,10 +1662,11 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
 }
 
 pub fn compose_companion_prompt(
-    base: SessionLaunchRequest,
+    launch_seed: LaunchExecutionSeed,
+    construction_seed: SessionConstructionSeed,
     spec: CompanionSpec<'_>,
-) -> SessionLaunchRequest {
-    apply_session_assembly(base, compose_companion(spec))
+) -> LaunchAugmentation {
+    apply_session_assembly(launch_seed, construction_seed, compose_companion(spec))
 }
 
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
@@ -1871,14 +1890,15 @@ async fn compose_companion_with_workflow(
 }
 
 pub async fn compose_companion_with_workflow_prompt(
-    base: SessionLaunchRequest,
+    launch_seed: LaunchExecutionSeed,
+    construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<SessionLaunchRequest, String> {
+) -> Result<LaunchAugmentation, String> {
     compose_companion_with_workflow(repos, platform_config, spec)
         .await
-        .map(|prepared| apply_session_assembly(base, prepared))
+        .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2351,8 +2371,11 @@ mod tests {
             )
         }
 
-        fn base_req() -> SessionLaunchRequest {
-            SessionLaunchRequest::from_user_input(UserPromptInput::from_text("ping"))
+        fn base_req() -> LaunchAugmentation {
+            (
+                LaunchExecutionSeed::from_user_input(UserPromptInput::from_text("ping")),
+                SessionConstructionSeed::default(),
+            )
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
@@ -2369,7 +2392,7 @@ mod tests {
         #[test]
         fn mcp_servers_prepared_overrides_base() {
             let mut base = base_req();
-            base.construction.mcp_servers = vec![session_server("base_only", "http://base")];
+            base.1.mcp_servers = vec![session_server("base_only", "http://base")];
 
             let prepared = SessionAssemblyBuilder {
                 mcp_servers: vec![
@@ -2379,9 +2402,9 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             let names: Vec<&str> = result
-                .construction
+                .1
                 .mcp_servers
                 .iter()
                 .map(|s| s.name.as_str())
@@ -2392,18 +2415,18 @@ mod tests {
         #[test]
         fn mcp_servers_prepared_empty_still_replaces() {
             let mut base = base_req();
-            base.construction.mcp_servers = vec![session_server("base_only", "http://base")];
+            base.1.mcp_servers = vec![session_server("base_only", "http://base")];
             let prepared = SessionAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
-            assert!(result.construction.mcp_servers.is_empty());
+            let result = apply_session_assembly(base.0, base.1, prepared);
+            assert!(result.1.mcp_servers.is_empty());
         }
 
         #[test]
         fn vfs_prepared_some_overrides_base() {
             // base 已有 vfs、prepared 也有 vfs → 以 prepared 为准（保留 compose 的 mount 组合）。
             let mut base = base_req();
-            base.construction.vfs = Some(Vfs {
+            base.1.vfs = Some(Vfs {
                 mounts: Vec::new(),
                 default_mount_id: Some("base-mount".to_string()),
                 source_project_id: None,
@@ -2421,9 +2444,9 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.construction.vfs.and_then(|v| v.default_mount_id),
+                result.1.vfs.and_then(|v| v.default_mount_id),
                 Some("prepared-mount".to_string()),
             );
         }
@@ -2432,7 +2455,7 @@ mod tests {
         fn vfs_prepared_none_preserves_base() {
             // base 有 vfs、prepared 没有 → 保留 base（不强制清空）。
             let mut base = base_req();
-            base.construction.vfs = Some(Vfs {
+            base.1.vfs = Some(Vfs {
                 mounts: Vec::new(),
                 default_mount_id: Some("base-mount".to_string()),
                 source_project_id: None,
@@ -2441,9 +2464,9 @@ mod tests {
             });
             let prepared = SessionAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.construction.vfs.and_then(|v| v.default_mount_id),
+                result.1.vfs.and_then(|v| v.default_mount_id),
                 Some("base-mount".to_string()),
             );
         }
@@ -2458,8 +2481,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
-            assert_eq!(result.construction.working_dir_input.as_deref(), Some("."));
+            let result = apply_session_assembly(base.0, base.1, prepared);
+            assert_eq!(result.1.working_dir_input.as_deref(), Some("."));
         }
 
         #[test]
@@ -2472,9 +2495,9 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.construction.working_dir_input.as_deref(),
+                result.1.working_dir_input.as_deref(),
                 Some("packages/foo"),
                 "prepared.working_dir 应覆盖 workspace default 的 \".\""
             );
@@ -2483,7 +2506,7 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_overrides_base() {
             let mut base = base_req();
-            base.user_input.prompt_blocks =
+            base.0.user_input.prompt_blocks =
                 Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
             let prepared = SessionAssemblyBuilder {
                 prompt_blocks: Some(vec![
@@ -2492,8 +2515,9 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             let texts: Vec<&str> = result
+                .0
                 .user_input
                 .prompt_blocks
                 .as_ref()
@@ -2507,12 +2531,13 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_none_preserves_base() {
             let mut base = base_req();
-            base.user_input.prompt_blocks =
+            base.0.user_input.prompt_blocks =
                 Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
             let prepared = SessionAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             let texts: Vec<&str> = result
+                .0
                 .user_input
                 .prompt_blocks
                 .as_ref()
@@ -2529,14 +2554,14 @@ mod tests {
             use agentdash_spi::SessionContextBundle;
 
             let mut base = base_req();
-            base.construction.context_bundle =
+            base.1.context_bundle =
                 Some(SessionContextBundle::new(uuid::Uuid::new_v4(), "test-base"));
             // prepared 为 None 时整体替换：base bundle 被清除
             let prepared = SessionAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert!(
-                result.construction.context_bundle.is_none(),
+                result.1.context_bundle.is_none(),
                 "context_bundle 为整体替换字段，prepared=None 会清除 base"
             );
         }
@@ -2551,7 +2576,7 @@ mod tests {
             use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
 
             let mut base = base_req();
-            base.construction.identity = Some(AuthIdentity {
+            base.1.identity = Some(AuthIdentity {
                 auth_mode: AuthMode::Personal,
                 user_id: "base-user".to_string(),
                 subject: "base-user".to_string(),
@@ -2567,8 +2592,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
-            let id = result.construction.identity.expect("identity exists");
+            let result = apply_session_assembly(base.0, base.1, prepared);
+            let id = result.1.identity.expect("identity exists");
             assert_eq!(id.user_id, "system:routine:r-1234");
             assert_eq!(id.provider.as_deref(), Some("system.routine"));
             assert!(!id.is_admin);
@@ -2591,16 +2616,12 @@ mod tests {
                 provider: None,
                 extra: serde_json::Value::Null,
             };
-            base.construction.identity = Some(base_id);
+            base.1.identity = Some(base_id);
 
             let prepared = SessionAssemblyBuilder::default();
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result
-                    .construction
-                    .identity
-                    .as_ref()
-                    .map(|i| i.user_id.as_str()),
+                result.1.identity.as_ref().map(|i| i.user_id.as_str()),
                 Some("alice"),
                 "prepared.identity=None 时 base construction identity 应被保留"
             );
@@ -2611,7 +2632,7 @@ mod tests {
             let mut base = base_req();
             let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
                 Arc::new(NoopPostTurnHandler);
-            base.post_turn_handler = Some(base_handler.clone());
+            base.0.post_turn_handler = Some(base_handler.clone());
             let prepared_handler: crate::session::post_turn_handler::DynPostTurnHandler =
                 Arc::new(NoopPostTurnHandler);
             let prepared = SessionAssemblyBuilder {
@@ -2619,8 +2640,9 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             let result_handler = result
+                .0
                 .post_turn_handler
                 .expect("prepared handler should be present");
             assert!(
@@ -2638,10 +2660,11 @@ mod tests {
             let mut base = base_req();
             let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
                 Arc::new(NoopPostTurnHandler);
-            base.post_turn_handler = Some(base_handler.clone());
+            base.0.post_turn_handler = Some(base_handler.clone());
 
-            let result = apply_session_assembly(base, SessionAssemblyBuilder::default());
+            let result = apply_session_assembly(base.0, base.1, SessionAssemblyBuilder::default());
             let result_handler = result
+                .0
                 .post_turn_handler
                 .expect("base handler should be preserved");
             assert!(
@@ -2654,7 +2677,8 @@ mod tests {
         fn env_prepared_overrides_base_when_nonempty() {
             // prepared.env 非空 → 整体替换。
             let mut base = base_req();
-            base.user_input
+            base.0
+                .user_input
                 .env
                 .insert("FOO".to_string(), "base".to_string());
 
@@ -2665,10 +2689,10 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
-            assert!(!result.user_input.env.contains_key("FOO"));
+            let result = apply_session_assembly(base.0, base.1, prepared);
+            assert!(!result.0.user_input.env.contains_key("FOO"));
             assert_eq!(
-                result.user_input.env.get("BAR").map(String::as_str),
+                result.0.user_input.env.get("BAR").map(String::as_str),
                 Some("prepared")
             );
         }
@@ -2677,14 +2701,15 @@ mod tests {
         fn env_prepared_empty_preserves_base() {
             // prepared.env 为空 → 保留 base.env。
             let mut base = base_req();
-            base.user_input
+            base.0
+                .user_input
                 .env
                 .insert("FOO".to_string(), "base".to_string());
 
             let prepared = SessionAssemblyBuilder::default();
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.user_input.env.get("FOO").map(String::as_str),
+                result.0.user_input.env.get("FOO").map(String::as_str),
                 Some("base"),
                 "prepared.env 为空时 base.env 应被保留"
             );

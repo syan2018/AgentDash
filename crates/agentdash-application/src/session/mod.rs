@@ -50,13 +50,13 @@ pub use assembler::{
 };
 pub use augmenter::{
     PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentTaskInput,
-    PromptAugmentTaskPhase, PromptRequestAugmenter, SessionConstructionRequest,
-    SessionLaunchRequest, SharedPromptRequestAugmenter,
+    PromptAugmentTaskPhase, PromptRequestAugmenter, SharedPromptRequestAugmenter,
 };
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
 };
+pub use construction::SessionConstructionSeed;
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
@@ -65,8 +65,8 @@ pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{
     LaunchCapabilitySource, LaunchCommand, LaunchCommandOutcome, LaunchExecution,
-    LaunchExecutionInput, LaunchFollowUpSource, LaunchMcpSource, LaunchRestoreMode, LaunchSource,
-    LaunchStrictness, LaunchSummary, LaunchVfsSource,
+    LaunchExecutionInput, LaunchExecutionSeed, LaunchFollowUpSource, LaunchMcpSource,
+    LaunchRestoreMode, LaunchSource, LaunchStrictness, LaunchSummary, LaunchVfsSource,
 };
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{

@@ -13,6 +13,36 @@ use super::context::SessionContextSnapshot;
 use super::ownership::ResolvedSessionOwner;
 use crate::vfs::ResolvedVfsSurface;
 
+pub struct SessionConstructionSeed {
+    pub owner: Option<ResolvedSessionOwner>,
+    pub source_contract: SourceContractPlan,
+    pub working_dir_input: Option<String>,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub vfs: Option<Vfs>,
+    pub capability_state: Option<CapabilityState>,
+    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
+    pub context_bundle: Option<SessionContextBundle>,
+    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub identity: Option<AuthIdentity>,
+}
+
+impl Default for SessionConstructionSeed {
+    fn default() -> Self {
+        Self {
+            owner: None,
+            source_contract: SourceContractPlan::default(),
+            working_dir_input: None,
+            mcp_servers: Vec::new(),
+            vfs: None,
+            capability_state: None,
+            context_bundle: None,
+            continuation_context_frame: None,
+            identity: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionConstructionPlan {
     pub session_id: String,

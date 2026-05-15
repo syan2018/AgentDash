@@ -13,6 +13,7 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
+use super::post_turn_handler::DynPostTurnHandler;
 use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,23 @@ pub struct LaunchCommand {
     companion: Option<PromptAugmentCompanionInput>,
     local_relay_mcp_declarations: Vec<SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
+}
+
+pub struct LaunchExecutionSeed {
+    pub user_input: UserPromptInput,
+    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
+}
+
+impl LaunchExecutionSeed {
+    pub fn from_user_input(input: UserPromptInput) -> Self {
+        Self {
+            user_input: input,
+            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
+            post_turn_handler: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

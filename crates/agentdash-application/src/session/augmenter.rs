@@ -16,11 +16,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
-use super::construction::SourceContractPlan;
-use super::launch::LaunchCommand;
-use super::ownership::ResolvedSessionOwner;
-use super::post_turn_handler::DynPostTurnHandler;
-use super::types::{HookSnapshotReloadTrigger, UserPromptInput};
+use super::construction::SessionConstructionSeed;
+use super::launch::{LaunchCommand, LaunchExecutionSeed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptAugmentTaskPhase {
@@ -52,58 +49,7 @@ pub struct PromptAugmentCompanionInput {
     pub workflow: Option<PromptAugmentCompanionWorkflowInput>,
 }
 
-pub struct SessionConstructionRequest {
-    pub owner: Option<ResolvedSessionOwner>,
-    pub source_contract: SourceContractPlan,
-    pub working_dir_input: Option<String>,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub vfs: Option<agentdash_spi::Vfs>,
-    pub capability_state: Option<agentdash_spi::CapabilityState>,
-    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
-    pub context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
-    pub continuation_context_frame: Option<agentdash_spi::hooks::ContextFrame>,
-    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-}
-
-impl Default for SessionConstructionRequest {
-    fn default() -> Self {
-        Self {
-            owner: None,
-            source_contract: SourceContractPlan::default(),
-            working_dir_input: None,
-            mcp_servers: Vec::new(),
-            vfs: None,
-            capability_state: None,
-            context_bundle: None,
-            continuation_context_frame: None,
-            identity: None,
-        }
-    }
-}
-
-/// 已按目标边界分组的 launch 请求事实。
-///
-/// `construction` 只承载 session 构建事实种子；hook/effect 仍作为迁移期 launch
-/// 字段存在，后续继续归入 `LaunchExecution` / effects outbox 边界。
-pub struct SessionLaunchRequest {
-    pub user_input: UserPromptInput,
-    pub construction: SessionConstructionRequest,
-    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
-    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
-    pub post_turn_handler: Option<DynPostTurnHandler>,
-}
-
-impl SessionLaunchRequest {
-    pub fn from_user_input(input: UserPromptInput) -> Self {
-        Self {
-            user_input: input,
-            construction: SessionConstructionRequest::default(),
-            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-            post_turn_handler: None,
-        }
-    }
-}
+pub type LaunchAugmentation = (LaunchExecutionSeed, SessionConstructionSeed);
 
 /// 用于把原始 prompt 输入增强成与主通道一致的 launch payload。
 #[async_trait]
@@ -115,7 +61,7 @@ pub trait PromptRequestAugmenter: Send + Sync {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<SessionLaunchRequest, ConnectorError>;
+    ) -> Result<LaunchAugmentation, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

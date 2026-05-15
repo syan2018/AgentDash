@@ -50,7 +50,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] 删除 `LaunchCommand::to_augment_input()`。
 - [x] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
 - [x] `PromptAugmentInput` 最终代码中不能作为 production helper、跨 crate handoff、planner input 或 augmented output 保留。
-- [ ] 删除当前 `SessionLaunchRequest` 过渡 envelope。
+- [x] 删除当前 `SessionLaunchRequest` 过渡 envelope。
+- [ ] 删除当前 `SessionConstructionSeed` / `LaunchExecutionSeed` 过渡 seed。
 
 ### 5. Remove Business `SessionHub`
 

@@ -39,6 +39,7 @@ use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleSte
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
@@ -460,6 +461,25 @@ pub struct SessionRequestAssembler<'a> {
     /// 为 `None` 时（例如单元测试 / routine 内部降级路径）跳过 emit；
     /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
     pub audit_bus: Option<SharedContextAuditBus>,
+    pub companion_parent_facts_provider: Option<&'a dyn CompanionParentFactsProvider>,
+}
+
+#[async_trait]
+pub trait CompanionParentFactsProvider: Send + Sync {
+    async fn latest_companion_parent_capability_state(
+        &self,
+        parent_session_id: &str,
+    ) -> Option<CapabilityState>;
+}
+
+#[async_trait]
+impl CompanionParentFactsProvider for crate::session::hub::SessionHub {
+    async fn latest_companion_parent_capability_state(
+        &self,
+        parent_session_id: &str,
+    ) -> Option<CapabilityState> {
+        self.get_latest_capability_state(parent_session_id).await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -827,12 +847,21 @@ impl<'a> SessionRequestAssembler<'a> {
             repos,
             platform_config,
             audit_bus: None,
+            companion_parent_facts_provider: None,
         }
     }
 
     /// 配置审计总线（生产路径由 `AppState` 注入）。
     pub fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
         self.audit_bus = Some(bus);
+        self
+    }
+
+    pub fn with_companion_parent_facts_provider(
+        mut self,
+        provider: &'a dyn CompanionParentFactsProvider,
+    ) -> Self {
+        self.companion_parent_facts_provider = Some(provider);
         self
     }
 
@@ -1377,6 +1406,83 @@ impl<'a> SessionRequestAssembler<'a> {
     ) -> (UserPromptInput, SessionConstructionSeed) {
         compose_companion_prompt(user_input, construction_seed, spec)
     }
+
+    pub async fn compose_companion_prompt_from_parent(
+        &self,
+        user_input: UserPromptInput,
+        construction_seed: SessionConstructionSeed,
+        spec: CompanionParentSpec<'_>,
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+        let parent_facts = self
+            .resolve_companion_parent_facts(spec.parent_session_id)
+            .await?;
+        Ok(compose_companion_prompt(
+            user_input,
+            construction_seed,
+            CompanionSpec {
+                parent_vfs: parent_facts.parent_vfs.as_ref(),
+                parent_mcp_servers: &parent_facts.parent_mcp_servers,
+                parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+                slice_mode: spec.slice_mode,
+                companion_executor_config: spec.companion_executor_config,
+                dispatch_prompt: spec.dispatch_prompt,
+            },
+        ))
+    }
+
+    pub async fn compose_companion_with_workflow_prompt_from_parent(
+        &self,
+        user_input: UserPromptInput,
+        construction_seed: SessionConstructionSeed,
+        spec: CompanionParentWorkflowSpec<'_>,
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+        let parent_facts = self
+            .resolve_companion_parent_facts(spec.companion.parent_session_id)
+            .await?;
+        compose_companion_with_workflow_prompt(
+            user_input,
+            construction_seed,
+            self.repos,
+            self.platform_config,
+            CompanionWorkflowSpec {
+                companion: CompanionSpec {
+                    parent_vfs: parent_facts.parent_vfs.as_ref(),
+                    parent_mcp_servers: &parent_facts.parent_mcp_servers,
+                    parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+                    slice_mode: spec.companion.slice_mode,
+                    companion_executor_config: spec.companion.companion_executor_config,
+                    dispatch_prompt: spec.companion.dispatch_prompt,
+                },
+                run: spec.run,
+                lifecycle: spec.lifecycle,
+                step: spec.step,
+                workflow: spec.workflow,
+            },
+        )
+        .await
+    }
+
+    async fn resolve_companion_parent_facts(
+        &self,
+        parent_session_id: &str,
+    ) -> Result<CompanionParentFacts, String> {
+        let Some(provider) = self.companion_parent_facts_provider else {
+            return Err("companion parent facts provider 未注入".to_string());
+        };
+        let parent_capability_state = provider
+            .latest_companion_parent_capability_state(parent_session_id)
+            .await;
+        Ok(CompanionParentFacts {
+            parent_vfs: parent_capability_state
+                .as_ref()
+                .and_then(|state| state.vfs.active.clone()),
+            parent_mcp_servers: parent_capability_state
+                .as_ref()
+                .map(|state| state.tool.mcp_servers.clone())
+                .unwrap_or_default(),
+            parent_context_bundle: None,
+        })
+    }
 }
 
 pub async fn compose_lifecycle_node_prompt(
@@ -1728,6 +1834,27 @@ pub struct CompanionSpec<'a> {
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
+}
+
+pub struct CompanionParentSpec<'a> {
+    pub parent_session_id: &'a str,
+    pub slice_mode: CompanionSliceMode,
+    pub companion_executor_config: AgentConfig,
+    pub dispatch_prompt: String,
+}
+
+pub struct CompanionParentWorkflowSpec<'a> {
+    pub companion: CompanionParentSpec<'a>,
+    pub run: &'a LifecycleRun,
+    pub lifecycle: &'a LifecycleDefinition,
+    pub step: &'a LifecycleStepDefinition,
+    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+}
+
+struct CompanionParentFacts {
+    parent_vfs: Option<Vfs>,
+    parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    parent_context_bundle: Option<SessionContextBundle>,
 }
 
 /// Companion + Workflow 组合 compose 输入。

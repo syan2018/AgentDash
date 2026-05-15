@@ -23,7 +23,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `SessionConstructionSeed.working_dir_input`，后续迁入 construction。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
 - [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；API bootstrap 不再创建内存 handler，当前写入 durable `TerminalHookEffectBinding`，后续继续把 binding 生成迁入 construction provider。
-- [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；当前 parent facts 仍由 API bootstrap 临时从 parent capability state 投影，后续迁入 construction provider。
+- [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；API bootstrap 不再投影 parent VFS/MCP，当前由 application assembler 的 parent facts provider 解析。
 - [x] local relay MCP 只作为 request declaration 命名与传递，不能作为 resolved MCP surface 使用。
 
 退出检查：
@@ -42,7 +42,8 @@ rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" cr
 - [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `SessionConstructionSeed.working_dir_input` 过渡种子。
 - [x] task effect binding 已进入 construction/effects durable binding，不再由 API bootstrap 绑定内存 handler。
 - [x] local relay workspace root 由 planner/construction 解析，并记录 VFS 来源。
-- [ ] companion slice 由 construction provider 解析；删除 API bootstrap 上的 companion parent facts 临时绑定。
+- [x] companion parent VFS/MCP projection 由 application assembler parent facts provider 解析；API bootstrap 上的 parent capability 临时投影已删除。
+- [ ] companion context bundle / audit projection 进入 construction provider。
 - [ ] context frame plan、audit projection、inspector projection 进入 construction。
 - [ ] launch、context endpoint、audit、inspector 只投影同一 construction。
 

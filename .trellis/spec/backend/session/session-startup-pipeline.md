@@ -94,6 +94,10 @@ route 层不得长期保留 `build_task_session_context`、`build_story_session_
 `bundle_id` / fragment count 的摘要形态。context frame、audit、inspector projection
 仍需继续落入 construction。
 
+Companion parent session facts 的解析归 application construction/assembler 侧。API/bootstrap
+不得读取 parent capability state 后自行拆出 parent VFS / MCP / context snapshot；它只能传入
+parent session id 与 dispatch/slice/source policy。
+
 ## LaunchExecution 规则
 
 `LaunchExecution` 必须显式承载或引用：

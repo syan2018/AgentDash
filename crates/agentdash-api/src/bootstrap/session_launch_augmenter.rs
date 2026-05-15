@@ -15,11 +15,11 @@ use agentdash_application::session::augmenter::{
 use agentdash_application::session::construction::SessionConstructionSeed;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
-    AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec,
-    OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
+    AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
+    OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    TerminalHookEffectBinding, compose_companion_prompt, compose_companion_with_workflow_prompt,
-    compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
+    TerminalHookEffectBinding, compose_lifecycle_node_prompt_with_audit,
+    resolve_session_prompt_lifecycle,
 };
 use agentdash_application::task::gateway::{
     effect_executor::TaskHookEffectExecutor, resolve_effective_task_workspace,
@@ -485,55 +485,41 @@ async fn build_companion_dispatch_prompt_request(
     construction_seed: SessionConstructionSeed,
     companion: PromptAugmentCompanionInput,
 ) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
-    let parent_capability_state = state
-        .services
-        .session_hub
-        .get_latest_capability_state(&companion.parent_session_id)
-        .await;
-    let parent_vfs = parent_capability_state
-        .as_ref()
-        .and_then(|state| state.vfs.active.as_ref());
-    let parent_mcp_servers = parent_capability_state
-        .as_ref()
-        .map(|state| state.tool.mcp_servers.clone())
-        .unwrap_or_default();
-
+    let assembler = build_session_assembler(state);
     if let Some(workflow) = companion.workflow {
-        compose_companion_with_workflow_prompt(
-            user_input,
-            construction_seed,
-            &state.repos,
-            &state.config.platform_config,
-            CompanionWorkflowSpec {
-                companion: CompanionSpec {
-                    parent_vfs,
-                    parent_mcp_servers: &parent_mcp_servers,
-                    parent_context_bundle: None,
+        assembler
+            .compose_companion_with_workflow_prompt_from_parent(
+                user_input,
+                construction_seed,
+                CompanionParentWorkflowSpec {
+                    companion: CompanionParentSpec {
+                        parent_session_id: &companion.parent_session_id,
+                        slice_mode: companion.slice_mode,
+                        companion_executor_config: companion.companion_executor_config,
+                        dispatch_prompt: companion.dispatch_prompt,
+                    },
+                    run: &workflow.run,
+                    lifecycle: &workflow.lifecycle,
+                    step: &workflow.step,
+                    workflow: workflow.workflow.as_ref(),
+                },
+            )
+            .await
+            .map_err(ApiError::BadRequest)
+    } else {
+        assembler
+            .compose_companion_prompt_from_parent(
+                user_input,
+                construction_seed,
+                CompanionParentSpec {
+                    parent_session_id: &companion.parent_session_id,
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,
                 },
-                run: &workflow.run,
-                lifecycle: &workflow.lifecycle,
-                step: &workflow.step,
-                workflow: workflow.workflow.as_ref(),
-            },
-        )
-        .await
-        .map_err(ApiError::BadRequest)
-    } else {
-        Ok(compose_companion_prompt(
-            user_input,
-            construction_seed,
-            CompanionSpec {
-                parent_vfs,
-                parent_mcp_servers: &parent_mcp_servers,
-                parent_context_bundle: None,
-                slice_mode: companion.slice_mode,
-                companion_executor_config: companion.companion_executor_config,
-                dispatch_prompt: companion.dispatch_prompt,
-            },
-        ))
+            )
+            .await
+            .map_err(ApiError::BadRequest)
     }
 }
 
@@ -546,6 +532,7 @@ fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_>
         &state.config.platform_config,
     )
     .with_audit_bus(state.services.audit_bus.clone())
+    .with_companion_parent_facts_provider(&state.services.session_hub)
 }
 
 async fn build_continuation_context_frame_for_session(

@@ -42,11 +42,11 @@ mod turn_supervisor;
 pub mod types;
 
 pub use assembler::{
-    AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec,
-    OwnerPromptLifecycle, OwnerScope, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    compose_companion_prompt, compose_companion_with_workflow_prompt,
-    compose_lifecycle_node_prompt, compose_lifecycle_node_prompt_with_audit,
-    extract_agent_mcp_entries, load_available_presets,
+    AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
+    CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
+    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
+    compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
+    compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
 pub use augmenter::{
     PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentTaskInput,

@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::{PromptAugmentInput, PromptRequestAugmenter};
+use agentdash_application::session::augmenter::PromptAugmentInput;
+use agentdash_application::session::{LaunchCommand, PromptRequestAugmenter};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -75,9 +76,9 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
     async fn augment(
         &self,
         session_id: &str,
-        input: PromptAugmentInput,
+        command: &LaunchCommand,
     ) -> Result<PromptAugmentInput, ConnectorError> {
-        augment_prompt_request_for_owner(&self.state, session_id, input)
+        augment_prompt_request_for_owner(&self.state, session_id, command.to_augment_input())
             .await
             .map_err(api_error_to_connector)
     }

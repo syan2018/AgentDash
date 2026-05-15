@@ -49,9 +49,8 @@ pub use assembler::{
     extract_agent_mcp_entries, load_available_presets,
 };
 pub use augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentInput,
-    PromptAugmentTaskInput, PromptAugmentTaskPhase, PromptRequestAugmenter,
-    SharedPromptRequestAugmenter,
+    PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentTaskInput,
+    PromptAugmentTaskPhase, PromptRequestAugmenter, SharedPromptRequestAugmenter,
 };
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,

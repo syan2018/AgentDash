@@ -8,13 +8,15 @@
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
+use agentdash_application::session::augmenter::{
+    PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+};
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, HookSnapshotReloadTrigger,
-    LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput,
-    PromptAugmentTaskPhase, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
+    LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta,
+    SessionPromptLifecycle, SessionRepositoryRehydrateMode, SessionRequestAssembler,
+    StoryStepPhase, StoryStepSpec, compose_companion_prompt,
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt_with_audit,
     resolve_session_prompt_lifecycle,
 };

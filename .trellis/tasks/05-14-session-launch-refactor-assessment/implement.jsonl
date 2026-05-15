@@ -1,7 +1,6 @@
-{"file": "docs/reviews/AgentDash_session_refactor_plan.md", "reason": "外部 session 重构 review 基线"}
-{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "现有 session 装配节拍与 finalize 契约"}
-{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "SessionRuntime 与 TurnExecution 当前职责边界"}
-{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionContext 分层契约"}
-{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "VFS 与本机路径安全边界"}
-{"file": ".trellis/tasks/archive/2026-05/05-02-session-launchservice-single-entry/prd.md", "reason": "前置 LaunchService 单入口任务范围"}
-{"file": ".trellis/tasks/archive/2026-05/05-02-session-launchservice-single-entry/session-module-map.md", "reason": "session 模块入口与主线基线"}
+{"file": "docs/reviews/AgentDash_session_refactor_plan.md", "reason": "原始目标输入；执行以本任务 PRD、design、tracker 为准"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "唯一 launch 数据流与禁止旧 payload 扩张的规范"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "runtime registry、turn supervisor、effects/pending 边界"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionContext 只作为 connector projection 的约束"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "context bundle/frame 主数据面约束"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "VFS 与 working_dir 路径边界"}

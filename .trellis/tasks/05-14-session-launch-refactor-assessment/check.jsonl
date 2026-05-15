@@ -1,7 +1,7 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门与 session 状态持久化约束"}
-{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 finalize/装配节拍是否仍符合规范"}
-{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查运行态字段和 live session 判定语义"}
-{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 ExecutionContext frame 所有权"}
-{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查 capability/MCP source 与工具策略一致性"}
-{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 hook reload/auto-resume/ContextFrame 语义"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 launch/context/query 跨层一致性"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 LaunchCommand -> SessionConstructionPlan -> LaunchExecution 主链路"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 runtime/effects/pending store 边界"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 connector projection 字段所有权"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "检查 context bundle/frame 是否同源"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查 MCP/capability source 与工具策略一致性"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 hook reload/auto-resume/effect 语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 launch/query/audit/inspector 跨层一致性"}

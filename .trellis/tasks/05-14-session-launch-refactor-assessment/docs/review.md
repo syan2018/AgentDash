@@ -33,7 +33,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 | `LaunchPlanner` 解析 owner、context、VFS、capability、restore、hook | 目标态只要求 construction 与 launch 两个数据边界；planner/resolver 是实现细节 |
 | `ContextComposer` / `SessionCompositionPlan` 作为 query/launch 同源 | `SessionConstructionPlan` 作为 query/launch/audit 同源，避免与 domain `SessionComposition` 混淆 |
 | `ExecutionContext` 从 `LaunchPlan` 构建 | connector input 可作为 `LaunchExecution` 字段存在，`ExecutionContext` 只是 connector SPI 投影 |
-| `SessionHub` 可退化为 facade 或删除 | 最终删除有职责的 `SessionHub`；迁移期 wrapper 只能转发，不能承载业务判断 |
+| `SessionHub` 可退化为 facade 或删除 | 最终删除有职责的 `SessionHub`；最终代码中不能承载业务判断 |
 | pending command 可为 command store / event stream | runtime command 事实源为 domain event，projection 只是可重建索引 |
 | terminal effect router 订阅 terminal event | terminal event + durable outbox + 有限重试 + dead-letter |
 
@@ -50,7 +50,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 - 明确 `Turn` 不是主要业务边界，Turn 只负责运行态监督。
 - 明确 session 构建需要自己的事实源：`SessionConstructionPlan`。
-- 明确 `LaunchPlan` 若继续使用该名字，只能等价于 `LaunchExecution`，不能成为跨域事实源。
+- 明确 `LaunchPlan` 不能成为跨域事实源；若再次出现该名字，只能等价于 `LaunchExecution`。
 - 明确 context endpoint、audit、inspector 都投影 construction，而不是投影 launch。
 - 明确 effect outbox 的 retry/dead-letter 与 idempotency 要求。
 - 明确不保留 `LaunchResolution` / `ExecutionPlan` / `ExecutionProjector` 作为目标态必需中间层。

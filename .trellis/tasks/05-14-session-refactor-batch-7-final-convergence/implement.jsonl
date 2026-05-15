@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "本 batch 删除增强 payload 主链路职责时的目标规范"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "拆 SessionHub、effects、pending、store 边界时的运行态规范"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "LaunchExecution 投影 ExecutionContext 的字段所有权"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "SessionConstructionPlan 补全 context bundle/frame 时的主数据面规范"}

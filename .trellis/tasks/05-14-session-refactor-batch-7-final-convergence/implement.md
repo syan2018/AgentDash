@@ -1,51 +1,132 @@
-# Implementation Plan：Batch 7 Final Convergence
+# Implementation Plan: Batch 7 Final Convergence
+
+## Current Boundary Decision
+
+最终主链路只允许：
+
+```text
+LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext projection
+```
+
+本 batch 先校正边界，再删除旧 payload。不能为了删除 `PromptAugmentInput`，把 resolved VFS / MCP / capability / context / hook / effect / working_dir 塞进 `LaunchCommand`。
 
 ## Ordered Steps
 
-- [x] 清理旧字段/旧类型 grep 与文档漂移。
-- [x] 更新 `.trellis/spec/backend/session/*`。
-- [x] 收紧 `working_dir` 路径策略与测试。
-- [x] 清理旧 pending meta 持久化映射。
-- [x] 拆出 session persistence store 能力边界。
-- [x] 收窄 AppState / SessionHub ready 初始化边界。
-- [x] 更新 parent task notes，记录当前状态与剩余真实风险。
-- [x] 删除 `SessionLaunchPlan` 代码实体与“plan”语义命名，避免它继续伪装成最终 launch plan。
-- [x] 将 `LaunchCommand` augment/dispatch 分支从 `SessionHub` facade 移入 `SessionLaunchExecutor::execute_command`。
-- [x] 删除 `AugmentedLaunchInput` 代码实体、跨 crate handoff 与 bootstrap 输出。
-  - `PromptAugmentInput` 现在是 `LaunchCommand` 到 augmenter 的同一 payload，不再存在 `PromptAugmentInput -> AugmentedLaunchInput` 二段 handoff。
-  - 这不是最终态：`PromptAugmentInput` 仍临时承载 construction seed、context bundle、hook trigger 与 post-turn handler，后续必须继续拆入 `SessionConstructionPlan` / `LaunchExecution`。
-  - `SessionLaunchExecutor` 生产入口已收缩为 `execute_command(LaunchCommand)`；已完成 augment 的执行段只保留私有方法与测试专用 wrapper。
-- [x] 将 `bootstrap/session_context_query.rs` 与 launch construction planner 合流。
-  - Task / Story / Project 的 VFS、capability、context snapshot projection 已迁入 `SessionConstructionPlanner`。
-  - API 侧仅保留权限校验、session meta 读取、DTO 投影与 `runtime_surface` 展示态补全。
-- [ ] 将 `SessionHub` 业务方法拆到 construction / launch / runtime / effects / pending 服务，删除有职责 facade。
-- [ ] 运行最终验证矩阵。
-- [ ] 标记 Batch 7 与 parent task 完成。
-- [ ] 整理提交历史、force-push 并更新 PR。
+### 1. 入口意图瘦身
+
+- [x] `LaunchCommand` 不再持有 `PromptAugmentInput`。
+- [x] `PromptRequestAugmenter` 不再接收 `PromptAugmentInput` 作为输入。
+- [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
+- [x] `PromptAugmentInput` 不再 re-export 到生产入口。
+- [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`，只保留 workspace root 作为来源事实。
+- [ ] `UserPromptInput.working_dir` 移出 prompt input；working dir 由 construction 根据 owner / workspace / agent / lifecycle / local relay root 解析。
+- [ ] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
+- [ ] task `post_turn_handler` trait object 迁出 command；后续进入 task/effects/outbox 服务边界，并重新评估是否仍需要。
+- [ ] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot。
+- [ ] local relay MCP 只作为 request declaration 命名与传递，不能作为 resolved MCP surface 使用。
+
+退出检查：
+
+```powershell
+rg -n "working_dir" crates/agentdash-application/src/session/types.rs crates/agentdash-application/src/session/launch_planner.rs crates/agentdash-application/src/session/assembler.rs crates/agentdash-local/src/handlers/prompt.rs
+rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+```
+
+命中允许存在，但必须全部在 tracker 中归属到 construction / effects / source contract 的后续删除点；不能被标记完成。
+
+### 2. 补全 `SessionConstructionPlan`
+
+- [x] `ContextPlan` 持有完整 `SessionContextBundle`。
+- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace。
+- [ ] task effect binding、companion slice、local relay workspace root 由 construction provider 解析。
+- [ ] context frame plan、audit projection、inspector projection 进入 construction。
+- [ ] launch、context endpoint、audit、inspector 只投影同一 construction。
+
+退出检查：
+
+```powershell
+rg -n "build_task_session_context|build_story_session_context_response|build_project_session_context_response|finalize_augmented_request" crates/agentdash-api/src/routes crates/agentdash-api/src/bootstrap
+```
+
+route/bootstrap 不得保留独立 owner / VFS / capability / context 主线。
+
+### 3. 收敛 `LaunchExecution`
+
+- [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+- [ ] `LaunchExecution` 显式包含 prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace。
+- [ ] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
+- [ ] `prompt_pipeline` 只负责 claim / activate、event append、connector.prompt、accepted 后提交 meta / pending / title、processor supervision。
+- [ ] connector.prompt 失败不提交 bootstrap / pending applied / title generation 等成功副作用。
+
+退出检查：
+
+```powershell
+rg -n "req\\.vfs|req\\.mcp_servers|req\\.capability_state|req\\.context_bundle|req\\.hook_snapshot_reload|req\\.post_turn_handler" crates/agentdash-application/src/session/prompt_pipeline.rs crates/agentdash-application/src/session/launch_planner.rs
+```
+
+### 4. 删除 `PromptAugmentInput` production handoff
+
+- [ ] API bootstrap 不再返回增强后的 `PromptAugmentInput`。
+- [ ] 删除 `LaunchCommand::to_augment_input()`。
+- [ ] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
+- [ ] `PromptAugmentInput` 不再作为 production helper、跨 crate handoff、planner 输入或增强后输出保留。
+
+退出检查：
+
+```powershell
+rg -n "PromptAugmentInput" crates/agentdash-api/src/bootstrap crates/agentdash-application/src/session/launch.rs crates/agentdash-application/src/session/launch_planner.rs crates/agentdash-application/src/session/prompt_pipeline.rs
+```
+
+生产主链路零命中。
+
+### 5. 拆除有职责 `SessionHub`
+
+- [ ] construction / launch / runtime / eventing / hooks / effects / pending / adapters 能力服务独立。
+- [ ] `SessionHub` 不再承载业务判断，也不能作为最终完成遮羞布。
+- [ ] 新增调用点不得依赖 Hub 读取或修改跨职责状态。
+
+退出检查：
+
+```powershell
+rg -n "impl SessionHub|pub struct SessionHub" crates/agentdash-application/src/session
+```
+
+若仍有命中，必须逐项说明剩余职责；任何业务分支阻塞完成。
+
+### 6. Effects / Pending / Persistence 验证
+
+- [ ] 所有 terminal effect handler 具备 durable identity 或 typed handler。
+- [ ] pending runtime command 覆盖 connector failure、apply once、failed / retry / recovery。
+- [ ] 新增业务逻辑按 meta / event / outbox / runtime-command store 边界依赖。
+- [ ] PostgreSQL / SQLite migration 验证通过。
 
 ## Final Validation
 
-- `cargo fmt --check`
-- `cargo check -p agentdash-application`
-- `cargo check -p agentdash-api`
-- `cargo check -p agentdash-infrastructure`
-- `cargo check -p agentdash-local`
-- `cargo test -p agentdash-application session::hub`
-- `cargo test -p agentdash-application session::terminal_effects`
-- `cargo test -p agentdash-application session::runtime_commands`
-- `cargo test -p agentdash-application session::memory_persistence`
-- `cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions`
-- `cargo test -p agentdash-application session::path_policy`
-- `rg -n "PromptSessionRequest|SessionLaunchIntent|has_live_runtime" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src`
-- `rg -n "pending_capability_state_transitions" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src`
-- `rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src`
-- `rg -n "execute_effects|on_session_terminal|request_hook_auto_resume" crates/agentdash-application/src/session/turn_processor.rs`
-- `git diff --check`
-
-Known warning: `crates/agentdash-application/src/canvas/management.rs` still has pre-existing unused import `CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH`.
+```powershell
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-infrastructure
+cargo check -p agentdash-local
+cargo test -p agentdash-application session::launch
+cargo test -p agentdash-application session::construction
+cargo test -p agentdash-application session::hub
+cargo test -p agentdash-application session::terminal_effects
+cargo test -p agentdash-application session::runtime_commands
+cargo test -p agentdash-application session::memory_persistence
+cargo test -p agentdash-application session::path_policy
+cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions
+rg -n "PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|LaunchCommand::.*_prepared" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src
+git diff --check
+```
 
 ## Exit Criteria
 
-- 分支可 review。
-- 本轮已执行 batch 的事实、验证和剩余风险都在 Trellis task 中可追溯。
-- 只要 `PromptAugmentInput` 仍承载 construction / launch 产物、`SessionHub` 仍是业务入口，或最终验证矩阵未通过，本 Batch 只能保持 `in_progress`。
+- `LaunchCommand` 是纯入口意图，不承载 resolved facts。
+- `UserPromptInput` 不承载 `working_dir`。
+- `SessionConstructionPlan` 是 owner / workspace / VFS / MCP / capability / context / identity 的唯一事实源。
+- `LaunchExecution` 是唯一 per-launch 策略计划。
+- `PromptAugmentInput` 不再是生产主链路 handoff、planner 输入或增强后输出。
+- `SessionHub` 不再是业务能力入口。
+- 最终验证矩阵通过。

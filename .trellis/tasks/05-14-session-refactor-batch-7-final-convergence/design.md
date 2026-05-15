@@ -2,38 +2,88 @@
 
 ## Boundary
 
-本批补齐父任务原始 Batch 7 的代码收口，不再把纯文档验证批次视作最终完成。
+本 batch 不再处理已经完成的 working_dir、旧 pending 字段、store adapter 等基础迁移叙述。当前唯一关注点是最终架构是否真正收口。
 
-`SessionHub` 在当前分支仍保留为外部协调入口，但以下职责已经从 Hub 主体拆出：
+目标边界：
 
-- owner / construction / launch command / launch execution。
-- runtime registry / turn supervisor。
-- terminal effect outbox dispatcher。
-- pending runtime command store。
+```text
+LaunchCommand
+  -> SessionConstructionPlan
+  -> LaunchExecution
+  -> ExecutionContext
+```
 
-本批要在代码层继续收掉剩余隐式行为：
+## Target Shape
 
-- `working_dir` 从“join 后交给 connector”改为显式策略校验。
-- 旧 pending meta column 从 repository 主线移除。
-- persistence 大 trait 拆出可依赖 store 能力边界。
-- AppState 构造过程用 ready builder/ready binding 收束延迟注入。
-- `SessionHub` 若仍保留 public shell，只能转发到已拆出的能力服务；一旦继续承载业务判断，本批仍未完成。
+### LaunchCommand
+
+只表达来源意图：
+
+- session/source/strictness；
+- user input；
+- identity；
+- task / companion / local relay / continuation source hints；
+- follow-up hint。
+
+不持有 VFS、MCP、capability、context bundle、hook trigger、post-turn handler。
+
+### SessionConstructionPlan
+
+承载 session 构建事实：
+
+- owner / source contract；
+- workspace / typed working dir / VFS；
+- executor profile；
+- MCP / capability / session capabilities；
+- context bundle / context frames / context projection；
+- identity；
+- audit / inspector / context endpoint projection；
+- trace。
+
+### LaunchExecution
+
+承载本次启动执行计划：
+
+- resolved prompt payload；
+- construction；
+- lifecycle；
+- restore；
+- hook；
+- follow-up；
+- runtime command；
+- terminal effect；
+- connector input；
+- trace。
+
+### SessionHub
+
+不作为目标能力边界。若类型仍存在，不能承载业务判断，也不能作为最终完成遮羞布。
+
+## Forbidden Outcomes
+
+- `PromptAugmentInput` 改名后继续作为主链路。
+- API bootstrap 返回增强 payload。
+- planner 继续从 request payload 读 VFS/MCP/capability/context/hook。
+- context endpoint 与 launch 各自构造 session surface。
+- `SessionHub` 继续作为服务定位器并承载业务判断。
 
 ## Verification Matrix
 
-- `cargo fmt --check`
-- `cargo check -p agentdash-application`
-- `cargo check -p agentdash-api`
-- `cargo check -p agentdash-infrastructure`
-- `cargo check -p agentdash-local`
-- `cargo test -p agentdash-application session::hub`
-- `cargo test -p agentdash-application session::terminal_effects`
-- `cargo test -p agentdash-application session::runtime_commands`
-- `cargo test -p agentdash-application session::memory_persistence`
-- `cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions`
-- `cargo test -p agentdash-application session::path_policy`
-- `rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src`
+最终收口后执行：
 
-## Remaining Non-Blocking Follow-up
-
-若仍无法完全删除 `SessionHub` 类型，必须将原因限定为 public call-site 迁移成本，并在本批至少完成可执行的服务边界拆分与新增行为入口禁令。不能再把“文档记录 follow-up”当作代码收口完成。
+```powershell
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-infrastructure
+cargo check -p agentdash-local
+cargo test -p agentdash-application session::launch
+cargo test -p agentdash-application session::construction
+cargo test -p agentdash-application session::hub
+cargo test -p agentdash-application session::terminal_effects
+cargo test -p agentdash-application session::runtime_commands
+cargo test -p agentdash-application session::memory_persistence
+cargo test -p agentdash-application session::path_policy
+cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions
+git diff --check
+```

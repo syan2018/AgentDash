@@ -13,6 +13,7 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
+use super::post_turn_handler::DynPostTurnHandler;
 use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,11 +35,17 @@ pub enum LaunchStrictness {
 }
 
 pub struct LaunchCommand {
-    augment_input: PromptAugmentInput,
+    user_input: UserPromptInput,
     source: LaunchSource,
     strictness: LaunchStrictness,
     follow_up_session_id: Option<String>,
     continuation_context_frame: Option<ContextFrame>,
+    identity: Option<agentdash_spi::AuthIdentity>,
+    post_turn_handler: Option<DynPostTurnHandler>,
+    task: Option<PromptAugmentTaskInput>,
+    companion: Option<PromptAugmentCompanionInput>,
+    requested_mcp_servers: Vec<SessionMcpServer>,
+    local_relay_workspace_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -49,16 +56,22 @@ pub struct LaunchCommandOutcome {
 
 impl LaunchCommand {
     fn new(
-        augment_input: PromptAugmentInput,
+        user_input: UserPromptInput,
         source: LaunchSource,
         strictness: LaunchStrictness,
     ) -> Self {
         Self {
-            augment_input,
+            user_input,
             source,
             strictness,
             follow_up_session_id: None,
             continuation_context_frame: None,
+            identity: None,
+            post_turn_handler: None,
+            task: None,
+            companion: None,
+            requested_mcp_servers: Vec::new(),
+            local_relay_workspace_root: None,
         }
     }
 
@@ -72,8 +85,18 @@ impl LaunchCommand {
         self
     }
 
-    pub fn into_augment_input(self) -> PromptAugmentInput {
-        self.augment_input
+    pub fn to_augment_input(&self) -> PromptAugmentInput {
+        let mut input = PromptAugmentInput::from_user_input(self.user_input.clone());
+        input.mcp_servers = self.requested_mcp_servers.clone();
+        input.vfs = self
+            .local_relay_workspace_root
+            .as_ref()
+            .map(|root| super::local_workspace_vfs(root));
+        input.identity = self.identity.clone();
+        input.post_turn_handler = self.post_turn_handler.clone();
+        input.task = self.task.clone();
+        input.companion = self.companion.clone();
+        input
     }
 
     pub fn continuation_context_frame(&self) -> Option<ContextFrame> {
@@ -106,38 +129,42 @@ impl LaunchCommand {
     }
 
     fn requires_augment_input(input: UserPromptInput, source: LaunchSource) -> Self {
-        Self::new(
-            PromptAugmentInput::from_user_input(input),
-            source,
-            LaunchStrictness::Strict,
-        )
+        Self::new(input, source, LaunchStrictness::Strict)
     }
 
-    fn augment_input_with(
+    fn command_with(
         input: UserPromptInput,
-        mcp_servers: Vec<SessionMcpServer>,
-        vfs: Option<Vfs>,
+        requested_mcp_servers: Vec<SessionMcpServer>,
+        local_relay_workspace_root: Option<PathBuf>,
         identity: Option<agentdash_spi::AuthIdentity>,
-        post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
+        post_turn_handler: Option<DynPostTurnHandler>,
         task: Option<PromptAugmentTaskInput>,
         companion: Option<PromptAugmentCompanionInput>,
-    ) -> PromptAugmentInput {
-        let mut augment_input = PromptAugmentInput::from_user_input(input);
-        augment_input.mcp_servers = mcp_servers;
-        augment_input.vfs = vfs;
-        augment_input.identity = identity;
-        augment_input.post_turn_handler = post_turn_handler;
-        augment_input.task = task;
-        augment_input.companion = companion;
-        augment_input
+        source: LaunchSource,
+        strictness: LaunchStrictness,
+    ) -> Self {
+        let mut command = Self::new(input, source, strictness);
+        command.requested_mcp_servers = requested_mcp_servers;
+        command.local_relay_workspace_root = local_relay_workspace_root;
+        command.identity = identity;
+        command.post_turn_handler = post_turn_handler;
+        command.task = task;
+        command.companion = companion;
+        command
     }
 
     pub fn http_prompt_input(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::new(
-            Self::augment_input_with(input, Vec::new(), None, identity, None, None, None),
+        Self::command_with(
+            input,
+            Vec::new(),
+            None,
+            identity,
+            None,
+            None,
+            None,
             LaunchSource::HttpPrompt,
             LaunchStrictness::Strict,
         )
@@ -155,8 +182,14 @@ impl LaunchCommand {
         input: UserPromptInput,
         companion: PromptAugmentCompanionInput,
     ) -> Self {
-        Self::new(
-            Self::augment_input_with(input, Vec::new(), None, None, None, None, Some(companion)),
+        Self::command_with(
+            input,
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            Some(companion),
             LaunchSource::CompanionDispatch,
             LaunchStrictness::Strict,
         )
@@ -170,8 +203,14 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::new(
-            Self::augment_input_with(input, Vec::new(), None, identity, None, None, None),
+        Self::command_with(
+            input,
+            Vec::new(),
+            None,
+            identity,
+            None,
+            None,
+            None,
             LaunchSource::RoutineExecutor,
             LaunchStrictness::Strict,
         )
@@ -185,20 +224,18 @@ impl LaunchCommand {
         override_prompt: Option<String>,
         additional_prompt: Option<String>,
     ) -> Self {
-        Self::new(
-            Self::augment_input_with(
-                input,
-                Vec::new(),
-                None,
-                identity,
-                post_turn_handler,
-                Some(PromptAugmentTaskInput {
-                    phase: Some(phase),
-                    override_prompt,
-                    additional_prompt,
-                }),
-                None,
-            ),
+        Self::command_with(
+            input,
+            Vec::new(),
+            None,
+            identity,
+            post_turn_handler,
+            Some(PromptAugmentTaskInput {
+                phase: Some(phase),
+                override_prompt,
+                additional_prompt,
+            }),
+            None,
             LaunchSource::TaskService,
             LaunchStrictness::Strict,
         )
@@ -206,11 +243,17 @@ impl LaunchCommand {
 
     pub fn local_relay_prompt_input(
         input: UserPromptInput,
-        mcp_servers: Vec<SessionMcpServer>,
-        vfs: Vfs,
+        requested_mcp_servers: Vec<SessionMcpServer>,
+        workspace_root: PathBuf,
     ) -> Self {
-        Self::new(
-            Self::augment_input_with(input, mcp_servers, Some(vfs), None, None, None, None),
+        Self::command_with(
+            input,
+            requested_mcp_servers,
+            Some(workspace_root),
+            None,
+            None,
+            None,
+            None,
             LaunchSource::LocalRelayPrompt,
             LaunchStrictness::Relaxed,
         )
@@ -570,7 +613,7 @@ mod tests {
         let command = LaunchCommand::local_relay_prompt_input(
             UserPromptInput::from_text("ping"),
             Vec::new(),
-            Vfs::default(),
+            PathBuf::from("/workspace"),
         )
         .with_follow_up(Some("follow-up-1"));
 

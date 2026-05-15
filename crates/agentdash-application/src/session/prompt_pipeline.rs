@@ -38,7 +38,6 @@ impl<'a> SessionLaunchExecutor<'a> {
         let continuation_context_frame = command.continuation_context_frame();
         let reason = command.reason_tag();
         let strictness = command.strictness();
-        let input = command.into_augment_input();
         let mut req = match strictness {
             LaunchStrictness::Strict => {
                 let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
@@ -46,10 +45,10 @@ impl<'a> SessionLaunchExecutor<'a> {
                         "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
                     )));
                 };
-                augmenter.augment(session_id, input).await?
+                augmenter.augment(session_id, &command).await?
             }
             LaunchStrictness::Relaxed => {
-                self.augment_relaxed_input(session_id, input, reason)
+                self.augment_relaxed_command(session_id, &command, reason)
                     .await?
             }
         };
@@ -83,21 +82,21 @@ impl<'a> SessionLaunchExecutor<'a> {
         })
     }
 
-    async fn augment_relaxed_input(
+    async fn augment_relaxed_command(
         &self,
         session_id: &str,
-        input: super::augmenter::PromptAugmentInput,
+        command: &LaunchCommand,
         reason: &str,
     ) -> Result<PromptAugmentInput, ConnectorError> {
         match self.hub.current_prompt_augmenter().await {
-            Some(augmenter) => augmenter.augment(session_id, input).await,
+            Some(augmenter) => augmenter.augment(session_id, command).await,
             None => {
                 tracing::warn!(
                     session_id = %session_id,
                     reason = %reason,
                     "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
                 );
-                Ok(input)
+                Ok(command.to_augment_input())
             }
         }
     }
@@ -158,7 +157,17 @@ impl<'a> SessionLaunchExecutor<'a> {
                 cached_continuation,
                 session_meta: &session_meta,
                 pending_runtime_commands,
-                request: req,
+                user_input: req.user_input,
+                construction_owner: req.construction_owner,
+                source_contract: req.source_contract,
+                mcp_servers: req.mcp_servers,
+                vfs: req.vfs,
+                capability_state: req.capability_state,
+                context_bundle: req.context_bundle,
+                continuation_context_frame: req.continuation_context_frame,
+                hook_snapshot_reload: req.hook_snapshot_reload,
+                identity: req.identity,
+                post_turn_handler: req.post_turn_handler,
             })
             .await?;
         let resolved_payload = planned_launch.resolved_payload;

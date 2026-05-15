@@ -2,46 +2,62 @@
 
 ## Goal
 
-基于 `docs/reviews/AgentDash_session_refactor_plan.md` 和当前工作区现状，完成 session 及外围 owner / task / workflow / routine / companion / local relay / prompt 拉起流程的系统性架构规划。
+完成 session 及外围 owner / task / workflow / routine / companion / local relay / prompt 拉起流程的系统性重构。
 
-目标不是拆出一个更大的 `LaunchPlan`，而是定义清楚：
+终态只有一条生产主链路：
 
 ```text
-LaunchCommand -> SessionConstructionPlan -> LaunchExecution
+LaunchCommand
+  -> SessionConstructionPlan
+  -> LaunchExecution
+  -> ExecutionContext connector projection
+  -> SessionEvent / TerminalEffectOutbox
 ```
 
-这条唯一数据流必须收口所有入口逻辑，删除多入口半成品 request、隐式 fallback、重复 context 组装和终态副作用内存回调。它只保留稳定数据边界，不把 resolver/planner/projector 这类实现函数固化为传递中间层。
+这次重构的原始动机是明确 session 构建边界和 launch 信息边界，用唯一数据流收口 owner、workspace、VFS、MCP、capability、context、identity、restore、hook、pending command、terminal effects，删除多入口半成品 request、隐式 fallback、重复 context 组装和有职责 `SessionHub` facade。
 
 ## Core Decisions
 
-- 参考 review 的目标继续保留，但其中的 `LaunchPlan` 被拆解为更明确的数据边界。
+- 外部 review 只作为目标态输入；本任务的权威目标是 `LaunchCommand -> SessionConstructionPlan -> LaunchExecution`。
+- `LaunchCommand` 只表达来源意图，不承载 construction / launch 产物。
 - `SessionConstructionPlan` 是 session 构建事实源，供 launch、context endpoint、audit、inspector 共同投影。
-- `LaunchExecution` 是一次 launch 执行计划，承载 prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect 与 connector input。
-- `ExecutionContext` 只是 connector SPI 投影；不强制保留独立 `ExecutionPlan` 中间层。
-- `Turn` 保持薄边界，只负责 reservation、active、cancel、hook runtime、processor/adapter supervision、terminal release。
-- `PromptSessionRequest` 从生产主链路删除。
-- `SessionHub` 最终不保留有职责 facade；迁移期 wrapper 只能转发，不能承载业务判断。
+- `LaunchExecution` 是一次 launch 的执行计划，承载 prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect 与 connector input。
+- `ExecutionContext` 只是 connector SPI 投影。
+- `Turn` 保持薄边界，只负责 reservation、active、cancel、hook runtime handle、processor/adapter supervision、terminal release。
+- `PromptSessionRequest`、`PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 不作为最终边界保留。
+- `PromptAugmentInput` 不得作为生产主链路 handoff、planner 输入或增强后输出保留。
+- `SessionHub` 最终不保留有职责 facade；最终代码中不能承载业务判断。
 - owner 解析使用单一 `ResolvedSessionOwner` / `SessionOwnerResolver`。
 - terminal event 先持久化，effect 进入 durable outbox。
-- pending runtime command 使用 domain event + derived projection，不再藏在 `SessionMeta`。
+- pending runtime command 使用 domain event + derived projection，不藏在 `SessionMeta`。
 
-## Confirmed Current Facts
+## 当前项目状态
 
-- `PromptSessionRequest` 仍贯穿 HTTP、Task、Workflow、Routine、Companion、Hook auto-resume、Local relay。
-- `SessionLaunchIntent` 只表达 source / strictness / preparation / follow-up，不承载 session 构建边界。
-- `start_prompt_with_follow_up` 仍混合 payload 解析、turn claim、meta 写入、pending transition 消费、VFS/MCP/capability fallback、hook/restore 判断、ExecutionContext 构造、connector 调用、processor 启动。
-- context endpoint 与 launch owner 选择优先级不一致。
-- project/story/task context endpoint 仍在 route 层重建 VFS / capability / context。
-- `pending_capability_state_transitions` 仍在 `SessionMeta` 中作为 hidden queue。
-- `SessionTurnProcessor` 仍直接执行 hook effects、post-turn handler、terminal callback、hook auto-resume。
-- `working_dir` 当前仍允许绝对路径与 `..`。
+当前分支已经完成一部分迁移基础：
+
+- 主要生产入口已进入 `LaunchCommand`。
+- `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 已删除。
+- `SessionConstructionPlan`、`SessionConstructionPlanner`、`LaunchExecution`、`SessionLaunchPlanner`、`SessionLaunchExecutor` 已存在。
+- context endpoint 大部分 route-local 重建已迁出。
+- runtime registry、turn supervisor、terminal effect outbox、runtime command store 已有基础实现。
+- working_dir、ready gate、旧 pending meta 字段已有阶段性收口。
+
+仍未满足目标态：
+
+- `LaunchCommand` 已不再持有 `PromptAugmentInput`，但仍会通过 `to_augment_input()` 投影旧增强 payload。
+- `PromptAugmentInput` 仍跨 API/bootstrap/application 传递，并承载 VFS/MCP/capability/context/hook/post-turn。
+- `SessionLaunchPlanner` 已不再以 `PromptAugmentInput` 为输入；旧 payload 仍在 `prompt_pipeline` 入口被拆字段后传入 planner。
+- `SessionConstructionPlan` 已保留完整 context bundle，但 context frame / audit / inspector projection 仍不完整，launch/query/audit/inspector 尚未完全同源。
+- `SessionHub` 仍承载业务方法和服务定位职责。
+- terminal effects、pending runtime command、persistence store 还缺最终验证矩阵。
 
 ## Requirements
 
-- 所有来源只构造 `LaunchCommand`，不构造最终执行上下文。
-- `SessionConstructionPlan` 必须包含 owner、source contract、workspace、VFS、typed working dir、executor profile、MCP、capability、context、identity、query/audit projections、resolution trace。
+- 所有来源只构造 `LaunchCommand`。
+- `LaunchCommand` 不持有增强后 payload 或 construction / launch 产物。
+- `SessionConstructionPlan` 必须包含 owner、source contract、workspace、typed working dir、executor profile、VFS、MCP、capability、context bundle/frame、identity、query/audit/inspector projections、resolution trace。
 - context endpoint、audit、inspector 只能投影 `SessionConstructionPlan`。
-- `LaunchExecution` 必须包含 lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input 和 launch trace。
+- `LaunchExecution` 必须包含 resolved prompt payload、construction、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input、launch trace。
 - connector input 在 connector 边界投影为 `ExecutionContext`。
 - runtime 不临时解析 owner / VFS / MCP / capability / context。
 - terminal effect 必须通过 durable outbox 执行，具备 idempotency、retry、dead-letter。
@@ -51,17 +67,20 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 ## Acceptance Criteria
 
-- [ ] `docs/session-construction-launch-dataflow.md` 明确唯一数据流和字段归属规则。
-- [ ] `docs/review.md` 明确参考 review 与当前目标的对齐和背离。
-- [ ] `docs/target-architecture.md` 给出 construction / launch / execution / runtime / effects / pending 的目标架构。
-- [ ] `design.md` 给出核心类型和边界不变量。
-- [ ] `implement.md` 明确可分批执行、验证、提交的完整方案，以及是否可正式开始。
-- [ ] `docs/current-to-target-migration.md` 明确当前链路每个环节的背离点、迁移动作和退出条件。
-- [ ] `docs/closure-checklist.md` 给出最终收口不变量。
-- [ ] 文档中不保留已放弃方案的过程性比较。
+- [ ] `LaunchCommand -> SessionConstructionPlan -> LaunchExecution` 是唯一生产主链路。
+- [ ] `PromptAugmentInput` 不再作为生产主链路 handoff、planner 输入或增强后输出。
+- [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的唯一事实源。
+- [ ] `LaunchExecution` 是唯一 per-launch 策略计划。
+- [ ] `prompt_pipeline` 不再承担 construction/launch planner 职责。
+- [ ] `SessionHub` 不再是业务能力入口。
+- [ ] terminal effects 全部 durable replay/retry/dead-letter。
+- [ ] pending runtime command apply-once 与失败恢复可审计。
+- [ ] 最终验证矩阵通过。
+- [ ] `.trellis/tasks/05-14-session-launch-refactor-assessment/docs/final-convergence-execution-tracker.md` 中所有完成定义为通过。
 
-## Out of Scope
+## Out Of Scope
 
-- 不在此 planning task 中修改 Rust 生产代码。
-- 不把此 parent planning task 作为单体巨型实现任务直接 `task.py start`；正式实现应创建 batch child task 后再 start。
-- 不在单个后续实现任务里完成全部 session 重构。
+- 不做兼容旧内部 API 的双主线。
+- 不把 connector `ExecutionContext` 升级为 application 事实源。
+- 不新增只转发旧 payload 的 service wrapper。
+- 不为了保留历史结构而拆分无业务边界的中间 DTO。

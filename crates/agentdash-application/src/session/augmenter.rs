@@ -17,6 +17,7 @@ use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
 use super::construction::SourceContractPlan;
+use super::launch::LaunchCommand;
 use super::ownership::ResolvedSessionOwner;
 use super::post_turn_handler::DynPostTurnHandler;
 use super::types::{HookSnapshotReloadTrigger, UserPromptInput};
@@ -106,7 +107,7 @@ pub trait PromptRequestAugmenter: Send + Sync {
     async fn augment(
         &self,
         session_id: &str,
-        input: PromptAugmentInput,
+        command: &LaunchCommand,
     ) -> Result<PromptAugmentInput, ConnectorError>;
 }
 

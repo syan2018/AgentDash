@@ -15,7 +15,7 @@ use agentdash_agent_protocol::{
 use tokio::sync::broadcast;
 
 #[cfg(test)]
-use super::super::PromptAugmentInput;
+use super::super::augmenter::PromptAugmentInput;
 use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;

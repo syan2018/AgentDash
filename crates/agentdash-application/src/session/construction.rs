@@ -60,6 +60,7 @@ pub struct SessionSurfacePlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ContextPlan {
+    pub bundle: Option<SessionContextBundle>,
     pub bundle_id: Option<Uuid>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub bootstrap_fragment_count: usize,
@@ -167,6 +168,7 @@ impl SessionConstructionPlan {
                 runtime_surface: context_projection.runtime_surface.clone(),
             },
             context: ContextPlan {
+                bundle: None,
                 context_snapshot: context_projection.context_snapshot.clone(),
                 ..Default::default()
             },
@@ -226,6 +228,7 @@ impl SessionConstructionPlan {
                 runtime_surface: input.runtime_surface,
             },
             context: ContextPlan {
+                bundle: input.context_bundle.clone(),
                 bundle_id: input.context_bundle.as_ref().map(|bundle| bundle.bundle_id),
                 context_snapshot: input.context_snapshot,
                 bootstrap_fragment_count,
@@ -277,5 +280,48 @@ mod tests {
         assert_eq!(plan.trace.entries[0].stage, "owner");
         assert_eq!(plan.trace.entries[0].source, "priority[0]=task");
         assert_eq!(plan.trace.entries[1].source, "task.context_builder");
+    }
+
+    #[test]
+    fn launch_construction_plan_keeps_full_context_bundle() {
+        let binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-launch-construction".to_string(),
+            SessionOwnerType::Project,
+            Uuid::new_v4(),
+            "execution",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
+        let bundle_id = bundle.bundle_id;
+
+        let plan = SessionConstructionPlan::from_launch(SessionConstructionLaunchInput {
+            session_id: "sess-launch-construction".to_string(),
+            owner,
+            source: SourceContractPlan {
+                launch_source: Some("http_prompt".to_string()),
+                preparation: None,
+                strictness: Some("strict".to_string()),
+            },
+            workspace_id: None,
+            working_dir_input: Some("workspace".to_string()),
+            working_directory: PathBuf::from("/workspace"),
+            executor_config: AgentConfig::new("PI_AGENT"),
+            vfs: None,
+            runtime_surface: None,
+            context_bundle: Some(bundle),
+            context_snapshot: None,
+            identity: None,
+            mcp_servers: Vec::new(),
+            capability_state: CapabilityState::default(),
+            session_capabilities: Some(SessionBaselineCapabilities::default()),
+            trace_entries: Vec::new(),
+        });
+
+        assert_eq!(
+            plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id),
+            Some(bundle_id)
+        );
+        assert_eq!(plan.context.bundle_id, Some(bundle_id));
     }
 }

@@ -22,8 +22,8 @@ LaunchCommand
 
 | 阶段 | 职责 | 禁止事项 |
 |---|---|---|
-| `LaunchCommand` | 来源意图：session、source、user input、identity、source hints、follow-up hint | 不携带已组装 VFS / MCP / capability / context bundle / hook trigger / prompt projection |
-| `SessionConstructionPlan` | session 构建事实源：owner、workspace、VFS、MCP、capability、context、identity、query/audit projection、trace | 不处理 turn reservation、connector accepted、terminal effect 状态 |
+| `LaunchCommand` | 来源意图：session、source、actor、prompt、executor override、source policy、follow-up hint | 不携带 working_dir、已组装 VFS / MCP / capability / context bundle / hook trigger / effect handler / prompt projection |
+| `SessionConstructionPlan` | session 构建事实源：owner、workspace、working dir、VFS、MCP、capability、context、identity、query/audit projection、trace | 不处理 turn reservation、connector accepted、terminal effect 状态 |
 | `LaunchExecution` | 单次 launch 执行计划：payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input | 不重建 owner / context / VFS / MCP / capability |
 | `ExecutionContext` | connector SPI 投影 | 不反向成为 application 架构事实源 |
 
@@ -37,12 +37,13 @@ LaunchCommand
 
 当前仍存在的迁移边界是 `PromptAugmentInput` 承载过多语义：
 
-- 它是 `LaunchCommand` 到 augmenter 的同一个 payload，不再允许拆出第二段跨 crate handoff；
+- `LaunchCommand` 已不再持有它，`PromptRequestAugmenter` 也不再接收它作为输入；当前剩余问题是 `LaunchCommand::to_augment_input()` 仍会投影出它，且 augmenter/bootstrap 仍返回它作为增强后输出；
+- 不再允许拆出第二段跨 crate handoff；
 - 它可以暂时携带 owner/source 种子，并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
 - 它不是 session 构建事实源，也不是 launch plan；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许作为新的长期 service / route / adapter 公开契约扩张；
-- 后续必须把 construction / context / hook / post-turn 字段继续拆入 `SessionConstructionPlanner` / `LaunchExecution`，让 `PromptAugmentInput` 退回 source adapter 到 augmenter 的窄输入。
+- 后续必须把 working dir / construction / context / hook / post-turn 字段继续拆入 `SessionConstructionPlanner` / `LaunchExecution`，让 `PromptAugmentInput` 退回 source adapter 到 augmenter 的窄输入并最终从 production handoff 删除。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -50,19 +51,20 @@ LaunchCommand
 
 所有来源只做来源语义转换：
 
-- HTTP prompt：从请求 DTO 与 auth identity 构造 `LaunchCommand::http_prompt_input`。
-- Task service：构造 `LaunchCommand::task_service_input`，task phase / override / additional prompt 只能作为 source hint 进入 planner。
+- HTTP prompt：从请求 DTO 与 auth identity 构造 `LaunchCommand::http_prompt_input`；HTTP 不提供 resolved working dir / VFS / MCP / context。
+- Task service：构造 `LaunchCommand::task_service_input`，task phase / override / additional prompt 只能作为 source hint 进入 planner；task effect binding 不得作为 trait object 穿过 command。
 - Workflow orchestrator：构造 `LaunchCommand::workflow_orchestrator_input`。
 - Routine executor：构造 `LaunchCommand::routine_executor_input`，系统身份必须来自 `AuthIdentity::system_routine(routine.id)`。
-- Companion dispatch / parent resume：构造对应 `LaunchCommand`，父 session slice 只能作为 construction planner 输入，不得先拼出 prompt projection。
+- Companion dispatch / parent resume：构造对应 `LaunchCommand`，只携带 parent session / dispatch / slice / target binding 等策略 payload；父 session VFS / MCP / context snapshot 必须由 construction 从 parent facts 解析，不得先拼出 prompt projection。
 - Hook auto-resume：必须 strict 复用主 construction/augment 路径；augmenter 缺失时失败，不做裸请求 fallback。
-- Local relay：允许携带本机 relay 已解析出的 request MCP / VFS 输入，但仍只能经 `LaunchCommand::local_relay_prompt_input` 进入 hub。
+- Local relay：允许携带本机 relay 请求中的 workspace root 与 MCP declaration；VFS、resolved MCP、capability、working dir 与 connector input 仍必须由 construction/launch 投影生成，不能作为已组装事实塞进 `LaunchCommand`。
 
 新增入口不得：
 
 - 直接构造 `PromptAugmentInput` 或任何已增强 prompt payload；
 - 直接调用 `start_prompt_with_follow_up`；
 - 直接修改 prompt projection 字段来表达 owner/context/capability；
+- 把 `working_dir` 当作用户 prompt input 继续向 launch 传递；
 - 在 route 层重建 Task / Story / Project 的 context 主线。
 
 ## Owner 与 Context 同源
@@ -84,6 +86,10 @@ launch、context endpoint、权限展示、audit/inspector 不得各自排序或
 
 route 层不得长期保留 `build_task_session_context`、`build_story_session_context_response`、
 `build_project_session_context_response` 这类主线重建分支。
+
+当前 `SessionConstructionPlan.context` 已保留完整 `SessionContextBundle`，不能再退回只存
+`bundle_id` / fragment count 的摘要形态。context frame、audit、inspector projection
+仍需继续落入 construction。
 
 ## LaunchExecution 规则
 

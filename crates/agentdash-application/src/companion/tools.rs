@@ -2244,9 +2244,10 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use crate::session::augmenter::PromptAugmentInput;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PromptAugmentInput,
-        PromptRequestAugmenter, SessionHub, local_workspace_vfs,
+        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter, SessionHub,
+        local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 
@@ -2544,9 +2545,9 @@ mod companion_tests {
         async fn augment(
             &self,
             _session_id: &str,
-            input: PromptAugmentInput,
+            command: &crate::session::LaunchCommand,
         ) -> Result<PromptAugmentInput, ConnectorError> {
-            let req = input;
+            let req = command.to_augment_input();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = req
                 .user_input

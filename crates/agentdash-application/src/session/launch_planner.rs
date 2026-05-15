@@ -2,15 +2,15 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
 use agentdash_spi::{
-    ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState,
-    SessionContextBundle,
+    AuthIdentity, CapabilityState, ConnectorError, ContextFragment, DiscoveredGuideline,
+    RestoredSessionState, SessionContextBundle, SessionMcpServer, Vfs,
 };
 
-use super::augmenter::PromptAugmentInput;
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
+use super::construction::SourceContractPlan;
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -21,11 +21,14 @@ use super::launch::{
     LaunchCapabilitySource, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource,
     LaunchMcpSource, LaunchRestoreMode, LaunchVfsSource,
 };
+use super::ownership::ResolvedSessionOwner;
 use super::path_policy::resolve_working_dir;
+use super::post_turn_handler::DynPostTurnHandler;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    PendingCapabilityStateTransition, ResolvedPromptPayload, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
+    SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
+    resolve_session_prompt_lifecycle,
 };
 
 pub(super) struct SessionLaunchPlanner<'a> {
@@ -40,7 +43,17 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
-    pub request: PromptAugmentInput,
+    pub user_input: UserPromptInput,
+    pub construction_owner: Option<ResolvedSessionOwner>,
+    pub source_contract: SourceContractPlan,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub vfs: Option<Vfs>,
+    pub capability_state: Option<CapabilityState>,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
+    pub identity: Option<AuthIdentity>,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
 pub(super) struct PlannedSessionLaunch {
@@ -70,9 +83,9 @@ impl<'a> SessionLaunchPlanner<'a> {
         &self,
         input: SessionLaunchPlannerInput<'_>,
     ) -> Result<PlannedSessionLaunch, ConnectorError> {
-        let mut req = input.request;
         let sid = input.session_id.to_string();
-        let resolved_payload = req
+        let mut context_bundle = input.context_bundle;
+        let resolved_payload = input
             .user_input
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
@@ -90,7 +103,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .last()
             .map(|transition| transition.state.clone());
 
-        let (base_effective_vfs, vfs_source) = if let Some(vfs) = req.vfs.clone() {
+        let (base_effective_vfs, vfs_source) = if let Some(vfs) = input.vfs.clone() {
             (vfs, LaunchVfsSource::Request)
         } else if let Some(vfs) = input
             .cached_continuation
@@ -121,11 +134,11 @@ impl<'a> SessionLaunchPlanner<'a> {
                 ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
         let working_directory =
-            resolve_working_dir(&default_mount_root, req.user_input.working_dir.as_deref())
+            resolve_working_dir(&default_mount_root, input.user_input.working_dir.as_deref())
                 .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
-        let working_dir_input = req.user_input.working_dir.clone();
+        let working_dir_input = input.user_input.working_dir.clone();
 
-        let executor_config = req
+        let executor_config = input
             .user_input
             .executor_config
             .clone()
@@ -137,8 +150,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 )
             })?;
 
-        let is_owner_bootstrap =
-            req.hook_snapshot_reload == super::types::HookSnapshotReloadTrigger::Reload;
+        let is_owner_bootstrap = input.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let hook_session = match self
             .hub
             .resolve_hook_session(
@@ -165,7 +177,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             let contribution: crate::context::Contribution = (&snapshot).into();
             contribution.fragments
         });
-        if let Some(bundle) = req.context_bundle.as_mut()
+        if let Some(bundle) = context_bundle.as_mut()
             && let Some(fragments) = hook_snapshot_contribution.as_ref()
         {
             bundle.merge(fragments.clone());
@@ -228,7 +240,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
         let discovered_guidelines = self.hub.discover_guidelines(&effective_vfs).await;
 
-        let (base_mcp_servers, base_mcp_source) = if req.mcp_servers.is_empty() {
+        let (base_mcp_servers, base_mcp_source) = if input.mcp_servers.is_empty() {
             input
                 .cached_continuation
                 .as_ref()
@@ -240,7 +252,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 })
                 .unwrap_or_else(|| (Vec::new(), LaunchMcpSource::Empty))
         } else {
-            (req.mcp_servers.clone(), LaunchMcpSource::Request)
+            (input.mcp_servers.clone(), LaunchMcpSource::Request)
         };
         let (mcp_servers, mcp_source) =
             if let Some(pending_state) = pending_capability_state.as_ref() {
@@ -251,7 +263,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             } else {
                 (base_mcp_servers.clone(), base_mcp_source)
             };
-        let base_capability_source = if req.capability_state.is_some() {
+        let base_capability_source = if input.capability_state.is_some() {
             LaunchCapabilitySource::Request
         } else if input.cached_continuation.is_some() {
             LaunchCapabilitySource::CachedSessionProfile
@@ -259,7 +271,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             LaunchCapabilitySource::Default
         };
         let base_capability_state = {
-            let mut state = req
+            let mut state = input
                 .capability_state
                 .clone()
                 .or_else(|| {
@@ -304,14 +316,14 @@ impl<'a> SessionLaunchPlanner<'a> {
         let construction_plan =
             SessionConstructionPlanner::plan_launch(SessionConstructionPlannerInput {
                 session_id: sid.clone(),
-                owner: req.construction_owner.clone(),
-                source: req.source_contract.clone(),
-                working_dir_input: req.user_input.working_dir.clone(),
+                owner: input.construction_owner.clone(),
+                source: input.source_contract.clone(),
+                working_dir_input: input.user_input.working_dir.clone(),
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),
-                context_bundle: req.context_bundle.clone(),
-                identity: req.identity.clone(),
+                context_bundle: context_bundle.clone(),
+                identity: input.identity.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),
                 session_capabilities: session_capabilities.clone(),
@@ -325,7 +337,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             turn_id: input.turn_id.to_string(),
             lifecycle: prompt_lifecycle,
             restore_mode,
-            hook_snapshot_reload: req.hook_snapshot_reload,
+            hook_snapshot_reload: input.hook_snapshot_reload,
             follow_up_session_id: resolved_follow_up_session_id.clone(),
             follow_up_source,
             pending_transition_count: pending_capability_transitions.len(),
@@ -335,11 +347,11 @@ impl<'a> SessionLaunchPlanner<'a> {
             capability_source,
             working_dir_input,
             working_directory,
-            environment_variables: req.user_input.env.clone(),
+            environment_variables: input.user_input.env.clone(),
             executor_config,
             mcp_servers: capability_state.tool.mcp_servers.clone(),
             vfs: capability_state.vfs.active.clone(),
-            identity: req.identity.clone(),
+            identity: input.identity.clone(),
             hook_session: hook_session.clone(),
             capability_state: capability_state.clone(),
             runtime_delegate,
@@ -352,9 +364,9 @@ impl<'a> SessionLaunchPlanner<'a> {
             launch_execution,
             hook_session,
             hook_snapshot_contribution,
-            context_bundle: req.context_bundle,
-            continuation_context_frame: req.continuation_context_frame,
-            post_turn_handler: req.post_turn_handler,
+            context_bundle,
+            continuation_context_frame: input.continuation_context_frame,
+            post_turn_handler: input.post_turn_handler,
             discovered_guidelines,
             pending_runtime_commands: input.pending_runtime_commands,
             pending_capability_transitions,

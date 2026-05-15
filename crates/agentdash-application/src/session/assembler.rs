@@ -61,7 +61,7 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
-use crate::session::PromptAugmentInput;
+use crate::session::augmenter::PromptAugmentInput;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::{HookSnapshotReloadTrigger, UserPromptInput};

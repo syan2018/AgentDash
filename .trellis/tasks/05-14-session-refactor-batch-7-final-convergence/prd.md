@@ -1,25 +1,59 @@
-# Session refactor batch 7 final convergence
+# Session Refactor Batch 7 Final Convergence
 
 ## Goal
 
-完成本轮 session launch/runtime 重构的最终代码收口：在 Batch 0-6 已完成的 owner / launch / runtime / terminal effect / pending command 迁移基础上，继续处理父任务原始 Batch 7 遗留的代码边界，而不是只做文档归档。
+完成父任务剩余代码收口；归档文档、重命名旧结构或保留半成品边界都不满足本 batch。
+
+本 batch 的目标是把生产主链路推进到：
+
+```text
+LaunchCommand -> SessionConstructionPlan -> LaunchExecution
+```
+
+并删除当前仍在遮蔽目标的 payload/facade/隐式行为。
+
+## Current Status
+
+已完成：
+
+- working_dir 路径策略已收紧。
+- 旧 pending meta JSON 字段主线已清理。
+- persistence store adapter 边界已拆出。
+- AppState ready gate 已阶段性收窄。
+- `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 已删除。
+- `SessionConstructionPlanner`、`SessionLaunchPlanner`、`SessionLaunchExecutor` 已存在。
+- terminal effect outbox 支持 replay/retry/dead-letter。
+
+未完成：
+
+- `LaunchCommand` 已不再持有 `PromptAugmentInput`，local relay 也不再携带已组装 `Vfs`，但仍会通过 `to_augment_input()` 投影旧增强 payload。
+- `LaunchCommand` 仍携带 task `post_turn_handler` 与 companion parent snapshot，这些不是纯入口意图，不能作为最终态保留。
+- `PromptAugmentInput` 仍承载 construction / launch 产物。
+- API bootstrap 仍返回增强 payload。
+- `SessionLaunchPlanner` 已不再消费增强 payload；`prompt_pipeline` 仍接收增强 payload 并拆字段。
+- `SessionConstructionPlan` 已保留完整 context bundle，但还不是完整 context frame / audit / inspector 事实源。
+- `SessionHub` 仍承载业务方法。
+- effects / pending / persistence 还缺最终验证。
 
 ## Requirements
 
-- 收紧 `working_dir` 路径策略：拒绝绝对路径、`..`、Windows prefix/root 越界输入，并保留合法相对路径投影。
-- 清理旧 `pending_capability_state_transitions_json` 持久化映射，使 runtime command store 成为唯一 pending runtime command 存储主线。
-- 将 `SessionPersistence` 的 meta / event / terminal outbox / runtime command projection 边界拆成可依赖的 store 接口，避免继续把所有能力写成一个无差别大 trait。
-- 收窄 AppState / SessionHub 初始化中的延迟注入：ready state 返回前必须完成 prompt augmenter、audit bus、terminal callback、tool provider 等必要绑定；文档和类型上不得再把未 ready 状态暴露为正常运行态。
-- 将 `SessionHub` 剩余 public surface 明确分流到 core / runtime / effects / pending store 边界；只要 public shell 仍承载业务判断，本 Batch 就不能作为最终收口完成。
-- 运行最终验证矩阵，至少覆盖 application/api/infrastructure/local 的编译与核心 session tests。
-- 父任务只记录已完成代码收口和真实剩余风险；在 `PromptAugmentInput` 仍承载 construction / launch 产物、`SessionHub` 仍是业务入口、最终验证矩阵未通过前，不得记录最终完成状态。
+- 删除 `PromptAugmentInput` 在生产主链路中的 handoff/planner 输入/增强后输出职责。
+- 补全 `SessionConstructionPlan` 字段，使 launch/query/audit/inspector 同源。
+- 将 `SessionLaunchPlanner` 输入改为 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+- `prompt_pipeline` 只执行计划，不做 construction/launch fallback。
+- 拆除有职责 `SessionHub`。
+- 补齐 terminal effects、pending runtime command、persistence store 的最终验证。
+- 更新父任务 tracker/spec，只记录真实代码状态。
 
 ## Acceptance Criteria
 
-- [ ] `resolve_working_dir` 不再接受绝对路径、parent segment 或 root/prefix 越界输入，并有单测覆盖。
-- [ ] app / api / local / infrastructure 中不再读写旧 `pending_capability_state_transitions_json` 字段。
-- [ ] session persistence 至少暴露独立 meta/event/effect/runtime-command store 边界，调用方可以按能力依赖。
-- [ ] AppState 构造返回前完成必要 session 依赖绑定；不再依赖返回后的外部补洞。
-- [ ] `SessionHub` public shell 不再承载业务分支；若仍存在业务方法，必须作为未完成差池追踪，不得作为“已收口 shell”验收。
+- [ ] `PromptAugmentInput` 不再出现在生产主链路 handoff 中。
+- [ ] `LaunchCommand` 是纯入口意图。
+- [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的事实源。
+- [ ] `LaunchExecution` 是唯一 per-launch 策略计划。
+- [ ] `prompt_pipeline` 不再读取 request/meta/profile 做策略 fallback。
+- [ ] `SessionHub` 不再承载业务判断。
+- [ ] terminal effect handlers 可 durable replay。
+- [ ] pending runtime command apply-once 与 failure recovery 有验证。
 - [ ] 最终验证矩阵通过。
-- [ ] 提交历史按业务边界整理并 force-push 到当前 PR。
+- [ ] 提交历史按业务边界整理。

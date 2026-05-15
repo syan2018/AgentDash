@@ -103,8 +103,6 @@ impl CommandHandler {
             }
         }
 
-        let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
-
         let command = LaunchCommand::local_relay_prompt_input(
             UserPromptInput {
                 prompt_blocks: payload.prompt_blocks.map(|v| {
@@ -119,7 +117,7 @@ impl CommandHandler {
                 executor_config,
             },
             parse_relay_mcp_servers(&payload.mcp_servers),
-            vfs,
+            workspace_root,
         )
         .with_follow_up(follow_up.clone());
 

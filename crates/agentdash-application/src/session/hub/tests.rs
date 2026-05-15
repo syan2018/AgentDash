@@ -22,8 +22,8 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
-use super::super::PromptAugmentInput;
 use super::super::RuntimeCommandStatus;
+use super::super::augmenter::PromptAugmentInput;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -2137,7 +2137,8 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
 
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::augmenter::{PromptAugmentInput, PromptRequestAugmenter};
+    use crate::session::augmenter::PromptAugmentInput;
+    use crate::session::{LaunchCommand, PromptRequestAugmenter};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyAugmenter {
@@ -2151,9 +2152,9 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
         async fn augment(
             &self,
             _session_id: &str,
-            input: PromptAugmentInput,
+            command: &LaunchCommand,
         ) -> Result<PromptAugmentInput, ConnectorError> {
-            let req = input;
+            let req = command.to_augment_input();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = req
                 .user_input

@@ -1,34 +1,39 @@
 # Feasibility
 
-## 可实现性结论
+## 结论
 
-当前目标可实现，且与现有代码的迁移基础匹配：
+目标可实现，但当前分支尚未完成。现有代码已经提供迁移基础：
 
-- `UserPromptInput` 已经和 `PromptSessionRequest` 分离。
-- `SessionAssemblyBuilder` / `PreparedSessionInputs` 已经沉淀了 surface 构建素材。
-- `SessionBootstrapPlan` / `SessionContextSnapshot` 已证明 query 与启动共享派生数据是可行的。
-- `ExecutionContext` 已分层，可由 launch 阶段的 connector input 投影生成，不需要先固定独立 `ExecutionPlan` 层。
-- `TurnState` / `TurnExecution` 已经具备 runtime registry 的雏形。
-- `session_events` 已经是可承接 runtime command event 与 terminal event 的事实基础。
+- `UserPromptInput` 已经能表达纯用户输入。
+- `LaunchCommand` 已经成为主要入口。
+- `SessionConstructionPlan` / `SessionConstructionPlanner` 已经存在。
+- `LaunchExecution` / `SessionLaunchPlanner` / `SessionLaunchExecutor` 已经存在。
+- runtime registry、turn supervisor、terminal effect outbox、runtime command store 已经有基础实现。
 
-## 迁移主线
+真正的剩余难点不是“再抽几个类型”，而是删除旧 payload 和 facade 所承载的隐式字段所有权。
 
-1. 先锁定当前行为矩阵，尤其是入口、fallback、owner priority、connector failure、terminal effects。
-2. 定义 `SessionConstructionPlan` 字段边界，并让 owner / VFS / MCP / capability / executor / context 的解析进入 construction trace。
-3. 让 context endpoint、audit、inspector 投影 `SessionConstructionPlan`，收掉 query 与 launch 双路径。
-4. 定义 `LaunchExecution`，把 lifecycle / restore / hook / follow-up / runtime command / terminal effect / connector input 从 pipeline 中移出。
-5. 在 connector 边界由 `LaunchExecution` 投影 `ExecutionContext`，不把 projection 固化成主链路中间层。
-6. 所有入口迁移为 `LaunchCommand` adapter，并删除生产主链路中的 `PromptSessionRequest`。
-7. 拆 runtime registry / turn supervisor，保留 Turn 的薄边界。
-8. terminal event 进入 outbox，移除 processor 内业务副作用。
-9. runtime command 进入 domain event + derived projection，删除 meta hidden queue。
-10. 删除有职责的 `SessionHub`，并收口 AppState ready builder、persistence store、working_dir 类型化。
+## 可行收口路径
 
-## 实现约束
+1. 将 `LaunchCommand` 从 `PromptAugmentInput` 中解耦，改为纯入口意图。
+2. 将 API/bootstrap/assembler 的增强结果迁入 `SessionConstructionPlan`，不再返回增强 payload。
+3. 补全 `SessionConstructionPlan` 的 context bundle/frame、MCP、capability、identity、trace 字段。
+4. 将 `SessionLaunchPlanner` 输入改为 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+5. 将 connector input 作为 `LaunchExecution` 内部字段投影为 `ExecutionContext`。
+6. 清理 `prompt_pipeline` 中剩余 planning/fallback 职责。
+7. 将 `SessionHub` 业务方法拆到能力服务，Hub 删除或仅保留无业务转发。
+8. 补齐 effects / pending / persistence 的最终验证。
 
-- 不新增跨域大对象。
-- 不让 route/service/orchestrator 继续组装 session surface。
-- 不让 `ExecutionContext` 反向成为 application 模型。
-- 不让 projection 成为事实源。
-- 不保留内存 callback 作为 terminal effect 唯一路径。
-- 不先做只转发旧 request 的 launch service；每个切片必须减少一个旧分叉或旧可变壳。
+## 风险
+
+- API bootstrap 目前依赖 repos/AppState，直接生成完整 construction 会触碰 application/API 分层。需要把依赖方向设计清楚，避免把 AppState 继续藏进 augmenter。
+- assembler 仍把多类 composition 结果写回 `PromptAugmentInput`。删除该壳时要一次性迁移 task/story/project/companion/lifecycle 几条路径，否则会出现新旧两套主线。
+- `SessionConstructionPlan` 当前 context 字段过薄。若不先补全字段，`LaunchExecution` 仍会从别处读 bundle/frame。
+- `SessionHub` 拆除会触碰测试和大量 helper。拆之前要先确保 launch/runtime/effects/pending 服务有清晰依赖边界。
+
+## 不可接受方案
+
+- 将 `PromptAugmentInput` 改名后继续传递。
+- 新增只转发旧 payload 的 launch service。
+- 让 route/context query 与 launch 各自构造 VFS/capability/context，再用测试维持一致。
+- 用 wrapper 解释有业务判断的 `SessionHub`。
+- 在 terminal effect 上依赖内存 callback 成功来掩盖 replay 不可用。

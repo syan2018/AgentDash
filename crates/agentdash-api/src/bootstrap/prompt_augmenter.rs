@@ -78,10 +78,22 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
         session_id: &str,
         command: &LaunchCommand,
     ) -> Result<PromptAugmentInput, ConnectorError> {
-        augment_prompt_request_for_owner(&self.state, session_id, command.to_augment_input())
+        augment_prompt_request_for_owner(&self.state, session_id, command_to_augment_input(command))
             .await
             .map_err(api_error_to_connector)
     }
+}
+
+fn command_to_augment_input(command: &LaunchCommand) -> PromptAugmentInput {
+    let mut input = PromptAugmentInput::from_user_input(command.user_input().clone());
+    input.mcp_servers = command.local_relay_mcp_declarations().to_vec();
+    input.vfs = command
+        .local_relay_workspace_root()
+        .map(agentdash_application::session::local_workspace_vfs);
+    input.identity = command.identity();
+    input.task = command.task_hint();
+    input.companion = command.companion_hint();
+    input
 }
 
 #[cfg(test)]

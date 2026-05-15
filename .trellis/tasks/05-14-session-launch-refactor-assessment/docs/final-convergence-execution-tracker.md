@@ -18,7 +18,7 @@ LaunchCommand
 
 | Area | Done | Blocking Gaps |
 |---|---|---|
-| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；local relay 不再把已组装 `Vfs` 塞进 command；local relay MCP 已收窄为 declaration source payload；`UserPromptInput.working_dir` 已移除；task `post_turn_handler` 不再穿过 command；companion command 不再携带 parent VFS/MCP/context snapshot；未使用的 command continuation context frame 通道已删除 | `LaunchCommand::to_augment_input()` 仍投影旧 payload；`PromptAugmentInput.working_dir_input` 仍是过渡 handoff，尚未迁入 construction |
+| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；`LaunchCommand::to_augment_input()` 已删除；local relay 不再把已组装 `Vfs` 塞进 command；local relay MCP 已收窄为 declaration source payload；`UserPromptInput.working_dir` 已移除；task `post_turn_handler` 不再穿过 command；companion command 不再携带 parent VFS/MCP/context snapshot；未使用的 command continuation context frame 通道已删除 | API augmenter / relaxed pipeline 仍会构造 `PromptAugmentInput`；`PromptAugmentInput.working_dir_input` 仍是过渡 handoff，尚未迁入 construction |
 | Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 已删除；`PromptAugmentInput` 已不再从 `session::mod` re-export | `PromptAugmentInput` 仍是 API/bootstrap/application handoff，并承载 VFS/MCP/capability/context/hook/post-turn |
 | Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle`；`UserPromptInput` 不再承载 working dir；task handler 由 Task owner 解析后的 bootstrap 临时绑定；companion parent facts 由 bootstrap 从 parent capability state 临时投影 | working dir 解析仍经 `PromptAugmentInput.working_dir_input` 过渡；VFS、MCP、capability、executor profile、identity、companion slice、task effect binding、audit/inspector projection 仍未完整归入 construction |
 | Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput` | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`prompt_pipeline` 仍接收增强 payload 并拆字段 |
@@ -80,7 +80,7 @@ rg -n "req\\.vfs|req\\.mcp_servers|req\\.capability_state|req\\.context_bundle|r
 ### 4. Delete `PromptAugmentInput` Production Handoff
 
 - API/bootstrap no longer returns `PromptAugmentInput`.
-- Delete `LaunchCommand::to_augment_input()`.
+- Delete the remaining API augmenter / relaxed pipeline `PromptAugmentInput` construction.
 - `prompt_pipeline` no longer receives `PromptAugmentInput`.
 
 Exit check:

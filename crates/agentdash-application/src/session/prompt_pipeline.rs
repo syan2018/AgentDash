@@ -92,7 +92,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                     reason = %reason,
                     "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
                 );
-                Ok(command.to_augment_input())
+                Ok(relaxed_command_to_augment_input(command))
             }
         }
     }
@@ -563,6 +563,18 @@ impl<'a> SessionLaunchExecutor<'a> {
             meta.title = title_hint.to_string();
         }
     }
+}
+
+fn relaxed_command_to_augment_input(command: &LaunchCommand) -> PromptAugmentInput {
+    let mut input = PromptAugmentInput::from_user_input(command.user_input().clone());
+    input.mcp_servers = command.local_relay_mcp_declarations().to_vec();
+    input.vfs = command
+        .local_relay_workspace_root()
+        .map(super::local_workspace_vfs);
+    input.identity = command.identity();
+    input.task = command.task_hint();
+    input.companion = command.companion_hint();
+    input
 }
 
 impl SessionHub {

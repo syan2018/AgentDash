@@ -2153,10 +2153,9 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             _session_id: &str,
             command: &LaunchCommand,
         ) -> Result<PromptAugmentInput, ConnectorError> {
-            let req = command.to_augment_input();
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let text = req
-                .user_input
+            let text = command
+                .user_input()
                 .prompt_blocks
                 .as_ref()
                 .and_then(|blocks| blocks.first())
@@ -2164,8 +2163,10 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
-            self.captured_mcp_len
-                .store(req.mcp_servers.len(), Ordering::SeqCst);
+            self.captured_mcp_len.store(
+                command.local_relay_mcp_declarations().len(),
+                Ordering::SeqCst,
+            );
             Err(ConnectorError::InvalidConfig(
                 "spy augmenter stops here".to_string(),
             ))

@@ -37,7 +37,7 @@ LaunchCommand
 
 当前仍存在的迁移边界是 `PromptAugmentInput` 承载过多语义：
 
-- `LaunchCommand` 已不再持有它，`PromptRequestAugmenter` 也不再接收它作为输入；当前剩余问题是 `LaunchCommand::to_augment_input()` 仍会投影出它，且 augmenter/bootstrap 仍返回它作为增强后输出；
+- `LaunchCommand` 已不再持有它，`LaunchCommand::to_augment_input()` 已删除，`PromptRequestAugmenter` 也不再接收它作为输入；当前剩余问题是 API augmenter / relaxed pipeline 仍会构造它，且 augmenter/bootstrap 仍返回它作为增强后输出；
 - 不再允许拆出第二段跨 crate handoff；
 - 它可以暂时携带 owner/source 种子，并在进入 `LaunchExecution` 前投影为 `SessionConstructionPlan`；
 - 它不是 session 构建事实源，也不是 launch plan；

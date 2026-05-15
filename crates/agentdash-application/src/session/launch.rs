@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
@@ -10,7 +10,7 @@ use agentdash_spi::{
 };
 
 use super::augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+    PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
 use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
@@ -75,17 +75,28 @@ impl LaunchCommand {
         self
     }
 
-    pub fn to_augment_input(&self) -> PromptAugmentInput {
-        let mut input = PromptAugmentInput::from_user_input(self.user_input.clone());
-        input.mcp_servers = self.local_relay_mcp_declarations.clone();
-        input.vfs = self
-            .local_relay_workspace_root
-            .as_ref()
-            .map(|root| super::local_workspace_vfs(root));
-        input.identity = self.identity.clone();
-        input.task = self.task.clone();
-        input.companion = self.companion.clone();
-        input
+    pub fn user_input(&self) -> &UserPromptInput {
+        &self.user_input
+    }
+
+    pub fn identity(&self) -> Option<agentdash_spi::AuthIdentity> {
+        self.identity.clone()
+    }
+
+    pub fn task_hint(&self) -> Option<PromptAugmentTaskInput> {
+        self.task.clone()
+    }
+
+    pub fn companion_hint(&self) -> Option<PromptAugmentCompanionInput> {
+        self.companion.clone()
+    }
+
+    pub fn local_relay_mcp_declarations(&self) -> &[SessionMcpServer] {
+        &self.local_relay_mcp_declarations
+    }
+
+    pub fn local_relay_workspace_root(&self) -> Option<&Path> {
+        self.local_relay_workspace_root.as_deref()
     }
 
     pub fn source(&self) -> LaunchSource {

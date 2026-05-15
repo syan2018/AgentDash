@@ -17,7 +17,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 | Boundary | Current State | Required Move |
 |---|---|---|
-| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 删除 `to_augment_input()`；把 source payload 到 construction/launch 的投影移出 command 方法 |
+| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；`to_augment_input()` 已删除；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 把 API augmenter / relaxed pipeline 中的 source payload 投影迁入 construction/launch 显式边界 |
 | `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `PromptAugmentInput.working_dir_input`，需迁入 construction |
 | Source adapters | 多数入口已构造 command；task handler 与 companion parent VFS/MCP/context snapshot 已移出 command | adapters 只能交出请求意图、来源引用和特殊来源策略 payload；bootstrap 上的 task/companion 临时投影需迁入 construction provider |
 | `PromptAugmentInput` | 仍跨 API/bootstrap/application 传递，承载 VFS/MCP/capability/context/hook/post-turn；task handler 已不再来自 command，而是在 Task owner bootstrap 后临时绑定 | 删除 production handoff；task effect binding 进入 construction/effects/outbox 服务边界 |
@@ -54,7 +54,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 ### Step 4: Delete Old Payload
 
 - API/bootstrap returns construction facts or construction plan input, not `PromptAugmentInput`.
-- Delete `LaunchCommand::to_augment_input()`.
+- Delete the remaining API augmenter / relaxed pipeline `PromptAugmentInput` construction.
 - Remove `PromptAugmentInput` from production mainline.
 
 ### Step 5: Split Hub And Verify Stores

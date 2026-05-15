@@ -99,6 +99,12 @@ pub trait SessionTerminalEffectStore: Send + Sync {
 
     async fn mark_terminal_effect_failed(&self, effect_id: Uuid, error: String) -> io::Result<()>;
 
+    async fn mark_terminal_effect_dead_letter(
+        &self,
+        effect_id: Uuid,
+        error: String,
+    ) -> io::Result<()>;
+
     async fn list_terminal_effects_by_status(
         &self,
         statuses: &[TerminalEffectStatus],
@@ -177,6 +183,12 @@ pub trait SessionPersistence: Send + Sync {
     async fn mark_terminal_effect_succeeded(&self, effect_id: Uuid) -> io::Result<()>;
 
     async fn mark_terminal_effect_failed(&self, effect_id: Uuid, error: String) -> io::Result<()>;
+
+    async fn mark_terminal_effect_dead_letter(
+        &self,
+        effect_id: Uuid,
+        error: String,
+    ) -> io::Result<()>;
 
     async fn list_terminal_effects_by_status(
         &self,
@@ -316,6 +328,16 @@ impl SessionTerminalEffectStore for SessionPersistenceStoreAdapter {
     async fn mark_terminal_effect_failed(&self, effect_id: Uuid, error: String) -> io::Result<()> {
         self.persistence
             .mark_terminal_effect_failed(effect_id, error)
+            .await
+    }
+
+    async fn mark_terminal_effect_dead_letter(
+        &self,
+        effect_id: Uuid,
+        error: String,
+    ) -> io::Result<()> {
+        self.persistence
+            .mark_terminal_effect_dead_letter(effect_id, error)
             .await
     }
 

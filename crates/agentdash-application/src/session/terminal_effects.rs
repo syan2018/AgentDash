@@ -48,6 +48,7 @@ pub enum TerminalEffectStatus {
     Running,
     Succeeded,
     Failed,
+    DeadLetter,
 }
 
 impl TerminalEffectStatus {
@@ -57,6 +58,7 @@ impl TerminalEffectStatus {
             Self::Running => "running",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
+            Self::DeadLetter => "dead_letter",
         }
     }
 }
@@ -70,6 +72,7 @@ impl TryFrom<&str> for TerminalEffectStatus {
             "running" => Ok(Self::Running),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
+            "dead_letter" => Ok(Self::DeadLetter),
             other => Err(format!("unknown terminal effect status: {other}")),
         }
     }
@@ -111,6 +114,9 @@ enum TerminalEffectExecutor {
         terminal_state: String,
     },
     HookAutoResume,
+    Unavailable {
+        reason: String,
+    },
 }
 
 #[derive(Clone)]
@@ -277,7 +283,66 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         }
     }
 
+    pub async fn replay_durable_outbox(&self, limit: u32) -> io::Result<usize> {
+        let records = self
+            .hub
+            .stores
+            .terminal_effects
+            .list_terminal_effects_by_status(
+                &[
+                    TerminalEffectStatus::Pending,
+                    TerminalEffectStatus::Running,
+                    TerminalEffectStatus::Failed,
+                ],
+                limit,
+            )
+            .await?;
+        let mut attempted = 0;
+        for record in records {
+            let executor = self.replay_executor_for(&record).await;
+            attempted += 1;
+            if let Err(error) = self
+                .execute_one(EnqueuedTerminalEffect { record, executor })
+                .await
+            {
+                tracing::warn!(
+                    error = %error,
+                    "Terminal effect durable replay 失败"
+                );
+            }
+        }
+        Ok(attempted)
+    }
+
+    async fn replay_executor_for(&self, record: &TerminalEffectRecord) -> TerminalEffectExecutor {
+        match record.effect_type {
+            TerminalEffectType::HookAutoResume => TerminalEffectExecutor::HookAutoResume,
+            TerminalEffectType::SessionTerminalCallback => {
+                match self.hub.terminal_callback.read().await.clone() {
+                    Some(callback) => TerminalEffectExecutor::SessionTerminalCallback {
+                        callback,
+                        terminal_state: record
+                            .payload
+                            .get("terminal_state")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                    },
+                    None => TerminalEffectExecutor::Unavailable {
+                        reason: "terminal callback 未注入，无法 replay session_terminal_callback"
+                            .to_string(),
+                    },
+                }
+            }
+            TerminalEffectType::HookEffects => TerminalEffectExecutor::Unavailable {
+                reason: "hook_effects 依赖原 turn 的 post-turn handler，当前尚未具备 durable handler registry"
+                    .to_string(),
+            },
+        }
+    }
+
     async fn execute_one(&self, item: EnqueuedTerminalEffect) -> io::Result<()> {
+        let next_attempt_count = item.record.attempt_count.saturating_add(1);
         self.hub
             .stores
             .terminal_effects
@@ -304,6 +369,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                     .await;
                 Ok(())
             }
+            TerminalEffectExecutor::Unavailable { reason } => Err(reason.clone()),
         };
 
         match result {
@@ -315,11 +381,19 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                     .await
             }
             Err(error) => {
-                self.hub
-                    .stores
-                    .terminal_effects
-                    .mark_terminal_effect_failed(item.record.id, error.clone())
-                    .await?;
+                if next_attempt_count >= MAX_TERMINAL_EFFECT_ATTEMPTS {
+                    self.hub
+                        .stores
+                        .terminal_effects
+                        .mark_terminal_effect_dead_letter(item.record.id, error.clone())
+                        .await?;
+                } else {
+                    self.hub
+                        .stores
+                        .terminal_effects
+                        .mark_terminal_effect_failed(item.record.id, error.clone())
+                        .await?;
+                }
                 Err(io::Error::new(io::ErrorKind::Other, error))
             }
         }
@@ -355,6 +429,16 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
     }
 }
 
+const MAX_TERMINAL_EFFECT_ATTEMPTS: u32 = 3;
+
+impl SessionHub {
+    pub async fn replay_terminal_effect_outbox(&self, limit: u32) -> io::Result<usize> {
+        SessionTerminalEffectDispatcher::new(self)
+            .replay_durable_outbox(limit)
+            .await
+    }
+}
+
 fn should_auto_resume(
     terminal_kind: TurnTerminalKind,
     hook_session: Option<&SharedHookSessionRuntime>,
@@ -381,6 +465,7 @@ mod tests {
             Ok(TerminalEffectStatus::Pending)
         );
         assert_eq!(TerminalEffectStatus::Failed.as_str(), "failed");
+        assert_eq!(TerminalEffectStatus::DeadLetter.as_str(), "dead_letter");
         assert!(TerminalEffectStatus::try_from("unknown").is_err());
     }
 

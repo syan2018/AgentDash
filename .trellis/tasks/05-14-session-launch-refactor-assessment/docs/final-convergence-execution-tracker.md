@@ -218,8 +218,11 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 
 现状问题：
 
-- outbox record 已存在，但 dispatcher 仍依赖同进程即时执行。
-- replay / claim / retry / dead-letter 语义不完整。
+- outbox record 已存在。
+- dispatcher 已支持按 `pending/running/failed` 状态从 durable outbox 重放，并在 `AppState` ready 后触发一次启动恢复。
+- effect 失败会有限重试，达到上限后进入 `dead_letter`。
+- `session_terminal_callback` replay 依赖当前进程已注入 callback；未注入时会显式失败/死信。
+- `hook_effects` replay 仍不能真正执行，因为它依赖原 turn 的 post-turn handler，当前没有 durable handler registry。
 
 目标：
 
@@ -228,12 +231,14 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 - worker 可从 pending/running stale 状态恢复；
 - effect handler 幂等；
 - failed/retry/dead-letter 可审计。
+- `hook_effects` 必须改为可由 durable handler registry 或明确的 typed effect handler 重放，不能继续依赖原 turn 的内存 handler。
 
 退出检查：
 
 - effect enqueue 成功但进程中断后可重放；
 - effect failure 不破坏 terminal event；
 - `SessionTurnProcessor` 不直接执行业务副作用。
+- `TerminalEffectType::HookEffects` 不再 replay 为 unavailable。
 
 ### H. Persistence store 边界仍未真正拆干净
 
@@ -342,6 +347,10 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 ### Phase 5：Effects / Pending / Persistence 收尾
 
 - [ ] terminal effect worker 支持 durable replay / retry / dead-letter。
+  - [x] `pending/running/failed` outbox 启动后可重放。
+  - [x] failure 达到上限后进入 `dead_letter`。
+  - [x] outbox 恢复接在 `AppState` ready gate 之后。
+  - [ ] `hook_effects` 具备 durable handler registry / typed handler，不再依赖原 turn 内存 handler。
 - [ ] pending command apply-once 与 failure recovery 测试覆盖。
 - [ ] store 边界从 adapter split 变为真实长期接口。
 - [ ] `SessionHub` 删除或只剩无业务 wrapper。

@@ -811,6 +811,22 @@ impl SessionPersistence for SqliteSessionRepository {
         .await
     }
 
+    async fn mark_terminal_effect_dead_letter(
+        &self,
+        effect_id: uuid::Uuid,
+        error: String,
+    ) -> io::Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.update_terminal_effect_status(
+            effect_id,
+            TerminalEffectStatus::DeadLetter,
+            now,
+            false,
+            Some(error),
+        )
+        .await
+    }
+
     async fn list_terminal_effects_by_status(
         &self,
         statuses: &[TerminalEffectStatus],

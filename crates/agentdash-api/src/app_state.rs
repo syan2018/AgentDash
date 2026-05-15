@@ -498,6 +498,21 @@ impl AppState {
             .await
             .map_err(|err| anyhow::anyhow!("AppState session 依赖未 ready: {err}"))?;
 
+        match state
+            .services
+            .session_hub
+            .replay_terminal_effect_outbox(100)
+            .await
+        {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "已调度 terminal effect outbox 恢复执行");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "terminal effect outbox 恢复执行失败");
+            }
+        }
+
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
             state.services.session_hub.clone(),

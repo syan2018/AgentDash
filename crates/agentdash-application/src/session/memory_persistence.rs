@@ -268,6 +268,19 @@ impl SessionPersistence for MemorySessionPersistence {
         .await
     }
 
+    async fn mark_terminal_effect_dead_letter(
+        &self,
+        effect_id: uuid::Uuid,
+        error: String,
+    ) -> io::Result<()> {
+        self.update_terminal_effect(effect_id, |effect, now| {
+            effect.status = TerminalEffectStatus::DeadLetter;
+            effect.updated_at_ms = now;
+            effect.last_error = Some(error);
+        })
+        .await
+    }
+
     async fn list_terminal_effects_by_status(
         &self,
         statuses: &[TerminalEffectStatus],

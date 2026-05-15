@@ -342,7 +342,7 @@ pub struct LaunchExecutionTraceEntry {
 }
 
 pub struct LaunchExecution {
-    pub construction: Option<SessionConstructionPlan>,
+    pub construction: SessionConstructionPlan,
     pub lifecycle: LifecycleLaunchPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
@@ -355,7 +355,7 @@ pub struct LaunchExecution {
 }
 
 pub struct LaunchExecutionInput {
-    pub construction: Option<SessionConstructionPlan>,
+    pub construction: SessionConstructionPlan,
     pub session_id: String,
     pub turn_id: String,
     pub lifecycle: SessionPromptLifecycle,
@@ -512,7 +512,7 @@ mod tests {
             SessionConstructionContextProjection::default(),
         );
         LaunchExecutionInput {
-            construction: Some(construction),
+            construction,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
             lifecycle,
@@ -572,13 +572,7 @@ mod tests {
         );
         assert!(!execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);
-        assert_eq!(
-            execution
-                .construction
-                .as_ref()
-                .map(|plan| plan.session_id.as_str()),
-            Some("sess-launch")
-        );
+        assert_eq!(execution.construction.session_id.as_str(), "sess-launch");
         assert!(execution.runtime_commands.apply_after_connector_accept);
         assert!(execution.terminal_effects.durable_outbox_required);
     }

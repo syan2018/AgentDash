@@ -2204,9 +2204,10 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use crate::session::construction::SessionConstructionSeed;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter,
-        SessionConstructionSeed, SessionHub, UserPromptInput, local_workspace_vfs,
+        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter, SessionHub,
+        UserPromptInput, local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 

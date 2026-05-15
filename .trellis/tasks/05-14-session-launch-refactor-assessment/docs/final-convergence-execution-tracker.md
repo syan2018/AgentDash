@@ -12,16 +12,16 @@ LaunchCommand
   -> SessionEvent / TerminalEffectOutbox
 ```
 
-后续执行必须继续向唯一数据流收敛。`PromptAugmentInput` 与 `SessionLaunchRequest` 都已从代码主线删除，但这不等于终态：当前仍有 `SessionConstructionSeed` 作为 API/bootstrap → application pipeline 的显式边界 seed。下一步不能继续扩张 seed，必须把 construction facts 直接沉入 `SessionConstructionPlan`，把 hook/effect/launch 策略沉入 `LaunchExecution`。
+后续执行必须继续向唯一数据流收敛。`PromptAugmentInput` 与 `SessionLaunchRequest` 都已从代码主线删除，但这不等于终态：当前仍有 `SessionConstructionSeed` 作为 API/bootstrap → launch planner 的显式边界 seed。它已不再从 `session::mod` 顶层 re-export，`prompt_pipeline` 也不再拆 seed 字段，但下一步不能继续扩张 seed，必须把 construction facts 直接沉入 `SessionConstructionPlan`，把 hook/effect/launch 策略沉入 `LaunchExecution`。
 
 ## Current Code Facts
 
 | Area | Done | Blocking Gaps |
 |---|---|---|
 | Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；`LaunchCommand::to_augment_input()` 已删除；local relay 不再把已组装 `Vfs` 塞进 command 或 seed，只传 workspace root source fact；local relay MCP 已收窄为 declaration source payload；`UserPromptInput.working_dir` 已移除；task `post_turn_handler` 不再穿过 command；companion command 不再携带 parent VFS/MCP/context snapshot；未使用的 command continuation context frame 通道已删除 | `SessionConstructionSeed.working_dir_input` 仍是过渡 seed，尚未由 construction provider 直接解析 |
-| Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest` 已删除；旧 payload 不再从 `session::mod` re-export，也不再出现在 `crates/agentdash-application/src` / `crates/agentdash-api/src` / `crates/agentdash-local/src` | `LaunchAugmentation` tuple alias 已删除；当前仅剩 `SessionConstructionSeed` 承接 API/bootstrap 到 construction planner 的过渡事实 |
+| Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest` 已删除；旧 payload 不再从 `session::mod` re-export，也不再出现在 `crates/agentdash-application/src` / `crates/agentdash-api/src` / `crates/agentdash-local/src`；`SessionConstructionSeed` 也已撤出 `session::mod` 顶层导出，只能显式从 construction 模块引用 | `LaunchAugmentation` tuple alias 已删除；当前仅剩 `SessionConstructionSeed` 承接 API/bootstrap 到 construction planner 的过渡事实 |
 | Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle` 与 continuation context frame；`UserPromptInput` 不再承载 working dir；local relay workspace root 由 seed 保存为 raw source fact，`SessionLaunchPlanner` 解析为 VFS 并在 construction trace 标记来源；task effect binding 已从 API bootstrap 的内存 handler 改为 `TerminalHookEffectBinding` durable 描述，并进入 `SessionConstructionSeed` / `SessionConstructionPlan.effects`；companion parent facts 由 bootstrap 从 parent capability state 临时投影 | working dir/MCP/capability/identity 仍先进入 `SessionConstructionSeed` 再被 planner 拆入 construction；executor profile、companion slice、audit/inspector projection 仍未完整归入 construction |
-| Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput`；`prompt_pipeline` 不再接收旧 payload 或 `SessionLaunchRequest` | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`prompt_pipeline` 仍接收 seed 并拆字段 |
+| Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput`，并改为整体接收 `SessionConstructionSeed`；`prompt_pipeline` 不再拆 owner/VFS/MCP/capability/context/effect 字段；`LaunchExecution` 不再允许缺失 construction plan，缺 owner 时会在 planner 阶段失败 | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；seed 仍是 planner 输入，construction 字段仍未直接由 construction provider 产出 |
 | API/bootstrap | route 层部分 launch composition 已迁到 bootstrap；bootstrap 不再返回 `PromptAugmentInput` / `SessionLaunchRequest` / `LaunchExecutionSeed`，也不再构造 task `DynPostTurnHandler` | bootstrap 仍返回 `UserPromptInput + SessionConstructionSeed`，尚未直接输出 construction/launch 显式计划；companion parent facts 仍在 bootstrap 临时投影 |
 | Runtime/Hub | registry / supervisor 已拆出，live executor session 与 active turn 命名已有区分 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
 | Effects/Pending | terminal effect outbox、runtime command store 已有基础；task post-turn handler 不再作为 command trait object 传递；task effect binding 已是 durable handler 描述，planner 通过 registry 解析即时 handler，outbox replay 复用同一 payload | effect handler 幂等语义、pending apply-once、失败恢复和 migration 仍需最终验证 |
@@ -68,8 +68,8 @@ rg -n "build_task_session_context|build_story_session_context_response|build_pro
 ### 3. Collapse Launch Execution
 
 - `SessionLaunchPlanner` consumes `LaunchCommand + SessionConstructionPlan + runtime facts`.
-- `LaunchExecution` owns prompt payload, construction, lifecycle, restore, hook plan, follow-up plan, runtime command plan, terminal effect plan, connector input, trace.
-- `prompt_pipeline` executes the plan only.
+- `LaunchExecution` owns prompt payload, construction, lifecycle, restore, hook plan, follow-up plan, runtime command plan, terminal effect plan, connector input, trace. 当前代码已要求 `LaunchExecution` 必须持有 `SessionConstructionPlan`，不再允许 `Option` construction。
+- `prompt_pipeline` executes the plan only. 当前代码已停止在 planner 输入处拆 construction seed 字段，但仍负责 turn/context frame 执行细节。
 
 Exit check:
 

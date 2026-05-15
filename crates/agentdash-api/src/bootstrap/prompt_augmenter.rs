@@ -11,9 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::{
-    LaunchCommand, PromptRequestAugmenter, SessionConstructionSeed, UserPromptInput,
-};
+use agentdash_application::session::construction::SessionConstructionSeed;
+use agentdash_application::session::{LaunchCommand, PromptRequestAugmenter, UserPromptInput};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;

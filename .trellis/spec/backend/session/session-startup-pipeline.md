@@ -43,6 +43,7 @@ LaunchCommand
 
 - 它只用于承接 API/bootstrap 到 construction planner 的暂存；
 - 它不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
+- 它不得从 `session::mod` 顶层 re-export；跨模块引用必须显式写作 construction 模块引用，避免被当成正式 session API；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许继续扩张成新的长期 service / route / adapter 公开契约；
 - 后续必须把 working dir / VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 seed。
@@ -107,6 +108,9 @@ route 层不得长期保留 `build_task_session_context`、`build_story_session_
 - terminal effect plan；
 - connector input projection；
 - launch trace。
+
+`LaunchExecution` 的 `construction` 不允许是可选字段。无法产出 `SessionConstructionPlan`
+时应在 planner 阶段失败，不得把缺失 construction 的 launch 继续交给 connector。
 
 `SessionLaunchPlanner` 负责把临时 launch 输入解析为 `LaunchExecution`。当前它仍借用
 `SessionHub` 依赖，后续需要继续与 `SessionConstructionPlanner` 合流，不能成为新的

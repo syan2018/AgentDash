@@ -18,6 +18,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `PromptRequestAugmenter` 不再接收 `PromptAugmentInput` 作为输入。
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
+- [x] `SessionConstructionSeed` 不再从 `session::mod` 顶层 re-export，外层引用必须显式进入 construction 模块。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed，只保留 workspace root 作为来源事实，由 planner/construction 解析。
 - [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `SessionConstructionSeed.working_dir_input`，后续迁入 construction。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
@@ -56,9 +57,11 @@ route/bootstrap 不得保留独立 owner / VFS / capability / context 主线。
 ### 3. 收敛 `LaunchExecution`
 
 - [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
+- [x] `LaunchExecution` 不再允许 `construction: Option<_>`；缺 owner / construction plan 会在 planner 阶段失败。
+- [x] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
 - [ ] `LaunchExecution` 显式包含 prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace。
-- [ ] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
 - [ ] `prompt_pipeline` 只负责 claim / activate、event append、connector.prompt、accepted 后提交 meta / pending / title、processor supervision。
+- [x] `prompt_pipeline` 不再拆 `SessionConstructionSeed` 的 owner / VFS / MCP / capability / context / effect 字段，字段拆解已收回 planner/construction 阶段。
 - [ ] connector.prompt 失败不提交 bootstrap / pending applied / title generation 等成功副作用。
 
 退出检查：

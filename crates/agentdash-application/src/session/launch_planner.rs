@@ -2,15 +2,15 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
+use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
-    AuthIdentity, CapabilityState, ConnectorError, ContextFragment, DiscoveredGuideline,
-    RestoredSessionState, SessionContextBundle, SessionMcpServer, Vfs,
+    ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState,
+    SessionContextBundle,
 };
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
-use super::construction::SourceContractPlan;
+use super::construction::SessionConstructionSeed;
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -21,7 +21,6 @@ use super::launch::{
     LaunchCapabilitySource, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource,
     LaunchMcpSource, LaunchRestoreMode, LaunchVfsSource,
 };
-use super::ownership::ResolvedSessionOwner;
 use super::path_policy::resolve_working_dir;
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
@@ -44,17 +43,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub user_input: UserPromptInput,
-    pub working_dir_input: Option<String>,
-    pub local_relay_workspace_root: Option<PathBuf>,
-    pub construction_owner: Option<ResolvedSessionOwner>,
-    pub source_contract: SourceContractPlan,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<CapabilityState>,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub continuation_context_frame: Option<ContextFrame>,
-    pub identity: Option<AuthIdentity>,
-    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+    pub construction_seed: SessionConstructionSeed,
 }
 
 pub(super) struct PlannedSessionLaunch {
@@ -84,7 +73,20 @@ impl<'a> SessionLaunchPlanner<'a> {
         input: SessionLaunchPlannerInput<'_>,
     ) -> Result<PlannedSessionLaunch, ConnectorError> {
         let sid = input.session_id.to_string();
-        let mut context_bundle = input.context_bundle;
+        let SessionConstructionSeed {
+            owner: construction_owner,
+            source_contract,
+            working_dir_input,
+            local_relay_workspace_root,
+            mcp_servers: seed_mcp_servers,
+            vfs: seed_vfs,
+            capability_state: seed_capability_state,
+            context_bundle,
+            continuation_context_frame,
+            identity,
+            terminal_hook_effect_binding,
+        } = input.construction_seed;
+        let mut context_bundle = context_bundle;
         let resolved_payload = input
             .user_input
             .resolve_prompt_payload()
@@ -103,9 +105,9 @@ impl<'a> SessionLaunchPlanner<'a> {
             .last()
             .map(|transition| transition.state.clone());
 
-        let (base_effective_vfs, vfs_source) = if let Some(vfs) = input.vfs.clone() {
+        let (base_effective_vfs, vfs_source) = if let Some(vfs) = seed_vfs.clone() {
             (vfs, LaunchVfsSource::Request)
-        } else if let Some(root) = input.local_relay_workspace_root.as_ref() {
+        } else if let Some(root) = local_relay_workspace_root.as_ref() {
             (
                 super::local_workspace_vfs(root),
                 LaunchVfsSource::LocalRelayWorkspaceRoot,
@@ -139,9 +141,8 @@ impl<'a> SessionLaunchPlanner<'a> {
                 ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
         let working_directory =
-            resolve_working_dir(&default_mount_root, input.working_dir_input.as_deref())
+            resolve_working_dir(&default_mount_root, working_dir_input.as_deref())
                 .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
-        let working_dir_input = input.working_dir_input.clone();
 
         let executor_config = input
             .user_input
@@ -251,7 +252,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
         let discovered_guidelines = self.hub.discover_guidelines(&effective_vfs).await;
 
-        let (base_mcp_servers, base_mcp_source) = if input.mcp_servers.is_empty() {
+        let (base_mcp_servers, base_mcp_source) = if seed_mcp_servers.is_empty() {
             input
                 .cached_continuation
                 .as_ref()
@@ -263,7 +264,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 })
                 .unwrap_or_else(|| (Vec::new(), LaunchMcpSource::Empty))
         } else {
-            (input.mcp_servers.clone(), LaunchMcpSource::Request)
+            (seed_mcp_servers.clone(), LaunchMcpSource::Request)
         };
         let (mcp_servers, mcp_source) =
             if let Some(pending_state) = pending_capability_state.as_ref() {
@@ -274,7 +275,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             } else {
                 (base_mcp_servers.clone(), base_mcp_source)
             };
-        let base_capability_source = if input.capability_state.is_some() {
+        let base_capability_source = if seed_capability_state.is_some() {
             LaunchCapabilitySource::Request
         } else if input.cached_continuation.is_some() {
             LaunchCapabilitySource::CachedSessionProfile
@@ -282,8 +283,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             LaunchCapabilitySource::Default
         };
         let base_capability_state = {
-            let mut state = input
-                .capability_state
+            let mut state = seed_capability_state
                 .clone()
                 .or_else(|| {
                     input
@@ -327,29 +327,32 @@ impl<'a> SessionLaunchPlanner<'a> {
         let construction_plan =
             SessionConstructionPlanner::plan_launch(SessionConstructionPlannerInput {
                 session_id: sid.clone(),
-                owner: input.construction_owner.clone(),
-                source: input.source_contract.clone(),
-                working_dir_input: input.working_dir_input.clone(),
-                local_relay_workspace_root: input.local_relay_workspace_root.clone(),
+                owner: construction_owner,
+                source: source_contract,
+                working_dir_input: working_dir_input.clone(),
+                local_relay_workspace_root,
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),
                 context_bundle: context_bundle.clone(),
-                continuation_context_frame: input.continuation_context_frame.clone(),
-                identity: input.identity.clone(),
-                terminal_hook_effect_binding: input.terminal_hook_effect_binding.clone(),
+                continuation_context_frame,
+                identity: identity.clone(),
+                terminal_hook_effect_binding: terminal_hook_effect_binding.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),
                 session_capabilities: session_capabilities.clone(),
                 prompt_lifecycle,
                 capability_source: capability_source.clone(),
                 vfs_source: vfs_source.clone(),
-            });
+            })
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "launch 缺少 resolved session owner，无法构建 SessionConstructionPlan"
+                        .to_string(),
+                )
+            })?;
         let post_turn_handler = self
-            .resolve_terminal_hook_effect_handler(
-                input.session_id,
-                input.terminal_hook_effect_binding,
-            )
+            .resolve_terminal_hook_effect_handler(input.session_id, terminal_hook_effect_binding)
             .await?;
         let launch_execution = LaunchExecution::build(LaunchExecutionInput {
             construction: construction_plan,
@@ -371,7 +374,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             executor_config,
             mcp_servers: capability_state.tool.mcp_servers.clone(),
             vfs: capability_state.vfs.active.clone(),
-            identity: input.identity.clone(),
+            identity,
             hook_session: hook_session.clone(),
             capability_state: capability_state.clone(),
             runtime_delegate,

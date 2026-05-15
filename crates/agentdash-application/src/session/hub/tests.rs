@@ -7,6 +7,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, ExecutionHookProvider, HookEvaluationQuery, HookInjection,
     HookResolution, HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionHookRefreshQuery,
@@ -29,6 +30,7 @@ use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
+use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
     PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
@@ -52,7 +54,16 @@ fn simple_prompt_request(prompt: &str) -> (UserPromptInput, SessionConstructionS
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     };
-    (user_input, SessionConstructionSeed::default())
+    let binding = SessionBinding::new(
+        uuid::Uuid::new_v4(),
+        "test-session".to_string(),
+        SessionOwnerType::Project,
+        uuid::Uuid::new_v4(),
+        "test-project",
+    );
+    let mut construction_seed = SessionConstructionSeed::default();
+    construction_seed.owner = SessionOwnerResolver::resolve_primary(&[binding]);
+    (user_input, construction_seed)
 }
 
 fn owner_bootstrap_request(

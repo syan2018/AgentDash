@@ -162,17 +162,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 session_meta: &session_meta,
                 pending_runtime_commands,
                 user_input,
-                working_dir_input: construction_seed.working_dir_input,
-                local_relay_workspace_root: construction_seed.local_relay_workspace_root,
-                construction_owner: construction_seed.owner,
-                source_contract: construction_seed.source_contract,
-                mcp_servers: construction_seed.mcp_servers,
-                vfs: construction_seed.vfs,
-                capability_state: construction_seed.capability_state,
-                context_bundle: construction_seed.context_bundle,
-                continuation_context_frame: construction_seed.continuation_context_frame,
-                identity: construction_seed.identity,
-                terminal_hook_effect_binding: construction_seed.terminal_hook_effect_binding,
+                construction_seed,
             })
             .await?;
         let resolved_payload = planned_launch.resolved_payload;
@@ -366,8 +356,9 @@ impl<'a> SessionLaunchExecutor<'a> {
         }
         if let Some(frame) = launch_execution
             .construction
-            .as_ref()
-            .and_then(|plan| plan.context.continuation_context_frame.clone())
+            .context
+            .continuation_context_frame
+            .clone()
         {
             let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);

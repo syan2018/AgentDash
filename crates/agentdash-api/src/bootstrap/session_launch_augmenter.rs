@@ -12,10 +12,11 @@ use agentdash_application::session::UserPromptInput;
 use agentdash_application::session::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
+use agentdash_application::session::construction::SessionConstructionSeed;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec,
-    OwnerPromptLifecycle, OwnerScope, SessionConstructionSeed, SessionMeta, SessionPromptLifecycle,
+    OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     TerminalHookEffectBinding, compose_companion_prompt, compose_companion_with_workflow_prompt,
     compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,

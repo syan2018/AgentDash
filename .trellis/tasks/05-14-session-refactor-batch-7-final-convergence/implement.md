@@ -20,7 +20,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 ## Commit Map
 
-本 batch 总计 7 次提交完成。前 4 次已经落地；剩余 3 次必须按顺序一次性推进，不再拆更小提交。
+本 batch 总计 9 次提交完成。前 6 次已经落地；剩余 3 次必须按顺序一次性推进，不再拆更小提交，也不创建 child task。
 
 | Commit | Status | Message | Scope |
 |---|---|---|---|
@@ -30,7 +30,9 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 | 4 | 已完成 | `refactor(session): 将 prompt pipeline 收缩为 launch execution 执行器` | pipeline 只执行 `LaunchExecution`，connector accepted 后才提交成功副作用 |
 | 5 | 已完成 | `refactor(session): 拆分 session 业务能力服务` | 拆出 core / eventing / runtime / control 等能力服务，并迁移 API/local 的直接调用点 |
 | 6 | 已完成 | `refactor(session): 迁移 session launch 调用至能力服务` | 把 API/task/routine/workflow 的 launch/hook/effects/capability 调用迁到具体服务；Hub 只在装配、runtime tool handle 与内部实现中残留 |
-| 7 | 未开始 | `refactor(session): 完成 hub effects pending persistence 收口` | 删除 Hub 内部业务残留，完成 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
+| 7 | 已完成 | `refactor(session): 删除 hub facade 调用残留` | 删除已迁出的 Hub facade 方法，迁移 companion / hook auto-resume / tests / title 调用点到具体能力服务 |
+| 8 | 未开始 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects、runtime tool provider、advance-node 依赖明确服务/依赖包，不再把 Hub 当服务定位器 |
+| 9 | 未开始 | `refactor(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
 
 ## Execution Rules
 
@@ -156,21 +158,85 @@ git diff --check
 - API/task/routine/workflow orchestrator 的 launch/hook/effects/capability 主调用不再依赖 Hub。
 - 剩余 `session_hub` 命中只允许是 AppState/local 装配、runtime tool provider handle、advance-node 工具服务定位、session 模块内部实现或测试 fixture。
 
-### Commit 7: Hub / effects / pending / persistence 最终收口
+### Commit 7: 删除 Hub facade 调用残留
 
-本提交删除最后的 Hub 内部业务残留，并做运行语义、迁移、测试与文档收口。
+状态：已完成。
+
+本提交只做已经明确归属的调用迁移和 facade 删除，不再把这些已拆出的能力留在 `SessionHub` 上假装兼容。完成后，外部调用点不应通过 Hub 调用 launch/control/runtime/effects/title/capability 入口；Hub 的残留必须只剩装配、内部尚待 Commit 8 下沉的实现、local runtime holder 或测试 fixture。
 
 必须完成：
 
-- `SessionHub` 若继续存在，只能作为装配对象；`impl SessionHub` 中业务方法必须删除或下沉到具体服务内部。
-- `SessionLaunchExecutor` / `SessionLaunchPlanner` 不再以 Hub 作为依赖参数，改用明确的 launch deps。
-- `SessionTerminalEffectDispatcher` 不再以 Hub 作为依赖参数，改用 effects deps。
-- runtime tool provider / advance-node 工具不再以 Hub 作为长期服务定位器。
+- 删除 Hub 上已经迁移到 `SessionLaunchService` / `SessionRuntimeService` / `SessionControlService` / `SessionEffectsService` / `SessionTitleService` 的同名方法。
+- companion、hook auto-resume、session tests、terminal effects tests、API/local 入口全部调用具体服务。
+- 删除无调用的 `hub/cancel.rs` 模块。
+- title 手动设置只经 `SessionTitleService`；Hub 不再暴露 `set_user_title`。
+- 更新执行文档，明确 Commit 8 才处理内部实现去 Hub，不把当前提交冒充最终态。
+
+退出检查：
+
+```powershell
+rg -n "pub async fn launch_command|pub async fn launch_command_with_outcome|pub async fn respond_companion_request|pub async fn replay_terminal_effect_outbox|pub async fn set_user_title|pub async fn cancel|pub async fn approve_tool_call|pub async fn reject_tool_call|pub async fn find_stalled_sessions" crates/agentdash-application/src/session
+rg -n "\.launch_command\(|\.launch_command_with_outcome\(|\.respond_companion_request\(|\.replay_terminal_effect_outbox\(|\.set_user_title\(|\.cancel\(|\.approve_tool_call\(|\.reject_tool_call\(" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
+git diff --check
+```
+
+完成定义：
+
+- Hub facade 中没有已迁出业务入口。
+- 对外 route / task / routine / workflow / companion 的调用目标是具体 service。
+- 剩余 `SessionHub` 命中全部列入 Commit 8 的“内部实现去 Hub”范围。
+
+### Commit 8: 解除 launch / effects / runtime tools 与 Hub 依赖
+
+本提交处理真正的架构收口：把 Hub 从“内部业务实现参数”降为装配阶段依赖来源。不是把 `SessionHub` 改名成另一个 service locator，而是让每条业务主线拿到自己需要的依赖包或具体服务。
+
+必须完成：
+
+- `SessionLaunchService` 持有明确 launch deps；`SessionLaunchExecutor` 不再接收 `&SessionHub`。
+- `SessionLaunchPlanner` 持有明确 planner deps；owner/context/VFS/MCP/capability 只来自 `SessionConstructionPlan`、runtime facts 和明确依赖，不从 Hub 侧重建。
+- hook runtime 解析、hook trigger dispatch、auto-resume 调度进入 `SessionHookService` 或明确 hook deps。
+- runtime capability / MCP / live transition / pending transition 进入 `SessionCapabilityService`，不再通过 Hub 方法转发。
+- `SessionTerminalEffectDispatcher` 由 `SessionEffectsService` 创建并接收 effects deps；不再读取 Hub。
+- `SessionTurnProcessor` 依赖 eventing/runtime/effects 等明确服务或 deps，不再持有 Hub。
+- `RelayRuntimeToolProvider` 不再保存 `SharedSessionHubHandle`；companion/workflow tool 构造只拿需要的 service bundle。
+- `CompleteLifecycleNodeTool` 不再通过 Hub 现取 core/launch/hooks/capability services。
+- local relay 的长期 runtime holder 如果仍需保存装配对象，必须命名为 assembly/runtime handle，并且 handler 立即投影为具体 services。
+
+退出检查：
+
+```powershell
+rg -n "SessionLaunchExecutor::new\\(&.*hub|SessionLaunchPlanner::new\\(.*hub|SessionTerminalEffectDispatcher::new\\(&.*hub|SharedSessionHubHandle|session_hub_handle|session_hub: Option<SessionHub>|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "impl SessionHub" crates/agentdash-application/src/session
+cargo fmt --check
+cargo check -p agentdash-application
+cargo check -p agentdash-api
+cargo check -p agentdash-local
+cargo test -p agentdash-application session::launch
+cargo test -p agentdash-application session::hub
+git diff --check
+```
+
+完成定义：
+
+- `SessionHub` 仍可作为构造函数和 ready gate 的装配对象存在，但业务执行器、planner、effect dispatcher、runtime tools 不再把 Hub 作为依赖参数或服务定位器。
+- `LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext projection` 的生产主线没有旁路 payload。
+- Context 查询、launch、companion、local relay、hook auto-resume 都从同一 construction fact source 投影。
+
+### Commit 9: Effects / pending / persistence 验证与任务收口
+
+本提交不再新增架构壳，只做最终语义确认、测试补齐、迁移核验和文档闭环。若 Commit 8 发现缺口，必须先在 Commit 8 修掉，不能在 Commit 9 写兼容旁路。
+
+必须完成：
+
 - terminal event 先落库，effect 进入 durable outbox；handler 有 durable identity 或 typed handler。
 - effect 支持 retry、dead-letter、replay 与审计。
 - pending runtime command 覆盖 requested / applied / failed，具备 apply-once 和失败恢复测试。
 - 新增业务逻辑依赖 meta / event / outbox / runtime-command store 边界，不再扩张大 `SessionPersistence`。
-- PostgreSQL / SQLite migration 覆盖旧字段删除/迁移。
+- PostgreSQL / SQLite migration 覆盖旧字段删除/迁移；确认没有 `pending_capability_state_transitions_json` 残留。
 - 父任务 tracker、closure checklist、session startup spec 与代码事实一致。
 
 最终验证：

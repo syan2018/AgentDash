@@ -472,14 +472,6 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
 
 const MAX_TERMINAL_EFFECT_ATTEMPTS: u32 = 3;
 
-impl SessionHub {
-    pub async fn replay_terminal_effect_outbox(&self, limit: u32) -> io::Result<usize> {
-        SessionTerminalEffectDispatcher::new(self)
-            .replay_durable_outbox(limit)
-            .await
-    }
-}
-
 fn should_auto_resume(
     terminal_kind: TurnTerminalKind,
     hook_session: Option<&SharedHookSessionRuntime>,

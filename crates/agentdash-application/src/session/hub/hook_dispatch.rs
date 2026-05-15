@@ -273,7 +273,11 @@ impl SessionHub {
                 let _ = hub.emit_context_frame(&session_id, None, &frame).await;
             }
 
-            if let Err(e) = hub.launch_command(&session_id, command).await {
+            if let Err(e) = hub
+                .launch_service()
+                .launch_command(&session_id, command)
+                .await
+            {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,

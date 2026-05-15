@@ -110,7 +110,7 @@ impl CompanionRequestTool {
             Some(hub) => hub,
             None => return Vec::new(),
         };
-        hub.get_runtime_mcp_servers(&sid).await
+        hub.capability_service().get_runtime_mcp_servers(&sid).await
     }
 }
 
@@ -390,6 +390,7 @@ impl CompanionRequestTool {
         );
 
         let turn_id = match session_hub
+            .launch_service()
             .launch_command(&target_binding.session_id, command)
             .await
         {
@@ -1491,7 +1492,11 @@ impl CompanionRespondTool {
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
                     });
-                    if let Err(error) = hub_clone.launch_command(&parent_sid, command).await {
+                    if let Err(error) = hub_clone
+                        .launch_service()
+                        .launch_command(&parent_sid, command)
+                        .await
+                    {
                         tracing::warn!(
                             parent_session_id = %parent_sid,
                             error = %error,

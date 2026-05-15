@@ -1,7 +1,7 @@
-//! `SessionHub` 迁移期兼容入口。
+//! `SessionHub` 装配对象的内部 helper 与测试入口。
 //!
-//! 业务职责正在拆入具体能力服务。保留在这里的方法只用于尚未迁移的内部调用
-//! 或测试入口；新的外部调用点必须依赖具体 service。
+//! 新的外部调用点必须依赖具体 service；Commit 8 会继续把内部业务实现
+//! 下沉到明确的能力服务或依赖包。
 
 use std::io;
 
@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 #[cfg(test)]
 use super::super::construction::SessionConstructionPlan;
 use super::super::hub_support::*;
-use super::super::launch::{LaunchCommand, LaunchCommandOutcome};
+#[cfg(test)]
 use super::super::prompt_pipeline::SessionLaunchExecutor;
 use super::super::types::*;
 use super::SessionHub;
@@ -214,36 +214,6 @@ impl SessionHub {
             .await
     }
 
-    /// 类型化启动入口（统一门面）。
-    ///
-    /// 由 [`LaunchCommand`] 决定是否需要 construction provider、是否 strict、
-    /// 以及可选的 follow_up_session_id 透传。
-    pub async fn launch_command(
-        &self,
-        session_id: &str,
-        command: LaunchCommand,
-    ) -> Result<String, ConnectorError> {
-        Ok(self
-            .launch_executor()
-            .execute_command(session_id, command)
-            .await?
-            .turn_id)
-    }
-
-    pub async fn launch_command_with_outcome(
-        &self,
-        session_id: &str,
-        command: LaunchCommand,
-    ) -> Result<LaunchCommandOutcome, ConnectorError> {
-        self.launch_executor()
-            .execute_command(session_id, command)
-            .await
-    }
-
-    fn launch_executor(&self) -> SessionLaunchExecutor<'_> {
-        SessionLaunchExecutor::new(self)
-    }
-
     pub async fn subscribe_with_history(
         &self,
         session_id: &str,
@@ -293,48 +263,6 @@ impl SessionHub {
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
         self.eventing_service()
             .persist_notification(session_id, envelope)
-            .await
-    }
-
-    /// 查找所有超过指定超时时间无活动的 running session，返回其 session_id 列表。
-    pub async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
-        self.runtime_service()
-            .find_stalled_sessions(stall_timeout_ms)
-            .await
-    }
-
-    pub async fn approve_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-    ) -> Result<(), ConnectorError> {
-        self.control_service()
-            .approve_tool_call(session_id, tool_call_id)
-            .await
-    }
-
-    pub async fn reject_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-        reason: Option<String>,
-    ) -> Result<(), ConnectorError> {
-        self.control_service()
-            .reject_tool_call(session_id, tool_call_id, reason)
-            .await
-    }
-
-    /// 人通过 API 回应 companion 请求。
-    /// 若命中 wait registry，则恢复挂起的工具调用；
-    /// 无论是否命中，都把回应写入 session 事件流，保证历史可回放。
-    pub async fn respond_companion_request(
-        &self,
-        session_id: &str,
-        request_id: &str,
-        payload: serde_json::Value,
-    ) -> Result<(), ConnectorError> {
-        self.control_service()
-            .respond_companion_request(session_id, request_id, payload)
             .await
     }
 }

@@ -74,25 +74,6 @@ impl SessionHub {
         Ok(())
     }
 
-    /// 用户手动修改标题 — 设置 `title_source = User`，后续不再自动覆盖。
-    pub async fn set_user_title(
-        &self,
-        session_id: &str,
-        title: &str,
-    ) -> std::io::Result<Option<super::types::SessionMeta>> {
-        let updated = self
-            .update_session_meta(session_id, |meta| {
-                meta.title = title.to_string();
-                meta.title_source = TitleSource::User;
-            })
-            .await?;
-
-        if let Some(ref meta) = updated {
-            self.broadcast_session_meta_updated(session_id, meta).await;
-        }
-        Ok(updated)
-    }
-
     /// 通过 SSE 通道广播 `session_meta_updated` 事件。
     async fn broadcast_session_meta_updated(
         &self,

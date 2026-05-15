@@ -1,18 +1,16 @@
-//! `SessionHub` 门面 + 职责子模块。
+//! `SessionHub` 装配对象与尚待下沉的 session 内部实现。
 //!
-//! 按 PR 6 拆分：
-//! - [`facade`]：session CRUD / subscribe / inject / 基本 prompt routing / companion。
+//! 按能力服务拆分后的剩余范围：
+//! - [`facade`]：测试入口与少量 session 内部 helper。
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_hook_auto_resume`。
-//!   （原 `session/event_bridge.rs` 已于 PR 6 迁入本模块并顺手删除 `_tx` 占位参数。）
 //! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。
-//! - [`cancel`]：`cancel` 路径与 interrupted 事件补发。
-//! - [`compaction`]：`context_compacted` 事件元数据富化（填 `compacted_until_ref`）。
 //!
-//! 对外路径 `crate::session::hub::SessionHub` 保持不变。
+//! Commit 8 必须继续把 tool / hook / transition / launch / effects 内部实现迁到
+//! 具体服务或明确依赖包；本模块最终只保留装配与 ready gate。
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -25,7 +23,6 @@ use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, Vfs};
 
-mod cancel;
 mod facade;
 mod factory;
 mod hook_dispatch;

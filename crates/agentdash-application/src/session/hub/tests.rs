@@ -1106,7 +1106,8 @@ async fn respond_companion_request_resolves_waiting_tool_and_persists_response_e
         .register(&session.id, "req-1", "turn-1", Some("approval".to_string()))
         .await;
 
-    hub.respond_companion_request(&session.id, "req-1", payload.clone())
+    hub.control_service()
+        .respond_companion_request(&session.id, "req-1", payload.clone())
         .await
         .expect("respond should succeed");
 
@@ -1992,7 +1993,8 @@ async fn cancel_marks_running_turn_interrupted() {
         .start_prompt(&session.id, simple_prompt_request("hello"))
         .await
         .expect("prompt should start");
-    hub.cancel(&session.id)
+    hub.runtime_service()
+        .cancel(&session.id)
         .await
         .expect("cancel should succeed");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;

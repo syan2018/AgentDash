@@ -13,7 +13,6 @@ use agentdash_application::vfs::{
     build_project_skill_asset_management_mount, mount_container_id, mount_owner_id,
     mount_owner_kind, mount_purpose,
 };
-use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -22,12 +21,8 @@ use crate::{
         CurrentUser, ProjectPermission, load_project_with_permission,
         load_story_and_project_with_permission, load_task_story_project_with_permission,
     },
-    routes::{
-        acp_sessions::{ensure_session_permission, pick_primary_session_binding},
-        project_agents::resolve_project_workspace,
-        project_sessions::build_project_session_context_response,
-        story_sessions::build_story_session_context_response,
-    },
+    bootstrap::session_context_query::build_session_context_plan,
+    routes::{acp_sessions::ensure_session_permission, project_agents::resolve_project_workspace},
     rpc::ApiError,
 };
 
@@ -716,72 +711,10 @@ pub(crate) async fn resolve_surface_bundle(
             let bindings =
                 ensure_session_permission(state.as_ref(), current_user, session_id, permission)
                     .await?;
-            let Some(primary) = pick_primary_session_binding(&bindings) else {
-                let empty = Vfs::default();
-                let surface = build_surface_summary(state, source, &empty).await?;
-                return Ok((surface, empty));
-            };
-            match primary.owner_type {
-                SessionOwnerType::Project => {
-                    let project = load_project_with_permission(
-                        state.as_ref(),
-                        current_user,
-                        primary.owner_id,
-                        permission,
-                    )
-                    .await?;
-                    build_project_session_context_response(
-                        state,
-                        &project,
-                        session_id,
-                        &primary.label,
-                    )
-                    .await?
-                    .vfs
-                    .unwrap_or_default()
-                }
-                SessionOwnerType::Story => {
-                    let (story, _) = load_story_and_project_with_permission(
-                        state.as_ref(),
-                        current_user,
-                        primary.owner_id,
-                        permission,
-                    )
-                    .await?;
-                    build_story_session_context_response(state, &story, session_id)
-                        .await?
-                        .and_then(|context| context.vfs)
-                        .unwrap_or_default()
-                }
-                SessionOwnerType::Task => {
-                    let task_id = primary.owner_id;
-                    let (task, _, _) = load_task_story_project_with_permission(
-                        state.as_ref(),
-                        current_user,
-                        task_id,
-                        permission,
-                    )
-                    .await?;
-                    let session_meta = state
-                        .services
-                        .session_hub
-                        .get_session_meta(session_id)
-                        .await
-                        .map_err(|error| ApiError::Internal(error.to_string()))?;
-                    let built_context =
-                        agentdash_application::task::context_builder::build_task_session_context(
-                            &state.repos,
-                            &state.services.vfs_service,
-                            &state.config.platform_config,
-                            task.id,
-                            session_meta.as_ref(),
-                        )
-                        .await;
-                    built_context
-                        .and_then(|context| context.vfs)
-                        .unwrap_or_default()
-                }
-            }
+            build_session_context_plan(state, current_user, session_id, &bindings)
+                .await?
+                .and_then(|plan| plan.context_projection.vfs)
+                .unwrap_or_default()
         }
     };
 

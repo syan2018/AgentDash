@@ -3,7 +3,7 @@
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
-use agentdash_application::session::{PromptSessionRequest, SessionHub, UserPromptInput};
+use agentdash_application::session::{LaunchCommand, SessionHub, UserPromptInput};
 
 use super::CommandHandler;
 use super::relay_mcp_servers::parse_relay_mcp_servers;
@@ -103,22 +103,22 @@ impl CommandHandler {
             }
         }
 
-        let vfs = agentdash_application::session::local_workspace_vfs(&workspace_root);
-
-        let mut req = PromptSessionRequest::from_user_input(UserPromptInput {
-            prompt_blocks: payload.prompt_blocks.map(|v| {
-                if let serde_json::Value::Array(arr) = v {
-                    arr
-                } else {
-                    vec![v]
-                }
-            }),
-            working_dir: payload.working_dir.clone(),
-            env: payload.env,
-            executor_config,
-        });
-        req.mcp_servers = parse_relay_mcp_servers(&payload.mcp_servers);
-        req.vfs = Some(vfs);
+        let command = LaunchCommand::local_relay_prompt_input(
+            UserPromptInput {
+                prompt_blocks: payload.prompt_blocks.map(|v| {
+                    if let serde_json::Value::Array(arr) = v {
+                        arr
+                    } else {
+                        vec![v]
+                    }
+                }),
+                env: payload.env,
+                executor_config,
+            },
+            parse_relay_mcp_servers(&payload.mcp_servers),
+            workspace_root,
+        )
+        .with_follow_up(follow_up.clone());
 
         tracing::info!(
             session_id = %session_id,
@@ -129,7 +129,8 @@ impl CommandHandler {
         let event_tx = self.event_tx.clone();
 
         match hub
-            .launch_local_relay_prompt_with_follow_up(&session_id, follow_up.as_deref(), req)
+            .launch_service()
+            .launch_command(&session_id, command)
             .await
         {
             Ok(turn_id) => {
@@ -178,7 +179,7 @@ impl CommandHandler {
         };
 
         tracing::info!(session_id = %payload.session_id, "收到 command.cancel");
-        match hub.cancel(&payload.session_id).await {
+        match hub.runtime_service().cancel(&payload.session_id).await {
             Ok(()) => RelayMessage::ResponseCancel {
                 id,
                 payload: Some(ResponseCancelPayload {
@@ -228,7 +229,7 @@ async fn forward_session_notifications(
     _turn_id: &str,
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 ) {
-    let mut rx = hub.ensure_session(session_id).await;
+    let mut rx = hub.eventing_service().ensure_session(session_id).await;
 
     loop {
         match rx.recv().await {

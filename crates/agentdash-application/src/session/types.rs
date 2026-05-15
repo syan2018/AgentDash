@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
-use agentdash_spi::hooks::ContextFrame;
-use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
+use agentdash_spi::PromptPayload;
 use uuid::Uuid;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -17,61 +16,15 @@ pub struct UserPromptInput {
     #[serde(default)]
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     #[serde(default)]
-    pub working_dir: Option<String>,
-    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// 后端完整请求 — 包含用户输入 + 后端注入的运行时上下文。
+/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。
 ///
-/// 由 session bootstrap 代码组合 `UserPromptInput` + 后端注入字段构造。
-pub struct PromptSessionRequest {
-    pub user_input: UserPromptInput,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub vfs: Option<Vfs>,
-    pub capability_state: Option<agentdash_spi::CapabilityState>,
-    /// 结构化上下文 Bundle —— 所有 connector 的主数据源。
-    pub context_bundle: Option<SessionContextBundle>,
-    /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
-    pub continuation_context_frame: Option<ContextFrame>,
-    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
-    ///
-    /// owner 首轮初始化与冷启动续跑都由 session 生命周期层决定，
-    /// route / frontend 只传原始用户输入。与 `SessionMeta.bootstrap_state` 不同 —
-    /// 后者是**持久化**的 session bootstrap 阶段标记（Plain/Pending/Bootstrapped），
-    /// 本字段仅是本轮 prompt 级别的 hook 触发器。
-    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
-    /// 发起本次 prompt 的用户身份（由 HTTP handler 从 session 注入）。
-    pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-    /// Turn 事件回调（替代 TurnMonitor）。
-    /// 由 task 执行层注入，在 session pipeline 事件流和终态时回调。
-    /// 为 None 时不执行任何回调（普通 session prompt 场景）。
-    pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
-}
-
-impl PromptSessionRequest {
-    /// 从 `UserPromptInput` 构造，后端注入字段全部为空。
-    pub fn from_user_input(input: UserPromptInput) -> Self {
-        Self {
-            user_input: input,
-            mcp_servers: Vec::new(),
-            vfs: None,
-            capability_state: None,
-            context_bundle: None,
-            continuation_context_frame: None,
-            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-            identity: None,
-            post_turn_handler: None,
-        }
-    }
-}
-
-/// PhaseNode 已激活但当前没有 live turn 可热更新时，暂存在 session meta 中的切换。
-///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费这些 transition，把最后一个 state
-/// 作为本轮生效状态，并清空队列。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 pending commands，把最后一个 state
+/// 作为本轮生效状态，并将 command 标记为 applied。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCapabilityStateTransition {
@@ -154,7 +107,7 @@ pub enum SessionPromptLifecycle {
 /// 3. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
 pub fn resolve_session_prompt_lifecycle(
     meta: &SessionMeta,
-    has_live_runtime: bool,
+    has_live_executor_session: bool,
     supports_repository_restore: bool,
 ) -> SessionPromptLifecycle {
     // P1: 未完成 owner bootstrap 的 session 必须走初始化流程
@@ -172,7 +125,7 @@ pub fn resolve_session_prompt_lifecycle(
     //   - 进程内没有该 session 的 live connector runtime
     //   - session 有历史事件（last_event_seq > 0 表示曾经执行过）
     //   - 执行器侧没有可复用的 follow-up session（否则直接 Plain 续跑）
-    if !has_live_runtime && meta.last_event_seq > 0 && !has_executor_follow_up {
+    if !has_live_executor_session && meta.last_event_seq > 0 && !has_executor_follow_up {
         return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
             SessionRepositoryRehydrateMode::ExecutorState
         } else {
@@ -228,7 +181,6 @@ impl UserPromptInput {
                 "type": "text",
                 "text": trimmed,
             })]),
-            working_dir: None,
             env: HashMap::new(),
             executor_config: None,
         }
@@ -289,8 +241,6 @@ pub struct SessionMeta {
     pub visible_canvas_mount_ids: Vec<String>,
     #[serde(default)]
     pub bootstrap_state: SessionBootstrapState,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pending_capability_state_transitions: Vec<PendingCapabilityStateTransition>,
 }
 
 /// Session 执行状态（持久化到 `SessionMeta.last_execution_status`）。

@@ -1,0 +1,33 @@
+{
+  "id": "session-refactor-batch-2-launch-execution",
+  "name": "session-refactor-batch-2-launch-execution",
+  "title": "Session refactor batch 2 launch execution",
+  "description": "从 prompt pipeline 中抽出一次 launch 的执行前解析，形成可测试 LaunchExecution，减少 start_prompt_with_follow_up 的状态分支。",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "session-refactor-launch-execution",
+  "package": "agentdash-application",
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "codex/session-refactor-task-review",
+  "base_branch": "codex/session-refactor-task-review",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-14-session-launch-refactor-assessment",
+  "relatedFiles": [
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/implement.md",
+    ".trellis/tasks/05-14-session-launch-refactor-assessment/docs/current-to-target-migration.md",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/session/launch.rs",
+    "crates/agentdash-application/src/session/types.rs",
+    "crates/agentdash-application/src/session/hub/tests.rs"
+  ],
+  "notes": "Batch 2 已引入 LaunchExecution 与 connector projection summary，并让 prompt pipeline 通过该 plan 构造 ExecutionContext；未迁移入口 adapter，不删除 PromptSessionRequest，不拆 terminal effects/pending storage。更深层 fallback 纯解析仍需后续继续下沉。",
+  "meta": {}
+}

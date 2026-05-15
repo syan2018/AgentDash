@@ -176,6 +176,16 @@ let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL 
 - [ ] 更新所有 `INSERT`/`SELECT`/`UPSERT` 语句和 `map_*_row` 映射函数
 - [ ] 更新所有手动构造该 struct 的测试代码
 
+### 删除旧列 / 旧持久化主线
+
+删除已废弃字段时必须同时处理代码与迁移：
+
+- repository 的 `CREATE TABLE IF NOT EXISTS`、`SELECT`、`INSERT`、`UPSERT` 不得继续读写旧列。
+- PostgreSQL 必须新增更高编号 migration，使用 `DROP COLUMN IF EXISTS` 清理旧列。
+- SQLite 既有本地库可以保留历史列，但 repository 主线不得再依赖它；不要继续在
+  `initialize()` 中追加旧列。
+- 历史 migration 文件不可倒改；grep 验证时应区分历史迁移记录和当前 src 主线。
+
 ---
 
 ## PL/pgSQL 迁移脚本规范（必读）

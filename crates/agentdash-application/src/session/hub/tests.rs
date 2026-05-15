@@ -7,6 +7,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, ExecutionHookProvider, HookEvaluationQuery, HookInjection,
     HookResolution, HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionHookRefreshQuery,
@@ -22,14 +23,16 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
+use super::super::RuntimeCommandStatus;
+use super::super::construction::SessionConstructionPlan;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
+use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PromptSessionRequest,
-    SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -46,32 +49,33 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
-    PromptSessionRequest {
-        user_input: UserPromptInput {
-            executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
-            ..UserPromptInput::from_text(prompt)
-        },
-        mcp_servers: vec![],
-        vfs: None,
-        capability_state: None,
-        context_bundle: None,
-        continuation_context_frame: None,
-        hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-        identity: None,
-        post_turn_handler: None,
-    }
+fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
+    let user_input = UserPromptInput {
+        executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        ..UserPromptInput::from_text(prompt)
+    };
+    let binding = SessionBinding::new(
+        uuid::Uuid::new_v4(),
+        "test-session".to_string(),
+        SessionOwnerType::Project,
+        uuid::Uuid::new_v4(),
+        "test-project",
+    );
+    let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+    SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PromptSessionRequest {
-    let mut req = simple_prompt_request(prompt);
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionConstructionPlan {
+    let mut construction = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
-    req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
+    let bundle = crate::context::build_continuation_bundle_from_markdown(
         bundle_session_id,
         system_context.to_string(),
-    ));
-    req.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
-    req
+    );
+    construction.context.bundle_id = Some(bundle.bundle_id);
+    construction.context.bootstrap_fragment_count = bundle.bootstrap_fragments.len();
+    construction.context.bundle = Some(bundle);
+    construction
 }
 
 #[derive(Default)]
@@ -185,27 +189,25 @@ async fn start_prompt_records_current_turn_state() {
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Workflow]);
 
     let mut req = simple_prompt_request("hello");
-    req.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.user_input.working_dir = Some("src".to_string());
-    req.mcp_servers = vec![session_mcp.clone()];
-    req.capability_state = Some(flow_caps.clone());
+    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.projections.mcp_servers = vec![session_mcp.clone()];
+    req.projections.capability_state = Some(flow_caps.clone());
 
     hub.start_prompt(&session.id, req)
         .await
         .expect("prompt should start");
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let turn = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.and_then(|runtime| runtime.turn_state.active_turn().cloned())
+        })
+        .await
         .expect("current turn execution state");
     assert_eq!(turn.session_frame.mcp_servers.len(), 1);
     assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
     assert!(turn.session_frame.mcp_servers[0].uses_relay);
-    assert_eq!(
-        turn.session_frame.working_directory,
-        workspace.path().join("src")
-    );
+    assert_eq!(turn.session_frame.working_directory, workspace.path());
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
     assert_eq!(
         turn.capability_state.tool.enabled_clusters,
@@ -484,8 +486,8 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
     let mut req = simple_prompt_request("hello");
-    req.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.capability_state = Some(initial_flow);
+    req.surface.vfs = Some(local_workspace_vfs(workspace.path()));
+    req.projections.capability_state = Some(initial_flow);
 
     hub.start_prompt(&session.id, req)
         .await
@@ -533,18 +535,20 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .await
         .expect("replace capability state");
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let (turn, profile) = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            let runtime = runtime?;
+            Some((
+                runtime.turn_state.active_turn().cloned()?,
+                runtime.session_profile.clone()?,
+            ))
+        })
+        .await
         .expect("current turn execution state");
     assert_eq!(turn.capability_state, target_state);
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
     assert_eq!(turn.session_frame.vfs, Some(target_vfs));
-    let profile = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.session_profile.as_ref())
-        .expect("session profile should be synchronized");
     assert_eq!(profile.capability_state, turn.capability_state);
 }
 
@@ -613,8 +617,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         },
     )
     .await
-    .expect("enqueue pending transition")
-    .expect("session should exist");
+    .expect("enqueue pending transition");
 
     hub.start_prompt(&session.id, simple_prompt_request("hello"))
         .await
@@ -632,12 +635,13 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     assert!(captured.mount_ids.contains(&"lifecycle".to_string()));
     assert_eq!(captured.default_mount_id.as_deref(), Some("workspace"));
 
-    let meta = hub
-        .get_session_meta(&session.id)
+    let applied_commands = hub
+        .persistence
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Applied], 10)
         .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert!(meta.pending_capability_state_transitions.is_empty());
+        .expect("runtime commands should load");
+    assert_eq!(applied_commands.len(), 1);
+    assert_eq!(applied_commands[0].transition_id, "transition-1");
 
     let events = hub
         .persistence
@@ -880,27 +884,26 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
-    {
-        let mut sessions = hub.sessions.lock().await;
-        let runtime = sessions
-            .get_mut(&session.id)
-            .expect("session runtime should exist");
-        runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
-            "turn-cap".to_string(),
-            ExecutionSessionFrame {
-                turn_id: "turn-cap".to_string(),
-                working_directory: base.path().to_path_buf(),
-                environment_variables: HashMap::new(),
-                executor_config: AgentConfig::new("PI_AGENT"),
-                mcp_servers: vec![],
-                vfs: Some(local_workspace_vfs(base.path())),
-                identity: None,
-            },
-            CapabilityState::default(),
-            uuid::Uuid::new_v4(),
-            bundle_session_uuid,
-        )));
-    }
+    hub.runtime_registry
+        .with_runtime_mut(&session.id, |runtime| {
+            let runtime = runtime.expect("session runtime should exist");
+            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
+                "turn-cap".to_string(),
+                ExecutionSessionFrame {
+                    turn_id: "turn-cap".to_string(),
+                    working_directory: base.path().to_path_buf(),
+                    environment_variables: HashMap::new(),
+                    executor_config: AgentConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    vfs: Some(local_workspace_vfs(base.path())),
+                    identity: None,
+                },
+                CapabilityState::default(),
+                uuid::Uuid::new_v4(),
+                bundle_session_uuid,
+            )));
+        })
+        .await;
 
     let hook_session = hub
         .get_hook_session_runtime(&session.id)
@@ -935,10 +938,12 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         "runtime context update 不是 HookTrace trigger，不应写 trace"
     );
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let turn = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.and_then(|runtime| runtime.turn_state.active_turn().cloned())
+        })
+        .await
         .expect("active turn should remain available");
     assert_eq!(turn.runtime_injection_fragments.len(), 1);
     assert_eq!(turn.runtime_injection_fragments[0].slot, "workflow_context");
@@ -979,7 +984,6 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
             json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
             json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
         ]),
-        working_dir: None,
         env: std::collections::HashMap::new(),
         executor_config: None,
     };
@@ -1102,7 +1106,8 @@ async fn respond_companion_request_resolves_waiting_tool_and_persists_response_e
         .register(&session.id, "req-1", "turn-1", Some("approval".to_string()))
         .await;
 
-    hub.respond_companion_request(&session.id, "req-1", payload.clone())
+    hub.control_service()
+        .respond_companion_request(&session.id, "req-1", payload.clone())
         .await
         .expect("respond should succeed");
 
@@ -1824,6 +1829,103 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
 }
 
 #[tokio::test]
+async fn connector_setup_failure_does_not_commit_bootstrap_or_pending_commands() {
+    struct FailingConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for FailingConnector {
+        fn connector_id(&self) -> &'static str {
+            "failing"
+        }
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+        async fn discover_options_stream(
+            &self,
+            _: &str,
+            _: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn prompt(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: &PromptPayload,
+            _: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            Err(ConnectorError::Runtime(
+                "connector setup failed".to_string(),
+            ))
+        }
+        async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn approve_tool_call(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+        async fn reject_tool_call(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
+    let session = hub.create_session("test").await.expect("create session");
+    hub.mark_owner_bootstrap_pending(&session.id)
+        .await
+        .expect("should mark pending");
+    hub.enqueue_pending_capability_state_transition(
+        &session.id,
+        PendingCapabilityStateTransition {
+            id: "transition-fail".to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "review".to_string(),
+            capability_keys: std::collections::BTreeSet::new(),
+            state: agentdash_spi::CapabilityState::default(),
+            created_at: 1,
+            source_turn_id: None,
+        },
+    )
+    .await
+    .expect("enqueue pending transition");
+
+    let error = hub
+        .start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
+        .await
+        .expect_err("prompt should fail");
+    assert!(error.to_string().contains("connector setup failed"));
+
+    let meta = hub
+        .get_session_meta(&session.id)
+        .await
+        .expect("meta should load")
+        .expect("session should exist");
+    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Pending);
+
+    let pending_commands = hub
+        .persistence
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Pending], 10)
+        .await
+        .expect("runtime commands should load");
+    assert_eq!(pending_commands.len(), 1);
+    assert_eq!(pending_commands[0].transition_id, "transition-fail");
+}
+
+#[tokio::test]
 async fn cancel_marks_running_turn_interrupted() {
     #[derive(Default)]
     struct CancelAwareConnector {
@@ -1891,7 +1993,8 @@ async fn cancel_marks_running_turn_interrupted() {
         .start_prompt(&session.id, simple_prompt_request("hello"))
         .await
         .expect("prompt should start");
-    hub.cancel(&session.id)
+    hub.runtime_service()
+        .cancel(&session.id)
         .await
         .expect("cancel should succeed");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -1927,29 +2030,32 @@ async fn cancel_marks_running_turn_interrupted() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Fail-lock: auto-resume 必须经过 PromptRequestAugmenter
+// Fail-lock: auto-resume 必须经过 SessionConstructionProvider
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn launch_prompt_strict_requires_prompt_augmenter() {
+async fn launch_prompt_strict_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("strict-launch").await.expect("create");
 
     let error = hub
-        .launch_prompt_with_intent(
+        .launch_service()
+        .launch_command(
             &session.id,
-            simple_prompt_request("hello"),
-            super::super::launch_intent::SessionLaunchIntent::http_prompt(),
+            super::super::launch::LaunchCommand::http_prompt_input(
+                UserPromptInput::from_text("hello"),
+                None,
+            ),
         )
         .await
-        .expect_err("strict launch 应在 augmenter 缺失时失败");
+        .expect_err("strict launch 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("prompt_augmenter 未注入"),
-                "错误信息应提示 augmenter 缺失，实际为: {message}"
+                message.contains("session_construction_provider 未注入"),
+                "错误信息应提示 provider 缺失，实际为: {message}"
             );
         }
         other => panic!("期望 Runtime 错误，实际为: {other}"),
@@ -1957,7 +2063,38 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
+async fn launch_prompt_relaxed_requires_session_construction_provider() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let session = hub.create_session("relaxed-launch").await.expect("create");
+
+    let error = hub
+        .launch_service()
+        .launch_command(
+            &session.id,
+            super::super::launch::LaunchCommand::local_relay_prompt_input(
+                UserPromptInput::from_text("hello"),
+                Vec::new(),
+                workspace.path().to_path_buf(),
+            ),
+        )
+        .await
+        .expect_err("relaxed launch 应在 provider 缺失时失败");
+
+    match error {
+        ConnectorError::Runtime(message) => {
+            assert!(
+                message.contains("拒绝 relaxed launch"),
+                "错误信息应提示 relaxed launch 被拒绝，实际为: {message}"
+            );
+        }
+        other => panic!("期望 Runtime 错误，实际为: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct PromptCountingConnector {
@@ -2026,38 +2163,38 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
         .await
         .expect("create");
 
-    // 不注入 augmenter，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
+    // 不注入 provider，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
     hub.schedule_hook_auto_resume(session.id.clone());
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     assert_eq!(
         prompt_calls.load(Ordering::SeqCst),
         0,
-        "strict auto-resume 在 augmenter 缺失时不应触发 connector.prompt"
+        "strict auto-resume 在 provider 缺失时不应触发 connector.prompt"
     );
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::augmenter::PromptRequestAugmenter;
+async fn schedule_hook_auto_resume_routes_through_provider() {
+    use crate::session::{LaunchCommand, SessionConstructionProvider};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct SpyAugmenter {
+    struct SpyConstructionProvider {
         calls: Arc<AtomicUsize>,
         captured_prompt: Arc<TokioMutex<Option<String>>>,
         captured_mcp_len: Arc<AtomicUsize>,
     }
 
     #[async_trait::async_trait]
-    impl PromptRequestAugmenter for SpyAugmenter {
-        async fn augment(
+    impl SessionConstructionProvider for SpyConstructionProvider {
+        async fn build_construction(
             &self,
             _session_id: &str,
-            req: PromptSessionRequest,
-        ) -> Result<PromptSessionRequest, ConnectorError> {
+            command: &LaunchCommand,
+        ) -> Result<SessionConstructionPlan, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let text = req
-                .user_input
+            let text = command
+                .user_input()
                 .prompt_blocks
                 .as_ref()
                 .and_then(|blocks| blocks.first())
@@ -2065,10 +2202,12 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
-            self.captured_mcp_len
-                .store(req.mcp_servers.len(), Ordering::SeqCst);
+            self.captured_mcp_len.store(
+                command.local_relay_mcp_declarations().len(),
+                Ordering::SeqCst,
+            );
             Err(ConnectorError::InvalidConfig(
-                "spy augmenter stops here".to_string(),
+                "spy provider stops here".to_string(),
             ))
         }
     }
@@ -2105,7 +2244,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             _: agentdash_spi::ExecutionContext,
         ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
             Err(ConnectorError::Runtime(
-                "connector should not be reached if augmenter stopped".to_string(),
+                "connector should not be reached if provider stopped".to_string(),
             ))
         }
         async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
@@ -2131,7 +2270,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
     let calls = Arc::new(AtomicUsize::new(0));
     let captured_prompt = Arc::new(TokioMutex::new(None));
     let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
-    hub.set_prompt_augmenter(Arc::new(SpyAugmenter {
+    hub.set_session_construction_provider(Arc::new(SpyConstructionProvider {
         calls: calls.clone(),
         captured_prompt: captured_prompt.clone(),
         captured_mcp_len: captured_mcp_len.clone(),
@@ -2166,31 +2305,25 @@ async fn auto_resume_prompt_does_not_induce_recap() {
 
 #[tokio::test]
 async fn request_hook_auto_resume_enforces_cap() {
-    use tokio::sync::broadcast;
-
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("auto-resume-cap").await.expect("create");
-
-    {
-        let mut sessions = hub.sessions.lock().await;
-        let (tx, _rx) = broadcast::channel(16);
-        sessions.insert(
-            session.id.clone(),
-            super::super::hub_support::build_session_runtime(tx),
-        );
-    }
+    let _rx = hub.ensure_session(&session.id).await;
 
     assert!(hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
 
-    let sessions = hub.sessions.lock().await;
-    let runtime = sessions
-        .get(&session.id)
-        .expect("session runtime should exist");
-    assert_eq!(runtime.hook_auto_resume_count, 2);
+    let auto_resume_count = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime
+                .map(|runtime| runtime.hook_auto_resume_count)
+                .expect("session runtime should exist")
+        })
+        .await;
+    assert_eq!(auto_resume_count, 2);
 }
 
 #[tokio::test]

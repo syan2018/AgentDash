@@ -1,64 +1,294 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{
-    ConnectorError, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
-};
+use agentdash_spi::{AgentConnector, ConnectorError, McpRelayProvider, Vfs};
 
-use super::baseline_capabilities::build_session_baseline_capabilities;
-use super::capability_state::merge_vfs_overlay;
-use super::hook_delegate::{
-    DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
-};
+use super::assignment_context_frame::build_assignment_context_frame;
+use super::capability_service::SessionCapabilityService;
+use super::construction::SessionConstructionPlan;
+use super::construction_provider::SharedSessionConstructionProvider;
+use super::core::SessionCoreService;
+use super::effects_service::SessionEffectsService;
+use super::eventing::SessionEventingService;
 use super::hook_runtime::HookSessionRuntime;
+use super::hooks_service::SessionHookService;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
-use super::assignment_context_frame::build_assignment_context_frame;
+use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
+use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
-use super::path_policy::resolve_working_dir;
+use super::persistence::SessionStoreSet;
+use super::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
+use super::runtime_registry::SessionRuntimeRegistry;
+use super::title_generator::SessionTitleGenerator;
+use super::turn_supervisor::TurnSupervisor;
 pub use super::types::*;
+use crate::context::SharedContextAuditBus;
 
-impl SessionHub {
-    /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
-    pub async fn start_prompt_with_follow_up(
+#[derive(Clone)]
+pub(super) struct SessionLaunchDeps {
+    pub(super) default_vfs: Option<Vfs>,
+    pub(super) connector: Arc<dyn AgentConnector>,
+    pub(super) runtime_registry: SessionRuntimeRegistry,
+    pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) stores: SessionStoreSet,
+    pub(super) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
+    pub(super) extra_skill_dirs: Vec<std::path::PathBuf>,
+    pub(super) title_generator: Option<Arc<dyn SessionTitleGenerator>>,
+    pub(super) session_construction_provider:
+        Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
+    pub(super) hook_effect_handler_registry:
+        Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
+    pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
+    pub(super) base_system_prompt: String,
+    pub(super) user_preferences: Vec<String>,
+    pub(super) runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
+    pub(super) mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
+    pub(super) eventing: SessionEventingService,
+    pub(super) core: SessionCoreService,
+    pub(super) hooks: SessionHookService,
+    pub(super) capability: SessionCapabilityService,
+    pub(super) effects: SessionEffectsService,
+}
+
+impl SessionLaunchDeps {
+    pub(super) async fn current_session_construction_provider(
+        &self,
+    ) -> Option<SharedSessionConstructionProvider> {
+        self.session_construction_provider.read().await.clone()
+    }
+
+    pub(super) async fn current_context_audit_bus(&self) -> Option<SharedContextAuditBus> {
+        self.context_audit_bus.read().await.clone()
+    }
+
+    pub(super) async fn build_tools_for_execution_context(
         &self,
         session_id: &str,
-        follow_up_session_id: Option<&str>,
-        mut req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        let resolved_payload = req
-            .user_input
-            .resolve_prompt_payload()
-            .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
-        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
-        let had_existing_runtime = self.connector.has_live_session(session_id).await;
+        context: &agentdash_spi::ExecutionContext,
+        mcp_servers: &[agentdash_spi::SessionMcpServer],
+    ) -> Vec<agentdash_agent_types::DynAgentTool> {
+        use agentdash_executor::mcp::{self as mcp_discovery};
 
-        let cached_continuation = {
-            let mut sessions = self.sessions.lock().await;
-            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-                let (tx, _rx) = tokio::sync::broadcast::channel(1024);
-                build_session_runtime(tx)
-            });
-            if runtime.is_running() {
-                return Err(ConnectorError::Runtime(
-                    "该会话有正在执行的 prompt，请等待完成或取消后再试".into(),
-                ));
+        let mut all_tools = Vec::new();
+
+        if let Some(provider) = &self.runtime_tool_provider {
+            match provider.build_tools(context).await {
+                Ok(tools) => all_tools.extend(tools),
+                Err(e) => tracing::warn!(
+                    session_id = %session_id,
+                    "runtime tool 构建失败: {e}"
+                ),
             }
-            runtime.turn_state = TurnState::Claimed;
-            runtime.session_profile.clone()
-        };
+        }
 
-        let persistence = self.persistence.clone();
+        let (relay_names, direct_servers) =
+            agentdash_spi::partition_session_mcp_servers(mcp_servers);
+        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.capability_state)
+            .await
+        {
+            Ok(tools) => all_tools.extend(tools),
+            Err(e) => tracing::warn!(
+                session_id = %session_id,
+                "直连 MCP 工具发现失败: {e}"
+            ),
+        }
+
+        if let Some(relay) = &self.mcp_relay_provider {
+            let call_context = agentdash_spi::RelayMcpCallContext {
+                session_id: session_id.to_string(),
+                turn_id: Some(context.session.turn_id.clone()),
+                tool_call_id: None,
+                vfs: context.session.vfs.clone(),
+                identity: context.session.identity.clone(),
+            };
+            let tools = mcp_discovery::discover_relay_mcp_tools(
+                relay.clone(),
+                &relay_names,
+                &context.turn.capability_state,
+                Some(call_context),
+            )
+            .await;
+            all_tools.extend(tools);
+        }
+
+        all_tools
+    }
+
+    pub(super) fn spawn_title_generation(&self, session_id: String, user_prompt: String) {
+        let Some(generator) = self.title_generator.clone() else {
+            return;
+        };
+        let eventing = self.eventing.clone();
+        let core = self.core.clone();
+
+        tokio::spawn(async move {
+            let result = generator.generate_title(&user_prompt).await;
+            match result {
+                Ok(title) if !title.trim().is_empty() => {
+                    let title = title.trim().to_string();
+                    let updated = core
+                        .update_session_meta(&session_id, |meta| {
+                            if meta.title_source == TitleSource::User {
+                                return;
+                            }
+                            meta.title = title;
+                            meta.title_source = TitleSource::Auto;
+                        })
+                        .await;
+                    match updated {
+                        Ok(Some(meta)) => {
+                            let source = SourceInfo {
+                                connector_id: "agentdash-server".to_string(),
+                                connector_type: "system".to_string(),
+                                executor_id: None,
+                            };
+                            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                                agentdash_agent_protocol::BackboneEvent::Platform(
+                                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                                        key: "session_meta_updated".to_string(),
+                                        value: serde_json::json!({
+                                            "title": meta.title,
+                                            "title_source": meta.title_source,
+                                        }),
+                                    },
+                                ),
+                                &session_id,
+                                source,
+                            );
+                            let _ = eventing.persist_notification(&session_id, envelope).await;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %error,
+                                "自动标题写入失败"
+                            );
+                        }
+                    }
+                }
+                Ok(_) => {
+                    tracing::warn!(session_id = %session_id, "LLM 返回了空标题，保留原标题");
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        reason = %reason,
+                        "自动标题生成失败，保留原标题"
+                    );
+                }
+            }
+        });
+    }
+}
+
+pub(super) struct SessionLaunchExecutor {
+    deps: SessionLaunchDeps,
+}
+
+impl SessionLaunchExecutor {
+    pub fn new(deps: SessionLaunchDeps) -> Self {
+        Self { deps }
+    }
+
+    pub async fn execute_command(
+        &self,
+        session_id: &str,
+        command: LaunchCommand,
+    ) -> Result<LaunchCommandOutcome, ConnectorError> {
+        let reason = command.reason_tag();
+        let strictness = command.strictness();
+        let construction = match strictness {
+            LaunchStrictness::Strict => {
+                let Some(provider) = self.deps.current_session_construction_provider().await else {
+                    return Err(ConnectorError::Runtime(format!(
+                        "session_construction_provider 未注入，拒绝 strict launch: {reason}"
+                    )));
+                };
+                provider.build_construction(session_id, &command).await?
+            }
+            LaunchStrictness::Relaxed => {
+                self.build_construction_relaxed_command(session_id, &command, reason)
+                    .await?
+            }
+        };
+        let context_sources = construction
+            .context
+            .bundle
+            .as_ref()
+            .map(|bundle| {
+                bundle
+                    .iter_fragments()
+                    .map(|fragment| format!("{}({})", fragment.label, fragment.slot))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let turn_id = self
+            .execute_constructed_launch(session_id, &command, construction)
+            .await?;
+        Ok(LaunchCommandOutcome {
+            turn_id,
+            context_sources,
+        })
+    }
+
+    async fn build_construction_relaxed_command(
+        &self,
+        session_id: &str,
+        command: &LaunchCommand,
+        reason: &str,
+    ) -> Result<SessionConstructionPlan, ConnectorError> {
+        let Some(provider) = self.deps.current_session_construction_provider().await else {
+            return Err(ConnectorError::Runtime(format!(
+                "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
+            )));
+        };
+        provider.build_construction(session_id, command).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn execute_constructed_launch_for_test(
+        &self,
+        session_id: &str,
+        construction: SessionConstructionPlan,
+    ) -> Result<String, ConnectorError> {
+        let user_input = UserPromptInput {
+            prompt_blocks: construction.prompt.prompt_blocks.clone(),
+            env: construction.prompt.environment_variables.clone(),
+            executor_config: construction.execution_profile.executor_config.clone(),
+        };
+        let command = LaunchCommand::http_prompt_input(user_input, None);
+        self.execute_constructed_launch(session_id, &command, construction)
+            .await
+    }
+
+    /// 已完成 construction plan 准备后的执行段。生产入口只能从 `execute_command` 进入。
+    async fn execute_constructed_launch(
+        &self,
+        session_id: &str,
+        command: &LaunchCommand,
+        construction: SessionConstructionPlan,
+    ) -> Result<String, ConnectorError> {
+        let deps = &self.deps;
+        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+        let had_existing_runtime = deps.connector.has_live_session(session_id).await;
+
+        let cached_continuation = deps.turn_supervisor.claim_prompt(session_id).await?;
+
+        let meta_store = deps.stores.meta.clone();
+        let runtime_command_store = deps.stores.runtime_commands.clone();
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let mut session_meta = match persistence.get_session_meta(&sid).await {
+        let mut session_meta = match meta_store.get_session_meta(&sid).await {
             Ok(Some(meta)) => meta,
             Ok(None) => {
                 return Err(ConnectorError::Runtime(format!(
@@ -71,209 +301,61 @@ impl SessionHub {
                 )));
             }
         };
-        let pending_capability_transitions =
-            std::mem::take(&mut session_meta.pending_capability_state_transitions);
-        let pending_capability_state = pending_capability_transitions
-            .last()
-            .map(|transition| transition.state.clone());
-
-        // 三级 fallback：① 请求级（Init/Rehydrate 注入） → ② session 缓存（Continue 复用） → ③ hub 默认
-        let base_effective_vfs = req
-            .vfs
-            .clone()
-            .or_else(|| {
-                cached_continuation
-                    .as_ref()
-                    .and_then(|c| c.capability_state.vfs.active.clone())
-            })
-            .or_else(|| self.default_vfs.clone())
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "prompt 缺少 vfs，且 session 无缓存、SessionHub 未配置默认 vfs".to_string(),
-                )
-            })?;
-        let mut effective_vfs = base_effective_vfs.clone();
-        if let Some(pending_surface) = pending_capability_state.as_ref()
-            && let Some(pending_vfs) = pending_surface.vfs.active.as_ref()
-        {
-            effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
-        }
-        let default_mount_root = effective_vfs
-            .default_mount()
-            .map(|m| PathBuf::from(m.root_ref.trim()))
-            .filter(|p| !p.as_os_str().is_empty())
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
-            })?;
-        let working_directory =
-            resolve_working_dir(&default_mount_root, req.user_input.working_dir.as_deref());
-
-        let title_hint = resolved_payload
-            .text_prompt
-            .chars()
-            .take(30)
-            .collect::<String>();
-        let executor_config = req
-            .user_input
-            .executor_config
-            .clone()
-            .or_else(|| session_meta.executor_config.clone())
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "当前 prompt 缺少 executor_config，且 session meta 中也没有可复用配置"
-                        .to_string(),
-                )
-            })?;
-
-        let is_owner_bootstrap = req.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
-
-        let hook_session: Option<SharedHookSessionRuntime> = match self
-            .resolve_hook_session(
-                session_id,
-                &turn_id,
-                &executor_config,
-                &working_directory,
-                is_owner_bootstrap,
-            )
+        let pending_runtime_commands = runtime_command_store
+            .list_pending_runtime_commands(&sid)
             .await
-        {
-            Ok(hs) => hs,
-            Err(error) => {
-                let mut sessions = self.sessions.lock().await;
-                if let Some(runtime) = sessions.get_mut(session_id) {
-                    runtime.turn_state = TurnState::Idle;
-                    runtime.hook_session = None;
-                }
-                return Err(error);
-            }
-        };
-
-        // 把 hook snapshot 里的 injection 合并到 compose 期 fragment 集合。
-        // Bundle 仍可作为 compose 中间载体，但 connector 不再直接消费 Bundle。
-        let hook_snapshot_contribution = hook_session.as_ref().map(|hs| {
-            let snapshot = hs.snapshot();
-            let contribution: crate::context::Contribution = (&snapshot).into();
-            contribution.fragments
-        });
-        if let Some(bundle) = req.context_bundle.as_mut()
-            && let Some(fragments) = hook_snapshot_contribution.as_ref()
-        {
-            bundle.merge(fragments.clone());
-        }
-
-        let context_audit_bus = self.current_context_audit_bus().await;
-        let runtime_delegate = hook_session.as_ref().map(|hs| {
-            let injection_sink: DynRuntimeHookInjectionSink =
-                Arc::new(SessionRuntimeHookInjectionSink::new(
-                    self.sessions.clone(),
-                    context_audit_bus.clone(),
-                ));
-            HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
-                hs.clone(),
-                Some(default_mount_root.to_string_lossy().replace('\\', "/")),
-                context_audit_bus.clone(),
-                Some(injection_sink),
-            )
-        });
-        let supports_repository_restore = self
-            .connector
-            .supports_repository_restore(executor_config.executor.as_str());
-        let prompt_lifecycle = resolve_session_prompt_lifecycle(
-            &session_meta,
-            had_existing_runtime,
-            supports_repository_restore,
-        );
-        let restored_session_state = match prompt_lifecycle {
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState,
-            ) => {
-                let transcript =
-                    self.build_projected_transcript(session_id)
-                        .await
-                        .map_err(|error| {
-                            ConnectorError::Runtime(format!(
-                                "重建 session `{session_id}` 历史消息失败: {error}"
-                            ))
-                        })?;
-                (!transcript.is_empty()).then(|| RestoredSessionState {
-                    messages: transcript.into_messages(),
-                })
-            }
-            _ => None,
-        };
-
-        let discovered_skills = self.discover_skills(&effective_vfs).await;
-        let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
-        let discovered_guidelines = self.discover_guidelines(&effective_vfs).await;
-
-        // session 级配置：请求未提供时回退到 session_profile 缓存
-        let base_mcp_servers = if req.mcp_servers.is_empty() {
-            cached_continuation
-                .as_ref()
-                .map(|c| c.capability_state.tool.mcp_servers.clone())
-                .unwrap_or_default()
-        } else {
-            req.mcp_servers.clone()
-        };
-        let mcp_servers = if let Some(pending_state) = pending_capability_state.as_ref() {
-            pending_state.tool.mcp_servers.clone()
-        } else {
-            base_mcp_servers.clone()
-        };
-        // base capability state: resolver 产出 + session-level MCP/VFS 完整合入
-        let base_capability_state = {
-            let mut state = req
-                .capability_state
-                .clone()
-                .or_else(|| {
-                    cached_continuation
-                        .as_ref()
-                        .map(|c| c.capability_state.clone())
-                })
-                .unwrap_or_default();
-            state.tool.mcp_servers = base_mcp_servers.clone();
-            state.vfs.active = Some(base_effective_vfs.clone());
-            state.skill.skills = session_capabilities.skills.clone();
-            state
-        };
-        // 最终 capability state: 若有 pending transition 则使用其状态（补全 MCP/VFS）
-        let capability_state = if let Some(pending_state) = pending_capability_state.as_ref() {
-            let mut state = pending_state.clone();
-            state.tool.mcp_servers = mcp_servers.clone();
-            state.vfs.active = Some(effective_vfs.clone());
-            state.skill.skills = session_capabilities.skills.clone();
-            state
-        } else {
-            base_capability_state.clone()
-        };
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "读取 session `{sid}` pending runtime commands 失败: {error}"
+                ))
+            })?;
+        let launch_execution = SessionLaunchPlanner::new(deps.clone())
+            .plan(SessionLaunchPlannerInput {
+                session_id,
+                turn_id: &turn_id,
+                command,
+                had_existing_runtime,
+                cached_continuation,
+                session_meta: &session_meta,
+                pending_runtime_commands,
+                construction,
+            })
+            .await?;
+        let resolved_payload = launch_execution.resolved_payload.clone();
+        let title_hint = launch_execution.title_hint.clone();
+        let resolved_follow_up_session_id = launch_execution.summary.follow_up_session_id.clone();
+        let post_turn_handler = launch_execution.terminal_effects.post_turn_handler.clone();
+        let hook_session = launch_execution.context.turn.hook_session.clone();
+        let hook_snapshot_contribution = launch_execution.hooks.snapshot_contribution.clone();
+        let context_bundle = launch_execution.construction.context.bundle.clone();
+        let discovered_guidelines = launch_execution.discovered_guidelines.clone();
+        let base_capability_state = launch_execution
+            .runtime_commands
+            .base_capability_state
+            .clone();
+        let capability_state = launch_execution.context.turn.capability_state.clone();
         let capability_keys = capability_state.capability_keys();
-        let identity = req.identity.clone();
-
-        // session_frame 从完整 capability_state 派生
-        let session_frame = ExecutionSessionFrame {
-            turn_id: turn_id.clone(),
-            working_directory,
-            environment_variables: req.user_input.env,
-            executor_config,
-            mcp_servers: capability_state.tool.mcp_servers.clone(),
-            vfs: capability_state.vfs.active.clone(),
-            identity: identity.clone(),
-        };
-        let turn_frame = ExecutionTurnFrame {
-            hook_session: hook_session.clone(),
-            capability_state: capability_state.clone(),
-            runtime_delegate,
-            restored_session_state,
-            context_frames: Vec::new(),
-            assembled_tools: Vec::new(),
-        };
-        let mut context = ExecutionContext {
-            session: session_frame,
-            turn: turn_frame,
-        };
+        let is_owner_bootstrap =
+            launch_execution.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
+        tracing::debug!(
+            session_id = %launch_execution.summary.session_id,
+            turn_id = %launch_execution.summary.turn_id,
+            lifecycle = ?launch_execution.summary.lifecycle,
+            restore_mode = ?launch_execution.summary.restore_mode,
+            follow_up_source = ?launch_execution.summary.follow_up_source,
+            pending_transition_count = launch_execution.summary.pending_transition_count,
+            vfs_source = ?launch_execution.summary.vfs_source,
+            pending_vfs_overlay_applied = launch_execution.summary.pending_vfs_overlay_applied,
+            mcp_source = ?launch_execution.summary.mcp_source,
+            capability_source = ?launch_execution.summary.capability_source,
+            mcp_server_count = launch_execution.summary.mcp_server_count,
+            has_vfs = launch_execution.summary.has_vfs,
+            "prepared session launch execution"
+        );
+        let mut context = launch_execution.context;
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
-        context.turn.assembled_tools = self
+        context.turn.assembled_tools = deps
             .build_tools_for_execution_context(
                 session_id,
                 &context,
@@ -282,21 +364,19 @@ impl SessionHub {
             .await;
 
         let identity_frame = build_identity_context_frame(&IdentityFrameInput {
-            base_system_prompt: &self.base_system_prompt,
+            base_system_prompt: &deps.base_system_prompt,
             agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
             agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-            user_preferences: &self.user_preferences,
+            user_preferences: &deps.user_preferences,
             discovered_guidelines: &discovered_guidelines,
         });
 
-        let compose_fragments = req
-            .context_bundle
+        let compose_fragments = context_bundle
             .as_ref()
             .map(|bundle| bundle.bootstrap_fragments.clone())
             .or_else(|| hook_snapshot_contribution.clone())
             .unwrap_or_default();
-        let (audit_bundle_id, audit_session_id) = req
-            .context_bundle
+        let (audit_bundle_id, audit_session_id) = context_bundle
             .as_ref()
             .map(|bundle| (bundle.bundle_id, bundle.session_id))
             .unwrap_or_else(|| {
@@ -311,76 +391,56 @@ impl SessionHub {
             });
 
         {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.session_profile = Some(super::hub_support::SessionProfile {
-                    capability_state: capability_state.clone(),
-                });
-                runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
-                    turn_id.clone(),
-                    context.session.clone(),
-                    capability_state.clone(),
-                    audit_bundle_id,
-                    audit_session_id,
-                )));
-            }
+            deps.turn_supervisor
+                .activate_turn(
+                    session_id,
+                    super::hub_support::SessionProfile {
+                        capability_state: capability_state.clone(),
+                    },
+                    TurnExecution::new(
+                        turn_id.clone(),
+                        context.session.clone(),
+                        capability_state.clone(),
+                        audit_bundle_id,
+                        audit_session_id,
+                    ),
+                )
+                .await;
         }
 
-        Self::apply_turn_start_meta(
-            &mut session_meta,
-            now,
-            &turn_id,
-            &context.session.executor_config,
-            is_owner_bootstrap,
-            &title_hint,
-        );
-        let _ = persistence.save_session_meta(&session_meta).await;
-
-        let pending_transition_frames = if !pending_capability_transitions.is_empty() {
-            self.apply_pending_runtime_context_transitions_on_turn(
-                &sid,
-                &turn_id,
-                hook_session.as_ref(),
-                base_capability_state,
-                &pending_capability_transitions,
-                &context.turn.assembled_tools,
-            )
-            .await
+        let pending_command_ids = launch_execution
+            .runtime_commands
+            .pending_commands
+            .iter()
+            .map(|command| command.id)
+            .collect::<Vec<_>>();
+        let pending_transition_application = if !launch_execution
+            .runtime_commands
+            .pending_capability_transitions
+            .is_empty()
+        {
+            deps.capability
+                .apply_pending_runtime_context_transitions_on_turn(
+                    &sid,
+                    &turn_id,
+                    hook_session.as_ref(),
+                    base_capability_state,
+                    &launch_execution
+                        .runtime_commands
+                        .pending_capability_transitions,
+                    &context.turn.assembled_tools,
+                )
+                .await
         } else {
-            Vec::new()
+            Default::default()
         };
 
-        // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成
-        let is_first_turn = session_meta.last_event_seq <= 1;
-        if is_first_turn
-            && session_meta.title_source != super::types::TitleSource::User
-            && self.title_generator.is_some()
-        {
-            self.spawn_title_generation(
-                session_id.to_string(),
-                resolved_payload.text_prompt.clone(),
-            );
-        }
-
-        let resolved_follow_up_session_id = follow_up_session_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .or_else(|| {
-                session_meta
-                    .executor_session_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
-            });
-
-        let connector_type = match self.connector.connector_type() {
+        let connector_type = match deps.connector.connector_type() {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
+            connector_id: deps.connector.connector_id().to_string(),
             connector_type: connector_type.to_string(),
             executor_id: Some(context.session.executor_config.executor.to_string()),
         };
@@ -395,11 +455,11 @@ impl SessionHub {
             &resolved_payload.user_blocks,
         );
         for envelope in user_envelopes {
-            let _ = self.persist_notification(&sid, envelope).await;
+            let _ = deps.eventing.persist_notification(&sid, envelope).await;
         }
 
         let started = build_turn_started_envelope(session_id, &source, &turn_id);
-        let _ = self.persist_notification(&sid, started).await;
+        let _ = deps.eventing.persist_notification(&sid, started).await;
 
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
@@ -409,7 +469,8 @@ impl SessionHub {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }
 
-                let _start_effects = self
+                let _start_effects = deps
+                    .hooks
                     .emit_session_hook_trigger(
                         hook_session.as_ref(),
                         &HookTriggerInput {
@@ -431,6 +492,7 @@ impl SessionHub {
             }
         }
 
+        let mut accepted_context_frames_to_emit = Vec::new();
         let mut owner_bootstrap_frames = Vec::new();
         if is_owner_bootstrap {
             let frame = build_initial_capability_state_frame(
@@ -438,30 +500,36 @@ impl SessionHub {
                 &capability_keys,
                 &context.turn.assembled_tools,
             );
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            accepted_context_frames_to_emit.push(frame.clone());
             owner_bootstrap_frames.push(frame);
 
             if let Some(frame) = build_assignment_context_frame(
-                req.context_bundle.as_ref().map(|bundle| bundle.phase_tag.as_str()),
+                context_bundle
+                    .as_ref()
+                    .map(|bundle| bundle.phase_tag.as_str()),
                 &compose_fragments,
             ) {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+                accepted_context_frames_to_emit.push(frame.clone());
                 owner_bootstrap_frames.push(frame);
             }
         }
 
-        let continuation_context_frame = req.continuation_context_frame.take();
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = continuation_context_frame {
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+        if let Some(frame) = launch_execution
+            .construction
+            .context
+            .continuation_context_frame
+            .clone()
+        {
+            accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
         turn_context_frames.extend(owner_bootstrap_frames);
-        turn_context_frames.extend(pending_transition_frames);
+        turn_context_frames.extend(pending_transition_application.context_frames.clone());
 
         if let Some(hook_session_runtime) = hook_session.as_ref() {
             turn_context_frames.extend(collect_queued_turn_start_frames(
@@ -478,7 +546,7 @@ impl SessionHub {
                 })
                 .collect::<Vec<_>>();
             for frame in &pending_action_frames {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), frame).await;
+                accepted_context_frames_to_emit.push(frame.clone());
             }
             turn_context_frames.extend(pending_action_frames);
         }
@@ -488,8 +556,9 @@ impl SessionHub {
             hook_session.as_ref(),
             &context.turn.context_frames,
         );
+        let executor_config_for_meta = context.session.executor_config.clone();
 
-        let mut stream = match self
+        let mut stream = match deps
             .connector
             .prompt(
                 session_id,
@@ -501,13 +570,7 @@ impl SessionHub {
         {
             Ok(stream) => stream,
             Err(error) => {
-                {
-                    let mut sessions = self.sessions.lock().await;
-                    if let Some(runtime) = sessions.get_mut(session_id) {
-                        runtime.turn_state = TurnState::Idle;
-                        runtime.hook_session = None;
-                    }
-                }
+                deps.turn_supervisor.clear_turn_and_hook(session_id).await;
                 let failed = build_turn_terminal_envelope(
                     &sid,
                     &source,
@@ -515,38 +578,85 @@ impl SessionHub {
                     TurnTerminalKind::Failed,
                     Some(error.to_string()),
                 );
-                let _ = self.persist_notification(&sid, failed).await;
+                let _ = deps.eventing.persist_notification(&sid, failed).await;
                 return Err(error);
             }
         };
+
+        for payload in &pending_transition_application.capability_events {
+            let _ = deps
+                .eventing
+                .emit_capability_state_changed(&sid, Some(&turn_id), payload.clone())
+                .await;
+        }
+        for frame in &accepted_context_frames_to_emit {
+            let _ = deps
+                .eventing
+                .emit_context_frame(&sid, Some(&turn_id), frame)
+                .await;
+        }
+
+        Self::apply_turn_start_meta(
+            &mut session_meta,
+            now,
+            &turn_id,
+            &executor_config_for_meta,
+            is_owner_bootstrap,
+            &title_hint,
+        );
+        let _ = meta_store.save_session_meta(&session_meta).await;
+
+        if !pending_command_ids.is_empty()
+            && let Err(error) = runtime_command_store
+                .mark_runtime_commands_applied(&pending_command_ids)
+                .await
+        {
+            tracing::warn!(
+                session_id = %sid,
+                error = %error,
+                "标记 pending runtime commands applied 失败"
+            );
+        }
+
+        // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成。
+        // connector.prompt 已接受后再触发，避免启动失败时产生额外副作用。
+        let is_first_turn = session_meta.last_event_seq <= 1;
+        if is_first_turn
+            && session_meta.title_source != super::types::TitleSource::User
+            && deps.title_generator.is_some()
+        {
+            deps.spawn_title_generation(
+                session_id.to_string(),
+                resolved_payload.text_prompt.clone(),
+            );
+        }
         let session_id = session_id.to_string();
 
         // 创建 SessionTurnProcessor — cloud-native 和 relay 共用的事件处理核心
         let processor = super::turn_processor::SessionTurnProcessor::spawn(
-            self.clone(),
+            super::turn_processor::SessionTurnProcessorDeps {
+                turn_supervisor: deps.turn_supervisor.clone(),
+                eventing: deps.eventing.clone(),
+                effects: deps.effects.clone(),
+            },
             super::turn_processor::SessionTurnProcessorConfig {
                 session_id: session_id.clone(),
                 turn_id: turn_id.clone(),
                 source: source.clone(),
                 hook_session,
-                post_turn_handler: req.post_turn_handler,
+                post_turn_handler,
             },
         );
 
         let processor_tx = processor.tx();
 
         // 注册 processor_tx 到 SessionRuntime.current_turn，供 relay / cancel 路径使用
-        {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(&session_id)
-                && let Some(turn) = runtime.turn_state.active_turn_mut()
-            {
-                turn.processor_tx = Some(processor_tx.clone());
-            }
-        }
+        deps.turn_supervisor
+            .register_processor_tx(&session_id, processor_tx.clone())
+            .await;
 
         Self::spawn_stream_adapter(
-            self.sessions.clone(),
+            deps.turn_supervisor.clone(),
             session_id.to_string(),
             turn_id.clone(),
             &mut stream,
@@ -558,9 +668,7 @@ impl SessionHub {
 
     /// 将 connector stream 桥接到 processor channel 的后台任务。
     fn spawn_stream_adapter(
-        sessions: std::sync::Arc<
-            tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>,
-        >,
+        turn_supervisor: super::turn_supervisor::TurnSupervisor,
         session_id: String,
         turn_id: String,
         stream: &mut agentdash_spi::ExecutionStream,
@@ -579,7 +687,7 @@ impl SessionHub {
                     Err(e) => {
                         tracing::error!("执行流错误 session_id={}: {}", session_id, e);
                         let (kind, message) = Self::resolve_stream_terminal(
-                            &sessions,
+                            &turn_supervisor,
                             &session_id,
                             &turn_id,
                             Some(e),
@@ -592,33 +700,23 @@ impl SessionHub {
                 }
             }
             let (kind, message) =
-                Self::resolve_stream_terminal(&sessions, &session_id, &turn_id, None).await;
+                Self::resolve_stream_terminal(&turn_supervisor, &session_id, &turn_id, None).await;
             let _ = processor_tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
         });
     }
 
     /// 根据 cancel 状态和错误信息决定 stream 结束时的 terminal kind。
     async fn resolve_stream_terminal(
-        sessions: &tokio::sync::Mutex<std::collections::HashMap<String, SessionRuntime>>,
+        turn_supervisor: &super::turn_supervisor::TurnSupervisor,
         session_id: &str,
         turn_id: &str,
         error: Option<agentdash_spi::ConnectorError>,
     ) -> (TurnTerminalKind, Option<String>) {
-        let (cancel_requested, live_turn_matches) = {
-            let guard = sessions.lock().await;
-            match guard
-                .get(session_id)
-                .and_then(|rt| rt.turn_state.active_turn())
-            {
-                Some(turn) => (turn.cancel_requested, turn.turn_id.as_str() == turn_id),
-                None => (false, false),
-            }
-        };
-        if cancel_requested && live_turn_matches {
-            (
-                TurnTerminalKind::Interrupted,
-                Some("执行已取消".to_string()),
-            )
+        if let Some(terminal) = turn_supervisor
+            .cancel_interrupted_terminal(session_id, turn_id)
+            .await
+        {
+            terminal
         } else if let Some(e) = error {
             (TurnTerminalKind::Failed, Some(e.to_string()))
         } else {
@@ -649,14 +747,16 @@ impl SessionHub {
             meta.title = title_hint.to_string();
         }
     }
+}
 
+impl SessionHub {
     /// 解析 hook runtime：决定 reload / refresh / skip。
     ///
     /// 三条路径：
     /// - **reload**：owner bootstrap 首轮 或 进程内没有 runtime（冷启动恢复）
     /// - **refresh**：已有 hook_session 且非 bootstrap → 只 refresh snapshot
     /// - **skip**：无 hook provider → 返回 None
-    async fn resolve_hook_session(
+    pub(super) async fn resolve_hook_session(
         &self,
         session_id: &str,
         turn_id: &str,
@@ -664,12 +764,7 @@ impl SessionHub {
         working_directory: &Path,
         is_owner_bootstrap: bool,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        let existing = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .and_then(|rt| rt.hook_session.clone())
-        };
+        let existing = self.runtime_registry.hook_session_runtime(session_id).await;
 
         if is_owner_bootstrap || existing.is_none() {
             return self
@@ -699,7 +794,7 @@ impl SessionHub {
     ///
     /// PR 7c：只有本函数（owner bootstrap 入口）以及 `ensure_hook_session_runtime`
     /// （冷启动恢复入口）可以写 `SessionRuntime.hook_session`；其他调用方（包括
-    /// `start_prompt_with_follow_up` 自己的 happy path）只读取不回写。
+    /// `SessionLaunchExecutor` 的 happy path）只读取不回写。
     pub async fn reload_session_hook_runtime(
         &self,
         session_id: &str,
@@ -710,10 +805,13 @@ impl SessionHub {
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
         let Some(provider) = self.hook_provider.as_ref() else {
             // 无 hook provider 场景下清空 runtime 记录，保证"单一权威"不滞留旧值。
-            let mut sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions.get_mut(session_id) {
-                runtime.hook_session = None;
-            }
+            self.runtime_registry
+                .with_runtime_mut(session_id, |runtime| {
+                    if let Some(runtime) = runtime {
+                        runtime.hook_session = None;
+                    }
+                })
+                .await;
             return Ok(None);
         };
 
@@ -742,84 +840,15 @@ impl SessionHub {
         ));
 
         // 写回 SessionRuntime.hook_session —— 单一权威字段仅在此处写入。
-        {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(session_runtime) = sessions.get_mut(session_id) {
-                session_runtime.hook_session = Some(runtime.clone());
-            }
-        }
+        self.runtime_registry
+            .with_runtime_mut(session_id, |session_runtime| {
+                if let Some(session_runtime) = session_runtime {
+                    session_runtime.hook_session = Some(runtime.clone());
+                }
+            })
+            .await;
 
         Ok(Some(runtime))
-    }
-
-    async fn discover_skills(&self, vfs: &agentdash_spi::Vfs) -> Vec<agentdash_spi::SkillRef> {
-        let mut skills = if let Some(service) = &self.vfs_service {
-            let result = crate::skill::load_skills_from_vfs(service, vfs).await;
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断: {}",
-                    diag.message
-                );
-            }
-            result.skills
-        } else {
-            Vec::new()
-        };
-
-        if !self.extra_skill_dirs.is_empty() {
-            let existing_names: std::collections::HashMap<String, String> = skills
-                .iter()
-                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
-                .collect();
-            let result =
-                crate::skill::load_skills_from_local_dirs(&self.extra_skill_dirs, &existing_names);
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断 (plugin): {}",
-                    diag.message
-                );
-            }
-            skills.extend(result.skills);
-        }
-        skills
-    }
-
-    async fn discover_guidelines(
-        &self,
-        vfs: &agentdash_spi::Vfs,
-    ) -> Vec<agentdash_spi::DiscoveredGuideline> {
-        let Some(service) = &self.vfs_service else {
-            return Vec::new();
-        };
-        let result = crate::context::mount_file_discovery::discover_mount_files(
-            service,
-            vfs,
-            crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
-        )
-        .await;
-        for diag in &result.diagnostics {
-            tracing::warn!(
-                rule_key = %diag.rule_key,
-                mount_id = %diag.mount_id,
-                path = %diag.path,
-                "guideline 发现诊断: {}",
-                diag.message
-            );
-        }
-        result
-            .files
-            .into_iter()
-            .map(|f| agentdash_spi::DiscoveredGuideline {
-                file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
-                mount_id: f.mount_id,
-                path: f.path,
-                content: f.content,
-            })
-            .collect()
     }
 }
 
@@ -870,8 +899,8 @@ fn notice_to_context_frame(notice: HookTurnStartNotice) -> Option<ContextFrame> 
         message_role: "user".to_string(),
         rendered_text: content.to_string(),
         sections: vec![ContextFrameSection::SystemNotice {
-            title: "Legacy TurnStart Notice".to_string(),
-            summary: "历史 notice 已桥接为 ContextFrame。".to_string(),
+            title: "TurnStart Notice".to_string(),
+            summary: "TurnStart notice 已桥接为 ContextFrame。".to_string(),
             body: Some(content.to_string()),
         }],
         created_at_ms: notice.created_at_ms,
@@ -923,7 +952,7 @@ fn enqueue_context_frames_for_transform_context(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::baseline_capabilities::build_session_baseline_capabilities;
 
     #[test]
     fn baseline_capabilities_built_from_skills() {

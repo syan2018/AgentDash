@@ -13,8 +13,8 @@ use agentdash_spi::hooks::{
 };
 use uuid::Uuid;
 
-use super::super::context_frame::{self, ContextFramePayload};
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
+use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionHub;
 use crate::hooks::hook_injection_to_fragment;
@@ -56,6 +56,12 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PendingRuntimeContextApplication {
+    pub capability_events: Vec<serde_json::Value>,
+    pub context_frames: Vec<ContextFrame>,
 }
 
 pub(crate) fn build_initial_capability_state_frame(
@@ -143,9 +149,11 @@ impl SessionHub {
         let _ = context_frame::enqueue_context_frame(hook_session, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
-        if let Some(workflow_frame) =
-            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
-        {
+        if let Some(workflow_frame) = build_workflow_assignment_context_frame(
+            &input.phase_node,
+            input.apply_mode,
+            &injections,
+        ) {
             self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
                 .await
                 .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
@@ -216,15 +224,15 @@ impl SessionHub {
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
         &self,
         session_id: &str,
-        turn_id: &str,
+        _turn_id: &str,
         hook_session: Option<&SharedHookSessionRuntime>,
         before_state: CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
         tools: &[DynAgentTool],
-    ) -> Vec<ContextFrame> {
-        let mut produced_frames = Vec::new();
+    ) -> PendingRuntimeContextApplication {
+        let mut application = PendingRuntimeContextApplication::default();
         if transitions.is_empty() {
-            return produced_frames;
+            return application;
         }
 
         if let Some(hook_session) = hook_session
@@ -248,10 +256,7 @@ impl SessionHub {
                 steering_capability_delta: None,
             }
             .event_payload();
-            let _ = self
-                .emit_capability_state_changed(session_id, Some(turn_id), payload.clone())
-                .await;
-            let _ = payload;
+            application.capability_events.push(payload);
             let injections = self
                 .collect_runtime_context_update_injections(session_id)
                 .await;
@@ -275,10 +280,7 @@ impl SessionHub {
                     tools,
                     &pending.state.skill.skills,
                 );
-                let _ = self
-                    .emit_context_frame(session_id, Some(turn_id), &notice)
-                    .await;
-                produced_frames.push(notice.clone());
+                application.context_frames.push(notice.clone());
 
                 // assignment_context 独立 frame，保持 frame 一职一责。
                 if let Some(workflow_frame) = build_workflow_assignment_context_frame(
@@ -286,24 +288,23 @@ impl SessionHub {
                     "applied_on_next_turn",
                     &injections,
                 ) {
-                    let _ = self
-                        .emit_context_frame(session_id, Some(turn_id), &workflow_frame)
-                        .await;
-                    produced_frames.push(workflow_frame);
+                    application.context_frames.push(workflow_frame);
                 }
             }
             pending_event_before_state = pending.state.clone();
         }
-        produced_frames
+        application
     }
 
     async fn emit_runtime_context_changed_notice(&self, input: &LiveRuntimeContextTransitionInput) {
         let injections = self
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
-        if let Some(notice) =
-            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
-        {
+        if let Some(notice) = build_workflow_assignment_context_frame(
+            &input.phase_node,
+            input.apply_mode,
+            &injections,
+        ) {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
                 .await;
@@ -404,19 +405,29 @@ impl RuntimeContextUpdateFrame {
         ) {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta) {
+        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta)
+        {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta) {
+        if let Some(d) =
+            dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta)
+        {
             dimensions.push(d);
         }
         if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(state_delta) {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries) {
+        if let Some(d) =
+            dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries)
+        {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(tools, state_delta) {
+        if let Some(d) =
+            dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(
+                tools,
+                state_delta,
+            )
+        {
             dimensions.push(d);
         }
 
@@ -467,7 +478,6 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
             .join("\n\n")
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查主链路是否仍被 PromptAugmentInput/旧 payload 扭曲"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 SessionHub、runtime、effects、pending 是否符合目标边界"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 ExecutionContext 是否只在 connector 边界投影"}
+{"file": ".trellis/spec/backend/session/bundle-main-datasource.md", "reason": "检查 construction context bundle/frame 是否单源"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 terminal effects 与 hook auto-resume durable 化"}

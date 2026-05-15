@@ -14,7 +14,9 @@ pub(crate) struct VfsDimensionDelta {
 }
 
 impl VfsDimensionDelta {
-    pub fn from_state_delta(state_delta: Option<&CapabilityStateDelta>) -> Option<Box<dyn DimensionDelta>> {
+    pub fn from_state_delta(
+        state_delta: Option<&CapabilityStateDelta>,
+    ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
         let delta = Self {
             mounts_added: state_delta.vfs.mounts.added.clone(),

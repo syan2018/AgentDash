@@ -16,26 +16,26 @@ use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::task::TaskStatus;
 
-use crate::session::SessionHub;
+use crate::session::SessionRuntimeService;
 
 /// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
 ///
 /// 当业务状态进入终态时，触发关联 session 的 cancel 指令。
 /// 不做反向 projection（projection 方向见 [`crate::task::view_projector`]）。
 pub struct TerminalCancelCoordinator {
-    session_hub: SessionHub,
+    session_runtime: SessionRuntimeService,
     story_repo: Arc<dyn StoryRepository>,
     session_binding_repo: Arc<dyn SessionBindingRepository>,
 }
 
 impl TerminalCancelCoordinator {
     pub fn new(
-        session_hub: SessionHub,
+        session_runtime: SessionRuntimeService,
         story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
     ) -> Self {
         Self {
-            session_hub,
+            session_runtime,
             story_repo,
             session_binding_repo,
         }
@@ -57,7 +57,7 @@ impl TerminalCancelCoordinator {
             _ => return,
         };
 
-        if let Err(err) = self.session_hub.cancel(&session_id).await {
+        if let Err(err) = self.session_runtime.cancel(&session_id).await {
             tracing::warn!(
                 task_id = %task_id,
                 session_id = %session_id,
@@ -113,7 +113,7 @@ impl TerminalCancelCoordinator {
                 Ok(Some(sid)) => sid,
                 _ => continue,
             };
-            if let Err(err) = self.session_hub.cancel(&session_id).await {
+            if let Err(err) = self.session_runtime.cancel(&session_id).await {
                 tracing::warn!(
                     task_id = %task.id,
                     session_id = %session_id,

@@ -15,38 +15,24 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
-use crate::bootstrap::prompt_augmenter::decode_augmented_runtime_error;
+use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
+use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::canvas::append_visible_canvas_mounts;
+use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
-    AgentLevelMcp, HookSnapshotReloadTrigger, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    PromptSessionRequest, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    UserPromptInput, finalize_request, resolve_session_prompt_lifecycle,
+    LaunchCommand, SessionExecutionState, SessionMeta, UserPromptInput,
 };
-use agentdash_application::task::gateway::resolve_effective_task_workspace;
-use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
-use agentdash_domain::{
-    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
-};
+use agentdash_domain::session_binding::SessionOwnerType;
 
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
-use agentdash_spi::hooks::ContextFrame;
 use serde::Serialize;
 
-use super::project_agents::{
-    parse_project_agent_session_label, resolve_project_agent_bridge_async,
-    resolve_project_workspace,
-};
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
-use crate::routes::vfs_surfaces::build_surface_summary;
-use crate::routes::{project_sessions, story_sessions, task_execution};
-use agentdash_application::session::context::apply_workspace_defaults;
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -94,7 +80,7 @@ pub async fn list_sessions(
         for binding in &bindings {
             if let Ok(Some(meta)) = state
                 .services
-                .session_hub
+                .session_core
                 .get_session_meta(&binding.session_id)
                 .await
             {
@@ -106,7 +92,7 @@ pub async fn list_sessions(
 
     let mut sessions = state
         .services
-        .session_hub
+        .session_core
         .list_sessions()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -156,7 +142,7 @@ pub async fn create_session(
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
     let meta = state
         .services
-        .session_hub
+        .session_core
         .create_session(&title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -177,7 +163,7 @@ pub async fn get_session(
     .await?;
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -199,7 +185,7 @@ pub async fn get_session_hook_runtime(
     .await?;
     let runtime = state
         .services
-        .session_hub
+        .session_hooks
         .ensure_hook_session_runtime(&session_id, None)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
@@ -296,7 +282,7 @@ pub async fn get_session_state(
     .await?;
     state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -304,7 +290,7 @@ pub async fn get_session_state(
 
     let execution_state = state
         .services
-        .session_hub
+        .session_core
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -363,7 +349,7 @@ pub async fn list_session_events(
     let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
     let page = state
         .services
-        .session_hub
+        .session_eventing
         .list_event_page(&session_id, after_seq, limit)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -437,7 +423,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Pending,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -463,7 +448,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -495,7 +479,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -521,7 +504,6 @@ mod tests {
             companion_context: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
-            pending_capability_state_transitions: Vec::new(),
         };
 
         assert_eq!(
@@ -550,28 +532,6 @@ pub struct SessionContextResponse {
     pub session_capabilities: Option<agentdash_spi::SessionBaselineCapabilities>,
 }
 
-async fn try_build_session_capabilities(
-    state: &AppState,
-    _session_id: &str,
-    vfs: Option<&agentdash_spi::Vfs>,
-) -> Option<agentdash_spi::SessionBaselineCapabilities> {
-    let skills = if let Some(space) = vfs {
-        let result =
-            agentdash_application::skill::load_skills_from_vfs(&state.services.vfs_service, space)
-                .await;
-        result.skills
-    } else {
-        Vec::new()
-    };
-
-    let caps =
-        agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities(
-            &skills,
-        );
-
-    if caps.is_empty() { None } else { Some(caps) }
-}
-
 /// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / vfs / snapshot
 pub async fn get_session_context(
     State(state): State<Arc<AppState>>,
@@ -586,183 +546,38 @@ pub async fn get_session_context(
     )
     .await?;
 
-    let Some(primary) = pick_primary_session_binding(&bindings) else {
-        return Ok(Json(SessionContextResponse {
+    let Some(plan) =
+        build_session_context_plan(&state, &current_user, &session_id, &bindings).await?
+    else {
+        return Ok(Json(SessionContextResponse::empty()));
+    };
+
+    Ok(Json(SessionContextResponse::from_construction_plan(plan)))
+}
+
+impl SessionContextResponse {
+    fn empty() -> Self {
+        Self {
             workspace_id: None,
             agent_binding: None,
             vfs: None,
             runtime_surface: None,
             context_snapshot: None,
             session_capabilities: None,
-        }));
-    };
-
-    match primary.owner_type {
-        SessionOwnerType::Task => {
-            let task_id = primary.owner_id;
-            let (task, _, _) = load_task_story_project_with_permission(
-                state.as_ref(),
-                &current_user,
-                task_id,
-                ProjectPermission::View,
-            )
-            .await?;
-            let result = state
-                .services
-                .story_step_activation_service
-                .get_task_session(task_id)
-                .await
-                .map_err(task_execution::map_task_execution_error)?;
-            let session_meta = if let Some(session_id) = result.session_id.as_deref() {
-                state
-                    .services
-                    .session_hub
-                    .get_session_meta(session_id)
-                    .await
-                    .map_err(|error| ApiError::Internal(error.to_string()))?
-            } else {
-                None
-            };
-            let built_context =
-                agentdash_application::task::context_builder::build_task_session_context(
-                    &state.repos,
-                    &state.services.vfs_service,
-                    &state.config.platform_config,
-                    task_id,
-                    session_meta.as_ref(),
-                )
-                .await;
-            let resolved_vfs = built_context
-                .as_ref()
-                .and_then(|context| context.vfs.clone());
-            let capabilities =
-                try_build_session_capabilities(&state, &session_id, resolved_vfs.as_ref()).await;
-            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        &state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.clone(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            Ok(Json(SessionContextResponse {
-                workspace_id: task.workspace_id.map(|id| id.to_string()),
-                agent_binding: Some(result.agent_binding),
-                vfs: resolved_vfs,
-                runtime_surface,
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                session_capabilities: capabilities,
-            }))
-        }
-        SessionOwnerType::Story => {
-            let story_id = primary.owner_id;
-            let (story, _) = load_story_and_project_with_permission(
-                state.as_ref(),
-                &current_user,
-                story_id,
-                ProjectPermission::View,
-            )
-            .await?;
-            let built_context =
-                story_sessions::build_story_session_context_response(&state, &story, &session_id)
-                    .await?;
-            let resolved_vfs = built_context
-                .as_ref()
-                .and_then(|context| context.vfs.clone());
-            let capabilities =
-                try_build_session_capabilities(&state, &session_id, resolved_vfs.as_ref()).await;
-            let runtime_surface = if let Some(space) = resolved_vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        &state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.clone(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            Ok(Json(SessionContextResponse {
-                workspace_id: None,
-                agent_binding: None,
-                vfs: resolved_vfs,
-                runtime_surface,
-                context_snapshot: built_context.and_then(|context| context.context_snapshot),
-                session_capabilities: capabilities,
-            }))
-        }
-        SessionOwnerType::Project => {
-            let project_id = primary.owner_id;
-            let project = load_project_with_permission(
-                state.as_ref(),
-                &current_user,
-                project_id,
-                ProjectPermission::View,
-            )
-            .await?;
-            let built_context = project_sessions::build_project_session_context_response(
-                &state,
-                &project,
-                &session_id,
-                &primary.label,
-            )
-            .await?;
-            let capabilities =
-                try_build_session_capabilities(&state, &session_id, built_context.vfs.as_ref())
-                    .await;
-            let runtime_surface = if let Some(space) = built_context.vfs.as_ref() {
-                Some(
-                    build_surface_summary(
-                        &state,
-                        &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                            session_id: session_id.clone(),
-                        },
-                        space,
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            Ok(Json(SessionContextResponse {
-                workspace_id: None,
-                agent_binding: None,
-                vfs: built_context.vfs.clone(),
-                runtime_surface,
-                context_snapshot: built_context.context_snapshot,
-                session_capabilities: capabilities,
-            }))
         }
     }
-}
 
-pub(crate) fn pick_primary_session_binding(
-    bindings: &[agentdash_domain::session_binding::SessionBinding],
-) -> Option<&agentdash_domain::session_binding::SessionBinding> {
-    // 与 `SessionPage.tsx` 中 `sessionOwnerBinding` 一致：project → story → task → 首个
-    bindings
-        .iter()
-        .find(|b| b.owner_type == SessionOwnerType::Project)
-        .or_else(|| {
-            bindings
-                .iter()
-                .find(|b| b.owner_type == SessionOwnerType::Story)
-        })
-        .or_else(|| {
-            bindings
-                .iter()
-                .find(|b| b.owner_type == SessionOwnerType::Task)
-        })
-        .or_else(|| bindings.first())
+    fn from_construction_plan(plan: SessionConstructionPlan) -> Self {
+        let projection = plan.context_projection;
+        Self {
+            workspace_id: projection.workspace_id.map(|id| id.to_string()),
+            agent_binding: projection.agent_binding,
+            vfs: projection.vfs,
+            runtime_surface: projection.runtime_surface,
+            context_snapshot: projection.context_snapshot,
+            session_capabilities: projection.session_capabilities,
+        }
+    }
 }
 
 pub async fn get_session_bindings(
@@ -871,7 +686,7 @@ pub async fn update_session_meta(
 
     let meta = state
         .services
-        .session_hub
+        .session_title
         .set_user_title(&session_id, title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -894,7 +709,7 @@ pub async fn delete_session(
     .await?;
     state
         .services
-        .session_hub
+        .session_core
         .delete_session(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -924,20 +739,18 @@ pub async fn prompt_session(
         ProjectPermission::Edit,
     )
     .await?;
-    // PR 1 Phase 1d：identity 前置注入到 base req —— augment 内部 build_*_owner_prompt_request
-    // 通过 `mut req` 透传，finalize_request 因 `prepared.identity=None` 自然保留 base.identity，
-    // 无需修改 augment trait 签名或跨函数 identity 形参链。
-    let mut base_req = PromptSessionRequest::from_user_input(user_input);
-    base_req.identity = Some(current_user);
     let turn_id = state
         .services
-        .session_hub
-        .launch_http_prompt(&session_id, base_req)
+        .session_launch
+        .launch_command(
+            &session_id,
+            LaunchCommand::http_prompt_input(user_input, Some(current_user)),
+        )
         .await
         .map_err(|e| match e {
             agentdash_spi::ConnectorError::InvalidConfig(msg) => ApiError::BadRequest(msg),
             agentdash_spi::ConnectorError::Runtime(msg) => {
-                decode_augmented_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
+                decode_construction_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
             }
             other => ApiError::Internal(other.to_string()),
         })?;
@@ -945,589 +758,6 @@ pub async fn prompt_session(
     Ok(Json(
         serde_json::json!({ "started": true, "sessionId": session_id, "turnId": turn_id }),
     ))
-}
-
-pub(crate) async fn augment_prompt_request_for_owner(
-    state: &Arc<AppState>,
-    session_id: &str,
-    req: PromptSessionRequest,
-) -> Result<PromptSessionRequest, ApiError> {
-    let meta = state
-        .services
-        .session_hub
-        .get_session_meta(session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let visible_canvas_mount_ids = meta.visible_canvas_mount_ids.clone();
-    let effective_executor = req
-        .user_input
-        .executor_config
-        .clone()
-        .or_else(|| meta.executor_config.clone());
-    let has_live_runtime = state
-        .services
-        .session_hub
-        .has_live_runtime(session_id)
-        .await;
-    let supports_repository_restore = effective_executor.as_ref().is_some_and(|config| {
-        state
-            .services
-            .connector
-            .supports_repository_restore(config.executor.as_str())
-    });
-    let lifecycle_kind =
-        resolve_session_prompt_lifecycle(&meta, has_live_runtime, supports_repository_restore);
-
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Task)
-    {
-        return build_task_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            binding.owner_id,
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
-    }
-
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Story)
-    {
-        let story = state
-            .repos
-            .story_repo
-            .get_by_id(binding.owner_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
-        let project = state
-            .repos
-            .project_repo
-            .get_by_id(story.project_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
-        let workspace = resolve_project_workspace(state, &project).await?;
-
-        return build_story_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            &story,
-            &project,
-            workspace.as_ref(),
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
-    }
-
-    if let Some(binding) = bindings
-        .iter()
-        .find(|binding| binding.owner_type == SessionOwnerType::Project)
-    {
-        let project = state
-            .repos
-            .project_repo
-            .get_by_id(binding.owner_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", binding.owner_id)))?;
-
-        return build_project_owner_prompt_request(
-            state,
-            session_id,
-            req,
-            &project,
-            &binding.label,
-            &meta,
-            lifecycle_kind,
-            &visible_canvas_mount_ids,
-        )
-        .await;
-    }
-
-    if let SessionPromptLifecycle::RepositoryRehydrate(
-        SessionRepositoryRehydrateMode::SystemContext,
-    ) = lifecycle_kind
-    {
-        let continuation_context_frame =
-            build_continuation_context_frame_for_session(state, session_id).await?;
-        return apply_plain_lifecycle_request(
-            req,
-            None,
-            continuation_context_frame,
-            HookSnapshotReloadTrigger::None,
-        );
-    }
-
-    Ok(req)
-}
-
-fn finalize_augmented_request(
-    req: &mut PromptSessionRequest,
-    context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    continuation_context_frame: Option<ContextFrame>,
-    prompt_blocks: Vec<serde_json::Value>,
-    workspace: Option<&Workspace>,
-    vfs: Option<agentdash_spi::Vfs>,
-    effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    capability_state: agentdash_spi::CapabilityState,
-    hook_snapshot_reload: HookSnapshotReloadTrigger,
-) {
-    req.user_input.prompt_blocks = Some(prompt_blocks);
-    req.context_bundle = context_bundle;
-    req.continuation_context_frame = continuation_context_frame;
-    req.hook_snapshot_reload = hook_snapshot_reload;
-
-    apply_workspace_defaults(&mut req.user_input.working_dir, &mut req.vfs, workspace);
-    if req.vfs.is_none() {
-        req.vfs = vfs;
-    }
-    req.mcp_servers = effective_mcp_servers;
-    req.capability_state = Some(capability_state);
-}
-
-fn apply_plain_lifecycle_request(
-    mut req: PromptSessionRequest,
-    context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    continuation_context_frame: Option<ContextFrame>,
-    hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<PromptSessionRequest, ApiError> {
-    let user_prompt_blocks = req
-        .user_input
-        .prompt_blocks
-        .take()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    req.user_input.prompt_blocks = Some(user_prompt_blocks);
-    req.context_bundle = context_bundle;
-    req.continuation_context_frame = continuation_context_frame;
-    req.hook_snapshot_reload = hook_snapshot_reload;
-    Ok(req)
-}
-
-async fn build_story_owner_prompt_request(
-    state: &Arc<AppState>,
-    session_id: &str,
-    mut req: PromptSessionRequest,
-    story: &Story,
-    project: &Project,
-    workspace: Option<&Workspace>,
-    _meta: &SessionMeta,
-    lifecycle_kind: SessionPromptLifecycle,
-    visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
-    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
-    }
-
-    let effective_executor_config = req
-        .user_input
-        .executor_config
-        .clone()
-        .or_else(|| {
-            project
-                .config
-                .default_agent_type
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(agentdash_spi::AgentConfig::new)
-        })
-        .ok_or_else(|| {
-            ApiError::BadRequest(
-                "Story owner prompt 缺少 executor_config，且 project 没有 default_agent_type"
-                    .to_string(),
-            )
-        })?;
-
-    let user_prompt_blocks = req
-        .user_input
-        .prompt_blocks
-        .take()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-
-    let lifecycle = map_owner_prompt_lifecycle(
-        state,
-        session_id,
-        lifecycle_kind,
-        None, // RepositoryRehydrate(SystemContext) 预算在 compose 内;此处传 None 让 compose 走默认
-    );
-    let (lifecycle, continuation_context_frame) =
-        resolve_continuation_system_context(state, session_id, lifecycle).await?;
-    let active_workflow = resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.session_binding_repo.as_ref(),
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .await
-    .map_err(ApiError::Internal)?;
-
-    let assembler = build_session_assembler(state);
-    let prepared = assembler
-        .compose_owner_bootstrap(OwnerBootstrapSpec {
-            owner: OwnerScope::Story {
-                story,
-                project,
-                workspace,
-            },
-            executor_config: effective_executor_config,
-            user_prompt_blocks,
-            agent_mcp: AgentLevelMcp::default(),
-            agent_tool_directives: Vec::new(),
-            agent_skill_asset_keys: Vec::new(),
-            request_mcp_servers: req.mcp_servers.clone(),
-            existing_vfs: req.vfs.clone(),
-            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            active_workflow,
-            lifecycle,
-            audit_session_key: Some(session_id.to_string()),
-            caller_agent_id: None,
-        })
-        .await
-        .map_err(ApiError::BadRequest)?;
-
-    let mut req = finalize_request(req, prepared);
-    req.continuation_context_frame = continuation_context_frame;
-    Ok(req)
-}
-
-async fn build_project_owner_prompt_request(
-    state: &Arc<AppState>,
-    session_id: &str,
-    mut req: PromptSessionRequest,
-    project: &Project,
-    binding_label: &str,
-    _meta: &SessionMeta,
-    lifecycle_kind: SessionPromptLifecycle,
-    visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
-    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
-    }
-
-    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
-        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
-    })?;
-    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let workspace = resolve_project_workspace(state, project).await?;
-
-    let effective_executor_config = match req.user_input.executor_config.clone() {
-        Some(mut user_ec) => {
-            let preset_ec = &project_agent.executor_config;
-            if user_ec.system_prompt.is_none() {
-                user_ec.system_prompt = preset_ec.system_prompt.clone();
-            }
-            if user_ec.system_prompt_mode.is_none() {
-                user_ec.system_prompt_mode = preset_ec.system_prompt_mode;
-            }
-            user_ec
-        }
-        None => project_agent.executor_config.clone(),
-    };
-
-    let user_prompt_blocks = req
-        .user_input
-        .prompt_blocks
-        .take()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-
-    let agent_id = uuid::Uuid::parse_str(agent_key).ok();
-    let agent_display_name = project_agent.display_name.clone();
-    let preset_name = project_agent.preset_name.clone();
-    let preset_mcp_servers = project_agent.preset_mcp_servers.clone();
-    let agent_tool_directives = project_agent
-        .preset_config
-        .capability_directives
-        .clone()
-        .unwrap_or_default();
-    let agent_skill_asset_keys = project_agent
-        .preset_config
-        .skill_asset_keys
-        .clone()
-        .unwrap_or_default();
-
-    let lifecycle = map_owner_prompt_lifecycle(state, session_id, lifecycle_kind, None);
-    let (lifecycle, continuation_context_frame) =
-        resolve_continuation_system_context(state, session_id, lifecycle).await?;
-    let active_workflow = resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.session_binding_repo.as_ref(),
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .await
-    .map_err(ApiError::Internal)?;
-
-    let assembler = build_session_assembler(state);
-    let prepared = assembler
-        .compose_owner_bootstrap(OwnerBootstrapSpec {
-            owner: OwnerScope::Project {
-                project,
-                workspace: workspace.as_ref(),
-                agent_id,
-                agent_display_name,
-                preset_name,
-            },
-            executor_config: effective_executor_config,
-            user_prompt_blocks,
-            agent_mcp: AgentLevelMcp { preset_mcp_servers },
-            agent_tool_directives,
-            agent_skill_asset_keys,
-            request_mcp_servers: req.mcp_servers.clone(),
-            existing_vfs: req.vfs.clone(),
-            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-            active_workflow,
-            lifecycle,
-            audit_session_key: Some(session_id.to_string()),
-            caller_agent_id: agent_id,
-        })
-        .await
-        .map_err(ApiError::BadRequest)?;
-
-    let mut req = finalize_request(req, prepared);
-    req.continuation_context_frame = continuation_context_frame;
-    Ok(req)
-}
-
-/// 构造 SessionRequestAssembler 实例(shared services 注入)。
-fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_> {
-    SessionRequestAssembler::new(
-        state.services.vfs_service.as_ref(),
-        state.repos.canvas_repo.as_ref(),
-        state.services.backend_registry.as_ref(),
-        &state.repos,
-        &state.config.platform_config,
-    )
-    .with_audit_bus(state.services.audit_bus.clone())
-}
-
-async fn build_continuation_context_frame_for_session(
-    state: &Arc<AppState>,
-    session_id: &str,
-) -> Result<Option<ContextFrame>, ApiError> {
-    let transcript = state
-        .services
-        .session_hub
-        .build_projected_transcript(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(
-        agentdash_application::session::continuation::build_continuation_context_frame(
-            &transcript,
-            None,
-        ),
-    )
-}
-
-/// `SessionPromptLifecycle` → `OwnerPromptLifecycle`，预留 continuation bundle 槽位。
-fn map_owner_prompt_lifecycle(
-    _state: &Arc<AppState>,
-    _session_id: &str,
-    kind: SessionPromptLifecycle,
-    prebuilt_continuation_bundle: Option<agentdash_spi::SessionContextBundle>,
-) -> OwnerPromptLifecycle {
-    match kind {
-        SessionPromptLifecycle::OwnerBootstrap => OwnerPromptLifecycle::OwnerBootstrap,
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::SystemContext,
-        ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_bundle,
-            include_owner_bundle: false,
-        },
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::ExecutorState,
-        ) => OwnerPromptLifecycle::RepositoryRehydrate {
-            prebuilt_continuation_bundle: None,
-            include_owner_bundle: true,
-        },
-        SessionPromptLifecycle::Plain => OwnerPromptLifecycle::Plain,
-    }
-}
-
-/// 对 `RepositoryRehydrate(SystemContext)` 预算 continuation frame（SessionHub IO）。
-async fn resolve_continuation_system_context(
-    state: &Arc<AppState>,
-    session_id: &str,
-    lifecycle: OwnerPromptLifecycle,
-) -> Result<(OwnerPromptLifecycle, Option<ContextFrame>), ApiError> {
-    if let OwnerPromptLifecycle::RepositoryRehydrate {
-        prebuilt_continuation_bundle: None,
-        include_owner_bundle: false,
-    } = lifecycle
-    {
-        let continuation_context_frame =
-            build_continuation_context_frame_for_session(state, session_id).await?;
-        return Ok((
-            OwnerPromptLifecycle::RepositoryRehydrate {
-                prebuilt_continuation_bundle: None,
-                include_owner_bundle: false,
-            },
-            continuation_context_frame,
-        ));
-    }
-    Ok((lifecycle, None))
-}
-
-async fn build_task_owner_prompt_request(
-    state: &Arc<AppState>,
-    session_id: &str,
-    mut req: PromptSessionRequest,
-    task_id: uuid::Uuid,
-    meta: &SessionMeta,
-    lifecycle_kind: SessionPromptLifecycle,
-    visible_canvas_mount_ids: &[String],
-) -> Result<PromptSessionRequest, ApiError> {
-    // M1-b：Task 查询经 Story aggregate
-    let story = state
-        .repos
-        .story_repo
-        .find_by_task_id(task_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let task = story
-        .find_task(task_id)
-        .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-
-    let effective_executor_config = req
-        .user_input
-        .executor_config
-        .clone()
-        .or_else(|| meta.executor_config.clone());
-
-    let project = state
-        .repos
-        .project_repo
-        .get_by_id(story.project_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
-    let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
-        .await
-        .map_err(task_execution::map_task_execution_error)?;
-    let active_workflow = resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.session_binding_repo.as_ref(),
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .await
-    .map_err(ApiError::Internal)?
-    .ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "Task session {session_id} 未绑定活跃 lifecycle step"
-        ))
-    })?;
-
-    let assembler = build_session_assembler(state);
-    let mut prepared = assembler
-        .compose_story_step(StoryStepSpec {
-            run: &active_workflow.run,
-            lifecycle: &active_workflow.lifecycle,
-            step: &active_workflow.active_step,
-            task: &task,
-            story: &story,
-            project: &project,
-            workspace: workspace.as_ref(),
-            phase: StoryStepPhase::Continue,
-            override_prompt: None,
-            additional_prompt: None,
-            explicit_executor_config: effective_executor_config.clone(),
-            strict_config_resolution: true,
-            active_workflow: Some(active_workflow.clone()),
-            audit_session_key: Some(session_id.to_string()),
-        })
-        .await
-        .map_err(task_execution::map_task_execution_error)?;
-
-    if let Some(space) = prepared.vfs.as_mut() {
-        append_visible_canvas_mounts(
-            state.repos.canvas_repo.as_ref(),
-            task.project_id,
-            space,
-            visible_canvas_mount_ids,
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-
-    let user_prompt_blocks = req
-        .user_input
-        .prompt_blocks
-        .take()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    let prompt_blocks = user_prompt_blocks;
-    let mut context_bundle = prepared.context_bundle.clone();
-    let mut continuation_context_frame = None;
-    let mut hook_snapshot_reload = HookSnapshotReloadTrigger::None;
-
-    match lifecycle_kind {
-        SessionPromptLifecycle::OwnerBootstrap => {
-            let _ = prepared.prompt_blocks.take();
-            hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
-        }
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::SystemContext,
-        ) => {
-            continuation_context_frame =
-                build_continuation_context_frame_for_session(state, session_id).await?;
-        }
-        SessionPromptLifecycle::RepositoryRehydrate(
-            SessionRepositoryRehydrateMode::ExecutorState,
-        ) => {
-            // 原生 executor restore：保持原 task bundle 作为 context_bundle。
-        }
-        SessionPromptLifecycle::Plain => {
-            context_bundle = None;
-        }
-    }
-
-    if let Some(config) = prepared
-        .executor_config
-        .take()
-        .or(effective_executor_config)
-    {
-        req.user_input.executor_config = Some(config);
-    }
-
-    let capability_state = prepared.capability_state.take().ok_or_else(|| {
-        ApiError::Internal("Task session compose 未产出 capability_state".to_string())
-    })?;
-
-    finalize_augmented_request(
-        &mut req,
-        context_bundle,
-        continuation_context_frame,
-        prompt_blocks,
-        prepared.workspace_defaults.as_ref(),
-        prepared.vfs,
-        prepared.mcp_servers,
-        capability_state,
-        hook_snapshot_reload,
-    );
-
-    Ok(req)
 }
 
 pub async fn cancel_session(
@@ -1544,14 +774,14 @@ pub async fn cancel_session(
     .await?;
     state
         .services
-        .session_hub
+        .session_runtime
         .cancel(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let execution_state = state
         .services
-        .session_hub
+        .session_core
         .inspect_session_execution_state(&session_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1599,7 +829,7 @@ pub async fn approve_tool_call(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .approve_tool_call(&session_id, &tool_call_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1626,7 +856,7 @@ pub async fn reject_tool_call(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1658,7 +888,7 @@ pub async fn respond_companion_request(
     .await?;
     state
         .services
-        .session_hub
+        .session_control
         .respond_companion_request(&session_id, &request_id, req.payload)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1697,7 +927,7 @@ pub async fn acp_session_stream_sse(
 
     let subscription = state
         .services
-        .session_hub
+        .session_eventing
         .subscribe_after(&session_id, last_event_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -1780,7 +1010,7 @@ pub async fn acp_session_stream_ndjson(
 
     let subscription = state
         .services
-        .session_hub
+        .session_eventing
         .subscribe_after(&session_id, resume_from)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;

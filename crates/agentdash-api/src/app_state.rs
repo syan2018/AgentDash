@@ -22,12 +22,16 @@ use agentdash_application::runtime_gateway::{
     WorkspaceDetectProvider,
 };
 use agentdash_application::scheduling::CronSchedulerHandle;
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::{
+    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
+    SessionEventingService, SessionHookService, SessionHub, SessionLaunchService,
+    SessionRuntimeService, SessionTitleService,
+};
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
-    RelayRuntimeToolProvider, SharedSessionHubHandle,
+    RelayRuntimeToolProvider, SessionToolServices, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_domain::llm_provider::LlmProviderRepository;
@@ -51,6 +55,15 @@ use agentdash_plugin_api::AuthMode;
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub session_hub: SessionHub,
+    pub session_core: SessionCoreService,
+    pub session_eventing: SessionEventingService,
+    pub session_runtime: SessionRuntimeService,
+    pub session_control: SessionControlService,
+    pub session_launch: SessionLaunchService,
+    pub session_hooks: SessionHookService,
+    pub session_capability: SessionCapabilityService,
+    pub session_effects: SessionEffectsService,
+    pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
@@ -245,7 +258,7 @@ impl AppState {
         let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
         let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
-        let session_hub_handle = SharedSessionHubHandle::default();
+        let session_services_handle = SharedSessionToolServicesHandle::default();
 
         let inline_persister: Arc<
             dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
@@ -281,7 +294,7 @@ impl AppState {
                 RelayRuntimeToolProvider::new(
                     vfs_service.clone(),
                     repos.clone(),
-                    session_hub_handle.clone(),
+                    session_services_handle.clone(),
                     Some(inline_persister),
                     platform_config.clone(),
                 )
@@ -351,20 +364,44 @@ impl AppState {
                 crate::title_generator::LlmTitleGenerator::new(bridge),
             ));
         }
+        let session_core = session_hub.core_service();
+        let session_eventing = session_hub.eventing_service();
+        let session_runtime = session_hub.runtime_service();
+        let session_control = session_hub.control_service();
+        let session_launch = session_hub.launch_service();
+        let session_hooks = session_hub.hook_service();
+        let session_capability = session_hub.capability_service();
+        let session_effects = session_hub.effects_service();
+        let session_title = session_hub.title_service();
+
         // Lifecycle DAG Orchestrator — 在 session 终态后评估后继 node 并启动新 session
         {
             let orchestrator =
                 Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
-                    session_hub.clone(),
+                    session_core.clone(),
+                    session_launch.clone(),
+                    session_hooks.clone(),
+                    session_capability.clone(),
                     repos.clone(),
                     platform_config.clone(),
                 ));
             session_hub.set_terminal_callback(orchestrator).await;
         }
 
-        session_hub_handle.set(session_hub.clone()).await;
+        session_services_handle
+            .set(SessionToolServices {
+                core: session_core.clone(),
+                eventing: session_eventing.clone(),
+                control: session_control.clone(),
+                launch: session_launch.clone(),
+                hooks: session_hooks.clone(),
+                capability: session_capability.clone(),
+                companion_wait_registry: session_hub.companion_wait_registry.clone(),
+            })
+            .await;
 
-        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> = Arc::new(session_hub.clone());
+        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
+            Arc::new(session_capability.clone());
         let runtime_gateway = Arc::new(
             RuntimeGateway::new()
                 .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
@@ -396,7 +433,7 @@ impl AppState {
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
-                session_hub: session_hub.clone(),
+                session_runtime: session_runtime.clone(),
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
@@ -428,33 +465,41 @@ impl AppState {
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
-                session_hub.clone(),
+                session_runtime.clone(),
                 story_repo_port.clone(),
                 repos.session_binding_repo.clone(),
             ),
         );
 
         let dispatcher =
-            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_hub.clone());
+            crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_runtime.clone());
 
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         session_hub.set_context_audit_bus(audit_bus.clone()).await;
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
-            hub: session_hub.clone(),
-            vfs_service: vfs_service.clone(),
-            platform_config: platform_config.clone(),
+            session_core: session_core.clone(),
+            session_eventing: session_eventing.clone(),
+            session_launch: session_launch.clone(),
             backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
-            audit_bus: Some(audit_bus.clone()),
         });
 
         let state = Self {
             repos,
             services: ServiceSet {
                 session_hub,
+                session_core,
+                session_eventing,
+                session_runtime,
+                session_control,
+                session_launch,
+                session_hooks,
+                session_capability,
+                session_effects,
+                session_title,
                 connector,
                 vfs_service,
                 backend_registry,
@@ -480,23 +525,60 @@ impl AppState {
 
         let mut state = Arc::new(state);
 
-        // 注入 PromptRequestAugmenter：让 SessionHub 的 auto-resume 等内部 prompt
-        // 路径与 HTTP 主通道共享同一条 `augment_prompt_request_for_owner`，
+        // 注入 SessionConstructionProvider：让 SessionHub 的 auto-resume 等内部 prompt
+        // 路径与 HTTP 主通道共享同一条 `build_session_construction_for_launch`，
         // 避免 owner / MCP / capability_state / context_bundle 漂移。
         {
-            let augmenter = Arc::new(
-                crate::bootstrap::prompt_augmenter::AppStatePromptAugmenter::new(state.clone()),
+            let provider = Arc::new(
+                crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(
+                    state.clone(),
+                ),
             );
             state
                 .services
                 .session_hub
-                .set_prompt_augmenter(augmenter)
+                .set_session_construction_provider(provider)
                 .await;
+        }
+
+        {
+            let registry = Arc::new(
+                agentdash_application::task::gateway::effect_executor::TaskHookEffectHandlerRegistry {
+                    repos: state.repos.clone(),
+                },
+            );
+            state
+                .services
+                .session_hub
+                .set_hook_effect_handler_registry(registry)
+                .await;
+        }
+
+        state
+            .services
+            .session_hub
+            .assert_ready_for_app_state()
+            .await
+            .map_err(|err| anyhow::anyhow!("AppState session 依赖未 ready: {err}"))?;
+
+        match state
+            .services
+            .session_effects
+            .replay_terminal_effect_outbox(100)
+            .await
+        {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "已调度 terminal effect outbox 恢复执行");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "terminal effect outbox 恢复执行失败");
+            }
         }
 
         // 后台 session stall 检测：定期扫描 running session，超时自动取消
         agentdash_application::session::stall_detector::spawn_stall_detector(
-            state.services.session_hub.clone(),
+            state.services.session_runtime.clone(),
             agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
         );
 
@@ -505,7 +587,8 @@ impl AppState {
             let routine_executor = Arc::new(
                 RoutineExecutor::new(
                     state.repos.clone(),
-                    state.services.session_hub.clone(),
+                    state.services.session_core.clone(),
+                    state.services.session_launch.clone(),
                     state.services.vfs_service.clone(),
                     state.services.connector.clone(),
                     state.config.platform_config.clone(),

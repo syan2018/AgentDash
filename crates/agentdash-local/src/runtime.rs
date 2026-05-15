@@ -341,8 +341,9 @@ async fn count_active_sessions(session_hub: Option<&SessionHub>) -> anyhow::Resu
     let Some(session_hub) = session_hub else {
         return Ok(0);
     };
+    let session_core = session_hub.core_service();
 
-    let sessions = session_hub.list_sessions().await?;
+    let sessions = session_core.list_sessions().await?;
     if sessions.is_empty() {
         return Ok(0);
     }
@@ -351,7 +352,7 @@ async fn count_active_sessions(session_hub: Option<&SessionHub>) -> anyhow::Resu
         .into_iter()
         .map(|session| session.id)
         .collect::<Vec<_>>();
-    let states = session_hub.inspect_execution_states_bulk(&ids).await?;
+    let states = session_core.inspect_execution_states_bulk(&ids).await?;
     Ok(states
         .values()
         .filter(|state| matches!(state, SessionExecutionState::Running { .. }))
@@ -484,7 +485,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             session_repo,
         );
 
-        if let Err(error) = hub.recover_interrupted_sessions().await {
+        if let Err(error) = hub.runtime_service().recover_interrupted_sessions().await {
             tracing::warn!(error = %error, "启动恢复 session 状态失败（非致命）");
         }
 

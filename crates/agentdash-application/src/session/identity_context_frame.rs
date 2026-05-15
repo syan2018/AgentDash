@@ -1,6 +1,6 @@
 use agentdash_domain::common::SystemPromptMode;
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 use agentdash_spi::DiscoveredGuideline;
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
 use super::context_frame::{self, ContextFramePayload};
 

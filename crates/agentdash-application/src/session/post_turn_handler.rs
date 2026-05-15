@@ -3,6 +3,22 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHookEffectBinding {
+    pub handler: serde_json::Value,
+    pub supported_effect_kinds: Vec<String>,
+}
+
+impl TerminalHookEffectBinding {
+    pub fn to_outbox_payload(&self, effects: Vec<HookEffect>) -> serde_json::Value {
+        serde_json::json!({
+            "effects": effects,
+            "handler": self.handler,
+            "supported_effect_kinds": self.supported_effect_kinds,
+        })
+    }
+}
+
 /// Session 事件回调 —— 替代 TurnMonitor 的核心抽象。
 ///
 /// 在 `start_prompt` 时由调用方（如 task 执行层）传入，
@@ -31,9 +47,27 @@ pub trait PostTurnHandler: Send + Sync + 'static {
     /// 返回本 handler 能处理的 effect kind 列表。
     /// 用于运行时校验：不在列表中的 effect 会被 pipeline warn 日志记录。
     fn supported_effect_kinds(&self) -> &[&str];
+
+    /// 返回可持久化的 handler identity。durable outbox replay 用它重建 handler。
+    ///
+    /// 没有 identity 的 handler 仍可在同进程即时执行，但进程重启后不能 replay。
+    fn durable_effect_handler(&self) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 pub type DynPostTurnHandler = Arc<dyn PostTurnHandler>;
+
+#[async_trait::async_trait]
+pub trait TerminalHookEffectHandlerRegistry: Send + Sync + 'static {
+    async fn handler_for(
+        &self,
+        session_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Option<DynPostTurnHandler>, String>;
+}
+
+pub type DynTerminalHookEffectHandlerRegistry = Arc<dyn TerminalHookEffectHandlerRegistry>;
 
 /// Session 进入终态后的全局回调。
 ///

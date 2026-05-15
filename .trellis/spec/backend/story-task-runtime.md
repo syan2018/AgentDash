@@ -296,14 +296,16 @@ start_task(task_id, user_input)
   └─ 定位 task → 读取/补齐 Task.lifecycle_step_key → 找到 story_id + 对应 step_key
       └─ activate_story_step(story_id, step_key, user_input)
           └─ LifecycleRunService::activate_step(run_id, step_key)
-              + session 装配: compose_lifecycle_node(...) (产出 PreparedSessionInputs)
+              + LaunchCommand::task_service_input(...)
+              + SessionConstructionPlan
+              + LaunchExecution
 ```
 
 **关键原则**：
 
 - `compose_task_runtime` / `TaskRuntimeSpec` / `TaskRuntimeOutput` 三者**彻底删除**（M5），不再存在 Task-specific 的装配分支。
-- `PreparedTurnContext` 过渡壳已删除；task owner prompt augmentation 也必须走 `SessionRequestAssembler::compose_story_step`。
-- `LifecycleNodeSpec` 补齐 user prompt 注入（`override_prompt` / `additional_prompt`）、explicit executor config；Task 侧所需的上下文组装全部并入 lifecycle node context pipeline（吸纳 `build_task_agent_context` / `TaskAgentBuildInput` 的逻辑）。
+- Task 启动通过 `LaunchCommand -> SessionConstructionPlan -> LaunchExecution` 主线进入 session；Task 侧只提供 task/source intent 与 prompt override。
+- `LifecycleNodeSpec` 补齐 user prompt 注入（`override_prompt` / `additional_prompt`）、explicit executor config；Task 侧所需的上下文组装归入 construction/lifecycle node context pipeline。
 - `task/session_runtime_inputs.rs` 整个文件删除；`resolve_workflow_via_task_sessions` 反查消失。
 - Story session / LifecycleRun 的定位通过 `find_active_run_for_story(story_id)` 完成（repo 层新增查询方法，或通过 SessionBinding → session_id → lifecycle_run 两跳）。
 
@@ -317,7 +319,7 @@ async fn activate_story_step(
 ) -> Result<ActivateStoryStepOutput, ApplicationError>;
 ```
 
-- 内部职责：(1) 找到 story → story session → 活跃 LifecycleRun；(2) 调 `LifecycleRunService::activate_step`；(3) 走 `compose_lifecycle_node` 完成 session 装配；(4) 触发后续执行。
+- 内部职责：(1) 找到 story → story session → 活跃 LifecycleRun；(2) 调 `LifecycleRunService::activate_step`；(3) 构造 task source `LaunchCommand`；(4) 经 construction/launch 主线触发执行。
 - 错误语义：`ApplicationError`（承接 `WorkflowApplicationError` + `DomainError`）。API 层映射到标准 HTTP 语义，参考 [error-handling.md](./error-handling.md)。
 - 事务边界：`activate_step` 当前非事务（两步 IO 各自提交）。本 spec 不强制在主线引入事务，但建议 M2 阶段至少把 `run.update + state_change projector append` 纳入同事务（并发裂缝修复）。
 

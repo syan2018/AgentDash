@@ -146,10 +146,10 @@ Workspace (1) → (*) WorkspaceBinding
 |------|------|------|
 | [流式协议](./session/streaming-protocol.md) | SSE/NDJSON 流式推送跨层契约 | ✅ 已拆分 |
 | [Pi Agent 流式合并](./session/pi-agent-streaming.md) | Pi Agent streaming chunk 合并协议 | ✅ 已拆分 |
-| [Session 运行态执行状态](./session/runtime-execution-state.md) | SessionRuntime.active_execution、connector projection、relay MCP 投影与 follow-up 收口规则 | ✅ 已创建 |
-| [Session 装配管线](./session/session-startup-pipeline.md) | 5 条正交轴、6 条入口节拍、SessionAssemblyBuilder 契约、finalize_request 合并规则 | ✅ 已创建 |
-| [ExecutionContext Frames](./session/execution-context-frames.md) | SessionFrame / TurnFrame 字段所有权、生命周期、PiAgent 按 bundle_id 热更 system prompt | ✅ 已创建 |
-| [Bundle 主数据面](./session/bundle-main-datasource.md) | SessionContextBundle bootstrap / turn_delta 双字段、Hook 三类语义分离、白名单契约 | ✅ 已创建 |
+| [Session 运行态执行状态](./session/runtime-execution-state.md) | runtime registry、turn supervisor、connector projection、effects/pending store 边界 | ✅ 已更新 |
+| [Session Startup Pipeline](./session/session-startup-pipeline.md) | LaunchCommand → SessionConstructionPlan → LaunchExecution → ExecutionContext 主线 | ✅ 已更新 |
+| [ExecutionContext Frames](./session/execution-context-frames.md) | connector projection 的 SessionFrame / TurnFrame 字段来源、生命周期与热更边界 | ✅ 已更新 |
+| [Bundle 主数据面](./session/bundle-main-datasource.md) | SessionContextBundle bootstrap / turn_delta、Hook 三类语义、slot 白名单契约 | ✅ 已更新 |
 
 #### `hooks/` — Hook 运行时
 
@@ -225,4 +225,4 @@ Workspace (1) → (*) WorkspaceBinding
 
 ---
 
-*更新：2026-04-30 — session/ 目录补齐三份架构 spec（session-startup-pipeline / execution-context-frames / bundle-main-datasource），对应 04-30-session-pipeline-architecture-refactor 任务 DoD D6。*
+*更新：2026-05-15 — session/ 目录对齐 LaunchCommand → SessionConstructionPlan → LaunchExecution 主线，精简迁移期描述。*

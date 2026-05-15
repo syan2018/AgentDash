@@ -136,8 +136,8 @@ store.write_meta(&session_meta).await?;
 
 ### 冷启动 continuation
 
-- `SessionHub` 中有 session 条目 / broadcaster ≠ 执行器仍有 live runtime
-- 必须以 `connector.has_live_session(session_id)` 为准
+- `SessionRuntimeRegistry` 中有 runtime entry / broadcaster 不等于 connector 仍有 live session。
+- 冷启动 continuation 以 `connector.has_live_session(session_id)` 判断是否需要恢复。
 - 仓储恢复：connector 支持原生恢复时用 `restored_session_state`，否则退化为 continuation `system_context`
 
 ### 合法值
@@ -157,12 +157,18 @@ store.write_meta(&session_meta).await?;
 
 **禁止**：在 `prompt_blocks` 中放 instruction text block；在用户消息文本中暴露技术 slot 标识。
 
-### PromptSessionRequest 新增字段
+### LaunchCommand / Launch Payload 字段变更
 
-`PromptSessionRequest` 跨多个 crate，新增字段后必须同步：
-1. `ExecutionContext` 添加字段
-2. `hub.rs::start_prompt_with_follow_up` 填充
-3. 所有 `PromptSessionRequest { ... }` 字面量构造处补充（api / executor 测试 / local）
+新增启动字段时先判定归属，再同步对应入口和测试：
+
+| 归属 | 放置位置 | 典型字段 |
+|---|---|---|
+| 来源意图 | `LaunchCommand` source payload | source identity、parent/session 引用、override、follow-up hint |
+| 构建事实 | `SessionConstructionPlan` | owner、workspace、working directory、VFS、MCP、capability、context、identity |
+| 单轮执行策略 | `LaunchExecution` | resolved prompt payload、lifecycle、restore、hook、runtime command、terminal effect |
+| Connector 投影 | `ExecutionContext` | session frame / turn frame 字段 |
+
+同步检查 HTTP、local relay、task、workflow、routine、companion、hook auto-resume 入口。
 
 ---
 

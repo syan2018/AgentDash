@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 use uuid::Uuid;
 
 use crate::repository_set::RepositorySet;
-use crate::session::PostTurnHandler;
+use crate::session::{DynPostTurnHandler, PostTurnHandler, TerminalHookEffectHandlerRegistry};
 
 use super::{
     artifact_ops::{ToolCallArtifactInput, persist_tool_call_artifact},
@@ -47,6 +49,14 @@ impl PostTurnHandler for TaskHookEffectExecutor {
 
     fn supported_effect_kinds(&self) -> &[&str] {
         Self::SUPPORTED_KINDS
+    }
+
+    fn durable_effect_handler(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "kind": "task",
+            "task_id": self.task_id,
+            "backend_id": self.backend_id,
+        }))
     }
 }
 
@@ -152,5 +162,46 @@ impl TaskHookEffectExecutor {
 
         clear_task_session_binding(&self.repos, self.task_id, &self.backend_id, reason).await;
         Ok(())
+    }
+}
+
+pub struct TaskHookEffectHandlerRegistry {
+    pub repos: RepositorySet,
+}
+
+#[async_trait::async_trait]
+impl TerminalHookEffectHandlerRegistry for TaskHookEffectHandlerRegistry {
+    async fn handler_for(
+        &self,
+        session_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Option<DynPostTurnHandler>, String> {
+        let Some(handler) = payload.get("handler") else {
+            return Ok(None);
+        };
+        let Some(kind) = handler.get("kind").and_then(|value| value.as_str()) else {
+            return Ok(None);
+        };
+        if kind != "task" {
+            return Ok(None);
+        }
+        let task_id = handler
+            .get("task_id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "task hook effect handler 缺少 task_id".to_string())?;
+        let task_id = Uuid::parse_str(task_id)
+            .map_err(|error| format!("task hook effect handler task_id 无效: {error}"))?;
+        let backend_id = handler
+            .get("backend_id")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "task hook effect handler 缺少 backend_id".to_string())?
+            .to_string();
+        Ok(Some(Arc::new(TaskHookEffectExecutor {
+            repos: self.repos.clone(),
+            task_id,
+            session_id: session_id.to_string(),
+            backend_id,
+        }) as DynPostTurnHandler))
     }
 }

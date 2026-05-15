@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::task::context_builder::build_task_session_context;
 use agentdash_application::task::execution::{
     ExecutionPhase, TaskExecutionCommand, TaskExecutionError,
 };
@@ -16,8 +15,8 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
+    bootstrap::session_context_query::build_session_context_plan,
     dto::TaskResponse,
-    routes::vfs_surfaces::build_surface_summary,
     rpc::ApiError,
 };
 
@@ -187,47 +186,27 @@ pub async fn get_task_session(
         .get_task_session(task_id)
         .await
         .map_err(map_task_execution_error)?;
-    let session_meta = if let Some(session_id) = result.session_id.as_deref() {
-        state
-            .services
-            .session_hub
-            .get_session_meta(session_id)
+    let context_projection = if let Some(session_id) = result.session_id.as_ref() {
+        let bindings = state
+            .repos
+            .session_binding_repo
+            .list_by_session(session_id)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        build_session_context_plan(&state, &current_user, session_id, &bindings)
+            .await?
+            .map(|plan| plan.context_projection)
     } else {
         None
     };
 
-    let built_context = build_task_session_context(
-        &state.repos,
-        &state.services.vfs_service,
-        &state.config.platform_config,
-        task_id,
-        session_meta.as_ref(),
-    )
-    .await;
-
-    let resolved_vfs = built_context
+    let resolved_vfs = context_projection
         .as_ref()
-        .and_then(|context| context.vfs.clone());
-    let runtime_surface = if let Some(session_id) = result.session_id.as_ref() {
-        if let Some(space) = resolved_vfs.as_ref() {
-            Some(
-                build_surface_summary(
-                    &state,
-                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                        session_id: session_id.clone(),
-                    },
-                    space,
-                )
-                .await?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+        .and_then(|projection| projection.vfs.clone());
+    let runtime_surface = context_projection
+        .as_ref()
+        .and_then(|projection| projection.runtime_surface.clone());
+    let context_snapshot = context_projection.and_then(|projection| projection.context_snapshot);
 
     Ok(Json(TaskSessionResponse {
         task_id: result.task_id,
@@ -240,7 +219,7 @@ pub async fn get_task_session(
         last_activity: result.last_activity,
         vfs: resolved_vfs,
         runtime_surface,
-        context_snapshot: built_context.and_then(|context| context.context_snapshot),
+        context_snapshot,
     }))
 }
 

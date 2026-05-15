@@ -8,56 +8,17 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::SessionExecutionState;
-use agentdash_application::session::bootstrap::{
-    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
-    derive_session_context_snapshot,
-};
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::vfs::{
-    SessionMountTarget, append_agent_knowledge_mounts, filter_project_containers_by_whitelist,
-};
-use agentdash_application::workflow::{
-    ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
-};
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    routes::project_agents::{
-        parse_project_agent_session_label, resolve_project_agent_bridge_async,
-        resolve_project_workspace,
-    },
-    routes::vfs_surfaces::build_surface_summary,
+    bootstrap::session_context_query::build_session_context_plan,
+    routes::project_agents::parse_project_agent_session_label,
     rpc::ApiError,
-    runtime_bridge::session_mcp_servers_to_runtime,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-
-/// 批量加载 project 级 MCP Preset 并展开为 resolver 消费的 map。
-/// 查询失败降级为空 map，避免 session 创建被 Preset 读失败阻断。
-async fn load_project_presets(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-) -> agentdash_application::capability::AvailableMcpPresets {
-    match state
-        .repos
-        .mcp_preset_repo
-        .list_by_project(project_id)
-        .await
-    {
-        Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
-        Err(error) => {
-            tracing::warn!(
-                project_id = %project_id,
-                error = %error,
-                "project_sessions: 加载 MCP Preset 列表失败"
-            );
-            Default::default()
-        }
-    }
-}
 #[derive(Debug, Serialize)]
 pub struct ProjectSessionDetailResponse {
     pub binding_id: String,
@@ -73,12 +34,6 @@ pub struct ProjectSessionDetailResponse {
     pub context_snapshot: Option<SessionContextSnapshot>,
 }
 
-#[derive(Debug)]
-pub(crate) struct BuiltProjectSessionContextResponse {
-    pub(crate) vfs: Option<agentdash_spi::Vfs>,
-    pub(crate) context_snapshot: Option<SessionContextSnapshot>,
-}
-
 pub async fn get_project_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -89,7 +44,7 @@ pub async fn get_project_session(
     let binding_uuid = Uuid::parse_str(&binding_id)
         .map_err(|_| ApiError::BadRequest(format!("无效的 binding_id: {binding_id}")))?;
 
-    let project = load_project_with_permission(
+    let _project = load_project_with_permission(
         state.as_ref(),
         &current_user,
         project_uuid,
@@ -112,17 +67,24 @@ pub async fn get_project_session(
 
     let meta = state
         .services
-        .session_hub
+        .session_core
         .get_session_meta(&binding.session_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let built_context = build_project_session_context_response(
+    let context_bindings = state
+        .repos
+        .session_binding_repo
+        .list_by_session(&binding.session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let context_projection = build_session_context_plan(
         &state,
-        &project,
+        &current_user,
         &binding.session_id,
-        &binding.label,
+        &context_bindings,
     )
-    .await?;
+    .await?
+    .map(|plan| plan.context_projection);
     let response_session_id = binding.session_id.clone();
 
     Ok(Json(ProjectSessionDetailResponse {
@@ -131,208 +93,14 @@ pub async fn get_project_session(
         label: binding.label,
         session_title: meta.as_ref().map(|item| item.title.clone()),
         last_activity: meta.as_ref().map(|item| item.updated_at),
-        vfs: built_context.vfs.clone(),
-        runtime_surface: if let Some(space) = built_context.vfs.as_ref() {
-            Some(
-                build_surface_summary(
-                    &state,
-                    &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
-                        session_id: response_session_id,
-                    },
-                    space,
-                )
-                .await?,
-            )
-        } else {
-            None
-        },
-        context_snapshot: built_context.context_snapshot,
+        vfs: context_projection
+            .as_ref()
+            .and_then(|projection| projection.vfs.clone()),
+        runtime_surface: context_projection
+            .as_ref()
+            .and_then(|projection| projection.runtime_surface.clone()),
+        context_snapshot: context_projection.and_then(|projection| projection.context_snapshot),
     }))
-}
-
-pub(crate) async fn build_project_session_context_response(
-    state: &Arc<AppState>,
-    project: &agentdash_domain::project::Project,
-    session_id: &str,
-    binding_label: &str,
-) -> Result<BuiltProjectSessionContextResponse, ApiError> {
-    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
-        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
-    })?;
-    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let workspace = resolve_project_workspace(state, project).await?;
-    let session_meta = state
-        .services
-        .session_hub
-        .get_session_meta(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
-
-    let connector_config = session_meta
-        .executor_config
-        .clone()
-        .or_else(|| Some(project_agent.executor_config.clone()));
-    let resolved_config = connector_config.clone();
-    let use_vfs = connector_config
-        .as_ref()
-        .is_some_and(|c| c.is_cloud_native());
-    // 加载 ProjectAgentLink 用于注入知识容器 mounts
-    let agent_uuid = Uuid::parse_str(agent_key).ok();
-    let agent_link = if let Some(aid) = agent_uuid {
-        state
-            .repos
-            .agent_link_repo
-            .find_by_project_and_agent(project.id, aid)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
-    } else {
-        None
-    };
-    let active_workflow = resolve_active_workflow_projection_for_session(
-        session_id,
-        state.repos.session_binding_repo.as_ref(),
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .await
-    .map_err(ApiError::Internal)?;
-
-    let mut vfs = if use_vfs {
-        Some(
-            state
-                .services
-                .vfs_service
-                .build_vfs(
-                    project,
-                    None,
-                    workspace.as_ref(),
-                    SessionMountTarget::Project,
-                    resolved_config.as_ref().map(|c| c.executor.as_str()),
-                )
-                .map_err(ApiError::BadRequest)?,
-        )
-    } else {
-        None
-    };
-
-    if let Some(vfs) = vfs.as_mut() {
-        // Agent 级容器管控：白名单过滤 + 知识库注入
-        if let Some(link) = &agent_link {
-            filter_project_containers_by_whitelist(vfs, link);
-            append_agent_knowledge_mounts(vfs, link).map_err(ApiError::Internal)?;
-        }
-    }
-
-    vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
-
-    if let Some(vfs) = vfs.as_mut() {
-        append_visible_canvas_mounts(
-            state.repos.canvas_repo.as_ref(),
-            project.id,
-            vfs,
-            &session_meta.visible_canvas_mount_ids,
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    }
-    let agent_mcp_entries: Vec<agentdash_application::capability::AgentMcpServerEntry> =
-        agentdash_application::session::extract_agent_mcp_entries(
-            &project_agent.preset_mcp_servers,
-        );
-
-    // ── 解析 agent_link 绑定的 lifecycle 上下文（与实际 session 创建保持一致） ──
-    let workflow_tool = if let Some(link) = agent_link.as_ref() {
-        agentdash_application::capability::resolve_session_workflow_context(
-            agentdash_application::capability::SessionWorkflowRepos {
-                agent_link: state.repos.agent_link_repo.as_ref(),
-                lifecycle_def: state.repos.lifecycle_definition_repo.as_ref(),
-                workflow_def: state.repos.workflow_definition_repo.as_ref(),
-            },
-            agentdash_application::capability::SessionWorkflowOwner::Project {
-                project_id: project.id,
-                agent_id: link.agent_id,
-            },
-        )
-        .await
-    } else {
-        None
-    };
-
-    // ── CapabilityResolver 统一计算平台 MCP（与实际 session 注入保持一致） ──
-    let mut contributions = Vec::new();
-    if let Some(directives) = project_agent.preset_config.capability_directives.clone()
-        && !directives.is_empty()
-    {
-        contributions.push(agentdash_application::capability::ContextContributions {
-            source: agentdash_application::capability::ContextContributionSource::Agent,
-            tool: Some(agentdash_application::capability::ToolContribution {
-                directives,
-                has_active_workflow: false,
-            }),
-            companion: None,
-        });
-    }
-    if let Some(wf_tool) = workflow_tool {
-        contributions.push(agentdash_application::capability::ContextContributions {
-            source: agentdash_application::capability::ContextContributionSource::Workflow,
-            tool: Some(wf_tool),
-            companion: None,
-        });
-    }
-    let cap_output = agentdash_application::capability::CapabilityResolver::resolve(
-        &agentdash_application::capability::CapabilityResolverInput {
-            owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
-                project_id: project.id,
-            },
-            contributions,
-            mcp_candidates: agentdash_application::capability::McpCandidates {
-                presets: load_project_presets(state, project.id).await,
-                agent_servers: agent_mcp_entries,
-            },
-        },
-        &state.config.platform_config,
-    );
-    let mut effective_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-        cap_output.tool.mcp_servers.clone();
-    effective_mcp_servers.extend(project_agent.preset_mcp_servers.iter().cloned());
-
-    let executor_source = if session_meta.executor_config.is_some() {
-        "session.meta.executor_config".to_string()
-    } else {
-        project_agent.source.clone()
-    };
-
-    let runtime_vfs = vfs.clone();
-
-    let plan = build_bootstrap_plan(BootstrapPlanInput {
-        project: project.clone(),
-        story: None,
-        workspace,
-        resolved_config,
-        vfs: runtime_vfs,
-        mcp_servers: session_mcp_servers_to_runtime(&effective_mcp_servers),
-        working_dir: None,
-        executor_preset_name: project_agent.preset_name,
-        executor_resolution: agentdash_application::session::ExecutorResolution::resolved(
-            executor_source,
-        ),
-        owner_variant: BootstrapOwnerVariant::Project {
-            agent_key: project_agent.key,
-            agent_display_name: project_agent.display_name,
-        },
-        workflow: active_workflow,
-    });
-
-    let snapshot = derive_session_context_snapshot(&plan);
-
-    Ok(BuiltProjectSessionContextResponse {
-        vfs: plan.vfs.clone(),
-        context_snapshot: Some(snapshot),
-    })
 }
 
 // ─── Project Sessions 聚合 API ────────────────────────────────────────────────
@@ -450,7 +218,7 @@ pub async fn list_project_sessions(
 
     let meta_map = state
         .services
-        .session_hub
+        .session_core
         .get_session_metas_bulk(&session_ids)
         .await
         .map_err(|e| ApiError::Internal(format!("批量读取 session meta 失败: {e}")))?;
@@ -458,7 +226,7 @@ pub async fn list_project_sessions(
     // ── Step 3: 单次 lock 批量读执行状态（内存，不扫 JSONL）─────────────────
     let status_map = state
         .services
-        .session_hub
+        .session_core
         .inspect_execution_states_bulk(&session_ids)
         .await
         .map_err(|e| ApiError::Internal(format!("批量读取 session 执行状态失败: {e}")))?;

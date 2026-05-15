@@ -3,8 +3,8 @@
 //! 把分散在 `plan_builder` / `session_runtime_inputs` / `turn_context` /
 //! `orchestrator` / `advance_node` 五处的"查 workflow → 算 capabilities →
 //! 调 Resolver → 拼 MCP list → 拼 kickoff prompt → 构建 lifecycle mount"收敛
-//! 到同一纯函数,消费者通过 applier 把产物写入不同目标(`PromptSessionRequest` /
-//! 新 session bootstrap / 热更新运行中 session)。
+//! 到同一纯函数,消费者通过 applier 把产物写入不同目标(新 session bootstrap /
+//! 热更新运行中 session)。
 //!
 //! ## 设计原则
 //!
@@ -34,7 +34,7 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
-use crate::session::{SessionHub, compose_vfs_with_overlay_and_directives};
+use crate::session::{SessionCapabilityService, compose_vfs_with_overlay_and_directives};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
@@ -298,30 +298,12 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 
 // ─── Appliers ─────────────────────────────────────────────
 //
-// 三个 applier 对应三条激活路径:
-//   A. Bootstrap 新 session —— apply_to_prompt_request
-//   B. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session (PR4 实现)
-//   C. PhaseNode / advance tool 热更新 —— apply_to_running_session
+// 两个 applier 对应两条激活路径:
+//   A. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session
+//   B. PhaseNode / advance tool 热更新 —— apply_to_running_session
 //
-// 当前已提供 A / C；B 仍待后续把 orchestrator 的 session 创建流程进一步收口。
-
-/// Applier A:把 `StepActivation` 的产物合入一份新构造的 `PromptSessionRequest`。
-///
-/// 调用方负责提供 base `req`(携带 user input + executor_config 等);本函数只写
-/// `vfs / capability_state / mcp_servers` 字段。
-/// kickoff_prompt 由调用方按需调 `activation.kickoff_prompt.to_default_prompt()` 拼进 user input。
-pub fn apply_to_prompt_request(
-    activation: &StepActivation,
-    req: &mut crate::session::PromptSessionRequest,
-) {
-    req.vfs = Some(compose_vfs_with_overlay_and_directives(
-        req.vfs.as_ref(),
-        &activation.lifecycle_vfs,
-        &activation.mount_directives,
-    ));
-    req.capability_state = Some(activation.capability_state.clone());
-    req.mcp_servers = activation.mcp_servers.clone();
-}
+// 新 session 的 launch construction 必须走 SessionConstructionPlan，不再公开把
+// activation 直接写入 launch plan 的 applier。
 
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
@@ -329,13 +311,13 @@ pub fn apply_to_prompt_request(
 pub(crate) async fn apply_to_running_session(
     activation: &StepActivation,
     hook_session: &SharedHookSessionRuntime,
-    session_hub: &SessionHub,
+    session_capability: &SessionCapabilityService,
     turn_id: Option<&str>,
     phase_node_key: &str,
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
-    let base_surface = session_hub
+    let base_surface = session_capability
         .get_current_capability_state(hook_session.session_id())
         .await;
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
@@ -344,7 +326,7 @@ pub(crate) async fn apply_to_running_session(
         &activation.capability_keys,
     );
 
-    session_hub
+    session_capability
         .apply_live_runtime_context_transition(
             hook_session,
             LiveRuntimeContextTransitionInput {

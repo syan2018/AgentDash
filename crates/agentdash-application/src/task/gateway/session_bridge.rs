@@ -1,7 +1,7 @@
 //! Task ↔ Session 绑定桥接。
 //!
 //! 职责：封装 Task execution child session 绑定的创建 / 清理流程，
-//! 包括与 `SessionHub`、`SessionBindingRepository` 的协同。
+//! 包括与 `SessionCoreService`、`SessionBindingRepository` 的协同。
 //!
 //! 注意：这里只负责维护 Task → SessionBinding 的归属关系与 StateChange 记录，
 //! 不参与 Task 生命周期决策（那是 projector / service 层的职责）。
@@ -19,11 +19,11 @@ use crate::task::execution::TaskExecutionError;
 
 use super::errors::map_internal_error;
 pub async fn create_task_session(
-    session_hub: &crate::session::SessionHub,
+    session_core: &crate::session::SessionCoreService,
     task: &Task,
 ) -> Result<SessionMeta, TaskExecutionError> {
     let title = format!("Task: {}", task.title.trim());
-    session_hub
+    session_core
         .create_session(title.trim())
         .await
         .map_err(map_internal_error)

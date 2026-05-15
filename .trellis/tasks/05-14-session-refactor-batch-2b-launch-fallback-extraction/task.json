@@ -1,0 +1,31 @@
+{
+  "id": "session-refactor-batch-2b-launch-fallback-extraction",
+  "name": "session-refactor-batch-2b-launch-fallback-extraction",
+  "title": "Session refactor batch 2b launch fallback extraction",
+  "description": "继续将 prompt pipeline 中的 fallback 来源解释下沉到 LaunchExecution summary，为 Batch 3 入口迁移解除阻塞。",
+  "status": "done",
+  "dev_type": "backend",
+  "scope": "session-refactor-launch-fallback-extraction",
+  "package": "agentdash-application",
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "codex/session-refactor-task-review",
+  "base_branch": "codex/session-refactor-task-review",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-14-session-launch-refactor-assessment",
+  "relatedFiles": [
+    ".trellis/tasks/05-14-session-refactor-batch-3-launch-command-adapters/implement.md",
+    "crates/agentdash-application/src/session/launch.rs",
+    "crates/agentdash-application/src/session/prompt_pipeline.rs",
+    "crates/agentdash-application/src/session/hub/tests.rs"
+  ],
+  "notes": "Batch 2b 已补 LaunchExecution fallback summary：restore/follow-up/VFS/MCP/capability/working_dir 来源可审计；未迁移入口 adapter，不删除 PromptSessionRequest，不拆 pending/effects/runtime。",
+  "meta": {}
+}

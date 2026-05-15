@@ -13,7 +13,9 @@ pub(crate) struct McpServerDimensionDelta {
 }
 
 impl McpServerDimensionDelta {
-    pub fn from_state_delta(state_delta: Option<&CapabilityStateDelta>) -> Option<Box<dyn DimensionDelta>> {
+    pub fn from_state_delta(
+        state_delta: Option<&CapabilityStateDelta>,
+    ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
         let delta = Self {
             added: state_delta.mcp_servers.added.clone(),

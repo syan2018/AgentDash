@@ -6,8 +6,8 @@ use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
 };
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 use agentdash_spi::content_block_to_text;
+use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
 use super::persistence::PersistedSessionEvent;
 

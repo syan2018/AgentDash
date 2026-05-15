@@ -1,15 +1,4 @@
-use std::path::{Path, PathBuf};
-
-/// 将请求级 working_dir 解析成执行级工作目录。
-///
-/// 本轮仅收口重复实现，不改变既有语义：非空输入直接按 `Path::join`
-/// 处理，因此绝对路径与 `..` 的策略仍保持现状，后续由独立任务收紧。
-pub fn resolve_working_dir(mount_root: &Path, requested: Option<&str>) -> PathBuf {
-    match requested {
-        Some(rel) if !rel.trim().is_empty() => mount_root.join(rel),
-        _ => mount_root.to_path_buf(),
-    }
-}
+use std::path::Path;
 
 /// 将执行级工作目录投影为相对 mount root 的 working_dir。
 ///
@@ -42,26 +31,6 @@ pub fn to_relative_working_dir(working_directory: &Path, mount_root_ref: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolve_working_dir_defaults_to_mount_root() {
-        assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), None),
-            PathBuf::from("/workspace/repo")
-        );
-        assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), Some(" ")),
-            PathBuf::from("/workspace/repo")
-        );
-    }
-
-    #[test]
-    fn resolve_working_dir_joins_relative_path() {
-        assert_eq!(
-            resolve_working_dir(Path::new("/workspace/repo"), Some("crates/app")),
-            PathBuf::from("/workspace/repo").join("crates/app")
-        );
-    }
 
     #[test]
     fn relative_working_dir_projects_subdir() {

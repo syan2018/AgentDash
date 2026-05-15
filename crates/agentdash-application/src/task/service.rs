@@ -11,18 +11,14 @@ use agentdash_domain::{
     task::{Task, TaskStatus},
 };
 
-use crate::canvas::append_visible_canvas_mounts;
-use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    PromptSessionRequest, SessionExecutionState, SessionHub, SessionRequestAssembler,
-    StoryStepPhase, StoryStepSpec, UserPromptInput, finalize_request,
+    LaunchCommand, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionLaunchService, TaskLaunchPhase, UserPromptInput,
 };
 use crate::task::lock::TaskLockMap;
-use crate::vfs::RelayVfsService;
 use crate::workflow::{
     BindAndActivateLifecycleStepCommand, LifecycleRunService, build_step_projector_from_repos,
-    resolve_workflow_projection_by_run,
 };
 use crate::workspace::BackendAvailability;
 
@@ -30,9 +26,8 @@ use super::execution::*;
 use super::gateway::{
     append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
     clear_task_session_binding, create_task_session as gw_create_task_session,
-    get_session_overview as gw_get_session_overview, get_task as gw_get_task, load_related_context,
-    map_connector_error, map_domain_error, resolve_project_scope_for_owner,
-    resolve_task_backend_id,
+    get_session_overview as gw_get_session_overview, get_task as gw_get_task, map_connector_error,
+    map_domain_error, resolve_project_scope_for_owner, resolve_task_backend_id,
 };
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
@@ -47,18 +42,16 @@ pub trait TurnDispatcher: Send + Sync {
 
 /// Story step activation service — Application 层编排 step child session 的启动/续跑/取消。
 ///
-/// 持有所有必要的 Application 层依赖（repos / hub / context services），
+/// 持有所有必要的 Application 层依赖（repos / session services / context services），
 /// 仅通过 `TurnDispatcher` trait 依赖基础设施层的分发能力。
 pub struct StoryStepActivationService {
     pub repos: RepositorySet,
-    pub hub: SessionHub,
-    pub vfs_service: Arc<RelayVfsService>,
-    pub platform_config: crate::platform_config::SharedPlatformConfig,
+    pub session_core: SessionCoreService,
+    pub session_eventing: SessionEventingService,
+    pub session_launch: SessionLaunchService,
     pub backend_availability: Arc<dyn BackendAvailability>,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub lock_map: Arc<TaskLockMap>,
-    /// 上下文审计总线（可选）。
-    pub audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl StoryStepActivationService {
@@ -100,8 +93,8 @@ impl StoryStepActivationService {
     /// 2. `lifecycle_run_repo.list_by_session(session_id)` + `select_active_run` 找到活跃 run
     /// 3. 根据 step_key 定位 `LifecycleStepDefinition`；再从 Story aggregate 中找到
     ///    `Task.lifecycle_step_key == step_key` 的 Task
-    /// 4. `compose_story_step(StoryStepSpec { ... })` 产出 `PreparedSessionInputs`
-    /// 5. `finalize_request(base, prepared)` + `session_hub.start_prompt` 派发
+    /// 4. `compose_story_step_prompt(StoryStepSpec { ... })` 产出 prompt pipeline 输入
+    /// 5. `SessionLaunchService::launch_command` 派发
     ///
     /// [M5 注]：由于当前 `start_task_inner` 仍负责 session 创建 / binding / 状态写入的
     /// 全流程，本方法目前作为分层预留入口，实际调用仍由 `start_task_inner` 与
@@ -141,7 +134,6 @@ impl StoryStepActivationService {
                     lifecycle.id, step_key_resolved
                 ))
             })?;
-        let (story, project, workspace) = load_related_context(&self.repos, &task).await?;
         let backend_id =
             resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
 
@@ -153,7 +145,7 @@ impl StoryStepActivationService {
                     ));
                 }
 
-                let session_meta = gw_create_task_session(&self.hub, &task).await?;
+                let session_meta = gw_create_task_session(&self.session_core, &task).await?;
                 let session_id = session_meta.id;
                 self.bind_session_to_owner(&session_id, "task", task.id, "execution")
                     .await?;
@@ -209,80 +201,24 @@ impl StoryStepActivationService {
             }
         };
 
-        let active_workflow = resolve_workflow_projection_by_run(
-            active_run.id,
-            &step.key,
-            self.repos.workflow_definition_repo.as_ref(),
-            self.repos.lifecycle_definition_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-        )
-        .await
-        .map_err(TaskExecutionError::Internal)?;
-
-        let mut assembler = SessionRequestAssembler::new(
-            self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
-            self.backend_availability.as_ref(),
-            &self.repos,
-            &self.platform_config,
-        );
-        if let Some(bus) = self.audit_bus.as_ref() {
-            assembler = assembler.with_audit_bus(bus.clone());
-        }
-        let mut prepared = assembler
-            .compose_story_step(StoryStepSpec {
-                run: &active_run,
-                lifecycle: &lifecycle,
-                step: &step,
-                task: &task,
-                story: &story,
-                project: &project,
-                workspace: workspace.as_ref(),
-                phase: match phase {
-                    ExecutionPhase::Start => StoryStepPhase::Start,
-                    ExecutionPhase::Continue => StoryStepPhase::Continue,
-                },
-                override_prompt,
-                additional_prompt,
-                explicit_executor_config: executor_config.cloned(),
-                strict_config_resolution: true,
-                active_workflow,
-                audit_session_key: Some(session_id.clone()),
-            })
-            .await?;
-
-        if let Some(vfs) = prepared.vfs.as_mut()
-            && let Ok(Some(meta)) = self.hub.get_session_meta(&session_id).await
-        {
-            append_visible_canvas_mounts(
-                self.repos.canvas_repo.as_ref(),
-                task.project_id,
-                vfs,
-                &meta.visible_canvas_mount_ids,
-            )
-            .await
-            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
-        }
-
-        let base = PromptSessionRequest::from_user_input(UserPromptInput::from_text(""));
-        let context_sources = prepared.source_summary.clone();
-        // PR 1 Phase 1d：identity / post_turn_handler 从"finalize 后手工赋值"迁移到
-        // "PreparedSessionInputs 前置赋值"，由 finalize_request 统一合入 req，
-        // 与 builder 装配契约（SessionAssemblyBuilder.with_identity / with_post_turn_handler）保持一致节拍。
-        prepared.identity = identity;
-        prepared.post_turn_handler = Some(Arc::new(
-            super::gateway::effect_executor::TaskHookEffectExecutor {
-                repos: self.repos.clone(),
-                task_id: task.id,
-                session_id: session_id.clone(),
-                backend_id: backend_id.clone(),
+        let mut user_input = UserPromptInput::from_text("");
+        user_input.executor_config = executor_config.cloned();
+        let command = LaunchCommand::task_service_input(
+            user_input,
+            identity,
+            match phase {
+                ExecutionPhase::Start => TaskLaunchPhase::Start,
+                ExecutionPhase::Continue => TaskLaunchPhase::Continue,
             },
-        )
-            as crate::session::post_turn_handler::DynPostTurnHandler);
-        let req = finalize_request(base, prepared);
-
-        let turn_id = match self.hub.launch_task_prompt(&session_id, req).await {
-            Ok(turn_id) => turn_id,
+            override_prompt.map(str::to_string),
+            additional_prompt.map(str::to_string),
+        );
+        let launch_outcome = match self
+            .session_launch
+            .launch_command_with_outcome(&session_id, command)
+            .await
+        {
+            Ok(outcome) => outcome,
             Err(err) => {
                 if phase == ExecutionPhase::Start {
                     let run_service = LifecycleRunService::new(
@@ -303,6 +239,8 @@ impl StoryStepActivationService {
                 return Err(map_connector_error(err));
             }
         };
+        let turn_id = launch_outcome.turn_id;
+        let context_sources = launch_outcome.context_sources;
 
         let latest_task = gw_get_task(&self.repos, task.id).await?;
 
@@ -458,13 +396,13 @@ impl StoryStepActivationService {
 
         let (session_title, last_activity, session_execution_status) =
             if let Some(sid) = session_id.as_deref() {
-                match gw_get_session_overview(&self.hub, sid).await? {
+                match gw_get_session_overview(&self.session_core, sid).await? {
                     Some(meta) => {
-                        let execution_state =
-                            self.hub
-                                .inspect_session_execution_state(sid)
-                                .await
-                                .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+                        let execution_state = self
+                            .session_core
+                            .inspect_session_execution_state(sid)
+                            .await
+                            .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
                         (
                             Some(meta.title),
                             Some(meta.updated_at),
@@ -762,7 +700,7 @@ impl StoryStepActivationService {
             .create(&binding)
             .await
             .map_err(map_domain_error)?;
-        self.hub
+        self.session_core
             .mark_owner_bootstrap_pending(session_id)
             .await
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
@@ -779,7 +717,11 @@ impl StoryStepActivationService {
     ) {
         let envelope =
             bridge_task_status_event_to_envelope(session_id, turn_id, event_type, message, data);
-        if let Err(err) = self.hub.inject_notification(session_id, envelope).await {
+        if let Err(err) = self
+            .session_eventing
+            .inject_notification(session_id, envelope)
+            .await
+        {
             tracing::warn!(
                 session_id, turn_id, event_type, error = %err,
                 "桥接 Task 生命周期事件到 session 流失败"
@@ -789,7 +731,7 @@ impl StoryStepActivationService {
 
     async fn is_task_session_running(&self, session_id: &str) -> Result<bool, TaskExecutionError> {
         let execution_state = self
-            .hub
+            .session_core
             .inspect_session_execution_state(session_id)
             .await
             .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;

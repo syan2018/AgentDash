@@ -41,8 +41,18 @@ impl SkillDimensionDelta {
         };
         let delta = Self {
             added: state_delta.skills.added.iter().map(|n| lookup(n)).collect(),
-            removed: state_delta.skills.removed.iter().map(|n| lookup(n)).collect(),
-            changed: state_delta.skills.changed.iter().map(|n| lookup(n)).collect(),
+            removed: state_delta
+                .skills
+                .removed
+                .iter()
+                .map(|n| lookup(n))
+                .collect(),
+            changed: state_delta
+                .skills
+                .changed
+                .iter()
+                .map(|n| lookup(n))
+                .collect(),
         };
         Some(Box::new(delta))
     }

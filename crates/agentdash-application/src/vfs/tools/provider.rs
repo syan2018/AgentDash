@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use crate::session::SessionHub;
+use crate::session::companion_wait::CompanionWaitRegistry;
+use crate::session::{
+    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
+    SessionHookService, SessionLaunchService,
+};
 use agentdash_spi::DynAgentTool;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -28,7 +32,7 @@ use uuid::Uuid;
 pub struct RelayRuntimeToolProvider {
     service: Arc<RelayVfsService>,
     repos: crate::repository_set::RepositorySet,
-    session_hub_handle: SharedSessionHubHandle,
+    session_services_handle: SharedSessionToolServicesHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
@@ -39,14 +43,14 @@ impl RelayRuntimeToolProvider {
     pub fn new(
         service: Arc<RelayVfsService>,
         repos: crate::repository_set::RepositorySet,
-        session_hub_handle: SharedSessionHubHandle,
+        session_services_handle: SharedSessionToolServicesHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             service,
             repos,
-            session_hub_handle,
+            session_services_handle,
             inline_persister,
             platform_config,
             shell_output_registry: None,
@@ -79,18 +83,29 @@ impl RelayRuntimeToolProvider {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct SharedSessionHubHandle {
-    inner: Arc<RwLock<Option<SessionHub>>>,
+#[derive(Clone)]
+pub struct SessionToolServices {
+    pub core: SessionCoreService,
+    pub eventing: SessionEventingService,
+    pub control: SessionControlService,
+    pub launch: SessionLaunchService,
+    pub hooks: SessionHookService,
+    pub capability: SessionCapabilityService,
+    pub companion_wait_registry: CompanionWaitRegistry,
 }
 
-impl SharedSessionHubHandle {
-    pub async fn set(&self, hub: SessionHub) {
+#[derive(Clone, Default)]
+pub struct SharedSessionToolServicesHandle {
+    inner: Arc<RwLock<Option<SessionToolServices>>>,
+}
+
+impl SharedSessionToolServicesHandle {
+    pub async fn set(&self, services: SessionToolServices) {
         let mut guard = self.inner.write().await;
-        *guard = Some(hub);
+        *guard = Some(services);
     }
 
-    pub async fn get(&self) -> Option<SessionHub> {
+    pub async fn get(&self) -> Option<SessionToolServices> {
         self.inner.read().await.clone()
     }
 }
@@ -122,7 +137,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let clusters = &context.turn.capability_state.tool.enabled_clusters;
 
         let mut tools: Vec<DynAgentTool> = Vec::new();
-        let session_hub = self.session_hub_handle.get().await;
+        let session_services = self.session_services_handle.get().await;
         let flow = &context.turn.capability_state;
 
         // Read 簇：只读文件系统访问
@@ -211,7 +226,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         {
             tools.push(Arc::new(CompleteLifecycleNodeTool::new(
                 self.repos.clone(),
-                session_hub.clone(),
+                session_services.clone(),
                 context,
                 self.platform_config.clone(),
             )));
@@ -229,8 +244,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     self.repos.agent_repo.clone(),
                     self.repos.agent_link_repo.clone(),
                     self.repos.clone(),
-                    self.platform_config.clone(),
-                    self.session_hub_handle.clone(),
+                    self.session_services_handle.clone(),
                     context,
                 )));
             }
@@ -240,7 +254,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 Some(ToolCluster::Collaboration),
             ) {
                 tools.push(Arc::new(CompanionRespondTool::new(
-                    self.session_hub_handle.clone(),
+                    self.session_services_handle.clone(),
                     context,
                 )));
             }
@@ -268,7 +282,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         self.repos.canvas_repo.clone(),
                         project_id,
                         shared_vfs.clone(),
-                        self.session_hub_handle.clone(),
+                        self.session_services_handle.clone(),
                         context
                             .turn
                             .hook_session
@@ -300,7 +314,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     ) {
                         tools.push(Arc::new(PresentCanvasTool::new(
                             self.repos.canvas_repo.clone(),
-                            self.session_hub_handle.clone(),
+                            self.session_services_handle.clone(),
                             session_id,
                             context.session.turn_id.clone(),
                             project_id,

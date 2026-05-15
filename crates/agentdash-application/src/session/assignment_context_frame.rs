@@ -14,10 +14,7 @@ struct AssignmentContextFrame {
 }
 
 impl AssignmentContextFrame {
-    fn from_parts(
-        phase_tag: Option<&str>,
-        runtime_fragments: &[ContextFragment],
-    ) -> Option<Self> {
+    fn from_parts(phase_tag: Option<&str>, runtime_fragments: &[ContextFragment]) -> Option<Self> {
         let phase_tag = phase_tag.unwrap_or("bootstrap").to_string();
         let fragments = assignment_runtime_fragments(runtime_fragments);
 

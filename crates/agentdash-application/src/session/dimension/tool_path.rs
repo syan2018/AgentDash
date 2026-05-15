@@ -14,7 +14,9 @@ pub(crate) struct ToolPathDimensionDelta {
 }
 
 impl ToolPathDimensionDelta {
-    pub fn from_state_delta(state_delta: Option<&CapabilityStateDelta>) -> Option<Box<dyn DimensionDelta>> {
+    pub fn from_state_delta(
+        state_delta: Option<&CapabilityStateDelta>,
+    ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
         let delta = Self {
             blocked: state_delta.excluded_tool_paths.added.clone(),
@@ -53,9 +55,24 @@ impl DimensionDelta for ToolPathDimensionDelta {
         }];
 
         append_path_lines(&mut lines, "Blocked tool paths", &self.blocked, "不再暴露");
-        append_path_lines(&mut lines, "Unblocked tool paths", &self.unblocked, "重新暴露");
-        append_path_lines(&mut lines, "Whitelisted tool paths", &self.whitelisted, "进入白名单");
-        append_path_lines(&mut lines, "Removed whitelist paths", &self.removed_whitelist, "移出白名单");
+        append_path_lines(
+            &mut lines,
+            "Unblocked tool paths",
+            &self.unblocked,
+            "重新暴露",
+        );
+        append_path_lines(
+            &mut lines,
+            "Whitelisted tool paths",
+            &self.whitelisted,
+            "进入白名单",
+        );
+        append_path_lines(
+            &mut lines,
+            "Removed whitelist paths",
+            &self.removed_whitelist,
+            "移出白名单",
+        );
 
         lines.join("\n")
     }

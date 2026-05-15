@@ -1,5 +1,5 @@
 use crate::platform_config::SharedPlatformConfig;
-use crate::session::SessionHub;
+use crate::vfs::tools::provider::SessionToolServices;
 use crate::workflow::{
     AdvanceCurrentNodeInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,
@@ -22,7 +22,7 @@ use super::active_workflow_locator_from_snapshot;
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
-    session_hub: Option<SessionHub>,
+    session_services: Option<SessionToolServices>,
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     platform_config: SharedPlatformConfig,
@@ -53,13 +53,13 @@ pub struct CompleteLifecycleNodeParams {
 impl CompleteLifecycleNodeTool {
     pub fn new(
         repos: crate::repository_set::RepositorySet,
-        session_hub: Option<SessionHub>,
+        session_services: Option<SessionToolServices>,
         context: &ExecutionContext,
         platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             repos,
-            session_hub,
+            session_services,
             current_turn_id: context.session.turn_id.clone(),
             hook_session: context.turn.hook_session.clone(),
             platform_config,
@@ -106,13 +106,16 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 )
             })?;
 
-        let session_hub = self.session_hub.clone().ok_or_else(|| {
+        let session_services = self.session_services.clone().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
-                "session hub 尚未就绪，无法推进 lifecycle node".to_string(),
+                "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )
         })?;
         let orchestrator = LifecycleOrchestrator::new(
-            session_hub,
+            session_services.core,
+            session_services.launch,
+            session_services.hooks,
+            session_services.capability,
             self.repos.clone(),
             self.platform_config.clone(),
         );

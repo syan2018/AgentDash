@@ -1,28 +1,20 @@
-//! `SessionHub` 对外 API 门面。
+//! `SessionHub` 装配对象的内部 helper 与测试入口。
 //!
-//! 集中：session CRUD / subscribe / inject / state 查询 / prompt routing /
-//! cancel / MCP runtime 热更 / 工具构建 / hook runtime 重建 / companion 回调 /
-//! auto-resume 调度 / compaction 事件元数据富化。
-//!
-//! 后续 PR 6b/6c 会继续按职责拆 `tool_builder` / `hook_dispatch` / `cancel`
-//! 独立子模块；本文件是 PR 6a 的过渡形态。
+//! 新的外部调用点必须依赖具体 service；Commit 8 会继续把内部业务实现
+//! 下沉到明确的能力服务或依赖包。
 
 use std::io;
 
-use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
-};
+use agentdash_agent_protocol::BackboneEnvelope;
 use tokio::sync::broadcast;
 
-use super::super::compaction_context_frame::build_compaction_context_frame;
-use super::super::continuation::build_projected_transcript_from_events;
+#[cfg(test)]
+use super::super::construction::SessionConstructionPlan;
 use super::super::hub_support::*;
-use super::super::launch_intent::{
-    SessionLaunchIntent, SessionLaunchPreparation, SessionLaunchStrictness,
-};
+#[cfg(test)]
+use super::super::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
 use super::super::types::*;
 use super::SessionHub;
-use crate::companion::build_companion_human_response_notification;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
 
@@ -31,37 +23,11 @@ impl SessionHub {
     ///
     /// 统一通过事件投影驱动状态变更，不直接修改 SessionMeta。
     pub async fn recover_interrupted_sessions(&self) -> std::io::Result<()> {
-        let sessions = self.persistence.list_sessions().await?;
-        for meta in sessions {
-            if meta.last_execution_status == ExecutionStatus::Running {
-                tracing::warn!(
-                    session_id = %meta.id,
-                    "启动恢复：session 上次未正常结束，标记为 interrupted"
-                );
-                let turn_id = meta.last_turn_id.clone().unwrap_or_else(|| {
-                    format!("t_recovery_{}", chrono::Utc::now().timestamp_millis())
-                });
-                let source = SourceInfo {
-                    connector_id: "agentdash-server".to_string(),
-                    connector_type: "system".to_string(),
-                    executor_id: None,
-                };
-                let notification = build_turn_terminal_envelope(
-                    &meta.id,
-                    &source,
-                    &turn_id,
-                    TurnTerminalKind::Interrupted,
-                    Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
-                );
-                let _ = self.persist_notification(&meta.id, notification).await?;
-            }
-        }
-        Ok(())
+        self.runtime_service().recover_interrupted_sessions().await
     }
 
     pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
-        self.create_session_with_title_source(title, super::super::types::TitleSource::Auto)
-            .await
+        self.core_service().create_session(title).await
     }
 
     /// 创建会话并显式指定标题来源。
@@ -71,39 +37,17 @@ impl SessionHub {
         title: &str,
         title_source: super::super::types::TitleSource,
     ) -> std::io::Result<SessionMeta> {
-        let id = format!(
-            "sess-{}-{}",
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
-        let now = chrono::Utc::now().timestamp_millis();
-        let meta = SessionMeta {
-            id: id.clone(),
-            title: title.to_string(),
-            title_source,
-            created_at: now,
-            updated_at: now,
-            last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
-            last_turn_id: None,
-            last_terminal_message: None,
-            executor_config: None,
-            executor_session_id: None,
-            companion_context: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
-            pending_capability_state_transitions: Vec::new(),
-        };
-        self.persistence.create_session(&meta).await?;
-        Ok(meta)
+        self.core_service()
+            .create_session_with_title_source(title, title_source)
+            .await
     }
 
     pub async fn list_sessions(&self) -> std::io::Result<Vec<SessionMeta>> {
-        self.persistence.list_sessions().await
+        self.core_service().list_sessions().await
     }
 
     pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
-        self.persistence.get_session_meta(session_id).await
+        self.core_service().get_session_meta(session_id).await
     }
 
     /// 批量获取多个 session 的 meta，并发读取。
@@ -111,29 +55,9 @@ impl SessionHub {
         &self,
         session_ids: &[String],
     ) -> std::io::Result<std::collections::HashMap<String, SessionMeta>> {
-        use futures::future::join_all;
-
-        let futures: Vec<_> = session_ids
-            .iter()
-            .map(|id| {
-                let persistence = self.persistence.clone();
-                let id = id.clone();
-                async move {
-                    let meta = persistence.get_session_meta(&id).await?;
-                    Ok::<_, std::io::Error>((id, meta))
-                }
-            })
-            .collect();
-
-        let results = join_all(futures).await;
-        let mut map = std::collections::HashMap::with_capacity(session_ids.len());
-        for result in results {
-            let (id, maybe_meta) = result?;
-            if let Some(meta) = maybe_meta {
-                map.insert(id, meta);
-            }
-        }
-        Ok(map)
+        self.core_service()
+            .get_session_metas_bulk(session_ids)
+            .await
     }
 
     /// 批量查询 session 执行状态。
@@ -144,32 +68,9 @@ impl SessionHub {
         &self,
         session_ids: &[String],
     ) -> std::io::Result<std::collections::HashMap<String, SessionExecutionState>> {
-        let running_set: std::collections::HashSet<String> = {
-            let sessions = self.sessions.lock().await;
-            session_ids
-                .iter()
-                .filter(|id| sessions.get(id.as_str()).is_some_and(|r| r.is_running()))
-                .cloned()
-                .collect()
-        };
-
-        let mut result = std::collections::HashMap::with_capacity(session_ids.len());
-        for id in session_ids {
-            if running_set.contains(id) {
-                result.insert(id.clone(), SessionExecutionState::Running { turn_id: None });
-            } else {
-                let meta = self
-                    .persistence
-                    .get_session_meta(id)
-                    .await?
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, format!("session {id} 不存在"))
-                    })?;
-                let status = meta_to_execution_state(&meta, id)?;
-                result.insert(id.clone(), status);
-            }
-        }
-        Ok(result)
+        self.core_service()
+            .inspect_execution_states_bulk(session_ids)
+            .await
     }
 
     pub async fn update_session_meta<F>(
@@ -180,13 +81,9 @@ impl SessionHub {
     where
         F: FnOnce(&mut SessionMeta),
     {
-        let Some(mut meta) = self.persistence.get_session_meta(session_id).await? else {
-            return Ok(None);
-        };
-        updater(&mut meta);
-        meta.updated_at = chrono::Utc::now().timestamp_millis();
-        self.persistence.save_session_meta(&meta).await?;
-        Ok(Some(meta))
+        self.core_service()
+            .update_session_meta(session_id, updater)
+            .await
     }
 
     /// 查询单个 session 的执行状态。
@@ -194,64 +91,27 @@ impl SessionHub {
         &self,
         session_id: &str,
     ) -> std::io::Result<SessionExecutionState> {
-        let (running, live_turn_id) = {
-            let sessions = self.sessions.lock().await;
-            sessions.get(session_id).map(|runtime| {
-                (
-                    runtime.is_running(),
-                    runtime
-                        .turn_state
-                        .active_turn()
-                        .map(|turn| turn.turn_id.clone()),
-                )
-            })
-        }
-        .unwrap_or((false, None));
-
-        if running {
-            return Ok(SessionExecutionState::Running {
-                turn_id: live_turn_id,
-            });
-        }
-
-        let Some(meta) = self.persistence.get_session_meta(session_id).await? else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            ));
-        };
-
-        meta_to_execution_state(&meta, session_id)
+        self.core_service()
+            .inspect_session_execution_state(session_id)
+            .await
     }
 
     pub async fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
-        {
-            let mut sessions = self.sessions.lock().await;
-            sessions.remove(session_id);
-        }
-        self.persistence.delete_session(session_id).await
+        self.core_service().delete_session(session_id).await
     }
 
     pub async fn ensure_session(
         &self,
         session_id: &str,
     ) -> broadcast::Receiver<super::super::persistence::PersistedSessionEvent> {
-        let mut sessions = self.sessions.lock().await;
-        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-            let (tx, _rx) = broadcast::channel(1024);
-            build_session_runtime(tx)
-        });
-        runtime.tx.subscribe()
+        self.eventing_service().ensure_session(session_id).await
     }
 
     pub async fn get_hook_session_runtime(
         &self,
         session_id: &str,
     ) -> Option<SharedHookSessionRuntime> {
-        let sessions = self.sessions.lock().await;
-        sessions
-            .get(session_id)
-            .and_then(|runtime| runtime.hook_session.clone())
+        self.runtime_registry.hook_session_runtime(session_id).await
     }
 
     /// 向运行中 session 的 agent 注入一条 out-of-band user message。
@@ -263,7 +123,7 @@ impl SessionHub {
         session_id: &str,
         message: String,
     ) -> Result<(), ConnectorError> {
-        self.connector
+        self.control_service()
             .push_session_notification(session_id, message)
             .await
     }
@@ -278,29 +138,9 @@ impl SessionHub {
         turn_id: Option<&str>,
         value: serde_json::Value,
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        let connector_type = match self.connector.connector_type() {
-            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
-            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
-        };
-        let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
-            connector_type: connector_type.to_string(),
-            executor_id: None,
-        };
-        let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "capability_state_changed".to_string(),
-                value,
-            }),
-            session_id,
-            source,
-        )
-        .with_trace(TraceInfo {
-            turn_id: turn_id.map(ToString::to_string),
-            entry_index: None,
-        });
-
-        self.persist_notification(session_id, envelope).await
+        self.eventing_service()
+            .emit_capability_state_changed(session_id, turn_id, value)
+            .await
     }
 
     pub(crate) async fn emit_context_frame(
@@ -309,74 +149,41 @@ impl SessionHub {
         turn_id: Option<&str>,
         notice: &ContextFrame,
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        let connector_type = match self.connector.connector_type() {
-            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
-            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
-        };
-        let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
-            connector_type: connector_type.to_string(),
-            executor_id: None,
-        };
-        let value = serde_json::to_value(notice).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("runtime context notice 序列化失败: {error}"),
-            )
-        })?;
-        let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "context_frame".to_string(),
-                value,
-            }),
-            session_id,
-            source,
-        )
-        .with_trace(TraceInfo {
-            turn_id: turn_id.map(ToString::to_string),
-            entry_index: None,
-        });
-
-        self.persist_notification(session_id, envelope).await
+        self.eventing_service()
+            .emit_context_frame(session_id, turn_id, notice)
+            .await
     }
 
     pub(crate) async fn enqueue_pending_capability_state_transition(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<Option<SessionMeta>> {
-        let phase_node = transition.phase_node.clone();
-        let updated = self
-            .update_session_meta(session_id, move |meta| {
-                meta.pending_capability_state_transitions
-                    .retain(|existing| existing.phase_node != phase_node);
-                meta.pending_capability_state_transitions.push(transition);
-            })
+    ) -> io::Result<()> {
+        self.stores
+            .runtime_commands
+            .upsert_pending_runtime_command(session_id, transition)
             .await?;
-        Ok(updated)
+        Ok(())
     }
 
-    pub async fn clear_pending_capability_state_transitions(
-        &self,
-        session_id: &str,
-    ) -> io::Result<Option<SessionMeta>> {
-        self.update_session_meta(session_id, |meta| {
-            meta.pending_capability_state_transitions.clear();
-        })
-        .await
+    pub async fn has_runtime_entry(&self, session_id: &str) -> bool {
+        self.core_service().has_runtime_entry(session_id).await
     }
 
-    pub async fn has_live_runtime(&self, session_id: &str) -> bool {
-        self.connector.has_live_session(session_id).await
+    pub async fn has_active_turn(&self, session_id: &str) -> bool {
+        self.core_service().has_active_turn(session_id).await
+    }
+
+    pub async fn has_live_executor_session(&self, session_id: &str) -> bool {
+        self.core_service()
+            .has_live_executor_session(session_id)
+            .await
     }
 
     pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> std::io::Result<()> {
-        let _ = self
-            .update_session_meta(session_id, |meta| {
-                meta.bootstrap_state = SessionBootstrapState::Pending;
-            })
-            .await?;
-        Ok(())
+        self.core_service()
+            .mark_owner_bootstrap_pending(session_id)
+            .await
     }
 
     /// 从持久化事件重建投影 transcript。
@@ -388,184 +195,32 @@ impl SessionHub {
         &self,
         session_id: &str,
     ) -> std::io::Result<agentdash_agent_types::ProjectedTranscript> {
-        let events = self.persistence.list_all_events(session_id).await?;
-        Ok(build_projected_transcript_from_events(&events))
+        self.eventing_service()
+            .build_projected_transcript(session_id)
+            .await
     }
 
-    /// 低层启动入口：跳过 augment，直接进入 prompt pipeline。
+    /// 测试专用入口：跳过 source provider，直接进入 prompt pipeline。
     ///
-    /// 外部应通过 `launch_prompt_with_intent` 或其具名包装启动，
-    /// 此方法仅供测试或已预组装的路径调用。
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) async fn start_prompt(
+    /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
+    #[cfg(test)]
+    pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        req: PromptSessionRequest,
+        construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
-        self.start_prompt_with_follow_up(session_id, None, req)
+        SessionLaunchExecutor::new(SessionLaunchDeps::from_hub(self))
+            .execute_constructed_launch_for_test(session_id, construction)
             .await
-    }
-
-    /// 类型化启动入口（统一门面）。
-    ///
-    /// 由 [`SessionLaunchIntent`] 决定是否需要 augment、是否 strict、
-    /// 以及可选的 follow_up_session_id 透传。
-    pub(crate) async fn launch_prompt_with_intent(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-        intent: SessionLaunchIntent,
-    ) -> Result<String, ConnectorError> {
-        let req = match intent.preparation() {
-            SessionLaunchPreparation::RequiresAugment => match intent.strictness() {
-                SessionLaunchStrictness::Strict => {
-                    let reason = intent.reason_tag();
-                    let Some(augmenter) = self.current_prompt_augmenter().await else {
-                        return Err(ConnectorError::Runtime(format!(
-                            "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
-                        )));
-                    };
-                    augmenter.augment(session_id, req).await?
-                }
-                SessionLaunchStrictness::Relaxed => {
-                    self.augment_prompt_request(session_id, req, intent.reason_tag())
-                        .await?
-                }
-            },
-            SessionLaunchPreparation::PreAssembled => req,
-        };
-        self.start_prompt_with_follow_up(session_id, intent.follow_up_session_id(), req)
-            .await
-    }
-
-    /// Task 执行链启动入口：请求已在 Task service 内 compose+finalize，直接启动。
-    pub async fn launch_task_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::task_service())
-            .await
-    }
-
-    /// Workflow node 启动入口：请求已在 orchestrator 内 compose+finalize，直接启动。
-    pub async fn launch_workflow_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(
-            session_id,
-            req,
-            SessionLaunchIntent::workflow_orchestrator(),
-        )
-        .await
-    }
-
-    /// Routine 启动入口：请求已在 routine executor 内组装，直接启动。
-    pub async fn launch_routine_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::routine_executor())
-            .await
-    }
-
-    /// Local relay 启动入口：保留 follow_up 透传语义，不经过 augmenter。
-    pub async fn launch_local_relay_prompt_with_follow_up(
-        &self,
-        session_id: &str,
-        follow_up_session_id: Option<&str>,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(
-            session_id,
-            req,
-            SessionLaunchIntent::local_relay_prompt()
-                .with_follow_up(follow_up_session_id.map(String::from)),
-        )
-        .await
-    }
-
-    /// Companion dispatch 启动入口：请求已在 companion compose 流程中组装。
-    pub(crate) async fn launch_companion_dispatch_prompt_with_follow_up(
-        &self,
-        session_id: &str,
-        follow_up_session_id: Option<&str>,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(
-            session_id,
-            req,
-            SessionLaunchIntent::companion_dispatch()
-                .with_follow_up(follow_up_session_id.map(String::from)),
-        )
-        .await
-    }
-
-    /// Companion parent resume 启动入口：固定 strict 策略。
-    pub(crate) async fn launch_companion_parent_resume_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(
-            session_id,
-            req,
-            SessionLaunchIntent::companion_parent_resume(),
-        )
-        .await
-    }
-
-    /// HTTP 主通道启动入口：固定 strict 策略。
-    pub async fn launch_http_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::http_prompt())
-            .await
-    }
-
-    /// Hook auto-resume 启动入口：固定 strict 策略。
-    pub async fn launch_hook_auto_resume_prompt(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-    ) -> Result<String, ConnectorError> {
-        self.launch_prompt_with_intent(session_id, req, SessionLaunchIntent::hook_auto_resume())
-            .await
-    }
-
-    /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。
-    ///
-    /// 没有注入 augmenter 的测试/嵌入场景保留旧行为，但正式 AppState
-    /// 应始终注入 augmenter，避免 owner / MCP / flow 上下文漂移。
-    pub(crate) async fn augment_prompt_request(
-        &self,
-        session_id: &str,
-        req: PromptSessionRequest,
-        reason: &str,
-    ) -> Result<PromptSessionRequest, ConnectorError> {
-        match self.current_prompt_augmenter().await {
-            Some(augmenter) => augmenter.augment(session_id, req).await,
-            None => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    reason = %reason,
-                    "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
-                );
-                Ok(req)
-            }
-        }
     }
 
     pub async fn subscribe_with_history(
         &self,
         session_id: &str,
     ) -> io::Result<SessionEventSubscription> {
-        self.subscribe_after(session_id, 0).await
+        self.eventing_service()
+            .subscribe_with_history(session_id)
+            .await
     }
 
     pub async fn subscribe_after(
@@ -573,13 +228,9 @@ impl SessionHub {
         session_id: &str,
         after_seq: u64,
     ) -> io::Result<SessionEventSubscription> {
-        let rx = self.ensure_session(session_id).await;
-        let backlog = self.persistence.read_backlog(session_id, after_seq).await?;
-        Ok(SessionEventSubscription {
-            snapshot_seq: backlog.snapshot_seq,
-            backlog: backlog.events,
-            rx,
-        })
+        self.eventing_service()
+            .subscribe_after(session_id, after_seq)
+            .await
     }
 
     pub async fn list_event_page(
@@ -588,7 +239,7 @@ impl SessionHub {
         after_seq: u64,
         limit: u32,
     ) -> io::Result<super::super::persistence::SessionEventPage> {
-        self.persistence
+        self.eventing_service()
             .list_event_page(session_id, after_seq, limit)
             .await
     }
@@ -600,8 +251,9 @@ impl SessionHub {
         session_id: &str,
         envelope: BackboneEnvelope,
     ) -> std::io::Result<()> {
-        let _ = self.persist_notification(session_id, envelope).await?;
-        Ok(())
+        self.eventing_service()
+            .inject_notification(session_id, envelope)
+            .await
     }
 
     pub(crate) async fn persist_notification(
@@ -609,154 +261,8 @@ impl SessionHub {
         session_id: &str,
         envelope: BackboneEnvelope,
     ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        let envelope = self
-            .maybe_enrich_compaction_notification(session_id, envelope)
-            .await?;
-        let persisted = self.persistence.append_event(session_id, &envelope).await?;
-        let tx = {
-            let mut sessions = self.sessions.lock().await;
-            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-                let (tx, _rx) = broadcast::channel(1024);
-                build_session_runtime(tx)
-            });
-            runtime.last_activity_at = chrono::Utc::now().timestamp_millis();
-            runtime.tx.clone()
-        };
-        let _ = tx.send(persisted.clone());
-        if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
-            &persisted.notification.event
-            && key == "context_compacted"
-            && let Some(frame) = build_compaction_context_frame(value)
-        {
-            let _ = self
-                .persist_context_frame_direct(session_id, persisted.turn_id.as_deref(), &frame)
-                .await;
-        }
-        Ok(persisted)
-    }
-
-    async fn persist_context_frame_direct(
-        &self,
-        session_id: &str,
-        turn_id: Option<&str>,
-        frame: &ContextFrame,
-    ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        let connector_type = match self.connector.connector_type() {
-            agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
-            agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
-        };
-        let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
-            connector_type: connector_type.to_string(),
-            executor_id: None,
-        };
-        let value = serde_json::to_value(frame).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("context frame 序列化失败: {error}"),
-            )
-        })?;
-        let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "context_frame".to_string(),
-                value,
-            }),
-            session_id,
-            source,
-        )
-        .with_trace(TraceInfo {
-            turn_id: turn_id.map(ToString::to_string),
-            entry_index: None,
-        });
-
-        let persisted = self.persistence.append_event(session_id, &envelope).await?;
-        let tx = {
-            let mut sessions = self.sessions.lock().await;
-            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-                let (tx, _rx) = broadcast::channel(1024);
-                build_session_runtime(tx)
-            });
-            runtime.last_activity_at = chrono::Utc::now().timestamp_millis();
-            runtime.tx.clone()
-        };
-        let _ = tx.send(persisted.clone());
-        Ok(persisted)
-    }
-
-    /// 查找所有超过指定超时时间无活动的 running session，返回其 session_id 列表。
-    pub async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
-        let now = chrono::Utc::now().timestamp_millis();
-        let threshold = stall_timeout_ms as i64;
-        let sessions = self.sessions.lock().await;
-        sessions
-            .iter()
-            .filter(|(_, runtime)| {
-                runtime.is_running() && (now - runtime.last_activity_at) > threshold
-            })
-            .map(|(id, _)| id.clone())
-            .collect()
-    }
-
-    pub async fn approve_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-    ) -> Result<(), ConnectorError> {
-        self.connector
-            .approve_tool_call(session_id, tool_call_id)
+        self.eventing_service()
+            .persist_notification(session_id, envelope)
             .await
-    }
-
-    pub async fn reject_tool_call(
-        &self,
-        session_id: &str,
-        tool_call_id: &str,
-        reason: Option<String>,
-    ) -> Result<(), ConnectorError> {
-        self.connector
-            .reject_tool_call(session_id, tool_call_id, reason)
-            .await
-    }
-
-    /// 人通过 API 回应 companion 请求。
-    /// 若命中 wait registry，则恢复挂起的工具调用；
-    /// 无论是否命中，都把回应写入 session 事件流，保证历史可回放。
-    pub async fn respond_companion_request(
-        &self,
-        session_id: &str,
-        request_id: &str,
-        payload: serde_json::Value,
-    ) -> Result<(), ConnectorError> {
-        let resolved = self
-            .companion_wait_registry
-            .resolve(session_id, request_id, payload.clone())
-            .await;
-
-        let fallback_turn_id = self
-            .persistence
-            .get_session_meta(session_id)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?
-            .and_then(|meta| meta.last_turn_id);
-        let turn_id = resolved
-            .as_ref()
-            .map(|result| result.turn_id.as_str())
-            .or(fallback_turn_id.as_deref());
-
-        let request_type = resolved
-            .as_ref()
-            .and_then(|result| result.request_type.as_deref());
-
-        let notification = build_companion_human_response_notification(
-            session_id,
-            turn_id,
-            request_id,
-            &payload,
-            request_type,
-            resolved.is_some(),
-        );
-        let _ = self.inject_notification(session_id, notification).await;
-
-        Ok(())
     }
 }

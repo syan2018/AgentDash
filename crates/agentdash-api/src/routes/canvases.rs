@@ -19,8 +19,8 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::dto::CanvasResponse;
-use crate::routes::{project_sessions, story_sessions};
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -181,8 +181,13 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let vfs =
-        resolve_canvas_runtime_vfs(&state, query.session_id.as_deref(), canvas.project_id).await?;
+    let vfs = resolve_canvas_runtime_vfs(
+        &state,
+        &current_user,
+        query.session_id.as_deref(),
+        canvas.project_id,
+    )
+    .await?;
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id.clone(),
@@ -284,6 +289,7 @@ fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
 
 async fn resolve_canvas_runtime_vfs(
     state: &Arc<AppState>,
+    current_user: &agentdash_plugin_api::AuthIdentity,
     session_id: Option<&str>,
     expected_project_id: Uuid,
 ) -> Result<Option<agentdash_spi::Vfs>, ApiError> {
@@ -294,60 +300,14 @@ async fn resolve_canvas_runtime_vfs(
     let bindings =
         ensure_canvas_session_scope(state.as_ref(), session_id, expected_project_id).await?;
 
-    let Some(binding) = pick_primary_binding_for_project(&bindings, expected_project_id) else {
+    if pick_primary_binding_for_project(&bindings, expected_project_id).is_none() {
         return Ok(None);
-    };
-    let session_meta = state
-        .services
-        .session_hub
-        .get_session_meta(session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-
-    match binding.owner_type {
-        SessionOwnerType::Task => {
-            let built_context =
-                agentdash_application::task::context_builder::build_task_session_context(
-                    &state.repos,
-                    &state.services.vfs_service,
-                    &state.config.platform_config,
-                    binding.owner_id,
-                    session_meta.as_ref(),
-                )
-                .await;
-            Ok(built_context.and_then(|context| context.vfs))
-        }
-        SessionOwnerType::Story => {
-            let story = state
-                .repos
-                .story_repo
-                .get_by_id(binding.owner_id)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("Story {} 不存在", binding.owner_id)))?;
-            let built_context =
-                story_sessions::build_story_session_context_response(state, &story, session_id)
-                    .await?;
-            Ok(built_context.and_then(|context| context.vfs))
-        }
-        SessionOwnerType::Project => {
-            let project = state
-                .repos
-                .project_repo
-                .get_by_id(binding.owner_id)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!("Project {} 不存在", binding.owner_id))
-                })?;
-            let built_context = project_sessions::build_project_session_context_response(
-                state,
-                &project,
-                session_id,
-                &binding.label,
-            )
-            .await?;
-            Ok(built_context.vfs)
-        }
     }
+    Ok(
+        build_session_context_plan(state, current_user, session_id, &bindings)
+            .await?
+            .and_then(|plan| plan.context_projection.vfs),
+    )
 }
 
 async fn ensure_canvas_session_scope(

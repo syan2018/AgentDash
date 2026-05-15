@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 runtime registry / turn supervisor 是否保持运行态契约。"}
+{"file": ".trellis/tasks/05-14-session-launch-refactor-assessment/implement.md", "reason": "核对 Batch 4 退出条件。"}

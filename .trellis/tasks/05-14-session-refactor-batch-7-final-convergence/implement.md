@@ -144,6 +144,8 @@ cargo check -p agentdash-api
 
 ### Commit 4: 收缩 `prompt_pipeline` 为执行器
 
+状态：已完成。
+
 提交信息：
 
 ```text
@@ -156,6 +158,12 @@ refactor(session): 将 prompt pipeline 收缩为 launch execution 执行器
 - `prompt_pipeline` 只做 claim / activate、event append、connector.prompt、accepted 后 meta/pending/title 提交、processor supervision。
 - connector.prompt 失败不得提交 bootstrap completed、pending applied、title generation 等成功副作用。
 - hook session、runtime delegate、restore state、terminal effect handler 的解析归入 launch/effects 边界，不在 pipeline 里临时 fallback。
+
+实际完成事实：
+
+- pending runtime context transition 改为先生成待应用结果，不在 connector.prompt 前持久化 applied 事件或 context frame。
+- connector.prompt 接受后再持久化 pending capability events、context frames、bootstrap meta、pending applied 与 title generation。
+- connector.prompt 失败路径保持清理 turn、写 failed terminal，不提交 bootstrap/pending/title 成功副作用。
 
 退出检查：
 

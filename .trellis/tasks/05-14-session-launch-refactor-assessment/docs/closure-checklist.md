@@ -33,8 +33,8 @@
 ## Runtime / Pipeline
 
 - [x] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
-- [ ] `prompt_pipeline` 只负责执行计划：turn claim/activate、event append、connector.prompt、accepted 后提交、processor supervision。
-- [ ] connector.prompt 失败不会提交 bootstrap、pending applied、title generation 等成功副作用。
+- [x] `prompt_pipeline` 只负责执行计划：turn claim/activate、event append、connector.prompt、accepted 后提交、processor supervision。
+- [x] connector.prompt 失败不会提交 bootstrap、pending applied、title generation 等成功副作用。
 - [ ] runtime registry 与 turn supervisor 是 active turn / cancel / stall 的入口。
 - [ ] connector live executor session 与 app active turn 命名和查询分离。
 

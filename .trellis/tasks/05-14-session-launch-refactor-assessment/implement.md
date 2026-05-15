@@ -45,8 +45,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 - [ ] `LaunchExecution` 在 connector.prompt 前完整包含 prompt、construction、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input、trace。
 - [ ] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
-- [ ] `prompt_pipeline` 只执行计划，不再读取 request/meta/profile 做策略 fallback。
-- [ ] connector.prompt 失败路径不提交 bootstrap/pending/title 等成功副作用。
+- [x] `prompt_pipeline` 只执行计划，不再读取 request/meta/profile 做策略 fallback。
+- [x] connector.prompt 失败路径不提交 bootstrap/pending/title 等成功副作用。
 
 ### 4. Delete `PromptAugmentInput` Production Handoff
 

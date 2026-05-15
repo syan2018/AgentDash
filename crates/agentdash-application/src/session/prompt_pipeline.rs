@@ -243,26 +243,24 @@ impl<'a> SessionLaunchExecutor<'a> {
             .iter()
             .map(|command| command.id)
             .collect::<Vec<_>>();
-        let pending_transition_frames = if !launch_execution
+        let pending_transition_application = if !launch_execution
             .runtime_commands
             .pending_capability_transitions
             .is_empty()
         {
-            let frames = hub
-                .apply_pending_runtime_context_transitions_on_turn(
-                    &sid,
-                    &turn_id,
-                    hook_session.as_ref(),
-                    base_capability_state,
-                    &launch_execution
-                        .runtime_commands
-                        .pending_capability_transitions,
-                    &context.turn.assembled_tools,
-                )
-                .await;
-            frames
+            hub.apply_pending_runtime_context_transitions_on_turn(
+                &sid,
+                &turn_id,
+                hook_session.as_ref(),
+                base_capability_state,
+                &launch_execution
+                    .runtime_commands
+                    .pending_capability_transitions,
+                &context.turn.assembled_tools,
+            )
+            .await
         } else {
-            Vec::new()
+            Default::default()
         };
 
         let connector_type = match hub.connector.connector_type() {
@@ -321,6 +319,7 @@ impl<'a> SessionLaunchExecutor<'a> {
             }
         }
 
+        let mut accepted_context_frames_to_emit = Vec::new();
         let mut owner_bootstrap_frames = Vec::new();
         if is_owner_bootstrap {
             let frame = build_initial_capability_state_frame(
@@ -328,7 +327,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 &capability_keys,
                 &context.turn.assembled_tools,
             );
-            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            accepted_context_frames_to_emit.push(frame.clone());
             owner_bootstrap_frames.push(frame);
 
             if let Some(frame) = build_assignment_context_frame(
@@ -337,14 +336,14 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .map(|bundle| bundle.phase_tag.as_str()),
                 &compose_fragments,
             ) {
-                let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+                accepted_context_frames_to_emit.push(frame.clone());
                 owner_bootstrap_frames.push(frame);
             }
         }
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
-            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
         if let Some(frame) = launch_execution
@@ -353,11 +352,11 @@ impl<'a> SessionLaunchExecutor<'a> {
             .continuation_context_frame
             .clone()
         {
-            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
         turn_context_frames.extend(owner_bootstrap_frames);
-        turn_context_frames.extend(pending_transition_frames);
+        turn_context_frames.extend(pending_transition_application.context_frames.clone());
 
         if let Some(hook_session_runtime) = hook_session.as_ref() {
             turn_context_frames.extend(collect_queued_turn_start_frames(
@@ -374,7 +373,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 })
                 .collect::<Vec<_>>();
             for frame in &pending_action_frames {
-                let _ = hub.emit_context_frame(&sid, Some(&turn_id), frame).await;
+                accepted_context_frames_to_emit.push(frame.clone());
             }
             turn_context_frames.extend(pending_action_frames);
         }
@@ -410,6 +409,15 @@ impl<'a> SessionLaunchExecutor<'a> {
                 return Err(error);
             }
         };
+
+        for payload in &pending_transition_application.capability_events {
+            let _ = hub
+                .emit_capability_state_changed(&sid, Some(&turn_id), payload.clone())
+                .await;
+        }
+        for frame in &accepted_context_frames_to_emit {
+            let _ = hub.emit_context_frame(&sid, Some(&turn_id), frame).await;
+        }
 
         Self::apply_turn_start_meta(
             &mut session_meta,

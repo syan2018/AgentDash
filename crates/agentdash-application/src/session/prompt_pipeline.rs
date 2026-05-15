@@ -165,9 +165,9 @@ impl<'a> SessionLaunchExecutor<'a> {
                 construction_seed,
             })
             .await?;
-        let resolved_payload = planned_launch.resolved_payload;
-        let title_hint = planned_launch.title_hint;
         let launch_execution = planned_launch.launch_execution;
+        let resolved_payload = launch_execution.resolved_payload.clone();
+        let title_hint = launch_execution.title_hint.clone();
         let hook_session = planned_launch.hook_session;
         let hook_snapshot_contribution = planned_launch.hook_snapshot_contribution;
         let context_bundle = planned_launch.context_bundle;

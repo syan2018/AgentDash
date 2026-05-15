@@ -25,8 +25,8 @@ use super::path_policy::resolve_working_dir;
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
-    SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionMeta,
+    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
 };
 
@@ -47,8 +47,6 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
 }
 
 pub(super) struct PlannedSessionLaunch {
-    pub resolved_payload: ResolvedPromptPayload,
-    pub title_hint: String,
     pub launch_execution: LaunchExecution,
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
@@ -91,11 +89,6 @@ impl<'a> SessionLaunchPlanner<'a> {
             .user_input
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
-        let title_hint = resolved_payload
-            .text_prompt
-            .chars()
-            .take(30)
-            .collect::<String>();
         let pending_capability_transitions = input
             .pending_runtime_commands
             .iter()
@@ -355,6 +348,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .resolve_terminal_hook_effect_handler(input.session_id, terminal_hook_effect_binding)
             .await?;
         let launch_execution = LaunchExecution::build(LaunchExecutionInput {
+            resolved_payload,
             construction: construction_plan,
             session_id: sid,
             turn_id: input.turn_id.to_string(),
@@ -382,8 +376,6 @@ impl<'a> SessionLaunchPlanner<'a> {
         });
 
         Ok(PlannedSessionLaunch {
-            resolved_payload,
-            title_hint,
             launch_execution,
             hook_session,
             hook_snapshot_contribution,

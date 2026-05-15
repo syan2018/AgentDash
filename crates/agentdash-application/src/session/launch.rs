@@ -13,7 +13,9 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
-use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
+use super::types::{
+    HookSnapshotReloadTrigger, ResolvedPromptPayload, SessionPromptLifecycle, UserPromptInput,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
@@ -342,6 +344,8 @@ pub struct LaunchExecutionTraceEntry {
 }
 
 pub struct LaunchExecution {
+    pub resolved_payload: ResolvedPromptPayload,
+    pub title_hint: String,
     pub construction: SessionConstructionPlan,
     pub lifecycle: LifecycleLaunchPlan,
     pub restore: RestoreLaunchPlan,
@@ -355,6 +359,7 @@ pub struct LaunchExecution {
 }
 
 pub struct LaunchExecutionInput {
+    pub resolved_payload: ResolvedPromptPayload,
     pub construction: SessionConstructionPlan,
     pub session_id: String,
     pub turn_id: String,
@@ -383,6 +388,12 @@ pub struct LaunchExecutionInput {
 
 impl LaunchExecution {
     pub fn build(input: LaunchExecutionInput) -> Self {
+        let title_hint = input
+            .resolved_payload
+            .text_prompt
+            .chars()
+            .take(30)
+            .collect::<String>();
         let restored_executor_state = input.restored_session_state.is_some();
         let capability_keys = input
             .capability_state
@@ -472,6 +483,8 @@ impl LaunchExecution {
             assembled_tools: Vec::new(),
         };
         Self {
+            resolved_payload: input.resolved_payload,
+            title_hint,
             construction: input.construction,
             lifecycle,
             restore,
@@ -511,7 +524,11 @@ mod tests {
             owner,
             SessionConstructionContextProjection::default(),
         );
+        let resolved_payload = UserPromptInput::from_text("hello")
+            .resolve_prompt_payload()
+            .expect("resolved payload");
         LaunchExecutionInput {
+            resolved_payload,
             construction,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
@@ -547,6 +564,8 @@ mod tests {
         let execution = LaunchExecution::build(input);
 
         assert_eq!(execution.context.session.turn_id, "t1");
+        assert_eq!(execution.resolved_payload.text_prompt, "hello");
+        assert_eq!(execution.title_hint, "hello");
         assert_eq!(
             execution.context.session.executor_config.executor,
             "PI_AGENT"

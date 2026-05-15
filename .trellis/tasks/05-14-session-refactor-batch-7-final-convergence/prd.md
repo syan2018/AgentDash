@@ -52,7 +52,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 - [ ] `SessionConstructionSeed` 被删除，字段进入 construction / launch / effects 目标边界。
 - [ ] `LaunchCommand` 是纯入口意图。
 - [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的事实源。
-- [ ] `LaunchExecution` 是唯一 per-launch 策略计划；当前已强制持有 `SessionConstructionPlan`，但 planner 输入仍未达到终态。
+- [ ] `LaunchExecution` 是唯一 per-launch 策略计划；当前已强制持有 `SessionConstructionPlan` 并承载 resolved prompt payload，但 planner 输入仍未达到终态。
 - [ ] `prompt_pipeline` 不再读取 request/meta/profile 做策略 fallback。
 - [ ] `SessionHub` 不再承载业务判断。
 - [ ] terminal effect handlers 可 durable replay。

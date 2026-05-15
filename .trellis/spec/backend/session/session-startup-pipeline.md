@@ -118,6 +118,8 @@ Task terminal hook effect binding 的 durable handler 描述归 application cons
 
 `LaunchExecution` 的 `construction` 不允许是可选字段。无法产出 `SessionConstructionPlan`
 时应在 planner 阶段失败，不得把缺失 construction 的 launch 继续交给 connector。
+resolved prompt payload 必须由 `LaunchExecution` 承载，不能作为 parallel planner result
+绕过 launch execution 交给 pipeline。
 
 `SessionLaunchPlanner` 负责把临时 launch 输入解析为 `LaunchExecution`。当前它仍借用
 `SessionHub` 依赖，后续需要继续与 `SessionConstructionPlanner` 合流，不能成为新的

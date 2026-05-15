@@ -13,6 +13,7 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
+use super::post_turn_handler::DynPostTurnHandler;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
@@ -321,10 +322,10 @@ pub struct RuntimeCommandLaunchPlan {
     pub apply_after_connector_accept: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalEffectPlan {
     pub terminal_event_first: bool,
     pub durable_outbox_required: bool,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +389,7 @@ pub struct LaunchExecutionInput {
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
 impl LaunchExecution {
@@ -443,6 +445,7 @@ impl LaunchExecution {
         let terminal_effects = TerminalEffectPlan {
             terminal_event_first: true,
             durable_outbox_required: true,
+            post_turn_handler: input.post_turn_handler,
         };
         let connector_input = ConnectorInputPlan {
             working_directory: input.working_directory.clone(),
@@ -581,6 +584,7 @@ mod tests {
             capability_state: CapabilityState::default(),
             runtime_delegate: None,
             restored_session_state: None,
+            post_turn_handler: None,
         }
     }
 

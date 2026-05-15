@@ -122,6 +122,8 @@ resolved prompt payload 必须由 `LaunchExecution` 承载，不能作为 parall
 绕过 launch execution 交给 pipeline。
 pending runtime commands / pending capability transitions 必须由 `LaunchExecution.runtime_commands`
 承载，pipeline 只能执行该 plan，不得从 planner result 旁路读取待应用命令。
+terminal post-turn handler 必须由 `LaunchExecution.terminal_effects` 承载，follow-up id 必须由
+`LaunchExecution` 的 follow-up plan / summary 投影，不能继续作为 parallel planner result。
 
 `SessionLaunchPlanner` 负责把临时 launch 输入解析为 `LaunchExecution`。当前它仍借用
 `SessionHub` 依赖，后续需要继续与 `SessionConstructionPlanner` 合流，不能成为新的

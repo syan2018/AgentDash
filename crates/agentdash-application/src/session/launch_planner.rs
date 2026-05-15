@@ -50,12 +50,10 @@ pub(super) struct PlannedSessionLaunch {
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
     pub context_bundle: Option<SessionContextBundle>,
-    pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub base_capability_state: agentdash_spi::CapabilityState,
     pub capability_state: agentdash_spi::CapabilityState,
     pub capability_keys: BTreeSet<String>,
-    pub resolved_follow_up_session_id: Option<String>,
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
@@ -371,6 +369,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             capability_state: capability_state.clone(),
             runtime_delegate,
             restored_session_state,
+            post_turn_handler,
         });
 
         Ok(PlannedSessionLaunch {
@@ -378,12 +377,10 @@ impl<'a> SessionLaunchPlanner<'a> {
             hook_session,
             hook_snapshot_contribution,
             context_bundle,
-            post_turn_handler,
             discovered_guidelines,
             base_capability_state,
             capability_state: capability_state.clone(),
             capability_keys,
-            resolved_follow_up_session_id,
         })
     }
 

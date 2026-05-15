@@ -42,6 +42,7 @@ impl SessionHub {
             companion_wait_registry: CompanionWaitRegistry::default(),
             title_generator: None,
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
+            hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             prompt_augmenter: Arc::new(tokio::sync::RwLock::new(None)),
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
             base_system_prompt: String::new(),
@@ -110,6 +111,13 @@ impl SessionHub {
         *self.terminal_callback.write().await = Some(callback);
     }
 
+    pub async fn set_hook_effect_handler_registry(
+        &self,
+        registry: super::super::post_turn_handler::DynTerminalHookEffectHandlerRegistry,
+    ) {
+        *self.hook_effect_handler_registry.write().await = Some(registry);
+    }
+
     /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
     ///
     /// **何时必须注入**：只要 SessionHub 会在内部构造 `SessionLaunchPlan`（如
@@ -148,6 +156,9 @@ impl SessionHub {
         }
         if self.terminal_callback.read().await.is_none() {
             return Err("SessionHub 缺少 terminal_callback".to_string());
+        }
+        if self.hook_effect_handler_registry.read().await.is_none() {
+            return Err("SessionHub 缺少 hook_effect_handler_registry".to_string());
         }
         if self.prompt_augmenter.read().await.is_none() {
             return Err("SessionHub 缺少 prompt_augmenter".to_string());

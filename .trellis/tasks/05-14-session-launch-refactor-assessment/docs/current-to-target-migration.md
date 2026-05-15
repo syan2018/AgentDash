@@ -255,7 +255,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 退出条件：
 
-- `SessionHub` 删除，或只剩无业务逻辑迁移壳且有删除任务。
+- `SessionHub` 删除；如果某个中间提交仍保留 public shell，它必须无业务逻辑，并且该阶段仍不能作为最终完成。
 - AppState 构造后不存在必需依赖为空的服务。
 - working dir 安全测试覆盖本地/云端路径策略。
 
@@ -286,4 +286,4 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 - `LaunchExecution.construction` 在实现中是共享引用、轻量 snapshot，还是只持有 construction id/trace。
 - pending runtime command 是纯事件 replay，还是事件 + projection 表；当前建议事件为事实源，projection 仅查询。
 - terminal outbox 与 session event append 是否共享事务；当前建议 terminal event 与 outbox enqueue 在同一持久化边界内完成。
-- `SessionHub` 迁移壳的最大生命周期与删除条件；最终态已确认不保留有职责 facade。
+- `SessionHub` public shell 的最大生命周期与删除条件；最终态已确认不保留有职责 facade。

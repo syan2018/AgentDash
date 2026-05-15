@@ -4,6 +4,8 @@
 
 当前重构未完成。此前 Batch 0-7 已完成的是迁移基础与局部收口，不是原始 PRD 的目标态。
 
+本文件不是给未完成层找合理性。任何仍在承载旧主线职责的对象，只要还被生产入口、跨 crate API、route/bootstrap use case 或 `SessionHub` 业务方法依赖，都按未完成处理。允许记录“当前为什么还在”，但不能把它解释成目标态的一部分。
+
 本 tracker 是后续实现与 check 的唯一追踪清单。任何阶段停下来后，必须重新对照：
 
 - `.trellis/tasks/05-14-session-launch-refactor-assessment/prd.md`
@@ -21,7 +23,7 @@ LaunchCommand
   -> SessionEvent / TerminalEffectOutbox
 ```
 
-## 不允许继续保留的半收敛结构
+## 不允许被包装成完成的半收敛结构
 
 以下对象不能作为最终架构边界，也不能在 check 时被解释为“已完成的统一层”：
 
@@ -36,12 +38,14 @@ LaunchCommand
 - `start_prompt_with_follow_up` 巨型 planner
 - 内存即时 terminal callback 作为唯一 effect 执行路径
 
-迁移期间如果某个对象短暂存在，必须满足：
+如果某个对象仍存在，默认判定为差池。只有同时满足以下条件时，才能在某个中间提交里临时存在，但该阶段仍不能标记完成：
 
 - 只在一个内部模块内被调用；
 - 不从 `session::mod` re-export 成公共主链路类型；
 - 不被任何 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 入口直接构造或传递；
 - 对应阶段必须有删除检查项和 `rg` 验证。
+
+反过来说，只要 `rg` 还能证明它是跨 crate handoff、facade 方法入参、route/bootstrap 输出或生产入口依赖，就不是“命名问题”，而是重构未完成。
 
 ## 当前差池清单
 
@@ -64,6 +68,7 @@ LaunchCommand
 - `PromptAugmentInput` 到 `SessionLaunchPlan` 的输出仍保留 API augmenter 与 application pipeline 之间的跨 crate 中间层；它不是最终边界。
 - Local relay relaxed fallback 仍可把 `PromptAugmentInput` 投影成裸 prompt；这是本机 relay 的临时运行路径，不能扩大到 HTTP / Task / Workflow / Routine / Companion / Hook。
 - workflow step activation 已删除公开 `apply_to_prompt_request` applier，不再暴露把 activation 直接写入 `SessionLaunchPlan` 的生产接口。
+- 只要 `bootstrap/session_launch_augmenter.rs` 继续返回 `SessionLaunchPlan`，`LaunchCommand` 就还没有完全回到纯入口意图；当前只是把旧装配挪出了 route，不是最终收口。
 
 目标：
 
@@ -113,6 +118,7 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 - 无 owner 或 relaxed fallback 路径仍可能没有 construction plan；这说明 construction planner 还没有成为所有 launch/query 的唯一事实源。
 - `augment_prompt_request_for_owner` 已从 API route 移到 `bootstrap/session_launch_augmenter.rs`，route 文件不再承载 prompt launch composition 主分支。
 - `bootstrap/session_launch_augmenter.rs` 仍返回 `SessionLaunchPlan`，还不是最终 `SessionConstructionPlanner`；但 owner/source 已不再只藏在 route-local 分支里。
+- `session/plan.rs` 仍以旧 session plan 片段生成 VFS/tools/persona/workflow/runtime policy fragment。这不是字符串命名问题，而是 construction trace 还没有成为这些 fragment 的权威来源。
 
 目标：
 
@@ -227,7 +233,10 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 - dispatcher 已支持按 `pending/running/failed` 状态从 durable outbox 重放，并在 `AppState` ready 后触发一次启动恢复。
 - effect 失败会有限重试，达到上限后进入 `dead_letter`。
 - `session_terminal_callback` replay 依赖当前进程已注入 callback；未注入时会显式失败/死信。
-- `hook_effects` replay 仍不能真正执行，因为它依赖原 turn 的 post-turn handler，当前没有 durable handler registry。
+- `hook_effects` payload 已记录 durable handler identity。
+- AppState 会注入 task hook effect handler registry，task handler 可在 replay 时重建。
+- `TerminalEffectType::HookEffects` 不再固定 replay 为 unavailable，并有单测覆盖 registry replay。
+- 仍不满足完整目标态：目前只有 task handler 的 durable registry；其他 handler kind 如果没有 durable identity 仍会失败/死信。
 
 目标：
 
@@ -237,6 +246,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 - effect handler 幂等；
 - failed/retry/dead-letter 可审计。
 - `hook_effects` 必须改为可由 durable handler registry 或明确的 typed effect handler 重放，不能继续依赖原 turn 的内存 handler。
+- 所有会进入 outbox 的 hook effect handler 都必须要么提供 durable identity，要么显式注册 typed effect handler；不能靠“同进程即时执行成功”掩盖重启后不可 replay。
 
 退出检查：
 
@@ -264,7 +274,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 
 ## 快刀执行策略
 
-这不是兼容性重构。项目未上线，不保留旧 API / 旧 DB 字段 / 旧内部壳作为兼容层。
+这不是兼容性重构。项目未上线，不保留旧 API / 旧 DB 字段 / 旧内部壳作为兼容层。每个中间提交都必须让旧主线减少，不能把旧主线换位置、换名字、换成“临时 wrapper”后继续作为完成依据。
 
 优先选择：
 
@@ -273,6 +283,8 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 3. 删除旧 `PreparedSessionInputs / finalize_request / *_prepared / PreparedLaunchPrompt` 主线，并继续把 `SessionLaunchPlan` 收缩到 planner/executor 内部。
 4. 修编译与测试。
 5. 再拆 `SessionHub` 剩余 facade。
+
+如果某一步只把业务判断从 route 移到 bootstrap、从 pipeline 移到 hub、从 request 壳移到 plan 壳，但没有进入 `SessionConstructionPlan` / `LaunchExecution` 或明确删除，则该步只算移动差池，不算完成。
 
 不选择：
 
@@ -359,7 +371,8 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
   - [x] `pending/running/failed` outbox 启动后可重放。
   - [x] failure 达到上限后进入 `dead_letter`。
   - [x] outbox 恢复接在 `AppState` ready gate 之后。
-  - [ ] `hook_effects` 具备 durable handler registry / typed handler，不再依赖原 turn 内存 handler。
+  - [x] task `hook_effects` 具备 durable handler registry，replay 不再固定 unavailable。
+  - [ ] 所有 outbox hook effect handler 都具备 durable registry / typed handler，不再依赖原 turn 内存 handler。
 - [ ] pending command apply-once 与 failure recovery 测试覆盖。
 - [ ] store 边界从 adapter split 变为真实长期接口。
 - [ ] `SessionHub` 删除或只剩无业务 wrapper。
@@ -393,6 +406,7 @@ git diff --check
 - [ ] `LaunchCommand` 不携带 construction / execution 产物。
 - [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的唯一事实源。
 - [ ] `LaunchExecution` 是唯一 launch 策略计划。
+- [ ] `SessionLaunchPlan` 不再作为跨 crate handoff 或生产入口/pipeline 入参存在。
 - [ ] `prompt_pipeline` 不再承担 planner 职责。
 - [ ] `SessionHub` 不再是业务能力入口。
 - [ ] terminal effects 具备 durable replay / retry / dead-letter。

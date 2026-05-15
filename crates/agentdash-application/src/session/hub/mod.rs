@@ -58,6 +58,9 @@ pub struct SessionHub {
     pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
+    pub(super) hook_effect_handler_registry: Arc<
+        tokio::sync::RwLock<Option<super::post_turn_handler::DynTerminalHookEffectHandlerRegistry>>,
+    >,
     /// 将"裸" SessionLaunchPlan 增强成与 HTTP 主通道一致的完整请求。
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。

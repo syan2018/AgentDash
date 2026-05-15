@@ -14,10 +14,10 @@
 本批要在代码层继续收掉剩余隐式行为：
 
 - `working_dir` 从“join 后交给 connector”改为显式策略校验。
-- legacy pending meta column 从 repository 主线移除。
+- 旧 pending meta column 从 repository 主线移除。
 - persistence 大 trait 拆出可依赖 store 能力边界。
 - AppState 构造过程用 ready builder/ready binding 收束延迟注入。
-- `SessionHub` 保留 public shell 时，只允许转发到已拆出的能力服务。
+- `SessionHub` 若仍保留 public shell，只能转发到已拆出的能力服务；一旦继续承载业务判断，本批仍未完成。
 
 ## Verification Matrix
 

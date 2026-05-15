@@ -71,7 +71,10 @@ pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
-pub use post_turn_handler::{DynSessionTerminalCallback, PostTurnHandler, SessionTerminalCallback};
+pub use post_turn_handler::{
+    DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
+    PostTurnHandler, SessionTerminalCallback, TerminalHookEffectHandlerRegistry,
+};
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
 pub use terminal_effects::{

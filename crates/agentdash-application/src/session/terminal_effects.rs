@@ -183,8 +183,13 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                     .as_ref()
                     .map(|handler| handler.supported_effect_kinds().to_vec())
                     .unwrap_or_default();
+                let handler = input
+                    .post_turn_handler
+                    .as_ref()
+                    .and_then(|handler| handler.durable_effect_handler());
                 let payload = serde_json::json!({
                     "effects": effects,
+                    "handler": handler,
                     "supported_effect_kinds": supported_effect_kinds,
                 });
                 self.enqueue(
@@ -334,10 +339,46 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                     },
                 }
             }
-            TerminalEffectType::HookEffects => TerminalEffectExecutor::Unavailable {
-                reason: "hook_effects 依赖原 turn 的 post-turn handler，当前尚未具备 durable handler registry"
-                    .to_string(),
+            TerminalEffectType::HookEffects => self.replay_hook_effect_executor(record).await,
+        }
+    }
+
+    async fn replay_hook_effect_executor(
+        &self,
+        record: &TerminalEffectRecord,
+    ) -> TerminalEffectExecutor {
+        let effects = match record.payload.get("effects").cloned() {
+            Some(value) => match serde_json::from_value::<Vec<HookEffect>>(value) {
+                Ok(effects) => effects,
+                Err(error) => {
+                    return TerminalEffectExecutor::Unavailable {
+                        reason: format!("hook_effects payload 无法反序列化: {error}"),
+                    };
+                }
             },
+            None => {
+                return TerminalEffectExecutor::Unavailable {
+                    reason: "hook_effects payload 缺少 effects".to_string(),
+                };
+            }
+        };
+        let Some(registry) = self.hub.hook_effect_handler_registry.read().await.clone() else {
+            return TerminalEffectExecutor::Unavailable {
+                reason: "hook_effects 缺少 durable handler registry".to_string(),
+            };
+        };
+        match registry
+            .handler_for(&record.session_id, &record.payload)
+            .await
+        {
+            Ok(Some(handler)) => TerminalEffectExecutor::HookEffects {
+                handler: Some(handler),
+                effects,
+            },
+            Ok(None) => TerminalEffectExecutor::Unavailable {
+                reason: "hook_effects durable handler registry 无匹配 handler".to_string(),
+            },
+            Err(error) => TerminalEffectExecutor::Unavailable { reason: error },
         }
     }
 
@@ -456,7 +497,20 @@ fn should_auto_resume(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use agentdash_agent_protocol::BackboneEnvelope;
+    use agentdash_spi::{
+        AgentConnector, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
+        ExecutionStream, PromptPayload,
+    };
+    use futures::stream;
+    use tokio::sync::Mutex;
+
+    use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
+    use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
+    use crate::session::{MemorySessionPersistence, SessionPersistence};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
@@ -480,5 +534,181 @@ mod tests {
             "session_terminal_callback"
         );
         assert!(TerminalEffectType::try_from("unknown").is_err());
+    }
+
+    #[tokio::test]
+    async fn replay_hook_effects_uses_durable_handler_registry() {
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&SessionMeta {
+                id: "sess-hook-replay".to_string(),
+                title: "hook replay".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_execution_status: ExecutionStatus::Idle,
+                last_turn_id: None,
+                last_terminal_message: None,
+                executor_config: None,
+                executor_session_id: None,
+                companion_context: None,
+                visible_canvas_mount_ids: Vec::new(),
+                bootstrap_state: SessionBootstrapState::Plain,
+            })
+            .await
+            .expect("session should be created");
+
+        let hub = SessionHub::new_with_hooks_and_persistence(
+            None,
+            Arc::new(NoopConnector),
+            None,
+            persistence.clone(),
+        );
+        let executed = Arc::new(Mutex::new(Vec::<String>::new()));
+        hub.set_hook_effect_handler_registry(Arc::new(RecordingHookEffectRegistry {
+            executed: executed.clone(),
+        }))
+        .await;
+        hub.stores
+            .terminal_effects
+            .insert_terminal_effect(NewTerminalEffectRecord {
+                session_id: "sess-hook-replay".to_string(),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 1,
+                effect_type: TerminalEffectType::HookEffects,
+                payload: serde_json::json!({
+                    "effects": [
+                        {
+                            "kind": "task:set_status",
+                            "payload": { "status": "done" }
+                        }
+                    ],
+                    "handler": {
+                        "kind": "recording"
+                    },
+                    "supported_effect_kinds": ["task:set_status"]
+                }),
+            })
+            .await
+            .expect("terminal effect should be inserted");
+
+        let attempted = hub
+            .replay_terminal_effect_outbox(10)
+            .await
+            .expect("replay should not fail at store level");
+
+        assert_eq!(attempted, 1);
+        assert_eq!(executed.lock().await.as_slice(), ["task:set_status"]);
+        let succeeded = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Succeeded], 10)
+            .await
+            .expect("succeeded effects should be queryable");
+        assert_eq!(succeeded.len(), 1);
+    }
+
+    struct RecordingHookEffectRegistry {
+        executed: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl TerminalHookEffectHandlerRegistry for RecordingHookEffectRegistry {
+        async fn handler_for(
+            &self,
+            _session_id: &str,
+            payload: &serde_json::Value,
+        ) -> Result<Option<DynPostTurnHandler>, String> {
+            let Some("recording") = payload
+                .get("handler")
+                .and_then(|handler| handler.get("kind"))
+                .and_then(|kind| kind.as_str())
+            else {
+                return Ok(None);
+            };
+            Ok(Some(Arc::new(RecordingPostTurnHandler {
+                executed: self.executed.clone(),
+            }) as DynPostTurnHandler))
+        }
+    }
+
+    struct RecordingPostTurnHandler {
+        executed: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::super::post_turn_handler::PostTurnHandler for RecordingPostTurnHandler {
+        async fn on_event(&self, _session_id: &str, _envelope: &BackboneEnvelope) {}
+
+        async fn execute_effects(&self, _session_id: &str, _turn_id: &str, effects: &[HookEffect]) {
+            self.executed
+                .lock()
+                .await
+                .extend(effects.iter().map(|effect| effect.kind.clone()));
+        }
+
+        fn supported_effect_kinds(&self) -> &[&str] {
+            &["task:set_status"]
+        }
+    }
+
+    struct NoopConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
     }
 }

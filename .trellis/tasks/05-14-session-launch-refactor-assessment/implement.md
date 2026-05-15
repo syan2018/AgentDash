@@ -303,7 +303,7 @@ python ./.trellis/scripts/task.py start .trellis/tasks/<created-child-dir>
 
 范围：
 
-- `SessionHub` 职责拆完，删除或只保留无业务逻辑迁移壳并立即清除。
+- `SessionHub` 职责拆完并删除；如果某个中间提交仍保留 public shell，它只能无业务逻辑转发，且不能作为最终完成。
 - `SessionPersistence` 拆清 meta/event/projection/outbox/runtime-command projection。
 - AppState 引入 ready builder。
 - `working_dir` 类型化，拒绝越界输入。

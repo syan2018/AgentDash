@@ -115,6 +115,7 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 - canvas runtime snapshot 与 VFS surface inspector 的 session runtime VFS 查询已改为调用 `build_session_context_plan`，不再在这些 route 内直接按 Task / Story / Project 重建 context。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
 - owner launch 主线会把 `construction_owner/source_contract` 投入 pipeline，并在最终 VFS/MCP/capability/context 解析后生成 `SessionConstructionPlan` 挂入 `LaunchExecution.construction`。
+- launch 侧已新增 `SessionConstructionPlanner`，`LaunchExecution.construction` 不再由 `SessionLaunchPlanner` 内联组装。
 - 无 owner 或 relaxed fallback 路径仍可能没有 construction plan；这说明 construction planner 还没有成为所有 launch/query 的唯一事实源。
 - `augment_prompt_request_for_owner` 已从 API route 移到 `bootstrap/session_launch_augmenter.rs`，route 文件不再承载 prompt launch composition 主分支。
 - `bootstrap/session_launch_augmenter.rs` 仍返回 `SessionLaunchPlan`，还不是最终 `SessionConstructionPlanner`；但 owner/source 已不再只藏在 route-local 分支里。
@@ -150,6 +151,7 @@ session context 主线不再在 route 层调用这些 builder；route 只做 aut
 现状问题：
 
 - 已新增 `SessionLaunchPlanner`，并从 `prompt_pipeline` 抽出 payload、VFS fallback、executor fallback、MCP fallback、capability fallback、hook runtime、restore、follow-up、pending command 与 construction projection 的计划构建。
+- launch 侧 construction projection 已从 `SessionLaunchPlanner` 内联逻辑抽入 `SessionConstructionPlanner`。
 - `prompt_pipeline` 不再直接读取 `req.vfs / req.mcp_servers / req.capability_state` 做策略 fallback；这些命中已集中到 `launch_planner.rs`。
 - `prompt_pipeline` 在 `SessionLaunchPlanner` 返回后不再继续持有 `SessionLaunchPlan`；planner 输出显式的 context bundle、continuation frame、post-turn handler 与 `LaunchExecution`。
 - `start_prompt_with_follow_up` 已删除，facade 通过 `SessionLaunchExecutor::execute` 进入执行段。
@@ -307,7 +309,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 
 ### Phase 1：建立目标旁路
 
-- [ ] 新增 `SessionConstructionPlanner`。
+- [x] 新增 `SessionConstructionPlanner`。
 - [x] 新增 `SessionLaunchPlanner`。
 - [x] 新增 `SessionLaunchExecutor`。
 - [ ] `LaunchCommand` 改为纯入口意图。
@@ -324,6 +326,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 - [x] 停止从 `session::mod` re-export `SessionLaunchPlan`，避免新增入口从主 namespace 继续依赖旧投影。
 - [ ] 将 VFS/MCP/capability/context/hook/post-turn 从 command 主体移入 construction/launch planner。
 - [x] owner launch 主线的 `LaunchExecution` 持有 `SessionConstructionPlan`。
+- [x] owner launch 主线通过 `SessionConstructionPlanner` 生成 `SessionConstructionPlan`。
 - [ ] 所有 launch 路径的 `LaunchExecution` 都持有完整 construction / launch plan。
 
 ### Phase 2：入口一次性切换
@@ -368,6 +371,7 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [x] `acp_sessions.rs` route 层不再直接重建 task/story/project VFS/capability/context。
 - [x] `canvases.rs` / `vfs_surfaces.rs` session runtime inspector 路径不再直接重建 task/story/project VFS/capability/context，改投影 `SessionConstructionPlan`。
 - [ ] `bootstrap/session_context_query.rs` 与 launch construction planner 合流，删除独立重建主线。
+- [ ] `SessionConstructionPlanner` 同时服务 launch 与 context query。
 - [ ] launch 与 context endpoint 一致性测试覆盖 Task / Story / Project。
 
 ### Phase 5：Effects / Pending / Persistence 收尾

@@ -8,6 +8,7 @@ pub mod capability_state;
 mod compaction_context_frame;
 pub mod companion_wait;
 pub mod construction;
+mod construction_planner;
 pub mod context;
 mod context_frame;
 pub mod continuation;

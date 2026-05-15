@@ -10,9 +10,7 @@ use agentdash_spi::{
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
-use super::construction::{
-    SessionConstructionLaunchInput, SessionConstructionPlan, SessionConstructionTraceEntry,
-};
+use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
@@ -302,39 +300,24 @@ impl<'a> SessionLaunchPlanner<'a> {
                     .map(|value| (Some(value.to_string()), LaunchFollowUpSource::SessionMeta))
             })
             .unwrap_or((None, LaunchFollowUpSource::None));
-        let construction_plan = req.construction_owner.clone().map(|owner| {
-            SessionConstructionPlan::from_launch(SessionConstructionLaunchInput {
+        let construction_plan =
+            SessionConstructionPlanner::plan_launch(SessionConstructionPlannerInput {
                 session_id: sid.clone(),
-                owner,
+                owner: req.construction_owner.clone(),
                 source: req.source_contract.clone(),
-                workspace_id: None,
                 working_dir_input: req.user_input.working_dir.clone(),
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),
-                runtime_surface: None,
                 context_bundle: req.context_bundle.clone(),
-                context_snapshot: None,
                 identity: req.identity.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),
-                session_capabilities: Some(session_capabilities.clone()),
-                trace_entries: vec![
-                    SessionConstructionTraceEntry {
-                        stage: "launch_lifecycle",
-                        source: format!("{prompt_lifecycle:?}"),
-                    },
-                    SessionConstructionTraceEntry {
-                        stage: "capability_source",
-                        source: format!("{capability_source:?}"),
-                    },
-                    SessionConstructionTraceEntry {
-                        stage: "vfs_source",
-                        source: format!("{vfs_source:?}"),
-                    },
-                ],
-            })
-        });
+                session_capabilities: session_capabilities.clone(),
+                prompt_lifecycle,
+                capability_source: capability_source.clone(),
+                vfs_source: vfs_source.clone(),
+            });
         let launch_execution = LaunchExecution::build(LaunchExecutionInput {
             construction: construction_plan,
             session_id: sid,

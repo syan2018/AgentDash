@@ -20,6 +20,7 @@ pub mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
+mod launch_planner;
 mod memory_persistence;
 pub mod ownership;
 pub(crate) mod path_policy;

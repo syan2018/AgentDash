@@ -99,6 +99,10 @@ route 层不得长期保留 `build_task_session_context`、`build_story_session_
 - connector input projection；
 - launch trace。
 
+`SessionLaunchPlanner` 负责把临时 launch 输入解析为 `LaunchExecution`。当前它仍借用
+`SessionHub` 依赖，后续需要继续与 `SessionConstructionPlanner` 合流，不能成为新的
+长期 facade。
+
 `prompt_pipeline` 的最终职责应收缩为执行计划：
 
 - claim / activate turn；

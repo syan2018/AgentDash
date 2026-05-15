@@ -192,7 +192,6 @@ async fn start_prompt_records_current_turn_state() {
 
     let mut req = simple_prompt_request("hello");
     req.1.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.1.working_dir_hint = Some("src".to_string());
     req.1.mcp_servers = vec![session_mcp.clone()];
     req.1.capability_state = Some(flow_caps.clone());
 
@@ -210,10 +209,7 @@ async fn start_prompt_records_current_turn_state() {
     assert_eq!(turn.session_frame.mcp_servers.len(), 1);
     assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
     assert!(turn.session_frame.mcp_servers[0].uses_relay);
-    assert_eq!(
-        turn.session_frame.working_directory,
-        workspace.path().join("src")
-    );
+    assert_eq!(turn.session_frame.working_directory, workspace.path());
     assert_eq!(turn.session_frame.executor_config.executor, "PI_AGENT");
     assert_eq!(
         turn.capability_state.tool.enabled_clusters,

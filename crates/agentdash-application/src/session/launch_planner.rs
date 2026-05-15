@@ -16,7 +16,6 @@ use super::launch::{
     LaunchCapabilitySource, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource,
     LaunchMcpSource, LaunchRestoreMode, LaunchVfsSource,
 };
-use super::path_policy::resolve_working_dir;
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
@@ -53,7 +52,6 @@ impl<'a> SessionLaunchPlanner<'a> {
         let SessionConstructionSeed {
             owner: construction_owner,
             source_contract,
-            working_dir_hint,
             local_relay_workspace_root,
             mcp_servers: seed_mcp_servers,
             vfs: seed_vfs,
@@ -112,9 +110,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .ok_or_else(|| {
                 ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
-        let working_directory =
-            resolve_working_dir(&default_mount_root, working_dir_hint.as_deref())
-                .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
+        let working_directory = default_mount_root.clone();
 
         let executor_config = input
             .user_input
@@ -300,7 +296,6 @@ impl<'a> SessionLaunchPlanner<'a> {
                 session_id: sid.clone(),
                 owner: construction_owner,
                 source: source_contract,
-                working_dir_hint: working_dir_hint.clone(),
                 local_relay_workspace_root,
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),

@@ -91,7 +91,6 @@ use crate::workspace::BackendAvailability;
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `context_bundle` / `capability_state` | 整体替换为 prepared 值 |
-/// | `working_dir_hint` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
@@ -117,13 +116,9 @@ fn apply_session_assembly(
     construction_seed.context_bundle = prepared.context_bundle;
 
     apply_workspace_defaults(
-        &mut construction_seed.working_dir_hint,
         &mut construction_seed.vfs,
         prepared.workspace_defaults.as_ref(),
     );
-    if let Some(wd) = prepared.working_dir {
-        construction_seed.working_dir_hint = Some(wd);
-    }
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
     // mount 组合会覆盖前端透传的 vfs，是刻意为之。
@@ -183,9 +178,6 @@ pub struct SessionAssemblyBuilder {
 
     // ── 身份 ──
     identity: Option<AuthIdentity>,
-
-    // ── 其它平坦字段 ──
-    working_dir: Option<String>,
 }
 
 impl SessionAssemblyBuilder {
@@ -311,7 +303,7 @@ impl SessionAssemblyBuilder {
 
     // ── 元信息层方法 ──────────────────────────────────────────────
 
-    /// 设置 workspace 默认值（用于 VFS/working_dir 回填）。
+    /// 设置 workspace 默认值（用于 VFS 回填）。
     pub fn with_workspace_defaults(mut self, workspace: Workspace) -> Self {
         self.workspace_defaults = Some(workspace);
         self
@@ -320,12 +312,6 @@ impl SessionAssemblyBuilder {
     /// 可选设置 workspace 默认值。
     pub fn with_optional_workspace_defaults(mut self, workspace: Option<Workspace>) -> Self {
         self.workspace_defaults = workspace;
-        self
-    }
-
-    /// 设置 compose 产出的 working_dir（task 启动场景覆盖 base working_dir）。
-    pub fn with_working_dir(mut self, working_dir: Option<String>) -> Self {
-        self.working_dir = working_dir;
         self
     }
 
@@ -408,7 +394,6 @@ impl SessionAssemblyBuilder {
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
             workspace_defaults: None,
-            working_dir: None,
             // 保留调用方已注入的身份 / env 不被 companion slice 清空
             env: self.env,
             identity: self.identity,
@@ -1347,8 +1332,6 @@ impl<'a> SessionRequestAssembler<'a> {
         // turn trigger，避免把完整 owner context 再渲染进用户消息和标题生成输入。
         let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
 
-        let working_dir = workspace_ref.map(|_| ".".to_string());
-
         // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
         let session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
             capability_state.tool.mcp_servers.clone();
@@ -1358,7 +1341,6 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(capability_state)
             .with_context_bundle(context_bundle)
-            .with_working_dir(working_dir)
             .with_optional_workspace_defaults(workspace_ref.cloned());
 
         if let Some(vfs) = vfs {
@@ -2422,20 +2404,7 @@ mod tests {
     mod apply_session_assembly_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
-        use agentdash_domain::workspace::{
-            Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
-        };
         use agentdash_spi::Vfs;
-
-        fn minimal_workspace() -> Workspace {
-            Workspace::new(
-                uuid::Uuid::nil(),
-                "test-ws".to_string(),
-                WorkspaceIdentityKind::LocalDir,
-                serde_json::json!({}),
-                WorkspaceResolutionPolicy::PreferDefaultBinding,
-            )
-        }
 
         fn base_req() -> (UserPromptInput, SessionConstructionSeed) {
             (
@@ -2534,38 +2503,6 @@ mod tests {
             assert_eq!(
                 result.1.vfs.and_then(|v| v.default_mount_id),
                 Some("base-mount".to_string()),
-            );
-        }
-
-        #[test]
-        fn workspace_defaults_fills_working_dir_when_absent() {
-            // base 与 prepared 都无 working_dir，workspace_defaults 非空 → 回填 "."。
-            // （vfs 由于 minimal workspace 没 binding 会保持 None，不是本测试关注点。）
-            let base = base_req();
-            let prepared = SessionAssemblyBuilder {
-                workspace_defaults: Some(minimal_workspace()),
-                ..Default::default()
-            };
-
-            let result = apply_session_assembly(base.0, base.1, prepared);
-            assert_eq!(result.1.working_dir_hint.as_deref(), Some("."));
-        }
-
-        #[test]
-        fn prepared_working_dir_overrides_workspace_default() {
-            // prepared.working_dir = Some(X) 覆盖 apply_workspace_defaults 回填的 "."。
-            let base = base_req();
-            let prepared = SessionAssemblyBuilder {
-                workspace_defaults: Some(minimal_workspace()),
-                working_dir: Some("packages/foo".to_string()),
-                ..Default::default()
-            };
-
-            let result = apply_session_assembly(base.0, base.1, prepared);
-            assert_eq!(
-                result.1.working_dir_hint.as_deref(),
-                Some("packages/foo"),
-                "prepared.working_dir 应覆盖 workspace default 的 \".\""
             );
         }
 
@@ -2759,7 +2696,7 @@ mod tests {
 
         #[test]
         fn builder_with_user_input_unpacks_fields() {
-            // 验证 with_user_input 一次性吸收 prompt 输入字段，不再吸收 working_dir。
+            // 验证 with_user_input 一次性吸收 prompt 输入字段。
             use crate::session::UserPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
@@ -2770,10 +2707,6 @@ mod tests {
                 executor_config: None,
             };
             let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
-            assert!(
-                prepared.working_dir.is_none(),
-                "with_user_input 不再从 prompt input 写入 working_dir"
-            );
             assert!(
                 prepared.prompt_blocks.is_some(),
                 "with_user_input 应把 prompt_blocks 写入 builder"

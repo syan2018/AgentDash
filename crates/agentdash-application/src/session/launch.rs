@@ -554,7 +554,6 @@ mod tests {
                 strictness: Some("strict".to_string()),
             },
             workspace_id: None,
-            working_dir_hint: Some("project".to_string()),
             working_directory: PathBuf::from("/workspace/project"),
             executor_config: AgentConfig::new("PI_AGENT"),
             vfs: None,

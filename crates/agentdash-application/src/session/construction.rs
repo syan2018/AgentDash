@@ -17,7 +17,6 @@ use crate::vfs::ResolvedVfsSurface;
 pub struct SessionConstructionSeed {
     pub owner: Option<ResolvedSessionOwner>,
     pub source_contract: SourceContractPlan,
-    pub working_dir_hint: Option<String>,
     pub local_relay_workspace_root: Option<PathBuf>,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
@@ -35,7 +34,6 @@ impl Default for SessionConstructionSeed {
         Self {
             owner: None,
             source_contract: SourceContractPlan::default(),
-            working_dir_hint: None,
             local_relay_workspace_root: None,
             mcp_servers: Vec::new(),
             vfs: None,
@@ -80,7 +78,6 @@ pub struct SourceContractPlan {
 #[derive(Debug, Clone, Default)]
 pub struct WorkspacePlan {
     pub workspace_id: Option<Uuid>,
-    pub working_dir_hint: Option<String>,
     pub working_directory: Option<PathBuf>,
 }
 
@@ -148,7 +145,6 @@ pub struct SessionConstructionLaunchInput {
     pub owner: ResolvedSessionOwner,
     pub source: SourceContractPlan,
     pub workspace_id: Option<Uuid>,
-    pub working_dir_hint: Option<String>,
     pub working_directory: PathBuf,
     pub executor_config: AgentConfig,
     pub vfs: Option<Vfs>,
@@ -263,7 +259,6 @@ impl SessionConstructionPlan {
             source: input.source,
             workspace: WorkspacePlan {
                 workspace_id: input.workspace_id,
-                working_dir_hint: input.working_dir_hint,
                 working_directory: Some(input.working_directory),
             },
             execution_profile: ExecutionProfilePlan {
@@ -354,7 +349,6 @@ mod tests {
                 strictness: Some("strict".to_string()),
             },
             workspace_id: None,
-            working_dir_hint: Some("workspace".to_string()),
             working_directory: PathBuf::from("/workspace"),
             executor_config: AgentConfig::new("PI_AGENT"),
             vfs: None,

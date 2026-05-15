@@ -21,7 +21,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `SessionConstructionSeed` 不再从 `session::mod` 顶层 re-export，外层引用必须显式进入 construction 模块。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed，只保留 workspace root 作为来源事实，由 planner/construction 解析。
 - [x] relaxed launch 缺 augmenter 时不再回退裸 construction seed。
-- [x] `UserPromptInput.working_dir` 移出 prompt input；`working_dir_input` 已归零，launch summary/input 不再携带 working dir hint；当前过渡事实只留在 `SessionConstructionSeed.working_dir_hint`，后续迁入 construction。
+- [x] `UserPromptInput.working_dir` 移出 prompt input；`working_dir_input` / `working_dir_hint` 已归零，launch summary/input 与 construction seed 不再携带 working dir hint。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
 - [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；API bootstrap 不再创建内存 handler，也不再生成 `TerminalHookEffectBinding`；task binding 由 story step assembler 产出 durable 描述。
 - [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；API bootstrap 不再投影 parent VFS/MCP，当前由 application assembler 的 parent facts provider 解析。
@@ -40,7 +40,8 @@ rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" cr
 
 - [x] `ContextPlan` 持有完整 `SessionContextBundle`。
 - [x] `ContextPlan` 持有 continuation context frame；该 frame 不再作为 launch planner 输出旁路存在。
-- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `SessionConstructionSeed.working_dir_hint` 过渡种子。
+- [x] `SessionConstructionPlan` 持有解析后的 working directory，不再从 `SessionConstructionSeed` 接收 working dir hint。
+- [ ] `SessionConstructionPlan` 持有 VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；继续删除剩余 `SessionConstructionSeed` 过渡种子。
 - [x] task effect binding 已进入 construction/effects durable binding，不再由 API bootstrap 绑定内存 handler或 durable binding。
 - [x] local relay workspace root 由 planner/construction 解析，并记录 VFS 来源。
 - [x] companion parent VFS/MCP projection 由 application assembler parent facts provider 解析；API bootstrap 上的 parent capability 临时投影已删除。

@@ -363,7 +363,7 @@ impl CompanionRequestTool {
         let execution_slice =
             build_companion_execution_slice(self.vfs.as_ref(), &active_mcp, slice_mode);
         // Companion 的 working_dir 后续由 construction 根据父 session facts 解析；
-        // identity/post_turn_handler 保持 None。
+        // identity 与 task effect binding 均不从 companion source 注入。
         let base_input = UserPromptInput {
             prompt_blocks: None,
             env: std::collections::HashMap::new(),
@@ -2204,10 +2204,9 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::session::augmenter::LaunchAugmentation;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter, SessionHub,
-        local_workspace_vfs,
+        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter,
+        SessionConstructionSeed, SessionHub, UserPromptInput, local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
 
@@ -2506,7 +2505,7 @@ mod companion_tests {
             &self,
             _session_id: &str,
             command: &crate::session::LaunchCommand,
-        ) -> Result<LaunchAugmentation, ConnectorError> {
+        ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = command
                 .user_input()

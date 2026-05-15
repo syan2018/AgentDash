@@ -8,22 +8,21 @@
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::session::LaunchExecutionSeed;
+use agentdash_application::session::UserPromptInput;
 use agentdash_application::session::augmenter::{
-    LaunchAugmentation, PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+    PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
-    AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, HookSnapshotReloadTrigger,
-    LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionConstructionSeed, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
-    compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt_with_audit,
-    resolve_session_prompt_lifecycle,
+    AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec,
+    OwnerPromptLifecycle, OwnerScope, SessionConstructionSeed, SessionMeta, SessionPromptLifecycle,
+    SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
+    TerminalHookEffectBinding, compose_companion_prompt, compose_companion_with_workflow_prompt,
+    compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
 };
-use agentdash_application::task::gateway::effect_executor::TaskHookEffectExecutor;
 use agentdash_application::task::gateway::{
-    resolve_effective_task_workspace, resolve_task_backend_id,
+    effect_executor::TaskHookEffectExecutor, resolve_effective_task_workspace,
+    resolve_task_backend_id,
 };
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
@@ -43,15 +42,15 @@ use crate::rpc::ApiError;
 pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
-    input: LaunchAugmentation,
+    input: (UserPromptInput, SessionConstructionSeed),
     task_input: Option<PromptAugmentTaskInput>,
     companion_input: Option<PromptAugmentCompanionInput>,
-) -> Result<LaunchAugmentation, ApiError> {
-    let (launch_seed, mut construction_seed) = input;
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+    let (user_input, mut construction_seed) = input;
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(
             state,
-            launch_seed,
+            user_input,
             construction_seed,
             companion,
         )
@@ -71,8 +70,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     let visible_canvas_mount_ids = meta.visible_canvas_mount_ids.clone();
-    let effective_executor = launch_seed
-        .user_input
+    let effective_executor = user_input
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
@@ -100,7 +98,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 return build_task_owner_prompt_request(
                     state,
                     session_id,
-                    launch_seed,
+                    user_input,
                     construction_seed,
                     owner.owner_id,
                     &meta,
@@ -134,7 +132,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 return build_story_owner_prompt_request(
                     state,
                     session_id,
-                    launch_seed,
+                    user_input,
                     construction_seed,
                     &story,
                     &project,
@@ -159,7 +157,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 return build_project_owner_prompt_request(
                     state,
                     session_id,
-                    launch_seed,
+                    user_input,
                     construction_seed,
                     &project,
                     &owner.label,
@@ -179,40 +177,36 @@ pub(crate) async fn augment_prompt_request_for_owner(
         let continuation_context_frame =
             build_continuation_context_frame_for_session(state, session_id).await?;
         return apply_plain_lifecycle_request(
-            launch_seed,
+            user_input,
             construction_seed,
             None,
             continuation_context_frame,
-            HookSnapshotReloadTrigger::None,
         );
     }
 
-    Ok((launch_seed, construction_seed))
+    Ok((user_input, construction_seed))
 }
 
 fn apply_plain_lifecycle_request(
-    mut launch_seed: LaunchExecutionSeed,
+    mut user_input: UserPromptInput,
     mut construction_seed: SessionConstructionSeed,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
-    hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<LaunchAugmentation, ApiError> {
-    let user_prompt_blocks = launch_seed
-        .user_input
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+    let user_prompt_blocks = user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
-    launch_seed.user_input.prompt_blocks = Some(user_prompt_blocks);
+    user_input.prompt_blocks = Some(user_prompt_blocks);
     construction_seed.context_bundle = context_bundle;
     construction_seed.continuation_context_frame = continuation_context_frame;
-    launch_seed.hook_snapshot_reload = hook_snapshot_reload;
-    Ok((launch_seed, construction_seed))
+    Ok((user_input, construction_seed))
 }
 
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut launch_seed: LaunchExecutionSeed,
+    mut user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     story: &Story,
     project: &Project,
@@ -220,19 +214,12 @@ async fn build_story_owner_prompt_request(
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<LaunchAugmentation, ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(
-            launch_seed,
-            construction_seed,
-            None,
-            None,
-            HookSnapshotReloadTrigger::None,
-        );
+        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
     }
 
-    let effective_executor_config = launch_seed
-        .user_input
+    let effective_executor_config = user_input
         .executor_config
         .clone()
         .or_else(|| {
@@ -251,8 +238,7 @@ async fn build_story_owner_prompt_request(
             )
         })?;
 
-    let user_prompt_blocks = launch_seed
-        .user_input
+    let user_prompt_blocks = user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
@@ -273,9 +259,9 @@ async fn build_story_owner_prompt_request(
     let request_mcp_servers = construction_seed.mcp_servers.clone();
     let existing_vfs = construction_seed.vfs.clone();
     let assembler = build_session_assembler(state);
-    let (launch_seed, mut construction_seed) = assembler
+    let (user_input, mut construction_seed) = assembler
         .compose_owner_bootstrap_prompt(
-            launch_seed,
+            user_input,
             construction_seed,
             OwnerBootstrapSpec {
                 owner: OwnerScope::Story {
@@ -301,35 +287,29 @@ async fn build_story_owner_prompt_request(
         .map_err(ApiError::BadRequest)?;
 
     construction_seed.continuation_context_frame = continuation_context_frame;
-    Ok((launch_seed, construction_seed))
+    Ok((user_input, construction_seed))
 }
 
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut launch_seed: LaunchExecutionSeed,
+    mut user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<LaunchAugmentation, ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(
-            launch_seed,
-            construction_seed,
-            None,
-            None,
-            HookSnapshotReloadTrigger::None,
-        );
+        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
     }
 
     if binding_label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX) {
         return build_lifecycle_node_prompt_request(
             state,
             session_id,
-            launch_seed,
+            user_input,
             construction_seed,
             lifecycle_kind,
         )
@@ -344,7 +324,7 @@ async fn build_project_owner_prompt_request(
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = resolve_project_workspace(state, project).await?;
 
-    let effective_executor_config = match launch_seed.user_input.executor_config.clone() {
+    let effective_executor_config = match user_input.executor_config.clone() {
         Some(mut user_ec) => {
             let preset_ec = &project_agent.executor_config;
             if user_ec.system_prompt.is_none() {
@@ -358,8 +338,7 @@ async fn build_project_owner_prompt_request(
         None => project_agent.executor_config.clone(),
     };
 
-    let user_prompt_blocks = launch_seed
-        .user_input
+    let user_prompt_blocks = user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
@@ -395,9 +374,9 @@ async fn build_project_owner_prompt_request(
     let request_mcp_servers = construction_seed.mcp_servers.clone();
     let existing_vfs = construction_seed.vfs.clone();
     let assembler = build_session_assembler(state);
-    let (launch_seed, mut construction_seed) = assembler
+    let (user_input, mut construction_seed) = assembler
         .compose_owner_bootstrap_prompt(
-            launch_seed,
+            user_input,
             construction_seed,
             OwnerBootstrapSpec {
                 owner: OwnerScope::Project {
@@ -425,24 +404,18 @@ async fn build_project_owner_prompt_request(
         .map_err(ApiError::BadRequest)?;
 
     construction_seed.continuation_context_frame = continuation_context_frame;
-    Ok((launch_seed, construction_seed))
+    Ok((user_input, construction_seed))
 }
 
 async fn build_lifecycle_node_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<LaunchAugmentation, ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(
-            launch_seed,
-            construction_seed,
-            None,
-            None,
-            HookSnapshotReloadTrigger::None,
-        );
+        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
     }
 
     let runs = state
@@ -487,7 +460,7 @@ async fn build_lifecycle_node_prompt_request(
     let audit_bus = Some(state.services.audit_bus.clone());
 
     compose_lifecycle_node_prompt_with_audit(
-        launch_seed,
+        user_input,
         construction_seed,
         &state.repos,
         &state.config.platform_config,
@@ -507,10 +480,10 @@ async fn build_lifecycle_node_prompt_request(
 
 async fn build_companion_dispatch_prompt_request(
     state: &Arc<AppState>,
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     companion: PromptAugmentCompanionInput,
-) -> Result<LaunchAugmentation, ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     let parent_capability_state = state
         .services
         .session_hub
@@ -526,7 +499,7 @@ async fn build_companion_dispatch_prompt_request(
 
     if let Some(workflow) = companion.workflow {
         compose_companion_with_workflow_prompt(
-            launch_seed,
+            user_input,
             construction_seed,
             &state.repos,
             &state.config.platform_config,
@@ -549,7 +522,7 @@ async fn build_companion_dispatch_prompt_request(
         .map_err(ApiError::BadRequest)
     } else {
         Ok(compose_companion_prompt(
-            launch_seed,
+            user_input,
             construction_seed,
             CompanionSpec {
                 parent_vfs,
@@ -640,14 +613,14 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut launch_seed: LaunchExecutionSeed,
-    construction_seed: SessionConstructionSeed,
+    user_input: UserPromptInput,
+    mut construction_seed: SessionConstructionSeed,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<PromptAugmentTaskInput>,
-) -> Result<LaunchAugmentation, ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     let story = state
         .repos
         .story_repo
@@ -660,8 +633,7 @@ async fn build_task_owner_prompt_request(
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
 
-    let effective_executor_config = launch_seed
-        .user_input
+    let effective_executor_config = user_input
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
@@ -683,13 +655,17 @@ async fn build_task_owner_prompt_request(
     )
     .await
     .map_err(task_execution::map_task_execution_error)?;
-    launch_seed.post_turn_handler = Some(Arc::new(TaskHookEffectExecutor {
-        repos: state.repos.clone(),
-        task_id,
-        session_id: session_id.to_string(),
-        backend_id,
-    })
-        as agentdash_application::session::DynPostTurnHandler);
+    construction_seed.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
+        handler: serde_json::json!({
+            "kind": "task",
+            "task_id": task_id,
+            "backend_id": backend_id,
+        }),
+        supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect(),
+    });
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),
@@ -705,8 +681,7 @@ async fn build_task_owner_prompt_request(
         ))
     })?;
 
-    let user_prompt_blocks = launch_seed
-        .user_input
+    let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
@@ -716,9 +691,9 @@ async fn build_task_owner_prompt_request(
         .and_then(|input| input.phase)
         .unwrap_or(PromptAugmentTaskPhase::Continue);
     let assembler = build_session_assembler(state);
-    let (mut launch_seed, mut construction_seed) = assembler
+    let (mut user_input, mut construction_seed) = assembler
         .compose_story_step_prompt(
-            launch_seed,
+            user_input,
             construction_seed,
             StoryStepSpec {
                 run: &active_workflow.run,
@@ -759,13 +734,10 @@ async fn build_task_owner_prompt_request(
     }
 
     let mut continuation_context_frame = None;
-    launch_seed.user_input.prompt_blocks = Some(user_prompt_blocks);
-    launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::None;
+    user_input.prompt_blocks = Some(user_prompt_blocks);
 
     match lifecycle_kind {
-        SessionPromptLifecycle::OwnerBootstrap => {
-            launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
-        }
+        SessionPromptLifecycle::OwnerBootstrap => {}
         SessionPromptLifecycle::RepositoryRehydrate(
             SessionRepositoryRehydrateMode::SystemContext,
         ) => {
@@ -780,10 +752,10 @@ async fn build_task_owner_prompt_request(
         }
     }
 
-    if launch_seed.user_input.executor_config.is_none()
+    if user_input.executor_config.is_none()
         && let Some(config) = effective_executor_config
     {
-        launch_seed.user_input.executor_config = Some(config);
+        user_input.executor_config = Some(config);
     }
 
     if construction_seed.capability_state.is_none() {
@@ -794,5 +766,5 @@ async fn build_task_owner_prompt_request(
 
     construction_seed.continuation_context_frame = continuation_context_frame;
 
-    Ok((launch_seed, construction_seed))
+    Ok((user_input, construction_seed))
 }

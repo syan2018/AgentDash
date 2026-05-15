@@ -14,9 +14,9 @@ use agentdash_agent_protocol::{
 };
 use tokio::sync::broadcast;
 
-#[cfg(test)]
-use super::super::augmenter::LaunchAugmentation;
 use super::super::compaction_context_frame::build_compaction_context_frame;
+#[cfg(test)]
+use super::super::construction::SessionConstructionSeed;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch::{LaunchCommand, LaunchCommandOutcome};
@@ -367,10 +367,10 @@ impl SessionHub {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        (launch_seed, construction_seed): LaunchAugmentation,
+        (user_input, construction_seed): (UserPromptInput, SessionConstructionSeed),
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
-            .execute_launch_seed_for_test(session_id, launch_seed, construction_seed)
+            .execute_launch_seed_for_test(session_id, user_input, construction_seed)
             .await
     }
 

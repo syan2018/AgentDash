@@ -39,13 +39,13 @@ LaunchCommand
 
 `SessionLaunchRequest` 已删除，不能重新引入。
 
-当前仍存在的迁移边界是 `SessionConstructionSeed` / `LaunchExecutionSeed`：
+当前仍存在的迁移边界是 `SessionConstructionSeed`：
 
-- 它们只用于承接 API/bootstrap 到 launch pipeline 的暂存；
-- 它们不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
+- 它只用于承接 API/bootstrap 到 construction planner 的暂存；
+- 它不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许继续扩张成新的长期 service / route / adapter 公开契约；
-- 后续必须把 working dir / VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`，把 hook / post-turn / terminal effect 字段拆入 `LaunchExecution` / effects outbox，然后删除这些过渡 seed。
+- 后续必须把 working dir / VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 seed。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -54,7 +54,7 @@ LaunchCommand
 所有来源只做来源语义转换：
 
 - HTTP prompt：从请求 DTO 与 auth identity 构造 `LaunchCommand::http_prompt_input`；HTTP 不提供 resolved working dir / VFS / MCP / context。
-- Task service：构造 `LaunchCommand::task_service_input`，task phase / override / additional prompt 只能作为 source hint 进入 planner；task effect binding 不得作为 trait object 穿过 command。
+- Task service：构造 `LaunchCommand::task_service_input`，task phase / override / additional prompt 只能作为 source hint 进入 planner；task effect binding 不得作为 trait object 穿过 command，必须以 durable binding 描述进入 construction/effects。
 - Workflow orchestrator：构造 `LaunchCommand::workflow_orchestrator_input`。
 - Routine executor：构造 `LaunchCommand::routine_executor_input`，系统身份必须来自 `AuthIdentity::system_routine(routine.id)`。
 - Companion dispatch / parent resume：构造对应 `LaunchCommand`，只携带 parent session / dispatch / slice / target binding 等策略 payload；父 session VFS / MCP / context snapshot 必须由 construction 从 parent facts 解析，不得先拼出 prompt projection。
@@ -180,6 +180,6 @@ cargo test -p agentdash-application session::construction
 ```
 
 `PreparedLaunchPrompt`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`
-必须保持归零。`SessionConstructionSeed` / `LaunchExecutionSeed` 若仍存在，必须只作为
+必须保持归零。`SessionConstructionSeed` 若仍存在，必须只作为
 删除中的过渡 seed，并在 task tracker 中列出下一步拆入 construction / launch / effects
 的删除点。

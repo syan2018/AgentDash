@@ -19,7 +19,7 @@
 //! launch seed 与 construction seed:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → (LaunchExecutionSeed, SessionConstructionSeed)
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → (UserPromptInput, SessionConstructionSeed)
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -60,12 +60,10 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
-use crate::session::augmenter::LaunchAugmentation;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::construction::SessionConstructionSeed;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::launch::LaunchExecutionSeed;
-use crate::session::types::{HookSnapshotReloadTrigger, UserPromptInput};
+use crate::session::types::UserPromptInput;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -89,34 +87,31 @@ use crate::workspace::BackendAvailability;
 /// |---|---|
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` / `hook_snapshot_reload` / `capability_state` | 整体替换为 prepared 值 |
+/// | `context_bundle` / `capability_state` | 整体替换为 prepared 值 |
 /// | `working_dir_input` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
 /// | `identity` | prepared 非空时覆盖；否则保留 base |
-/// | `post_turn_handler` | prepared 非空时覆盖；否则保留 base |
 ///
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
 ///
-/// **identity / post_turn_handler 下沉**（2026-04-30 PR 1 Phase 1c）：过去这两个字段
-/// 由调用方在 `apply_session_assembly` 之后手工 `req.identity = ...` 赋值，容易漏填
-/// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
-/// `with_post_turn_handler` 注入，`apply_session_assembly` 统一合入，单一装配节拍保证不漏。
+/// **identity 下沉**：过去由调用方在 `apply_session_assembly` 之后手工赋值，
+/// 容易漏填。现在 entry 通过 `SessionAssemblyBuilder::with_identity` 注入，
+/// `apply_session_assembly` 统一合入。
 fn apply_session_assembly(
-    mut launch_seed: LaunchExecutionSeed,
+    mut user_input: UserPromptInput,
     mut construction_seed: SessionConstructionSeed,
     prepared: SessionAssemblyBuilder,
-) -> LaunchAugmentation {
+) -> (UserPromptInput, SessionConstructionSeed) {
     if let Some(blocks) = prepared.prompt_blocks {
-        launch_seed.user_input.prompt_blocks = Some(blocks);
+        user_input.prompt_blocks = Some(blocks);
     }
     if let Some(cfg) = prepared.executor_config {
-        launch_seed.user_input.executor_config = Some(cfg);
+        user_input.executor_config = Some(cfg);
     }
     construction_seed.context_bundle = prepared.context_bundle;
-    launch_seed.hook_snapshot_reload = prepared.hook_snapshot_reload;
 
     apply_workspace_defaults(
         &mut construction_seed.working_dir_input,
@@ -135,15 +130,12 @@ fn apply_session_assembly(
     construction_seed.mcp_servers = prepared.mcp_servers;
     construction_seed.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
-        launch_seed.user_input.env = prepared.env;
+        user_input.env = prepared.env;
     }
     if prepared.identity.is_some() {
         construction_seed.identity = prepared.identity;
     }
-    if prepared.post_turn_handler.is_some() {
-        launch_seed.post_turn_handler = prepared.post_turn_handler;
-    }
-    (launch_seed, construction_seed)
+    (user_input, construction_seed)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -162,7 +154,6 @@ fn apply_session_assembly(
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
 ///
-/// 不派生 `Debug`（post_turn_handler trait 不要求 Debug）；Clone 保留。
 #[derive(Clone, Default)]
 pub struct SessionAssemblyBuilder {
     // ── VFS 层 ──
@@ -180,7 +171,6 @@ pub struct SessionAssemblyBuilder {
     // ── Prompt 层 ──
     prompt_blocks: Option<Vec<serde_json::Value>>,
     executor_config: Option<AgentConfig>,
-    hook_snapshot_reload: HookSnapshotReloadTrigger,
 
     // ── 元信息层 ──
     workspace_defaults: Option<Workspace>,
@@ -188,9 +178,8 @@ pub struct SessionAssemblyBuilder {
     // ── 用户输入侧 ──
     env: HashMap<String, String>,
 
-    // ── 身份 & 回调（2026-04-30 PR 1 Phase 1c 新增） ──
+    // ── 身份 ──
     identity: Option<AuthIdentity>,
-    post_turn_handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
 
     // ── 其它平坦字段 ──
     working_dir: Option<String>,
@@ -317,12 +306,6 @@ impl SessionAssemblyBuilder {
         self
     }
 
-    /// 设置 bootstrap action。
-    pub fn with_hook_snapshot_reload(mut self, action: HookSnapshotReloadTrigger) -> Self {
-        self.hook_snapshot_reload = action;
-        self
-    }
-
     // ── 元信息层方法 ──────────────────────────────────────────────
 
     /// 设置 workspace 默认值（用于 VFS/working_dir 回填）。
@@ -365,26 +348,6 @@ impl SessionAssemblyBuilder {
         self
     }
 
-    /// Turn 事件回调（task / routine 等 entry 注入）。
-    pub fn with_post_turn_handler(
-        mut self,
-        handler: crate::session::post_turn_handler::DynPostTurnHandler,
-    ) -> Self {
-        self.post_turn_handler = Some(handler);
-        self
-    }
-
-    /// 可选 Turn 事件回调（None 时不覆盖）。
-    pub fn with_optional_post_turn_handler(
-        mut self,
-        handler: Option<crate::session::post_turn_handler::DynPostTurnHandler>,
-    ) -> Self {
-        if handler.is_some() {
-            self.post_turn_handler = handler;
-        }
-        self
-    }
-
     /// 一次性吸收 `UserPromptInput` 的所有字段。
     ///
     /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_env`；
@@ -405,7 +368,7 @@ impl SessionAssemblyBuilder {
 
     /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
     ///
-    /// 保留 `self` 上预先设置的 `identity` / `post_turn_handler` / `env` 等字段
+    /// 保留 `self` 上预先设置的 `identity` / `env` 等字段
     /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
     ///
     /// PR 5d（E8①）起，`parent_context_bundle` 会按 `mode` 进行 **fragment 级**
@@ -441,13 +404,11 @@ impl SessionAssemblyBuilder {
             context_bundle: sliced_bundle,
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
-            hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
             workspace_defaults: None,
             working_dir: None,
-            // 保留调用方已注入的身份 / 回调 / env 不被 companion slice 清空
+            // 保留调用方已注入的身份 / env 不被 companion slice 清空
             env: self.env,
             identity: self.identity,
-            post_turn_handler: self.post_turn_handler,
         }
     }
 
@@ -691,7 +652,7 @@ pub struct OwnerBootstrapSpec<'a> {
 }
 
 /// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
-/// 如何组装 context bundle + prompt_blocks + hook_snapshot_reload。
+/// 如何组装 context bundle + prompt_blocks。
 ///
 /// 与 `SessionPromptLifecycle` 结构等价,但这里只暴露 compose 所需的 3 个分支,
 /// continuation bundle(来自 SessionHub)由调用方在 Spec 里预先算好传入。
@@ -1062,18 +1023,14 @@ impl<'a> SessionRequestAssembler<'a> {
             vec![owner_contribution, session_plan_contribution],
         );
 
-        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks / hook_snapshot_reload ──
+        // ── 6. Prompt lifecycle 三态 → bundle / prompt_blocks ──
         //
         // - OwnerBootstrap：使用新建的 owner context bundle
         // - RepositoryRehydrate：根据 connector 能力，使用 continuation bundle 或 owner bundle
         // - Plain：不附加 bundle
         let audit_lifecycle = owner_audit_lifecycle(&spec.lifecycle);
-        let (prompt_blocks, hook_snapshot_reload, effective_bundle) = match spec.lifecycle {
-            OwnerPromptLifecycle::OwnerBootstrap => (
-                spec.user_prompt_blocks,
-                HookSnapshotReloadTrigger::Reload,
-                Some(context_bundle),
-            ),
+        let (prompt_blocks, effective_bundle) = match spec.lifecycle {
+            OwnerPromptLifecycle::OwnerBootstrap => (spec.user_prompt_blocks, Some(context_bundle)),
             OwnerPromptLifecycle::RepositoryRehydrate {
                 prebuilt_continuation_bundle,
                 include_owner_bundle,
@@ -1085,17 +1042,9 @@ impl<'a> SessionRequestAssembler<'a> {
                         None
                     }
                 });
-                (
-                    spec.user_prompt_blocks,
-                    HookSnapshotReloadTrigger::None,
-                    chosen_bundle,
-                )
+                (spec.user_prompt_blocks, chosen_bundle)
             }
-            OwnerPromptLifecycle::Plain => (
-                spec.user_prompt_blocks,
-                HookSnapshotReloadTrigger::None,
-                None,
-            ),
+            OwnerPromptLifecycle::Plain => (spec.user_prompt_blocks, None),
         };
         if let (Some(bundle), Some(trigger)) = (
             effective_bundle.as_ref(),
@@ -1114,7 +1063,6 @@ impl<'a> SessionRequestAssembler<'a> {
             .with_executor_config(spec.executor_config)
             .with_mcp_servers(session_mcp_servers)
             .with_resolved_capabilities(cap_output)
-            .with_hook_snapshot_reload(hook_snapshot_reload)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -1127,13 +1075,13 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_owner_bootstrap_prompt(
         &self,
-        launch_seed: LaunchExecutionSeed,
+        user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<LaunchAugmentation, String> {
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
         self.compose_owner_bootstrap(spec)
             .await
-            .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
+            .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
     }
 
     /// Story step activation 场景下组装 child session。
@@ -1394,23 +1342,23 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_story_step_prompt(
         &self,
-        launch_seed: LaunchExecutionSeed,
+        user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
         spec: StoryStepSpec<'_>,
-    ) -> Result<LaunchAugmentation, TaskExecutionError> {
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), TaskExecutionError> {
         self.compose_story_step(spec)
             .await
-            .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
+            .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
     }
 
     pub async fn compose_lifecycle_node_prompt(
         &self,
-        launch_seed: LaunchExecutionSeed,
+        user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<LaunchAugmentation, String> {
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
         compose_lifecycle_node_prompt_with_audit(
-            launch_seed,
+            user_input,
             construction_seed,
             self.repos,
             self.platform_config,
@@ -1423,23 +1371,23 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub fn compose_companion_prompt(
         &self,
-        launch_seed: LaunchExecutionSeed,
+        user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
         spec: CompanionSpec<'_>,
-    ) -> LaunchAugmentation {
-        compose_companion_prompt(launch_seed, construction_seed, spec)
+    ) -> (UserPromptInput, SessionConstructionSeed) {
+        compose_companion_prompt(user_input, construction_seed, spec)
     }
 }
 
 pub async fn compose_lifecycle_node_prompt(
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
-) -> Result<LaunchAugmentation, String> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
     compose_lifecycle_node_prompt_with_audit(
-        launch_seed,
+        user_input,
         construction_seed,
         repos,
         platform_config,
@@ -1451,17 +1399,17 @@ pub async fn compose_lifecycle_node_prompt(
 }
 
 pub async fn compose_lifecycle_node_prompt_with_audit(
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<LaunchAugmentation, String> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
-        .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
+        .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
 }
 
 async fn compose_lifecycle_node_with_audit(
@@ -1662,11 +1610,11 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
 }
 
 pub fn compose_companion_prompt(
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     spec: CompanionSpec<'_>,
-) -> LaunchAugmentation {
-    apply_session_assembly(launch_seed, construction_seed, compose_companion(spec))
+) -> (UserPromptInput, SessionConstructionSeed) {
+    apply_session_assembly(user_input, construction_seed, compose_companion(spec))
 }
 
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
@@ -1885,20 +1833,19 @@ async fn compose_companion_with_workflow(
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
         .with_executor_config(comp.companion_executor_config.clone())
-        .with_hook_snapshot_reload(HookSnapshotReloadTrigger::Reload)
         .build())
 }
 
 pub async fn compose_companion_with_workflow_prompt(
-    launch_seed: LaunchExecutionSeed,
+    user_input: UserPromptInput,
     construction_seed: SessionConstructionSeed,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<LaunchAugmentation, String> {
+) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
     compose_companion_with_workflow(repos, platform_config, spec)
         .await
-        .map(|prepared| apply_session_assembly(launch_seed, construction_seed, prepared))
+        .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2335,31 +2282,6 @@ mod tests {
             Workspace, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
         };
         use agentdash_spi::Vfs;
-        use std::sync::Arc;
-
-        struct NoopPostTurnHandler;
-
-        #[async_trait::async_trait]
-        impl crate::session::post_turn_handler::PostTurnHandler for NoopPostTurnHandler {
-            async fn on_event(
-                &self,
-                _session_id: &str,
-                _envelope: &agentdash_agent_protocol::BackboneEnvelope,
-            ) {
-            }
-
-            async fn execute_effects(
-                &self,
-                _session_id: &str,
-                _turn_id: &str,
-                _effects: &[agentdash_spi::hooks::HookEffect],
-            ) {
-            }
-
-            fn supported_effect_kinds(&self) -> &[&str] {
-                &[]
-            }
-        }
 
         fn minimal_workspace() -> Workspace {
             Workspace::new(
@@ -2371,9 +2293,9 @@ mod tests {
             )
         }
 
-        fn base_req() -> LaunchAugmentation {
+        fn base_req() -> (UserPromptInput, SessionConstructionSeed) {
             (
-                LaunchExecutionSeed::from_user_input(UserPromptInput::from_text("ping")),
+                UserPromptInput::from_text("ping"),
                 SessionConstructionSeed::default(),
             )
         }
@@ -2506,7 +2428,7 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_overrides_base() {
             let mut base = base_req();
-            base.0.user_input.prompt_blocks =
+            base.0.prompt_blocks =
                 Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
             let prepared = SessionAssemblyBuilder {
                 prompt_blocks: Some(vec![
@@ -2518,7 +2440,6 @@ mod tests {
             let result = apply_session_assembly(base.0, base.1, prepared);
             let texts: Vec<&str> = result
                 .0
-                .user_input
                 .prompt_blocks
                 .as_ref()
                 .unwrap()
@@ -2531,14 +2452,13 @@ mod tests {
         #[test]
         fn prompt_blocks_prepared_none_preserves_base() {
             let mut base = base_req();
-            base.0.user_input.prompt_blocks =
+            base.0.prompt_blocks =
                 Some(vec![serde_json::json!({ "type": "text", "text": "base" })]);
             let prepared = SessionAssemblyBuilder::default();
 
             let result = apply_session_assembly(base.0, base.1, prepared);
             let texts: Vec<&str> = result
                 .0
-                .user_input
                 .prompt_blocks
                 .as_ref()
                 .unwrap()
@@ -2567,7 +2487,7 @@ mod tests {
         }
 
         // ═══════════════════════════════════════════════════════════
-        // PR 1 Phase 1c 新字段测试：identity / post_turn_handler / env
+        // PR 1 Phase 1c 新字段测试：identity / env
         // ═══════════════════════════════════════════════════════════
 
         #[test]
@@ -2628,59 +2548,10 @@ mod tests {
         }
 
         #[test]
-        fn post_turn_handler_prepared_overrides_base() {
-            let mut base = base_req();
-            let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
-                Arc::new(NoopPostTurnHandler);
-            base.0.post_turn_handler = Some(base_handler.clone());
-            let prepared_handler: crate::session::post_turn_handler::DynPostTurnHandler =
-                Arc::new(NoopPostTurnHandler);
-            let prepared = SessionAssemblyBuilder {
-                post_turn_handler: Some(prepared_handler.clone()),
-                ..Default::default()
-            };
-
-            let result = apply_session_assembly(base.0, base.1, prepared);
-            let result_handler = result
-                .0
-                .post_turn_handler
-                .expect("prepared handler should be present");
-            assert!(
-                Arc::ptr_eq(&result_handler, &prepared_handler),
-                "prepared.post_turn_handler=Some 时应覆盖 base handler"
-            );
-            assert!(
-                !Arc::ptr_eq(&result_handler, &base_handler),
-                "base handler 不应在 prepared handler 存在时保留"
-            );
-        }
-
-        #[test]
-        fn post_turn_handler_prepared_none_preserves_base() {
-            let mut base = base_req();
-            let base_handler: crate::session::post_turn_handler::DynPostTurnHandler =
-                Arc::new(NoopPostTurnHandler);
-            base.0.post_turn_handler = Some(base_handler.clone());
-
-            let result = apply_session_assembly(base.0, base.1, SessionAssemblyBuilder::default());
-            let result_handler = result
-                .0
-                .post_turn_handler
-                .expect("base handler should be preserved");
-            assert!(
-                Arc::ptr_eq(&result_handler, &base_handler),
-                "prepared.post_turn_handler=None 时应保留 base handler"
-            );
-        }
-
-        #[test]
         fn env_prepared_overrides_base_when_nonempty() {
             // prepared.env 非空 → 整体替换。
             let mut base = base_req();
-            base.0
-                .user_input
-                .env
-                .insert("FOO".to_string(), "base".to_string());
+            base.0.env.insert("FOO".to_string(), "base".to_string());
 
             let mut prepared_env = HashMap::new();
             prepared_env.insert("BAR".to_string(), "prepared".to_string());
@@ -2690,9 +2561,9 @@ mod tests {
             };
 
             let result = apply_session_assembly(base.0, base.1, prepared);
-            assert!(!result.0.user_input.env.contains_key("FOO"));
+            assert!(!result.0.env.contains_key("FOO"));
             assert_eq!(
-                result.0.user_input.env.get("BAR").map(String::as_str),
+                result.0.env.get("BAR").map(String::as_str),
                 Some("prepared")
             );
         }
@@ -2701,15 +2572,12 @@ mod tests {
         fn env_prepared_empty_preserves_base() {
             // prepared.env 为空 → 保留 base.env。
             let mut base = base_req();
-            base.0
-                .user_input
-                .env
-                .insert("FOO".to_string(), "base".to_string());
+            base.0.env.insert("FOO".to_string(), "base".to_string());
 
             let prepared = SessionAssemblyBuilder::default();
             let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.0.user_input.env.get("FOO").map(String::as_str),
+                result.0.env.get("FOO").map(String::as_str),
                 Some("base"),
                 "prepared.env 为空时 base.env 应被保留"
             );

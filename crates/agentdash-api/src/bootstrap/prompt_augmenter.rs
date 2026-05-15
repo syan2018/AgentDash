@@ -11,9 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::augmenter::LaunchAugmentation;
 use agentdash_application::session::{
-    LaunchCommand, LaunchExecutionSeed, PromptRequestAugmenter, SessionConstructionSeed,
+    LaunchCommand, PromptRequestAugmenter, SessionConstructionSeed, UserPromptInput,
 };
 use agentdash_spi::ConnectorError;
 
@@ -79,7 +78,7 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<LaunchAugmentation, ConnectorError> {
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
         augment_prompt_request_for_owner(
             &self.state,
             session_id,
@@ -92,8 +91,7 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
     }
 }
 
-fn command_to_launch_seed(command: &LaunchCommand) -> LaunchAugmentation {
-    let launch_seed = LaunchExecutionSeed::from_user_input(command.user_input().clone());
+fn command_to_launch_seed(command: &LaunchCommand) -> (UserPromptInput, SessionConstructionSeed) {
     let construction_seed = SessionConstructionSeed {
         mcp_servers: command.local_relay_mcp_declarations().to_vec(),
         vfs: command
@@ -102,7 +100,7 @@ fn command_to_launch_seed(command: &LaunchCommand) -> LaunchAugmentation {
         identity: command.identity(),
         ..Default::default()
     };
-    (launch_seed, construction_seed)
+    (command.user_input().clone(), construction_seed)
 }
 
 #[cfg(test)]

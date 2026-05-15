@@ -23,7 +23,7 @@ use super::launch::{
 };
 use super::ownership::ResolvedSessionOwner;
 use super::path_policy::resolve_working_dir;
-use super::post_turn_handler::DynPostTurnHandler;
+use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
@@ -52,9 +52,8 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub capability_state: Option<CapabilityState>,
     pub context_bundle: Option<SessionContextBundle>,
     pub continuation_context_frame: Option<ContextFrame>,
-    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub identity: Option<AuthIdentity>,
-    pub post_turn_handler: Option<DynPostTurnHandler>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
 }
 
 pub(super) struct PlannedSessionLaunch {
@@ -150,7 +149,22 @@ impl<'a> SessionLaunchPlanner<'a> {
                 )
             })?;
 
-        let is_owner_bootstrap = input.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
+        let supports_repository_restore = self
+            .hub
+            .connector
+            .supports_repository_restore(executor_config.executor.as_str());
+        let prompt_lifecycle = resolve_session_prompt_lifecycle(
+            input.session_meta,
+            input.had_existing_runtime,
+            supports_repository_restore,
+        );
+        let hook_snapshot_reload =
+            if matches!(prompt_lifecycle, SessionPromptLifecycle::OwnerBootstrap) {
+                HookSnapshotReloadTrigger::Reload
+            } else {
+                HookSnapshotReloadTrigger::None
+            };
+        let is_owner_bootstrap = hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let hook_session = match self
             .hub
             .resolve_hook_session(
@@ -197,15 +211,6 @@ impl<'a> SessionLaunchPlanner<'a> {
                 Some(injection_sink),
             )
         });
-        let supports_repository_restore = self
-            .hub
-            .connector
-            .supports_repository_restore(executor_config.executor.as_str());
-        let prompt_lifecycle = resolve_session_prompt_lifecycle(
-            input.session_meta,
-            input.had_existing_runtime,
-            supports_repository_restore,
-        );
         let restore_mode = match prompt_lifecycle {
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
@@ -325,6 +330,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 context_bundle: context_bundle.clone(),
                 continuation_context_frame: input.continuation_context_frame.clone(),
                 identity: input.identity.clone(),
+                terminal_hook_effect_binding: input.terminal_hook_effect_binding.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),
                 session_capabilities: session_capabilities.clone(),
@@ -332,13 +338,19 @@ impl<'a> SessionLaunchPlanner<'a> {
                 capability_source: capability_source.clone(),
                 vfs_source: vfs_source.clone(),
             });
+        let post_turn_handler = self
+            .resolve_terminal_hook_effect_handler(
+                input.session_id,
+                input.terminal_hook_effect_binding,
+            )
+            .await?;
         let launch_execution = LaunchExecution::build(LaunchExecutionInput {
             construction: construction_plan,
             session_id: sid,
             turn_id: input.turn_id.to_string(),
             lifecycle: prompt_lifecycle,
             restore_mode,
-            hook_snapshot_reload: input.hook_snapshot_reload,
+            hook_snapshot_reload,
             follow_up_session_id: resolved_follow_up_session_id.clone(),
             follow_up_source,
             pending_transition_count: pending_capability_transitions.len(),
@@ -366,7 +378,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             hook_session,
             hook_snapshot_contribution,
             context_bundle,
-            post_turn_handler: input.post_turn_handler,
+            post_turn_handler,
             discovered_guidelines,
             pending_runtime_commands: input.pending_runtime_commands,
             pending_capability_transitions,
@@ -375,5 +387,30 @@ impl<'a> SessionLaunchPlanner<'a> {
             capability_keys,
             resolved_follow_up_session_id,
         })
+    }
+
+    async fn resolve_terminal_hook_effect_handler(
+        &self,
+        session_id: &str,
+        binding: Option<TerminalHookEffectBinding>,
+    ) -> Result<Option<DynPostTurnHandler>, ConnectorError> {
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        let payload = serde_json::json!({
+            "handler": binding.handler,
+            "supported_effect_kinds": binding.supported_effect_kinds,
+        });
+        let Some(registry) = self.hub.hook_effect_handler_registry.read().await.clone() else {
+            return Err(ConnectorError::Runtime(
+                "terminal hook effect binding 存在，但 durable handler registry 未注入".to_string(),
+            ));
+        };
+        registry
+            .handler_for(session_id, &payload)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("解析 terminal hook effect handler 失败: {error}"))
+            })
     }
 }

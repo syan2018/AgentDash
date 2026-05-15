@@ -8,7 +8,7 @@
 - [x] 生产主链路不存在 `PromptSessionRequest`、`PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`。
 - [x] `PromptAugmentInput` 不作为跨 crate handoff、planner 输入或增强后输出存在。
 - [x] `SessionLaunchRequest` 过渡 envelope 已删除。
-- [ ] `SessionConstructionSeed` / `LaunchExecutionSeed` 过渡 seed 已删除，construction / launch / effects 字段分别进入目标边界。
+- [ ] `SessionConstructionSeed` 过渡 seed 已删除，construction / launch / effects 字段分别进入目标边界。
 - [ ] `SessionConstructionPlan` 是 owner/workspace/VFS/MCP/capability/executor/context/identity 的唯一事实源。
 - [ ] `LaunchExecution` 是 lifecycle/restore/hook/follow-up/runtime-command/terminal-effect/connector-input 的唯一 per-launch 计划。
 - [ ] `ExecutionContext` 只在 connector 边界投影生成。
@@ -16,7 +16,7 @@
 ## Source Adapters
 
 - [ ] HTTP adapter 不构造 VFS/MCP/context/capability。
-- [ ] Task adapter 不传 `post_turn_handler` trait object；task effect binding 归 task/effects/outbox 服务边界。
+- [x] Task adapter 不传 `post_turn_handler` trait object；task effect binding 已进入 construction/effects durable binding。
 - [ ] Companion adapter 不传 parent VFS/MCP/context snapshot；construction 从 parent session facts 解析 slice。
 - [ ] Local relay adapter 只传 workspace root 和原始 MCP declaration，不传 resolved VFS/MCP/capability。
 - [ ] Hook auto-resume strict 复用主 construction/launch 路径。

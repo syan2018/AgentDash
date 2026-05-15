@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::context::SessionContextSnapshot;
 use super::ownership::ResolvedSessionOwner;
+use super::post_turn_handler::TerminalHookEffectBinding;
 use crate::vfs::ResolvedVfsSurface;
 
 pub struct SessionConstructionSeed {
@@ -25,6 +26,7 @@ pub struct SessionConstructionSeed {
     /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
     pub continuation_context_frame: Option<ContextFrame>,
     pub identity: Option<AuthIdentity>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
 }
 
 impl Default for SessionConstructionSeed {
@@ -39,6 +41,7 @@ impl Default for SessionConstructionSeed {
             context_bundle: None,
             continuation_context_frame: None,
             identity: None,
+            terminal_hook_effect_binding: None,
         }
     }
 }
@@ -54,6 +57,7 @@ pub struct SessionConstructionPlan {
     pub surface: SessionSurfacePlan,
     pub context: ContextPlan,
     pub identity: IdentityPlan,
+    pub effects: ConstructionEffectPlan,
     pub projections: ConstructionProjections,
     pub context_projection: SessionConstructionContextProjection,
     pub trace: SessionConstructionTrace,
@@ -104,6 +108,11 @@ pub struct IdentityPlan {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct ConstructionEffectPlan {
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
     pub context: SessionConstructionContextProjection,
     pub mcp_servers: Vec<SessionMcpServer>,
@@ -146,6 +155,7 @@ pub struct SessionConstructionLaunchInput {
     pub continuation_context_frame: Option<ContextFrame>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub identity: Option<AuthIdentity>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub capability_state: CapabilityState,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
@@ -206,6 +216,7 @@ impl SessionConstructionPlan {
                 ..Default::default()
             },
             identity: IdentityPlan::default(),
+            effects: ConstructionEffectPlan::default(),
             projections,
             context_projection,
             trace,
@@ -269,6 +280,9 @@ impl SessionConstructionPlan {
             },
             identity: IdentityPlan {
                 identity: input.identity,
+            },
+            effects: ConstructionEffectPlan {
+                terminal_hook_effect_binding: input.terminal_hook_effect_binding,
             },
             projections: ConstructionProjections {
                 context: context_projection.clone(),
@@ -347,6 +361,7 @@ mod tests {
             continuation_context_frame: None,
             context_snapshot: None,
             identity: None,
+            terminal_hook_effect_binding: None,
             mcp_servers: Vec::new(),
             capability_state: CapabilityState::default(),
             session_capabilities: Some(SessionBaselineCapabilities::default()),

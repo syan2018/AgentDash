@@ -17,7 +17,8 @@ use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
 
 use super::construction::SessionConstructionSeed;
-use super::launch::{LaunchCommand, LaunchExecutionSeed};
+use super::launch::LaunchCommand;
+use super::types::UserPromptInput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptAugmentTaskPhase {
@@ -49,19 +50,16 @@ pub struct PromptAugmentCompanionInput {
     pub workflow: Option<PromptAugmentCompanionWorkflowInput>,
 }
 
-pub type LaunchAugmentation = (LaunchExecutionSeed, SessionConstructionSeed);
-
 /// 用于把原始 prompt 输入增强成与主通道一致的 launch payload。
 #[async_trait]
 pub trait PromptRequestAugmenter: Send + Sync {
     /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
-    /// 补齐后端注入字段（mcp_servers / vfs / capability_state / context_bundle /
-    /// hook_snapshot_reload 等）。
+    /// 补齐后端注入字段（mcp_servers / vfs / capability_state / context_bundle 等）。
     async fn augment(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<LaunchAugmentation, ConnectorError>;
+    ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

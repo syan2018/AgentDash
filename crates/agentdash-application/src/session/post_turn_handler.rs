@@ -3,6 +3,22 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHookEffectBinding {
+    pub handler: serde_json::Value,
+    pub supported_effect_kinds: Vec<String>,
+}
+
+impl TerminalHookEffectBinding {
+    pub fn to_outbox_payload(&self, effects: Vec<HookEffect>) -> serde_json::Value {
+        serde_json::json!({
+            "effects": effects,
+            "handler": self.handler,
+            "supported_effect_kinds": self.supported_effect_kinds,
+        })
+    }
+}
+
 /// Session 事件回调 —— 替代 TurnMonitor 的核心抽象。
 ///
 /// 在 `start_prompt` 时由调用方（如 task 执行层）传入，

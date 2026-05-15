@@ -21,10 +21,8 @@ use serde_json::json;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::super::LaunchExecutionSeed;
 use super::super::MemorySessionPersistence;
 use super::super::RuntimeCommandStatus;
-use super::super::augmenter::LaunchAugmentation;
 use super::super::construction::SessionConstructionSeed;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
@@ -32,8 +30,7 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionBootstrapState,
-    SessionExecutionState, UserPromptInput,
+    PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -50,25 +47,26 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> LaunchAugmentation {
-    let mut launch_seed = LaunchExecutionSeed::from_user_input(UserPromptInput {
+fn simple_prompt_request(prompt: &str) -> (UserPromptInput, SessionConstructionSeed) {
+    let user_input = UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
-    });
-    launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::None;
-    (launch_seed, SessionConstructionSeed::default())
+    };
+    (user_input, SessionConstructionSeed::default())
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> LaunchAugmentation {
-    let (mut launch_seed, mut construction_seed) = simple_prompt_request(prompt);
+fn owner_bootstrap_request(
+    prompt: &str,
+    system_context: &str,
+) -> (UserPromptInput, SessionConstructionSeed) {
+    let (user_input, mut construction_seed) = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     construction_seed.context_bundle =
         Some(crate::context::build_continuation_bundle_from_markdown(
             bundle_session_id,
             system_context.to_string(),
         ));
-    launch_seed.hook_snapshot_reload = HookSnapshotReloadTrigger::Reload;
-    (launch_seed, construction_seed)
+    (user_input, construction_seed)
 }
 
 #[derive(Default)]
@@ -2139,7 +2137,6 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
 
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::augmenter::LaunchAugmentation;
     use crate::session::{LaunchCommand, PromptRequestAugmenter};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2155,7 +2152,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             &self,
             _session_id: &str,
             command: &LaunchCommand,
-        ) -> Result<LaunchAugmentation, ConnectorError> {
+        ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = command
                 .user_input()

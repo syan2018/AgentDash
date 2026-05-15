@@ -65,8 +65,8 @@ pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{
     LaunchCapabilitySource, LaunchCommand, LaunchCommandOutcome, LaunchExecution,
-    LaunchExecutionInput, LaunchExecutionSeed, LaunchFollowUpSource, LaunchMcpSource,
-    LaunchRestoreMode, LaunchSource, LaunchStrictness, LaunchSummary, LaunchVfsSource,
+    LaunchExecutionInput, LaunchFollowUpSource, LaunchMcpSource, LaunchRestoreMode, LaunchSource,
+    LaunchStrictness, LaunchSummary, LaunchVfsSource,
 };
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
@@ -74,7 +74,8 @@ pub use persistence::{
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
-    PostTurnHandler, SessionTerminalCallback, TerminalHookEffectHandlerRegistry,
+    PostTurnHandler, SessionTerminalCallback, TerminalHookEffectBinding,
+    TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};

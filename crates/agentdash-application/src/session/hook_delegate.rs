@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
@@ -8,13 +8,12 @@ use agentdash_spi::{
     TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
-use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::hook_messages as msg;
-use super::hub_support::SessionRuntime;
 use super::pending_action_context_frame::build_pending_action_context_frame;
+use super::runtime_registry::SessionRuntimeRegistry;
 
 use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
@@ -60,17 +59,17 @@ pub trait RuntimeHookInjectionSink: Send + Sync {
 }
 
 pub(super) struct SessionRuntimeHookInjectionSink {
-    sessions: Arc<TokioMutex<HashMap<String, SessionRuntime>>>,
+    registry: SessionRuntimeRegistry,
     audit_bus: Option<SharedContextAuditBus>,
 }
 
 impl SessionRuntimeHookInjectionSink {
     pub(super) fn new(
-        sessions: Arc<TokioMutex<HashMap<String, SessionRuntime>>>,
+        registry: SessionRuntimeRegistry,
         audit_bus: Option<SharedContextAuditBus>,
     ) -> Self {
         Self {
-            sessions,
+            registry,
             audit_bus,
         }
     }
@@ -93,20 +92,20 @@ impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
             .cloned()
             .map(hook_injection_to_fragment)
             .collect::<Vec<_>>();
-        let (bundle_id, bundle_session_uuid) = {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(turn) = sessions
-                .get_mut(session_id)
-                .and_then(|runtime| runtime.turn_state.active_turn_mut())
-            {
-                let bundle_id = turn.context_audit_bundle_id;
-                let bundle_session_uuid = turn.context_audit_session_id;
-                turn.runtime_injection_fragments.extend(fragments.clone());
-                (bundle_id, bundle_session_uuid)
-            } else {
-                (Uuid::new_v4(), Uuid::new_v4())
-            }
-        };
+        let (bundle_id, bundle_session_uuid) = self
+            .registry
+            .with_runtime_mut(session_id, |runtime| {
+                if let Some(turn) = runtime.and_then(|runtime| runtime.turn_state.active_turn_mut())
+                {
+                    let bundle_id = turn.context_audit_bundle_id;
+                    let bundle_session_uuid = turn.context_audit_session_id;
+                    turn.runtime_injection_fragments.extend(fragments.clone());
+                    (bundle_id, bundle_session_uuid)
+                } else {
+                    (Uuid::new_v4(), Uuid::new_v4())
+                }
+            })
+            .await;
 
         let Some(bus) = self.audit_bus.as_ref() else {
             return;

@@ -13,8 +13,8 @@ use agentdash_spi::hooks::{
 };
 use uuid::Uuid;
 
-use super::super::context_frame::{self, ContextFramePayload};
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
+use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionHub;
 use crate::hooks::hook_injection_to_fragment;
@@ -143,9 +143,11 @@ impl SessionHub {
         let _ = context_frame::enqueue_context_frame(hook_session, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
-        if let Some(workflow_frame) =
-            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
-        {
+        if let Some(workflow_frame) = build_workflow_assignment_context_frame(
+            &input.phase_node,
+            input.apply_mode,
+            &injections,
+        ) {
             self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
                 .await
                 .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
@@ -301,9 +303,11 @@ impl SessionHub {
         let injections = self
             .collect_runtime_context_update_injections(&input.session_id)
             .await;
-        if let Some(notice) =
-            build_workflow_assignment_context_frame(&input.phase_node, input.apply_mode, &injections)
-        {
+        if let Some(notice) = build_workflow_assignment_context_frame(
+            &input.phase_node,
+            input.apply_mode,
+            &injections,
+        ) {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
                 .await;
@@ -404,19 +408,29 @@ impl RuntimeContextUpdateFrame {
         ) {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta) {
+        if let Some(d) = dimension::tool_path::ToolPathDimensionDelta::from_state_delta(state_delta)
+        {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta) {
+        if let Some(d) =
+            dimension::mcp_server::McpServerDimensionDelta::from_state_delta(state_delta)
+        {
             dimensions.push(d);
         }
         if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(state_delta) {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries) {
+        if let Some(d) =
+            dimension::skill::SkillDimensionDelta::from_state_delta(state_delta, skill_entries)
+        {
             dimensions.push(d);
         }
-        if let Some(d) = dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(tools, state_delta) {
+        if let Some(d) =
+            dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(
+                tools,
+                state_delta,
+            )
+        {
             dimensions.push(d);
         }
 
@@ -467,7 +481,6 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
             .join("\n\n")
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -22,13 +22,14 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
+use super::super::RuntimeCommandStatus;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PromptSessionRequest,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PreparedLaunchPrompt,
     SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionHub;
@@ -46,8 +47,8 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
-    PromptSessionRequest {
+fn simple_prompt_request(prompt: &str) -> PreparedLaunchPrompt {
+    PreparedLaunchPrompt {
         user_input: UserPromptInput {
             executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
             ..UserPromptInput::from_text(prompt)
@@ -63,7 +64,7 @@ fn simple_prompt_request(prompt: &str) -> PromptSessionRequest {
     }
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PromptSessionRequest {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PreparedLaunchPrompt {
     let mut req = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
@@ -194,10 +195,12 @@ async fn start_prompt_records_current_turn_state() {
         .await
         .expect("prompt should start");
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let turn = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.and_then(|runtime| runtime.turn_state.active_turn().cloned())
+        })
+        .await
         .expect("current turn execution state");
     assert_eq!(turn.session_frame.mcp_servers.len(), 1);
     assert_eq!(turn.session_frame.mcp_servers[0].name, "relay_tools");
@@ -533,18 +536,20 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .await
         .expect("replace capability state");
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let (turn, profile) = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            let runtime = runtime?;
+            Some((
+                runtime.turn_state.active_turn().cloned()?,
+                runtime.session_profile.clone()?,
+            ))
+        })
+        .await
         .expect("current turn execution state");
     assert_eq!(turn.capability_state, target_state);
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
     assert_eq!(turn.session_frame.vfs, Some(target_vfs));
-    let profile = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.session_profile.as_ref())
-        .expect("session profile should be synchronized");
     assert_eq!(profile.capability_state, turn.capability_state);
 }
 
@@ -613,8 +618,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         },
     )
     .await
-    .expect("enqueue pending transition")
-    .expect("session should exist");
+    .expect("enqueue pending transition");
 
     hub.start_prompt(&session.id, simple_prompt_request("hello"))
         .await
@@ -632,12 +636,13 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     assert!(captured.mount_ids.contains(&"lifecycle".to_string()));
     assert_eq!(captured.default_mount_id.as_deref(), Some("workspace"));
 
-    let meta = hub
-        .get_session_meta(&session.id)
+    let applied_commands = hub
+        .persistence
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Applied], 10)
         .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert!(meta.pending_capability_state_transitions.is_empty());
+        .expect("runtime commands should load");
+    assert_eq!(applied_commands.len(), 1);
+    assert_eq!(applied_commands[0].transition_id, "transition-1");
 
     let events = hub
         .persistence
@@ -880,27 +885,26 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
-    {
-        let mut sessions = hub.sessions.lock().await;
-        let runtime = sessions
-            .get_mut(&session.id)
-            .expect("session runtime should exist");
-        runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
-            "turn-cap".to_string(),
-            ExecutionSessionFrame {
-                turn_id: "turn-cap".to_string(),
-                working_directory: base.path().to_path_buf(),
-                environment_variables: HashMap::new(),
-                executor_config: AgentConfig::new("PI_AGENT"),
-                mcp_servers: vec![],
-                vfs: Some(local_workspace_vfs(base.path())),
-                identity: None,
-            },
-            CapabilityState::default(),
-            uuid::Uuid::new_v4(),
-            bundle_session_uuid,
-        )));
-    }
+    hub.runtime_registry
+        .with_runtime_mut(&session.id, |runtime| {
+            let runtime = runtime.expect("session runtime should exist");
+            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
+                "turn-cap".to_string(),
+                ExecutionSessionFrame {
+                    turn_id: "turn-cap".to_string(),
+                    working_directory: base.path().to_path_buf(),
+                    environment_variables: HashMap::new(),
+                    executor_config: AgentConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    vfs: Some(local_workspace_vfs(base.path())),
+                    identity: None,
+                },
+                CapabilityState::default(),
+                uuid::Uuid::new_v4(),
+                bundle_session_uuid,
+            )));
+        })
+        .await;
 
     let hook_session = hub
         .get_hook_session_runtime(&session.id)
@@ -935,10 +939,12 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         "runtime context update 不是 HookTrace trigger，不应写 trace"
     );
 
-    let sessions = hub.sessions.lock().await;
-    let turn = sessions
-        .get(&session.id)
-        .and_then(|runtime| runtime.turn_state.active_turn())
+    let turn = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.and_then(|runtime| runtime.turn_state.active_turn().cloned())
+        })
+        .await
         .expect("active turn should remain available");
     assert_eq!(turn.runtime_injection_fragments.len(), 1);
     assert_eq!(turn.runtime_injection_fragments[0].slot, "workflow_context");
@@ -1937,10 +1943,12 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
     let session = hub.create_session("strict-launch").await.expect("create");
 
     let error = hub
-        .launch_prompt_with_intent(
+        .launch_command(
             &session.id,
-            simple_prompt_request("hello"),
-            super::super::launch_intent::SessionLaunchIntent::http_prompt(),
+            super::super::launch::LaunchCommand::http_prompt_input(
+                UserPromptInput::from_text("hello"),
+                None,
+            ),
         )
         .await
         .expect_err("strict launch 应在 augmenter 缺失时失败");
@@ -2039,7 +2047,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
 
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::augmenter::PromptRequestAugmenter;
+    use crate::session::augmenter::{PromptAugmentInput, PromptRequestAugmenter};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyAugmenter {
@@ -2053,8 +2061,9 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
         async fn augment(
             &self,
             _session_id: &str,
-            req: PromptSessionRequest,
-        ) -> Result<PromptSessionRequest, ConnectorError> {
+            input: PromptAugmentInput,
+        ) -> Result<PreparedLaunchPrompt, ConnectorError> {
+            let req = input.into_prepared_prompt();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = req
                 .user_input
@@ -2166,31 +2175,25 @@ async fn auto_resume_prompt_does_not_induce_recap() {
 
 #[tokio::test]
 async fn request_hook_auto_resume_enforces_cap() {
-    use tokio::sync::broadcast;
-
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("auto-resume-cap").await.expect("create");
-
-    {
-        let mut sessions = hub.sessions.lock().await;
-        let (tx, _rx) = broadcast::channel(16);
-        sessions.insert(
-            session.id.clone(),
-            super::super::hub_support::build_session_runtime(tx),
-        );
-    }
+    let _rx = hub.ensure_session(&session.id).await;
 
     assert!(hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
     assert!(!hub.request_hook_auto_resume(session.id.clone()).await);
 
-    let sessions = hub.sessions.lock().await;
-    let runtime = sessions
-        .get(&session.id)
-        .expect("session runtime should exist");
-    assert_eq!(runtime.hook_auto_resume_count, 2);
+    let auto_resume_count = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime
+                .map(|runtime| runtime.hook_auto_resume_count)
+                .expect("session runtime should exist")
+        })
+        .await;
+    assert_eq!(auto_resume_count, 2);
 }
 
 #[tokio::test]

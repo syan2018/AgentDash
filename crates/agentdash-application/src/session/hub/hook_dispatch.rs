@@ -8,14 +8,6 @@
 
 use std::sync::Arc;
 
-use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::{
-    HookEffect, HookEvaluationQuery, HookInjection, HookSessionRuntimeAccess, HookTraceEntry,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
-};
-use tokio::sync::broadcast;
-
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_delegate::{
     RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
@@ -23,9 +15,16 @@ use super::super::hook_delegate::{
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
 use super::super::hook_runtime::HookSessionRuntime;
-use super::super::hub_support::{build_session_runtime, session_hook_trace_decision};
-use super::super::types::{PromptSessionRequest, UserPromptInput};
+use super::super::hub_support::session_hook_trace_decision;
+use super::super::launch::LaunchCommand;
+use super::super::types::UserPromptInput;
 use super::SessionHub;
+use agentdash_agent_protocol::SourceInfo;
+use agentdash_spi::ConnectorError;
+use agentdash_spi::hooks::{
+    HookEffect, HookEvaluationQuery, HookInjection, HookSessionRuntimeAccess, HookTraceEntry,
+    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookSessionRuntime,
+};
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
 pub(in crate::session) struct HookTriggerInput<'a> {
@@ -112,7 +111,7 @@ impl SessionHub {
                     // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
                     // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
                     // 时兜底持久化，避免前端出现重复 Hook 卡片。
-                    if !self.has_live_runtime(session_id).await {
+                    if !self.has_live_executor_session(session_id).await {
                         let envelope =
                             build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
                         let _ = self.persist_notification(session_id, envelope).await;
@@ -120,7 +119,7 @@ impl SessionHub {
                 }
                 if !trace_injections.is_empty() {
                     let sink = SessionRuntimeHookInjectionSink::new(
-                        self.sessions.clone(),
+                        self.runtime_registry.clone(),
                         self.current_context_audit_bus().await,
                     );
                     sink.emit_injections(
@@ -153,15 +152,9 @@ impl SessionHub {
         &self,
         session_id: &str,
     ) -> Vec<HookInjection> {
-        let hook_session = {
-            let sessions = self.sessions.lock().await;
-            let Some(runtime) = sessions.get(session_id) else {
-                return Vec::new();
-            };
-            let Some(hook_session) = runtime.hook_session.clone() else {
-                return Vec::new();
-            };
-            hook_session
+        let Some(hook_session) = self.runtime_registry.hook_session_runtime(session_id).await
+        else {
+            return Vec::new();
         };
 
         let injections = hook_session.snapshot().injections;
@@ -170,7 +163,7 @@ impl SessionHub {
         }
 
         let sink = SessionRuntimeHookInjectionSink::new(
-            self.sessions.clone(),
+            self.runtime_registry.clone(),
             self.current_context_audit_bus().await,
         );
         sink.emit_injections(
@@ -187,14 +180,8 @@ impl SessionHub {
         session_id: &str,
         turn_id: Option<&str>,
     ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        {
-            let sessions = self.sessions.lock().await;
-            if let Some(runtime) = sessions
-                .get(session_id)
-                .and_then(|runtime| runtime.hook_session.clone())
-            {
-                return Ok(Some(runtime));
-            }
+        if let Some(runtime) = self.runtime_registry.hook_session_runtime(session_id).await {
+            return Ok(Some(runtime));
         }
 
         if self
@@ -226,15 +213,10 @@ impl SessionHub {
             snapshot,
         ));
 
-        let mut sessions = self.sessions.lock().await;
-        let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-            let (tx, _rx) = broadcast::channel(1024);
-            build_session_runtime(tx)
-        });
-        if runtime.hook_session.is_none() {
-            runtime.hook_session = Some(rebuilt_runtime.clone());
-        }
-        Ok(runtime.hook_session.clone())
+        Ok(self
+            .runtime_registry
+            .set_hook_session_if_absent(session_id, rebuilt_runtime)
+            .await)
     }
 
     /// Processor 请求的 auto-resume 入口。
@@ -248,18 +230,10 @@ impl SessionHub {
         const MAX_HOOK_AUTO_RESUMES: u32 = 2;
 
         // 原子：读取当前计数 + 若未超限则递增。
-        let decision = {
-            let mut guard = self.sessions.lock().await;
-            let Some(runtime) = guard.get_mut(&session_id) else {
-                return false;
-            };
-            if runtime.hook_auto_resume_count >= MAX_HOOK_AUTO_RESUMES {
-                false
-            } else {
-                runtime.hook_auto_resume_count += 1;
-                true
-            }
-        };
+        let decision = self
+            .runtime_registry
+            .increment_auto_resume_if_allowed(&session_id, MAX_HOOK_AUTO_RESUMES)
+            .await;
 
         if decision {
             tracing::info!(
@@ -289,7 +263,7 @@ impl SessionHub {
         let hub = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let bare_req = PromptSessionRequest::from_user_input(UserPromptInput::from_text(
+            let command = LaunchCommand::hook_auto_resume_input(UserPromptInput::from_text(
                 msg::AUTO_RESUME_PROMPT,
             ));
             if let Some(frame) = build_auto_resume_context_frame(
@@ -299,10 +273,7 @@ impl SessionHub {
                 let _ = hub.emit_context_frame(&session_id, None, &frame).await;
             }
 
-            if let Err(e) = hub
-                .launch_hook_auto_resume_prompt(&session_id, bare_req)
-                .await
-            {
+            if let Err(e) = hub.launch_command(&session_id, command).await {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,

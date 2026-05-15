@@ -10,7 +10,9 @@ use tokio::sync::Mutex;
 
 use super::super::augmenter::SharedPromptRequestAugmenter;
 use super::super::companion_wait::CompanionWaitRegistry;
-use super::super::persistence::SessionPersistence;
+use super::super::persistence::{SessionPersistence, SessionStoreSet};
+use super::super::runtime_registry::SessionRuntimeRegistry;
+use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionHub;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -23,11 +25,17 @@ impl SessionHub {
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let runtime_registry = SessionRuntimeRegistry::new(sessions.clone());
+        let turn_supervisor = TurnSupervisor::new(runtime_registry.clone());
+        let stores = SessionStoreSet::from_persistence(persistence.clone());
         Self {
             default_vfs,
             connector,
             hook_provider,
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            runtime_registry,
+            turn_supervisor,
+            stores,
             persistence,
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
@@ -104,7 +112,7 @@ impl SessionHub {
 
     /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
     ///
-    /// **何时必须注入**：只要 SessionHub 会在内部构造 `PromptSessionRequest`（如
+    /// **何时必须注入**：只要 SessionHub 会在内部构造 `PreparedLaunchPrompt`（如
     /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此增强器——否则
     /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
     ///
@@ -125,5 +133,28 @@ impl SessionHub {
 
     pub(crate) async fn current_context_audit_bus(&self) -> Option<SharedContextAuditBus> {
         self.context_audit_bus.read().await.clone()
+    }
+
+    /// 云端 AppState 返回前的 ready gate。
+    ///
+    /// 这里不负责补依赖，只验证构造阶段已经完成所有 session 主链路需要的绑定，
+    /// 避免把“稍后注入”的空值暴露给正式运行态。
+    pub async fn assert_ready_for_app_state(&self) -> Result<(), String> {
+        if self.runtime_tool_provider.is_none() {
+            return Err("SessionHub 缺少 runtime_tool_provider".to_string());
+        }
+        if self.mcp_relay_provider.is_none() {
+            return Err("SessionHub 缺少 mcp_relay_provider".to_string());
+        }
+        if self.terminal_callback.read().await.is_none() {
+            return Err("SessionHub 缺少 terminal_callback".to_string());
+        }
+        if self.prompt_augmenter.read().await.is_none() {
+            return Err("SessionHub 缺少 prompt_augmenter".to_string());
+        }
+        if self.context_audit_bus.read().await.is_none() {
+            return Err("SessionHub 缺少 context_audit_bus".to_string());
+        }
+        Ok(())
     }
 }

@@ -11,39 +11,17 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
-use tokio::sync::broadcast;
 
 use super::super::hub_support::{
-    TurnTerminalKind, build_session_runtime, build_turn_terminal_envelope,
-    parse_turn_terminal_event_from_envelope,
+    TurnTerminalKind, build_turn_terminal_envelope, parse_turn_terminal_event_from_envelope,
 };
 use super::SessionHub;
 
 impl SessionHub {
     pub async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        let (running, current_turn_id, tx, processor_tx) = {
-            let mut sessions = self.sessions.lock().await;
-            let runtime = sessions.entry(session_id.to_string()).or_insert_with(|| {
-                let (tx, _rx) = broadcast::channel(1024);
-                build_session_runtime(tx)
-            });
-            if let Some(turn) = runtime.turn_state.active_turn_mut() {
-                turn.cancel_requested = true;
-            }
-            let (turn_id, processor_tx) = runtime
-                .turn_state
-                .active_turn()
-                .map(|turn| (Some(turn.turn_id.clone()), turn.processor_tx.clone()))
-                .unwrap_or((None, None));
-            (
-                runtime.is_running(),
-                turn_id,
-                runtime.tx.clone(),
-                processor_tx,
-            )
-        };
+        let cancel_snapshot = self.turn_supervisor.request_cancel(session_id).await;
 
-        if running {
+        if cancel_snapshot.running {
             match self.connector.cancel(session_id).await {
                 Ok(()) => {}
                 Err(err) => {
@@ -54,12 +32,13 @@ impl SessionHub {
                     );
                 }
             }
-            if let Some(ptx) = processor_tx {
+            if let Some(ptx) = cancel_snapshot.processor_tx {
                 if ptx
-                    .send(super::super::turn_processor::TurnEvent::Terminal {
-                        kind: TurnTerminalKind::Interrupted,
-                        message: Some("执行已取消".to_string()),
-                    })
+                    .send(
+                        super::super::turn_supervisor::TurnSupervisor::interrupted_event(
+                            "执行已取消",
+                        ),
+                    )
                     .is_err()
                 {
                     tracing::warn!(
@@ -81,7 +60,7 @@ impl SessionHub {
             .list_all_events(session_id)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let mut latest_turn_id = current_turn_id;
+        let mut latest_turn_id = cancel_snapshot.current_turn_id;
         let mut terminal_by_turn: HashMap<String, (TurnTerminalKind, Option<String>)> =
             HashMap::new();
         for event in history {
@@ -117,7 +96,7 @@ impl SessionHub {
             TurnTerminalKind::Interrupted,
             Some("检测到未收尾的旧执行，已手动标记为 interrupted".to_string()),
         );
-        let _ = tx;
+        let _ = cancel_snapshot.tx;
         let _ = self
             .persist_notification(session_id, interrupted)
             .await

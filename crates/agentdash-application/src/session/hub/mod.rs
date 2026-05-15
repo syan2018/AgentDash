@@ -14,14 +14,13 @@
 //!
 //! 对外路径 `crate::session::hub::SessionHub` 保持不变。
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
-
-use tokio::sync::Mutex;
+use std::{path::PathBuf, sync::Arc};
 
 use super::augmenter::SharedPromptRequestAugmenter;
 use super::companion_wait::CompanionWaitRegistry;
-use super::hub_support::SessionRuntime;
-use super::persistence::SessionPersistence;
+use super::persistence::{SessionPersistence, SessionStoreSet};
+use super::runtime_registry::SessionRuntimeRegistry;
+use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, Vfs};
@@ -45,11 +44,13 @@ pub(crate) use runtime_context_transition::{
 
 #[derive(Clone)]
 pub struct SessionHub {
-    /// 当 `PromptSessionRequest.vfs` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
+    /// 当 `PreparedLaunchPrompt.vfs` 为 None 时回退使用（如云宿主 cwd、本机首个 accessible root）。
     pub(super) default_vfs: Option<Vfs>,
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
-    pub(super) sessions: Arc<Mutex<HashMap<String, SessionRuntime>>>,
+    pub(super) runtime_registry: SessionRuntimeRegistry,
+    pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) stores: SessionStoreSet,
     pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
@@ -57,7 +58,7 @@ pub struct SessionHub {
     pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
-    /// 将"裸" PromptSessionRequest 增强成与 HTTP 主通道一致的完整请求。
+    /// 将"裸" PreparedLaunchPrompt 增强成与 HTTP 主通道一致的完整请求。
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) prompt_augmenter: Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,

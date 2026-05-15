@@ -47,7 +47,8 @@ LaunchCommand
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许继续扩张成新的长期 service / route / adapter 公开契约；
 - `working_dir_input` 与 `working_dir_hint` 已归零，launch summary/input 与 construction seed 不得重新携带 working dir hint；working directory 只能由 construction 从 VFS default mount / local relay workspace root / workspace 事实解析到 `SessionConstructionPlan.workspace.working_directory`。
-- 后续必须把 VFS / MCP / capability / context / identity 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 seed。
+- `SessionConstructionSeed` 不得携带 `SourceContractPlan`、source identity、local relay workspace root 或 local relay MCP declarations。source contract 与 source identity 只能从 `LaunchCommand` 派生并显式传入 planner；local relay workspace root / MCP declarations 只能作为 command source payload 进入 construction/launch 解析。
+- 后续必须把 VFS / MCP / capability / context 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 seed。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 

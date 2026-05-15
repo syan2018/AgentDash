@@ -39,11 +39,12 @@ use crate::rpc::ApiError;
 pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
-    input: (UserPromptInput, SessionConstructionSeed),
+    user_input: UserPromptInput,
+    mut construction_seed: SessionConstructionSeed,
     task_input: Option<PromptAugmentTaskInput>,
     companion_input: Option<PromptAugmentCompanionInput>,
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
-    let (user_input, mut construction_seed) = input;
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(
             state,
@@ -102,6 +103,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
                     task_input,
+                    source_mcp_declarations,
                 )
                 .await;
             }
@@ -137,6 +139,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     &meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
+                    source_mcp_declarations,
                 )
                 .await;
             }
@@ -161,6 +164,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     &meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
+                    source_mcp_declarations,
                 )
                 .await;
             }
@@ -211,6 +215,7 @@ async fn build_story_owner_prompt_request(
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
@@ -253,7 +258,6 @@ async fn build_story_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let request_mcp_servers = construction_seed.mcp_servers.clone();
     let existing_vfs = construction_seed.vfs.clone();
     let assembler = build_session_assembler(state);
     let (user_input, mut construction_seed) = assembler
@@ -271,7 +275,7 @@ async fn build_story_owner_prompt_request(
                 agent_mcp: AgentLevelMcp::default(),
                 agent_tool_directives: Vec::new(),
                 agent_skill_asset_keys: Vec::new(),
-                request_mcp_servers,
+                request_mcp_servers: source_mcp_declarations,
                 existing_vfs,
                 visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
                 active_workflow,
@@ -297,6 +301,7 @@ async fn build_project_owner_prompt_request(
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
@@ -368,7 +373,6 @@ async fn build_project_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let request_mcp_servers = construction_seed.mcp_servers.clone();
     let existing_vfs = construction_seed.vfs.clone();
     let assembler = build_session_assembler(state);
     let (user_input, mut construction_seed) = assembler
@@ -388,7 +392,7 @@ async fn build_project_owner_prompt_request(
                 agent_mcp: AgentLevelMcp { preset_mcp_servers },
                 agent_tool_directives,
                 agent_skill_asset_keys,
-                request_mcp_servers,
+                request_mcp_servers: source_mcp_declarations,
                 existing_vfs,
                 visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
                 active_workflow,
@@ -604,6 +608,7 @@ async fn build_task_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<PromptAugmentTaskInput>,
+    _source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
     let story = state
         .repos

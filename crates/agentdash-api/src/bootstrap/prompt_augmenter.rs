@@ -81,23 +81,15 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
         augment_prompt_request_for_owner(
             &self.state,
             session_id,
-            command_to_launch_seed(command),
+            command.user_input().clone(),
+            SessionConstructionSeed::default(),
             command.task_hint(),
             command.companion_hint(),
+            command.local_relay_mcp_declarations().to_vec(),
         )
         .await
         .map_err(api_error_to_connector)
     }
-}
-
-fn command_to_launch_seed(command: &LaunchCommand) -> (UserPromptInput, SessionConstructionSeed) {
-    let construction_seed = SessionConstructionSeed {
-        mcp_servers: command.local_relay_mcp_declarations().to_vec(),
-        local_relay_workspace_root: command.local_relay_workspace_root().map(ToOwned::to_owned),
-        identity: command.identity(),
-        ..Default::default()
-    };
-    (command.user_input().clone(), construction_seed)
 }
 
 #[cfg(test)]

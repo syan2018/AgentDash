@@ -37,7 +37,6 @@ use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -94,14 +93,9 @@ use crate::workspace::BackendAvailability;
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
-/// | `identity` | prepared 非空时覆盖；否则保留 base |
 ///
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
-///
-/// **identity 下沉**：过去由调用方在 `apply_session_assembly` 之后手工赋值，
-/// 容易漏填。现在 entry 通过 `SessionAssemblyBuilder::with_identity` 注入，
-/// `apply_session_assembly` 统一合入。
 fn apply_session_assembly(
     mut user_input: UserPromptInput,
     mut construction_seed: SessionConstructionSeed,
@@ -129,9 +123,6 @@ fn apply_session_assembly(
     construction_seed.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
         user_input.env = prepared.env;
-    }
-    if prepared.identity.is_some() {
-        construction_seed.identity = prepared.identity;
     }
     (user_input, construction_seed)
 }
@@ -175,9 +166,6 @@ pub struct SessionAssemblyBuilder {
 
     // ── 用户输入侧 ──
     env: HashMap<String, String>,
-
-    // ── 身份 ──
-    identity: Option<AuthIdentity>,
 }
 
 impl SessionAssemblyBuilder {
@@ -323,20 +311,6 @@ impl SessionAssemblyBuilder {
         self
     }
 
-    /// 发起本次 prompt 的用户身份（含 `AuthIdentity::system_routine(id)` 等）。
-    pub fn with_identity(mut self, identity: AuthIdentity) -> Self {
-        self.identity = Some(identity);
-        self
-    }
-
-    /// 可选设置身份（None 时不覆盖已有值）。
-    pub fn with_optional_identity(mut self, identity: Option<AuthIdentity>) -> Self {
-        if identity.is_some() {
-            self.identity = identity;
-        }
-        self
-    }
-
     /// 一次性吸收 `UserPromptInput` 的所有字段。
     ///
     /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_env`；
@@ -357,7 +331,7 @@ impl SessionAssemblyBuilder {
 
     /// 一步完成 companion slice 装配（VFS + MCP + 能力 + prompt + bootstrap）。
     ///
-    /// 保留 `self` 上预先设置的 `identity` / `env` 等字段
+    /// 保留 `self` 上预先设置的 `env` 等字段
     /// （用 `..self` 叠加语法），只覆盖 companion slice 涉及的关注点。
     ///
     /// PR 5d（E8①）起，`parent_context_bundle` 会按 `mode` 进行 **fragment 级**
@@ -394,9 +368,8 @@ impl SessionAssemblyBuilder {
             prompt_blocks: Some(prompt_blocks),
             executor_config: Some(executor_config),
             workspace_defaults: None,
-            // 保留调用方已注入的身份 / env 不被 companion slice 清空
+            // 保留调用方已注入的 env 不被 companion slice 清空
             env: self.env,
-            identity: self.identity,
         }
     }
 
@@ -2568,65 +2541,8 @@ mod tests {
         }
 
         // ═══════════════════════════════════════════════════════════
-        // PR 1 Phase 1c 新字段测试：identity / env
+        // PR 1 Phase 1c 新字段测试：env
         // ═══════════════════════════════════════════════════════════
-
-        #[test]
-        fn identity_prepared_overrides_base() {
-            // prepared.identity = Some → 覆盖 base construction identity。
-            use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
-
-            let mut base = base_req();
-            base.1.identity = Some(AuthIdentity {
-                auth_mode: AuthMode::Personal,
-                user_id: "base-user".to_string(),
-                subject: "base-user".to_string(),
-                display_name: None,
-                email: None,
-                groups: Vec::new(),
-                is_admin: false,
-                provider: None,
-                extra: serde_json::Value::Null,
-            });
-            let prepared = SessionAssemblyBuilder {
-                identity: Some(AuthIdentity::system_routine("r-1234")),
-                ..Default::default()
-            };
-
-            let result = apply_session_assembly(base.0, base.1, prepared);
-            let id = result.1.identity.expect("identity exists");
-            assert_eq!(id.user_id, "system:routine:r-1234");
-            assert_eq!(id.provider.as_deref(), Some("system.routine"));
-            assert!(!id.is_admin);
-        }
-
-        #[test]
-        fn identity_prepared_none_preserves_base() {
-            // prepared.identity = None → 保留 base construction identity（不会清空）。
-            use agentdash_spi::platform::auth::{AuthIdentity, AuthMode};
-
-            let mut base = base_req();
-            let base_id = AuthIdentity {
-                auth_mode: AuthMode::Enterprise,
-                user_id: "alice".to_string(),
-                subject: "alice".to_string(),
-                display_name: Some("Alice".to_string()),
-                email: None,
-                groups: Vec::new(),
-                is_admin: false,
-                provider: None,
-                extra: serde_json::Value::Null,
-            };
-            base.1.identity = Some(base_id);
-
-            let prepared = SessionAssemblyBuilder::default();
-            let result = apply_session_assembly(base.0, base.1, prepared);
-            assert_eq!(
-                result.1.identity.as_ref().map(|i| i.user_id.as_str()),
-                Some("alice"),
-                "prepared.identity=None 时 base construction identity 应被保留"
-            );
-        }
 
         #[test]
         fn env_prepared_overrides_base_when_nonempty() {
@@ -2679,19 +2595,6 @@ mod tests {
                 id.auth_mode,
                 agentdash_spi::platform::auth::AuthMode::Personal
             ));
-        }
-
-        #[test]
-        fn builder_with_identity_method_propagates_to_prepared() {
-            // 验证 SessionAssemblyBuilder.with_identity() 的值能顺利进入 SessionAssemblyBuilder.identity。
-            let id = agentdash_spi::platform::auth::AuthIdentity::system_routine("r-zzz");
-            let prepared = SessionAssemblyBuilder::new()
-                .with_identity(id.clone())
-                .build();
-            assert_eq!(
-                prepared.identity.as_ref().map(|i| i.user_id.as_str()),
-                Some("system:routine:r-zzz"),
-            );
         }
 
         #[test]

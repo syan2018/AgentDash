@@ -16,8 +16,6 @@ use crate::vfs::ResolvedVfsSurface;
 
 pub struct SessionConstructionSeed {
     pub owner: Option<ResolvedSessionOwner>,
-    pub source_contract: SourceContractPlan,
-    pub local_relay_workspace_root: Option<PathBuf>,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     pub capability_state: Option<CapabilityState>,
@@ -25,7 +23,6 @@ pub struct SessionConstructionSeed {
     pub context_bundle: Option<SessionContextBundle>,
     /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
     pub continuation_context_frame: Option<ContextFrame>,
-    pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
 }
 
@@ -33,14 +30,11 @@ impl Default for SessionConstructionSeed {
     fn default() -> Self {
         Self {
             owner: None,
-            source_contract: SourceContractPlan::default(),
-            local_relay_workspace_root: None,
             mcp_servers: Vec::new(),
             vfs: None,
             capability_state: None,
             context_bundle: None,
             continuation_context_frame: None,
-            identity: None,
             terminal_hook_effect_binding: None,
         }
     }

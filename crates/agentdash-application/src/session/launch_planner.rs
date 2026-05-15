@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::{ConnectorError, RestoredSessionState};
+use agentdash_spi::{AuthIdentity, ConnectorError, RestoredSessionState, SessionMcpServer};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
-use super::construction::SessionConstructionSeed;
+use super::construction::{SessionConstructionSeed, SourceContractPlan};
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -37,6 +37,10 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub user_input: UserPromptInput,
     pub construction_seed: SessionConstructionSeed,
+    pub source_contract: SourceContractPlan,
+    pub source_identity: Option<AuthIdentity>,
+    pub local_relay_workspace_root: Option<PathBuf>,
+    pub local_relay_mcp_declarations: Vec<SessionMcpServer>,
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
@@ -51,14 +55,11 @@ impl<'a> SessionLaunchPlanner<'a> {
         let sid = input.session_id.to_string();
         let SessionConstructionSeed {
             owner: construction_owner,
-            source_contract,
-            local_relay_workspace_root,
             mcp_servers: seed_mcp_servers,
             vfs: seed_vfs,
             capability_state: seed_capability_state,
             context_bundle,
             continuation_context_frame,
-            identity,
             terminal_hook_effect_binding,
         } = input.construction_seed;
         let mut context_bundle = context_bundle;
@@ -77,7 +78,7 @@ impl<'a> SessionLaunchPlanner<'a> {
 
         let (base_effective_vfs, vfs_source) = if let Some(vfs) = seed_vfs.clone() {
             (vfs, LaunchVfsSource::Request)
-        } else if let Some(root) = local_relay_workspace_root.as_ref() {
+        } else if let Some(root) = input.local_relay_workspace_root.as_ref() {
             (
                 super::local_workspace_vfs(root),
                 LaunchVfsSource::LocalRelayWorkspaceRoot,
@@ -220,7 +221,14 @@ impl<'a> SessionLaunchPlanner<'a> {
         let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
         let discovered_guidelines = self.hub.discover_guidelines(&effective_vfs).await;
 
-        let (base_mcp_servers, base_mcp_source) = if seed_mcp_servers.is_empty() {
+        let (base_mcp_servers, base_mcp_source) = if !seed_mcp_servers.is_empty() {
+            (seed_mcp_servers.clone(), LaunchMcpSource::Request)
+        } else if !input.local_relay_mcp_declarations.is_empty() {
+            (
+                input.local_relay_mcp_declarations.clone(),
+                LaunchMcpSource::Request,
+            )
+        } else {
             input
                 .cached_continuation
                 .as_ref()
@@ -231,8 +239,6 @@ impl<'a> SessionLaunchPlanner<'a> {
                     )
                 })
                 .unwrap_or_else(|| (Vec::new(), LaunchMcpSource::Empty))
-        } else {
-            (seed_mcp_servers.clone(), LaunchMcpSource::Request)
         };
         let (mcp_servers, mcp_source) =
             if let Some(pending_state) = pending_capability_state.as_ref() {
@@ -295,14 +301,14 @@ impl<'a> SessionLaunchPlanner<'a> {
             SessionConstructionPlanner::plan_launch(SessionConstructionPlannerInput {
                 session_id: sid.clone(),
                 owner: construction_owner,
-                source: source_contract,
-                local_relay_workspace_root,
+                source: input.source_contract,
+                local_relay_workspace_root: input.local_relay_workspace_root,
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),
                 context_bundle: context_bundle.clone(),
                 continuation_context_frame,
-                identity: identity.clone(),
+                identity: input.source_identity.clone(),
                 terminal_hook_effect_binding: terminal_hook_effect_binding.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),

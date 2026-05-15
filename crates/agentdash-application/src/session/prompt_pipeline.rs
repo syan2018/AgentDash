@@ -1,15 +1,15 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
+use agentdash_spi::{AuthIdentity, ConnectorError, SessionMcpServer};
 
 use super::assignment_context_frame::build_assignment_context_frame;
-use super::construction::SessionConstructionSeed;
+use super::construction::{SessionConstructionSeed, SourceContractPlan};
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
@@ -37,7 +37,11 @@ impl<'a> SessionLaunchExecutor<'a> {
         let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
         let reason = command.reason_tag();
         let strictness = command.strictness();
-        let (user_input, mut construction_seed) = match strictness {
+        let source_identity = command.identity();
+        let local_relay_workspace_root =
+            command.local_relay_workspace_root().map(ToOwned::to_owned);
+        let local_relay_mcp_declarations = command.local_relay_mcp_declarations().to_vec();
+        let (user_input, construction_seed) = match strictness {
             LaunchStrictness::Strict => {
                 let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
                     return Err(ConnectorError::Runtime(format!(
@@ -51,14 +55,17 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .await?
             }
         };
-        construction_seed.source_contract.launch_source = Some(reason.to_string());
-        construction_seed.source_contract.strictness = Some(
-            match strictness {
-                LaunchStrictness::Strict => "strict",
-                LaunchStrictness::Relaxed => "relaxed",
-            }
-            .to_string(),
-        );
+        let source_contract = SourceContractPlan {
+            launch_source: Some(reason.to_string()),
+            preparation: None,
+            strictness: Some(
+                match strictness {
+                    LaunchStrictness::Strict => "strict",
+                    LaunchStrictness::Relaxed => "relaxed",
+                }
+                .to_string(),
+            ),
+        };
         let context_sources = construction_seed
             .context_bundle
             .as_ref()
@@ -75,6 +82,10 @@ impl<'a> SessionLaunchExecutor<'a> {
                 follow_up_session_id.as_deref(),
                 user_input,
                 construction_seed,
+                source_contract,
+                source_identity,
+                local_relay_workspace_root,
+                local_relay_mcp_declarations,
             )
             .await?;
         Ok(LaunchCommandOutcome {
@@ -104,8 +115,17 @@ impl<'a> SessionLaunchExecutor<'a> {
         user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
     ) -> Result<String, ConnectorError> {
-        self.execute_launch_seed(session_id, None, user_input, construction_seed)
-            .await
+        self.execute_launch_seed(
+            session_id,
+            None,
+            user_input,
+            construction_seed,
+            SourceContractPlan::default(),
+            None,
+            None,
+            Vec::new(),
+        )
+        .await
     }
 
     /// 已完成 launch/construction seed 准备后的执行段。生产入口只能从 `execute_command` 进入。
@@ -115,6 +135,10 @@ impl<'a> SessionLaunchExecutor<'a> {
         follow_up_session_id: Option<&str>,
         user_input: UserPromptInput,
         construction_seed: SessionConstructionSeed,
+        source_contract: SourceContractPlan,
+        source_identity: Option<AuthIdentity>,
+        local_relay_workspace_root: Option<PathBuf>,
+        local_relay_mcp_declarations: Vec<SessionMcpServer>,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -158,6 +182,10 @@ impl<'a> SessionLaunchExecutor<'a> {
                 pending_runtime_commands,
                 user_input,
                 construction_seed,
+                source_contract,
+                source_identity,
+                local_relay_workspace_root,
+                local_relay_mcp_declarations,
             })
             .await?;
         let resolved_payload = launch_execution.resolved_payload.clone();

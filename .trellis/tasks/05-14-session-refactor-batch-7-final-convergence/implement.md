@@ -20,10 +20,10 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`，只保留 workspace root 作为来源事实。
 - [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `PromptAugmentInput.working_dir_input`，后续迁入 construction。
-- [ ] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
-- [ ] task `post_turn_handler` trait object 迁出 command；后续进入 task/effects/outbox 服务边界，并重新评估是否仍需要。
-- [ ] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot。
-- [ ] local relay MCP 只作为 request declaration 命名与传递，不能作为 resolved MCP surface 使用。
+- [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；但 `to_augment_input()` 仍会把这些 payload 投影成旧增强对象，需在第 4 阶段删除。
+- [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；当前由 API bootstrap 在 Task owner 解析后临时绑定，后续仍需进入 task/effects/outbox 服务边界。
+- [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；当前 parent facts 仍由 API bootstrap 临时从 parent capability state 投影，后续迁入 construction provider。
+- [x] local relay MCP 只作为 request declaration 命名与传递，不能作为 resolved MCP surface 使用。
 
 退出检查：
 
@@ -38,7 +38,7 @@ rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" cr
 
 - [x] `ContextPlan` 持有完整 `SessionContextBundle`。
 - [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `PromptAugmentInput.working_dir_input` 过渡种子。
-- [ ] task effect binding、companion slice、local relay workspace root 由 construction provider 解析。
+- [ ] task effect binding、companion slice、local relay workspace root 由 construction provider 解析；删除 API bootstrap 上的 task handler 与 companion parent facts 临时绑定。
 - [ ] context frame plan、audit projection、inspector projection 进入 construction。
 - [ ] launch、context endpoint、audit、inspector 只投影同一 construction。
 

@@ -17,10 +17,10 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 | Boundary | Current State | Required Move |
 |---|---|---|
-| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；local relay 不再携带已组装 `Vfs` | 删除 `to_augment_input()`；移出 task handler、companion snapshot、working_dir 等非意图字段 |
+| `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 删除 `to_augment_input()`；把 source payload 到 construction/launch 的投影移出 command 方法 |
 | `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `PromptAugmentInput.working_dir_input`，需迁入 construction |
-| Source adapters | 多数入口已构造 command | adapters 只能交出请求意图、来源引用和特殊来源策略 payload |
-| `PromptAugmentInput` | 仍跨 API/bootstrap/application 传递，承载 VFS/MCP/capability/context/hook/post-turn | 删除 production handoff；不再作为增强后输出 |
+| Source adapters | 多数入口已构造 command；task handler 与 companion parent VFS/MCP/context snapshot 已移出 command | adapters 只能交出请求意图、来源引用和特殊来源策略 payload；bootstrap 上的 task/companion 临时投影需迁入 construction provider |
+| `PromptAugmentInput` | 仍跨 API/bootstrap/application 传递，承载 VFS/MCP/capability/context/hook/post-turn；task handler 已不再来自 command，而是在 Task owner bootstrap 后临时绑定 | 删除 production handoff；task effect binding 进入 construction/effects/outbox 服务边界 |
 | `SessionConstructionPlan` | 已有类型；context plan 已保留完整 bundle | 补齐 working dir、VFS、MCP、capability、executor、identity、task effect binding、companion slice、audit/inspector projection |
 | Context endpoint | route 层大部分重建已迁走 | query/audit/inspector 与 launch 投影同一 construction |
 | `SessionLaunchPlanner` | 已不直接消费 `PromptAugmentInput` | 消费 `LaunchCommand + SessionConstructionPlan + runtime facts` |
@@ -34,8 +34,8 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 - Keep `working_dir` out of `UserPromptInput`; remove the remaining `PromptAugmentInput.working_dir_input` transition once construction owns working dir resolution.
 - Keep `LaunchCommand` limited to source, actor, target ids, prompt, executor override, follow-up hint, source policy payload.
-- Replace task `post_turn_handler` transport with task/effects source contract.
-- Replace companion parent VFS/MCP/context transport with parent session references and slice policy.
+- Keep task `post_turn_handler` out of `LaunchCommand`; move the current bootstrap-time handler binding into task/effects source contract.
+- Keep companion parent VFS/MCP/context snapshots out of `LaunchCommand`; move the current bootstrap parent capability projection into construction provider.
 - Keep local relay workspace root as source fact; keep MCP only as declaration.
 
 ### Step 2: Complete Construction

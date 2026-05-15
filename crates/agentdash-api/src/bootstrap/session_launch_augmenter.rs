@@ -20,7 +20,10 @@ use agentdash_application::session::{
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt_with_audit,
     resolve_session_prompt_lifecycle,
 };
-use agentdash_application::task::gateway::resolve_effective_task_workspace;
+use agentdash_application::task::gateway::effect_executor::TaskHookEffectExecutor;
+use agentdash_application::task::gateway::{
+    resolve_effective_task_workspace, resolve_task_backend_id,
+};
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
 use agentdash_domain::{
@@ -464,6 +467,19 @@ async fn build_companion_dispatch_prompt_request(
     req: PromptAugmentInput,
     companion: PromptAugmentCompanionInput,
 ) -> Result<PromptAugmentInput, ApiError> {
+    let parent_capability_state = state
+        .services
+        .session_hub
+        .get_latest_capability_state(&companion.parent_session_id)
+        .await;
+    let parent_vfs = parent_capability_state
+        .as_ref()
+        .and_then(|state| state.vfs.active.as_ref());
+    let parent_mcp_servers = parent_capability_state
+        .as_ref()
+        .map(|state| state.tool.mcp_servers.clone())
+        .unwrap_or_default();
+
     if let Some(workflow) = companion.workflow {
         compose_companion_with_workflow_prompt(
             req,
@@ -471,9 +487,9 @@ async fn build_companion_dispatch_prompt_request(
             &state.config.platform_config,
             CompanionWorkflowSpec {
                 companion: CompanionSpec {
-                    parent_vfs: companion.parent_vfs.as_ref(),
-                    parent_mcp_servers: &companion.parent_mcp_servers,
-                    parent_context_bundle: companion.parent_context_bundle.as_ref(),
+                    parent_vfs,
+                    parent_mcp_servers: &parent_mcp_servers,
+                    parent_context_bundle: None,
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,
@@ -490,9 +506,9 @@ async fn build_companion_dispatch_prompt_request(
         Ok(compose_companion_prompt(
             req,
             CompanionSpec {
-                parent_vfs: companion.parent_vfs.as_ref(),
-                parent_mcp_servers: &companion.parent_mcp_servers,
-                parent_context_bundle: companion.parent_context_bundle.as_ref(),
+                parent_vfs,
+                parent_mcp_servers: &parent_mcp_servers,
+                parent_context_bundle: None,
                 slice_mode: companion.slice_mode,
                 companion_executor_config: companion.companion_executor_config,
                 dispatch_prompt: companion.dispatch_prompt,
@@ -578,7 +594,7 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: PromptAugmentInput,
+    mut req: PromptAugmentInput,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
@@ -613,6 +629,19 @@ async fn build_task_owner_prompt_request(
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
         .map_err(task_execution::map_task_execution_error)?;
+    let backend_id = resolve_task_backend_id(
+        &state.repos,
+        state.services.backend_registry.as_ref(),
+        &task,
+    )
+    .await
+    .map_err(task_execution::map_task_execution_error)?;
+    req.post_turn_handler = Some(Arc::new(TaskHookEffectExecutor {
+        repos: state.repos.clone(),
+        task_id,
+        session_id: session_id.to_string(),
+        backend_id,
+    }) as agentdash_application::session::DynPostTurnHandler);
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),

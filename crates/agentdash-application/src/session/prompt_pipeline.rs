@@ -35,7 +35,6 @@ impl<'a> SessionLaunchExecutor<'a> {
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
-        let continuation_context_frame = command.continuation_context_frame();
         let reason = command.reason_tag();
         let strictness = command.strictness();
         let mut req = match strictness {
@@ -52,9 +51,6 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .await?
             }
         };
-        if continuation_context_frame.is_some() {
-            req.continuation_context_frame = continuation_context_frame;
-        }
         req.source_contract.launch_source = Some(reason.to_string());
         req.source_contract.strictness = Some(
             match strictness {

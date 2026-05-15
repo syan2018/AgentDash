@@ -370,15 +370,6 @@ impl CompanionRequestTool {
             executor_config: None,
         };
 
-        let companion_spec = crate::session::CompanionSpec {
-            parent_vfs: self.vfs.as_ref(),
-            parent_mcp_servers: &active_mcp,
-            parent_context_bundle: None,
-            slice_mode,
-            companion_executor_config,
-            dispatch_prompt: final_prompt,
-        };
-
         let workflow = if let Some(wf_key) = workflow_key {
             Some(
                 self.setup_companion_workflow(hook_session.as_ref(), &target_binding, wf_key)
@@ -390,12 +381,10 @@ impl CompanionRequestTool {
         let command = LaunchCommand::companion_dispatch_input(
             base_input.clone(),
             PromptAugmentCompanionInput {
-                parent_vfs: companion_spec.parent_vfs.cloned(),
-                parent_mcp_servers: companion_spec.parent_mcp_servers.to_vec(),
-                parent_context_bundle: companion_spec.parent_context_bundle.cloned(),
-                slice_mode: companion_spec.slice_mode,
-                companion_executor_config: companion_spec.companion_executor_config.clone(),
-                dispatch_prompt: companion_spec.dispatch_prompt.clone(),
+                parent_session_id: current_session_id.clone(),
+                slice_mode,
+                companion_executor_config: companion_executor_config.clone(),
+                dispatch_prompt: final_prompt.clone(),
                 workflow,
             },
         );

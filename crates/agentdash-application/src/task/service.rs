@@ -200,19 +200,9 @@ impl StoryStepActivationService {
 
         let mut user_input = UserPromptInput::from_text("");
         user_input.executor_config = executor_config.cloned();
-        let post_turn_handler = Some(Arc::new(
-            super::gateway::effect_executor::TaskHookEffectExecutor {
-                repos: self.repos.clone(),
-                task_id: task.id,
-                session_id: session_id.clone(),
-                backend_id: backend_id.clone(),
-            },
-        )
-            as crate::session::post_turn_handler::DynPostTurnHandler);
         let command = LaunchCommand::task_service_input(
             user_input,
             identity,
-            post_turn_handler,
             match phase {
                 ExecutionPhase::Start => PromptAugmentTaskPhase::Start,
                 ExecutionPhase::Continue => PromptAugmentTaskPhase::Continue,

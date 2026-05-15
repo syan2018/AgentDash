@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
-use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
+use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
     CapabilityState, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
     RestoredSessionState, SessionMcpServer, Vfs,
@@ -13,7 +13,6 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
-use super::post_turn_handler::DynPostTurnHandler;
 use super::types::{HookSnapshotReloadTrigger, SessionPromptLifecycle, UserPromptInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,12 +38,10 @@ pub struct LaunchCommand {
     source: LaunchSource,
     strictness: LaunchStrictness,
     follow_up_session_id: Option<String>,
-    continuation_context_frame: Option<ContextFrame>,
     identity: Option<agentdash_spi::AuthIdentity>,
-    post_turn_handler: Option<DynPostTurnHandler>,
     task: Option<PromptAugmentTaskInput>,
     companion: Option<PromptAugmentCompanionInput>,
-    requested_mcp_servers: Vec<SessionMcpServer>,
+    local_relay_mcp_declarations: Vec<SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
 }
 
@@ -65,12 +62,10 @@ impl LaunchCommand {
             source,
             strictness,
             follow_up_session_id: None,
-            continuation_context_frame: None,
             identity: None,
-            post_turn_handler: None,
             task: None,
             companion: None,
-            requested_mcp_servers: Vec::new(),
+            local_relay_mcp_declarations: Vec::new(),
             local_relay_workspace_root: None,
         }
     }
@@ -80,27 +75,17 @@ impl LaunchCommand {
         self
     }
 
-    pub fn with_continuation_context_frame(mut self, frame: Option<ContextFrame>) -> Self {
-        self.continuation_context_frame = frame;
-        self
-    }
-
     pub fn to_augment_input(&self) -> PromptAugmentInput {
         let mut input = PromptAugmentInput::from_user_input(self.user_input.clone());
-        input.mcp_servers = self.requested_mcp_servers.clone();
+        input.mcp_servers = self.local_relay_mcp_declarations.clone();
         input.vfs = self
             .local_relay_workspace_root
             .as_ref()
             .map(|root| super::local_workspace_vfs(root));
         input.identity = self.identity.clone();
-        input.post_turn_handler = self.post_turn_handler.clone();
         input.task = self.task.clone();
         input.companion = self.companion.clone();
         input
-    }
-
-    pub fn continuation_context_frame(&self) -> Option<ContextFrame> {
-        self.continuation_context_frame.clone()
     }
 
     pub fn source(&self) -> LaunchSource {
@@ -134,20 +119,14 @@ impl LaunchCommand {
 
     fn command_with(
         input: UserPromptInput,
-        requested_mcp_servers: Vec<SessionMcpServer>,
-        local_relay_workspace_root: Option<PathBuf>,
         identity: Option<agentdash_spi::AuthIdentity>,
-        post_turn_handler: Option<DynPostTurnHandler>,
         task: Option<PromptAugmentTaskInput>,
         companion: Option<PromptAugmentCompanionInput>,
         source: LaunchSource,
         strictness: LaunchStrictness,
     ) -> Self {
         let mut command = Self::new(input, source, strictness);
-        command.requested_mcp_servers = requested_mcp_servers;
-        command.local_relay_workspace_root = local_relay_workspace_root;
         command.identity = identity;
-        command.post_turn_handler = post_turn_handler;
         command.task = task;
         command.companion = companion;
         command
@@ -159,10 +138,7 @@ impl LaunchCommand {
     ) -> Self {
         Self::command_with(
             input,
-            Vec::new(),
-            None,
             identity,
-            None,
             None,
             None,
             LaunchSource::HttpPrompt,
@@ -184,9 +160,6 @@ impl LaunchCommand {
     ) -> Self {
         Self::command_with(
             input,
-            Vec::new(),
-            None,
-            None,
             None,
             None,
             Some(companion),
@@ -205,10 +178,7 @@ impl LaunchCommand {
     ) -> Self {
         Self::command_with(
             input,
-            Vec::new(),
-            None,
             identity,
-            None,
             None,
             None,
             LaunchSource::RoutineExecutor,
@@ -219,17 +189,13 @@ impl LaunchCommand {
     pub fn task_service_input(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
-        post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
         phase: PromptAugmentTaskPhase,
         override_prompt: Option<String>,
         additional_prompt: Option<String>,
     ) -> Self {
         Self::command_with(
             input,
-            Vec::new(),
-            None,
             identity,
-            post_turn_handler,
             Some(PromptAugmentTaskInput {
                 phase: Some(phase),
                 override_prompt,
@@ -243,20 +209,17 @@ impl LaunchCommand {
 
     pub fn local_relay_prompt_input(
         input: UserPromptInput,
-        requested_mcp_servers: Vec<SessionMcpServer>,
+        mcp_declarations: Vec<SessionMcpServer>,
         workspace_root: PathBuf,
     ) -> Self {
-        Self::command_with(
+        let mut command = Self::new(
             input,
-            requested_mcp_servers,
-            Some(workspace_root),
-            None,
-            None,
-            None,
-            None,
             LaunchSource::LocalRelayPrompt,
             LaunchStrictness::Relaxed,
-        )
+        );
+        command.local_relay_mcp_declarations = mcp_declarations;
+        command.local_relay_workspace_root = Some(workspace_root);
+        command
     }
 }
 

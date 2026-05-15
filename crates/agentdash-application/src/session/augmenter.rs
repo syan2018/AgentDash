@@ -45,9 +45,7 @@ pub struct PromptAugmentCompanionWorkflowInput {
 
 #[derive(Clone)]
 pub struct PromptAugmentCompanionInput {
-    pub parent_vfs: Option<agentdash_spi::Vfs>,
-    pub parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub parent_context_bundle: Option<agentdash_spi::SessionContextBundle>,
+    pub parent_session_id: String,
     pub slice_mode: agentdash_spi::CompanionSliceMode,
     pub companion_executor_config: agentdash_spi::AgentConfig,
     pub dispatch_prompt: String,

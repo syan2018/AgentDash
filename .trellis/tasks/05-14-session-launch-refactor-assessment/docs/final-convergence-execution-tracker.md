@@ -18,13 +18,13 @@ LaunchCommand
 
 | Area | Done | Blocking Gaps |
 |---|---|---|
-| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；local relay 不再把已组装 `Vfs` 塞进 command；`UserPromptInput.working_dir` 已移除 | `LaunchCommand::to_augment_input()` 仍投影旧 payload；`PromptAugmentInput.working_dir_input` 仍是过渡 handoff，尚未迁入 construction；task `post_turn_handler` 与 companion parent snapshot 仍穿透入口 |
+| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；local relay 不再把已组装 `Vfs` 塞进 command；local relay MCP 已收窄为 declaration source payload；`UserPromptInput.working_dir` 已移除；task `post_turn_handler` 不再穿过 command；companion command 不再携带 parent VFS/MCP/context snapshot；未使用的 command continuation context frame 通道已删除 | `LaunchCommand::to_augment_input()` 仍投影旧 payload；`PromptAugmentInput.working_dir_input` 仍是过渡 handoff，尚未迁入 construction |
 | Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 已删除；`PromptAugmentInput` 已不再从 `session::mod` re-export | `PromptAugmentInput` 仍是 API/bootstrap/application handoff，并承载 VFS/MCP/capability/context/hook/post-turn |
-| Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle`；`UserPromptInput` 不再承载 working dir | working dir 解析仍经 `PromptAugmentInput.working_dir_input` 过渡；VFS、MCP、capability、executor profile、identity、companion slice、task effect binding、audit/inspector projection 仍未完整归入 construction |
+| Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle`；`UserPromptInput` 不再承载 working dir；task handler 由 Task owner 解析后的 bootstrap 临时绑定；companion parent facts 由 bootstrap 从 parent capability state 临时投影 | working dir 解析仍经 `PromptAugmentInput.working_dir_input` 过渡；VFS、MCP、capability、executor profile、identity、companion slice、task effect binding、audit/inspector projection 仍未完整归入 construction |
 | Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput` | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`prompt_pipeline` 仍接收增强 payload 并拆字段 |
 | API/bootstrap | route 层部分 launch composition 已迁到 bootstrap | bootstrap 仍返回增强后的 `PromptAugmentInput`，不是 construction/launch 显式边界 |
 | Runtime/Hub | registry / supervisor 已拆出，live executor session 与 active turn 命名已有区分 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
-| Effects/Pending | terminal effect outbox、runtime command store 已有基础 | task post-turn handler 仍以内存 trait object 穿透；effect durable identity、pending apply-once、失败恢复和 migration 仍需最终验证 |
+| Effects/Pending | terminal effect outbox、runtime command store 已有基础；task post-turn handler 不再作为 command trait object 传递 | task effect binding 仍是 API bootstrap 中的内存 handler 临时绑定，尚未成为 construction/effects/outbox 服务边界；effect durable identity、pending apply-once、失败恢复和 migration 仍需最终验证 |
 | Persistence/AppState | store adapter、ready gate、working_dir 策略已有阶段性收口 | `SessionPersistence` 底层仍是大组合接口；AppState/Hub 拆分未达到最终架构 |
 
 ## Non-Negotiable Boundaries
@@ -33,7 +33,7 @@ LaunchCommand
 - `LaunchCommand` 不携带 resolved VFS / MCP / capability / context / hook trigger / effect handler / working_dir / connector input。
 - `UserPromptInput` 不包含 `working_dir`；working dir 最终由 construction 从 project / story / task / agent / lifecycle / local relay workspace root 解析。当前 `PromptAugmentInput.working_dir_input` 是待删除过渡点。
 - task `post_turn_handler` 不能作为 command trait object 传递；后续迁入 task/effects/outbox 服务边界并重新评估是否仍需要。
-- companion dispatch 不传 parent VFS/MCP/context snapshot；construction 从 parent session facts 解析 companion slice。
+- companion dispatch 不传 parent VFS/MCP/context snapshot；最终由 construction 从 parent session facts 解析 companion slice。当前 bootstrap 仍有临时投影。
 - local relay workspace root 是来源事实；MCP 只有作为原始 declaration 才可留在 source payload，不能被命名或使用为 resolved MCP surface。
 
 ## Remaining Execution Order
@@ -41,9 +41,9 @@ LaunchCommand
 ### 1. Correct Entry Intent Boundary
 
 - Keep `UserPromptInput` free of `working_dir`; move the remaining `PromptAugmentInput.working_dir_input` transition into construction.
-- Replace task post-turn handler command transport with a task/effects source contract.
-- Replace companion parent snapshot command transport with parent session references and slice policy.
-- Rename/reshape local relay MCP input as declaration, not resolved MCP.
+- Move the current API bootstrap task handler binding into construction/effects source contract.
+- Move the current API bootstrap companion parent capability projection into construction provider.
+- Keep local relay MCP input as declaration source payload and move final resolution into construction with the rest of `PromptAugmentInput`.
 
 Exit checks:
 

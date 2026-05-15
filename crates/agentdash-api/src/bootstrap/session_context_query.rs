@@ -9,6 +9,7 @@ use std::sync::Arc;
 use agentdash_application::session::construction::{
     SessionConstructionContextProjection, SessionConstructionPlan,
 };
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_plugin_api::AuthIdentity;
@@ -86,7 +87,7 @@ pub(crate) async fn build_session_context_plan(
             } else {
                 None
             };
-            SessionConstructionPlan::new(
+            SessionConstructionPlanner::plan_context(
                 session_id.to_string(),
                 owner,
                 SessionConstructionContextProjection {
@@ -130,7 +131,7 @@ pub(crate) async fn build_session_context_plan(
             } else {
                 None
             };
-            SessionConstructionPlan::new(
+            SessionConstructionPlanner::plan_context(
                 session_id.to_string(),
                 owner,
                 SessionConstructionContextProjection {
@@ -175,7 +176,7 @@ pub(crate) async fn build_session_context_plan(
             } else {
                 None
             };
-            SessionConstructionPlan::new(
+            SessionConstructionPlanner::plan_context(
                 session_id.to_string(),
                 owner,
                 SessionConstructionContextProjection {

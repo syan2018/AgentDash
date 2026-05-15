@@ -112,6 +112,7 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 - 当前 `SessionConstructionPlan` 字段仍不完整。
 - context endpoint route 已只调用 `bootstrap/session_context_query.rs` 并投影 `SessionConstructionPlan`。
 - `bootstrap/session_context_query.rs` 仍按 Task / Story / Project 分支重建 VFS / context / capability，且复用 route context builder；还没有与 launch construction 合流。
+- `bootstrap/session_context_query.rs` 已通过 `SessionConstructionPlanner::plan_context` 生成 `SessionConstructionPlan`，但 projection 构建仍是独立分支。
 - canvas runtime snapshot 与 VFS surface inspector 的 session runtime VFS 查询已改为调用 `build_session_context_plan`，不再在这些 route 内直接按 Task / Story / Project 重建 context。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
 - owner launch 主线会把 `construction_owner/source_contract` 投入 pipeline，并在最终 VFS/MCP/capability/context 解析后生成 `SessionConstructionPlan` 挂入 `LaunchExecution.construction`。
@@ -371,7 +372,8 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [x] `acp_sessions.rs` route 层不再直接重建 task/story/project VFS/capability/context。
 - [x] `canvases.rs` / `vfs_surfaces.rs` session runtime inspector 路径不再直接重建 task/story/project VFS/capability/context，改投影 `SessionConstructionPlan`。
 - [ ] `bootstrap/session_context_query.rs` 与 launch construction planner 合流，删除独立重建主线。
-- [ ] `SessionConstructionPlanner` 同时服务 launch 与 context query。
+- [x] `SessionConstructionPlanner` 同时作为 launch 与 context query 的 plan 生成入口。
+- [ ] Task / Story / Project 的 construction projection 构建迁入 `SessionConstructionPlanner`，不再由 context query 独立重建。
 - [ ] launch 与 context endpoint 一致性测试覆盖 Task / Story / Project。
 
 ### Phase 5：Effects / Pending / Persistence 收尾

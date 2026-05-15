@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use super::construction::{
-    SessionConstructionLaunchInput, SessionConstructionPlan, SessionConstructionTraceEntry,
+    SessionConstructionContextProjection, SessionConstructionLaunchInput, SessionConstructionPlan,
+    SessionConstructionTraceEntry,
 };
 use super::ownership::ResolvedSessionOwner;
 
-pub(super) struct SessionConstructionPlanner;
+pub struct SessionConstructionPlanner;
 
 pub(super) struct SessionConstructionPlannerInput {
     pub session_id: String,
@@ -26,7 +27,17 @@ pub(super) struct SessionConstructionPlannerInput {
 }
 
 impl SessionConstructionPlanner {
-    pub fn plan_launch(input: SessionConstructionPlannerInput) -> Option<SessionConstructionPlan> {
+    pub fn plan_context(
+        session_id: impl Into<String>,
+        owner: ResolvedSessionOwner,
+        projection: SessionConstructionContextProjection,
+    ) -> SessionConstructionPlan {
+        SessionConstructionPlan::new(session_id, owner, projection)
+    }
+
+    pub(super) fn plan_launch(
+        input: SessionConstructionPlannerInput,
+    ) -> Option<SessionConstructionPlan> {
         let owner = input.owner?;
         Some(SessionConstructionPlan::from_launch(
             SessionConstructionLaunchInput {

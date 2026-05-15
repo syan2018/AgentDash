@@ -152,7 +152,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                     "读取 session `{sid}` pending runtime commands 失败: {error}"
                 ))
             })?;
-        let planned_launch = SessionLaunchPlanner::new(hub)
+        let launch_execution = SessionLaunchPlanner::new(hub)
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
@@ -165,15 +165,14 @@ impl<'a> SessionLaunchExecutor<'a> {
                 construction_seed,
             })
             .await?;
-        let launch_execution = planned_launch.launch_execution;
         let resolved_payload = launch_execution.resolved_payload.clone();
         let title_hint = launch_execution.title_hint.clone();
         let resolved_follow_up_session_id = launch_execution.summary.follow_up_session_id.clone();
         let post_turn_handler = launch_execution.terminal_effects.post_turn_handler.clone();
         let hook_session = launch_execution.context.turn.hook_session.clone();
-        let hook_snapshot_contribution = planned_launch.hook_snapshot_contribution;
-        let context_bundle = planned_launch.context_bundle;
-        let discovered_guidelines = planned_launch.discovered_guidelines;
+        let hook_snapshot_contribution = launch_execution.hooks.snapshot_contribution.clone();
+        let context_bundle = launch_execution.construction.context.bundle.clone();
+        let discovered_guidelines = launch_execution.discovered_guidelines.clone();
         let base_capability_state = launch_execution
             .runtime_commands
             .base_capability_state

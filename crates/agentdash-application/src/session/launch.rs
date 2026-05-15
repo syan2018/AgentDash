@@ -5,8 +5,8 @@ use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
-    CapabilityState, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
-    RestoredSessionState, SessionMcpServer, Vfs,
+    CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame,
+    ExecutionTurnFrame, RestoredSessionState, SessionMcpServer, Vfs,
 };
 
 use super::augmenter::{
@@ -310,9 +310,9 @@ pub struct RestoreLaunchPlan {
     pub restored_executor_state: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookLaunchPlan {
     pub snapshot_reload: HookSnapshotReloadTrigger,
+    pub snapshot_contribution: Option<Vec<ContextFragment>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,6 +351,7 @@ pub struct LaunchExecutionTraceEntry {
 pub struct LaunchExecution {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub construction: SessionConstructionPlan,
     pub lifecycle: LifecycleLaunchPlan,
     pub restore: RestoreLaunchPlan,
@@ -371,6 +372,7 @@ pub struct LaunchExecutionInput {
     pub lifecycle: SessionPromptLifecycle,
     pub restore_mode: LaunchRestoreMode,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
+    pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
     pub follow_up_session_id: Option<String>,
     pub follow_up_source: LaunchFollowUpSource,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
@@ -392,6 +394,7 @@ pub struct LaunchExecutionInput {
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
 impl LaunchExecution {
@@ -438,6 +441,7 @@ impl LaunchExecution {
         };
         let hooks = HookLaunchPlan {
             snapshot_reload: input.hook_snapshot_reload,
+            snapshot_contribution: input.hook_snapshot_contribution,
         };
         let runtime_commands = RuntimeCommandLaunchPlan {
             pending_commands: input.pending_runtime_commands,
@@ -497,6 +501,7 @@ impl LaunchExecution {
         Self {
             resolved_payload: input.resolved_payload,
             title_hint,
+            discovered_guidelines: input.discovered_guidelines,
             construction: input.construction,
             lifecycle,
             restore,
@@ -547,6 +552,7 @@ mod tests {
             lifecycle,
             restore_mode: LaunchRestoreMode::None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
+            hook_snapshot_contribution: None,
             follow_up_session_id: None,
             follow_up_source: LaunchFollowUpSource::None,
             pending_runtime_commands: Vec::new(),
@@ -589,6 +595,7 @@ mod tests {
             runtime_delegate: None,
             restored_session_state: None,
             post_turn_handler: None,
+            discovered_guidelines: Vec::new(),
         }
     }
 

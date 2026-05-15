@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::{
-    ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState,
-    SessionContextBundle,
-};
+use agentdash_spi::{ConnectorError, RestoredSessionState};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
@@ -43,13 +40,6 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub construction_seed: SessionConstructionSeed,
 }
 
-pub(super) struct PlannedSessionLaunch {
-    pub launch_execution: LaunchExecution,
-    pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub discovered_guidelines: Vec<DiscoveredGuideline>,
-}
-
 impl<'a> SessionLaunchPlanner<'a> {
     pub fn new(hub: &'a SessionHub) -> Self {
         Self { hub }
@@ -58,7 +48,7 @@ impl<'a> SessionLaunchPlanner<'a> {
     pub async fn plan(
         &self,
         input: SessionLaunchPlannerInput<'_>,
-    ) -> Result<PlannedSessionLaunch, ConnectorError> {
+    ) -> Result<LaunchExecution, ConnectorError> {
         let sid = input.session_id.to_string();
         let SessionConstructionSeed {
             owner: construction_owner,
@@ -343,6 +333,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             lifecycle: prompt_lifecycle,
             restore_mode,
             hook_snapshot_reload,
+            hook_snapshot_contribution,
             follow_up_session_id: resolved_follow_up_session_id.clone(),
             follow_up_source,
             pending_runtime_commands: input.pending_runtime_commands,
@@ -364,14 +355,10 @@ impl<'a> SessionLaunchPlanner<'a> {
             runtime_delegate,
             restored_session_state,
             post_turn_handler,
+            discovered_guidelines,
         });
 
-        Ok(PlannedSessionLaunch {
-            launch_execution,
-            hook_snapshot_contribution,
-            context_bundle,
-            discovered_guidelines,
-        })
+        Ok(launch_execution)
     }
 
     async fn resolve_terminal_hook_effect_handler(

@@ -180,7 +180,7 @@ async fn start_prompt_records_current_turn_state() {
 
     let mut req = simple_prompt_request("hello");
     req.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.user_input.working_dir = Some("src".to_string());
+    req.working_dir_input = Some("src".to_string());
     req.mcp_servers = vec![session_mcp.clone()];
     req.capability_state = Some(flow_caps.clone());
 
@@ -978,7 +978,6 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
             json!({ "type": "resource_link", "uri": "file:///workspace/src/main.ts", "name": "src/main.ts" }),
             json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
         ]),
-        working_dir: None,
         env: std::collections::HashMap::new(),
         executor_config: None,
     };

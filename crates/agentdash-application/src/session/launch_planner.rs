@@ -44,6 +44,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub user_input: UserPromptInput,
+    pub working_dir_input: Option<String>,
     pub construction_owner: Option<ResolvedSessionOwner>,
     pub source_contract: SourceContractPlan,
     pub mcp_servers: Vec<SessionMcpServer>,
@@ -134,9 +135,9 @@ impl<'a> SessionLaunchPlanner<'a> {
                 ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
         let working_directory =
-            resolve_working_dir(&default_mount_root, input.user_input.working_dir.as_deref())
+            resolve_working_dir(&default_mount_root, input.working_dir_input.as_deref())
                 .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
-        let working_dir_input = input.user_input.working_dir.clone();
+        let working_dir_input = input.working_dir_input.clone();
 
         let executor_config = input
             .user_input
@@ -318,7 +319,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 session_id: sid.clone(),
                 owner: input.construction_owner.clone(),
                 source: input.source_contract.clone(),
-                working_dir_input: input.user_input.working_dir.clone(),
+                working_dir_input: input.working_dir_input.clone(),
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),

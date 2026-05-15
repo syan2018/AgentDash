@@ -158,6 +158,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                 session_meta: &session_meta,
                 pending_runtime_commands,
                 user_input: req.user_input,
+                working_dir_input: req.working_dir_input,
                 construction_owner: req.construction_owner,
                 source_contract: req.source_contract,
                 mcp_servers: req.mcp_servers,

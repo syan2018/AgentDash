@@ -4,7 +4,7 @@
 
 - [ ] 所有生产启动来源只构造 `LaunchCommand`。
 - [ ] `LaunchCommand` 只包含来源意图和引用，不包含 resolved VFS/MCP/capability/context/hook/effect/working_dir/connector input。
-- [ ] `UserPromptInput` 不包含 `working_dir`。
+- [x] `UserPromptInput` 不包含 `working_dir`。
 - [ ] 生产主链路不存在 `PromptSessionRequest`、`PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`。
 - [ ] `PromptAugmentInput` 不作为跨 crate handoff、planner 输入或增强后输出存在。
 - [ ] `SessionConstructionPlan` 是 owner/workspace/VFS/MCP/capability/executor/context/identity 的唯一事实源。

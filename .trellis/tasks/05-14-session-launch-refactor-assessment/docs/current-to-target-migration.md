@@ -18,7 +18,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 | Boundary | Current State | Required Move |
 |---|---|---|
 | `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；local relay 不再携带已组装 `Vfs` | 删除 `to_augment_input()`；移出 task handler、companion snapshot、working_dir 等非意图字段 |
-| `UserPromptInput` | 仍包含 `working_dir` | prompt input 只保留 prompt/request override；working dir 由 construction 解析 |
+| `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `PromptAugmentInput.working_dir_input`，需迁入 construction |
 | Source adapters | 多数入口已构造 command | adapters 只能交出请求意图、来源引用和特殊来源策略 payload |
 | `PromptAugmentInput` | 仍跨 API/bootstrap/application 传递，承载 VFS/MCP/capability/context/hook/post-turn | 删除 production handoff；不再作为增强后输出 |
 | `SessionConstructionPlan` | 已有类型；context plan 已保留完整 bundle | 补齐 working dir、VFS、MCP、capability、executor、identity、task effect binding、companion slice、audit/inspector projection |
@@ -32,7 +32,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 ### Step 1: Correct Entry Intent
 
-- Remove `working_dir` from `UserPromptInput`.
+- Keep `working_dir` out of `UserPromptInput`; remove the remaining `PromptAugmentInput.working_dir_input` transition once construction owns working dir resolution.
 - Keep `LaunchCommand` limited to source, actor, target ids, prompt, executor override, follow-up hint, source policy payload.
 - Replace task `post_turn_handler` transport with task/effects source contract.
 - Replace companion parent VFS/MCP/context transport with parent session references and slice policy.

@@ -16,8 +16,6 @@ pub struct UserPromptInput {
     #[serde(default)]
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     #[serde(default)]
-    pub working_dir: Option<String>,
-    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<agentdash_spi::AgentConfig>,
@@ -183,7 +181,6 @@ impl UserPromptInput {
                 "type": "text",
                 "text": trimmed,
             })]),
-            working_dir: None,
             env: HashMap::new(),
             executor_config: None,
         }

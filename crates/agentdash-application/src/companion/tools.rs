@@ -69,7 +69,6 @@ pub struct CompanionRequestTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     current_executor_config: AgentConfig,
-    working_dir: String,
     vfs: Option<Vfs>,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
 }
@@ -96,7 +95,6 @@ impl CompanionRequestTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.session.turn_id.clone(),
             current_executor_config: context.session.executor_config.clone(),
-            working_dir: relative_working_dir(context),
             vfs: context.session.vfs.clone(),
             hook_session: context.turn.hook_session.clone(),
         }
@@ -364,11 +362,10 @@ impl CompanionRequestTool {
         let active_mcp = self.active_mcp_servers().await;
         let execution_slice =
             build_companion_execution_slice(self.vfs.as_ref(), &active_mcp, slice_mode);
-        // Companion 继承父 session 的 working_dir，identity/post_turn_handler 保持 None
-        // （子 session 的 identity 从父 session 运行时继承，不在此处注入）。
+        // Companion 的 working_dir 后续由 construction 根据父 session facts 解析；
+        // identity/post_turn_handler 保持 None。
         let base_input = UserPromptInput {
             prompt_blocks: None,
-            working_dir: Some(self.working_dir.clone()),
             env: std::collections::HashMap::new(),
             executor_config: None,
         };
@@ -1502,7 +1499,6 @@ impl CompanionRespondTool {
                             "type": "text",
                             "text": resume_prompt,
                         })]),
-                        working_dir: None,
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
                     });
@@ -1601,31 +1597,6 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
         HookPendingActionResolutionKind::Adopted => "adopted",
         HookPendingActionResolutionKind::Dismissed => "dismissed",
     }
-}
-
-// ─── 以下为原有内部逻辑函数，保持不变 ──────────────────────────────
-
-pub fn relative_working_dir(context: &ExecutionContext) -> String {
-    let Some(space) = context.session.vfs.as_ref() else {
-        return ".".to_string();
-    };
-    let Some(mount) = space.default_mount() else {
-        return ".".to_string();
-    };
-
-    // 这里刻意不做 Path 语义运算：只把两端都规范化成字符串路径后做前缀裁剪，
-    // 避免在业务层引入“云端理解本机路径”的依赖链路。
-    let root = mount
-        .root_ref
-        .trim()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_string();
-    if root.is_empty() {
-        return ".".to_string();
-    }
-    crate::session::path_policy::to_relative_working_dir(&context.session.working_directory, &root)
-        .unwrap_or_else(|| ".".to_string())
 }
 
 async fn evaluate_subagent_hook(

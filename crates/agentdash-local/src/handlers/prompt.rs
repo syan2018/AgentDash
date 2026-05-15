@@ -112,7 +112,6 @@ impl CommandHandler {
                         vec![v]
                     }
                 }),
-                working_dir: payload.working_dir.clone(),
                 env: payload.env,
                 executor_config,
             },

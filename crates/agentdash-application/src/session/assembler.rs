@@ -89,7 +89,7 @@ use crate::workspace::BackendAvailability;
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `context_bundle` / `hook_snapshot_reload` / `capability_state` | 整体替换为 prepared 值 |
-/// | `working_dir` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `working_dir_input` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
@@ -118,12 +118,12 @@ fn apply_session_assembly(
     req.hook_snapshot_reload = prepared.hook_snapshot_reload;
 
     apply_workspace_defaults(
-        &mut req.user_input.working_dir,
+        &mut req.working_dir_input,
         &mut req.vfs,
         prepared.workspace_defaults.as_ref(),
     );
     if let Some(wd) = prepared.working_dir {
-        req.user_input.working_dir = Some(wd);
+        req.working_dir_input = Some(wd);
     }
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
@@ -386,8 +386,8 @@ impl SessionAssemblyBuilder {
 
     /// 一次性吸收 `UserPromptInput` 的所有字段。
     ///
-    /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_working_dir` /
-    /// `with_env`；便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
+    /// 等价于依次调用 `with_prompt_blocks` / `with_executor_config` / `with_env`；
+    /// 便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
     /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
     pub fn with_user_input(mut self, input: UserPromptInput) -> Self {
         if let Some(blocks) = input.prompt_blocks {
@@ -395,9 +395,6 @@ impl SessionAssemblyBuilder {
         }
         if let Some(cfg) = input.executor_config {
             self.executor_config = Some(cfg);
-        }
-        if input.working_dir.is_some() {
-            self.working_dir = input.working_dir;
         }
         self.env = input.env;
         self
@@ -2458,7 +2455,7 @@ mod tests {
             };
 
             let result = apply_session_assembly(base, prepared);
-            assert_eq!(result.user_input.working_dir.as_deref(), Some("."));
+            assert_eq!(result.working_dir_input.as_deref(), Some("."));
         }
 
         #[test]
@@ -2473,7 +2470,7 @@ mod tests {
 
             let result = apply_session_assembly(base, prepared);
             assert_eq!(
-                result.user_input.working_dir.as_deref(),
+                result.working_dir_input.as_deref(),
                 Some("packages/foo"),
                 "prepared.working_dir 应覆盖 workspace default 的 \".\""
             );
@@ -2717,22 +2714,20 @@ mod tests {
 
         #[test]
         fn builder_with_user_input_unpacks_fields() {
-            // 验证 with_user_input 一次性吸收 UserPromptInput 的四字段。
+            // 验证 with_user_input 一次性吸收 prompt 输入字段，不再吸收 working_dir。
             use crate::session::UserPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 
             let input = UserPromptInput {
                 prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
-                working_dir: Some("subdir".to_string()),
                 env,
                 executor_config: None,
             };
             let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
-            assert_eq!(
-                prepared.working_dir.as_deref(),
-                Some("subdir"),
-                "with_user_input 应把 UserPromptInput.working_dir 写入 builder.working_dir"
+            assert!(
+                prepared.working_dir.is_none(),
+                "with_user_input 不再从 prompt input 写入 working_dir"
             );
             assert!(
                 prepared.prompt_blocks.is_some(),

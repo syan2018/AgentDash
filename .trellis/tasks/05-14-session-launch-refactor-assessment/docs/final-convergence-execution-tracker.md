@@ -18,9 +18,9 @@ LaunchCommand
 
 | Area | Done | Blocking Gaps |
 |---|---|---|
-| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；local relay 不再把已组装 `Vfs` 塞进 command | `LaunchCommand::to_augment_input()` 仍投影旧 payload；`UserPromptInput.working_dir` 仍存在；task `post_turn_handler` 与 companion parent snapshot 仍穿透入口 |
+| Entry | 生产入口大多进入 `LaunchCommand`；`start_prompt` 已收紧为测试入口；`start_prompt_with_follow_up` 已删除；`LaunchCommand` 不再持有 `PromptAugmentInput`；local relay 不再把已组装 `Vfs` 塞进 command；`UserPromptInput.working_dir` 已移除 | `LaunchCommand::to_augment_input()` 仍投影旧 payload；`PromptAugmentInput.working_dir_input` 仍是过渡 handoff，尚未迁入 construction；task `post_turn_handler` 与 companion parent snapshot 仍穿透入口 |
 | Old Shells | `PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput` 已删除；`PromptAugmentInput` 已不再从 `session::mod` re-export | `PromptAugmentInput` 仍是 API/bootstrap/application handoff，并承载 VFS/MCP/capability/context/hook/post-turn |
-| Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle` | working dir、VFS、MCP、capability、executor profile、identity、companion slice、task effect binding、audit/inspector projection 仍未完整归入 construction |
+| Construction | 已有 `SessionConstructionPlan` / `SessionConstructionPlanner`；`ContextPlan` 已保留完整 `SessionContextBundle`；`UserPromptInput` 不再承载 working dir | working dir 解析仍经 `PromptAugmentInput.working_dir_input` 过渡；VFS、MCP、capability、executor profile、identity、companion slice、task effect binding、audit/inspector projection 仍未完整归入 construction |
 | Launch | 已有 `SessionLaunchPlanner` / `SessionLaunchExecutor`；`SessionLaunchPlannerInput` 已删除 `request: PromptAugmentInput` | planner 输入还不是 `LaunchCommand + SessionConstructionPlan + runtime facts`；`prompt_pipeline` 仍接收增强 payload 并拆字段 |
 | API/bootstrap | route 层部分 launch composition 已迁到 bootstrap | bootstrap 仍返回增强后的 `PromptAugmentInput`，不是 construction/launch 显式边界 |
 | Runtime/Hub | registry / supervisor 已拆出，live executor session 与 active turn 命名已有区分 | 多个业务方法仍在 `impl SessionHub`，Hub 仍是能力聚合入口 |
@@ -31,7 +31,7 @@ LaunchCommand
 
 - `LaunchCommand` 只表达来源意图和引用：source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
 - `LaunchCommand` 不携带 resolved VFS / MCP / capability / context / hook trigger / effect handler / working_dir / connector input。
-- `UserPromptInput` 最终不包含 `working_dir`；working dir 由 construction 从 project / story / task / agent / lifecycle / local relay workspace root 解析。
+- `UserPromptInput` 不包含 `working_dir`；working dir 最终由 construction 从 project / story / task / agent / lifecycle / local relay workspace root 解析。当前 `PromptAugmentInput.working_dir_input` 是待删除过渡点。
 - task `post_turn_handler` 不能作为 command trait object 传递；后续迁入 task/effects/outbox 服务边界并重新评估是否仍需要。
 - companion dispatch 不传 parent VFS/MCP/context snapshot；construction 从 parent session facts 解析 companion slice。
 - local relay workspace root 是来源事实；MCP 只有作为原始 declaration 才可留在 source payload，不能被命名或使用为 resolved MCP surface。
@@ -40,7 +40,7 @@ LaunchCommand
 
 ### 1. Correct Entry Intent Boundary
 
-- Remove `working_dir` from `UserPromptInput`; keep prompt input limited to actual prompt/request overrides.
+- Keep `UserPromptInput` free of `working_dir`; move the remaining `PromptAugmentInput.working_dir_input` transition into construction.
 - Replace task post-turn handler command transport with a task/effects source contract.
 - Replace companion parent snapshot command transport with parent session references and slice policy.
 - Rename/reshape local relay MCP input as declaration, not resolved MCP.

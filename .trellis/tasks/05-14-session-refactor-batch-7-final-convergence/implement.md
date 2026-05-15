@@ -19,7 +19,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`，只保留 workspace root 作为来源事实。
-- [ ] `UserPromptInput.working_dir` 移出 prompt input；working dir 由 construction 根据 owner / workspace / agent / lifecycle / local relay root 解析。
+- [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `PromptAugmentInput.working_dir_input`，后续迁入 construction。
 - [ ] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
 - [ ] task `post_turn_handler` trait object 迁出 command；后续进入 task/effects/outbox 服务边界，并重新评估是否仍需要。
 - [ ] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot。
@@ -32,12 +32,12 @@ rg -n "working_dir" crates/agentdash-application/src/session/types.rs crates/age
 rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 ```
 
-命中允许存在，但必须全部在 tracker 中归属到 construction / effects / source contract 的后续删除点；不能被标记完成。
+命中允许存在，但必须全部在 tracker 中归属到 construction / effects / source contract 的后续删除点；不能被标记完成。`UserPromptInput` 不得再出现 `working_dir` 字段。
 
 ### 2. 补全 `SessionConstructionPlan`
 
 - [x] `ContextPlan` 持有完整 `SessionContextBundle`。
-- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace。
+- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `PromptAugmentInput.working_dir_input` 过渡种子。
 - [ ] task effect binding、companion slice、local relay workspace root 由 construction provider 解析。
 - [ ] context frame plan、audit projection、inspector projection 进入 construction。
 - [ ] launch、context endpoint、audit、inspector 只投影同一 construction。

@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +20,6 @@ use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     LaunchCommand, SessionExecutionState, SessionMeta, UserPromptInput,
 };
@@ -514,42 +513,6 @@ mod tests {
             )
         );
     }
-
-    #[test]
-    fn pick_primary_session_binding_uses_unified_task_story_project_priority() {
-        let project_id = uuid::Uuid::new_v4();
-        let session_id = "sess-owner-priority".to_string();
-        let task_binding = agentdash_domain::session_binding::SessionBinding::new(
-            project_id,
-            session_id.clone(),
-            SessionOwnerType::Task,
-            uuid::Uuid::new_v4(),
-            "task",
-        );
-        let story_binding = agentdash_domain::session_binding::SessionBinding::new(
-            project_id,
-            session_id.clone(),
-            SessionOwnerType::Story,
-            uuid::Uuid::new_v4(),
-            "story",
-        );
-        let project_binding = agentdash_domain::session_binding::SessionBinding::new(
-            project_id,
-            session_id,
-            SessionOwnerType::Project,
-            uuid::Uuid::new_v4(),
-            "project",
-        );
-
-        let bindings = vec![task_binding, story_binding, project_binding];
-        let primary = pick_primary_session_binding(&bindings).expect("primary binding");
-
-        assert_eq!(
-            primary.owner_type,
-            SessionOwnerType::Task,
-            "context query 应与 launch augment 共用 Task -> Story -> Project owner priority"
-        );
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -615,12 +578,6 @@ impl SessionContextResponse {
             session_capabilities: projection.session_capabilities,
         }
     }
-}
-
-pub(crate) fn pick_primary_session_binding(
-    bindings: &[agentdash_domain::session_binding::SessionBinding],
-) -> Option<&agentdash_domain::session_binding::SessionBinding> {
-    SessionOwnerResolver::select_primary_binding(bindings)
 }
 
 pub async fn get_session_bindings(

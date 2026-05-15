@@ -13,8 +13,10 @@ use super::augmenter::{
     PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
 };
 use super::construction::SessionConstructionPlan;
+use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    HookSnapshotReloadTrigger, ResolvedPromptPayload, SessionPromptLifecycle, UserPromptInput,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
+    SessionPromptLifecycle, UserPromptInput,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,7 +316,8 @@ pub struct HookLaunchPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCommandLaunchPlan {
-    pub pending_transition_count: usize,
+    pub pending_commands: Vec<PendingRuntimeCommandRecord>,
+    pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub apply_after_connector_accept: bool,
 }
 
@@ -368,7 +371,8 @@ pub struct LaunchExecutionInput {
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub follow_up_session_id: Option<String>,
     pub follow_up_source: LaunchFollowUpSource,
-    pub pending_transition_count: usize,
+    pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
+    pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub vfs_source: LaunchVfsSource,
     pub pending_vfs_overlay_applied: bool,
     pub mcp_source: LaunchMcpSource,
@@ -394,6 +398,7 @@ impl LaunchExecution {
             .chars()
             .take(30)
             .collect::<String>();
+        let pending_transition_count = input.pending_capability_transitions.len();
         let restored_executor_state = input.restored_session_state.is_some();
         let capability_keys = input
             .capability_state
@@ -408,7 +413,7 @@ impl LaunchExecution {
             hook_snapshot_reload: input.hook_snapshot_reload,
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
-            pending_transition_count: input.pending_transition_count,
+            pending_transition_count,
             vfs_source: input.vfs_source,
             pending_vfs_overlay_applied: input.pending_vfs_overlay_applied,
             mcp_source: input.mcp_source,
@@ -431,7 +436,8 @@ impl LaunchExecution {
             snapshot_reload: input.hook_snapshot_reload,
         };
         let runtime_commands = RuntimeCommandLaunchPlan {
-            pending_transition_count: input.pending_transition_count,
+            pending_commands: input.pending_runtime_commands,
+            pending_capability_transitions: input.pending_capability_transitions,
             apply_after_connector_accept: true,
         };
         let terminal_effects = TerminalEffectPlan {
@@ -452,7 +458,7 @@ impl LaunchExecution {
                 },
                 LaunchExecutionTraceEntry {
                     stage: "runtime_command",
-                    source: if input.pending_transition_count > 0 {
+                    source: if pending_transition_count > 0 {
                         "pending_projection"
                     } else {
                         "none"
@@ -537,7 +543,29 @@ mod tests {
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,
             follow_up_session_id: None,
             follow_up_source: LaunchFollowUpSource::None,
-            pending_transition_count: 2,
+            pending_runtime_commands: Vec::new(),
+            pending_capability_transitions: vec![
+                PendingCapabilityStateTransition {
+                    id: "pending-1".to_string(),
+                    run_id: uuid::Uuid::new_v4(),
+                    lifecycle_key: "dev".to_string(),
+                    phase_node: "phase-a".to_string(),
+                    capability_keys: Default::default(),
+                    state: CapabilityState::default(),
+                    created_at: 1,
+                    source_turn_id: None,
+                },
+                PendingCapabilityStateTransition {
+                    id: "pending-2".to_string(),
+                    run_id: uuid::Uuid::new_v4(),
+                    lifecycle_key: "dev".to_string(),
+                    phase_node: "phase-b".to_string(),
+                    capability_keys: Default::default(),
+                    state: CapabilityState::default(),
+                    created_at: 2,
+                    source_turn_id: None,
+                },
+            ],
             vfs_source: LaunchVfsSource::Request,
             pending_vfs_overlay_applied: false,
             mcp_source: LaunchMcpSource::Request,
@@ -592,6 +620,13 @@ mod tests {
         assert!(!execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);
         assert_eq!(execution.construction.session_id.as_str(), "sess-launch");
+        assert_eq!(
+            execution
+                .runtime_commands
+                .pending_capability_transitions
+                .len(),
+            2
+        );
         assert!(execution.runtime_commands.apply_after_connector_accept);
         assert!(execution.terminal_effects.durable_outbox_required);
     }
@@ -635,7 +670,16 @@ mod tests {
         let mut input = input_for(SessionPromptLifecycle::Plain);
         input.follow_up_session_id = Some("executor-session-1".to_string());
         input.follow_up_source = LaunchFollowUpSource::SessionMeta;
-        input.pending_transition_count = 1;
+        input.pending_capability_transitions = vec![PendingCapabilityStateTransition {
+            id: "pending-3".to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "phase-c".to_string(),
+            capability_keys: Default::default(),
+            state: CapabilityState::default(),
+            created_at: 3,
+            source_turn_id: None,
+        }];
         input.vfs_source = LaunchVfsSource::CachedSessionProfile;
         input.pending_vfs_overlay_applied = true;
         input.mcp_source = LaunchMcpSource::PendingCapabilityTransition;

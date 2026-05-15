@@ -61,6 +61,7 @@ route/bootstrap 不得保留独立 owner / VFS / capability / context 主线。
 - [x] `LaunchExecution` 不再允许 `construction: Option<_>`；缺 owner / construction plan 会在 planner 阶段失败。
 - [x] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
 - [x] `LaunchExecution` 显式包含 resolved prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace。
+- [x] pending runtime commands 与 pending capability transitions 不再作为 `PlannedSessionLaunch` 旁路字段，改由 `LaunchExecution.runtime_commands` 承载。
 - [ ] `prompt_pipeline` 只负责 claim / activate、event append、connector.prompt、accepted 后提交 meta / pending / title、processor supervision。
 - [x] `prompt_pipeline` 不再拆 `SessionConstructionSeed` 的 owner / VFS / MCP / capability / context / effect 字段，字段拆解已收回 planner/construction 阶段。
 - [ ] connector.prompt 失败不提交 bootstrap / pending applied / title generation 等成功副作用。

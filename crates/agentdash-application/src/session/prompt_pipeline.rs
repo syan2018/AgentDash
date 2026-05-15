@@ -173,8 +173,6 @@ impl<'a> SessionLaunchExecutor<'a> {
         let context_bundle = planned_launch.context_bundle;
         let post_turn_handler = planned_launch.post_turn_handler;
         let discovered_guidelines = planned_launch.discovered_guidelines;
-        let pending_runtime_commands = planned_launch.pending_runtime_commands;
-        let pending_capability_transitions = planned_launch.pending_capability_transitions;
         let base_capability_state = planned_launch.base_capability_state;
         let capability_state = planned_launch.capability_state;
         let capability_keys = planned_launch.capability_keys;
@@ -252,18 +250,26 @@ impl<'a> SessionLaunchExecutor<'a> {
                 .await;
         }
 
-        let pending_command_ids = pending_runtime_commands
+        let pending_command_ids = launch_execution
+            .runtime_commands
+            .pending_commands
             .iter()
             .map(|command| command.id)
             .collect::<Vec<_>>();
-        let pending_transition_frames = if !pending_capability_transitions.is_empty() {
+        let pending_transition_frames = if !launch_execution
+            .runtime_commands
+            .pending_capability_transitions
+            .is_empty()
+        {
             let frames = hub
                 .apply_pending_runtime_context_transitions_on_turn(
                     &sid,
                     &turn_id,
                     hook_session.as_ref(),
                     base_capability_state,
-                    &pending_capability_transitions,
+                    &launch_execution
+                        .runtime_commands
+                        .pending_capability_transitions,
                     &context.turn.assembled_tools,
                 )
                 .await;

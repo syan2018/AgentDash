@@ -25,9 +25,8 @@ use super::path_policy::resolve_working_dir;
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionMeta,
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
-    resolve_session_prompt_lifecycle,
+    HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    UserPromptInput, resolve_session_prompt_lifecycle,
 };
 
 pub(super) struct SessionLaunchPlanner<'a> {
@@ -53,8 +52,6 @@ pub(super) struct PlannedSessionLaunch {
     pub context_bundle: Option<SessionContextBundle>,
     pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
-    pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub base_capability_state: agentdash_spi::CapabilityState,
     pub capability_state: agentdash_spi::CapabilityState,
     pub capability_keys: BTreeSet<String>,
@@ -357,7 +354,8 @@ impl<'a> SessionLaunchPlanner<'a> {
             hook_snapshot_reload,
             follow_up_session_id: resolved_follow_up_session_id.clone(),
             follow_up_source,
-            pending_transition_count: pending_capability_transitions.len(),
+            pending_runtime_commands: input.pending_runtime_commands,
+            pending_capability_transitions,
             vfs_source,
             pending_vfs_overlay_applied,
             mcp_source,
@@ -382,8 +380,6 @@ impl<'a> SessionLaunchPlanner<'a> {
             context_bundle,
             post_turn_handler,
             discovered_guidelines,
-            pending_runtime_commands: input.pending_runtime_commands,
-            pending_capability_transitions,
             base_capability_state,
             capability_state: capability_state.clone(),
             capability_keys,

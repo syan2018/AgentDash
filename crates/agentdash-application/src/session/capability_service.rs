@@ -3,8 +3,8 @@ use async_trait::async_trait;
 
 use super::hub::SessionHub;
 use super::hub::{
-    LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput,
-    RuntimeContextTransitionOutcome,
+    LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
+    PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
 };
 use super::types::{CapabilityState, PendingCapabilityStateTransition};
 use crate::runtime_gateway::{
@@ -59,6 +59,27 @@ impl SessionCapabilityService {
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         self.hub
             .apply_live_runtime_context_transition(hook_session, input)
+            .await
+    }
+
+    pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        hook_session: Option<&agentdash_spi::hooks::SharedHookSessionRuntime>,
+        before_state: CapabilityState,
+        transitions: &[PendingCapabilityStateTransition],
+        tools: &[agentdash_agent_types::DynAgentTool],
+    ) -> PendingRuntimeContextApplication {
+        self.hub
+            .apply_pending_runtime_context_transitions_on_turn(
+                session_id,
+                turn_id,
+                hook_session,
+                before_state,
+                transitions,
+                tools,
+            )
             .await
     }
 }

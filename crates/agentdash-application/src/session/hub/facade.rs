@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 use super::super::construction::SessionConstructionPlan;
 use super::super::hub_support::*;
 #[cfg(test)]
-use super::super::prompt_pipeline::SessionLaunchExecutor;
+use super::super::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
 use super::super::types::*;
 use super::SessionHub;
 use agentdash_spi::ConnectorError;
@@ -209,7 +209,7 @@ impl SessionHub {
         session_id: &str,
         construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
-        SessionLaunchExecutor::new(self)
+        SessionLaunchExecutor::new(SessionLaunchDeps::from_hub(self))
             .execute_constructed_launch_for_test(session_id, construction)
             .await
     }

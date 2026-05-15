@@ -14,16 +14,16 @@ pub(crate) struct CancelTurnSnapshot {
 }
 
 #[derive(Clone)]
-pub(crate) struct TurnSupervisor {
+pub(super) struct TurnSupervisor {
     registry: SessionRuntimeRegistry,
 }
 
 impl TurnSupervisor {
-    pub fn new(registry: SessionRuntimeRegistry) -> Self {
+    pub(super) fn new(registry: SessionRuntimeRegistry) -> Self {
         Self { registry }
     }
 
-    pub async fn request_cancel(&self, session_id: &str) -> CancelTurnSnapshot {
+    pub(super) async fn request_cancel(&self, session_id: &str) -> CancelTurnSnapshot {
         let runtimes = self.registry.shared_runtimes();
         let mut runtimes = runtimes.lock().await;
         let runtime = runtimes.entry(session_id.to_string()).or_insert_with(|| {
@@ -46,7 +46,7 @@ impl TurnSupervisor {
         }
     }
 
-    pub async fn claim_prompt(
+    pub(super) async fn claim_prompt(
         &self,
         session_id: &str,
     ) -> Result<Option<SessionProfile>, ConnectorError> {
@@ -65,7 +65,7 @@ impl TurnSupervisor {
         Ok(runtime.session_profile.clone())
     }
 
-    pub async fn activate_turn(
+    pub(super) async fn activate_turn(
         &self,
         session_id: &str,
         profile: SessionProfile,
@@ -81,7 +81,7 @@ impl TurnSupervisor {
             .await;
     }
 
-    pub async fn clear_turn_and_hook(&self, session_id: &str) {
+    pub(super) async fn clear_turn_and_hook(&self, session_id: &str) {
         self.registry
             .with_runtime_mut(session_id, |runtime| {
                 if let Some(runtime) = runtime {
@@ -92,7 +92,7 @@ impl TurnSupervisor {
             .await;
     }
 
-    pub async fn clear_active_turn(&self, session_id: &str) {
+    pub(super) async fn clear_active_turn(&self, session_id: &str) {
         self.registry
             .with_runtime_mut(session_id, |runtime| {
                 if let Some(runtime) = runtime {
@@ -102,7 +102,7 @@ impl TurnSupervisor {
             .await;
     }
 
-    pub async fn cancel_interrupted_terminal(
+    pub(super) async fn cancel_interrupted_terminal(
         &self,
         session_id: &str,
         turn_id: &str,
@@ -124,7 +124,7 @@ impl TurnSupervisor {
         })
     }
 
-    pub async fn register_processor_tx(
+    pub(super) async fn register_processor_tx(
         &self,
         session_id: &str,
         processor_tx: mpsc::UnboundedSender<TurnEvent>,
@@ -140,13 +140,13 @@ impl TurnSupervisor {
             .await;
     }
 
-    pub async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
+    pub(super) async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
         self.registry
             .find_stalled_active_turns(stall_timeout_ms)
             .await
     }
 
-    pub fn interrupted_event(message: impl Into<String>) -> TurnEvent {
+    pub(super) fn interrupted_event(message: impl Into<String>) -> TurnEvent {
         TurnEvent::Terminal {
             kind: TurnTerminalKind::Interrupted,
             message: Some(message.into()),

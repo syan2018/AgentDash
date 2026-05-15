@@ -27,7 +27,7 @@ use agentdash_spi::hooks::{
 };
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
-pub(in crate::session) struct HookTriggerInput<'a> {
+pub(crate) struct HookTriggerInput<'a> {
     pub session_id: &'a str,
     pub turn_id: Option<&'a str>,
     pub trigger: HookTrigger,

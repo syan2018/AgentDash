@@ -10,13 +10,13 @@ use super::construction_planner::{SessionConstructionPlanner, SessionConstructio
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
-use super::hub::SessionHub;
 use super::hub_support::SessionProfile;
 use super::launch::{
     LaunchCapabilitySource, LaunchCommand, LaunchExecution, LaunchExecutionInput,
     LaunchFollowUpSource, LaunchMcpSource, LaunchRestoreMode, LaunchStrictness, LaunchVfsSource,
 };
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
+use super::prompt_pipeline::SessionLaunchDeps;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
@@ -24,7 +24,8 @@ use super::types::{
 };
 
 pub(super) struct SessionLaunchPlanner<'a> {
-    hub: &'a SessionHub,
+    deps: SessionLaunchDeps,
+    _marker: std::marker::PhantomData<&'a ()>,
 }
 
 pub(super) struct SessionLaunchPlannerInput<'a> {
@@ -39,8 +40,11 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
-    pub fn new(hub: &'a SessionHub) -> Self {
-        Self { hub }
+    pub fn new(deps: SessionLaunchDeps) -> Self {
+        Self {
+            deps,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     pub async fn plan(
@@ -104,7 +108,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .and_then(|c| c.capability_state.vfs.active.clone())
         {
             (vfs, LaunchVfsSource::CachedSessionProfile)
-        } else if let Some(vfs) = self.hub.default_vfs.clone() {
+        } else if let Some(vfs) = self.deps.default_vfs.clone() {
             (vfs, LaunchVfsSource::HubDefault)
         } else {
             return Err(ConnectorError::InvalidConfig(
@@ -142,7 +146,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             })?;
 
         let supports_repository_restore = self
-            .hub
+            .deps
             .connector
             .supports_repository_restore(executor_config.executor.as_str());
         let prompt_lifecycle = resolve_session_prompt_lifecycle(
@@ -158,7 +162,8 @@ impl<'a> SessionLaunchPlanner<'a> {
             };
         let is_owner_bootstrap = hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         let hook_session = match self
-            .hub
+            .deps
+            .hooks
             .resolve_hook_session(
                 input.session_id,
                 input.turn_id,
@@ -170,7 +175,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         {
             Ok(hs) => hs,
             Err(error) => {
-                self.hub
+                self.deps
                     .turn_supervisor
                     .clear_turn_and_hook(input.session_id)
                     .await;
@@ -189,11 +194,11 @@ impl<'a> SessionLaunchPlanner<'a> {
             bundle.merge(fragments.clone());
         }
 
-        let context_audit_bus = self.hub.current_context_audit_bus().await;
+        let context_audit_bus = self.deps.current_context_audit_bus().await;
         let runtime_delegate = hook_session.as_ref().map(|hs| {
             let injection_sink: DynRuntimeHookInjectionSink =
                 Arc::new(SessionRuntimeHookInjectionSink::new(
-                    self.hub.runtime_registry.clone(),
+                    self.deps.runtime_registry.clone(),
                     context_audit_bus.clone(),
                 ));
             HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
@@ -217,7 +222,8 @@ impl<'a> SessionLaunchPlanner<'a> {
                 SessionRepositoryRehydrateMode::ExecutorState,
             ) => {
                 let transcript = self
-                    .hub
+                    .deps
+                    .eventing
                     .build_projected_transcript(input.session_id)
                     .await
                     .map_err(|error| {
@@ -233,9 +239,9 @@ impl<'a> SessionLaunchPlanner<'a> {
             _ => None,
         };
 
-        let discovered_skills = self.hub.discover_skills(&effective_vfs).await;
+        let discovered_skills = self.discover_skills(&effective_vfs).await;
         let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
-        let discovered_guidelines = self.hub.discover_guidelines(&effective_vfs).await;
+        let discovered_guidelines = self.discover_guidelines(&effective_vfs).await;
 
         let (base_mcp_servers, base_mcp_source) = if !construction_mcp_servers.is_empty() {
             (construction_mcp_servers.clone(), LaunchMcpSource::Request)
@@ -379,7 +385,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             "handler": binding.handler,
             "supported_effect_kinds": binding.supported_effect_kinds,
         });
-        let Some(registry) = self.hub.hook_effect_handler_registry.read().await.clone() else {
+        let Some(registry) = self.deps.hook_effect_handler_registry.read().await.clone() else {
             return Err(ConnectorError::Runtime(
                 "terminal hook effect binding 存在，但 durable handler registry 未注入".to_string(),
             ));
@@ -390,5 +396,77 @@ impl<'a> SessionLaunchPlanner<'a> {
             .map_err(|error| {
                 ConnectorError::Runtime(format!("解析 terminal hook effect handler 失败: {error}"))
             })
+    }
+
+    async fn discover_skills(&self, vfs: &agentdash_spi::Vfs) -> Vec<agentdash_spi::SkillRef> {
+        let mut skills = if let Some(service) = &self.deps.vfs_service {
+            let result = crate::skill::load_skills_from_vfs(service, vfs).await;
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断: {}",
+                    diag.message
+                );
+            }
+            result.skills
+        } else {
+            Vec::new()
+        };
+
+        if !self.deps.extra_skill_dirs.is_empty() {
+            let existing_names: std::collections::HashMap<String, String> = skills
+                .iter()
+                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
+                .collect();
+            let result = crate::skill::load_skills_from_local_dirs(
+                &self.deps.extra_skill_dirs,
+                &existing_names,
+            );
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "skill 诊断 (plugin): {}",
+                    diag.message
+                );
+            }
+            skills.extend(result.skills);
+        }
+        skills
+    }
+
+    async fn discover_guidelines(
+        &self,
+        vfs: &agentdash_spi::Vfs,
+    ) -> Vec<agentdash_spi::DiscoveredGuideline> {
+        let Some(service) = &self.deps.vfs_service else {
+            return Vec::new();
+        };
+        let result = crate::context::mount_file_discovery::discover_mount_files(
+            service,
+            vfs,
+            crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
+        )
+        .await;
+        for diag in &result.diagnostics {
+            tracing::warn!(
+                rule_key = %diag.rule_key,
+                mount_id = %diag.mount_id,
+                path = %diag.path,
+                "guideline 发现诊断: {}",
+                diag.message
+            );
+        }
+        result
+            .files
+            .into_iter()
+            .map(|f| agentdash_spi::DiscoveredGuideline {
+                file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
+                mount_id: f.mount_id,
+                path: f.path,
+                content: f.content,
+            })
+            .collect()
     }
 }

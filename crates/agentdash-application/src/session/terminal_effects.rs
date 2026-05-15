@@ -142,12 +142,22 @@ pub(crate) struct TerminalEffectDispatchInput {
 }
 
 pub(crate) struct SessionTerminalEffectDispatcher<'a> {
+    deps: TerminalEffectDeps<'a>,
+}
+
+pub(crate) struct TerminalEffectDeps<'a> {
     hub: &'a SessionHub,
 }
 
-impl<'a> SessionTerminalEffectDispatcher<'a> {
-    pub fn new(hub: &'a SessionHub) -> Self {
+impl<'a> TerminalEffectDeps<'a> {
+    pub(crate) fn from_hub(hub: &'a SessionHub) -> Self {
         Self { hub }
+    }
+}
+
+impl<'a> SessionTerminalEffectDispatcher<'a> {
+    pub fn new(deps: TerminalEffectDeps<'a>) -> Self {
+        Self { deps }
     }
 
     pub async fn enqueue_terminal_effects(
@@ -159,6 +169,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
 
         if let Some(hook_session) = input.hook_session.as_ref() {
             let effects = self
+                .deps
                 .hub
                 .emit_session_hook_trigger(
                     hook_session.as_ref(),
@@ -210,7 +221,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             }
         }
 
-        if let Some(callback) = self.hub.terminal_callback.read().await.clone() {
+        if let Some(callback) = self.deps.hub.terminal_callback.read().await.clone() {
             self.enqueue(
                 &mut batch,
                 NewTerminalEffectRecord {
@@ -257,6 +268,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         executor: TerminalEffectExecutor,
     ) {
         match self
+            .deps
             .hub
             .stores
             .terminal_effects
@@ -290,6 +302,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
 
     pub async fn replay_durable_outbox(&self, limit: u32) -> io::Result<usize> {
         let records = self
+            .deps
             .hub
             .stores
             .terminal_effects
@@ -323,7 +336,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         match record.effect_type {
             TerminalEffectType::HookAutoResume => TerminalEffectExecutor::HookAutoResume,
             TerminalEffectType::SessionTerminalCallback => {
-                match self.hub.terminal_callback.read().await.clone() {
+                match self.deps.hub.terminal_callback.read().await.clone() {
                     Some(callback) => TerminalEffectExecutor::SessionTerminalCallback {
                         callback,
                         terminal_state: record
@@ -362,7 +375,14 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                 };
             }
         };
-        let Some(registry) = self.hub.hook_effect_handler_registry.read().await.clone() else {
+        let Some(registry) = self
+            .deps
+            .hub
+            .hook_effect_handler_registry
+            .read()
+            .await
+            .clone()
+        else {
             return TerminalEffectExecutor::Unavailable {
                 reason: "hook_effects 缺少 durable handler registry".to_string(),
             };
@@ -384,7 +404,8 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
 
     async fn execute_one(&self, item: EnqueuedTerminalEffect) -> io::Result<()> {
         let next_attempt_count = item.record.attempt_count.saturating_add(1);
-        self.hub
+        self.deps
+            .hub
             .stores
             .terminal_effects
             .mark_terminal_effect_running(item.record.id)
@@ -405,6 +426,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             }
             TerminalEffectExecutor::HookAutoResume => {
                 let _ = self
+                    .deps
                     .hub
                     .request_hook_auto_resume(item.record.session_id.clone())
                     .await;
@@ -415,7 +437,8 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
 
         match result {
             Ok(()) => {
-                self.hub
+                self.deps
+                    .hub
                     .stores
                     .terminal_effects
                     .mark_terminal_effect_succeeded(item.record.id)
@@ -423,13 +446,15 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             }
             Err(error) => {
                 if next_attempt_count >= MAX_TERMINAL_EFFECT_ATTEMPTS {
-                    self.hub
+                    self.deps
+                        .hub
                         .stores
                         .terminal_effects
                         .mark_terminal_effect_dead_letter(item.record.id, error.clone())
                         .await?;
                 } else {
-                    self.hub
+                    self.deps
+                        .hub
                         .stores
                         .terminal_effects
                         .mark_terminal_effect_failed(item.record.id, error.clone())

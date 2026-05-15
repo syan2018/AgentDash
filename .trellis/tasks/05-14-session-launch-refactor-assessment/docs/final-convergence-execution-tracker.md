@@ -26,7 +26,7 @@ LaunchCommand
 | Commit 6 | 已完成 | launch/hook/effects/capability 调用点迁入具体服务 |
 | Commit 7 | 已完成 | 删除 Hub facade 调用残留，迁移 companion / hook auto-resume / tests / title 到具体服务 |
 | Commit 8 | 已完成 | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle，删除 Hub handle 服务定位器 |
-| Commit 9 | 未开始 | 解除 launch planner/executor、terminal effects 与 Hub 执行期参数依赖 |
+| Commit 9 | 已完成 | 解除 launch planner/executor、terminal effects 与 Hub 执行期参数依赖 |
 | Commit 10 | 未开始 | effects / pending / persistence 语义验证、migration 核验与父任务文档最终收口 |
 
 ## Current Code Facts

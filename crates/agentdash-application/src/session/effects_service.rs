@@ -1,7 +1,9 @@
 use std::io;
 
 use super::hub::SessionHub;
-use super::terminal_effects::SessionTerminalEffectDispatcher;
+use super::terminal_effects::{
+    SessionTerminalEffectDispatcher, TerminalEffectDeps, TerminalEffectDispatchInput,
+};
 
 #[derive(Clone)]
 pub struct SessionEffectsService {
@@ -14,8 +16,15 @@ impl SessionEffectsService {
     }
 
     pub async fn replay_terminal_effect_outbox(&self, limit: u32) -> io::Result<usize> {
-        SessionTerminalEffectDispatcher::new(&self.hub)
+        SessionTerminalEffectDispatcher::new(TerminalEffectDeps::from_hub(&self.hub))
             .replay_durable_outbox(limit)
             .await
+    }
+
+    pub(crate) async fn dispatch_terminal_effects(&self, input: TerminalEffectDispatchInput) {
+        let dispatcher =
+            SessionTerminalEffectDispatcher::new(TerminalEffectDeps::from_hub(&self.hub));
+        let terminal_effects = dispatcher.enqueue_terminal_effects(input).await;
+        dispatcher.execute_enqueued(terminal_effects).await;
     }
 }

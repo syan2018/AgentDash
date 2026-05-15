@@ -32,7 +32,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 | 6 | 已完成 | `refactor(session): 迁移 session launch 调用至能力服务` | 把 API/task/routine/workflow 的 launch/hook/effects/capability 调用迁到具体服务；Hub 只在装配、runtime tool handle 与内部实现中残留 |
 | 7 | 已完成 | `refactor(session): 删除 hub facade 调用残留` | 删除已迁出的 Hub facade 方法，迁移 companion / hook auto-resume / tests / title 调用点到具体能力服务 |
 | 8 | 已完成 | `refactor(session): 移除 runtime tools 的 hub 服务定位器` | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle |
-| 9 | 未开始 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects 依赖明确服务/依赖包，不再以 Hub 作为执行期参数 |
+| 9 | 已完成 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects 依赖明确服务/依赖包，不再以 Hub 作为执行期参数 |
 | 10 | 未开始 | `refactor(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
 
 ## Execution Rules
@@ -223,6 +223,8 @@ git diff --check
 - companion/canvas/workflow runtime tools 不再持有 Hub。
 
 ### Commit 9: 解除 launch / effects 与 Hub 依赖
+
+状态：已完成。
 
 本提交处理真正的架构收口：把 Hub 从“内部业务实现参数”降为装配阶段依赖来源。不是把 `SessionHub` 改名成另一个 service locator，而是让每条业务主线拿到自己需要的依赖包或具体服务。
 

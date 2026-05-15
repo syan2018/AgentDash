@@ -10,10 +10,12 @@ use tokio::sync::mpsc;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 
-use super::hub::SessionHub;
+use super::effects_service::SessionEffectsService;
+use super::eventing::SessionEventingService;
 use super::hub_support::*;
 use super::post_turn_handler::DynPostTurnHandler;
-use super::terminal_effects::{SessionTerminalEffectDispatcher, TerminalEffectDispatchInput};
+use super::terminal_effects::TerminalEffectDispatchInput;
+use super::turn_supervisor::TurnSupervisor;
 
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
@@ -35,6 +37,13 @@ pub struct SessionTurnProcessorConfig {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
+#[derive(Clone)]
+pub(super) struct SessionTurnProcessorDeps {
+    pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) eventing: SessionEventingService,
+    pub(super) effects: SessionEffectsService,
+}
+
 /// Per-turn 事件处理器句柄。
 ///
 /// 持有发送端和后台任务 handle，调用方通过 `tx()` 向 channel 推送事件。
@@ -46,9 +55,12 @@ pub struct SessionTurnProcessor {
 
 impl SessionTurnProcessor {
     /// 启动 processor 后台任务，返回句柄。
-    pub fn spawn(hub: SessionHub, config: SessionTurnProcessorConfig) -> Self {
+    pub(super) fn spawn(
+        deps: SessionTurnProcessorDeps,
+        config: SessionTurnProcessorConfig,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        let join_handle = tokio::spawn(Self::run(hub, config, rx));
+        let join_handle = tokio::spawn(Self::run(deps, config, rx));
         Self {
             tx,
             _join_handle: join_handle,
@@ -62,7 +74,7 @@ impl SessionTurnProcessor {
 
     /// 后台主循环：消费 TurnEvent channel，处理 notification 和 terminal。
     async fn run(
-        hub: SessionHub,
+        deps: SessionTurnProcessorDeps,
         config: SessionTurnProcessorConfig,
         mut rx: mpsc::UnboundedReceiver<TurnEvent>,
     ) {
@@ -81,8 +93,13 @@ impl SessionTurnProcessor {
         while let Some(event) = rx.recv().await {
             match event {
                 TurnEvent::Notification(notification) => {
-                    Self::handle_notification(&hub, &session_id, &notification, &post_turn_handler)
-                        .await;
+                    Self::handle_notification(
+                        &deps,
+                        &session_id,
+                        &notification,
+                        &post_turn_handler,
+                    )
+                    .await;
                 }
                 TurnEvent::Terminal { kind, message } => {
                     terminal_kind = kind;
@@ -95,7 +112,7 @@ impl SessionTurnProcessor {
 
         // channel 关闭但没收到显式 Terminal → 检测 cancel 状态
         if !received_terminal {
-            if let Some((kind, message)) = hub
+            if let Some((kind, message)) = deps
                 .turn_supervisor
                 .cancel_interrupted_terminal(&session_id, &turn_id)
                 .await
@@ -113,7 +130,8 @@ impl SessionTurnProcessor {
             terminal_kind,
             terminal_message.clone(),
         );
-        let terminal_event = hub
+        let terminal_event = deps
+            .eventing
             .persist_notification(&session_id, terminal_notification)
             .await;
         let terminal_event_seq = match terminal_event {
@@ -129,26 +147,25 @@ impl SessionTurnProcessor {
             }
         };
 
-        let dispatcher = SessionTerminalEffectDispatcher::new(&hub);
-        let terminal_effects = dispatcher
-            .enqueue_terminal_effects(TerminalEffectDispatchInput {
-                session_id: session_id.clone(),
-                turn_id: turn_id.clone(),
-                terminal_event_seq,
-                terminal_kind,
-                terminal_message: terminal_message.clone(),
-                source,
-                hook_session,
-                post_turn_handler,
-            })
-            .await;
+        let terminal_effect_input = TerminalEffectDispatchInput {
+            session_id: session_id.clone(),
+            turn_id: turn_id.clone(),
+            terminal_event_seq,
+            terminal_kind,
+            terminal_message: terminal_message.clone(),
+            source,
+            hook_session,
+            post_turn_handler,
+        };
 
         // 清理 turn 状态 — 回到 Idle。
         // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
         // 会被当前 terminal turn 拦住。
-        hub.turn_supervisor.clear_active_turn(&session_id).await;
+        deps.turn_supervisor.clear_active_turn(&session_id).await;
 
-        dispatcher.execute_enqueued(terminal_effects).await;
+        deps.effects
+            .dispatch_terminal_effects(terminal_effect_input)
+            .await;
     }
 
     /// 处理单条 notification：on_event → persist。
@@ -156,7 +173,7 @@ impl SessionTurnProcessor {
     /// `executor_session_id` 同步已由 `append_event` 的事件投影统一处理，
     /// processor 不再需要额外的直接 meta 写入路径。
     async fn handle_notification(
-        hub: &SessionHub,
+        deps: &SessionTurnProcessorDeps,
         session_id: &str,
         envelope: &BackboneEnvelope,
         post_turn_handler: &Option<DynPostTurnHandler>,
@@ -164,6 +181,9 @@ impl SessionTurnProcessor {
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, envelope).await;
         }
-        let _ = hub.persist_notification(session_id, envelope.clone()).await;
+        let _ = deps
+            .eventing
+            .persist_notification(session_id, envelope.clone())
+            .await;
     }
 }

@@ -2,15 +2,22 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::ConnectorError;
+use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
+use agentdash_spi::{AgentConnector, ConnectorError, McpRelayProvider, Vfs};
 
 use super::assignment_context_frame::build_assignment_context_frame;
+use super::capability_service::SessionCapabilityService;
 use super::construction::SessionConstructionPlan;
+use super::construction_provider::SharedSessionConstructionProvider;
+use super::core::SessionCoreService;
+use super::effects_service::SessionEffectsService;
+use super::eventing::SessionEventingService;
 use super::hook_runtime::HookSessionRuntime;
+use super::hooks_service::SessionHookService;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
@@ -18,15 +25,179 @@ use super::identity_context_frame::{IdentityFrameInput, build_identity_context_f
 use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
 use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
+use super::persistence::SessionStoreSet;
+use super::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
+use super::runtime_registry::SessionRuntimeRegistry;
+use super::title_generator::SessionTitleGenerator;
+use super::turn_supervisor::TurnSupervisor;
 pub use super::types::*;
+use crate::context::SharedContextAuditBus;
 
-pub(super) struct SessionLaunchExecutor<'a> {
-    hub: &'a SessionHub,
+#[derive(Clone)]
+pub(super) struct SessionLaunchDeps {
+    pub(super) default_vfs: Option<Vfs>,
+    pub(super) connector: Arc<dyn AgentConnector>,
+    pub(super) runtime_registry: SessionRuntimeRegistry,
+    pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) stores: SessionStoreSet,
+    pub(super) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
+    pub(super) extra_skill_dirs: Vec<std::path::PathBuf>,
+    pub(super) title_generator: Option<Arc<dyn SessionTitleGenerator>>,
+    pub(super) session_construction_provider:
+        Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
+    pub(super) hook_effect_handler_registry:
+        Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
+    pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
+    pub(super) base_system_prompt: String,
+    pub(super) user_preferences: Vec<String>,
+    pub(super) runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
+    pub(super) mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
+    pub(super) eventing: SessionEventingService,
+    pub(super) core: SessionCoreService,
+    pub(super) hooks: SessionHookService,
+    pub(super) capability: SessionCapabilityService,
+    pub(super) effects: SessionEffectsService,
 }
 
-impl<'a> SessionLaunchExecutor<'a> {
-    pub fn new(hub: &'a SessionHub) -> Self {
-        Self { hub }
+impl SessionLaunchDeps {
+    pub(super) async fn current_session_construction_provider(
+        &self,
+    ) -> Option<SharedSessionConstructionProvider> {
+        self.session_construction_provider.read().await.clone()
+    }
+
+    pub(super) async fn current_context_audit_bus(&self) -> Option<SharedContextAuditBus> {
+        self.context_audit_bus.read().await.clone()
+    }
+
+    pub(super) async fn build_tools_for_execution_context(
+        &self,
+        session_id: &str,
+        context: &agentdash_spi::ExecutionContext,
+        mcp_servers: &[agentdash_spi::SessionMcpServer],
+    ) -> Vec<agentdash_agent_types::DynAgentTool> {
+        use agentdash_executor::mcp::{self as mcp_discovery};
+
+        let mut all_tools = Vec::new();
+
+        if let Some(provider) = &self.runtime_tool_provider {
+            match provider.build_tools(context).await {
+                Ok(tools) => all_tools.extend(tools),
+                Err(e) => tracing::warn!(
+                    session_id = %session_id,
+                    "runtime tool 构建失败: {e}"
+                ),
+            }
+        }
+
+        let (relay_names, direct_servers) =
+            agentdash_spi::partition_session_mcp_servers(mcp_servers);
+        match mcp_discovery::discover_mcp_tools(&direct_servers, &context.turn.capability_state)
+            .await
+        {
+            Ok(tools) => all_tools.extend(tools),
+            Err(e) => tracing::warn!(
+                session_id = %session_id,
+                "直连 MCP 工具发现失败: {e}"
+            ),
+        }
+
+        if let Some(relay) = &self.mcp_relay_provider {
+            let call_context = agentdash_spi::RelayMcpCallContext {
+                session_id: session_id.to_string(),
+                turn_id: Some(context.session.turn_id.clone()),
+                tool_call_id: None,
+                vfs: context.session.vfs.clone(),
+                identity: context.session.identity.clone(),
+            };
+            let tools = mcp_discovery::discover_relay_mcp_tools(
+                relay.clone(),
+                &relay_names,
+                &context.turn.capability_state,
+                Some(call_context),
+            )
+            .await;
+            all_tools.extend(tools);
+        }
+
+        all_tools
+    }
+
+    pub(super) fn spawn_title_generation(&self, session_id: String, user_prompt: String) {
+        let Some(generator) = self.title_generator.clone() else {
+            return;
+        };
+        let eventing = self.eventing.clone();
+        let core = self.core.clone();
+
+        tokio::spawn(async move {
+            let result = generator.generate_title(&user_prompt).await;
+            match result {
+                Ok(title) if !title.trim().is_empty() => {
+                    let title = title.trim().to_string();
+                    let updated = core
+                        .update_session_meta(&session_id, |meta| {
+                            if meta.title_source == TitleSource::User {
+                                return;
+                            }
+                            meta.title = title;
+                            meta.title_source = TitleSource::Auto;
+                        })
+                        .await;
+                    match updated {
+                        Ok(Some(meta)) => {
+                            let source = SourceInfo {
+                                connector_id: "agentdash-server".to_string(),
+                                connector_type: "system".to_string(),
+                                executor_id: None,
+                            };
+                            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                                agentdash_agent_protocol::BackboneEvent::Platform(
+                                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                                        key: "session_meta_updated".to_string(),
+                                        value: serde_json::json!({
+                                            "title": meta.title,
+                                            "title_source": meta.title_source,
+                                        }),
+                                    },
+                                ),
+                                &session_id,
+                                source,
+                            );
+                            let _ = eventing.persist_notification(&session_id, envelope).await;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %error,
+                                "自动标题写入失败"
+                            );
+                        }
+                    }
+                }
+                Ok(_) => {
+                    tracing::warn!(session_id = %session_id, "LLM 返回了空标题，保留原标题");
+                }
+                Err(reason) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        reason = %reason,
+                        "自动标题生成失败，保留原标题"
+                    );
+                }
+            }
+        });
+    }
+}
+
+pub(super) struct SessionLaunchExecutor {
+    deps: SessionLaunchDeps,
+}
+
+impl SessionLaunchExecutor {
+    pub fn new(deps: SessionLaunchDeps) -> Self {
+        Self { deps }
     }
 
     pub async fn execute_command(
@@ -38,7 +209,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         let strictness = command.strictness();
         let construction = match strictness {
             LaunchStrictness::Strict => {
-                let Some(provider) = self.hub.current_session_construction_provider().await else {
+                let Some(provider) = self.deps.current_session_construction_provider().await else {
                     return Err(ConnectorError::Runtime(format!(
                         "session_construction_provider 未注入，拒绝 strict launch: {reason}"
                     )));
@@ -76,7 +247,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         command: &LaunchCommand,
         reason: &str,
     ) -> Result<SessionConstructionPlan, ConnectorError> {
-        let Some(provider) = self.hub.current_session_construction_provider().await else {
+        let Some(provider) = self.deps.current_session_construction_provider().await else {
             return Err(ConnectorError::Runtime(format!(
                 "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
             )));
@@ -107,14 +278,14 @@ impl<'a> SessionLaunchExecutor<'a> {
         command: &LaunchCommand,
         construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
-        let hub = self.hub;
+        let deps = &self.deps;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
-        let had_existing_runtime = hub.connector.has_live_session(session_id).await;
+        let had_existing_runtime = deps.connector.has_live_session(session_id).await;
 
-        let cached_continuation = hub.turn_supervisor.claim_prompt(session_id).await?;
+        let cached_continuation = deps.turn_supervisor.claim_prompt(session_id).await?;
 
-        let meta_store = hub.stores.meta.clone();
-        let runtime_command_store = hub.stores.runtime_commands.clone();
+        let meta_store = deps.stores.meta.clone();
+        let runtime_command_store = deps.stores.runtime_commands.clone();
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let mut session_meta = match meta_store.get_session_meta(&sid).await {
@@ -138,7 +309,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                     "读取 session `{sid}` pending runtime commands 失败: {error}"
                 ))
             })?;
-        let launch_execution = SessionLaunchPlanner::new(hub)
+        let launch_execution = SessionLaunchPlanner::new(deps.clone())
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
@@ -184,7 +355,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         let mut context = launch_execution.context;
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
-        context.turn.assembled_tools = hub
+        context.turn.assembled_tools = deps
             .build_tools_for_execution_context(
                 session_id,
                 &context,
@@ -193,10 +364,10 @@ impl<'a> SessionLaunchExecutor<'a> {
             .await;
 
         let identity_frame = build_identity_context_frame(&IdentityFrameInput {
-            base_system_prompt: &hub.base_system_prompt,
+            base_system_prompt: &deps.base_system_prompt,
             agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
             agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-            user_preferences: &hub.user_preferences,
+            user_preferences: &deps.user_preferences,
             discovered_guidelines: &discovered_guidelines,
         });
 
@@ -220,7 +391,7 @@ impl<'a> SessionLaunchExecutor<'a> {
             });
 
         {
-            hub.turn_supervisor
+            deps.turn_supervisor
                 .activate_turn(
                     session_id,
                     super::hub_support::SessionProfile {
@@ -248,27 +419,28 @@ impl<'a> SessionLaunchExecutor<'a> {
             .pending_capability_transitions
             .is_empty()
         {
-            hub.apply_pending_runtime_context_transitions_on_turn(
-                &sid,
-                &turn_id,
-                hook_session.as_ref(),
-                base_capability_state,
-                &launch_execution
-                    .runtime_commands
-                    .pending_capability_transitions,
-                &context.turn.assembled_tools,
-            )
-            .await
+            deps.capability
+                .apply_pending_runtime_context_transitions_on_turn(
+                    &sid,
+                    &turn_id,
+                    hook_session.as_ref(),
+                    base_capability_state,
+                    &launch_execution
+                        .runtime_commands
+                        .pending_capability_transitions,
+                    &context.turn.assembled_tools,
+                )
+                .await
         } else {
             Default::default()
         };
 
-        let connector_type = match hub.connector.connector_type() {
+        let connector_type = match deps.connector.connector_type() {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let source = SourceInfo {
-            connector_id: hub.connector.connector_id().to_string(),
+            connector_id: deps.connector.connector_id().to_string(),
             connector_type: connector_type.to_string(),
             executor_id: Some(context.session.executor_config.executor.to_string()),
         };
@@ -283,11 +455,11 @@ impl<'a> SessionLaunchExecutor<'a> {
             &resolved_payload.user_blocks,
         );
         for envelope in user_envelopes {
-            let _ = hub.persist_notification(&sid, envelope).await;
+            let _ = deps.eventing.persist_notification(&sid, envelope).await;
         }
 
         let started = build_turn_started_envelope(session_id, &source, &turn_id);
-        let _ = hub.persist_notification(&sid, started).await;
+        let _ = deps.eventing.persist_notification(&sid, started).await;
 
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
@@ -297,7 +469,8 @@ impl<'a> SessionLaunchExecutor<'a> {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }
 
-                let _start_effects = hub
+                let _start_effects = deps
+                    .hooks
                     .emit_session_hook_trigger(
                         hook_session.as_ref(),
                         &HookTriggerInput {
@@ -385,7 +558,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         );
         let executor_config_for_meta = context.session.executor_config.clone();
 
-        let mut stream = match hub
+        let mut stream = match deps
             .connector
             .prompt(
                 session_id,
@@ -397,7 +570,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         {
             Ok(stream) => stream,
             Err(error) => {
-                hub.turn_supervisor.clear_turn_and_hook(session_id).await;
+                deps.turn_supervisor.clear_turn_and_hook(session_id).await;
                 let failed = build_turn_terminal_envelope(
                     &sid,
                     &source,
@@ -405,18 +578,22 @@ impl<'a> SessionLaunchExecutor<'a> {
                     TurnTerminalKind::Failed,
                     Some(error.to_string()),
                 );
-                let _ = hub.persist_notification(&sid, failed).await;
+                let _ = deps.eventing.persist_notification(&sid, failed).await;
                 return Err(error);
             }
         };
 
         for payload in &pending_transition_application.capability_events {
-            let _ = hub
+            let _ = deps
+                .eventing
                 .emit_capability_state_changed(&sid, Some(&turn_id), payload.clone())
                 .await;
         }
         for frame in &accepted_context_frames_to_emit {
-            let _ = hub.emit_context_frame(&sid, Some(&turn_id), frame).await;
+            let _ = deps
+                .eventing
+                .emit_context_frame(&sid, Some(&turn_id), frame)
+                .await;
         }
 
         Self::apply_turn_start_meta(
@@ -446,9 +623,9 @@ impl<'a> SessionLaunchExecutor<'a> {
         let is_first_turn = session_meta.last_event_seq <= 1;
         if is_first_turn
             && session_meta.title_source != super::types::TitleSource::User
-            && hub.title_generator.is_some()
+            && deps.title_generator.is_some()
         {
-            hub.spawn_title_generation(
+            deps.spawn_title_generation(
                 session_id.to_string(),
                 resolved_payload.text_prompt.clone(),
             );
@@ -457,7 +634,11 @@ impl<'a> SessionLaunchExecutor<'a> {
 
         // 创建 SessionTurnProcessor — cloud-native 和 relay 共用的事件处理核心
         let processor = super::turn_processor::SessionTurnProcessor::spawn(
-            hub.clone(),
+            super::turn_processor::SessionTurnProcessorDeps {
+                turn_supervisor: deps.turn_supervisor.clone(),
+                eventing: deps.eventing.clone(),
+                effects: deps.effects.clone(),
+            },
             super::turn_processor::SessionTurnProcessorConfig {
                 session_id: session_id.clone(),
                 turn_id: turn_id.clone(),
@@ -470,12 +651,12 @@ impl<'a> SessionLaunchExecutor<'a> {
         let processor_tx = processor.tx();
 
         // 注册 processor_tx 到 SessionRuntime.current_turn，供 relay / cancel 路径使用
-        hub.turn_supervisor
+        deps.turn_supervisor
             .register_processor_tx(&session_id, processor_tx.clone())
             .await;
 
         Self::spawn_stream_adapter(
-            hub.turn_supervisor.clone(),
+            deps.turn_supervisor.clone(),
             session_id.to_string(),
             turn_id.clone(),
             &mut stream,
@@ -668,79 +849,6 @@ impl SessionHub {
             .await;
 
         Ok(Some(runtime))
-    }
-
-    pub(super) async fn discover_skills(
-        &self,
-        vfs: &agentdash_spi::Vfs,
-    ) -> Vec<agentdash_spi::SkillRef> {
-        let mut skills = if let Some(service) = &self.vfs_service {
-            let result = crate::skill::load_skills_from_vfs(service, vfs).await;
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断: {}",
-                    diag.message
-                );
-            }
-            result.skills
-        } else {
-            Vec::new()
-        };
-
-        if !self.extra_skill_dirs.is_empty() {
-            let existing_names: std::collections::HashMap<String, String> = skills
-                .iter()
-                .map(|s| (s.name.clone(), s.file_path.to_string_lossy().to_string()))
-                .collect();
-            let result =
-                crate::skill::load_skills_from_local_dirs(&self.extra_skill_dirs, &existing_names);
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "skill 诊断 (plugin): {}",
-                    diag.message
-                );
-            }
-            skills.extend(result.skills);
-        }
-        skills
-    }
-
-    pub(super) async fn discover_guidelines(
-        &self,
-        vfs: &agentdash_spi::Vfs,
-    ) -> Vec<agentdash_spi::DiscoveredGuideline> {
-        let Some(service) = &self.vfs_service else {
-            return Vec::new();
-        };
-        let result = crate::context::mount_file_discovery::discover_mount_files(
-            service,
-            vfs,
-            crate::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES,
-        )
-        .await;
-        for diag in &result.diagnostics {
-            tracing::warn!(
-                rule_key = %diag.rule_key,
-                mount_id = %diag.mount_id,
-                path = %diag.path,
-                "guideline 发现诊断: {}",
-                diag.message
-            );
-        }
-        result
-            .files
-            .into_iter()
-            .map(|f| agentdash_spi::DiscoveredGuideline {
-                file_name: f.path.rsplit('/').next().unwrap_or(&f.path).to_string(),
-                mount_id: f.mount_id,
-                path: f.path,
-                content: f.content,
-            })
-            .collect()
     }
 }
 

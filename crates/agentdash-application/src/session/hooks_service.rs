@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::{HookSessionRuntimeAccess, SharedHookSessionRuntime};
 
-use super::hub::SessionHub;
+use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionHub};
 
 #[derive(Clone)]
 pub struct SessionHookService {
@@ -48,6 +48,35 @@ impl SessionHookService {
                 permission_policy,
                 working_directory,
             )
+            .await
+    }
+
+    pub(crate) async fn resolve_hook_session(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        executor_config: &agentdash_domain::common::AgentConfig,
+        working_directory: &Path,
+        is_owner_bootstrap: bool,
+    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+        self.hub
+            .resolve_hook_session(
+                session_id,
+                turn_id,
+                executor_config,
+                working_directory,
+                is_owner_bootstrap,
+            )
+            .await
+    }
+
+    pub(crate) async fn emit_session_hook_trigger(
+        &self,
+        hook_session: &dyn HookSessionRuntimeAccess,
+        input: &HookTriggerInput<'_>,
+    ) -> HookTriggerDispatchResult {
+        self.hub
+            .emit_session_hook_trigger(hook_session, input)
             .await
     }
 }

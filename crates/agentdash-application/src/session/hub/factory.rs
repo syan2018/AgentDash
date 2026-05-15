@@ -186,13 +186,6 @@ impl SessionHub {
         *self.session_construction_provider.write().await = Some(provider);
     }
 
-    /// 取出当前已注入的 construction provider（主要用于 hub 内部调用与测试检查）。
-    pub(crate) async fn current_session_construction_provider(
-        &self,
-    ) -> Option<SharedSessionConstructionProvider> {
-        self.session_construction_provider.read().await.clone()
-    }
-
     /// 注入 Context Audit 总线，使 Hub 创建的 runtime delegate 能发出 hook fragment 审计。
     pub async fn set_context_audit_bus(&self, bus: SharedContextAuditBus) {
         *self.context_audit_bus.write().await = Some(bus);

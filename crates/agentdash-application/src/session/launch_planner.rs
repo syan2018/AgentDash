@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_spi::hooks::SharedHookSessionRuntime;
-use agentdash_spi::{ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState};
+use agentdash_spi::{
+    ConnectorError, ContextFragment, DiscoveredGuideline, RestoredSessionState,
+    SessionContextBundle,
+};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
@@ -42,12 +45,14 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
 }
 
 pub(super) struct PlannedSessionLaunch {
-    pub request: SessionLaunchPlan,
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub launch_execution: LaunchExecution,
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<agentdash_spi::hooks::ContextFrame>,
+    pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
@@ -358,12 +363,14 @@ impl<'a> SessionLaunchPlanner<'a> {
         });
 
         Ok(PlannedSessionLaunch {
-            request: req,
             resolved_payload,
             title_hint,
             launch_execution,
             hook_session,
             hook_snapshot_contribution,
+            context_bundle: req.context_bundle,
+            continuation_context_frame: req.continuation_context_frame,
+            post_turn_handler: req.post_turn_handler,
             discovered_guidelines,
             pending_runtime_commands: input.pending_runtime_commands,
             pending_capability_transitions,

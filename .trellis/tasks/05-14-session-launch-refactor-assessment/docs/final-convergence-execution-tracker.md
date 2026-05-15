@@ -151,6 +151,7 @@ session context 主线不再在 route 层调用这些 builder；route 只做 aut
 
 - 已新增 `SessionLaunchPlanner`，并从 `prompt_pipeline` 抽出 payload、VFS fallback、executor fallback、MCP fallback、capability fallback、hook runtime、restore、follow-up、pending command 与 construction projection 的计划构建。
 - `prompt_pipeline` 不再直接读取 `req.vfs / req.mcp_servers / req.capability_state` 做策略 fallback；这些命中已集中到 `launch_planner.rs`。
+- `prompt_pipeline` 在 `SessionLaunchPlanner` 返回后不再继续持有 `SessionLaunchPlan`；planner 输出显式的 context bundle、continuation frame、post-turn handler 与 `LaunchExecution`。
 - `LaunchExecution` 仍偏 summary/context projection，且 planner 仍借用 `SessionHub` 依赖，不是完全独立的 launch service。
 - `start_prompt_with_follow_up` 仍以 `SessionLaunchPlan` 作为输入；这不是最终执行边界。
 
@@ -352,6 +353,7 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [ ] 将 `bootstrap/session_launch_augmenter.rs` 输出从 `SessionLaunchPlan` 改为 construction/launch plan。
 - [ ] 删除 `SessionLaunchPlan` 或退化成 launch executor 私有 connector projection。
 - [x] 将 payload/VFS/MCP/capability/lifecycle/restore/follow-up/pending/construction planning 从 `start_prompt_with_follow_up` 抽到 `SessionLaunchPlanner`。
+- [x] `prompt_pipeline` 不再在 planner 后继续读取 `SessionLaunchPlan`，执行段只消费 `PlannedSessionLaunch` 字段。
 - [ ] 删除 `start_prompt_with_follow_up` 剩余 planner 职责，并让它只执行 `LaunchExecution`。
 
 ### Phase 4：Context 同源

@@ -68,12 +68,14 @@ impl SessionHub {
                 request: req,
             })
             .await?;
-        let mut req = planned_launch.request;
         let resolved_payload = planned_launch.resolved_payload;
         let title_hint = planned_launch.title_hint;
         let launch_execution = planned_launch.launch_execution;
         let hook_session = planned_launch.hook_session;
         let hook_snapshot_contribution = planned_launch.hook_snapshot_contribution;
+        let context_bundle = planned_launch.context_bundle;
+        let continuation_context_frame = planned_launch.continuation_context_frame;
+        let post_turn_handler = planned_launch.post_turn_handler;
         let discovered_guidelines = planned_launch.discovered_guidelines;
         let pending_runtime_commands = planned_launch.pending_runtime_commands;
         let pending_capability_transitions = planned_launch.pending_capability_transitions;
@@ -81,7 +83,8 @@ impl SessionHub {
         let capability_state = planned_launch.capability_state;
         let capability_keys = planned_launch.capability_keys;
         let resolved_follow_up_session_id = planned_launch.resolved_follow_up_session_id;
-        let is_owner_bootstrap = req.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
+        let is_owner_bootstrap =
+            launch_execution.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         tracing::debug!(
             session_id = %launch_execution.summary.session_id,
             turn_id = %launch_execution.summary.turn_id,
@@ -116,14 +119,12 @@ impl SessionHub {
             discovered_guidelines: &discovered_guidelines,
         });
 
-        let compose_fragments = req
-            .context_bundle
+        let compose_fragments = context_bundle
             .as_ref()
             .map(|bundle| bundle.bootstrap_fragments.clone())
             .or_else(|| hook_snapshot_contribution.clone())
             .unwrap_or_default();
-        let (audit_bundle_id, audit_session_id) = req
-            .context_bundle
+        let (audit_bundle_id, audit_session_id) = context_bundle
             .as_ref()
             .map(|bundle| (bundle.bundle_id, bundle.session_id))
             .unwrap_or_else(|| {
@@ -242,7 +243,7 @@ impl SessionHub {
             owner_bootstrap_frames.push(frame);
 
             if let Some(frame) = build_assignment_context_frame(
-                req.context_bundle
+                context_bundle
                     .as_ref()
                     .map(|bundle| bundle.phase_tag.as_str()),
                 &compose_fragments,
@@ -252,7 +253,6 @@ impl SessionHub {
             }
         }
 
-        let continuation_context_frame = req.continuation_context_frame.take();
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
             let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
@@ -361,7 +361,7 @@ impl SessionHub {
                 turn_id: turn_id.clone(),
                 source: source.clone(),
                 hook_session,
-                post_turn_handler: req.post_turn_handler,
+                post_turn_handler,
             },
         );
 

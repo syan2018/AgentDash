@@ -477,17 +477,19 @@ impl AppState {
 
         let mut state = Arc::new(state);
 
-        // 注入 PromptRequestAugmenter：让 SessionHub 的 auto-resume 等内部 prompt
-        // 路径与 HTTP 主通道共享同一条 `augment_prompt_request_for_owner`，
+        // 注入 SessionConstructionProvider：让 SessionHub 的 auto-resume 等内部 prompt
+        // 路径与 HTTP 主通道共享同一条 `build_session_construction_for_launch`，
         // 避免 owner / MCP / capability_state / context_bundle 漂移。
         {
-            let augmenter = Arc::new(
-                crate::bootstrap::prompt_augmenter::AppStatePromptAugmenter::new(state.clone()),
+            let provider = Arc::new(
+                crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(
+                    state.clone(),
+                ),
             );
             state
                 .services
                 .session_hub
-                .set_prompt_augmenter(augmenter)
+                .set_session_construction_provider(provider)
                 .await;
         }
 

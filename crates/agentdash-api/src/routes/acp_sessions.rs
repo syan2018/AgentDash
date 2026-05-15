@@ -15,7 +15,7 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
-use crate::bootstrap::prompt_augmenter::decode_augmented_runtime_error;
+use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
 use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
@@ -750,7 +750,7 @@ pub async fn prompt_session(
         .map_err(|e| match e {
             agentdash_spi::ConnectorError::InvalidConfig(msg) => ApiError::BadRequest(msg),
             agentdash_spi::ConnectorError::Runtime(msg) => {
-                decode_augmented_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
+                decode_construction_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
             }
             other => ApiError::Internal(other.to_string()),
         })?;

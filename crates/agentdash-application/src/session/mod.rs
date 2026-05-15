@@ -1,6 +1,5 @@
 pub mod assembler;
 mod assignment_context_frame;
-pub mod augmenter;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
 pub mod bootstrap;
@@ -9,6 +8,7 @@ mod compaction_context_frame;
 pub mod companion_wait;
 pub mod construction;
 pub mod construction_planner;
+pub mod construction_provider;
 pub mod context;
 mod context_frame;
 pub mod continuation;
@@ -48,13 +48,13 @@ pub use assembler::{
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
     compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
-pub use augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentTaskInput,
-    PromptAugmentTaskPhase, PromptRequestAugmenter, SharedPromptRequestAugmenter,
-};
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
+};
+pub use construction_provider::{
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
+    SharedSessionConstructionProvider, TaskLaunchPhase, TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
 pub use hook_delegate::HookRuntimeDelegate;

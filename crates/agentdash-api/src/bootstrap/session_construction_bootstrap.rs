@@ -1,18 +1,17 @@
 //! Session launch construction use case.
 //!
 //! 这个模块承接原本挂在 `routes/acp_sessions.rs` 里的 owner/context/capability
-//! 组装逻辑。它返回 launch seed 与 construction seed，owner/source
-//! 只作为 `SessionConstructionPlan` 的输入种子；route 层不再承载 launch
-//! composition 主分支。
+//! 组装逻辑。它只返回当前 provider 到 application construction 的事实输入；
+//! route 层不再承载 launch composition 主分支。
 
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::UserPromptInput;
-use agentdash_application::session::augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+use agentdash_application::session::construction::SessionConstructionFacts;
+use agentdash_application::session::construction_provider::{
+    CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource,
 };
-use agentdash_application::session::construction::SessionConstructionSeed;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
@@ -36,20 +35,20 @@ use crate::routes::project_agents::{
 use crate::routes::task_execution;
 use crate::rpc::ApiError;
 
-pub(crate) async fn augment_prompt_request_for_owner(
+pub(crate) async fn build_session_construction_for_launch(
     state: &Arc<AppState>,
     session_id: &str,
     user_input: UserPromptInput,
-    mut construction_seed: SessionConstructionSeed,
-    task_input: Option<PromptAugmentTaskInput>,
-    companion_input: Option<PromptAugmentCompanionInput>,
+    mut construction_facts: SessionConstructionFacts,
+    task_input: Option<TaskLaunchSource>,
+    companion_input: Option<CompanionLaunchSource>,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(
             state,
             user_input,
-            construction_seed,
+            construction_facts,
             companion,
         )
         .await;
@@ -90,14 +89,14 @@ pub(crate) async fn augment_prompt_request_for_owner(
     );
 
     if let Some(owner) = SessionOwnerResolver::resolve_primary(&bindings) {
-        construction_seed.owner = Some(owner.clone());
+        construction_facts.owner = Some(owner.clone());
         match owner.owner_type {
             SessionOwnerType::Task => {
                 return build_task_owner_prompt_request(
                     state,
                     session_id,
                     user_input,
-                    construction_seed,
+                    construction_facts,
                     owner.owner_id,
                     &meta,
                     lifecycle_kind,
@@ -132,7 +131,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     state,
                     session_id,
                     user_input,
-                    construction_seed,
+                    construction_facts,
                     &story,
                     &project,
                     workspace.as_ref(),
@@ -158,7 +157,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     state,
                     session_id,
                     user_input,
-                    construction_seed,
+                    construction_facts,
                     &project,
                     &owner.label,
                     &meta,
@@ -179,36 +178,36 @@ pub(crate) async fn augment_prompt_request_for_owner(
             build_continuation_context_frame_for_session(state, session_id).await?;
         return apply_plain_lifecycle_request(
             user_input,
-            construction_seed,
+            construction_facts,
             None,
             continuation_context_frame,
         );
     }
 
-    Ok((user_input, construction_seed))
+    Ok((user_input, construction_facts))
 }
 
 fn apply_plain_lifecycle_request(
     mut user_input: UserPromptInput,
-    mut construction_seed: SessionConstructionSeed,
+    mut construction_facts: SessionConstructionFacts,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     let user_prompt_blocks = user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     user_input.prompt_blocks = Some(user_prompt_blocks);
-    construction_seed.context_bundle = context_bundle;
-    construction_seed.continuation_context_frame = continuation_context_frame;
-    Ok((user_input, construction_seed))
+    construction_facts.context_bundle = context_bundle;
+    construction_facts.continuation_context_frame = continuation_context_frame;
+    Ok((user_input, construction_facts))
 }
 
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
     mut user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
@@ -216,9 +215,9 @@ async fn build_story_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
+        return apply_plain_lifecycle_request(user_input, construction_facts, None, None);
     }
 
     let effective_executor_config = user_input
@@ -258,12 +257,12 @@ async fn build_story_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let existing_vfs = construction_seed.vfs.clone();
+    let existing_vfs = construction_facts.vfs.clone();
     let assembler = build_session_assembler(state);
-    let (user_input, mut construction_seed) = assembler
+    let (user_input, mut construction_facts) = assembler
         .compose_owner_bootstrap_prompt(
             user_input,
-            construction_seed,
+            construction_facts,
             OwnerBootstrapSpec {
                 owner: OwnerScope::Story {
                     story,
@@ -287,24 +286,24 @@ async fn build_story_owner_prompt_request(
         .await
         .map_err(ApiError::BadRequest)?;
 
-    construction_seed.continuation_context_frame = continuation_context_frame;
-    Ok((user_input, construction_seed))
+    construction_facts.continuation_context_frame = continuation_context_frame;
+    Ok((user_input, construction_facts))
 }
 
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
     mut user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
+        return apply_plain_lifecycle_request(user_input, construction_facts, None, None);
     }
 
     if binding_label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX) {
@@ -312,7 +311,7 @@ async fn build_project_owner_prompt_request(
             state,
             session_id,
             user_input,
-            construction_seed,
+            construction_facts,
             lifecycle_kind,
         )
         .await;
@@ -373,12 +372,12 @@ async fn build_project_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let existing_vfs = construction_seed.vfs.clone();
+    let existing_vfs = construction_facts.vfs.clone();
     let assembler = build_session_assembler(state);
-    let (user_input, mut construction_seed) = assembler
+    let (user_input, mut construction_facts) = assembler
         .compose_owner_bootstrap_prompt(
             user_input,
-            construction_seed,
+            construction_facts,
             OwnerBootstrapSpec {
                 owner: OwnerScope::Project {
                     project,
@@ -404,19 +403,19 @@ async fn build_project_owner_prompt_request(
         .await
         .map_err(ApiError::BadRequest)?;
 
-    construction_seed.continuation_context_frame = continuation_context_frame;
-    Ok((user_input, construction_seed))
+    construction_facts.continuation_context_frame = continuation_context_frame;
+    Ok((user_input, construction_facts))
 }
 
 async fn build_lifecycle_node_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, construction_seed, None, None);
+        return apply_plain_lifecycle_request(user_input, construction_facts, None, None);
     }
 
     let runs = state
@@ -462,7 +461,7 @@ async fn build_lifecycle_node_prompt_request(
 
     compose_lifecycle_node_prompt_with_audit(
         user_input,
-        construction_seed,
+        construction_facts,
         &state.repos,
         &state.config.platform_config,
         LifecycleNodeSpec {
@@ -482,15 +481,15 @@ async fn build_lifecycle_node_prompt_request(
 async fn build_companion_dispatch_prompt_request(
     state: &Arc<AppState>,
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
-    companion: PromptAugmentCompanionInput,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+    construction_facts: SessionConstructionFacts,
+    companion: CompanionLaunchSource,
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     let assembler = build_session_assembler(state);
     if let Some(workflow) = companion.workflow {
         assembler
             .compose_companion_with_workflow_prompt_from_parent(
                 user_input,
-                construction_seed,
+                construction_facts,
                 CompanionParentWorkflowSpec {
                     companion: CompanionParentSpec {
                         parent_session_id: &companion.parent_session_id,
@@ -510,7 +509,7 @@ async fn build_companion_dispatch_prompt_request(
         assembler
             .compose_companion_prompt_from_parent(
                 user_input,
-                construction_seed,
+                construction_facts,
                 CompanionParentSpec {
                     parent_session_id: &companion.parent_session_id,
                     slice_mode: companion.slice_mode,
@@ -602,14 +601,14 @@ async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-    task_input: Option<PromptAugmentTaskInput>,
+    task_input: Option<TaskLaunchSource>,
     _source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), ApiError> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), ApiError> {
     let story = state
         .repos
         .story_repo
@@ -660,12 +659,12 @@ async fn build_task_owner_prompt_request(
     let task_phase = task_input
         .as_ref()
         .and_then(|input| input.phase)
-        .unwrap_or(PromptAugmentTaskPhase::Continue);
+        .unwrap_or(TaskLaunchPhase::Continue);
     let assembler = build_session_assembler(state);
-    let (mut user_input, mut construction_seed) = assembler
+    let (mut user_input, mut construction_facts) = assembler
         .compose_story_step_prompt(
             user_input,
-            construction_seed,
+            construction_facts,
             StoryStepSpec {
                 run: &active_workflow.run,
                 lifecycle: &active_workflow.lifecycle,
@@ -675,8 +674,8 @@ async fn build_task_owner_prompt_request(
                 project: &project,
                 workspace: workspace.as_ref(),
                 phase: match task_phase {
-                    PromptAugmentTaskPhase::Start => StoryStepPhase::Start,
-                    PromptAugmentTaskPhase::Continue => StoryStepPhase::Continue,
+                    TaskLaunchPhase::Start => StoryStepPhase::Start,
+                    TaskLaunchPhase::Continue => StoryStepPhase::Continue,
                 },
                 override_prompt: task_input
                     .as_ref()
@@ -693,7 +692,7 @@ async fn build_task_owner_prompt_request(
         .await
         .map_err(task_execution::map_task_execution_error)?;
 
-    if let Some(space) = construction_seed.vfs.as_mut() {
+    if let Some(space) = construction_facts.vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             task.project_id,
@@ -719,7 +718,7 @@ async fn build_task_owner_prompt_request(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => {}
         SessionPromptLifecycle::Plain => {
-            construction_seed.context_bundle = None;
+            construction_facts.context_bundle = None;
         }
     }
 
@@ -729,13 +728,13 @@ async fn build_task_owner_prompt_request(
         user_input.executor_config = Some(config);
     }
 
-    if construction_seed.capability_state.is_none() {
+    if construction_facts.capability_state.is_none() {
         return Err(ApiError::Internal(
             "Task session compose 未产出 capability_state".to_string(),
         ));
     }
 
-    construction_seed.continuation_context_frame = continuation_context_frame;
+    construction_facts.continuation_context_frame = continuation_context_frame;
 
-    Ok((user_input, construction_seed))
+    Ok((user_input, construction_facts))
 }

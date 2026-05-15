@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 use super::super::compaction_context_frame::build_compaction_context_frame;
 #[cfg(test)]
-use super::super::construction::SessionConstructionSeed;
+use super::super::construction::SessionConstructionFacts;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch::{LaunchCommand, LaunchCommandOutcome};
@@ -360,23 +360,23 @@ impl SessionHub {
         Ok(build_projected_transcript_from_events(&events))
     }
 
-    /// 测试专用入口：跳过 augment，直接进入 prompt pipeline。
+    /// 测试专用入口：跳过 source provider，直接进入 prompt pipeline。
     ///
     /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
     #[cfg(test)]
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        (user_input, construction_seed): (UserPromptInput, SessionConstructionSeed),
+        (user_input, construction_facts): (UserPromptInput, SessionConstructionFacts),
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
-            .execute_launch_seed_for_test(session_id, user_input, construction_seed)
+            .execute_constructed_launch_for_test(session_id, user_input, construction_facts)
             .await
     }
 
     /// 类型化启动入口（统一门面）。
     ///
-    /// 由 [`LaunchCommand`] 决定是否需要 augment、是否 strict、
+    /// 由 [`LaunchCommand`] 决定是否需要 construction provider、是否 strict、
     /// 以及可选的 follow_up_session_id 透传。
     pub async fn launch_command(
         &self,

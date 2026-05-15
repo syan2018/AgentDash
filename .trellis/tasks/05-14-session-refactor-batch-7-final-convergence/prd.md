@@ -29,8 +29,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 - `LaunchCommand` 已不再持有 `PromptAugmentInput`，local relay 也不再携带已组装 `Vfs`，`to_augment_input()` 已删除。
 - task `post_turn_handler` 与 companion parent snapshot 已迁出 command；task effect binding 已改为 construction/effects durable binding，当前 companion parent capability 临时投影仍在 API bootstrap，后续必须进入 construction provider。
 - `PromptAugmentInput` 已删除，不再承载 construction / launch 产物。
-- API bootstrap 不再返回 `SessionLaunchRequest`；当前返回 `SessionConstructionSeed`。
-- `SessionLaunchPlanner` 已不再消费旧 payload；`prompt_pipeline` 仍接收 seed，但不再拆 seed 字段。
+- API bootstrap 不再返回 `SessionLaunchRequest`；当前返回 `SessionConstructionFacts`。
+- `SessionLaunchPlanner` 已不再消费旧 payload；`prompt_pipeline` 仍接收 facts，但不再拆 facts 字段。
 - `SessionConstructionPlan` 已保留完整 context bundle，但还不是完整 context frame / audit / inspector 事实源。
 - `SessionHub` 仍承载业务方法。
 - effects / pending / persistence 还缺最终验证。
@@ -49,7 +49,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 - [x] `PromptAugmentInput` 不再出现在生产主链路 handoff 中。
 - [x] `SessionLaunchRequest` 过渡 envelope 被删除。
-- [ ] `SessionConstructionSeed` 被删除，字段进入 construction / launch / effects 目标边界。
+- [ ] `SessionConstructionFacts` 被删除，字段进入 construction / launch / effects 目标边界。
 - [ ] `LaunchCommand` 是纯入口意图。
 - [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的事实源。
 - [ ] `LaunchExecution` 是唯一 per-launch 策略计划；当前已强制持有 `SessionConstructionPlan` 并承载 resolved prompt payload，但 planner 输入仍未达到终态。

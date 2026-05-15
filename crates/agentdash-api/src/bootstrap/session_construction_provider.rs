@@ -1,9 +1,9 @@
-//! `PromptRequestAugmenter` 的 API 层实现。
+//! `SessionConstructionProvider` 的 API 层实现。
 //!
-//! 把原始 prompt 输入代入与 HTTP 主通道同一条 `augment_prompt_request_for_owner`
+//! 把原始 prompt 输入代入与 HTTP 主通道同一条 `build_session_construction_for_launch`
 //! 路径，使 hub auto-resume 与用户手动 prompt 完全对齐。
 //!
-//! 为什么放这里：augment 逻辑依赖 `Arc<AppState>`（repos、services、platform_config），
+//! 为什么放这里：construction 逻辑依赖 `Arc<AppState>`（repos、services、platform_config），
 //! 这些都是 API 层构造的；把 trait impl 也放在 API 层最自然，也不必把依赖下沉到
 //! application crate。
 
@@ -11,34 +11,34 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::construction::SessionConstructionSeed;
-use agentdash_application::session::{LaunchCommand, PromptRequestAugmenter, UserPromptInput};
+use agentdash_application::session::construction::SessionConstructionFacts;
+use agentdash_application::session::{LaunchCommand, SessionConstructionProvider, UserPromptInput};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
-use crate::bootstrap::session_launch_augmenter::augment_prompt_request_for_owner;
+use crate::bootstrap::session_construction_bootstrap::build_session_construction_for_launch;
 use crate::rpc::ApiError;
 
-/// 使用 `Arc<AppState>` 的主通道增强器。在 AppState 初始化完成后通过
-/// `SessionHub::set_prompt_augmenter` 注入。
-pub struct AppStatePromptAugmenter {
+/// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后通过
+/// `SessionHub::set_session_construction_provider` 注入。
+pub struct AppStateSessionConstructionProvider {
     state: Arc<AppState>,
 }
 
-impl AppStatePromptAugmenter {
+impl AppStateSessionConstructionProvider {
     pub fn new(state: Arc<AppState>) -> Self {
         Self { state }
     }
 }
 
-const AUGMENTER_API_ERROR_PREFIX: &str = "__augmenter_api_error__:";
+const CONSTRUCTION_API_ERROR_PREFIX: &str = "__construction_api_error__:";
 
 fn encode_api_error(kind: &str, message: String) -> String {
-    format!("{AUGMENTER_API_ERROR_PREFIX}{kind}:{message}")
+    format!("{CONSTRUCTION_API_ERROR_PREFIX}{kind}:{message}")
 }
 
-pub(crate) fn decode_augmented_runtime_error(message: &str) -> Option<ApiError> {
-    let payload = message.strip_prefix(AUGMENTER_API_ERROR_PREFIX)?;
+pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiError> {
+    let payload = message.strip_prefix(CONSTRUCTION_API_ERROR_PREFIX)?;
     let (kind, detail) = payload.split_once(':')?;
     match kind {
         "unauthorized" => Some(ApiError::Unauthorized(detail.to_string())),
@@ -72,17 +72,17 @@ fn api_error_to_connector(error: ApiError) -> ConnectorError {
 }
 
 #[async_trait]
-impl PromptRequestAugmenter for AppStatePromptAugmenter {
-    async fn augment(
+impl SessionConstructionProvider for AppStateSessionConstructionProvider {
+    async fn build_construction(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
-        augment_prompt_request_for_owner(
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
+        build_session_construction_for_launch(
             &self.state,
             session_id,
             command.user_input().clone(),
-            SessionConstructionSeed::default(),
+            SessionConstructionFacts::default(),
             command.task_hint(),
             command.companion_hint(),
             command.local_relay_mcp_declarations().to_vec(),
@@ -97,9 +97,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_augmented_runtime_error_roundtrip_not_found() {
+    fn decode_construction_runtime_error_roundtrip_not_found() {
         let encoded = encode_api_error("not_found", "session missing".to_string());
-        let decoded = decode_augmented_runtime_error(&encoded);
+        let decoded = decode_construction_runtime_error(&encoded);
         match decoded {
             Some(ApiError::NotFound(message)) => assert_eq!(message, "session missing"),
             other => panic!("期望 NotFound，实际为: {other:?}"),
@@ -107,7 +107,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_augmented_runtime_error_ignores_plain_runtime_text() {
-        assert!(decode_augmented_runtime_error("plain runtime error").is_none());
+    fn decode_construction_runtime_error_ignores_plain_runtime_text() {
+        assert!(decode_construction_runtime_error("plain runtime error").is_none());
     }
 }

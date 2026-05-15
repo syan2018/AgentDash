@@ -39,16 +39,16 @@ LaunchCommand
 
 `SessionLaunchRequest` 已删除，不能重新引入。
 
-当前仍存在的迁移边界是 `SessionConstructionSeed`：
+当前仍存在的迁移边界是 `SessionConstructionFacts`：
 
 - 它只用于承接 API/bootstrap 到 construction planner 的暂存；
 - 它不是最终架构边界，不是 session 构建事实源，也不是 launch plan；
 - 它不得从 `session::mod` 顶层 re-export；跨模块引用必须显式写作 construction 模块引用，避免被当成正式 session API；
 - 不允许被 HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 生产入口直接构造，入口必须构造 `LaunchCommand`；
 - 不允许继续扩张成新的长期 service / route / adapter 公开契约；
-- `working_dir_input` 与 `working_dir_hint` 已归零，launch summary/input 与 construction seed 不得重新携带 working dir hint；working directory 只能由 construction 从 VFS default mount / local relay workspace root / workspace 事实解析到 `SessionConstructionPlan.workspace.working_directory`。
-- `SessionConstructionSeed` 不得携带 `SourceContractPlan`、source identity、local relay workspace root 或 local relay MCP declarations。source contract 与 source identity 只能从 `LaunchCommand` 派生并显式传入 planner；local relay workspace root / MCP declarations 只能作为 command source payload 进入 construction/launch 解析。
-- 后续必须把 VFS / MCP / capability / context 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 seed。
+- `working_dir_input` 与 `working_dir_hint` 已归零，launch summary/input 与 construction facts 不得重新携带 working dir hint；working directory 只能由 construction 从 VFS default mount / local relay workspace root / workspace 事实解析到 `SessionConstructionPlan.workspace.working_directory`。
+- `SessionConstructionFacts` 不得携带 `SourceContractPlan`、source identity、local relay workspace root 或 local relay MCP declarations。source contract 与 source identity 只能从 `LaunchCommand` 派生并显式传入 planner；local relay workspace root / MCP declarations 只能作为 command source payload 进入 construction/launch 解析。
+- 后续必须把 VFS / MCP / capability / context 字段直接拆入 `SessionConstructionPlanner` / `SessionConstructionPlan`。hook reload 已由 launch lifecycle 推导；task effect 已改为 durable binding，后续继续把 binding 生成迁入 construction provider，然后删除这个过渡 facts handoff。
 
 `start_prompt` 是测试专用入口。生产代码必须走 `LaunchCommand`，不得重新添加直接调用 prompt pipeline 的旁路。
 
@@ -61,8 +61,8 @@ LaunchCommand
 - Workflow orchestrator：构造 `LaunchCommand::workflow_orchestrator_input`。
 - Routine executor：构造 `LaunchCommand::routine_executor_input`，系统身份必须来自 `AuthIdentity::system_routine(routine.id)`。
 - Companion dispatch / parent resume：构造对应 `LaunchCommand`，只携带 parent session / dispatch / slice / target binding 等策略 payload；父 session VFS / MCP / context snapshot 必须由 construction 从 parent facts 解析，不得先拼出 prompt projection。
-- Hook auto-resume：必须 strict 复用主 construction/augment 路径；augmenter 缺失时失败，不做裸请求 fallback。
-- Local relay：允许携带本机 relay 请求中的 workspace root 与 MCP declaration；VFS、resolved MCP、capability、working dir 与 connector input 仍必须由 construction/launch 投影生成，不能作为已组装事实塞进 `LaunchCommand`。augmenter 缺失时必须失败，不允许回退到裸 construction seed。
+- Hook auto-resume：必须 strict 复用主 construction provider 路径；construction provider 缺失时失败，不做裸请求 fallback。
+- Local relay：允许携带本机 relay 请求中的 workspace root 与 MCP declaration；VFS、resolved MCP、capability、working dir 与 connector input 仍必须由 construction/launch 投影生成，不能作为已组装事实塞进 `LaunchCommand`。construction provider 缺失时必须失败，不允许回退到裸 construction facts。
 
 新增入口不得：
 
@@ -189,7 +189,7 @@ connector.prompt 失败时不得标记 applied；下一轮必须仍可恢复。
 - runtime tool provider；
 - MCP relay provider；
 - terminal callback；
-- prompt/construction augmenter；
+- session construction provider；
 - context audit bus。
 
 不得把“稍后注入”的空值暴露为正式运行态。
@@ -209,6 +209,6 @@ cargo test -p agentdash-application session::construction
 ```
 
 `PreparedLaunchPrompt`、`AugmentedLaunchInput`、`PromptAugmentInput`、`SessionLaunchRequest`
-必须保持归零。`SessionConstructionSeed` 若仍存在，必须只作为
-删除中的过渡 seed，并在 task tracker 中列出下一步拆入 construction / launch / effects
+必须保持归零。`SessionConstructionFacts` 若仍存在，必须只作为
+删除中的 provider handoff，并在 task tracker 中列出下一步拆入 construction / launch / effects
 的删除点。

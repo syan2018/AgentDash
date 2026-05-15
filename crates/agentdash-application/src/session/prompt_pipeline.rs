@@ -1,15 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AuthIdentity, ConnectorError, SessionMcpServer};
 
 use super::assignment_context_frame::build_assignment_context_frame;
-use super::construction::{SessionConstructionSeed, SourceContractPlan};
+use super::construction::SessionConstructionFacts;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
@@ -34,39 +34,23 @@ impl<'a> SessionLaunchExecutor<'a> {
         session_id: &str,
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
-        let follow_up_session_id = command.follow_up_session_id().map(ToString::to_string);
         let reason = command.reason_tag();
         let strictness = command.strictness();
-        let source_identity = command.identity();
-        let local_relay_workspace_root =
-            command.local_relay_workspace_root().map(ToOwned::to_owned);
-        let local_relay_mcp_declarations = command.local_relay_mcp_declarations().to_vec();
-        let (user_input, construction_seed) = match strictness {
+        let (user_input, construction_facts) = match strictness {
             LaunchStrictness::Strict => {
-                let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
+                let Some(provider) = self.hub.current_session_construction_provider().await else {
                     return Err(ConnectorError::Runtime(format!(
-                        "prompt_augmenter 未注入，拒绝 strict launch: {reason}"
+                        "session_construction_provider 未注入，拒绝 strict launch: {reason}"
                     )));
                 };
-                augmenter.augment(session_id, &command).await?
+                provider.build_construction(session_id, &command).await?
             }
             LaunchStrictness::Relaxed => {
-                self.augment_relaxed_command(session_id, &command, reason)
+                self.build_construction_relaxed_command(session_id, &command, reason)
                     .await?
             }
         };
-        let source_contract = SourceContractPlan {
-            launch_source: Some(reason.to_string()),
-            preparation: None,
-            strictness: Some(
-                match strictness {
-                    LaunchStrictness::Strict => "strict",
-                    LaunchStrictness::Relaxed => "relaxed",
-                }
-                .to_string(),
-            ),
-        };
-        let context_sources = construction_seed
+        let context_sources = construction_facts
             .context_bundle
             .as_ref()
             .map(|bundle| {
@@ -77,16 +61,7 @@ impl<'a> SessionLaunchExecutor<'a> {
             })
             .unwrap_or_default();
         let turn_id = self
-            .execute_launch_seed(
-                session_id,
-                follow_up_session_id.as_deref(),
-                user_input,
-                construction_seed,
-                source_contract,
-                source_identity,
-                local_relay_workspace_root,
-                local_relay_mcp_declarations,
-            )
+            .execute_constructed_launch(session_id, &command, user_input, construction_facts)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -94,51 +69,39 @@ impl<'a> SessionLaunchExecutor<'a> {
         })
     }
 
-    async fn augment_relaxed_command(
+    async fn build_construction_relaxed_command(
         &self,
         session_id: &str,
         command: &LaunchCommand,
         reason: &str,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
-        let Some(augmenter) = self.hub.current_prompt_augmenter().await else {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
+        let Some(provider) = self.hub.current_session_construction_provider().await else {
             return Err(ConnectorError::Runtime(format!(
-                "prompt_augmenter 未注入，拒绝 relaxed launch: {reason}"
+                "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
             )));
         };
-        augmenter.augment(session_id, command).await
+        provider.build_construction(session_id, command).await
     }
 
     #[cfg(test)]
-    pub(crate) async fn execute_launch_seed_for_test(
+    pub(crate) async fn execute_constructed_launch_for_test(
         &self,
         session_id: &str,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
     ) -> Result<String, ConnectorError> {
-        self.execute_launch_seed(
-            session_id,
-            None,
-            user_input,
-            construction_seed,
-            SourceContractPlan::default(),
-            None,
-            None,
-            Vec::new(),
-        )
-        .await
+        let command = LaunchCommand::http_prompt_input(user_input.clone(), None);
+        self.execute_constructed_launch(session_id, &command, user_input, construction_facts)
+            .await
     }
 
-    /// 已完成 launch/construction seed 准备后的执行段。生产入口只能从 `execute_command` 进入。
-    async fn execute_launch_seed(
+    /// 已完成 construction facts 准备后的执行段。生产入口只能从 `execute_command` 进入。
+    async fn execute_constructed_launch(
         &self,
         session_id: &str,
-        follow_up_session_id: Option<&str>,
+        command: &LaunchCommand,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
-        source_contract: SourceContractPlan,
-        source_identity: Option<AuthIdentity>,
-        local_relay_workspace_root: Option<PathBuf>,
-        local_relay_mcp_declarations: Vec<SessionMcpServer>,
+        construction_facts: SessionConstructionFacts,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -175,17 +138,13 @@ impl<'a> SessionLaunchExecutor<'a> {
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
-                follow_up_session_id: follow_up_session_id.map(ToString::to_string),
+                command,
                 had_existing_runtime,
                 cached_continuation,
                 session_meta: &session_meta,
                 pending_runtime_commands,
                 user_input,
-                construction_seed,
-                source_contract,
-                source_identity,
-                local_relay_workspace_root,
-                local_relay_mcp_declarations,
+                construction_facts,
             })
             .await?;
         let resolved_payload = launch_execution.resolved_payload.clone();

@@ -9,10 +9,8 @@ use agentdash_spi::{
     ExecutionTurnFrame, RestoredSessionState, SessionMcpServer,
 };
 
-use super::augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
-};
 use super::construction::SessionConstructionPlan;
+use super::construction_provider::{CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource};
 use super::post_turn_handler::DynPostTurnHandler;
 use super::runtime_commands::PendingRuntimeCommandRecord;
 use super::types::{
@@ -44,8 +42,8 @@ pub struct LaunchCommand {
     strictness: LaunchStrictness,
     follow_up_session_id: Option<String>,
     identity: Option<agentdash_spi::AuthIdentity>,
-    task: Option<PromptAugmentTaskInput>,
-    companion: Option<PromptAugmentCompanionInput>,
+    task: Option<TaskLaunchSource>,
+    companion: Option<CompanionLaunchSource>,
     local_relay_mcp_declarations: Vec<SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
 }
@@ -88,11 +86,11 @@ impl LaunchCommand {
         self.identity.clone()
     }
 
-    pub fn task_hint(&self) -> Option<PromptAugmentTaskInput> {
+    pub fn task_hint(&self) -> Option<TaskLaunchSource> {
         self.task.clone()
     }
 
-    pub fn companion_hint(&self) -> Option<PromptAugmentCompanionInput> {
+    pub fn companion_hint(&self) -> Option<CompanionLaunchSource> {
         self.companion.clone()
     }
 
@@ -129,15 +127,15 @@ impl LaunchCommand {
         }
     }
 
-    fn requires_augment_input(input: UserPromptInput, source: LaunchSource) -> Self {
+    fn strict_source_input(input: UserPromptInput, source: LaunchSource) -> Self {
         Self::new(input, source, LaunchStrictness::Strict)
     }
 
     fn command_with(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
-        task: Option<PromptAugmentTaskInput>,
-        companion: Option<PromptAugmentCompanionInput>,
+        task: Option<TaskLaunchSource>,
+        companion: Option<CompanionLaunchSource>,
         source: LaunchSource,
         strictness: LaunchStrictness,
     ) -> Self {
@@ -163,16 +161,16 @@ impl LaunchCommand {
     }
 
     pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
-        Self::requires_augment_input(input, LaunchSource::HookAutoResume)
+        Self::strict_source_input(input, LaunchSource::HookAutoResume)
     }
 
     pub fn companion_parent_resume_input(input: UserPromptInput) -> Self {
-        Self::requires_augment_input(input, LaunchSource::CompanionParentResume)
+        Self::strict_source_input(input, LaunchSource::CompanionParentResume)
     }
 
     pub fn companion_dispatch_input(
         input: UserPromptInput,
-        companion: PromptAugmentCompanionInput,
+        companion: CompanionLaunchSource,
     ) -> Self {
         Self::command_with(
             input,
@@ -185,7 +183,7 @@ impl LaunchCommand {
     }
 
     pub fn workflow_orchestrator_input(input: UserPromptInput) -> Self {
-        Self::requires_augment_input(input, LaunchSource::WorkflowOrchestrator)
+        Self::strict_source_input(input, LaunchSource::WorkflowOrchestrator)
     }
 
     pub fn routine_executor_input(
@@ -205,14 +203,14 @@ impl LaunchCommand {
     pub fn task_service_input(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
-        phase: PromptAugmentTaskPhase,
+        phase: TaskLaunchPhase,
         override_prompt: Option<String>,
         additional_prompt: Option<String>,
     ) -> Self {
         Self::command_with(
             input,
             identity,
-            Some(PromptAugmentTaskInput {
+            Some(TaskLaunchSource {
                 phase: Some(phase),
                 override_prompt,
                 additional_prompt,

@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_spi::{AuthIdentity, ConnectorError, RestoredSessionState, SessionMcpServer};
+use agentdash_spi::{ConnectorError, RestoredSessionState};
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::capability_state::merge_vfs_overlay;
-use super::construction::{SessionConstructionSeed, SourceContractPlan};
+use super::construction::{SessionConstructionFacts, SourceContractPlan};
 use super::construction_planner::{SessionConstructionPlanner, SessionConstructionPlannerInput};
 use super::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -13,8 +13,8 @@ use super::hook_delegate::{
 use super::hub::SessionHub;
 use super::hub_support::SessionProfile;
 use super::launch::{
-    LaunchCapabilitySource, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource,
-    LaunchMcpSource, LaunchRestoreMode, LaunchVfsSource,
+    LaunchCapabilitySource, LaunchCommand, LaunchExecution, LaunchExecutionInput,
+    LaunchFollowUpSource, LaunchMcpSource, LaunchRestoreMode, LaunchStrictness, LaunchVfsSource,
 };
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::runtime_commands::PendingRuntimeCommandRecord;
@@ -30,17 +30,13 @@ pub(super) struct SessionLaunchPlanner<'a> {
 pub(super) struct SessionLaunchPlannerInput<'a> {
     pub session_id: &'a str,
     pub turn_id: &'a str,
-    pub follow_up_session_id: Option<String>,
+    pub command: &'a LaunchCommand,
     pub had_existing_runtime: bool,
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
     pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
     pub user_input: UserPromptInput,
-    pub construction_seed: SessionConstructionSeed,
-    pub source_contract: SourceContractPlan,
-    pub source_identity: Option<AuthIdentity>,
-    pub local_relay_workspace_root: Option<PathBuf>,
-    pub local_relay_mcp_declarations: Vec<SessionMcpServer>,
+    pub construction_facts: SessionConstructionFacts,
 }
 
 impl<'a> SessionLaunchPlanner<'a> {
@@ -53,15 +49,27 @@ impl<'a> SessionLaunchPlanner<'a> {
         input: SessionLaunchPlannerInput<'_>,
     ) -> Result<LaunchExecution, ConnectorError> {
         let sid = input.session_id.to_string();
-        let SessionConstructionSeed {
+        let command = input.command;
+        let source_contract = SourceContractPlan {
+            launch_source: Some(command.reason_tag().to_string()),
+            preparation: None,
+            strictness: Some(
+                match command.strictness() {
+                    LaunchStrictness::Strict => "strict",
+                    LaunchStrictness::Relaxed => "relaxed",
+                }
+                .to_string(),
+            ),
+        };
+        let SessionConstructionFacts {
             owner: construction_owner,
-            mcp_servers: seed_mcp_servers,
-            vfs: seed_vfs,
-            capability_state: seed_capability_state,
+            mcp_servers: construction_mcp_servers,
+            vfs: construction_vfs,
+            capability_state: construction_capability_state,
             context_bundle,
             continuation_context_frame,
             terminal_hook_effect_binding,
-        } = input.construction_seed;
+        } = input.construction_facts;
         let mut context_bundle = context_bundle;
         let resolved_payload = input
             .user_input
@@ -76,9 +84,9 @@ impl<'a> SessionLaunchPlanner<'a> {
             .last()
             .map(|transition| transition.state.clone());
 
-        let (base_effective_vfs, vfs_source) = if let Some(vfs) = seed_vfs.clone() {
+        let (base_effective_vfs, vfs_source) = if let Some(vfs) = construction_vfs.clone() {
             (vfs, LaunchVfsSource::Request)
-        } else if let Some(root) = input.local_relay_workspace_root.as_ref() {
+        } else if let Some(root) = command.local_relay_workspace_root() {
             (
                 super::local_workspace_vfs(root),
                 LaunchVfsSource::LocalRelayWorkspaceRoot,
@@ -221,11 +229,11 @@ impl<'a> SessionLaunchPlanner<'a> {
         let session_capabilities = build_session_baseline_capabilities(&discovered_skills);
         let discovered_guidelines = self.hub.discover_guidelines(&effective_vfs).await;
 
-        let (base_mcp_servers, base_mcp_source) = if !seed_mcp_servers.is_empty() {
-            (seed_mcp_servers.clone(), LaunchMcpSource::Request)
-        } else if !input.local_relay_mcp_declarations.is_empty() {
+        let (base_mcp_servers, base_mcp_source) = if !construction_mcp_servers.is_empty() {
+            (construction_mcp_servers.clone(), LaunchMcpSource::Request)
+        } else if !command.local_relay_mcp_declarations().is_empty() {
             (
-                input.local_relay_mcp_declarations.clone(),
+                command.local_relay_mcp_declarations().to_vec(),
                 LaunchMcpSource::Request,
             )
         } else {
@@ -249,7 +257,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             } else {
                 (base_mcp_servers.clone(), base_mcp_source)
             };
-        let base_capability_source = if seed_capability_state.is_some() {
+        let base_capability_source = if construction_capability_state.is_some() {
             LaunchCapabilitySource::Request
         } else if input.cached_continuation.is_some() {
             LaunchCapabilitySource::CachedSessionProfile
@@ -257,7 +265,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             LaunchCapabilitySource::Default
         };
         let base_capability_state = {
-            let mut state = seed_capability_state
+            let mut state = construction_capability_state
                 .clone()
                 .or_else(|| {
                     input
@@ -282,8 +290,8 @@ impl<'a> SessionLaunchPlanner<'a> {
                 (base_capability_state.clone(), base_capability_source)
             };
         let (resolved_follow_up_session_id, follow_up_source) = input
-            .follow_up_session_id
-            .as_deref()
+            .command
+            .follow_up_session_id()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| (Some(value.to_string()), LaunchFollowUpSource::Explicit))
@@ -301,14 +309,14 @@ impl<'a> SessionLaunchPlanner<'a> {
             SessionConstructionPlanner::plan_launch(SessionConstructionPlannerInput {
                 session_id: sid.clone(),
                 owner: construction_owner,
-                source: input.source_contract,
-                local_relay_workspace_root: input.local_relay_workspace_root,
+                source: source_contract,
+                local_relay_workspace_root: command.local_relay_workspace_root().map(PathBuf::from),
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
                 vfs: capability_state.vfs.active.clone(),
                 context_bundle: context_bundle.clone(),
                 continuation_context_frame,
-                identity: input.source_identity.clone(),
+                identity: command.identity(),
                 terminal_hook_effect_binding: terminal_hook_effect_binding.clone(),
                 mcp_servers: capability_state.tool.mcp_servers.clone(),
                 capability_state: capability_state.clone(),

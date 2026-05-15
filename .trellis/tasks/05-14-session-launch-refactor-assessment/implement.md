@@ -10,14 +10,14 @@
 LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext projection
 ```
 
-权威执行 tracker 是 `docs/final-convergence-execution-tracker.md`。当前 Batch 7 负责一次性收口，不再继续创建碎片化 child task。
+权威执行 tracker 是 `docs/final-convergence-execution-tracker.md`。当前 Batch 7 负责一次性收口，不再继续创建碎片化 child task。具体执行以 `../05-14-session-refactor-batch-7-final-convergence/implement.md` 的 6 个 commit slice 为唯一计划。
 
 ## Execution Order
 
 ### 1. Correct Entry Intent Boundary
 
 - [x] `LaunchCommand` 不再持有 `PromptAugmentInput`。
-- [x] `PromptRequestAugmenter` 不再接收 `PromptAugmentInput` 作为输入。
+- [x] `SessionConstructionProvider` 不再接收 `PromptAugmentInput` 作为输入。
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再从 `session::mod` re-export。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed；只传 workspace root source fact，由 planner/construction 解析。
@@ -47,13 +47,13 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 ### 4. Delete `PromptAugmentInput` Production Handoff
 
-- [x] `PromptRequestAugmenter` 不再返回增强后的 `PromptAugmentInput`。
-- [ ] API bootstrap 输出 construction 事实或 construction planner input；当前已删除 generalized `LaunchAugmentation` alias，但仍返回 `UserPromptInput + SessionConstructionSeed` 过渡 tuple。
+- [x] `SessionConstructionProvider` 不再返回增强后的 `PromptAugmentInput`。
+- [ ] API bootstrap 输出 construction 事实或 construction planner input；当前已删除 generalized `LaunchAugmentation` alias，但仍返回 `UserPromptInput + SessionConstructionFacts` 过渡 tuple。
 - [x] 删除 `LaunchCommand::to_augment_input()`。
 - [x] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
 - [x] `PromptAugmentInput` 最终代码中不能作为 production helper、跨 crate handoff、planner input 或 augmented output 保留。
 - [x] 删除当前 `SessionLaunchRequest` 过渡 envelope。
-- [ ] 删除当前 `SessionConstructionSeed` 过渡 seed。
+- [ ] 删除当前 `SessionConstructionFacts` provider handoff。
 
 ### 5. Remove Business `SessionHub`
 
@@ -96,13 +96,4 @@ git diff --check
 
 ## Commit Plan
 
-按业务边界整理提交：
-
-1. `refactor(session): 校准 launch 边界与最终收口计划`
-2. `refactor(session): 收敛 construction 事实源`
-3. `refactor(session): 删除增强 payload 主链路`
-4. `refactor(session): 收敛 launch execution 执行计划`
-5. `refactor(session): 拆除 SessionHub 业务 facade`
-6. `test(session): 补齐最终验证矩阵`
-
-提交信息遵循项目要求：`type(scope): 中文提交信息`，body 分点说明具体更新。
+按 `.trellis/tasks/05-14-session-refactor-batch-7-final-convergence/implement.md` 的 6 个固定 commit slice 执行。提交信息遵循项目要求：`type(scope): 中文提交信息`，body 分点说明具体更新。

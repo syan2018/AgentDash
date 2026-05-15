@@ -8,8 +8,8 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use super::super::augmenter::SharedPromptRequestAugmenter;
 use super::super::companion_wait::CompanionWaitRegistry;
+use super::super::construction_provider::SharedSessionConstructionProvider;
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
@@ -43,7 +43,7 @@ impl SessionHub {
             title_generator: None,
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
-            prompt_augmenter: Arc::new(tokio::sync::RwLock::new(None)),
+            session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
             base_system_prompt: String::new(),
             user_preferences: Vec::new(),
@@ -118,20 +118,25 @@ impl SessionHub {
         *self.hook_effect_handler_registry.write().await = Some(registry);
     }
 
-    /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
+    /// 注入 session construction provider（owner / MCP / flow capabilities / system context 等）。
     ///
     /// **何时必须注入**：只要 SessionHub 会在内部发起 strict launch（如
-    /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此增强器——否则
+    /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此 construction provider——否则
     /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
     ///
     /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
-    pub async fn set_prompt_augmenter(&self, augmenter: SharedPromptRequestAugmenter) {
-        *self.prompt_augmenter.write().await = Some(augmenter);
+    pub async fn set_session_construction_provider(
+        &self,
+        provider: SharedSessionConstructionProvider,
+    ) {
+        *self.session_construction_provider.write().await = Some(provider);
     }
 
-    /// 取出当前已注入的增强器（主要用于 hub 内部调用与测试检查）。
-    pub(crate) async fn current_prompt_augmenter(&self) -> Option<SharedPromptRequestAugmenter> {
-        self.prompt_augmenter.read().await.clone()
+    /// 取出当前已注入的 construction provider（主要用于 hub 内部调用与测试检查）。
+    pub(crate) async fn current_session_construction_provider(
+        &self,
+    ) -> Option<SharedSessionConstructionProvider> {
+        self.session_construction_provider.read().await.clone()
     }
 
     /// 注入 Context Audit 总线，使 Hub 创建的 runtime delegate 能发出 hook fragment 审计。
@@ -160,8 +165,8 @@ impl SessionHub {
         if self.hook_effect_handler_registry.read().await.is_none() {
             return Err("SessionHub 缺少 hook_effect_handler_registry".to_string());
         }
-        if self.prompt_augmenter.read().await.is_none() {
-            return Err("SessionHub 缺少 prompt_augmenter".to_string());
+        if self.session_construction_provider.read().await.is_none() {
+            return Err("SessionHub 缺少 session_construction_provider".to_string());
         }
         if self.context_audit_bus.read().await.is_none() {
             return Err("SessionHub 缺少 context_audit_bus".to_string());

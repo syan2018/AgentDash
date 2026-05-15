@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::session::{
-    CompanionSessionContext, LaunchCommand, PromptAugmentCompanionInput,
-    PromptAugmentCompanionWorkflowInput, SessionHub, UserPromptInput, build_hook_trace_envelope,
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, CompanionSessionContext, LaunchCommand,
+    SessionHub, UserPromptInput, build_hook_trace_envelope,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -380,7 +380,7 @@ impl CompanionRequestTool {
         };
         let command = LaunchCommand::companion_dispatch_input(
             base_input.clone(),
-            PromptAugmentCompanionInput {
+            CompanionLaunchSource {
                 parent_session_id: current_session_id.clone(),
                 slice_mode,
                 companion_executor_config: companion_executor_config.clone(),
@@ -827,7 +827,7 @@ impl CompanionRequestTool {
         hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
         target_binding: &SessionBinding,
         workflow_key: &str,
-    ) -> Result<PromptAugmentCompanionWorkflowInput, AgentToolError> {
+    ) -> Result<CompanionLaunchWorkflowSource, AgentToolError> {
         let snapshot = hook_session.snapshot();
         let project_id = snapshot
             .owners
@@ -891,7 +891,7 @@ impl CompanionRequestTool {
             )));
         }
 
-        Ok(PromptAugmentCompanionWorkflowInput {
+        Ok(CompanionLaunchWorkflowSource {
             run,
             lifecycle,
             step: entry_step,
@@ -1482,7 +1482,7 @@ impl CompanionRespondTool {
                 let parent_sid = companion_context.parent_session_id.clone();
                 let hub_clone = session_hub.clone();
                 tokio::spawn(async move {
-                    // parent resume 路径通过 strict launch 复用主通道 augment 逻辑。
+                    // parent resume 路径通过 strict launch 复用主通道 construction 逻辑。
                     let command = LaunchCommand::companion_parent_resume_input(UserPromptInput {
                         prompt_blocks: Some(vec![serde_json::json!({
                             "type": "text",
@@ -2204,9 +2204,9 @@ mod companion_tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::session::construction::SessionConstructionSeed;
+    use crate::session::construction::SessionConstructionFacts;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, PromptRequestAugmenter, SessionHub,
+        CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider, SessionHub,
         UserPromptInput, local_workspace_vfs,
     };
     use crate::vfs::tools::provider::SharedSessionHubHandle;
@@ -2468,7 +2468,7 @@ mod companion_tests {
             _context: ExecutionContext,
         ) -> Result<ExecutionStream, ConnectorError> {
             Err(ConnectorError::Runtime(
-                "connector should not be reached when augmenter rejects resume".to_string(),
+                "connector should not be reached when provider rejects resume".to_string(),
             ))
         }
 
@@ -2494,19 +2494,19 @@ mod companion_tests {
         }
     }
 
-    struct SpyAugmenter {
+    struct SpyConstructionProvider {
         calls: Arc<AtomicUsize>,
         captured_prompt: Arc<TokioMutex<Option<String>>>,
         captured_mcp_len: Arc<AtomicUsize>,
     }
 
     #[async_trait::async_trait]
-    impl PromptRequestAugmenter for SpyAugmenter {
-        async fn augment(
+    impl SessionConstructionProvider for SpyConstructionProvider {
+        async fn build_construction(
             &self,
             _session_id: &str,
             command: &crate::session::LaunchCommand,
-        ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
+        ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let prompt_text = command
                 .user_input()
@@ -2522,13 +2522,13 @@ mod companion_tests {
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(
-                "spy augmenter stops companion resume".to_string(),
+                "spy provider stops companion resume".to_string(),
             ))
         }
     }
 
     #[tokio::test]
-    async fn companion_parent_resume_routes_through_augmenter() {
+    async fn companion_parent_resume_routes_through_provider() {
         let root = tempfile::tempdir().expect("workspace");
         let hub = SessionHub::new_with_hooks_and_persistence(
             Some(local_workspace_vfs(root.path())),
@@ -2566,7 +2566,7 @@ mod companion_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let captured_prompt = Arc::new(TokioMutex::new(None));
         let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
-        hub.set_prompt_augmenter(Arc::new(SpyAugmenter {
+        hub.set_session_construction_provider(Arc::new(SpyConstructionProvider {
             calls: calls.clone(),
             captured_prompt: captured_prompt.clone(),
             captured_mcp_len: captured_mcp_len.clone(),
@@ -2609,7 +2609,7 @@ mod companion_tests {
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,
-            "companion parent resume 必须先经 augmenter 补齐主通道上下文"
+            "companion parent resume 必须先经 provider 补齐主通道上下文"
         );
         let prompt_text = captured_prompt.lock().await.clone().unwrap_or_default();
         assert!(prompt_text.contains("[Companion Result]"));
@@ -2617,7 +2617,7 @@ mod companion_tests {
         assert_eq!(
             captured_mcp_len.load(Ordering::SeqCst),
             0,
-            "companion resume 传给 augmenter 的输入应是裸请求，由 augmenter 负责补齐 MCP"
+            "companion resume 传给 provider 的输入应是裸请求，由 provider 负责补齐 MCP"
         );
     }
 }

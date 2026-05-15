@@ -14,7 +14,7 @@ use super::ownership::ResolvedSessionOwner;
 use super::post_turn_handler::TerminalHookEffectBinding;
 use crate::vfs::ResolvedVfsSurface;
 
-pub struct SessionConstructionSeed {
+pub struct SessionConstructionFacts {
     pub owner: Option<ResolvedSessionOwner>,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
@@ -26,7 +26,7 @@ pub struct SessionConstructionSeed {
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
 }
 
-impl Default for SessionConstructionSeed {
+impl Default for SessionConstructionFacts {
     fn default() -> Self {
         Self {
             owner: None,

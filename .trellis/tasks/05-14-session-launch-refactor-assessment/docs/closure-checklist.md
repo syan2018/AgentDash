@@ -8,7 +8,7 @@
 - [x] 生产主链路不存在 `PromptSessionRequest`、`PreparedSessionInputs`、`finalize_request`、`PreparedLaunchPrompt`、`SessionLaunchPlan`、`AugmentedLaunchInput`。
 - [x] `PromptAugmentInput` 不作为跨 crate handoff、planner 输入或增强后输出存在。
 - [x] `SessionLaunchRequest` 过渡 envelope 已删除。
-- [ ] `SessionConstructionSeed` 过渡 seed 已删除，construction / launch / effects 字段分别进入目标边界。
+- [ ] `SessionConstructionFacts` provider handoff 已删除，construction / launch / effects 字段分别进入目标边界。
 - [ ] `SessionConstructionPlan` 是 owner/workspace/VFS/MCP/capability/executor/context/identity 的唯一事实源。
 - [ ] `LaunchExecution` 是 lifecycle/restore/hook/follow-up/runtime-command/terminal-effect/connector-input 的唯一 per-launch 计划。
 - [ ] `ExecutionContext` 只在 connector 边界投影生成。
@@ -52,7 +52,7 @@
 
 - [ ] `SessionHub` 不再是业务能力入口。
 - [ ] 若 `SessionHub` 类型仍存在，已确认它不承载业务判断且不作为最终完成遮羞布。
-- [ ] AppState ready 后 prompt/construction augmenter、audit bus、terminal callback/tool provider/effect handlers 不为空。
+- [ ] AppState ready 后 session construction provider、audit bus、terminal callback/tool provider/effect handlers 不为空。
 - [ ] resolved working directory 只接受 mount root 内规范化相对路径。
 - [ ] path policy 测试覆盖绝对路径、`..`、Windows prefix/root、空 segment。
 

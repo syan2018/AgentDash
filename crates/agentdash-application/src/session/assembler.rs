@@ -15,8 +15,8 @@
 //! 5 条路径共享 4 个"策略轴":owner scope mount / context bundle 生成 /
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
-//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口合入按目标边界分组的
-//! launch seed 与 construction seed:
+//! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口合入当前 construction
+//! provider handoff:
 //!
 //! ```text
 //! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → construction facts
@@ -61,7 +61,7 @@ use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
-use crate::session::construction::SessionConstructionSeed;
+use crate::session::construction::SessionConstructionFacts;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::session::types::UserPromptInput;
@@ -81,7 +81,7 @@ use crate::workspace::BackendAvailability;
 // SECTION 1:内部 builder prompt 投影
 // ═══════════════════════════════════════════════════════════════════
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进 launch seed 与 construction seed。
+/// 把 `SessionAssemblyBuilder` 的累积声明合并进 construction provider handoff。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -98,33 +98,33 @@ use crate::workspace::BackendAvailability;
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
 fn apply_session_assembly(
     mut user_input: UserPromptInput,
-    mut construction_seed: SessionConstructionSeed,
+    mut construction_facts: SessionConstructionFacts,
     prepared: SessionAssemblyBuilder,
-) -> (UserPromptInput, SessionConstructionSeed) {
+) -> (UserPromptInput, SessionConstructionFacts) {
     if let Some(blocks) = prepared.prompt_blocks {
         user_input.prompt_blocks = Some(blocks);
     }
     if let Some(cfg) = prepared.executor_config {
         user_input.executor_config = Some(cfg);
     }
-    construction_seed.context_bundle = prepared.context_bundle;
+    construction_facts.context_bundle = prepared.context_bundle;
 
     apply_workspace_defaults(
-        &mut construction_seed.vfs,
+        &mut construction_facts.vfs,
         prepared.workspace_defaults.as_ref(),
     );
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
     // mount 组合会覆盖前端透传的 vfs，是刻意为之。
     if prepared.vfs.is_some() {
-        construction_seed.vfs = prepared.vfs;
+        construction_facts.vfs = prepared.vfs;
     }
-    construction_seed.mcp_servers = prepared.mcp_servers;
-    construction_seed.capability_state = prepared.capability_state;
+    construction_facts.mcp_servers = prepared.mcp_servers;
+    construction_facts.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
         user_input.env = prepared.env;
     }
-    (user_input, construction_seed)
+    (user_input, construction_facts)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1065,12 +1065,12 @@ impl<'a> SessionRequestAssembler<'a> {
     pub async fn compose_owner_bootstrap_prompt(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
         self.compose_owner_bootstrap(spec)
             .await
-            .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
+            .map(|prepared| apply_session_assembly(user_input, construction_facts, prepared))
     }
 
     /// Story step activation 场景下组装 child session。
@@ -1084,7 +1084,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// launch seed / construction seed 后交 launch executor 派发。
+    /// construction provider handoff 后交 launch executor 派发。
     async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -1329,15 +1329,15 @@ impl<'a> SessionRequestAssembler<'a> {
     pub async fn compose_story_step_prompt(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: StoryStepSpec<'_>,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), TaskExecutionError> {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), TaskExecutionError> {
         let task_id = spec.task.id;
         let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
         self.compose_story_step(spec).await.map(|prepared| {
-            let (user_input, mut construction_seed) =
-                apply_session_assembly(user_input, construction_seed, prepared);
-            construction_seed.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
+            let (user_input, mut construction_facts) =
+                apply_session_assembly(user_input, construction_facts, prepared);
+            construction_facts.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
                 handler: serde_json::json!({
                     "kind": "task",
                     "task_id": task_id,
@@ -1348,19 +1348,19 @@ impl<'a> SessionRequestAssembler<'a> {
                     .map(|kind| (*kind).to_string())
                     .collect(),
             });
-            (user_input, construction_seed)
+            (user_input, construction_facts)
         })
     }
 
     pub async fn compose_lifecycle_node_prompt(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
         compose_lifecycle_node_prompt_with_audit(
             user_input,
-            construction_seed,
+            construction_facts,
             self.repos,
             self.platform_config,
             spec,
@@ -1373,24 +1373,24 @@ impl<'a> SessionRequestAssembler<'a> {
     pub fn compose_companion_prompt(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: CompanionSpec<'_>,
-    ) -> (UserPromptInput, SessionConstructionSeed) {
-        compose_companion_prompt(user_input, construction_seed, spec)
+    ) -> (UserPromptInput, SessionConstructionFacts) {
+        compose_companion_prompt(user_input, construction_facts, spec)
     }
 
     pub async fn compose_companion_prompt_from_parent(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: CompanionParentSpec<'_>,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.parent_session_id)
             .await?;
         Ok(compose_companion_prompt(
             user_input,
-            construction_seed,
+            construction_facts,
             CompanionSpec {
                 parent_vfs: parent_facts.parent_vfs.as_ref(),
                 parent_mcp_servers: &parent_facts.parent_mcp_servers,
@@ -1405,15 +1405,15 @@ impl<'a> SessionRequestAssembler<'a> {
     pub async fn compose_companion_with_workflow_prompt_from_parent(
         &self,
         user_input: UserPromptInput,
-        construction_seed: SessionConstructionSeed,
+        construction_facts: SessionConstructionFacts,
         spec: CompanionParentWorkflowSpec<'_>,
-    ) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+    ) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
         let parent_facts = self
             .resolve_companion_parent_facts(spec.companion.parent_session_id)
             .await?;
         compose_companion_with_workflow_prompt(
             user_input,
-            construction_seed,
+            construction_facts,
             self.repos,
             self.platform_config,
             CompanionWorkflowSpec {
@@ -1459,14 +1459,14 @@ impl<'a> SessionRequestAssembler<'a> {
 
 pub async fn compose_lifecycle_node_prompt(
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
     compose_lifecycle_node_prompt_with_audit(
         user_input,
-        construction_seed,
+        construction_facts,
         repos,
         platform_config,
         spec,
@@ -1478,16 +1478,16 @@ pub async fn compose_lifecycle_node_prompt(
 
 pub async fn compose_lifecycle_node_prompt_with_audit(
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
-        .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
+        .map(|prepared| apply_session_assembly(user_input, construction_facts, prepared))
 }
 
 async fn compose_lifecycle_node_with_audit(
@@ -1689,10 +1689,10 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
 
 pub fn compose_companion_prompt(
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     spec: CompanionSpec<'_>,
-) -> (UserPromptInput, SessionConstructionSeed) {
-    apply_session_assembly(user_input, construction_seed, compose_companion(spec))
+) -> (UserPromptInput, SessionConstructionFacts) {
+    apply_session_assembly(user_input, construction_facts, compose_companion(spec))
 }
 
 /// 按 `CompanionSliceMode` 对父 bundle 做 fragment 级裁剪（PR 5d · E8①）。
@@ -1937,14 +1937,14 @@ async fn compose_companion_with_workflow(
 
 pub async fn compose_companion_with_workflow_prompt(
     user_input: UserPromptInput,
-    construction_seed: SessionConstructionSeed,
+    construction_facts: SessionConstructionFacts,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<(UserPromptInput, SessionConstructionSeed), String> {
+) -> Result<(UserPromptInput, SessionConstructionFacts), String> {
     compose_companion_with_workflow(repos, platform_config, spec)
         .await
-        .map(|prepared| apply_session_assembly(user_input, construction_seed, prepared))
+        .map(|prepared| apply_session_assembly(user_input, construction_facts, prepared))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2379,10 +2379,10 @@ mod tests {
         use crate::session::UserPromptInput;
         use agentdash_spi::Vfs;
 
-        fn base_req() -> (UserPromptInput, SessionConstructionSeed) {
+        fn base_req() -> (UserPromptInput, SessionConstructionFacts) {
             (
                 UserPromptInput::from_text("ping"),
-                SessionConstructionSeed::default(),
+                SessionConstructionFacts::default(),
             )
         }
 

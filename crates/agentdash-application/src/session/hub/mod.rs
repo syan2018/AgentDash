@@ -16,8 +16,8 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use super::augmenter::SharedPromptRequestAugmenter;
 use super::companion_wait::CompanionWaitRegistry;
+use super::construction_provider::SharedSessionConstructionProvider;
 use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
@@ -61,10 +61,11 @@ pub struct SessionHub {
     pub(super) hook_effect_handler_registry: Arc<
         tokio::sync::RwLock<Option<super::post_turn_handler::DynTerminalHookEffectHandlerRegistry>>,
     >,
-    /// 将来源 command 增强成与 HTTP 主通道一致的完整 launch request。
+    /// 将来源 command 构建成与 HTTP 主通道一致的完整 launch request。
     /// Hub 内部的 auto-resume 等场景必须经它补齐 owner/mcp/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
-    pub(super) prompt_augmenter: Arc<tokio::sync::RwLock<Option<SharedPromptRequestAugmenter>>>,
+    pub(super) session_construction_provider:
+        Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
     /// Context Inspector 使用的审计总线。Hub 内部创建 runtime delegate 时需要把它
     /// 传给 hook 链路，记录每轮 HookInjection → ContextFragment 的动态片段。
     pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,

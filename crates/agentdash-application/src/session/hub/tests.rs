@@ -24,7 +24,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
 use super::super::RuntimeCommandStatus;
-use super::super::construction::SessionConstructionSeed;
+use super::super::construction::SessionConstructionFacts;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -49,7 +49,7 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> (UserPromptInput, SessionConstructionSeed) {
+fn simple_prompt_request(prompt: &str) -> (UserPromptInput, SessionConstructionFacts) {
     let user_input = UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
@@ -61,23 +61,23 @@ fn simple_prompt_request(prompt: &str) -> (UserPromptInput, SessionConstructionS
         uuid::Uuid::new_v4(),
         "test-project",
     );
-    let mut construction_seed = SessionConstructionSeed::default();
-    construction_seed.owner = SessionOwnerResolver::resolve_primary(&[binding]);
-    (user_input, construction_seed)
+    let mut construction_facts = SessionConstructionFacts::default();
+    construction_facts.owner = SessionOwnerResolver::resolve_primary(&[binding]);
+    (user_input, construction_facts)
 }
 
 fn owner_bootstrap_request(
     prompt: &str,
     system_context: &str,
-) -> (UserPromptInput, SessionConstructionSeed) {
-    let (user_input, mut construction_seed) = simple_prompt_request(prompt);
+) -> (UserPromptInput, SessionConstructionFacts) {
+    let (user_input, mut construction_facts) = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
-    construction_seed.context_bundle =
+    construction_facts.context_bundle =
         Some(crate::context::build_continuation_bundle_from_markdown(
             bundle_session_id,
             system_context.to_string(),
         ));
-    (user_input, construction_seed)
+    (user_input, construction_facts)
 }
 
 #[derive(Default)]
@@ -2030,11 +2030,11 @@ async fn cancel_marks_running_turn_interrupted() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Fail-lock: auto-resume 必须经过 PromptRequestAugmenter
+// Fail-lock: auto-resume 必须经过 SessionConstructionProvider
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn launch_prompt_strict_requires_prompt_augmenter() {
+async fn launch_prompt_strict_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("strict-launch").await.expect("create");
@@ -2048,13 +2048,13 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
             ),
         )
         .await
-        .expect_err("strict launch 应在 augmenter 缺失时失败");
+        .expect_err("strict launch 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("prompt_augmenter 未注入"),
-                "错误信息应提示 augmenter 缺失，实际为: {message}"
+                message.contains("session_construction_provider 未注入"),
+                "错误信息应提示 provider 缺失，实际为: {message}"
             );
         }
         other => panic!("期望 Runtime 错误，实际为: {other}"),
@@ -2062,7 +2062,7 @@ async fn launch_prompt_strict_requires_prompt_augmenter() {
 }
 
 #[tokio::test]
-async fn launch_prompt_relaxed_requires_prompt_augmenter() {
+async fn launch_prompt_relaxed_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -2078,7 +2078,7 @@ async fn launch_prompt_relaxed_requires_prompt_augmenter() {
             ),
         )
         .await
-        .expect_err("relaxed launch 应在 augmenter 缺失时失败");
+        .expect_err("relaxed launch 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
@@ -2092,7 +2092,7 @@ async fn launch_prompt_relaxed_requires_prompt_augmenter() {
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
+async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct PromptCountingConnector {
@@ -2161,35 +2161,35 @@ async fn schedule_hook_auto_resume_strict_mode_requires_augmenter() {
         .await
         .expect("create");
 
-    // 不注入 augmenter，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
+    // 不注入 provider，strict auto-resume 应该在 launch 前失败，不能触发 connector.prompt。
     hub.schedule_hook_auto_resume(session.id.clone());
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     assert_eq!(
         prompt_calls.load(Ordering::SeqCst),
         0,
-        "strict auto-resume 在 augmenter 缺失时不应触发 connector.prompt"
+        "strict auto-resume 在 provider 缺失时不应触发 connector.prompt"
     );
 }
 
 #[tokio::test]
-async fn schedule_hook_auto_resume_routes_through_augmenter() {
-    use crate::session::{LaunchCommand, PromptRequestAugmenter};
+async fn schedule_hook_auto_resume_routes_through_provider() {
+    use crate::session::{LaunchCommand, SessionConstructionProvider};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    struct SpyAugmenter {
+    struct SpyConstructionProvider {
         calls: Arc<AtomicUsize>,
         captured_prompt: Arc<TokioMutex<Option<String>>>,
         captured_mcp_len: Arc<AtomicUsize>,
     }
 
     #[async_trait::async_trait]
-    impl PromptRequestAugmenter for SpyAugmenter {
-        async fn augment(
+    impl SessionConstructionProvider for SpyConstructionProvider {
+        async fn build_construction(
             &self,
             _session_id: &str,
             command: &LaunchCommand,
-        ) -> Result<(UserPromptInput, SessionConstructionSeed), ConnectorError> {
+        ) -> Result<(UserPromptInput, SessionConstructionFacts), ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = command
                 .user_input()
@@ -2205,7 +2205,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(
-                "spy augmenter stops here".to_string(),
+                "spy provider stops here".to_string(),
             ))
         }
     }
@@ -2242,7 +2242,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             _: agentdash_spi::ExecutionContext,
         ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
             Err(ConnectorError::Runtime(
-                "connector should not be reached if augmenter stopped".to_string(),
+                "connector should not be reached if provider stopped".to_string(),
             ))
         }
         async fn cancel(&self, _: &str) -> Result<(), ConnectorError> {
@@ -2268,7 +2268,7 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
     let calls = Arc::new(AtomicUsize::new(0));
     let captured_prompt = Arc::new(TokioMutex::new(None));
     let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
-    hub.set_prompt_augmenter(Arc::new(SpyAugmenter {
+    hub.set_session_construction_provider(Arc::new(SpyConstructionProvider {
         calls: calls.clone(),
         captured_prompt: captured_prompt.clone(),
         captured_mcp_len: captured_mcp_len.clone(),

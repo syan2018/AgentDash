@@ -4,7 +4,7 @@
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
 //! - `ensure_hook_session_runtime`（按需懒重建 hook snapshot runtime）
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
-//! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 augmenter 后转 prompt）
+//! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 provider 后转 prompt）
 
 use std::sync::Arc;
 
@@ -255,10 +255,10 @@ impl SessionHub {
     /// Uses fire-and-forget to avoid awaiting `start_prompt` directly inside
     /// the stream-processing spawn block (whose Future is not Send).
     ///
-    /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 augmenter，
+    /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 provider，
     /// 否则 owner context / MCP / capability_state / context_bundle 会漂移，
     /// Agent 失去工作流背景 → 复读上一轮。因此这里固定走 strict launch：
-    /// augmenter 缺失/失败时直接放弃本次 auto-resume，禁止裸请求降级。
+    /// provider 缺失/失败时直接放弃本次 auto-resume，禁止裸请求降级。
     pub(crate) fn schedule_hook_auto_resume(&self, session_id: String) {
         let hub = self.clone();
         tokio::spawn(async move {

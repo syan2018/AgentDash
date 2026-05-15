@@ -27,16 +27,16 @@
     ".trellis/tasks/05-14-session-refactor-batch-7-final-convergence/implement.md",
     ".trellis/spec/backend/session/session-startup-pipeline.md",
     ".trellis/spec/backend/session/runtime-execution-state.md",
-    "crates/agentdash-application/src/session/augmenter.rs",
+    "crates/agentdash-application/src/session/construction_provider.rs",
     "crates/agentdash-application/src/session/launch.rs",
     "crates/agentdash-application/src/session/launch_planner.rs",
     "crates/agentdash-application/src/session/prompt_pipeline.rs",
     "crates/agentdash-application/src/session/construction.rs",
     "crates/agentdash-application/src/session/construction_planner.rs",
     "crates/agentdash-application/src/session/hub/mod.rs",
-    "crates/agentdash-api/src/bootstrap/session_launch_augmenter.rs",
-    "crates/agentdash-api/src/bootstrap/prompt_augmenter.rs"
+    "crates/agentdash-api/src/bootstrap/session_construction_bootstrap.rs",
+    "crates/agentdash-api/src/bootstrap/session_construction_provider.rs"
   ],
-  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed 与 LaunchAugmentation alias 已从生产代码删除，PromptRequestAugmenter/prompt_pipeline/API bootstrap 不再返回或接收旧 payload/envelope，ContextPlan 已保留完整 SessionContextBundle 与 continuation context frame。剩余阻塞是 SessionConstructionSeed 仍是 bootstrap 到 pipeline 的过渡 seed，SessionConstructionPlan 仍未成为完整 frame/audit/inspector 事实源，companion parent facts 仍在 bootstrap 临时绑定，SessionHub 仍承载业务方法。执行以父任务 tracker 为准。",
+  "notes": "2026-05-15 状态校准：Batch 7 不是归档批次，仍需完成最终代码收口。已完成的 working_dir、旧 pending 字段、store adapter、ready gate、outbox/retry 等只算基础迁移。当前 LaunchCommand 已是纯入口意图，to_augment_input() 已删除，PromptAugmentInput、SessionLaunchRequest、LaunchExecutionSeed、LaunchAugmentation alias 与 SessionConstructionSeed 已从生产代码删除，SessionConstructionProvider/prompt_pipeline/API bootstrap 不再返回或接收旧 payload/envelope，ContextPlan 已保留完整 SessionContextBundle 与 continuation context frame。剩余阻塞是 SessionConstructionFacts 仍是 bootstrap 到 planner 的 provider handoff，SessionConstructionPlan 仍未成为完整 frame/audit/inspector 事实源，SessionHub 仍承载业务方法。执行以 implement.md 的 6 个 commit slice 为准。",
   "meta": {}
 }

@@ -13,7 +13,7 @@ use agentdash_domain::{
 
 use crate::repository_set::RepositorySet;
 use crate::session::{
-    LaunchCommand, PromptAugmentTaskPhase, SessionExecutionState, SessionHub, UserPromptInput,
+    LaunchCommand, SessionExecutionState, SessionHub, TaskLaunchPhase, UserPromptInput,
 };
 use crate::task::lock::TaskLockMap;
 use crate::workflow::{
@@ -204,8 +204,8 @@ impl StoryStepActivationService {
             user_input,
             identity,
             match phase {
-                ExecutionPhase::Start => PromptAugmentTaskPhase::Start,
-                ExecutionPhase::Continue => PromptAugmentTaskPhase::Continue,
+                ExecutionPhase::Start => TaskLaunchPhase::Start,
+                ExecutionPhase::Continue => TaskLaunchPhase::Continue,
             },
             override_prompt.map(str::to_string),
             additional_prompt.map(str::to_string),

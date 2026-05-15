@@ -1,15 +1,14 @@
 //! Session launch construction use case.
 //!
 //! 这个模块承接原本挂在 `routes/acp_sessions.rs` 里的 owner/context/capability
-//! 组装逻辑。它仍然返回待删除的 `PreparedLaunchPrompt` projection，但 route 层
-//! 不再承载 launch composition 主分支；下一步会把输出继续收口到
-//! `SessionConstructionPlan / LaunchExecution`。
+//! 组装逻辑。它返回 `SessionLaunchPlan`，其中 owner/source 只作为
+//! `SessionConstructionPlan` 的输入种子；route 层不再承载 launch composition 主分支。
 
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::ownership::SessionOwnerResolver;
-use agentdash_application::session::types::PreparedLaunchPrompt;
+use agentdash_application::session::types::SessionLaunchPlan;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionSpec, CompanionWorkflowSpec, HookSnapshotReloadTrigger,
     LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
@@ -39,10 +38,10 @@ pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
     input: PromptAugmentInput,
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     let task_input = input.task.clone();
     let companion_input = input.companion.clone();
-    let req = input.into_prepared_prompt();
+    let mut req = input.into_launch_plan();
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(state, req, companion).await;
     }
@@ -82,14 +81,15 @@ pub(crate) async fn augment_prompt_request_for_owner(
         supports_repository_restore,
     );
 
-    if let Some(binding) = SessionOwnerResolver::select_primary_binding(&bindings) {
-        match binding.owner_type {
+    if let Some(owner) = SessionOwnerResolver::resolve_primary(&bindings) {
+        req.construction_owner = Some(owner.clone());
+        match owner.owner_type {
             SessionOwnerType::Task => {
                 return build_task_owner_prompt_request(
                     state,
                     session_id,
                     req,
-                    binding.owner_id,
+                    owner.owner_id,
                     &meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
@@ -101,11 +101,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 let story = state
                     .repos
                     .story_repo
-                    .get_by_id(binding.owner_id)
+                    .get_by_id(owner.owner_id)
                     .await
                     .map_err(|e| ApiError::Internal(e.to_string()))?
                     .ok_or_else(|| {
-                        ApiError::NotFound(format!("Story {} 不存在", binding.owner_id))
+                        ApiError::NotFound(format!("Story {} 不存在", owner.owner_id))
                     })?;
                 let project = state
                     .repos
@@ -135,11 +135,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
                 let project = state
                     .repos
                     .project_repo
-                    .get_by_id(binding.owner_id)
+                    .get_by_id(owner.owner_id)
                     .await
                     .map_err(|e| ApiError::Internal(e.to_string()))?
                     .ok_or_else(|| {
-                        ApiError::NotFound(format!("Project {} 不存在", binding.owner_id))
+                        ApiError::NotFound(format!("Project {} 不存在", owner.owner_id))
                     })?;
 
                 return build_project_owner_prompt_request(
@@ -147,7 +147,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
                     session_id,
                     req,
                     &project,
-                    &binding.label,
+                    &owner.label,
                     &meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
@@ -175,11 +175,11 @@ pub(crate) async fn augment_prompt_request_for_owner(
 }
 
 fn apply_plain_lifecycle_request(
-    mut req: PreparedLaunchPrompt,
+    mut req: SessionLaunchPlan,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
@@ -195,14 +195,14 @@ fn apply_plain_lifecycle_request(
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PreparedLaunchPrompt,
+    mut req: SessionLaunchPlan,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -282,13 +282,13 @@ async fn build_story_owner_prompt_request(
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PreparedLaunchPrompt,
+    mut req: SessionLaunchPlan,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -391,9 +391,9 @@ async fn build_project_owner_prompt_request(
 async fn build_lifecycle_node_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: PreparedLaunchPrompt,
+    req: SessionLaunchPlan,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -459,9 +459,9 @@ async fn build_lifecycle_node_prompt_request(
 
 async fn build_companion_dispatch_prompt_request(
     state: &Arc<AppState>,
-    req: PreparedLaunchPrompt,
+    req: SessionLaunchPlan,
     companion: PromptAugmentCompanionInput,
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     if let Some(workflow) = companion.workflow {
         compose_companion_with_workflow_prompt(
             req,
@@ -576,13 +576,13 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: PreparedLaunchPrompt,
+    req: SessionLaunchPlan,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<PromptAugmentTaskInput>,
-) -> Result<PreparedLaunchPrompt, ApiError> {
+) -> Result<SessionLaunchPlan, ApiError> {
     let story = state
         .repos
         .story_repo

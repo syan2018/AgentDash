@@ -16,10 +16,10 @@
 //! prompt 来源 / 能力裁剪 / 父 session 继承。但字段形状不相交(Task 有
 //! `ActiveWorkflowProjection`,Companion 有 parent 继承,AgentNode 有 step),
 //! 因此设计上采用**组合器内部草稿**收束各轴字段，公共入口只返回
-//! `PreparedLaunchPrompt`，不再暴露半成品 request 类型:
+//! `SessionLaunchPlan`，不再暴露半成品 request 类型:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → PreparedLaunchPrompt
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → SessionLaunchPlan
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -61,7 +61,7 @@ use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 use crate::session::context::apply_workspace_defaults;
-use crate::session::types::{HookSnapshotReloadTrigger, PreparedLaunchPrompt, UserPromptInput};
+use crate::session::types::{HookSnapshotReloadTrigger, SessionLaunchPlan, UserPromptInput};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
 use crate::vfs::{
@@ -77,7 +77,7 @@ use crate::workspace::BackendAvailability;
 // SECTION 1:内部 builder prompt 投影
 // ═══════════════════════════════════════════════════════════════════
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进一个 base `PreparedLaunchPrompt`。
+/// 把 `SessionAssemblyBuilder` 的累积声明合并进一个 base `SessionLaunchPlan`。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -101,9 +101,9 @@ use crate::workspace::BackendAvailability;
 /// （如 routine 路径）。现在 entry 通过 `SessionAssemblyBuilder::with_identity` /
 /// `with_post_turn_handler` 注入，`apply_session_assembly` 统一合入，单一装配节拍保证不漏。
 fn apply_session_assembly(
-    base: PreparedLaunchPrompt,
+    base: SessionLaunchPlan,
     prepared: SessionAssemblyBuilder,
-) -> PreparedLaunchPrompt {
+) -> SessionLaunchPlan {
     let mut req = base;
     if let Some(blocks) = prepared.prompt_blocks {
         req.user_input.prompt_blocks = Some(blocks);
@@ -149,7 +149,7 @@ fn apply_session_assembly(
 /// 声明式 session 装配 builder。
 ///
 /// 将 session 启动拆为 6 个正交关注点（VFS / 能力 / MCP / 系统上下文 / Prompt / 工作流），
-/// 每个关注点通过独立的 `with_*` 方法注入，最终只投影为 `PreparedLaunchPrompt`。
+/// 每个关注点通过独立的 `with_*` 方法注入，最终只投影为 `SessionLaunchPlan`。
 ///
 /// ## 设计原则
 ///
@@ -1126,9 +1126,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_owner_bootstrap_prompt(
         &self,
-        base: PreparedLaunchPrompt,
+        base: SessionLaunchPlan,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<PreparedLaunchPrompt, String> {
+    ) -> Result<SessionLaunchPlan, String> {
         self.compose_owner_bootstrap(spec)
             .await
             .map(|prepared| apply_session_assembly(base, prepared))
@@ -1145,7 +1145,7 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// `PreparedLaunchPrompt` 后交 `session_hub.start_prompt` 派发。
+    /// `SessionLaunchPlan` 后交 `session_hub.start_prompt` 派发。
     async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -1392,9 +1392,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_story_step_prompt(
         &self,
-        base: PreparedLaunchPrompt,
+        base: SessionLaunchPlan,
         spec: StoryStepSpec<'_>,
-    ) -> Result<PreparedLaunchPrompt, TaskExecutionError> {
+    ) -> Result<SessionLaunchPlan, TaskExecutionError> {
         self.compose_story_step(spec)
             .await
             .map(|prepared| apply_session_assembly(base, prepared))
@@ -1402,9 +1402,9 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub async fn compose_lifecycle_node_prompt(
         &self,
-        base: PreparedLaunchPrompt,
+        base: SessionLaunchPlan,
         spec: LifecycleNodeSpec<'_>,
-    ) -> Result<PreparedLaunchPrompt, String> {
+    ) -> Result<SessionLaunchPlan, String> {
         compose_lifecycle_node_prompt_with_audit(
             base,
             self.repos,
@@ -1418,30 +1418,30 @@ impl<'a> SessionRequestAssembler<'a> {
 
     pub fn compose_companion_prompt(
         &self,
-        base: PreparedLaunchPrompt,
+        base: SessionLaunchPlan,
         spec: CompanionSpec<'_>,
-    ) -> PreparedLaunchPrompt {
+    ) -> SessionLaunchPlan {
         compose_companion_prompt(base, spec)
     }
 }
 
 pub async fn compose_lifecycle_node_prompt(
-    base: PreparedLaunchPrompt,
+    base: SessionLaunchPlan,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
-) -> Result<PreparedLaunchPrompt, String> {
+) -> Result<SessionLaunchPlan, String> {
     compose_lifecycle_node_prompt_with_audit(base, repos, platform_config, spec, None, None).await
 }
 
 pub async fn compose_lifecycle_node_prompt_with_audit(
-    base: PreparedLaunchPrompt,
+    base: SessionLaunchPlan,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<PreparedLaunchPrompt, String> {
+) -> Result<SessionLaunchPlan, String> {
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
         .map(|prepared| apply_session_assembly(base, prepared))
@@ -1645,9 +1645,9 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
 }
 
 pub fn compose_companion_prompt(
-    base: PreparedLaunchPrompt,
+    base: SessionLaunchPlan,
     spec: CompanionSpec<'_>,
-) -> PreparedLaunchPrompt {
+) -> SessionLaunchPlan {
     apply_session_assembly(base, compose_companion(spec))
 }
 
@@ -1872,11 +1872,11 @@ async fn compose_companion_with_workflow(
 }
 
 pub async fn compose_companion_with_workflow_prompt(
-    base: PreparedLaunchPrompt,
+    base: SessionLaunchPlan,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<PreparedLaunchPrompt, String> {
+) -> Result<SessionLaunchPlan, String> {
     compose_companion_with_workflow(repos, platform_config, spec)
         .await
         .map(|prepared| apply_session_assembly(base, prepared))
@@ -2352,8 +2352,8 @@ mod tests {
             )
         }
 
-        fn base_req() -> PreparedLaunchPrompt {
-            PreparedLaunchPrompt::from_user_input(UserPromptInput::from_text("ping"))
+        fn base_req() -> SessionLaunchPlan {
+            SessionLaunchPlan::from_user_input(UserPromptInput::from_text("ping"))
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {

@@ -29,8 +29,8 @@ use super::super::hub_support::{
 };
 use super::super::local_workspace_vfs;
 use super::super::types::{
-    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PreparedLaunchPrompt,
-    SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, SessionBootstrapState,
+    SessionExecutionState, SessionLaunchPlan, UserPromptInput,
 };
 use super::SessionHub;
 
@@ -47,24 +47,16 @@ fn test_hub(
     )
 }
 
-fn simple_prompt_request(prompt: &str) -> PreparedLaunchPrompt {
-    PreparedLaunchPrompt {
-        user_input: UserPromptInput {
-            executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
-            ..UserPromptInput::from_text(prompt)
-        },
-        mcp_servers: vec![],
-        vfs: None,
-        capability_state: None,
-        context_bundle: None,
-        continuation_context_frame: None,
-        hook_snapshot_reload: HookSnapshotReloadTrigger::None,
-        identity: None,
-        post_turn_handler: None,
-    }
+fn simple_prompt_request(prompt: &str) -> SessionLaunchPlan {
+    let mut plan = SessionLaunchPlan::from_user_input(UserPromptInput {
+        executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        ..UserPromptInput::from_text(prompt)
+    });
+    plan.hook_snapshot_reload = HookSnapshotReloadTrigger::None;
+    plan
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> PreparedLaunchPrompt {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionLaunchPlan {
     let mut req = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     req.context_bundle = Some(crate::context::build_continuation_bundle_from_markdown(
@@ -2159,8 +2151,8 @@ async fn schedule_hook_auto_resume_routes_through_augmenter() {
             &self,
             _session_id: &str,
             input: PromptAugmentInput,
-        ) -> Result<PreparedLaunchPrompt, ConnectorError> {
-            let req = input.into_prepared_prompt();
+        ) -> Result<SessionLaunchPlan, ConnectorError> {
+            let req = input.into_launch_plan();
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = req
                 .user_input

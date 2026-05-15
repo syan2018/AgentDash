@@ -112,7 +112,7 @@ impl SessionHub {
 
     /// 注入 Prompt 请求增强器（owner / MCP / flow capabilities / system context 等）。
     ///
-    /// **何时必须注入**：只要 SessionHub 会在内部构造 `PreparedLaunchPrompt`（如
+    /// **何时必须注入**：只要 SessionHub 会在内部构造 `SessionLaunchPlan`（如
     /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此增强器——否则
     /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
     ///

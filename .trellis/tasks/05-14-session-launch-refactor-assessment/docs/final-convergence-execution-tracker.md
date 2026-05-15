@@ -27,7 +27,7 @@ LaunchCommand
 
 - `PreparedSessionInputs`
 - `finalize_request`
-- `PreparedLaunchPrompt`
+- `SessionLaunchPlan` 作为长期公共主链路边界
 - `LaunchCommand::*_prepared`
 - `LaunchCommand` 承载已组装 prompt / prompt material 的分支
 - route-local `augment_prompt_request_for_owner` 业务分支
@@ -49,18 +49,19 @@ LaunchCommand
 
 当前状态：
 
-- `LaunchCommand` 已不再持有 `PreparedLaunchPrompt`。
+- `LaunchCommand` 已不再持有组装后的 launch plan。
 - `LaunchCommand::*_prepared` 已删除。
 - `PreparedSessionInputs` 已删除。
 - 生产入口已不再直接调用 `.start_prompt(...)`；当前 `rg "\.start_prompt\("` 只剩 hub 自测。
 - `start_prompt` 已收紧为 `#[cfg(test)]`，生产代码不能再绕过 `LaunchCommand` 调用 prompt pipeline。
 - `start_prompt_with_follow_up` 已收紧为 `pub(crate)`；crate 外部不能再绕过 `LaunchCommand` 直接进入 prompt pipeline。
-- `PreparedLaunchPrompt` 已从 `session::` 顶层 re-export 移除；剩余命中集中在 `session::types`、assembler、API augmenter 与 hub pipeline。
+- `PreparedLaunchPrompt` 已删除；当前临时跨 crate 类型是 `SessionLaunchPlan`。
+- `SessionLaunchPlan` 不再只是平坦 prompt 壳：它携带 `construction_owner` 与 `source_contract`，供 pipeline 生成 `SessionConstructionPlan`。
 
 仍不满足目标态的原因：
 
 - `LaunchCommand` 仍通过 `PromptAugmentInput` 间接携带 task / companion 等 composition hint。
-- `PromptAugmentInput` 到 `PreparedLaunchPrompt` 的输出仍是旧 prompt projection，而不是 `SessionConstructionPlan`。
+- `PromptAugmentInput` 到 `SessionLaunchPlan` 的输出仍保留 API augmenter 与 application pipeline 之间的跨 crate 中间层；它不是最终边界。
 - Local relay relaxed fallback 仍可把 `PromptAugmentInput` 投影成裸 prompt；这是本机 relay 的临时运行路径，不能扩大到 HTTP / Task / Workflow / Routine / Companion / Hook。
 
 目标：
@@ -83,7 +84,7 @@ rg -n "LaunchCommand::.*_prepared|PreparedSessionInputs" crates/agentdash-applic
 - `PreparedSessionInputs` 已删除。
 - `finalize_request` 已删除。
 - `SessionAssemblyBuilder::build()` 不再产出平坦中间 DTO，只结束 builder 链。
-- assembler 仍会投影为 `PreparedLaunchPrompt`，因此还不是最终 construction planner。
+- assembler 仍会投影为 `SessionLaunchPlan`，因此还不是最终 construction planner。
 
 目标：
 
@@ -106,9 +107,10 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 - context endpoint route 已只调用 `bootstrap/session_context_query.rs` 并投影 `SessionConstructionPlan`。
 - `bootstrap/session_context_query.rs` 仍按 Task / Story / Project 分支重建 VFS / context / capability，且复用 route context builder；还没有与 launch construction 合流。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
-- `LaunchExecution.construction` 当前大多仍为 `None`，说明执行链路没有真正消费 construction fact。
+- owner launch 主线会把 `construction_owner/source_contract` 投入 pipeline，并在最终 VFS/MCP/capability/context 解析后生成 `SessionConstructionPlan` 挂入 `LaunchExecution.construction`。
+- 无 owner 或 relaxed fallback 路径仍可能没有 construction plan；这说明 construction planner 还没有成为所有 launch/query 的唯一事实源。
 - `augment_prompt_request_for_owner` 已从 API route 移到 `bootstrap/session_launch_augmenter.rs`，route 文件不再承载 prompt launch composition 主分支。
-- `bootstrap/session_launch_augmenter.rs` 仍返回 `PreparedLaunchPrompt`，还不是最终 `SessionConstructionPlanner`。
+- `bootstrap/session_launch_augmenter.rs` 仍返回 `SessionLaunchPlan`，还不是最终 `SessionConstructionPlanner`；但 owner/source 已不再只藏在 route-local 分支里。
 
 目标：
 
@@ -141,7 +143,7 @@ session context 主线不再在 route 层调用这些 builder；route 只做 aut
 
 - `prompt_pipeline` 仍临时解析 payload、VFS fallback、executor fallback、MCP fallback、capability fallback、hook reload、restore、follow-up、pending command、terminal effect。
 - `LaunchExecution` 仍偏 summary/context projection。
-- `start_prompt_with_follow_up` 仍以 `PreparedLaunchPrompt` 作为输入；这不是最终执行边界。
+- `start_prompt_with_follow_up` 仍以 `SessionLaunchPlan` 作为输入；这不是最终执行边界。
 
 目标：
 
@@ -265,7 +267,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 
 1. 新建目标旁路 `SessionConstructionPlanner + SessionLaunchPlanner + SessionLaunchExecutor`。
 2. 将所有入口一次性切到新旁路。
-3. 删除旧 `PreparedSessionInputs / finalize_request / *_prepared / PreparedLaunchPrompt` 主线。
+3. 删除旧 `PreparedSessionInputs / finalize_request / *_prepared / PreparedLaunchPrompt` 主线，并继续把 `SessionLaunchPlan` 收缩到 planner/executor 内部。
 4. 修编译与测试。
 5. 再拆 `SessionHub` 剩余 facade。
 
@@ -297,13 +299,14 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
   - [x] 停止从 `session::mod` re-export `finalize_request`。
   - [x] 删除 `PreparedSessionInputs` 与 `finalize_request` 代码实体。
   - [x] 删除中途引入的 `SessionAssemblyDraft`，避免把旧 DTO 改名保留。
-- [x] 删除 `LaunchCommand` 内部的 `PreparedLaunchPrompt` 字段。
+- [x] 删除 `LaunchCommand` 内部的已组装 launch plan 字段。
 - [x] 删除 `LaunchCommand` 内部承载已组装 prompt material 的分支；未迁移入口显式停在 `start_prompt` 调用点，不再伪装成统一 command。
 - [x] 将 `start_prompt` 收紧为测试专用，防止生产代码新增旧 prompt 旁路。
 - [x] 将 `start_prompt_with_follow_up` 从 public API 收紧为 crate 内部执行函数。
-- [x] 停止从 `session::mod` re-export `PreparedLaunchPrompt`，避免新增入口从主 namespace 继续依赖旧投影。
+- [x] 停止从 `session::mod` re-export `SessionLaunchPlan`，避免新增入口从主 namespace 继续依赖旧投影。
 - [ ] 将 VFS/MCP/capability/context/hook/post-turn 从 command 主体移入 construction/launch planner。
-- [ ] `LaunchExecution` 持有完整 construction / launch plan。
+- [x] owner launch 主线的 `LaunchExecution` 持有 `SessionConstructionPlan`。
+- [ ] 所有 launch 路径的 `LaunchExecution` 都持有完整 construction / launch plan。
 
 ### Phase 2：入口一次性切换
 
@@ -329,9 +332,10 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [x] 删除 `finalize_request`。
 - [x] 删除 `LaunchCommand::*_prepared`。
 - [x] 删除 `LaunchCommand` 已组装 prompt 分支。
+- [x] 删除 `PreparedLaunchPrompt` 代码实体。
 - [x] 从 route 文件删除 `augment_prompt_request_for_owner` 业务分支；当前集中到 `bootstrap/session_launch_augmenter.rs`。
-- [ ] 将 `bootstrap/session_launch_augmenter.rs` 输出从 `PreparedLaunchPrompt` 改为 construction/launch plan。
-- [ ] 删除 `PreparedLaunchPrompt` 或退化成 launch executor 私有 connector projection。
+- [ ] 将 `bootstrap/session_launch_augmenter.rs` 输出从 `SessionLaunchPlan` 改为 construction/launch plan。
+- [ ] 删除 `SessionLaunchPlan` 或退化成 launch executor 私有 connector projection。
 - [ ] 删除 `start_prompt_with_follow_up` planner 职责。
 
 ### Phase 4：Context 同源

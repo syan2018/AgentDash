@@ -9,6 +9,9 @@ use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{PromptPayload, SessionContextBundle, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
+use super::construction::SourceContractPlan;
+use super::ownership::ResolvedSessionOwner;
+
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
 #[derive(Debug, Clone, Deserialize)]
@@ -24,12 +27,16 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// 已补齐的 launch prompt — 包含用户输入 + 后端注入的运行时上下文。
+/// 一次 launch 的入口计划。
 ///
-/// 由 `LaunchCommand` adapter / augmenter / assembler 组合 `UserPromptInput`
-/// 与后端注入字段构造，作为 prompt pipeline 进入 `LaunchExecution` 前的输入投影。
-pub struct PreparedLaunchPrompt {
+/// 它不是 session 构建事实源：owner/source 只作为 construction planner 的输入种子，
+/// VFS/MCP/capability/context 会在进入 `LaunchExecution` 前被投影为
+/// `SessionConstructionPlan`。保留这个类型只是为了让 API 层 augmenter 与
+/// application launch executor 跨 crate 传递同一次 launch 的输入。
+pub struct SessionLaunchPlan {
     pub user_input: UserPromptInput,
+    pub construction_owner: Option<ResolvedSessionOwner>,
+    pub source_contract: SourceContractPlan,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     pub capability_state: Option<agentdash_spi::CapabilityState>,
@@ -52,11 +59,13 @@ pub struct PreparedLaunchPrompt {
     pub post_turn_handler: Option<super::post_turn_handler::DynPostTurnHandler>,
 }
 
-impl PreparedLaunchPrompt {
-    /// 从 `UserPromptInput` 构造最小 prompt，后端注入字段全部为空。
+impl SessionLaunchPlan {
+    /// 从 `UserPromptInput` 构造最小 launch plan，后端注入字段全部为空。
     pub fn from_user_input(input: UserPromptInput) -> Self {
         Self {
             user_input: input,
+            construction_owner: None,
+            source_contract: SourceContractPlan::default(),
             mcp_servers: Vec::new(),
             vfs: None,
             capability_state: None,

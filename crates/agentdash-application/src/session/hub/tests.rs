@@ -192,7 +192,7 @@ async fn start_prompt_records_current_turn_state() {
 
     let mut req = simple_prompt_request("hello");
     req.1.vfs = Some(local_workspace_vfs(workspace.path()));
-    req.1.working_dir_input = Some("src".to_string());
+    req.1.working_dir_hint = Some("src".to_string());
     req.1.mcp_servers = vec![session_mcp.clone()];
     req.1.capability_state = Some(flow_caps.clone());
 

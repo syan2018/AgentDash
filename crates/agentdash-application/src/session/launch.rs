@@ -291,7 +291,6 @@ pub struct LaunchSummary {
     pub pending_vfs_overlay_applied: bool,
     pub mcp_source: LaunchMcpSource,
     pub capability_source: LaunchCapabilitySource,
-    pub working_dir_input: Option<String>,
     pub working_directory: PathBuf,
     pub has_vfs: bool,
     pub mcp_server_count: usize,
@@ -382,7 +381,6 @@ pub struct LaunchExecutionInput {
     pub pending_vfs_overlay_applied: bool,
     pub mcp_source: LaunchMcpSource,
     pub capability_source: LaunchCapabilitySource,
-    pub working_dir_input: Option<String>,
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
@@ -425,7 +423,6 @@ impl LaunchExecution {
             pending_vfs_overlay_applied: input.pending_vfs_overlay_applied,
             mcp_source: input.mcp_source,
             capability_source: input.capability_source,
-            working_dir_input: input.working_dir_input,
             working_directory: input.working_directory.clone(),
             has_vfs: input.vfs.is_some(),
             mcp_server_count: input.mcp_servers.len(),
@@ -583,7 +580,6 @@ mod tests {
             pending_vfs_overlay_applied: false,
             mcp_source: LaunchMcpSource::Request,
             capability_source: LaunchCapabilitySource::Request,
-            working_dir_input: Some("project".to_string()),
             working_directory: PathBuf::from("/workspace/project"),
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
             executor_config: AgentConfig::new("PI_AGENT"),
@@ -627,10 +623,6 @@ mod tests {
         assert_eq!(
             execution.summary.capability_source,
             LaunchCapabilitySource::Request
-        );
-        assert_eq!(
-            execution.summary.working_dir_input,
-            Some("project".to_string())
         );
         assert!(!execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);

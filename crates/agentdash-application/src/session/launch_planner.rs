@@ -53,7 +53,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         let SessionConstructionSeed {
             owner: construction_owner,
             source_contract,
-            working_dir_input,
+            working_dir_hint,
             local_relay_workspace_root,
             mcp_servers: seed_mcp_servers,
             vfs: seed_vfs,
@@ -113,7 +113,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
             })?;
         let working_directory =
-            resolve_working_dir(&default_mount_root, working_dir_input.as_deref())
+            resolve_working_dir(&default_mount_root, working_dir_hint.as_deref())
                 .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
         let executor_config = input
@@ -300,7 +300,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 session_id: sid.clone(),
                 owner: construction_owner,
                 source: source_contract,
-                working_dir_input: working_dir_input.clone(),
+                working_dir_hint: working_dir_hint.clone(),
                 local_relay_workspace_root,
                 working_directory: working_directory.clone(),
                 executor_config: executor_config.clone(),
@@ -316,12 +316,7 @@ impl<'a> SessionLaunchPlanner<'a> {
                 capability_source: capability_source.clone(),
                 vfs_source: vfs_source.clone(),
             })
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "launch 缺少 resolved session owner，无法构建 SessionConstructionPlan"
-                        .to_string(),
-                )
-            })?;
+            .map_err(ConnectorError::InvalidConfig)?;
         let post_turn_handler = self
             .resolve_terminal_hook_effect_handler(input.session_id, terminal_hook_effect_binding)
             .await?;
@@ -343,7 +338,6 @@ impl<'a> SessionLaunchPlanner<'a> {
             pending_vfs_overlay_applied,
             mcp_source,
             capability_source,
-            working_dir_input,
             working_directory,
             environment_variables: input.user_input.env.clone(),
             executor_config,

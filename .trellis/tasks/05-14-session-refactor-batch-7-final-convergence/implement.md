@@ -20,7 +20,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
 - [x] `SessionConstructionSeed` 不再从 `session::mod` 顶层 re-export，外层引用必须显式进入 construction 模块。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand` 或 seed，只保留 workspace root 作为来源事实，由 planner/construction 解析。
-- [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `SessionConstructionSeed.working_dir_input`，后续迁入 construction。
+- [x] `UserPromptInput.working_dir` 移出 prompt input；`working_dir_input` 已归零，launch summary/input 不再携带 working dir hint；当前过渡事实只留在 `SessionConstructionSeed.working_dir_hint`，后续迁入 construction。
 - [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
 - [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；API bootstrap 不再创建内存 handler，也不再生成 `TerminalHookEffectBinding`；task binding 由 story step assembler 产出 durable 描述。
 - [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；API bootstrap 不再投影 parent VFS/MCP，当前由 application assembler 的 parent facts provider 解析。
@@ -39,7 +39,7 @@ rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" cr
 
 - [x] `ContextPlan` 持有完整 `SessionContextBundle`。
 - [x] `ContextPlan` 持有 continuation context frame；该 frame 不再作为 launch planner 输出旁路存在。
-- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `SessionConstructionSeed.working_dir_input` 过渡种子。
+- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `SessionConstructionSeed.working_dir_hint` 过渡种子。
 - [x] task effect binding 已进入 construction/effects durable binding，不再由 API bootstrap 绑定内存 handler或 durable binding。
 - [x] local relay workspace root 由 planner/construction 解析，并记录 VFS 来源。
 - [x] companion parent VFS/MCP projection 由 application assembler parent facts provider 解析；API bootstrap 上的 parent capability 临时投影已删除。
@@ -60,7 +60,7 @@ route/bootstrap 不得保留独立 owner / VFS / capability / context 主线。
 - [ ] `SessionLaunchPlanner` 消费 `LaunchCommand + SessionConstructionPlan + runtime facts`。
 - [x] `LaunchExecution` 不再允许 `construction: Option<_>`；缺 owner / construction plan 会在 planner 阶段失败。
 - [x] connector input 由 `LaunchExecution` 投影为 `ExecutionContext`。
-- [x] `LaunchExecution` 显式包含 resolved prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace。
+- [x] `LaunchExecution` 显式包含 resolved prompt payload、construction、lifecycle、restore、hook plan、follow-up plan、runtime command plan、terminal effect plan、connector input、trace；`working_dir_input` 已从 launch execution/summary 删除，connector input 只接收解析后的 `working_directory`。
 - [x] pending runtime commands 与 pending capability transitions 不再作为 `PlannedSessionLaunch` 旁路字段，改由 `LaunchExecution.runtime_commands` 承载。
 - [x] follow-up id 从 `LaunchExecution.summary` 投影；post-turn handler 从 `LaunchExecution.terminal_effects` 投影，不再挂在 `PlannedSessionLaunch`。
 - [x] base/effective capability 与 hook session 从 `LaunchExecution.runtime_commands` / `LaunchExecution.context` 投影，不再挂在 `PlannedSessionLaunch`。

@@ -19,7 +19,7 @@
 //! launch seed 与 construction seed:
 //!
 //! ```text
-//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → (UserPromptInput, SessionConstructionSeed)
+//! 4 个 compose fn(各自 Spec) → SessionAssemblyBuilder → construction facts
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
@@ -91,7 +91,7 @@ use crate::workspace::BackendAvailability;
 /// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
 /// | `context_bundle` / `capability_state` | 整体替换为 prepared 值 |
-/// | `working_dir_input` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
+/// | `working_dir_hint` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
 /// | `mcp_servers` | **整体替换** 为 prepared 值（compose 内部已汇总 request + platform + custom + preset） |
 /// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
@@ -117,12 +117,12 @@ fn apply_session_assembly(
     construction_seed.context_bundle = prepared.context_bundle;
 
     apply_workspace_defaults(
-        &mut construction_seed.working_dir_input,
+        &mut construction_seed.working_dir_hint,
         &mut construction_seed.vfs,
         prepared.workspace_defaults.as_ref(),
     );
     if let Some(wd) = prepared.working_dir {
-        construction_seed.working_dir_input = Some(wd);
+        construction_seed.working_dir_hint = Some(wd);
     }
     // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
     // 语义等价于旧的三重分支，但表达更直接；compose 产出的 workspace/canvas/lifecycle
@@ -2548,7 +2548,7 @@ mod tests {
             };
 
             let result = apply_session_assembly(base.0, base.1, prepared);
-            assert_eq!(result.1.working_dir_input.as_deref(), Some("."));
+            assert_eq!(result.1.working_dir_hint.as_deref(), Some("."));
         }
 
         #[test]
@@ -2563,7 +2563,7 @@ mod tests {
 
             let result = apply_session_assembly(base.0, base.1, prepared);
             assert_eq!(
-                result.1.working_dir_input.as_deref(),
+                result.1.working_dir_hint.as_deref(),
                 Some("packages/foo"),
                 "prepared.working_dir 应覆盖 workspace default 的 \".\""
             );

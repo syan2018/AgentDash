@@ -64,7 +64,7 @@ pub(super) struct SessionConstructionPlannerInput {
     pub session_id: String,
     pub owner: Option<ResolvedSessionOwner>,
     pub source: super::construction::SourceContractPlan,
-    pub working_dir_input: Option<String>,
+    pub working_dir_hint: Option<String>,
     pub local_relay_workspace_root: Option<PathBuf>,
     pub working_directory: PathBuf,
     pub executor_config: agentdash_domain::common::AgentConfig,
@@ -459,8 +459,10 @@ impl SessionConstructionPlanner {
 
     pub(super) fn plan_launch(
         input: SessionConstructionPlannerInput,
-    ) -> Option<SessionConstructionPlan> {
-        let owner = input.owner?;
+    ) -> Result<SessionConstructionPlan, String> {
+        let owner = input
+            .owner
+            .ok_or_else(|| "launch 缺少 resolved session owner".to_string())?;
         let mut trace_entries = vec![
             SessionConstructionTraceEntry {
                 stage: "launch_lifecycle",
@@ -481,13 +483,13 @@ impl SessionConstructionPlanner {
                 source: root.to_string_lossy().replace('\\', "/"),
             });
         }
-        Some(SessionConstructionPlan::from_launch(
+        Ok(SessionConstructionPlan::from_launch(
             SessionConstructionLaunchInput {
                 session_id: input.session_id,
                 owner,
                 source: input.source,
                 workspace_id: None,
-                working_dir_input: input.working_dir_input,
+                working_dir_hint: input.working_dir_hint,
                 working_directory: input.working_directory,
                 executor_config: input.executor_config,
                 vfs: input.vfs,

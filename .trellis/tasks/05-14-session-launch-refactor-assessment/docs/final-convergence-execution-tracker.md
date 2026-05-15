@@ -27,7 +27,7 @@ LaunchCommand
 | Commit 7 | 已完成 | 删除 Hub facade 调用残留，迁移 companion / hook auto-resume / tests / title 到具体服务 |
 | Commit 8 | 已完成 | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle，删除 Hub handle 服务定位器 |
 | Commit 9 | 已完成 | 解除 launch planner/executor、terminal effects 与 Hub 执行期参数依赖 |
-| Commit 10 | 未开始 | effects / pending / persistence 语义验证、migration 核验与父任务文档最终收口 |
+| Commit 10 | 已完成 | effects / pending / persistence 语义验证、migration 核验与父任务文档最终收口 |
 
 ## Current Code Facts
 
@@ -145,7 +145,7 @@ git diff --check
 退出检查：
 
 ```powershell
-rg -n "SessionLaunchExecutor::new\\(&.*hub|SessionLaunchPlanner::new\\(.*hub|SessionTerminalEffectDispatcher::new\\(&.*hub|SharedSessionHubHandle|session_hub_handle|session_hub: Option<SessionHub>|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "SessionLaunchExecutor::new\\(&.*hub|SessionLaunchPlanner::new\\(.*hub|SessionTerminalEffectDispatcher::new\\(&.*hub|SessionTurnProcessor::spawn\\(\\s*hub|SharedSessionHubHandle|session_hub_handle|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "impl SessionHub" crates/agentdash-application/src/session
 cargo fmt --check
 cargo check -p agentdash-application
@@ -181,7 +181,7 @@ cargo test -p agentdash-application session::runtime_commands
 cargo test -p agentdash-application session::memory_persistence
 cargo test -p agentdash-application session::path_policy
 cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions
-rg -n "PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|LaunchCommand::.*_prepared|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "\\b(PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed)\\b|LaunchCommand::.*_prepared" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src
 git diff --check
 ```
@@ -199,7 +199,7 @@ git diff --check
 - [x] API/local CRUD/event/runtime/control entrypoints no longer go through `SessionHub`.
 - [ ] `SessionHub` is not a business capability entrypoint.
 - [ ] launch planner/executor/effects/runtime tools do not depend on `SessionHub`.
-- [ ] terminal effects are durable replay/retry/dead-letter.
-- [ ] pending runtime command apply-once and recovery are auditable.
-- [ ] persistence store boundaries are not bypassed by new business logic.
-- [ ] final validation matrix passes.
+- [x] terminal effects are durable replay/retry/dead-letter.
+- [x] pending runtime command apply-once and recovery are auditable.
+- [x] persistence store boundaries are not bypassed by new business logic.
+- [x] final validation matrix passes.

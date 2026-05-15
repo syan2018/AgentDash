@@ -38,7 +38,7 @@
 - Repository 模式、错误处理、质量规范、日志规范
 
 模块专属契约（按子系统分目录）：
-- `session/` — 流式协议、Pi Agent 流式合并
+- `session/` — launch 主线、runtime 状态、ExecutionContext 投影、Bundle 主数据面、流式协议
 - `hooks/` — Hook Runtime 跨层契约、Rhai 脚本引擎
 - `workflow/` — Lifecycle Edge 设计
 - `vfs/` — 统一 VFS
@@ -103,6 +103,10 @@
 |--------|------|------|
 | session/ | 流式协议 | ✅ 已拆分 |
 | session/ | Pi Agent 流式合并 | ✅ 已拆分 |
+| session/ | Session Startup Pipeline | ✅ 已更新 |
+| session/ | Session 运行态执行状态 | ✅ 已更新 |
+| session/ | ExecutionContext Frames | ✅ 已更新 |
+| session/ | Bundle 主数据面 | ✅ 已更新 |
 | hooks/ | Execution Hook Runtime | ✅ 已更新 |
 | hooks/ | Hook Script Engine | ✅ 已创建 |
 | workflow/ | Lifecycle Edge 设计 | ✅ 已创建 |

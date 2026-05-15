@@ -1,89 +1,91 @@
-# Session 运行态执行状态
+# Session Runtime Execution State
 
-## 核心规则
+本 spec 定义 session 启动后的运行态边界。构建事实来自
+`SessionConstructionPlan`，单次执行策略来自 `LaunchExecution`，运行态只回答
+“当前这次 turn 是否被 claim、是否 active、如何取消、终态如何清理”。
 
-Session 启动后的"当前实际在跑什么"归属 `SessionRuntime.active_execution`。
-`SessionConstructionSeed` / `LaunchExecutionSeed` 是当前迁移期 seed，`ExecutionContext`
-是连接器投影，二者都不是运行态真相容器。`PromptAugmentInput` / `SessionLaunchRequest`
-已删除，不能重新引入。
+## Runtime Boundaries
 
-2026-05 重构后，运行态事实按以下边界拆分：
+| 能力 | 权威组件 | 语义 |
+|---|---|---|
+| Session runtime map | `SessionRuntimeRegistry` | 进程内 session runtime entry 的访问入口 |
+| Turn lifecycle | `TurnSupervisor` | claim / activate / cancel / cleanup / stalled scan |
+| Connector live session | connector gateway | 远端或内嵌 connector 是否仍持有 live executor session |
+| Active turn | `TurnState::Active(TurnExecution)` | 当前进程内是否有正在执行的 turn |
 
-- `SessionRuntimeRegistry` 是进程内 `SessionRuntime` map 的唯一访问入口。
-- `TurnSupervisor` 负责 turn claim / activate / cancel / cleanup / stalled scan。
-- `has_live_executor_session(session_id)` 只表示 connector 层是否有 live executor
-  session；不得再用 "live runtime" 混称 active turn 或 registry entry。
-- `has_runtime_entry(session_id)` 表示 hub 进程内是否有 runtime entry。
-- `has_active_turn(session_id)` 表示当前是否存在 active turn。
+三个查询语义保持分离：
 
-## 内嵌 Connector
+- `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。
+- `has_runtime_entry(session_id)`：本进程是否有 runtime entry。
+- `has_active_turn(session_id)`：当前是否存在 active turn。
 
-PiAgent 等 in-process connector 不处理原始 `McpServer` 声明，也不区分
-direct / relay MCP。Application 层负责把 runtime tools、direct MCP tools、
-relay MCP tools 统一构建成 `assembled_tools: Vec<DynAgentTool>`，connector
-只接收并调用这些工具。
+## Connector Projection
 
-`ExecutionContext.session.mcp_servers` 只作为 connector-facing 的完整运行输入存在；
-内嵌 connector 不消费该字段，不能在 agent 模块内重新做 MCP 发现或建联。
+`ExecutionContext` 是 connector-facing projection，不是 application 层事实源。
 
-## Relay Connector
+PiAgent 等 in-process connector 直接消费 `ExecutionTurnFrame.assembled_tools`、
+`runtime_delegate`、`hook_session`、`restored_session_state` 与 `context_bundle`。
+MCP discovery、VFS resolution 和 capability resolution 属于 construction/launch
+职责。
 
-Relay connector 是远端执行器的 transport bridge。对于 relay 的本地/第三方
-agent，cloud 侧直接把完整 `mcp_servers` 结构随 prompt payload 透传给远端，
-不区分 direct / relay，也不加额外标注。
+Relay connector 是远端执行器 transport bridge。Cloud 侧把完整 `mcp_servers`、
+VFS、working directory、env、executor config、identity 与 context projection
+下发给远端；relay 侧按原样透传给第三方 agent。
 
-这些 MCP 连接由远端第三方 agent 自己处理，跟云端内嵌 agent 的
-`assembled_tools` 设计无关。`RelayAgentConnector` 只能做原样透传，不能维护
-私有 per-session MCP 缓存，也不能自创第二套 relay MCP 分类状态。
+## Tool And Context Hot Update
 
-## 热更新
+Workflow phase、lifecycle hot update 或 MCP preset 变更从 active turn 读取当前
+`CapabilityState` 与 `ExecutionSessionFrame` 快照，重建工具集后调用 live
+connector 的 `update_session_tools`。
 
-Workflow phase / lifecycle hot update 必须从 `SessionRuntime.active_execution`
-读取当前 `CapabilityState.mcp_servers`，重建完整工具集后通过 live connector 替换。
-`CompositeConnector` 必须把 `update_session_tools` 转发给持有 live session 的
-子 connector，不能走 trait 默认 no-op。
+热更新路径只更新 runtime tools/capability projection，不构造新的 prompt，也不把
+一次性 `ExecutionContext` 当成新的 session 事实源。
 
-## 内部 Follow-up
+## Internal Follow-up
 
-Hub 内部构造的 follow-up prompt（例如 hook auto-resume、companion parent
-resume）必须经过 `PromptRequestAugmenter` 或等价的 assembler/envelope 路径，
-以补齐 owner、VFS、MCP、CapabilityState、context bundle 等运行时字段。
-禁止在特化路径中手写半裸 prompt payload 并手工拷贝部分状态。
+Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：
+
+```text
+LaunchCommand -> SessionConstructionPlan -> LaunchExecution
+```
+
+follow-up 来源只表达 resume intent、parent/session 引用和 source policy。owner、
+VFS、MCP、capability、context、identity 由 construction 重新投影。
 
 ## Terminal Effects
 
-`turn_terminal` event 必须先持久化，并由 `SessionMeta.last_execution_status` 投影
-记录终态。终态后的业务副作用不允许由 `SessionTurnProcessor` 直接分发；必须先写入
-terminal effect outbox，再由 dispatcher 执行并标记 `pending` / `running` /
-`succeeded` / `failed`。
+`turn_terminal` event 先持久化，`SessionMeta.last_execution_status` 由事件投影更新。
+终态后的业务副作用写入 terminal effect outbox，再由 dispatcher 执行。
 
-当前 outbox effect 类型：
+Outbox effect 类型：
 
-- `hook_effects`：`SessionTerminal` hook 产出的 `HookEffect` 列表。
-- `session_terminal_callback`：平台级 terminal callback。
-- `hook_auto_resume`：hook `BeforeStop == continue` 驱动的 auto-resume。
+- `hook_effects`
+- `session_terminal_callback`
+- `hook_auto_resume`
 
-effect 失败不能回滚 terminal event，也不能破坏 active turn cleanup。
+Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect 失败只
+影响 outbox 状态，不回滚 terminal event，也不阻断 active turn cleanup。
 
 ## Persistence Store Boundaries
 
-`SessionPersistence` 仍可作为迁移期组合接口存在，但能力边界必须拆开：
+| Store | 职责 |
+|---|---|
+| `SessionMetaStore` | session meta CRUD 与投影字段合并写回 |
+| `SessionEventStore` | append/read/list session events |
+| `SessionTerminalEffectStore` | terminal effect outbox 写入、状态迁移和查询 |
+| `SessionRuntimeCommandStore` | runtime command upsert、pending 查询、applied/failed 状态迁移 |
 
-- `SessionMetaStore`：session meta CRUD 与投影字段合并写回。
-- `SessionEventStore`：append/read/list session events。
-- `SessionTerminalEffectStore`：terminal effect outbox 写入、状态迁移和查询。
-- `SessionRuntimeCommandStore`：pending runtime command upsert / pending 查询 /
-  applied / failed 状态迁移。
-
-新增 runtime/effect/pending 调用点必须依赖对应 store 边界，不得继续把
-`SessionPersistence` 当作无差别大仓储扩展。
+`SessionPersistence` 可以作为装配层组合接口存在；runtime、effects、pending 的业务逻辑
+依赖对应 store 边界。
 
 ## Pending Runtime Commands
 
-pending runtime context / capability transition 不再存放在
-`SessionMeta.pending_capability_state_transitions`。目标态事实源是 runtime command
-store，按 `pending` / `applied` / `failed` 状态审计。
+Runtime context / capability transition 的事实源是 runtime command store：
 
-下轮 prompt 只从 command store 查询 pending commands，应用后标记为 `applied`。
-`SessionMeta` 不再承担 command queue 职责；repository 主线不得继续读写 legacy
-`pending_capability_state_transitions_json` 字段。
+```text
+pending -> applied
+pending -> failed
+```
+
+下一轮 prompt 只从 command store 查询 pending commands；connector accepted 后写
+applied，失败路径保留可审计状态用于恢复。

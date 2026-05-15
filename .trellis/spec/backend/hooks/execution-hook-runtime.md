@@ -97,7 +97,7 @@ pub trait ExecutionHookProvider: Send + Sync {
   frame 在后端语义上合并成一个含糊的 surface。
 - Hook auto-resume 必须生成独立 `ContextFrame(kind="auto_resume")`。该 frame 的
   `delivery_channel` 是 `user_prompt`，`rendered_text` 必须等于系统实际发起的
-  auto-resume prompt；不要让系统续跑提示伪装成普通用户输入而缺少可审计 UI。
+  auto-resume prompt；系统续跑提示需要保留可审计 UI 语义。
 - `context_compacted` 事件必须伴随生成独立
   `ContextFrame(kind="compaction_summary")`。该 frame 的 `delivery_channel` 是
   `continuation`，section 至少包含 summary、tokens_before、messages_compacted、
@@ -113,23 +113,21 @@ pub trait ExecutionHookProvider: Send + Sync {
   step / effective contract 发生变化，也必须产生 capability context update。原因是
   workflow guidance / context binding 属于动态上下文变化，不能依赖工具 surface
   delta 才进入下一次 AgentLoop 边界。
-- PhaseNode 的 live apply、pending next turn、applied on next turn 三条路径必须
-  通过同一份 runtime context transition 结构派生 `capability_state_changed`
-  事件 payload 与 pending metadata；禁止各入口手写互不一致的事件 JSON。
-- 生产路径必须通过 `SessionHub` 的 runtime context transition applier 应用
-  transition。`replace_current_capability_state`、`emit_capability_state_changed`、
-  runtime context update injection 收集、pending transition 写入等低层方法只允许
-  作为 applier 内部 primitive 使用。
+- PhaseNode 的 live apply、pending next turn、applied on next turn 三条路径通过
+  同一份 runtime context transition 结构派生 `capability_state_changed`
+  事件 payload 与 pending metadata。
+- 生产路径通过 `SessionCapabilityService` 应用 transition。`replace_current_capability_state`、
+  `emit_capability_state_changed`、runtime context update injection 收集、pending
+  transition 写入等底层方法只作为 service 内部 primitive 使用。
 - runtime context update 不应作为第二条即时 live notification 推给 Agent。transition
   applier 应先更新 `CapabilityState` 与 tool set，再收集当前 hook snapshot 中的
   workflow/context 注入，将合并后的能力变化、工具定义摘要与 workflow 注入写入
   `HookTurnStartNotice` 队列；
   下一次 `transform_context` 边界统一消费。
-- runtime steering 的一等展示结构是 `ContextFrame`。所有 runtime capability
-  delta、tool schema、workflow context、普通 hook injection、system notice 都必须先
-  由所属模块的 typed metadata 构造为 `ContextFrame.sections` 与
-  `ContextFrame.rendered_text`。禁止沉淀一个跨所有 section kind 的中心化 renderer，
-  也禁止为事件流、Agent Markdown、前端摘要分别手写三份互不共享的数据。
+- runtime steering 的一等展示结构是 `ContextFrame`。runtime capability delta、
+  tool schema、workflow context、普通 hook injection、system notice 先由所属模块的
+  typed metadata 构造为 `ContextFrame.sections` 与 `ContextFrame.rendered_text`。
+  各消费者共享同一份 frame 数据。
 - 各 `ContextFrame.kind` 由所属模块内聚渲染：例如 workspace surface 只由
   workspace/VFS metadata 渲染，skill surface 只由 skill capability metadata 渲染。
   多个 frame 的汇聚点是 delivery boundary 与前端 feed 聚合，不是一个后端“大杂烩”
@@ -141,10 +139,8 @@ pub trait ExecutionHookProvider: Send + Sync {
   前端的 Agent 行为可视化以 `SessionMetaUpdate { key: "context_frame" }` 为准；
   相邻 frame 应在 feed 层聚合展示，`hook_trace context_injected` 不得冒充 context
   frame 的完整可视化。
-- `baseline_initialized`、`context_injected`、`steering_injected` 等 legacy hook trace
-  决策只可作为 lifecycle/audit 事件存在；普通视图不得把它们展示成 Agent-visible
-  context card。真正注入给 Agent 的上下文必须进入 `ContextFrame` 或明确标记为
-  待迁移 legacy。
+- `baseline_initialized`、`context_injected`、`steering_injected` 等 hook trace
+  决策属于 lifecycle/audit 事件；Agent-visible context card 来自 `ContextFrame`。
 
 ### Ask / Approval
 

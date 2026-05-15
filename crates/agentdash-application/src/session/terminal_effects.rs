@@ -611,6 +611,7 @@ mod tests {
             .expect("terminal effect should be inserted");
 
         let attempted = hub
+            .effects_service()
             .replay_terminal_effect_outbox(10)
             .await
             .expect("replay should not fail at store level");

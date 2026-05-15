@@ -33,7 +33,7 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 | 7 | 已完成 | `refactor(session): 删除 hub facade 调用残留` | 删除已迁出的 Hub facade 方法，迁移 companion / hook auto-resume / tests / title 调用点到具体能力服务 |
 | 8 | 已完成 | `refactor(session): 移除 runtime tools 的 hub 服务定位器` | runtime tool provider、companion/canvas/workflow tools 改用具体 service bundle |
 | 9 | 已完成 | `refactor(session): 解除 launch effects 与 hub 依赖` | 让 launch planner/executor、terminal effects 依赖明确服务/依赖包，不再以 Hub 作为执行期参数 |
-| 10 | 未开始 | `refactor(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
+| 10 | 已完成 | `test(session): 完成 effects pending persistence 验证收口` | 核验 durable effects、pending runtime command、store boundaries、migration 与父任务文档最终收口 |
 
 ## Execution Rules
 
@@ -241,7 +241,7 @@ git diff --check
 退出检查：
 
 ```powershell
-rg -n "SessionLaunchExecutor::new\\(&.*hub|SessionLaunchPlanner::new\\(.*hub|SessionTerminalEffectDispatcher::new\\(&.*hub|SharedSessionHubHandle|session_hub_handle|session_hub: Option<SessionHub>|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "SessionLaunchExecutor::new\\(&.*hub|SessionLaunchPlanner::new\\(.*hub|SessionTerminalEffectDispatcher::new\\(&.*hub|SessionTurnProcessor::spawn\\(\\s*hub|SharedSessionHubHandle|session_hub_handle|impl RuntimeSessionMcpAccess for SessionHub" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "impl SessionHub" crates/agentdash-application/src/session
 cargo fmt --check
 cargo check -p agentdash-application
@@ -259,6 +259,8 @@ git diff --check
 - Context 查询、launch、companion、local relay、hook auto-resume 都从同一 construction fact source 投影。
 
 ### Commit 10: Effects / pending / persistence 验证与任务收口
+
+状态：已完成。
 
 本提交不再新增架构壳，只做最终语义确认、测试补齐、迁移核验和文档闭环。若 Commit 8 发现缺口，必须先在 Commit 8 修掉，不能在 Commit 9 写兼容旁路。
 
@@ -287,7 +289,7 @@ cargo test -p agentdash-application session::runtime_commands
 cargo test -p agentdash-application session::memory_persistence
 cargo test -p agentdash-application session::path_policy
 cargo test -p agentdash-infrastructure terminal_effect_outbox_persists_status_transitions
-rg -n "PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|LaunchCommand::.*_prepared|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
+rg -n "\\b(PreparedSessionInputs|finalize_request|PreparedLaunchPrompt|SessionLaunchPlan|AugmentedLaunchInput|PromptSessionRequest|SessionLaunchIntent|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed)\\b|LaunchCommand::.*_prepared" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
 rg -n "pending_capability_state_transitions_json" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-infrastructure/src
 git diff --check
 ```

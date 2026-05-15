@@ -2040,6 +2040,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
     let session = hub.create_session("strict-launch").await.expect("create");
 
     let error = hub
+        .launch_service()
         .launch_command(
             &session.id,
             super::super::launch::LaunchCommand::http_prompt_input(
@@ -2069,6 +2070,7 @@ async fn launch_prompt_relaxed_requires_session_construction_provider() {
     let session = hub.create_session("relaxed-launch").await.expect("create");
 
     let error = hub
+        .launch_service()
         .launch_command(
             &session.id,
             super::super::launch::LaunchCommand::local_relay_prompt_input(

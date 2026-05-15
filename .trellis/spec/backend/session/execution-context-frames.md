@@ -1,27 +1,10 @@
 # Execution Context Frames
 
-> **主题**：`agentdash-spi::ExecutionContext` 按"session 级不可变 vs turn 级
-> 动态"拆成 `ExecutionSessionFrame` + `ExecutionTurnFrame` 两层之后，各字段的
-> 所有权、生命周期与跨 turn 热更策略。
->
-> 装配阶段如何产出这些字段见 [`session-startup-pipeline.md`](./session-startup-pipeline.md)；
-> `TurnFrame.context_bundle` 的内部结构与运行期 hook 回灌见
-> [`bundle-main-datasource.md`](./bundle-main-datasource.md)。
+`agentdash-spi::ExecutionContext` 是 connector 边界的投影。Application 层事实来自
+`SessionConstructionPlan` 和 `LaunchExecution`；connector 只接收本次 prompt 所需的
+`ExecutionSessionFrame` 与 `ExecutionTurnFrame`。
 
-## 摘要
-
-- 进入 connector 的上下文按"身份 + 执行环境"与"上下文 + 工具 + 运行时控制面"
-  物理分两层：`ExecutionSessionFrame`（Who + Where）session 级不可变，
-  `ExecutionTurnFrame`（What + How + Trigger 副作用）per-turn 可变。
-- `SessionRuntime` 只持 session 级状态；per-turn 状态（`processor_tx` /
-  `cancel_requested` / `session_frame` 快照等）下沉到
-  `SessionRuntime.turn_state: TurnState` 的 `Active(TurnExecution)` 分支。
-- Bundle 是主数据面：`TurnFrame.context_bundle: Option<SessionContextBundle>`；
-  PiAgent 通过 `bundle_id` 比对在不重新创建 agent 的情况下热更 system prompt。
-- 预渲染 system prompt 存放在 `SessionContextBundle.rendered_system_prompt`；
-  `ExecutionTurnFrame` 不再保存独立的 system prompt 字段。
-
-## 1. `ExecutionContext` 顶层结构
+## Top-level Shape
 
 定义位置：`crates/agentdash-spi/src/connector.rs`。
 
@@ -32,14 +15,16 @@ pub struct ExecutionContext {
 }
 ```
 
-- 构造权威：`SessionLaunchExecutor::execute_command` 进入的 launch pipeline
-  是**唯一**构造 connector `ExecutionContext` 的生产路径；其余代码只读 / clone。
-- 热更路径（phase 切换 / MCP 热更）通过 `hub/tool_builder.rs` 基于
-  `TurnExecution.session_frame` 重建一次性的 `ExecutionContext`，用来调
-  `RuntimeToolProvider::build_tools`；这条路径**不**把重建的 context 传给
-  connector prompt，仅用于工具构建（见 §4.3）。
+生产构造路径：
 
-## 2. `ExecutionSessionFrame` — Who + Where
+```text
+LaunchExecution -> SessionLaunchExecutor -> ExecutionContext
+```
+
+其它路径可以 clone/read active turn 的 frame 用于工具热更新，但不把该 projection 写回为
+session 架构事实源。
+
+## `ExecutionSessionFrame` — Who + Where
 
 ```rust
 pub struct ExecutionSessionFrame {
@@ -53,27 +38,20 @@ pub struct ExecutionSessionFrame {
 }
 ```
 
-| 字段 | 所有权（唯一权威） | 生命周期 | 消费者 |
-|---|---|---|---|
-| `turn_id` | `prompt_pipeline` 装配阶段生成 | 当前 turn 不变 | 每个 connector、trace meta、hook 审计 |
-| `working_directory` | `prompt_pipeline` 调 `resolve_working_dir(default_mount_root, req.user_input.working_dir)` 产出 | 当前 turn 不变 | Relay / vibe_kanban（下发远端）、PiAgent 内部工具上下文 |
-| `environment_variables` | move 自 `req.user_input.env` | 当前 turn 不变 | Relay 子进程启动、vibe_kanban 子进程启动 |
-| `executor_config` | `req.user_input.executor_config` ∪ `session_meta.executor_config` 合并 | 当前 turn 不变 | 所有 connector（决定 executor / model / thinking_level 等） |
-| `mcp_servers` | `CapabilityState.mcp_servers` 的 session-frame 投影 | 当前 turn 不变 | **Relay** 透传远端；PiAgent 不读这里（读 `turn.assembled_tools`） |
-| `vfs` | `CapabilityState.vfs` 的 session-frame 投影，缺省时由 compose / workspace defaults 兜底 | 当前 turn 不变 | Relay / vibe_kanban / PiAgent 工具路径解析 |
-| `identity` | entry 经 `SessionAssemblyBuilder::with_identity` 注入（E1 / E2） | 当前 turn 不变 | Relay 下发 / 审计链路 / permission 决策 |
+| 字段 | 来源 | 消费者 |
+|---|---|---|
+| `turn_id` | Launch execution claim/activation | connector trace、hook 审计 |
+| `working_directory` | `SessionConstructionPlan.workspace.working_directory` | Relay、vibe_kanban、PiAgent tools |
+| `environment_variables` | launch prompt payload / executor policy | Relay、vibe_kanban |
+| `executor_config` | construction execution profile + launch override | 所有 connector |
+| `mcp_servers` | capability projection | Relay 透传；PiAgent 通过 assembled tools 消费 |
+| `vfs` | construction VFS projection | Relay、vibe_kanban、PiAgent tools |
+| `identity` | construction identity projection | Relay、审计、permission 决策 |
 
-**不可变语义**：在一次 `connector.prompt(...)` 调用范围内，`SessionFrame` 的
-字段必须视为不可变。后续 turn 若有改动则由下一次 `prompt_pipeline` 重新组装
-整个 `ExecutionContext`，当前 turn 内不 mutate。
+一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由
+launch pipeline 重新生成。
 
-**SessionFrame 与 `ActiveSessionExecutionState` 的收敛**：历史上 session 运行
-态在 `ActiveSessionExecutionState` 内另存了 working_directory / mcp_servers /
-executor_config / vfs / identity 等副本。当前这些字段**统一**以
-`ExecutionSessionFrame` 为权威，运行态通过 `TurnExecution.session_frame`
-（`Clone`）持一份快照供热更路径用（见 §4.3）。
-
-## 3. `ExecutionTurnFrame` — What + How + Trigger 副作用
+## `ExecutionTurnFrame` — What + How
 
 ```rust
 pub struct ExecutionTurnFrame {
@@ -86,243 +64,61 @@ pub struct ExecutionTurnFrame {
 }
 ```
 
-| 字段 | 所有权 | 生命周期 | 备注 |
-|---|---|---|---|
-| `hook_session` | `SessionRuntime.hook_session`（Arc 共享）的 clone | 当前 turn 起止内共享 | 运行期 trace / injection / capability 追踪 |
-| `capability_state` | `req.capability_state` clone；其中 `mcp_servers/vfs` 是运行态唯一能力状态的一部分 | 当前 turn | 运行时工具裁剪、MCP 注入、VFS/context diff 的依据 |
-| `runtime_delegate` | `prompt_pipeline` 基于 `hook_session` 构造的 `HookRuntimeDelegate` | 当前 turn | 详见 `bundle-main-datasource.md` §3 |
-| `restored_session_state` | 冷启动 continuation 路径从事件仓储恢复 | 仅首次重建 turn | `AgentConnector::supports_repository_restore` 返回 true 的 executor 才用 |
-| `context_bundle` | `req.context_bundle` clone（装配期组装） | 当前 turn 初值；运行期 Hook 可追加 `turn_delta` | **主数据面**；详见 `bundle-main-datasource.md` |
-| `assembled_tools` | `prompt_pipeline` 调 `SessionHub::build_tools_for_execution_context` 预构建 | 当前 turn | runtime tools + direct MCP + relay MCP 混合列表；in-process connector 直接执行 |
+| 字段 | 来源 | 消费者 |
+|---|---|---|
+| `hook_session` | session runtime shared hook handle | hook trace、runtime injection、capability 追踪 |
+| `capability_state` | construction capability projection + runtime command apply result | runtime tools、MCP/VFS diff |
+| `runtime_delegate` | launch hook plan | agent loop hook callbacks |
+| `restored_session_state` | restore plan | 支持 repository restore 的 connector |
+| `context_bundle` | construction context projection | connector context、Inspector/audit |
+| `assembled_tools` | runtime tool provider + MCP tools projection | in-process connector tool execution |
 
-### 3.1 Connector 字段消费矩阵
+`TurnExecution` 在 active turn 内保存 session frame、capability state、context bundle、
+cancel flag 与 processor channel。它是 per-turn runtime 快照，不承担 owner/context/VFS
+解析。
 
-| Connector | SessionFrame 读 | TurnFrame 读 | 备注 |
-|---|---|---|---|
-| **PiAgent**（`crates/agentdash-executor/src/connectors/pi_agent/connector.rs`） | `turn_id` / `executor_config`（provider_id / model_id / thinking_level） | `assembled_tools` / `runtime_delegate` / `hook_session` / `restored_session_state` / `context_bundle`（bundle_id 比对 + rendered_system_prompt） | `mcp_servers` 不读；工具已在 `assembled_tools` 里 |
-| **Relay** | `mcp_servers` / `vfs` / `working_directory` / `environment_variables` / `executor_config` / `identity` | `context_bundle.rendered_system_prompt`（过渡） | MCP 结构原样透传远端；结构化 `context_bundle` 暂不完整消费 |
-| **vibe_kanban** | `vfs` / `working_directory` / `environment_variables` / `executor_config` | `context_bundle.rendered_system_prompt` | 非结构化消费；prompt 前置到 user_text |
+## Connector Consumption Matrix
 
-### 3.2 `rendered_system_prompt` 的过渡地位
+| Connector | SessionFrame | TurnFrame |
+|---|---|---|
+| PiAgent | `turn_id`、`executor_config` | `assembled_tools`、`runtime_delegate`、`hook_session`、`restored_session_state`、`context_bundle` |
+| Relay | `mcp_servers`、`vfs`、`working_directory`、`environment_variables`、`executor_config`、`identity` | `context_bundle.rendered_system_prompt` 过渡消费 |
+| vibe_kanban | `vfs`、`working_directory`、`environment_variables`、`executor_config` | `context_bundle.rendered_system_prompt` 过渡消费 |
 
-- **当前**：`prompt_pipeline` 调 `assemble_system_prompt(SystemPromptInput { ... })`
-  只预渲染稳定 core identity 字符串，塞进 `context_bundle.rendered_system_prompt`。
-  Project Context、Workspace、Skills、Hook Runtime 等动态内容不得进入此字段。
-- **PiAgent** 仍在 is_new_agent 分支 / bundle_id 变化分支使用这段字符串调
-  `agent.set_system_prompt(...)`（见 `pi_agent/connector.rs`）；但它只承载稳定
-  身份/协议。动态上下文由独立 `ContextFrame` 经 turn-start delivery boundary
-  投递。
-- **Relay / vibe_kanban** 必须继续吃这段字符串，因为 Relay / vibe_kanban 尚未完整消费
-  结构化 `context_bundle`；vibe_kanban 做 prompt 前置。但该字符串不再包含动态
-  session surface。
-- **计划下线路径**：Relay 协议扩展 ContextFrame/Bundle 直读 → 所有 connector 直读
-  frame list → 删除本字段（out of scope，独立任务）。
+`rendered_system_prompt` 目前保留给 Relay / vibe_kanban / PiAgent 的过渡消费。动态
+Project Context、Workspace、Skills、Hook Runtime 等内容通过 ContextFrame/Bundle
+进入，不作为 running turn 的 system prompt 重置。
 
-### 3.3 `hook_session` 的 Arc 共享
+## Tool Hot Update
 
-`SessionRuntime.hook_session: Option<SharedHookSessionRuntime>` 是 session 级
-唯一权威；`ExecutionTurnFrame.hook_session` 通过 `Arc::clone` 持有同一实例。
-`prompt_pipeline` **不**双向写入；运行期 hook 记录 trace / 追加 injection 时
-都经 hook_session 上的内部锁管理，下一 turn 从同一 Arc 读取最新状态。
-
-## 4. `SessionRuntime` vs `TurnExecution`
-
-定义位置：`crates/agentdash-application/src/session/hub_support.rs`。
-
-### 4.1 `SessionRuntime`（session 级）
-
-```rust
-pub(super) struct SessionRuntime {
-    pub tx: broadcast::Sender<PersistedSessionEvent>,
-    pub hook_session: Option<SharedHookSessionRuntime>,
-    pub turn_state: TurnState,
-    pub session_profile: Option<SessionProfile>,
-    pub hook_auto_resume_count: u32,
-    pub last_activity_at: i64,
-}
-```
-
-- 生命周期：`ensure_session` / 首次 prompt / subscribe / cancel 都会
-  `or_insert_with(build_session_runtime)`；真正销毁只有
-  `SessionHub.delete_session`。
-- **纯 session 级字段**：`tx`（SSE fan-out）、`turn_state`（Idle / Claimed /
-  Active 的互斥状态机）、`session_profile`（跨 turn 复用的 `CapabilityState` 投影）、
-  `hook_session`（跨 turn 共享）、`last_activity_at`（stall 检测）、
-  `hook_auto_resume_count`（跨 auto-resume 链累积的限流计数，新 turn 不清零）。
-- **禁令**：`SessionRuntime` struct 上不再出现 `processor_tx` / `turn_id` /
-  `cancel_requested` / `session_frame`（参见 target-architecture.md §I5）。
-- `turn_state.active_turn()` 是唯一 per-turn 入口；无活跃 turn 时为 `None`。
-
-### 4.2 `TurnExecution`（per-turn）
-
-```rust
-pub(super) struct TurnExecution {
-    pub turn_id: String,
-    pub session_frame: ExecutionSessionFrame,
-    pub capability_state: CapabilityState,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub cancel_requested: bool,
-    pub processor_tx: Option<UnboundedSender<TurnEvent>>,
-}
-```
-
-- 生命周期：`prompt_pipeline` 在组装完成后写入
-  `SessionRuntime.turn_state = TurnState::Active(TurnExecution::new(...))`；
-  `turn_processor` 收到 `TurnEvent::Terminal` 后清理 active turn 与
-  `processor_tx`。
-- `session_frame`：`ExecutionSessionFrame` 的 clone，供 MCP 热更 /
-  `replace_runtime_mcp_servers` 重建 `ExecutionContext` 使用，避免回读 wire
-  prompt payload。
-- `capability_state`：per-turn 唯一能力状态，作为 MCP / 工具集 / VFS diff 重建时的入参。
-- `context_bundle`：当前 turn 的 Bundle 主数据面 clone。运行期 hook
-  injections 由 `SessionRuntimeHookInjectionSink` 追加到
-  `context_bundle.turn_delta`，供结构化审计与后续上下文装配使用；即时模型消费
-  仍必须走 steering / notification / pending action，不能把这里的变化解释为
-  live system prompt reset。
-- `cancel_requested`：`hub.cancel` 置 `true`；`turn_processor` / stream adapter
-  读它决定发 `Interrupted` 终态。
-- `processor_tx`：stream adapter 与 cancel 路径向 `SessionTurnProcessor` 发送
-  `TurnEvent` 的 channel；per-turn 唯一实例。
-
-### 4.3 MCP 热更 / 工具集热更路径
-
-定义位置：`crates/agentdash-application/src/session/hub/tool_builder.rs`。
+MCP 或 capability 热更新流程：
 
 ```text
-hub.replace_runtime_mcp_servers(session_id, new_mcp_servers)
-  └─ 读 SessionRuntime.turn_state.active_turn().session_frame（clone）
-  └─ 用 new_mcp_servers 覆盖 session_frame.mcp_servers
-  └─ 构造一次性 ExecutionContext { session: session_frame, turn: default }
-  └─ RuntimeToolProvider::build_tools(&ctx) → Vec<DynAgentTool>
-  └─ connector.update_session_tools(session_id, tools)
-  └─ 回写 SessionRuntime.turn_state.active_turn_mut().session_frame.mcp_servers
-     （保持 per-turn 一致）
+active TurnExecution
+  -> clone ExecutionSessionFrame + CapabilityState
+  -> build tools
+  -> connector.update_session_tools(session_id, tools)
+  -> update active turn projection
 ```
 
-- 关键约束：热更路径**不**改写 prompt payload，也**不**构造 "ghost"
-  `ExecutionContext` 传给 connector.prompt；仅仅是为了调用
-  `RuntimeToolProvider::build_tools` 传入一个结构化上下文。
-- 热更触发源：Workflow PhaseNode 切换 / MCP Preset 变更 / 能力变更 hook。
-- **禁令**：Relay / 远程 connector 必须把 `update_session_tools` 转发给持有
-  live session 的子 connector；不允许在 `CompositeConnector` 层走默认 no-op
-  （见 `runtime-execution-state.md`）。
+该流程只服务 live connector 的工具集替换；下一轮 prompt 仍通过
+`LaunchCommand -> SessionConstructionPlan -> LaunchExecution` 重新投影完整
+`ExecutionContext`。
 
-## 5. PiAgent 按 `bundle_id` 热更 system prompt
+## PiAgent Bundle Handling
 
-### 5.1 事件级流程
+PiAgent 使用 `context.turn.context_bundle.bundle_id` 判断是否需要刷新 stable system
+prompt：
 
-```mermaid
-sequenceDiagram
-    participant Hub as prompt_pipeline
-    participant Conn as PiAgentConnector.prompt
-    participant Runtime as PiAgentSessionRuntime
-    participant Agent as agent
+- 首次创建 agent：写入 rendered system prompt 与工具集。
+- bundle id 变化：刷新 stable system prompt。
+- bundle id 相同：复用现有 agent/runtime。
 
-    Hub->>Conn: prompt(session_id, context: ExecutionContext)
-    Note right of Hub: context.turn.context_bundle.bundle_id = Bx
-    Conn->>Runtime: agents.remove(session_id) → existing_runtime?
-    alt is_new_agent (无 existing_runtime)
-        Conn->>Agent: create_agent_with_bridge(...)
-        Conn->>Agent: set_system_prompt(rendered_system_prompt)
-        Conn->>Agent: set_tools(context.turn.assembled_tools)
-        opt restored_session_state 非空
-            Conn->>Agent: replace_messages(restored.messages)
-        end
-        Conn->>Runtime: cached_bundle_id = Some(Bx)
-    else existing agent 且 bundle_id 变化（cached != Bx）
-        Conn->>Agent: set_system_prompt(rendered_system_prompt)
-        Conn->>Runtime: cached_bundle_id = Some(Bx)
-    else existing agent 且 bundle_id 相同
-        Note over Conn,Agent: 不重设 system prompt，复用 KV cache 前缀
-    end
-    Conn->>Agent: set_runtime_delegate(context.turn.runtime_delegate)
-    Conn->>Agent: set_thinking_level(...) 若有
-    Conn->>Agent: prompt(AgentMessage::user(text))
-    Conn->>Runtime: agents.insert(session_id, runtime { agent, tools, last_bundle_id })
-```
+运行期动态内容走 steering、follow-up、pending action 或 session notification。
 
-### 5.2 契约约束
+## Related Specs
 
-- **缓存字段**：`PiAgentSessionRuntime.last_bundle_id: Option<uuid::Uuid>`，表示
-  连接器已经把哪个 `bundle_id` 对应的 system prompt 写入了 agent。
-- **变化判定**：`incoming = context.turn.context_bundle.map(|b| b.bundle_id)`；
-  仅在 `cached != incoming` 时调 `agent.set_system_prompt(...)`。
-- **渲染来源**：当前仍使用 `context.turn.context_bundle.rendered_system_prompt`
-  字符串（由 application 层预渲染）。Bundle α 化（独立任务）后改为 connector 直接调
-  `bundle.render_section(FragmentScope::RuntimeAgent, RUNTIME_AGENT_CONTEXT_SLOTS)`
-  自行渲染。
-- **out-of-band 热更钩**：`AgentConnector::update_session_context_bundle(
-  session_id, bundle)` 默认 no-op，用于 MCP 热更 / hook snapshot 刷新等非
-  prompt 边界的 Bundle 变化。该钩不得用于当前 running turn 的动态 workflow /
-  hook injection 消费，也不得在运行中重设 system prompt；需要立刻影响模型的
-  内容必须走 steering / follow-up / pending action / session notification。
-  Relay / vibe_kanban 保持 no-op，等下一次 prompt 的 Bundle 透传。
-
-### 5.3 不变式
-
-- PiAgent 的 agent 实例跨 turn 复用；仅在 `bundle_id` 变化或首次构造时重置
-  system prompt；不每 turn 刷一次（避免 KV cache 失效）。运行期动态内容不
-  通过 `set_system_prompt` 表达。
-- 同一 `bundle_id` 跨 turn 不触发 `set_system_prompt`。
-- `rendered_system_prompt == None` 时，`set_system_prompt` 不调用（Bundle
-  为空等边界场景直接 fallback 到 agent 的默认 prompt）。
-
-## 6. `rendered_system_prompt` 下线路线图
-
-- **当前状态**：字段位于 `SessionContextBundle`，PiAgent / Relay / vibe_kanban 三家都在消费。
-  PiAgent 的消费通过 `bundle_id`
-  变化门禁。
-- **PR 8 拟下线条件**（未来独立任务）：
-  1. Relay 协议扩展 `context_bundle` 下发，或 Relay 侧支持本地渲染；
-  2. vibe_kanban 支持结构化 Bundle 消费（或放弃 system prompt 前置方案）；
-  3. PiAgent 切换为在 connector 侧调用 `bundle.render_section(...)` 自行渲染。
-- 下线动作：当所有 connector 能直接渲染 Bundle 后，删除
-  `SessionContextBundle.rendered_system_prompt` 的预渲染字符串 →
-  `prompt_pipeline` 仅传结构化 Bundle 给 connector。
-
-## 7. 相关 spec / PRD / code 锚点
-
-### 相关 spec
-
-- [`session-startup-pipeline.md`](./session-startup-pipeline.md) — 装配阶段
-  如何产出 `SessionFrame` / `TurnFrame` 各字段的来源值。
-- [`bundle-main-datasource.md`](./bundle-main-datasource.md) —
-  `TurnFrame.context_bundle` 的结构 / Hook 三类语义 / turn_delta 回灌。
-- [`./runtime-execution-state.md`](./runtime-execution-state.md) — 运行态
-  `SessionRuntime` / `TurnExecution` 职责边界；与本 spec §4 互补。
-- [`./pi-agent-streaming.md`](./pi-agent-streaming.md) — PiAgent streaming chunk
-  合并协议，独立于 system prompt 热更。
-
-### PRD / 任务文档
-
-- `.trellis/tasks/04-30-session-pipeline-architecture-refactor/prd.md`
-  - Requirements · "概念与边界" / "Bundle 主数据面"
-  - Decisions · D2（立刻 split ExecutionContext） / D4（PiAgent 按 bundle_id
-    热更） / E5（删除旧 capability key 并行字段）
-  - Implementation Plan · PR 2 / PR 3 / PR 7
-- `.trellis/tasks/04-30-session-pipeline-architecture-refactor/target-architecture.md`
-  §C5 / §C6 / §C7 / §C8 / §C10 / §I2 / §I5 / §6.2 数据流图。
-- `.trellis/tasks/04-30-session-pipeline-architecture-refactor/research/pipeline-review/01-runtime-layer.md`
-  §2.1-2.4（`SessionRuntime` 结构与生命周期） / §5.1 字段冗余表。
-- `.trellis/tasks/04-30-session-pipeline-architecture-refactor/research/pipeline-review/03-connector-hook-layer.md`
-  §4.2 三 connector 字段消费矩阵。
-
-### 代码锚点
-
-- `crates/agentdash-spi/src/connector.rs`
-  - `ExecutionSessionFrame`（~51 行）
-  - `ExecutionTurnFrame`（~73 行）
-  - `ExecutionContext`（~107 行）
-  - `AgentConnector::update_session_context_bundle`（~473 行，default no-op）
-- `crates/agentdash-application/src/session/hub_support.rs`
-  - `SessionRuntime`（~169 行，session 级）
-  - `TurnExecution`（~187 行，per-turn）
-- `crates/agentdash-application/src/session/prompt_pipeline.rs:270-350` —
-  构造 `ExecutionContext` / 写入 `SessionRuntime.turn_state` / 预渲染
-  `context_bundle.rendered_system_prompt`。
-- `crates/agentdash-application/src/session/hub/tool_builder.rs` — MCP 热更
-  从 `turn_state.active_turn().session_frame` 出发构建工具集的路径。
-- `crates/agentdash-application/src/session/hub/cancel.rs` — cancel 路径如何
-  读写 `TurnExecution.cancel_requested` / `processor_tx`。
-- `crates/agentdash-executor/src/connectors/pi_agent/connector.rs:312-412` —
-  按 `bundle_id` 热更 system prompt 的消费路径。
+- [`session-startup-pipeline.md`](./session-startup-pipeline.md)
+- [`bundle-main-datasource.md`](./bundle-main-datasource.md)
+- [`runtime-execution-state.md`](./runtime-execution-state.md)
+- [`pi-agent-streaming.md`](./pi-agent-streaming.md)

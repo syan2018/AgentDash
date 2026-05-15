@@ -2239,7 +2239,7 @@ mod companion_tests {
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider, SessionHub,
         local_workspace_vfs,
     };
-    use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
+    use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
@@ -2567,7 +2567,17 @@ mod companion_tests {
             Arc::new(MemorySessionPersistence::default()),
         );
         let handle = SharedSessionToolServicesHandle::default();
-        handle.set(hub.clone()).await;
+        handle
+            .set(SessionToolServices {
+                core: hub.core_service(),
+                eventing: hub.eventing_service(),
+                control: hub.control_service(),
+                launch: hub.launch_service(),
+                hooks: hub.hook_service(),
+                capability: hub.capability_service(),
+                companion_wait_registry: hub.companion_wait_registry.clone(),
+            })
+            .await;
 
         let parent = hub
             .core_service()

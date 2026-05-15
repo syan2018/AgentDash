@@ -52,14 +52,8 @@ pub struct PromptAugmentCompanionInput {
     pub workflow: Option<PromptAugmentCompanionWorkflowInput>,
 }
 
-/// LaunchCommand 与 owner/context/capability augment 之间的唯一 payload。
-///
-/// 该类型从来源入口进入 augmenter，并在同一对象上补齐 construction seed 与
-/// launch 局部字段。它不是 plan，也不是 session 构建事实源；进入执行前必须继续
-/// 投影为 `SessionConstructionPlan` 与 `LaunchExecution`。
-pub struct PromptAugmentInput {
-    pub user_input: UserPromptInput,
-    pub construction_owner: Option<ResolvedSessionOwner>,
+pub struct SessionConstructionRequest {
+    pub owner: Option<ResolvedSessionOwner>,
     pub source_contract: SourceContractPlan,
     pub working_dir_input: Option<String>,
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
@@ -69,19 +63,13 @@ pub struct PromptAugmentInput {
     pub context_bundle: Option<agentdash_spi::SessionContextBundle>,
     /// continuation 场景下的独立上下文 frame（不再退化为 bundle markdown 字符串）。
     pub continuation_context_frame: Option<agentdash_spi::hooks::ContextFrame>,
-    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
-    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
     pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
-    pub post_turn_handler: Option<DynPostTurnHandler>,
-    pub task: Option<PromptAugmentTaskInput>,
-    pub companion: Option<PromptAugmentCompanionInput>,
 }
 
-impl PromptAugmentInput {
-    pub fn from_user_input(input: UserPromptInput) -> Self {
+impl Default for SessionConstructionRequest {
+    fn default() -> Self {
         Self {
-            user_input: input,
-            construction_owner: None,
+            owner: None,
             source_contract: SourceContractPlan::default(),
             working_dir_input: None,
             mcp_servers: Vec::new(),
@@ -89,11 +77,30 @@ impl PromptAugmentInput {
             capability_state: None,
             context_bundle: None,
             continuation_context_frame: None,
-            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             identity: None,
+        }
+    }
+}
+
+/// 已按目标边界分组的 launch 请求事实。
+///
+/// `construction` 只承载 session 构建事实种子；hook/effect 仍作为迁移期 launch
+/// 字段存在，后续继续归入 `LaunchExecution` / effects outbox 边界。
+pub struct SessionLaunchRequest {
+    pub user_input: UserPromptInput,
+    pub construction: SessionConstructionRequest,
+    /// 本轮 prompt 是否需要重载 hook snapshot + 触发 `SessionStart` hook。
+    pub hook_snapshot_reload: HookSnapshotReloadTrigger,
+    pub post_turn_handler: Option<DynPostTurnHandler>,
+}
+
+impl SessionLaunchRequest {
+    pub fn from_user_input(input: UserPromptInput) -> Self {
+        Self {
+            user_input: input,
+            construction: SessionConstructionRequest::default(),
+            hook_snapshot_reload: HookSnapshotReloadTrigger::None,
             post_turn_handler: None,
-            task: None,
-            companion: None,
         }
     }
 }
@@ -108,7 +115,7 @@ pub trait PromptRequestAugmenter: Send + Sync {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<PromptAugmentInput, ConnectorError>;
+    ) -> Result<SessionLaunchRequest, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

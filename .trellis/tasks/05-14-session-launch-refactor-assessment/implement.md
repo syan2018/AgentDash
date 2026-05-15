@@ -21,15 +21,15 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再从 `session::mod` re-export。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`。
-- [ ] `UserPromptInput.working_dir` 移出 prompt input。
-- [ ] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
-- [ ] task `post_turn_handler` trait object 迁出 command，进入 task/effects/outbox 服务边界。
-- [ ] companion parent VFS/MCP/context snapshot 迁出 command，由 construction 从 parent session facts 解析。
-- [ ] local relay MCP 只作为 request declaration 保留，不作为 resolved MCP surface 使用。
+- [x] `UserPromptInput.working_dir` 移出 prompt input。
+- [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload。
+- [x] task `post_turn_handler` trait object 迁出 command；当前仍在 API bootstrap 绑定，后续进入 task/effects/outbox 服务边界。
+- [x] companion parent VFS/MCP/context snapshot 迁出 command；当前 parent capability 临时投影仍在 bootstrap，后续由 construction 从 parent session facts 解析。
+- [x] local relay MCP 只作为 request declaration 保留，不作为 resolved MCP surface 使用。
 
 ### 2. Complete `SessionConstructionPlan`
 
-- [x] `ContextPlan` 承载完整 `SessionContextBundle`。
+- [x] `ContextPlan` 承载完整 `SessionContextBundle` 与 continuation context frame。
 - [ ] construction 持有 working dir plan、VFS、MCP declaration resolution、capability、executor profile、identity、workspace、owner、source trace。
 - [ ] construction 持有 task effect binding、companion slice、local relay workspace root resolution。
 - [ ] construction 持有 context frame plan、audit projection、inspector projection。
@@ -45,11 +45,12 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 
 ### 4. Delete `PromptAugmentInput` Production Handoff
 
-- [ ] `PromptRequestAugmenter` 不再返回增强后的 `PromptAugmentInput`。
-- [ ] API bootstrap 输出 construction 事实或 construction planner input，不返回增强 payload。
-- [ ] 删除 `LaunchCommand::to_augment_input()`。
-- [ ] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
-- [ ] `PromptAugmentInput` 最终代码中不能作为 production helper、跨 crate handoff、planner input 或 augmented output 保留。
+- [x] `PromptRequestAugmenter` 不再返回增强后的 `PromptAugmentInput`。
+- [ ] API bootstrap 输出 construction 事实或 construction planner input，不返回 generalized launch envelope。
+- [x] 删除 `LaunchCommand::to_augment_input()`。
+- [x] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
+- [x] `PromptAugmentInput` 最终代码中不能作为 production helper、跨 crate handoff、planner input 或 augmented output 保留。
+- [ ] 删除当前 `SessionLaunchRequest` 过渡 envelope。
 
 ### 5. Remove Business `SessionHub`
 

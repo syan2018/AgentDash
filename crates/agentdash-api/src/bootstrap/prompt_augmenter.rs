@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::session::augmenter::PromptAugmentInput;
+use agentdash_application::session::augmenter::SessionLaunchRequest;
 use agentdash_application::session::{LaunchCommand, PromptRequestAugmenter};
 use agentdash_spi::ConnectorError;
 
@@ -77,22 +77,26 @@ impl PromptRequestAugmenter for AppStatePromptAugmenter {
         &self,
         session_id: &str,
         command: &LaunchCommand,
-    ) -> Result<PromptAugmentInput, ConnectorError> {
-        augment_prompt_request_for_owner(&self.state, session_id, command_to_augment_input(command))
-            .await
-            .map_err(api_error_to_connector)
+    ) -> Result<SessionLaunchRequest, ConnectorError> {
+        augment_prompt_request_for_owner(
+            &self.state,
+            session_id,
+            command_to_launch_request(command),
+            command.task_hint(),
+            command.companion_hint(),
+        )
+        .await
+        .map_err(api_error_to_connector)
     }
 }
 
-fn command_to_augment_input(command: &LaunchCommand) -> PromptAugmentInput {
-    let mut input = PromptAugmentInput::from_user_input(command.user_input().clone());
-    input.mcp_servers = command.local_relay_mcp_declarations().to_vec();
-    input.vfs = command
+fn command_to_launch_request(command: &LaunchCommand) -> SessionLaunchRequest {
+    let mut input = SessionLaunchRequest::from_user_input(command.user_input().clone());
+    input.construction.mcp_servers = command.local_relay_mcp_declarations().to_vec();
+    input.construction.vfs = command
         .local_relay_workspace_root()
         .map(agentdash_application::session::local_workspace_vfs);
-    input.identity = command.identity();
-    input.task = command.task_hint();
-    input.companion = command.companion_hint();
+    input.construction.identity = command.identity();
     input
 }
 

@@ -44,10 +44,10 @@ LaunchCommand
 
 仍未满足目标态：
 
-- `LaunchCommand` 已不再持有 `PromptAugmentInput`，但仍会通过 `to_augment_input()` 投影旧增强 payload。
-- `PromptAugmentInput` 仍跨 API/bootstrap/application 传递，并承载 VFS/MCP/capability/context/hook/post-turn。
-- `SessionLaunchPlanner` 已不再以 `PromptAugmentInput` 为输入；旧 payload 仍在 `prompt_pipeline` 入口被拆字段后传入 planner。
-- `SessionConstructionPlan` 已保留完整 context bundle，但 context frame / audit / inspector projection 仍不完整，launch/query/audit/inspector 尚未完全同源。
+- `LaunchCommand` 已不再持有 `PromptAugmentInput`，`to_augment_input()` 已删除。
+- `PromptAugmentInput` 已从生产代码删除；当前剩余过渡壳是 `SessionLaunchRequest`，仍跨 API/bootstrap/application 传递 construction 与 hook/effect 种子。
+- `SessionLaunchPlanner` 已不再以旧 payload 为输入；过渡 envelope 仍在 `prompt_pipeline` 入口被拆字段后传入 planner。
+- `SessionConstructionPlan` 已保留完整 context bundle 与 continuation context frame，但 audit / inspector projection 仍不完整，launch/query/audit/inspector 尚未完全同源。
 - `SessionHub` 仍承载业务方法和服务定位职责。
 - terminal effects、pending runtime command、persistence store 还缺最终验证矩阵。
 
@@ -68,7 +68,8 @@ LaunchCommand
 ## Acceptance Criteria
 
 - [ ] `LaunchCommand -> SessionConstructionPlan -> LaunchExecution` 是唯一生产主链路。
-- [ ] `PromptAugmentInput` 不再作为生产主链路 handoff、planner 输入或增强后输出。
+- [x] `PromptAugmentInput` 不再作为生产主链路 handoff、planner 输入或增强后输出。
+- [ ] `SessionLaunchRequest` 过渡 envelope 不再作为生产主链路 handoff。
 - [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的唯一事实源。
 - [ ] `LaunchExecution` 是唯一 per-launch 策略计划。
 - [ ] `prompt_pipeline` 不再承担 construction/launch planner 职责。

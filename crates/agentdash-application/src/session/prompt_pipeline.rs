@@ -9,7 +9,7 @@ use agentdash_spi::hooks::{
 };
 
 use super::assignment_context_frame::build_assignment_context_frame;
-use super::augmenter::PromptAugmentInput;
+use super::augmenter::SessionLaunchRequest;
 use super::hook_runtime::HookSessionRuntime;
 use super::hub::SessionHub;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
@@ -51,8 +51,8 @@ impl<'a> SessionLaunchExecutor<'a> {
                     .await?
             }
         };
-        req.source_contract.launch_source = Some(reason.to_string());
-        req.source_contract.strictness = Some(
+        req.construction.source_contract.launch_source = Some(reason.to_string());
+        req.construction.source_contract.strictness = Some(
             match strictness {
                 LaunchStrictness::Strict => "strict",
                 LaunchStrictness::Relaxed => "relaxed",
@@ -60,6 +60,7 @@ impl<'a> SessionLaunchExecutor<'a> {
             .to_string(),
         );
         let context_sources = req
+            .construction
             .context_bundle
             .as_ref()
             .map(|bundle| {
@@ -83,7 +84,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         session_id: &str,
         command: &LaunchCommand,
         reason: &str,
-    ) -> Result<PromptAugmentInput, ConnectorError> {
+    ) -> Result<SessionLaunchRequest, ConnectorError> {
         match self.hub.current_prompt_augmenter().await {
             Some(augmenter) => augmenter.augment(session_id, command).await,
             None => {
@@ -92,7 +93,7 @@ impl<'a> SessionLaunchExecutor<'a> {
                     reason = %reason,
                     "prompt_augmenter 未注入，内部 follow-up 将使用裸请求"
                 );
-                Ok(relaxed_command_to_augment_input(command))
+                Ok(relaxed_command_to_launch_request(command))
             }
         }
     }
@@ -101,7 +102,7 @@ impl<'a> SessionLaunchExecutor<'a> {
     pub(crate) async fn execute_augmented_input_for_test(
         &self,
         session_id: &str,
-        req: PromptAugmentInput,
+        req: SessionLaunchRequest,
     ) -> Result<String, ConnectorError> {
         self.execute_augmented_input(session_id, None, req).await
     }
@@ -111,7 +112,7 @@ impl<'a> SessionLaunchExecutor<'a> {
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
-        req: PromptAugmentInput,
+        req: SessionLaunchRequest,
     ) -> Result<String, ConnectorError> {
         let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -154,16 +155,16 @@ impl<'a> SessionLaunchExecutor<'a> {
                 session_meta: &session_meta,
                 pending_runtime_commands,
                 user_input: req.user_input,
-                working_dir_input: req.working_dir_input,
-                construction_owner: req.construction_owner,
-                source_contract: req.source_contract,
-                mcp_servers: req.mcp_servers,
-                vfs: req.vfs,
-                capability_state: req.capability_state,
-                context_bundle: req.context_bundle,
-                continuation_context_frame: req.continuation_context_frame,
+                working_dir_input: req.construction.working_dir_input,
+                construction_owner: req.construction.owner,
+                source_contract: req.construction.source_contract,
+                mcp_servers: req.construction.mcp_servers,
+                vfs: req.construction.vfs,
+                capability_state: req.construction.capability_state,
+                context_bundle: req.construction.context_bundle,
+                continuation_context_frame: req.construction.continuation_context_frame,
                 hook_snapshot_reload: req.hook_snapshot_reload,
-                identity: req.identity,
+                identity: req.construction.identity,
                 post_turn_handler: req.post_turn_handler,
             })
             .await?;
@@ -173,7 +174,6 @@ impl<'a> SessionLaunchExecutor<'a> {
         let hook_session = planned_launch.hook_session;
         let hook_snapshot_contribution = planned_launch.hook_snapshot_contribution;
         let context_bundle = planned_launch.context_bundle;
-        let continuation_context_frame = planned_launch.continuation_context_frame;
         let post_turn_handler = planned_launch.post_turn_handler;
         let discovered_guidelines = planned_launch.discovered_guidelines;
         let pending_runtime_commands = planned_launch.pending_runtime_commands;
@@ -357,7 +357,11 @@ impl<'a> SessionLaunchExecutor<'a> {
             let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = continuation_context_frame {
+        if let Some(frame) = launch_execution
+            .construction
+            .as_ref()
+            .and_then(|plan| plan.context.continuation_context_frame.clone())
+        {
             let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);
         }
@@ -565,15 +569,13 @@ impl<'a> SessionLaunchExecutor<'a> {
     }
 }
 
-fn relaxed_command_to_augment_input(command: &LaunchCommand) -> PromptAugmentInput {
-    let mut input = PromptAugmentInput::from_user_input(command.user_input().clone());
-    input.mcp_servers = command.local_relay_mcp_declarations().to_vec();
-    input.vfs = command
+fn relaxed_command_to_launch_request(command: &LaunchCommand) -> SessionLaunchRequest {
+    let mut input = SessionLaunchRequest::from_user_input(command.user_input().clone());
+    input.construction.mcp_servers = command.local_relay_mcp_declarations().to_vec();
+    input.construction.vfs = command
         .local_relay_workspace_root()
         .map(super::local_workspace_vfs);
-    input.identity = command.identity();
-    input.task = command.task_hint();
-    input.companion = command.companion_hint();
+    input.construction.identity = command.identity();
     input
 }
 

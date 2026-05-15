@@ -1,7 +1,7 @@
 //! Session launch construction use case.
 //!
 //! 这个模块承接原本挂在 `routes/acp_sessions.rs` 里的 owner/context/capability
-//! 组装逻辑。它返回 augmenter 输出 `PromptAugmentInput`，其中 owner/source
+//! 组装逻辑。它返回按目标边界分组的 `SessionLaunchRequest`，其中 owner/source
 //! 只作为 `SessionConstructionPlan` 的输入种子；route 层不再承载 launch
 //! composition 主分支。
 
@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
 use agentdash_application::session::augmenter::{
-    PromptAugmentCompanionInput, PromptAugmentInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+    PromptAugmentCompanionInput, PromptAugmentTaskInput, PromptAugmentTaskPhase,
+    SessionLaunchRequest,
 };
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
@@ -42,10 +43,10 @@ use crate::rpc::ApiError;
 pub(crate) async fn augment_prompt_request_for_owner(
     state: &Arc<AppState>,
     session_id: &str,
-    input: PromptAugmentInput,
-) -> Result<PromptAugmentInput, ApiError> {
-    let task_input = input.task.clone();
-    let companion_input = input.companion.clone();
+    input: SessionLaunchRequest,
+    task_input: Option<PromptAugmentTaskInput>,
+    companion_input: Option<PromptAugmentCompanionInput>,
+) -> Result<SessionLaunchRequest, ApiError> {
     let mut req = input;
     if let Some(companion) = companion_input {
         return build_companion_dispatch_prompt_request(state, req, companion).await;
@@ -87,7 +88,7 @@ pub(crate) async fn augment_prompt_request_for_owner(
     );
 
     if let Some(owner) = SessionOwnerResolver::resolve_primary(&bindings) {
-        req.construction_owner = Some(owner.clone());
+        req.construction.owner = Some(owner.clone());
         match owner.owner_type {
             SessionOwnerType::Task => {
                 return build_task_owner_prompt_request(
@@ -180,19 +181,19 @@ pub(crate) async fn augment_prompt_request_for_owner(
 }
 
 fn apply_plain_lifecycle_request(
-    mut req: PromptAugmentInput,
+    mut req: SessionLaunchRequest,
     context_bundle: Option<agentdash_spi::SessionContextBundle>,
     continuation_context_frame: Option<ContextFrame>,
     hook_snapshot_reload: HookSnapshotReloadTrigger,
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     let user_prompt_blocks = req
         .user_input
         .prompt_blocks
         .take()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     req.user_input.prompt_blocks = Some(user_prompt_blocks);
-    req.context_bundle = context_bundle;
-    req.continuation_context_frame = continuation_context_frame;
+    req.construction.context_bundle = context_bundle;
+    req.construction.continuation_context_frame = continuation_context_frame;
     req.hook_snapshot_reload = hook_snapshot_reload;
     Ok(req)
 }
@@ -200,14 +201,14 @@ fn apply_plain_lifecycle_request(
 async fn build_story_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptAugmentInput,
+    mut req: SessionLaunchRequest,
     story: &Story,
     project: &Project,
     workspace: Option<&Workspace>,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -251,8 +252,8 @@ async fn build_story_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let request_mcp_servers = req.mcp_servers.clone();
-    let existing_vfs = req.vfs.clone();
+    let request_mcp_servers = req.construction.mcp_servers.clone();
+    let existing_vfs = req.construction.vfs.clone();
     let assembler = build_session_assembler(state);
     let mut req = assembler
         .compose_owner_bootstrap_prompt(
@@ -280,20 +281,20 @@ async fn build_story_owner_prompt_request(
         .await
         .map_err(ApiError::BadRequest)?;
 
-    req.continuation_context_frame = continuation_context_frame;
+    req.construction.continuation_context_frame = continuation_context_frame;
     Ok(req)
 }
 
 async fn build_project_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptAugmentInput,
+    mut req: SessionLaunchRequest,
     project: &Project,
     binding_label: &str,
     _meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -358,8 +359,8 @@ async fn build_project_owner_prompt_request(
     .await
     .map_err(ApiError::Internal)?;
 
-    let request_mcp_servers = req.mcp_servers.clone();
-    let existing_vfs = req.vfs.clone();
+    let request_mcp_servers = req.construction.mcp_servers.clone();
+    let existing_vfs = req.construction.vfs.clone();
     let assembler = build_session_assembler(state);
     let mut req = assembler
         .compose_owner_bootstrap_prompt(
@@ -389,16 +390,16 @@ async fn build_project_owner_prompt_request(
         .await
         .map_err(ApiError::BadRequest)?;
 
-    req.continuation_context_frame = continuation_context_frame;
+    req.construction.continuation_context_frame = continuation_context_frame;
     Ok(req)
 }
 
 async fn build_lifecycle_node_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    req: PromptAugmentInput,
+    req: SessionLaunchRequest,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return apply_plain_lifecycle_request(req, None, None, HookSnapshotReloadTrigger::None);
     }
@@ -464,9 +465,9 @@ async fn build_lifecycle_node_prompt_request(
 
 async fn build_companion_dispatch_prompt_request(
     state: &Arc<AppState>,
-    req: PromptAugmentInput,
+    req: SessionLaunchRequest,
     companion: PromptAugmentCompanionInput,
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     let parent_capability_state = state
         .services
         .session_hub
@@ -594,13 +595,13 @@ async fn resolve_continuation_system_context(
 async fn build_task_owner_prompt_request(
     state: &Arc<AppState>,
     session_id: &str,
-    mut req: PromptAugmentInput,
+    mut req: SessionLaunchRequest,
     task_id: uuid::Uuid,
     meta: &SessionMeta,
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<PromptAugmentTaskInput>,
-) -> Result<PromptAugmentInput, ApiError> {
+) -> Result<SessionLaunchRequest, ApiError> {
     let story = state
         .repos
         .story_repo
@@ -698,7 +699,7 @@ async fn build_task_owner_prompt_request(
         .await
         .map_err(task_execution::map_task_execution_error)?;
 
-    if let Some(space) = req.vfs.as_mut() {
+    if let Some(space) = req.construction.vfs.as_mut() {
         append_visible_canvas_mounts(
             state.repos.canvas_repo.as_ref(),
             task.project_id,
@@ -727,7 +728,7 @@ async fn build_task_owner_prompt_request(
             SessionRepositoryRehydrateMode::ExecutorState,
         ) => {}
         SessionPromptLifecycle::Plain => {
-            req.context_bundle = None;
+            req.construction.context_bundle = None;
         }
     }
 
@@ -737,13 +738,13 @@ async fn build_task_owner_prompt_request(
         req.user_input.executor_config = Some(config);
     }
 
-    if req.capability_state.is_none() {
+    if req.construction.capability_state.is_none() {
         return Err(ApiError::Internal(
             "Task session compose 未产出 capability_state".to_string(),
         ));
     }
 
-    req.continuation_context_frame = continuation_context_frame;
+    req.construction.continuation_context_frame = continuation_context_frame;
 
     Ok(req)
 }

@@ -50,7 +50,8 @@ pub use assembler::{
 };
 pub use augmenter::{
     PromptAugmentCompanionInput, PromptAugmentCompanionWorkflowInput, PromptAugmentTaskInput,
-    PromptAugmentTaskPhase, PromptRequestAugmenter, SharedPromptRequestAugmenter,
+    PromptAugmentTaskPhase, PromptRequestAugmenter, SessionConstructionRequest,
+    SessionLaunchRequest, SharedPromptRequestAugmenter,
 };
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,

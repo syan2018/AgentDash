@@ -19,8 +19,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> ExecutionContext 
 - [x] `SessionLaunchPlannerInput` 不再包含 `request: PromptAugmentInput`。
 - [x] `PromptAugmentInput` 不再 re-export 到生产入口。
 - [x] local relay 不再把已组装 `Vfs` 塞进 `LaunchCommand`，只保留 workspace root 作为来源事实。
-- [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `PromptAugmentInput.working_dir_input`，后续迁入 construction。
-- [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，但 API augmenter / relaxed pipeline 仍在构造旧增强对象。
+- [x] `UserPromptInput.working_dir` 移出 prompt input；当前过渡事实留在 `SessionLaunchRequest.construction.working_dir_input`，后续迁入 construction。
+- [x] `LaunchCommand` 只保留 source、actor、target ids、prompt、executor override、follow-up hint、特殊来源策略 payload；`to_augment_input()` 已删除，API augmenter / relaxed pipeline 不再构造旧 `PromptAugmentInput`。
 - [x] task `post_turn_handler` trait object 迁出 `LaunchCommand`；当前由 API bootstrap 在 Task owner 解析后临时绑定，后续仍需进入 task/effects/outbox 服务边界。
 - [x] companion command 只保留 parent session / dispatch / slice / target binding 等策略 payload，不携带 parent VFS / MCP / context snapshot；当前 parent facts 仍由 API bootstrap 临时从 parent capability state 投影，后续迁入 construction provider。
 - [x] local relay MCP 只作为 request declaration 命名与传递，不能作为 resolved MCP surface 使用。
@@ -37,7 +37,8 @@ rg -n "post_turn_handler|parent_vfs|parent_mcp_servers|parent_context_bundle" cr
 ### 2. 补全 `SessionConstructionPlan`
 
 - [x] `ContextPlan` 持有完整 `SessionContextBundle`。
-- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `PromptAugmentInput.working_dir_input` 过渡种子。
+- [x] `ContextPlan` 持有 continuation context frame；该 frame 不再作为 launch planner 输出旁路存在。
+- [ ] `SessionConstructionPlan` 持有 working dir plan / VFS / MCP declaration resolution / capability state / executor profile / identity projection / source trace；删除 `SessionLaunchRequest.construction.working_dir_input` 过渡种子。
 - [ ] task effect binding、companion slice、local relay workspace root 由 construction provider 解析；删除 API bootstrap 上的 task handler 与 companion parent facts 临时绑定。
 - [ ] context frame plan、audit projection、inspector projection 进入 construction。
 - [ ] launch、context endpoint、audit、inspector 只投影同一 construction。
@@ -66,10 +67,11 @@ rg -n "req\\.vfs|req\\.mcp_servers|req\\.capability_state|req\\.context_bundle|r
 
 ### 4. 删除 `PromptAugmentInput` production handoff
 
-- [ ] API bootstrap 不再返回增强后的 `PromptAugmentInput`。
+- [x] API bootstrap 不再返回增强后的 `PromptAugmentInput`。
 - [x] 删除 `LaunchCommand::to_augment_input()`。
-- [ ] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
-- [ ] `PromptAugmentInput` 不再作为 production helper、跨 crate handoff、planner 输入或增强后输出保留。
+- [x] `prompt_pipeline` 不再接收 `PromptAugmentInput`。
+- [x] `PromptAugmentInput` 不再作为 production helper、跨 crate handoff、planner 输入或增强后输出保留。
+- [ ] 删除分组后的 `SessionLaunchRequest` 过渡 envelope：construction 字段必须直接进入 `SessionConstructionPlan`，hook/effect/launch 字段必须进入 `LaunchExecution` / effects 边界。
 
 退出检查：
 

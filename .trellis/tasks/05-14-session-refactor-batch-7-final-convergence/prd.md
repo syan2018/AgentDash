@@ -26,11 +26,11 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 未完成：
 
-- `LaunchCommand` 已不再持有 `PromptAugmentInput`，local relay 也不再携带已组装 `Vfs`，但仍会通过 `to_augment_input()` 投影旧增强 payload。
-- `LaunchCommand` 仍携带 task `post_turn_handler` 与 companion parent snapshot，这些不是纯入口意图，不能作为最终态保留。
-- `PromptAugmentInput` 仍承载 construction / launch 产物。
-- API bootstrap 仍返回增强 payload。
-- `SessionLaunchPlanner` 已不再消费增强 payload；`prompt_pipeline` 仍接收增强 payload 并拆字段。
+- `LaunchCommand` 已不再持有 `PromptAugmentInput`，local relay 也不再携带已组装 `Vfs`，`to_augment_input()` 已删除。
+- task `post_turn_handler` 与 companion parent snapshot 已迁出 command；当前 task effect binding 与 companion parent capability 临时投影仍在 API bootstrap，后续必须进入 construction/effects 边界。
+- `PromptAugmentInput` 已删除，不再承载 construction / launch 产物。
+- API bootstrap 仍返回 `SessionLaunchRequest` 过渡 envelope。
+- `SessionLaunchPlanner` 已不再消费旧 payload；`prompt_pipeline` 仍接收过渡 envelope 并拆字段。
 - `SessionConstructionPlan` 已保留完整 context bundle，但还不是完整 context frame / audit / inspector 事实源。
 - `SessionHub` 仍承载业务方法。
 - effects / pending / persistence 还缺最终验证。
@@ -47,7 +47,8 @@ LaunchCommand -> SessionConstructionPlan -> LaunchExecution
 
 ## Acceptance Criteria
 
-- [ ] `PromptAugmentInput` 不再出现在生产主链路 handoff 中。
+- [x] `PromptAugmentInput` 不再出现在生产主链路 handoff 中。
+- [ ] `SessionLaunchRequest` 过渡 envelope 被删除，字段进入 construction / launch / effects 目标边界。
 - [ ] `LaunchCommand` 是纯入口意图。
 - [ ] `SessionConstructionPlan` 是 launch/query/audit/inspector 的事实源。
 - [ ] `LaunchExecution` 是唯一 per-launch 策略计划。

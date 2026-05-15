@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::task::AgentBinding;
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AuthIdentity, CapabilityState, SessionBaselineCapabilities, SessionContextBundle,
     SessionMcpServer, Vfs,
@@ -62,6 +63,7 @@ pub struct SessionSurfacePlan {
 pub struct ContextPlan {
     pub bundle: Option<SessionContextBundle>,
     pub bundle_id: Option<Uuid>,
+    pub continuation_context_frame: Option<ContextFrame>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub bootstrap_fragment_count: usize,
 }
@@ -111,6 +113,7 @@ pub struct SessionConstructionLaunchInput {
     pub vfs: Option<Vfs>,
     pub runtime_surface: Option<ResolvedVfsSurface>,
     pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub identity: Option<AuthIdentity>,
     pub mcp_servers: Vec<SessionMcpServer>,
@@ -230,6 +233,7 @@ impl SessionConstructionPlan {
             context: ContextPlan {
                 bundle: input.context_bundle.clone(),
                 bundle_id: input.context_bundle.as_ref().map(|bundle| bundle.bundle_id),
+                continuation_context_frame: input.continuation_context_frame,
                 context_snapshot: input.context_snapshot,
                 bootstrap_fragment_count,
             },
@@ -310,6 +314,7 @@ mod tests {
             vfs: None,
             runtime_surface: None,
             context_bundle: Some(bundle),
+            continuation_context_frame: None,
             context_snapshot: None,
             identity: None,
             mcp_servers: Vec::new(),

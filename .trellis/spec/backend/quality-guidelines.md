@@ -162,11 +162,11 @@ store.write_meta(&session_meta).await?;
 旧 `PromptSessionRequest` 已从生产主链路删除。新增启动字段时必须同步：
 
 1. 入口 adapter 的 `LaunchCommand` source payload。
-2. 装配阶段的 `PromptAugmentInput`，并确认新增字段是否应改归 `SessionConstructionPlan` / `LaunchExecution`。
+2. 装配阶段的 `SessionLaunchRequest` 过渡 envelope，并确认新增字段是否应直接改归 `SessionConstructionPlan` / `LaunchExecution`。
 3. `LaunchExecution` summary / connector-facing `ExecutionContext` 投影。
 4. HTTP / local relay / task / workflow / routine / companion / hook auto-resume 入口测试。
 
-禁止通过恢复 `PromptSessionRequest`、`PreparedLaunchPrompt` 或新增半成品 request 壳绕过主链路。
+禁止通过恢复 `PromptSessionRequest`、`PromptAugmentInput`、`PreparedLaunchPrompt` 或新增半成品 request 壳绕过主链路。
 
 ---
 

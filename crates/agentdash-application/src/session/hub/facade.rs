@@ -15,7 +15,7 @@ use agentdash_agent_protocol::{
 use tokio::sync::broadcast;
 
 #[cfg(test)]
-use super::super::augmenter::PromptAugmentInput;
+use super::super::augmenter::SessionLaunchRequest;
 use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
@@ -367,7 +367,7 @@ impl SessionHub {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        req: PromptAugmentInput,
+        req: SessionLaunchRequest,
     ) -> Result<String, ConnectorError> {
         SessionLaunchExecutor::new(self)
             .execute_augmented_input_for_test(session_id, req)

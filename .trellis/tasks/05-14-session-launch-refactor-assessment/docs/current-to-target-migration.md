@@ -18,13 +18,13 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 | Boundary | Current State | Required Move |
 |---|---|---|
 | `LaunchCommand` | 已是生产入口；不再持有 `PromptAugmentInput`；`to_augment_input()` 已删除；local relay 不再携带已组装 `Vfs`；task handler、companion snapshot、working_dir、continuation context frame 已移出 command；local relay MCP 已收窄为 declaration source payload | 把 API augmenter / relaxed pipeline 中的 source payload 投影迁入 construction/launch 显式边界 |
-| `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `PromptAugmentInput.working_dir_input`，需迁入 construction |
+| `UserPromptInput` | 已移除 `working_dir`；prompt input 只保留 prompt/env/executor override | working dir 过渡事实仍在 `SessionLaunchRequest.construction.working_dir_input`，需迁入 construction |
 | Source adapters | 多数入口已构造 command；task handler 与 companion parent VFS/MCP/context snapshot 已移出 command | adapters 只能交出请求意图、来源引用和特殊来源策略 payload；bootstrap 上的 task/companion 临时投影需迁入 construction provider |
-| `PromptAugmentInput` | 仍跨 API/bootstrap/application 传递，承载 VFS/MCP/capability/context/hook/post-turn；task handler 已不再来自 command，而是在 Task owner bootstrap 后临时绑定 | 删除 production handoff；task effect binding 进入 construction/effects/outbox 服务边界 |
+| `PromptAugmentInput` | 已删除，不再跨 API/bootstrap/application 传递 | 保持归零；剩余 `SessionLaunchRequest` 过渡 envelope 不能扩张，需继续拆入 construction/launch/effects |
 | `SessionConstructionPlan` | 已有类型；context plan 已保留完整 bundle | 补齐 working dir、VFS、MCP、capability、executor、identity、task effect binding、companion slice、audit/inspector projection |
 | Context endpoint | route 层大部分重建已迁走 | query/audit/inspector 与 launch 投影同一 construction |
-| `SessionLaunchPlanner` | 已不直接消费 `PromptAugmentInput` | 消费 `LaunchCommand + SessionConstructionPlan + runtime facts` |
-| `prompt_pipeline` | 仍接收增强 payload 并参与 planning/fallback | 只执行 `LaunchExecution` |
+| `SessionLaunchPlanner` | 已不直接消费旧 payload | 消费 `LaunchCommand + SessionConstructionPlan + runtime facts` |
+| `prompt_pipeline` | 仍接收 `SessionLaunchRequest` 过渡 envelope 并参与 planning/fallback | 只执行 `LaunchExecution` |
 | `SessionHub` | 仍是能力聚合入口 | 拆成 core / ownership / construction / launch / runtime / eventing / hooks / effects / pending / adapters |
 | Effects / Pending | outbox 与 runtime command store 已有基础 | 补 durable identity、apply-once、failed/retry/recovery、migration 验证 |
 
@@ -32,7 +32,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 
 ### Step 1: Correct Entry Intent
 
-- Keep `working_dir` out of `UserPromptInput`; remove the remaining `PromptAugmentInput.working_dir_input` transition once construction owns working dir resolution.
+- Keep `working_dir` out of `UserPromptInput`; remove the remaining `SessionLaunchRequest.construction.working_dir_input` transition once construction owns working dir resolution.
 - Keep `LaunchCommand` limited to source, actor, target ids, prompt, executor override, follow-up hint, source policy payload.
 - Keep task `post_turn_handler` out of `LaunchCommand`; move the current bootstrap-time handler binding into task/effects source contract.
 - Keep companion parent VFS/MCP/context snapshots out of `LaunchCommand`; move the current bootstrap parent capability projection into construction provider.
@@ -51,11 +51,11 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 - Project connector input from `LaunchExecution`.
 - Remove request/meta/profile fallback from `prompt_pipeline`.
 
-### Step 4: Delete Old Payload
+### Step 4: Delete Old Payload And Envelope
 
-- API/bootstrap returns construction facts or construction plan input, not `PromptAugmentInput`.
-- Delete the remaining API augmenter / relaxed pipeline `PromptAugmentInput` construction.
-- Remove `PromptAugmentInput` from production mainline.
+- Keep `PromptAugmentInput` deleted.
+- API/bootstrap returns construction facts or construction plan input, not a generalized launch envelope.
+- Remove `SessionLaunchRequest` from production mainline after construction/effects/launch fields have owners.
 
 ### Step 5: Split Hub And Verify Stores
 
@@ -65,6 +65,7 @@ Source Adapter -> LaunchCommand -> SessionConstructionPlan -> LaunchExecution ->
 ## Forbidden Final-State Explanations
 
 - `PromptAugmentInput` as production payload.
+- `SessionLaunchRequest` as final production boundary.
 - `LaunchCommand` carrying resolved VFS/MCP/context/capability/hook/effect/working_dir.
 - `UserPromptInput.working_dir`.
 - route/bootstrap rebuilding owner/context/VFS/capability outside construction.

@@ -3,8 +3,8 @@
 ## 核心规则
 
 Session 启动后的"当前实际在跑什么"归属 `SessionRuntime.active_execution`。
-`PromptAugmentInput` 是当前迁移期入口 augment payload，`ExecutionContext`
-是连接器投影，二者都不是运行态真相容器。
+`SessionLaunchRequest` 是当前迁移期 launch envelope，`ExecutionContext`
+是连接器投影，二者都不是运行态真相容器。`PromptAugmentInput` 已删除，不能重新引入。
 
 2026-05 重构后，运行态事实按以下边界拆分：
 

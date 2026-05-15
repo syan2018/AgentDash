@@ -103,7 +103,8 @@ rg -n "PreparedSessionInputs|finalize_request" crates/agentdash-application/src 
 现状问题：
 
 - 当前 `SessionConstructionPlan` 字段仍不完整。
-- context endpoint 仍在 route 层按 Task / Story / Project 分支重建 VFS / context / capability。
+- context endpoint route 已只调用 `bootstrap/session_context_query.rs` 并投影 `SessionConstructionPlan`。
+- `bootstrap/session_context_query.rs` 仍按 Task / Story / Project 分支重建 VFS / context / capability，且复用 route context builder；还没有与 launch construction 合流。
 - launch augment 与 context query 不是同一个 construction 结果的投影。
 - `LaunchExecution.construction` 当前大多仍为 `None`，说明执行链路没有真正消费 construction fact。
 - `augment_prompt_request_for_owner` 已从 API route 移到 `bootstrap/session_launch_augmenter.rs`，route 文件不再承载 prompt launch composition 主分支。
@@ -331,8 +332,11 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 ### Phase 4：Context 同源
 
 - [ ] context endpoint 只投影 `SessionConstructionPlan`。
+- [x] `GET /sessions/{id}/context` route 只调用 context query use case 并投影 `SessionConstructionPlan`。
 - [ ] audit / inspector 只投影 `SessionConstructionPlan`。
 - [ ] route 层不再重建 task/story/project VFS/capability/context。
+- [x] `acp_sessions.rs` route 层不再直接重建 task/story/project VFS/capability/context。
+- [ ] `bootstrap/session_context_query.rs` 与 launch construction planner 合流，删除独立重建主线。
 - [ ] launch 与 context endpoint 一致性测试覆盖 Task / Story / Project。
 
 ### Phase 5：Effects / Pending / Persistence 收尾

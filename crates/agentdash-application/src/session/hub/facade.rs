@@ -18,6 +18,7 @@ use super::super::compaction_context_frame::build_compaction_context_frame;
 use super::super::continuation::build_projected_transcript_from_events;
 use super::super::hub_support::*;
 use super::super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
+use super::super::prompt_pipeline::SessionLaunchExecutor;
 use super::super::types::*;
 use super::SessionHub;
 use crate::companion::build_companion_human_response_notification;
@@ -366,7 +367,8 @@ impl SessionHub {
         session_id: &str,
         req: SessionLaunchPlan,
     ) -> Result<String, ConnectorError> {
-        self.start_prompt_with_follow_up(session_id, None, req)
+        SessionLaunchExecutor::new(self)
+            .execute(session_id, None, req)
             .await
     }
 
@@ -432,12 +434,17 @@ impl SessionHub {
             })
             .unwrap_or_default();
         let turn_id = self
-            .start_prompt_with_follow_up(session_id, follow_up_session_id.as_deref(), req)
+            .launch_executor()
+            .execute(session_id, follow_up_session_id.as_deref(), req)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
             context_sources,
         })
+    }
+
+    fn launch_executor(&self) -> SessionLaunchExecutor<'_> {
+        SessionLaunchExecutor::new(self)
     }
 
     /// 将内部 follow-up 的裸请求补齐到与 HTTP 主通道一致。

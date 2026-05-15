@@ -18,21 +18,30 @@ use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
 pub use super::types::*;
 
-impl SessionHub {
+pub(super) struct SessionLaunchExecutor<'a> {
+    hub: &'a SessionHub,
+}
+
+impl<'a> SessionLaunchExecutor<'a> {
+    pub fn new(hub: &'a SessionHub) -> Self {
+        Self { hub }
+    }
+
     /// 多轮对话（支持底层执行器 follow-up 会话续跑）。
-    pub(crate) async fn start_prompt_with_follow_up(
+    pub async fn execute(
         &self,
         session_id: &str,
         follow_up_session_id: Option<&str>,
         req: SessionLaunchPlan,
     ) -> Result<String, ConnectorError> {
+        let hub = self.hub;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
-        let had_existing_runtime = self.connector.has_live_session(session_id).await;
+        let had_existing_runtime = hub.connector.has_live_session(session_id).await;
 
-        let cached_continuation = self.turn_supervisor.claim_prompt(session_id).await?;
+        let cached_continuation = hub.turn_supervisor.claim_prompt(session_id).await?;
 
-        let meta_store = self.stores.meta.clone();
-        let runtime_command_store = self.stores.runtime_commands.clone();
+        let meta_store = hub.stores.meta.clone();
+        let runtime_command_store = hub.stores.runtime_commands.clone();
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let mut session_meta = match meta_store.get_session_meta(&sid).await {
@@ -56,7 +65,7 @@ impl SessionHub {
                     "读取 session `{sid}` pending runtime commands 失败: {error}"
                 ))
             })?;
-        let planned_launch = SessionLaunchPlanner::new(self)
+        let planned_launch = SessionLaunchPlanner::new(hub)
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
@@ -103,7 +112,7 @@ impl SessionHub {
         let mut context = launch_execution.context;
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
-        context.turn.assembled_tools = self
+        context.turn.assembled_tools = hub
             .build_tools_for_execution_context(
                 session_id,
                 &context,
@@ -112,10 +121,10 @@ impl SessionHub {
             .await;
 
         let identity_frame = build_identity_context_frame(&IdentityFrameInput {
-            base_system_prompt: &self.base_system_prompt,
+            base_system_prompt: &hub.base_system_prompt,
             agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
             agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-            user_preferences: &self.user_preferences,
+            user_preferences: &hub.user_preferences,
             discovered_guidelines: &discovered_guidelines,
         });
 
@@ -139,7 +148,7 @@ impl SessionHub {
             });
 
         {
-            self.turn_supervisor
+            hub.turn_supervisor
                 .activate_turn(
                     session_id,
                     super::hub_support::SessionProfile {
@@ -161,7 +170,7 @@ impl SessionHub {
             .map(|command| command.id)
             .collect::<Vec<_>>();
         let pending_transition_frames = if !pending_capability_transitions.is_empty() {
-            let frames = self
+            let frames = hub
                 .apply_pending_runtime_context_transitions_on_turn(
                     &sid,
                     &turn_id,
@@ -176,12 +185,12 @@ impl SessionHub {
             Vec::new()
         };
 
-        let connector_type = match self.connector.connector_type() {
+        let connector_type = match hub.connector.connector_type() {
             agentdash_spi::ConnectorType::LocalExecutor => "local_executor",
             agentdash_spi::ConnectorType::RemoteAcpBackend => "remote_acp_backend",
         };
         let source = SourceInfo {
-            connector_id: self.connector.connector_id().to_string(),
+            connector_id: hub.connector.connector_id().to_string(),
             connector_type: connector_type.to_string(),
             executor_id: Some(context.session.executor_config.executor.to_string()),
         };
@@ -196,11 +205,11 @@ impl SessionHub {
             &resolved_payload.user_blocks,
         );
         for envelope in user_envelopes {
-            let _ = self.persist_notification(&sid, envelope).await;
+            let _ = hub.persist_notification(&sid, envelope).await;
         }
 
         let started = build_turn_started_envelope(session_id, &source, &turn_id);
-        let _ = self.persist_notification(&sid, started).await;
+        let _ = hub.persist_notification(&sid, started).await;
 
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
@@ -210,7 +219,7 @@ impl SessionHub {
                     let _ = hook_session.update_capabilities(initial_caps.clone());
                 }
 
-                let _start_effects = self
+                let _start_effects = hub
                     .emit_session_hook_trigger(
                         hook_session.as_ref(),
                         &HookTriggerInput {
@@ -239,7 +248,7 @@ impl SessionHub {
                 &capability_keys,
                 &context.turn.assembled_tools,
             );
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             owner_bootstrap_frames.push(frame);
 
             if let Some(frame) = build_assignment_context_frame(
@@ -248,18 +257,18 @@ impl SessionHub {
                     .map(|bundle| bundle.phase_tag.as_str()),
                 &compose_fragments,
             ) {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+                let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
                 owner_bootstrap_frames.push(frame);
             }
         }
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         if let Some(frame) = identity_frame {
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);
         }
         if let Some(frame) = continuation_context_frame {
-            let _ = self.emit_context_frame(&sid, Some(&turn_id), &frame).await;
+            let _ = hub.emit_context_frame(&sid, Some(&turn_id), &frame).await;
             turn_context_frames.push(frame);
         }
         turn_context_frames.extend(owner_bootstrap_frames);
@@ -280,7 +289,7 @@ impl SessionHub {
                 })
                 .collect::<Vec<_>>();
             for frame in &pending_action_frames {
-                let _ = self.emit_context_frame(&sid, Some(&turn_id), frame).await;
+                let _ = hub.emit_context_frame(&sid, Some(&turn_id), frame).await;
             }
             turn_context_frames.extend(pending_action_frames);
         }
@@ -292,7 +301,7 @@ impl SessionHub {
         );
         let executor_config_for_meta = context.session.executor_config.clone();
 
-        let mut stream = match self
+        let mut stream = match hub
             .connector
             .prompt(
                 session_id,
@@ -304,7 +313,7 @@ impl SessionHub {
         {
             Ok(stream) => stream,
             Err(error) => {
-                self.turn_supervisor.clear_turn_and_hook(session_id).await;
+                hub.turn_supervisor.clear_turn_and_hook(session_id).await;
                 let failed = build_turn_terminal_envelope(
                     &sid,
                     &source,
@@ -312,7 +321,7 @@ impl SessionHub {
                     TurnTerminalKind::Failed,
                     Some(error.to_string()),
                 );
-                let _ = self.persist_notification(&sid, failed).await;
+                let _ = hub.persist_notification(&sid, failed).await;
                 return Err(error);
             }
         };
@@ -344,9 +353,9 @@ impl SessionHub {
         let is_first_turn = session_meta.last_event_seq <= 1;
         if is_first_turn
             && session_meta.title_source != super::types::TitleSource::User
-            && self.title_generator.is_some()
+            && hub.title_generator.is_some()
         {
-            self.spawn_title_generation(
+            hub.spawn_title_generation(
                 session_id.to_string(),
                 resolved_payload.text_prompt.clone(),
             );
@@ -355,7 +364,7 @@ impl SessionHub {
 
         // 创建 SessionTurnProcessor — cloud-native 和 relay 共用的事件处理核心
         let processor = super::turn_processor::SessionTurnProcessor::spawn(
-            self.clone(),
+            hub.clone(),
             super::turn_processor::SessionTurnProcessorConfig {
                 session_id: session_id.clone(),
                 turn_id: turn_id.clone(),
@@ -368,12 +377,12 @@ impl SessionHub {
         let processor_tx = processor.tx();
 
         // 注册 processor_tx 到 SessionRuntime.current_turn，供 relay / cancel 路径使用
-        self.turn_supervisor
+        hub.turn_supervisor
             .register_processor_tx(&session_id, processor_tx.clone())
             .await;
 
         Self::spawn_stream_adapter(
-            self.turn_supervisor.clone(),
+            hub.turn_supervisor.clone(),
             session_id.to_string(),
             turn_id.clone(),
             &mut stream,
@@ -464,7 +473,9 @@ impl SessionHub {
             meta.title = title_hint.to_string();
         }
     }
+}
 
+impl SessionHub {
     /// 解析 hook runtime：决定 reload / refresh / skip。
     ///
     /// 三条路径：
@@ -509,7 +520,7 @@ impl SessionHub {
     ///
     /// PR 7c：只有本函数（owner bootstrap 入口）以及 `ensure_hook_session_runtime`
     /// （冷启动恢复入口）可以写 `SessionRuntime.hook_session`；其他调用方（包括
-    /// `start_prompt_with_follow_up` 自己的 happy path）只读取不回写。
+    /// `SessionLaunchExecutor` 的 happy path）只读取不回写。
     pub async fn reload_session_hook_runtime(
         &self,
         session_id: &str,

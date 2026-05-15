@@ -58,7 +58,7 @@ LaunchCommand
 - `PreparedSessionInputs` 已删除。
 - 生产入口已不再直接调用 `.start_prompt(...)`；当前 `rg "\.start_prompt\("` 只剩 hub 自测。
 - `start_prompt` 已收紧为 `#[cfg(test)]`，生产代码不能再绕过 `LaunchCommand` 调用 prompt pipeline。
-- `start_prompt_with_follow_up` 已收紧为 `pub(crate)`；crate 外部不能再绕过 `LaunchCommand` 直接进入 prompt pipeline。
+- `start_prompt_with_follow_up` 已删除；prompt 执行段入口改为 `SessionLaunchExecutor::execute`。
 - `PreparedLaunchPrompt` 已删除；当前临时跨 crate 类型是 `SessionLaunchPlan`。
 - `SessionLaunchPlan` 不再只是平坦 prompt 壳：它携带 `construction_owner` 与 `source_contract`，供 pipeline 生成 `SessionConstructionPlan`。
 
@@ -152,8 +152,9 @@ session context 主线不再在 route 层调用这些 builder；route 只做 aut
 - 已新增 `SessionLaunchPlanner`，并从 `prompt_pipeline` 抽出 payload、VFS fallback、executor fallback、MCP fallback、capability fallback、hook runtime、restore、follow-up、pending command 与 construction projection 的计划构建。
 - `prompt_pipeline` 不再直接读取 `req.vfs / req.mcp_servers / req.capability_state` 做策略 fallback；这些命中已集中到 `launch_planner.rs`。
 - `prompt_pipeline` 在 `SessionLaunchPlanner` 返回后不再继续持有 `SessionLaunchPlan`；planner 输出显式的 context bundle、continuation frame、post-turn handler 与 `LaunchExecution`。
+- `start_prompt_with_follow_up` 已删除，facade 通过 `SessionLaunchExecutor::execute` 进入执行段。
 - `LaunchExecution` 仍偏 summary/context projection，且 planner 仍借用 `SessionHub` 依赖，不是完全独立的 launch service。
-- `start_prompt_with_follow_up` 仍以 `SessionLaunchPlan` 作为输入；这不是最终执行边界。
+- `SessionLaunchExecutor::execute` 仍以 `SessionLaunchPlan` 作为输入；这不是最终执行边界。
 
 目标：
 
@@ -201,6 +202,7 @@ rg -n "CachedSessionProfile|HubDefault|SessionMeta\\)|req\\.mcp_servers|req\\.ca
 - `SessionHub` 仍持有 connector、hook provider、runtime registry、turn supervisor、stores、persistence、prompt augmenter、terminal callback 等。
 - 多个业务行为仍实现为 `impl SessionHub`。
 - `launch_command` 仍在 hub facade 内完成 augment 与旧 prompt pipeline 分发。
+- prompt 执行主段已抽为 `SessionLaunchExecutor`，但该 executor 仍借用 `SessionHub` 字段与 helper 方法，尚未成为独立 launch service。
 
 目标：
 
@@ -307,7 +309,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 
 - [ ] 新增 `SessionConstructionPlanner`。
 - [x] 新增 `SessionLaunchPlanner`。
-- [ ] 新增 `SessionLaunchExecutor`。
+- [x] 新增 `SessionLaunchExecutor`。
 - [ ] `LaunchCommand` 改为纯入口意图。
   - [x] 删除 `LaunchCommand::*_prepared`，避免 `LaunchCommand` 继续接收 `PreparedSessionInputs`。
   - [x] 将 HTTP Story/Project、Task service、Workflow orchestrator、Routine executor、Companion dispatch 调用点从直接传递 `PreparedSessionInputs` 推到 prompt 边界。
@@ -318,7 +320,7 @@ rg -n "impl SessionHub|pub struct SessionHub|SessionHub::launch|start_prompt_wit
 - [x] 删除 `LaunchCommand` 内部的已组装 launch plan 字段。
 - [x] 删除 `LaunchCommand` 内部承载已组装 prompt material 的分支；未迁移入口显式停在 `start_prompt` 调用点，不再伪装成统一 command。
 - [x] 将 `start_prompt` 收紧为测试专用，防止生产代码新增旧 prompt 旁路。
-- [x] 将 `start_prompt_with_follow_up` 从 public API 收紧为 crate 内部执行函数。
+- [x] 删除 `start_prompt_with_follow_up` 入口，改为 `SessionLaunchExecutor::execute`。
 - [x] 停止从 `session::mod` re-export `SessionLaunchPlan`，避免新增入口从主 namespace 继续依赖旧投影。
 - [ ] 将 VFS/MCP/capability/context/hook/post-turn 从 command 主体移入 construction/launch planner。
 - [x] owner launch 主线的 `LaunchExecution` 持有 `SessionConstructionPlan`。
@@ -354,7 +356,8 @@ rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/s
 - [ ] 删除 `SessionLaunchPlan` 或退化成 launch executor 私有 connector projection。
 - [x] 将 payload/VFS/MCP/capability/lifecycle/restore/follow-up/pending/construction planning 从 `start_prompt_with_follow_up` 抽到 `SessionLaunchPlanner`。
 - [x] `prompt_pipeline` 不再在 planner 后继续读取 `SessionLaunchPlan`，执行段只消费 `PlannedSessionLaunch` 字段。
-- [ ] 删除 `start_prompt_with_follow_up` 剩余 planner 职责，并让它只执行 `LaunchExecution`。
+- [x] 删除 `start_prompt_with_follow_up` 入口，改由 `SessionLaunchExecutor::execute` 执行。
+- [ ] `SessionLaunchExecutor` 不再以 `SessionLaunchPlan` 为输入，改为消费 `LaunchExecution` / construction 输出。
 
 ### Phase 4：Context 同源
 

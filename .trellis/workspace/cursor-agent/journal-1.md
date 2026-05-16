@@ -598,3 +598,37 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Session 重构最终收尾清洁
+
+**Date**: 2026-05-16
+**Task**: Session 重构最终收尾清洁
+**Branch**: `main`
+
+### Summary
+
+完成 session 重构最终 hardening：规划并提交收尾 task，修复 terminal cleanup 与 runtime command apply-once 边界，统一 context inspect 与 launch projection，正式落库 tab_layout 并贯通 API/仓储/前端，补充回归测试和 code-spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `99cb5b63` | (see git log) |
+| `1c3a5b64` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

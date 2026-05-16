@@ -70,6 +70,3 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 - [后端开发指南](../backend/index.md)
 - [沟通规范](../communication.md)
 
----
-
-*更新：2026-03-29 — 充实命名规范，增加 HTTP JSON 字段命名约定*

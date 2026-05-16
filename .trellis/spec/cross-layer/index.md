@@ -31,6 +31,3 @@
 - [前端开发指南](../frontend/index.md)
 - [前后端共享规范](../shared/index.md)
 
----
-
-*创建：2026-04-21 — 从 backend/ 中拆分跨层契约文档*

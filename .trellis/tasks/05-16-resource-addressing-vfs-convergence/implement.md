@@ -20,6 +20,7 @@
 
 - [x] 增加 `Vfs::validate()` 等价验证入口 `validate_vfs`。
 - [x] 在 `build_derived_vfs`、workspace VFS、agent knowledge VFS 构建后执行 hard validation。
+- [x] 补齐 `validate_vfs` 对 default mount 必填、系统保留 mount id 与内置 provider capability 的硬校验。
 - [x] 收敛 `RootRef` provider/local 语义，关键入口不再把虚拟 root 当作本机 path。
 - [x] 把 relay/local file、list、search、shell cwd 策略集中到共享路径解析 helper。
 - [x] 为 materialization 任务暴露稳定地址解析接口，避免其重复实现 URI/path 判断。
@@ -68,4 +69,4 @@ pnpm --filter @agentdash/app-web exec tsc --noEmit
 - [x] `cargo check -p agentdash-application`
 - [x] `cargo check -p agentdash-api`
 - [x] `cargo check -p agentdash-local`
-- [ ] `pnpm --filter app-web run typecheck` 当前无法执行：工作区缺少 `node_modules`，本机提示 `tsc` 不可用。
+- [x] `pnpm --filter app-web run typecheck`

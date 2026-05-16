@@ -104,7 +104,7 @@ PathPolicy
 - `MountRelativePath` 拒绝绝对路径、Windows drive、UNC/root path 和越界 `..`。
 - `RootRef` 必须区分本机路径和 provider URI；`lifecycle://`、`skill-assets://`、`canvas://` 等虚拟 root 不得被隐式转为 OS `PathBuf`。
 - session connector working directory 只能来自本机路径 root。虚拟 mount 需要先经过物化契约转成本机路径。
-- `Vfs` 构建/派生后必须执行 hard validation，至少检查 mount id 唯一、default mount 存在、root_ref/provider scheme 合法、link target 存在且无环。
+- `Vfs` 构建/派生后必须执行 hard validation，至少检查 mount id 唯一、系统保留 mount id 未被错误 provider 占用、default mount 存在、root_ref/provider scheme 合法、内置 provider capability 与支持范围一致、link target 存在且无环。
 - 本项目仍处预研期，不保留旧路径行为回退；发现非法地址应直接失败并补测试。
 
 #### 3.2 Session Mount Table 契约

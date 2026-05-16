@@ -376,18 +376,43 @@ pub fn validate_vfs(vfs: &Vfs) -> Result<(), String> {
         if mount.provider.trim().is_empty() {
             return Err(format!("mount `{}` provider 不能为空", mount.id));
         }
+        validate_reserved_mount_id(mount)?;
         validate_mount_root_ref(mount)?;
+        validate_provider_capabilities(mount)?;
     }
 
-    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
-        && !vfs.mounts.iter().any(|mount| mount.id == default_mount_id)
-    {
-        return Err(format!(
-            "default_mount_id 指向不存在的 mount: {default_mount_id}"
-        ));
+    match vfs.default_mount_id.as_deref() {
+        Some(default_mount_id) if vfs.mounts.iter().any(|mount| mount.id == default_mount_id) => {}
+        Some(default_mount_id) => {
+            return Err(format!(
+                "default_mount_id 指向不存在的 mount: {default_mount_id}"
+            ));
+        }
+        None if !vfs.mounts.is_empty() => {
+            return Err("VFS 包含 mount 时必须设置 default_mount_id".to_string());
+        }
+        None => {}
     }
 
     validate_links(vfs)
+}
+
+fn validate_reserved_mount_id(mount: &Mount) -> Result<(), String> {
+    let valid = match mount.id.as_str() {
+        "main" => matches!(mount.provider.as_str(), "relay_fs" | "local_fs"),
+        "lifecycle" => mount.provider == "lifecycle_vfs",
+        "skill-assets" => mount.provider == "skill_asset_fs",
+        id if id.starts_with("cvs-") => mount.provider == "canvas_fs",
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "mount id `{}` 是系统保留 ID，不能由 provider `{}` 使用",
+            mount.id, mount.provider
+        ))
+    }
 }
 
 fn validate_mount_root_ref(mount: &Mount) -> Result<(), String> {
@@ -416,6 +441,38 @@ fn validate_mount_root_ref(mount: &Mount) -> Result<(), String> {
         )),
         _ => Ok(()),
     }
+}
+
+fn validate_provider_capabilities(mount: &Mount) -> Result<(), String> {
+    for capability in &mount.capabilities {
+        let supported = match mount.provider.as_str() {
+            "relay_fs" | "local_fs" => matches!(
+                capability,
+                MountCapability::Read
+                    | MountCapability::Write
+                    | MountCapability::List
+                    | MountCapability::Search
+                    | MountCapability::Exec
+            ),
+            "inline_fs" | "lifecycle_vfs" | "skill_asset_fs" | "canvas_fs" => matches!(
+                capability,
+                MountCapability::Read
+                    | MountCapability::Write
+                    | MountCapability::List
+                    | MountCapability::Search
+            ),
+            _ => true,
+        };
+        if !supported {
+            return Err(format!(
+                "mount `{}` provider `{}` 不支持 capability `{}`",
+                mount.id,
+                mount.provider,
+                capability_name(capability)
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_links(vfs: &Vfs) -> Result<(), String> {
@@ -642,5 +699,35 @@ mod tests {
         vfs.default_mount_id = Some("missing".to_string());
         let err = validate_vfs(&vfs).expect_err("bad default");
         assert!(err.contains("default_mount_id"));
+    }
+
+    #[test]
+    fn validate_vfs_requires_default_mount_when_mounts_exist() {
+        let mut vfs = make_vfs(vec![]);
+        vfs.default_mount_id = None;
+
+        let err = validate_vfs(&vfs).expect_err("missing default");
+
+        assert!(err.contains("default_mount_id"));
+    }
+
+    #[test]
+    fn validate_vfs_rejects_reserved_mount_id_conflict() {
+        let mut vfs = make_vfs(vec![]);
+        vfs.mounts[0].id = "lifecycle".to_string();
+
+        let err = validate_vfs(&vfs).expect_err("reserved conflict");
+
+        assert!(err.contains("系统保留"));
+    }
+
+    #[test]
+    fn validate_vfs_rejects_builtin_provider_unsupported_capability() {
+        let mut vfs = make_vfs(vec![]);
+        vfs.mounts[0].capabilities.push(MountCapability::Exec);
+
+        let err = validate_vfs(&vfs).expect_err("unsupported capability");
+
+        assert!(err.contains("不支持 capability"));
     }
 }

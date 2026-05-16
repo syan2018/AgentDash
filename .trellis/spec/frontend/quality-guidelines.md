@@ -64,6 +64,3 @@
 - [ ] 组件拆分合理
 - [ ] API 字段使用 `snake_case`，无双风格兼容代码
 
----
-
-*更新：2026-03-29 — 对齐 snake\_case 直接映射决策，移除与 type-safety.md 矛盾的 camelCase 转换描述*

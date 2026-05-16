@@ -1,331 +1,49 @@
 # Type Safety
 
-> AgentDashboard 前端类型安全规范。
+> 前端类型安全规范。
 
 ---
 
-## 技术栈
+## 核心原则
 
-- **TypeScript**: ~5.9.3
-- **严格模式**: 已启用
-- **运行时验证**: 手动映射 API 响应
-
----
-
-## 类型组织
-
-### 目录结构
-
-```
-packages/app-web/src/
-├── types/
-│   └── index.ts           # 全局共享类型
-├── features/
-│   └── {feature}/
-│       └── model/
-│           └── types.ts   # Feature 私有类型
-└── services/
-    └── executor.ts        # API 相关类型
-```
-
-### 类型分类
-
-| 位置 | 用途 | 示例 |
-|------|------|------|
-| `types/index.ts` | 跨 Feature 共享 | `Story`, `Task`, `Backend` |
-| `features/X/model/types.ts` | Feature 内部 | `AcpDisplayEntry` |
-| `services/*.ts` | API 相关 | `ExecutorConfig` |
-| `Component.tsx` | 组件 Props | `AcpSessionListProps` |
+- **严格模式**：TypeScript strict 已启用，禁止 `any`、类型断言（`as`）、非空断言（`!`）
+- **snake_case 直接映射**：前端类型字段名与后端 Rust DTO 直接对齐，不做 camelCase 转换
+- **运行时验证**：API 响应通过 mapper 函数做 `unknown → typed object` 转换，包含基础校验
 
 ---
 
-## 类型定义规范
+## 类型分层
 
-### Interface vs Type
-
-```ts
-// ✅ Interface：对象结构、可扩展
-interface Story {
-  id: string;
-  title: string;
-}
-
-// ✅ Type：联合类型、工具类型
-type StoryStatus = 'draft' | 'ready' | 'running';
-
-// ✅ Type：复杂转换
-type StoryInput = Omit<Story, 'id' | 'createdAt'>;
-```
-
-### Props 类型
-
-```tsx
-// ✅ 导出 interface
-export interface SessionChatViewProps {
-  sessionId: string;
-  endpoint?: string;
-  className?: string;
-  onError?: (error: Error) => void;
-}
-
-export function SessionChatView(props: SessionChatViewProps) {
-  // ...
-}
-```
-
-### Hook 返回类型
-
-```ts
-export interface UseSessionStreamResult {
-  entries: SessionFeedEntry[];
-  isConnected: boolean;
-  isLoading: boolean;
-  error: Error | null;
-  reconnect: () => void;
-}
-
-export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
-  // ...
-}
-```
+| 位置 | 用途 |
+|------|------|
+| `types/index.ts` + 拆分文件 | 跨 Feature 共享的领域类型 |
+| `features/{name}/model/types.ts` | Feature 内部类型 |
+| `generated/backbone-protocol.ts` | 自动生成的协议类型，禁止手动修改 |
 
 ---
 
-## API 类型映射
+## Mapper 边界
 
-> **设计决策（v0.2）**：前端类型直接使用 **snake_case** 与后端对齐，不做 camelCase 转换。
-> 原因：减少映射层复杂度，避免序列化/反序列化不一致。
+mapper 只负责：
+- `unknown → typed object` 转换
+- 状态值归一化（如多个旧状态名映射到新枚举值）
+- null / array / number 基础运行时校验
 
-```ts
-// 前端类型直接使用 snake_case（与后端 Rust 实体一致）
-interface Story {
-  id: string;
-  project_id: string;     // snake_case，与后端一致
-  backend_id: string;
-  title: string;
-  status: StoryStatus;
-  context: StoryContext;   // 结构化上下文
-  created_at: string;
-  updated_at: string;
-}
-
-// 映射函数仅做状态值归一化，不做字段名转换
-const mapStory = (raw: Record<string, unknown>): Story => {
-  return {
-    id: String(raw.id ?? ''),
-    project_id: String(raw.project_id ?? ''),
-    backend_id: String(raw.backend_id ?? ''),
-    title: String(raw.title ?? '未命名 Story'),
-    status: normalizeStoryStatus(String(raw.status ?? 'draft')),
-    context: parseStoryContext(raw.context),
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? new Date().toISOString()),
-  };
-};
-```
-
-### 业务 API 映射边界
-
-- 前端业务类型以 `packages/app-web/src/types/index.ts` 为准，字段名统一 `snake_case`
-- store/service mapper 只负责：
-  - `unknown -> typed object`
-  - 状态值归一化
-  - null / array / number 等基础运行时校验
-- store/service mapper 不负责：
-  - 同时兼容 `camelCase` + `snake_case`
-  - 猜测后端字段别名
-  - 用双字段读取掩盖后端 DTO 契约错误
-
-```ts
-// ✅ 正确：只接受规范字段
-const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
-  id: String(raw.id ?? ''),
-  session_id: String(raw.session_id ?? ''),
-  owner_type: String(raw.owner_type ?? 'story') as SessionBinding['owner_type'],
-  owner_id: String(raw.owner_id ?? ''),
-  created_at: String(raw.created_at ?? new Date().toISOString()),
-});
-
-// ❌ 错误：把后端契约漂移长期固化在前端
-const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
-  session_id: String(raw.sessionId ?? raw.session_id ?? ''),
-  owner_type: String(raw.ownerType ?? raw.owner_type ?? 'story') as SessionBinding['owner_type'],
-});
-```
-
-当 mapper 开始出现 `fooBar ?? foo_bar` 时，应回到后端 DTO 修复，而不是继续扩写前端兼容层。
-
-### CapabilityDirective 类型契约
-
-`CapabilityDirective` 对齐后端 `ToolCapabilityDirective`，`add` / `remove` 携带的是 qualified path 字符串，不是仅限 `CapabilityKey` 的枚举值。
-
-```ts
-// 正确：能力级、工具级、MCP 能力都通过字符串 path 表达
-type CapabilityDirective = { add: string } | { remove: string };
-
-const directives: CapabilityDirective[] = [
-  { add: "workflow_management" },
-  { remove: "workflow_management::upsert_workflow_tool" },
-  { add: "mcp:code_analyzer" },
-];
-```
-
-`CapabilityKey` 只用于前端内置能力选项、筛选与展示，不要用它收窄 workflow / agent config 中的 `capability_directives`。`AgentPresetConfig` 这类 API 配置对象需要保持可 JSON 扩展，应继承 `Record<string, unknown>`，再叠加已知字段。
-
-### ContextFrame 事件契约
-
-`SessionMetaUpdate { key: "context_frame" }` 的 `value` 是 Agent 可见上下文的
-结构化 frame。前端必须在 feature `model/` 层用运行时 parser 将
-`Record<string, unknown>` 映射为 typed object，再交给 UI 卡片渲染；组件文件只负责
-展示，不导出 parser 或非组件工具，避免 React refresh lint 误判。
-
-- 字段名直接沿用后端 snake_case：`rendered_text`、`delivery_status`、
-  `delivery_channel`、`message_role`、`kind`、`phase_node`、
-  `capability_key`、`parameters_schema`、`tool_path`。
-- 未识别 section kind 应被忽略，而不是回退成“已注入动态上下文”。
-- runtime 工具变化展示消费 `tool_schema_delta` section；主视图只展示本次 delta，
-  不展示完整当前工具 schema。完整 tool list 是 provider request 的执行层事实，
-  不是 context frame 主视图内容。
-- 启动期 surface 使用独立 frame/section：`workspace_surface` 展示工作目录、
-  default mount 与 mounts；`skill_surface` 展示可由模型按需加载的 skills 与
-  read tool；`hook_runtime_surface` 展示 Hook Runtime 启用状态与 pending action
-  数量。前端可以在 `useSessionFeed` 把相邻 `context_frame` 折叠为批量更新组，
-  但单张 `ContextFrameCard` 必须保留每个 frame 自己的 `kind` 与 section。
-- 系统发起的续跑提示使用 `auto_resume` section，展示 `reason` 与真实 `prompt`；
-  `delivery_channel=user_prompt` 时仍按 ContextFrame 渲染，不要把它隐藏成普通用户消息。
-- 历史压缩使用 `compaction_summary` section，展示 summary、压缩消息数量、压缩前
-  token 数、边界 ref 与时间戳；不要只显示一个静默的 `context_compacted` 状态。
-- 相邻 `context_frame` event 应由 `useSessionFeed` 聚合成“Agent 上下文批量更新”
-  组，默认展示 frame 数、section 数与 kind 摘要；展开后再渲染每个
-  `ContextFrameCard`。不要在用户主视图中平铺一串 verbose frame。
-- `hook_trace context_injected` 仅作为普通 hook audit 展示；runtime context 可视化
-  只能以 `context_frame` frame 为准。
-- 普通视图不得把 `hook_trace` / `hook_event` 中的 legacy
-  `baseline_initialized`、`context_injected`、`steering_injected` 冒充为 Agent-visible
-  context card；这些 trace 只应在 debug/verbose 或后续迁移为 `ContextFrame` 后展示。
-- `context_injected` / `steering_injected` 若没有携带 `injections`、diagnostics、
-  completion 或 block reason，应视为空壳 trace 静默处理；对应的 runtime turn-start
-  文本应由 `context_frame` 卡片展示。
-
-### 状态值归一化
-
-后端可能返回旧版状态名，前端映射函数负责归一化：
-
-```ts
-const normalizeStoryStatus = (value: string): StoryStatus => {
-  switch (value) {
-    case 'created': case 'draft': return 'draft';
-    case 'context_ready': case 'decomposed': case 'ready': return 'ready';
-    case 'executing': return 'running';
-    case 'awaiting_verification': return 'review';
-    // ...
-    default: return 'draft';
-  }
-};
-```
+mapper 不负责：
+- 同时兼容 `camelCase` + `snake_case`（出现 `fooBar ?? foo_bar` 时应修后端 DTO）
+- 猜测后端字段别名
 
 ---
 
-## 类型守卫
+## CapabilityDirective 契约
 
-```ts
-// 类型守卫函数
-export function isAggregatedGroup(item: AcpDisplayItem): item is AggregatedEntryGroup {
-  return item.type === 'aggregated_group';
-}
-
-export function isAggregatedThinkingGroup(item: AcpDisplayItem): item is AggregatedThinkingGroup {
-  return item.type === 'aggregated_thinking';
-}
-
-// 使用
-if (isAggregatedGroup(item)) {
-  // TypeScript 知道 item 是 AggregatedEntryGroup
-  console.log(item.groupKey);
-}
-```
-
----
-
-## 运行时安全
-
-### API 响应处理
-
-```ts
-// ✅ 显式类型转换 + 验证
-const mapTask = (raw: Record<string, unknown>): Task => {
-  return {
-    id: String(raw.id ?? ''),
-    title: String(raw.title ?? '未命名 Task'),
-    status: normalizeTaskStatus(String(raw.status ?? 'pending')),
-    artifacts: Array.isArray(raw.artifacts)
-      ? raw.artifacts as Task['artifacts']
-      : [],
-  };
-};
-
-// 使用
-const response = await api.get<Record<string, unknown>[]>('/tasks');
-const tasks = response.map(mapTask);
-```
+`CapabilityDirective` 使用 qualified path 字符串（`{ add: string } | { remove: string }`），支持能力级、工具级、MCP 能力。`CapabilityKey` 仅用于前端内置能力选项的 UI 展示，不要用它收窄 API 配置中的 `capability_directives`。
 
 ---
 
 ## 禁止模式
 
-```ts
-// ❌ 禁止使用 any
-const data: any = await api.get('/data');
-
-// ❌ 禁止类型断言（除非必要）
-const data = await api.get('/data') as SomeType;
-
-// ❌ 禁止非空断言
-const item = items.find(x => x.id === id)!;
-
-// ✅ 正确
-const data: unknown = await api.get('/data');
-const item = items.find(x => x.id === id);
-if (!item) throw new Error('Not found');
-```
-
----
-
-## 常用类型工具
-
-```ts
-// 从数组提取元素类型
-type ElementType<T> = T extends (infer U)[] ? U : never;
-
-// 可选字段
-type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
-
-// 示例：创建 Story 时 id 可选
-type CreateStoryInput = PartialBy<Story, 'id' | 'createdAt'>;
-```
-
----
-
-## 参考类型定义
-
-- `packages/app-web/src/types/index.ts` - Project, Workspace, Story, Task 等核心类型
-- `packages/app-web/src/features/session/model/types.ts` - Backbone Protocol 事件类型
-- `packages/app-web/src/services/executor.ts` - ExecutorConfig 类型
-
----
-
-## 架构演进记录
-
-### v0.2 — snake_case 直接映射
-
-**变更**：前端类型从 camelCase 切换到 snake_case，与后端 Rust 实体直接对齐。
-
-**影响范围**：
-- `types/index.ts` 中所有字段名使用 snake_case
-- 组件中访问字段如 `story.created_at`（非 `story.createdAt`）
-- Store 映射函数不再做字段名转换
-
-**原因**：
-1. 减少映射层代码量和出错概率
-2. 新增 Project/Workspace 等多个实体后，camelCase 转换维护成本过高
-3. TypeScript 类型与 API JSON 响应直接匹配，调试更直观
+- `any` 类型
+- `as SomeType` 类型断言（除非编译器无法推断的极少数场景）
+- `value!` 非空断言
+- API 响应直接信任为具体类型（必须经过 mapper）

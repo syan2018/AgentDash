@@ -1,131 +1,60 @@
 # LLM 模型配置跨层契约
 
-> 本规范描述 AgentDash 中模型选择、推理级别、provider 管理的跨层契约。
-> 参考来源：`references/pi-mono/packages/agent/src/types.ts`（AgentState）
+> 模型选择、推理级别、provider 管理的跨层约定。
 
 ---
 
-## 1. 核心原则
+## 核心参数
 
-### 业务层只关心三件事
-
-对齐 pi-mono `AgentState`，Agent 运转只需要：
+Agent 运转只需要三个业务参数：
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `model_id` | `String` | 使用的模型 ID |
 | `provider_id` | `String` | 所属 provider（如 `anthropic`、`gemini`） |
-| `thinking_level` | `ThinkingLevel` | 推理强度（`off/minimal/low/medium/high/xhigh`） |
+| `thinking_level` | `ThinkingLevel` | 推理强度枚举 |
 
-**已删除（不再暴露给业务层）**：`temperature`、`max_tokens`、`top_p`、`top_k`、`budget_tokens`
-
----
-
-## 2. ThinkingLevel 枚举契约
-
-### 后端定义
-
-```rust
-// crates/agentdash-domain/src/common/agent_config.rs
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingLevel {
-    Off,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-}
-```
-
-序列化值（前后端完全一致）：`"off"` / `"minimal"` / `"low"` / `"medium"` / `"high"` / `"xhigh"`
-
-### 前端定义
-
-```ts
-// packages/app-web/src/types/index.ts
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-```
-
-### VibeKanban 路径兼容
-
-VibeKanban 仍使用字符串 `reasoning_id`。转换在 `to_vibe_kanban_config()` 中完成：
-
-```rust
-reasoning_id: self.thinking_level.map(|level| match level {
-    ThinkingLevel::Off => "off",
-    ThinkingLevel::Minimal => "minimal",
-    // ...
-}.to_string()),
-```
+`temperature`、`max_tokens`、`top_p` 等不暴露给业务层。
 
 ---
 
-## 3. AgentConfig 契约
+## ThinkingLevel 枚举
 
-```rust
-// crates/agentdash-domain/src/common/agent_config.rs
-pub struct AgentConfig {
-    pub executor: String,
-    pub provider_id: Option<String>,
-    pub model_id: Option<String>,
-    pub agent_id: Option<String>,
-    pub thinking_level: Option<ThinkingLevel>,
-    pub permission_policy: Option<String>,
-    pub tool_clusters: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
-    pub system_prompt_mode: Option<SystemPromptMode>,
-}
-```
+后端定义在 `agentdash-domain/src/common/agent_config.rs`，前端定义在 `types/index.ts`。
 
-序列化为 HTTP JSON（`snake_case`）：
-```json
-{
-  "executor": "PI_AGENT",
-  "model_id": "claude-opus-4-6",
-  "thinking_level": "high"
-}
-```
+序列化值（前后端一致）：`"off"` / `"minimal"` / `"low"` / `"medium"` / `"high"` / `"xhigh"`
+
+**关键约束**：`ModelInfo.reasoning == true` 的模型才在 UI 中显示 ThinkingLevel 选择器。
 
 ---
 
-## 4. ModelInfo 元数据契约
+## AgentConfig 关键字段
 
-`discover_options_stream` 返回的模型列表中，每个模型包含：
+定义在 `agentdash-domain/src/common/agent_config.rs`：
+`executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`permission_policy`、`system_prompt`、`system_prompt_mode`
 
-### 后端输出（JSON patch 中的 value）
-
-```json
-{
-  "id": "claude-opus-4-6",
-  "name": "Claude Opus 4.6",
-  "provider_id": "anthropic",
-  "reasoning": true,
-  "context_window": 200000,
-  "max_tokens": 32000
-}
-```
-
-### 前端类型
-
-```ts
-// packages/app-web/src/features/executor-selector/model/types.ts
-export interface ModelInfo {
-  id: string;
-  name: string;
-  provider_id: string;
-  reasoning: boolean;       // 是否支持 extended thinking
-  context_window: number;   // 上下文窗口大小（tokens）
-  max_tokens: number;       // 最大输出 tokens
-}
-```
-
-**关键约束**：`reasoning: true` 的模型才在 UI 中显示 ThinkingLevel 选择器。
+注意：旧 `tool_clusters` 已删除，由 `AgentPresetConfig.capability_directives` 替代。
 
 ---
 
-## 5. PiAgent Provider Registry 架构
+## ModelInfo 前端契约
+
+定义在 `features/executor-selector/model/types.ts`，关键字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | 模型 ID |
+| `name` | `string` | 显示名称 |
+| `provider_id` | `string?` | 所属 provider |
+| `reasoning` | `boolean` | 是否支持 extended thinking |
+| `supports_image` | `boolean` | 是否支持图像输入 |
+| `context_window` | `number` | 上下文窗口大小 |
+| `blocked` | `boolean?` | 是否被 provider 设置屏蔽 |
+| `discovered` | `boolean?` | 是否来自 API 动态发现 |
+
+---
+
+## PiAgent Provider Registry
 
 ### 已支持的 Provider
 
@@ -138,65 +67,22 @@ export interface ModelInfo {
 | `xai` | xAI (Grok) | `llm.xai.api_key` | Grok Mini 支持 thinking |
 | `openai` | OpenAI / 兼容端点 | `llm.openai.api_key` | 支持自定义 `base_url` 与 `wire_api` |
 
+注册优先级（第一个为默认）：`anthropic → gemini → deepseek → groq → xai → openai`
+
 ### OpenAI `wire_api` 契约
 
-`openai` provider 的运行时 bridge 选择必须读取 system scope 设置 `llm.openai.wire_api`：
+`llm.openai.wire_api` 控制运行时 bridge 选择：
 
-| key | 可选值 | 作用 |
-|-----|--------|------|
-| `llm.openai.wire_api` | `responses` | 使用 Rig OpenAI Responses API 路径 |
-| `llm.openai.wire_api` | `completions` | 使用 Rig OpenAI Chat Completions 路径 |
+| 值 | 作用 |
+|----|------|
+| `responses` | 使用 OpenAI Responses API 路径（官方端点默认） |
+| `completions` | 使用 Chat Completions 路径（自定义兼容端点默认） |
 
-默认策略：
-
-- `base_url` 为空，或等于官方 `https://api.openai.com/v1` 时，默认 `responses`
-- `base_url` 是自定义 OpenAI-compatible 端点时，默认 `completions`
-
-原因：
-
-- 官方 OpenAI 模型优先走 Responses API，能力最完整
-- 自定义兼容端点的 tool-call delta 流普遍更接近 Chat Completions 语义
-- 若这里不区分，前端 Settings 页虽然显示了 `wire_api`，但实际 tool call streaming 行为会与配置脱节
-
-### 注册优先级
-
-构建顺序决定默认 provider（第一个注册的为默认）：
-`anthropic → gemini → deepseek → groq → xai → openai`
-
-### 运行时模型 override
-
-`prompt()` 中通过 `find_bridge_for_model(model_id)` 找到对应 provider 的 bridge 工厂，动态创建 bridge。若未找到则回退到默认 bridge。
+默认策略：`base_url` 为空或为官方地址时用 `responses`，自定义端点时用 `completions`。原因是自定义兼容端点的 tool-call delta 流更接近 Chat Completions 语义。
 
 ---
 
-## 6. 数据流
-
-```
-前端 ExecutorSelector 选择模型
-  ↓ { executor: "PI_AGENT", model_id: "claude-opus-4-6", thinking_level: "high" }
-  ↓ POST /sessions/{id}/prompt
-后端 resolve_task_executor_config()
-  ↓ AgentDashExecutorConfig { model_id, thinking_level }
-PiAgentConnector.prompt()
-  ↓ find_bridge_for_model(model_id) → Arc<dyn LlmBridge>
-  ↓ agent.set_thinking_level(thinking_level)
-AgentLoop → BridgeRequest → LLM API
-```
-
----
-
-## 7. Forbidden Patterns
-
-```
-❌ 在 AgentConfig 中暴露 temperature/max_tokens 给外部配置
-❌ 用 reasoning_id: String 表示推理强度（改用 ThinkingLevel 枚举）
-❌ 构建时硬编码 model（如 CLAUDE_4_SONNET）而非运行时按 model_id 选择
-❌ 前端下拉选项依赖后端 reasoning_options 列表（改为前端固定枚举）
-```
-
----
-
-## 8. Settings Key 命名规范
+## Settings Key 命名
 
 ```
 llm.anthropic.api_key
@@ -211,3 +97,23 @@ llm.openai.wire_api          # 可选：responses / completions
 llm.ollama.base_url          # 本地 Ollama，无 api_key
 agent.pi.system_prompt       # PiAgent 系统提示词
 ```
+
+---
+
+## 数据流
+
+```
+前端 ExecutorSelector → { executor, model_id, thinking_level }
+  → POST /sessions/{id}/prompt
+  → 后端按 model_id 选择 provider bridge
+  → agent.set_thinking_level(thinking_level)
+  → AgentLoop → LLM API
+```
+
+---
+
+## 禁止模式
+
+- 在 AgentConfig 中暴露 `temperature` / `max_tokens` 给外部配置
+- 用 `reasoning_id: String` 表示推理强度（改用 `ThinkingLevel` 枚举）
+- 构建时硬编码 model 而非运行时按 `model_id` 选择

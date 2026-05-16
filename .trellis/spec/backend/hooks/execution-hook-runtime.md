@@ -30,31 +30,15 @@ AgentRuntimeDelegate（agent loop 边界同步消费）
 
 ---
 
-## 核心 Trait 签名
+## 核心 Trait
 
-### AgentRuntimeDelegate
+### AgentRuntimeDelegate（`agentdash-agent-types::runtime::delegate`）
 
-```rust
-#[async_trait]
-pub trait AgentRuntimeDelegate: Send + Sync {
-    async fn transform_context(&self, input: TransformContextInput, cancel: CancellationToken) -> Result<TransformContextOutput, AgentRuntimeError>;
-    async fn before_tool_call(&self, input: BeforeToolCallInput, cancel: CancellationToken) -> Result<ToolCallDecision, AgentRuntimeError>;
-    async fn after_tool_call(&self, input: AfterToolCallInput, cancel: CancellationToken) -> Result<AfterToolCallEffects, AgentRuntimeError>;
-    async fn after_turn(&self, input: AfterTurnInput, cancel: CancellationToken) -> Result<TurnControlDecision, AgentRuntimeError>;
-    async fn before_stop(&self, input: BeforeStopInput, cancel: CancellationToken) -> Result<StopDecision, AgentRuntimeError>;
-}
-```
+Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`evaluate_compaction`、`after_compaction`、`transform_context`、`before_tool_call`、`after_tool_call`、`after_turn`、`before_stop`、`on_before_provider_request`。具体签名查代码。
 
-### ExecutionHookProvider
+### ExecutionHookProvider（`agentdash-spi::hooks`）
 
-```rust
-#[async_trait]
-pub trait ExecutionHookProvider: Send + Sync {
-    async fn load_session_snapshot(&self, query: SessionHookSnapshotQuery) -> Result<SessionHookSnapshot, HookError>;
-    async fn refresh_session_snapshot(&self, query: SessionHookRefreshQuery) -> Result<SessionHookSnapshot, HookError>;
-    async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
-}
-```
+从业务对象解析 Hook 信息的提供者。方法包括：`load_session_snapshot`、`refresh_session_snapshot`、`evaluate_hook`。
 
 ---
 
@@ -185,4 +169,3 @@ pub trait ExecutionHookProvider: Send + Sync {
 
 > Pi Agent 流式 chunk 合并协议已拆分到 [pi-agent-streaming.md](../session/pi-agent-streaming.md)。
 
-*更新：2026-04-14 — 大幅精简，移除实现级冗余描述，保留跨层契约与设计约束*

@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import type { ResolvedVfsSurface, ResolvedVfsSurfaceSource } from "../types/context";
+import { vfsRoutes } from "./vfsRoutes";
 
 // ─── Descriptor（能力发现） ─────────────────────────────
 
@@ -123,17 +124,12 @@ function applyQueryParams(searchParams: URLSearchParams, params?: VfsQueryParams
   if (params.workspaceId) searchParams.set("workspace_id", params.workspaceId);
 }
 
-function buildQs(searchParams: URLSearchParams): string {
-  const qs = searchParams.toString();
-  return qs ? `?${qs}` : "";
-}
-
 export async function listVfss(
   params?: VfsQueryParams,
 ): Promise<ListVfssResponse> {
   const sp = new URLSearchParams();
   applyQueryParams(sp, params);
-  return api.get<ListVfssResponse>(`/vfs${buildQs(sp)}`);
+  return api.get<ListVfssResponse>(vfsRoutes.spaces(sp));
 }
 
 export async function listAddressEntries(
@@ -146,19 +142,17 @@ export async function listAddressEntries(
   if (params?.path) sp.set("path", params.path);
   if (params?.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
-  return api.get<ListEntriesResponse>(
-    `/vfs/${encodeURIComponent(spaceId)}/entries${buildQs(sp)}`,
-  );
+  return api.get<ListEntriesResponse>(vfsRoutes.entries(spaceId, sp));
 }
 
 export async function resolveVfsSurface(
   source: ResolvedVfsSurfaceSource,
 ): Promise<ResolvedVfsSurface> {
-  return api.post<ResolvedVfsSurface>("/vfs-surfaces/resolve", { source });
+  return api.post<ResolvedVfsSurface>(vfsRoutes.surfaces.resolve, { source });
 }
 
 export async function getVfsSurface(surfaceRef: string): Promise<ResolvedVfsSurface> {
-  return api.get<ResolvedVfsSurface>(`/vfs-surfaces/${encodeURIComponent(surfaceRef)}`);
+  return api.get<ResolvedVfsSurface>(vfsRoutes.surfaces.byRef(surfaceRef));
 }
 
 export async function listSurfaceMountEntries(params: {
@@ -174,7 +168,7 @@ export async function listSurfaceMountEntries(params: {
   if (params.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
   return api.get<ListSurfaceMountEntriesResponse>(
-    `/vfs-surfaces/${encodeURIComponent(params.surfaceRef)}/mounts/${encodeURIComponent(params.mountId)}/entries${buildQs(sp)}`,
+    vfsRoutes.surfaces.entries(params.surfaceRef, params.mountId, sp),
   );
 }
 
@@ -183,7 +177,7 @@ export async function readSurfaceFile(params: {
   mountId: string;
   path: string;
 }): Promise<ReadSurfaceFileResponse> {
-  return api.post<ReadSurfaceFileResponse>("/vfs-surfaces/read-file", {
+  return api.post<ReadSurfaceFileResponse>(vfsRoutes.surfaces.readFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -196,7 +190,7 @@ export async function writeSurfaceFile(params: {
   path: string;
   content: string;
 }): Promise<WriteSurfaceFileResponse> {
-  return api.post<WriteSurfaceFileResponse>("/vfs-surfaces/write-file", {
+  return api.post<WriteSurfaceFileResponse>(vfsRoutes.surfaces.writeFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -210,7 +204,7 @@ export async function createSurfaceFile(params: {
   path: string;
   content: string;
 }): Promise<CreateSurfaceFileResponse> {
-  return api.post<CreateSurfaceFileResponse>("/vfs-surfaces/create-file", {
+  return api.post<CreateSurfaceFileResponse>(vfsRoutes.surfaces.createFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -223,7 +217,7 @@ export async function deleteSurfaceFile(params: {
   mountId: string;
   path: string;
 }): Promise<DeleteSurfaceFileResponse> {
-  return api.post<DeleteSurfaceFileResponse>("/vfs-surfaces/delete-file", {
+  return api.post<DeleteSurfaceFileResponse>(vfsRoutes.surfaces.deleteFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -236,7 +230,7 @@ export async function renameSurfaceFile(params: {
   fromPath: string;
   toPath: string;
 }): Promise<RenameSurfaceFileResponse> {
-  return api.post<RenameSurfaceFileResponse>("/vfs-surfaces/rename-file", {
+  return api.post<RenameSurfaceFileResponse>(vfsRoutes.surfaces.renameFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     from_path: params.fromPath,
@@ -249,7 +243,7 @@ export async function statSurfaceFile(params: {
   mountId: string;
   path: string;
 }): Promise<StatSurfaceFileResponse> {
-  return api.post<StatSurfaceFileResponse>("/vfs-surfaces/stat-file", {
+  return api.post<StatSurfaceFileResponse>(vfsRoutes.surfaces.statFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -261,7 +255,7 @@ export async function applySurfacePatch(params: {
   mountId: string;
   patch: string;
 }): Promise<ApplySurfacePatchResponse> {
-  return api.post<ApplySurfacePatchResponse>("/vfs-surfaces/apply-patch", {
+  return api.post<ApplySurfacePatchResponse>(vfsRoutes.surfaces.applyPatch, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     patch: params.patch,

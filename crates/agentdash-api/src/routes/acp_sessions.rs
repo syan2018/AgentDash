@@ -21,7 +21,7 @@ use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
-    LaunchCommand, SessionExecutionState, SessionMeta, UserPromptInput,
+    LaunchCommand, SessionExecutionState, SessionMeta, TitleSource, UserPromptInput,
 };
 use agentdash_domain::session_binding::SessionOwnerType;
 
@@ -424,6 +424,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Pending,
         };
@@ -449,6 +450,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
         };
@@ -480,6 +482,7 @@ mod tests {
             executor_config: None,
             executor_session_id: Some("exec-1".to_string()),
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
         };
@@ -505,6 +508,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Bootstrapped,
         };
@@ -664,10 +668,22 @@ pub async fn get_session_bindings(
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSessionMetaRequest {
-    pub title: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tab_layout: Option<serde_json::Value>,
 }
 
-/// PATCH /sessions/{id}/meta — 用户手动修改会话标题
+/// GET /sessions/{id}/meta — 返回完整 session meta。
+pub async fn get_session_meta(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionMeta>, ApiError> {
+    get_session(State(state), CurrentUser(current_user), Path(session_id)).await
+}
+
+/// PATCH /sessions/{id}/meta — 用户手动修改会话 meta。
 pub async fn update_session_meta(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -682,15 +698,32 @@ pub async fn update_session_meta(
     )
     .await?;
 
-    let title = req.title.trim();
-    if title.is_empty() {
+    if req.title.is_none() && req.tab_layout.is_none() {
+        return Err(ApiError::BadRequest(
+            "必须提供 title 或 tab_layout".to_string(),
+        ));
+    }
+    if let Some(title) = req.title.as_deref()
+        && title.trim().is_empty()
+    {
         return Err(ApiError::BadRequest("标题不能为空".to_string()));
     }
 
     let meta = state
         .services
-        .session_title
-        .set_user_title(&session_id, title)
+        .session_core
+        .update_session_meta(&session_id, |meta| {
+            if let Some(title) = req.title.as_deref() {
+                let title = title.trim();
+                if !title.is_empty() {
+                    meta.title = title.to_string();
+                    meta.title_source = TitleSource::User;
+                }
+            }
+            if let Some(tab_layout) = req.tab_layout.clone() {
+                meta.tab_layout = Some(tab_layout);
+            }
+        })
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;

@@ -134,6 +134,13 @@ impl SessionTurnProcessor {
             .eventing
             .persist_notification(&session_id, terminal_notification)
             .await;
+
+        // 清理 turn 状态 — 回到 Idle。
+        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
+        // 会被当前 terminal turn 拦住。即使 terminal event 持久化失败，也必须
+        // 释放 active turn，避免 session 永久卡在 running。
+        deps.turn_supervisor.clear_active_turn(&session_id).await;
+
         let terminal_event_seq = match terminal_event {
             Ok(event) => event.event_seq,
             Err(error) => {
@@ -158,11 +165,6 @@ impl SessionTurnProcessor {
             post_turn_handler,
         };
 
-        // 清理 turn 状态 — 回到 Idle。
-        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
-        // 会被当前 terminal turn 拦住。
-        deps.turn_supervisor.clear_active_turn(&session_id).await;
-
         deps.effects
             .dispatch_terminal_effects(terminal_effect_input)
             .await;
@@ -185,5 +187,248 @@ impl SessionTurnProcessor {
             .eventing
             .persist_notification(session_id, envelope.clone())
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use agentdash_agent_protocol::SourceInfo;
+    use agentdash_spi::hooks::{HookEffect, HookSessionRuntimeAccess};
+    use agentdash_spi::{
+        AgentConfig, AgentConnector, CapabilityState, ConnectorCapabilities, ConnectorError,
+        ConnectorType, ExecutionContext, ExecutionSessionFrame, ExecutionStream, PromptPayload,
+    };
+    use async_trait::async_trait;
+    use futures::stream;
+    use tokio::sync::{Mutex, RwLock, mpsc};
+    use uuid::Uuid;
+
+    use super::super::MemorySessionPersistence;
+    use super::super::effects_service::SessionEffectsService;
+    use super::super::eventing::SessionEventingService;
+    use super::super::hub_support::{SessionProfile, TurnExecution, TurnTerminalKind};
+    use super::super::persistence::{
+        PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionEventStore,
+        SessionStoreSet,
+    };
+    use super::super::runtime_registry::SessionRuntimeRegistry;
+    use super::super::terminal_effects::{
+        TerminalAutoResumePort, TerminalEffectDeps, TerminalHookTriggerPort,
+        TerminalHookTriggerRequest,
+    };
+    use super::super::turn_supervisor::TurnSupervisor;
+    use super::*;
+
+    #[tokio::test]
+    async fn terminal_persist_failure_still_clears_active_turn() {
+        let session_id = "sess-terminal-persist-fails";
+        let turn_id = "turn-1";
+        let registry = SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new())));
+        let supervisor = TurnSupervisor::new(registry.clone());
+        supervisor
+            .claim_prompt(session_id)
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                session_id,
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                TurnExecution::new(
+                    turn_id.to_string(),
+                    ExecutionSessionFrame {
+                        turn_id: turn_id.to_string(),
+                        working_directory: PathBuf::from("."),
+                        environment_variables: HashMap::new(),
+                        executor_config: AgentConfig::new("PI_AGENT"),
+                        mcp_servers: Vec::new(),
+                        vfs: None,
+                        identity: None,
+                    },
+                    CapabilityState::default(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                ),
+            )
+            .await;
+        assert!(registry.has_active_turn(session_id).await);
+
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let base_stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet {
+            events: Arc::new(FailingEventStore),
+            ..base_stores
+        };
+        let deps = SessionTurnProcessorDeps {
+            turn_supervisor: supervisor,
+            eventing: SessionEventingService::new(
+                stores.clone(),
+                registry.clone(),
+                Arc::new(NoopConnector),
+            ),
+            effects: SessionEffectsService::new(TerminalEffectDeps {
+                terminal_effects: stores.terminal_effects.clone(),
+                hook_trigger: Arc::new(NoopHookTrigger),
+                terminal_callback: Arc::new(RwLock::new(None)),
+                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+                auto_resume: Arc::new(NoopAutoResume),
+            }),
+        };
+        let config = SessionTurnProcessorConfig {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.to_string(),
+            source: SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "unit".to_string(),
+                executor_id: None,
+            },
+            hook_session: None,
+            post_turn_handler: None,
+        };
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(TurnEvent::Terminal {
+            kind: TurnTerminalKind::Completed,
+            message: None,
+        })
+        .expect("terminal event should be queued");
+        drop(tx);
+
+        SessionTurnProcessor::run(deps, config, rx).await;
+
+        assert!(!registry.has_active_turn(session_id).await);
+    }
+
+    struct FailingEventStore;
+
+    #[async_trait]
+    impl SessionEventStore for FailingEventStore {
+        async fn append_event(
+            &self,
+            _session_id: &str,
+            _envelope: &agentdash_agent_protocol::BackboneEnvelope,
+        ) -> io::Result<PersistedSessionEvent> {
+            Err(io::Error::other("forced terminal persist failure"))
+        }
+
+        async fn read_backlog(
+            &self,
+            _session_id: &str,
+            _after_seq: u64,
+        ) -> io::Result<SessionEventBacklog> {
+            Ok(SessionEventBacklog {
+                snapshot_seq: 0,
+                events: Vec::new(),
+            })
+        }
+
+        async fn list_event_page(
+            &self,
+            _session_id: &str,
+            _after_seq: u64,
+            _limit: u32,
+        ) -> io::Result<SessionEventPage> {
+            Ok(SessionEventPage {
+                snapshot_seq: 0,
+                events: Vec::new(),
+                has_more: false,
+                next_after_seq: 0,
+            })
+        }
+
+        async fn list_all_events(
+            &self,
+            _session_id: &str,
+        ) -> io::Result<Vec<PersistedSessionEvent>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct NoopHookTrigger;
+
+    #[async_trait]
+    impl TerminalHookTriggerPort for NoopHookTrigger {
+        async fn emit_terminal_hook_trigger(
+            &self,
+            _hook_session: &dyn HookSessionRuntimeAccess,
+            _input: TerminalHookTriggerRequest<'_>,
+        ) -> Vec<HookEffect> {
+            Vec::new()
+        }
+    }
+
+    struct NoopAutoResume;
+
+    #[async_trait]
+    impl TerminalAutoResumePort for NoopAutoResume {
+        async fn request_hook_auto_resume(&self, _session_id: String) -> bool {
+            false
+        }
+    }
+
+    struct NoopConnector;
+
+    #[async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
     }
 }

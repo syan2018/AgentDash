@@ -37,6 +37,7 @@ impl PostgresSessionRepository {
                 executor_config_json TEXT,
                 executor_session_id TEXT,
                 companion_context_json TEXT,
+                tab_layout_json TEXT,
                 visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
                 bootstrap_state TEXT NOT NULL DEFAULT 'plain'
             )
@@ -158,6 +159,10 @@ impl PostgresSessionRepository {
             companion_context: parse_optional_json_column(
                 row.get::<Option<String>, _>("companion_context_json"),
                 "companion_context_json",
+            )?,
+            tab_layout: parse_optional_json_column(
+                row.get::<Option<String>, _>("tab_layout_json"),
+                "tab_layout_json",
             )?,
             visible_canvas_mount_ids: parse_optional_json_column(
                 row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
@@ -362,6 +367,7 @@ impl SessionPersistence for PostgresSessionRepository {
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
         let companion_context_json =
             optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
+        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         let visible_canvas_mount_ids_json = json_string(
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
@@ -371,9 +377,9 @@ impl SessionPersistence for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(&meta.id)
@@ -388,6 +394,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
         .bind(companion_context_json)
+        .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
@@ -401,7 +408,7 @@ impl SessionPersistence for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
             FROM sessions
             WHERE id = $1
@@ -419,7 +426,7 @@ impl SessionPersistence for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
             FROM sessions
             ORDER BY updated_at DESC
@@ -437,6 +444,7 @@ impl SessionPersistence for PostgresSessionRepository {
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
         let companion_context_json =
             optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
+        let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         let visible_canvas_mount_ids_json = json_string(
             &meta.visible_canvas_mount_ids,
             "visible_canvas_mount_ids_json",
@@ -446,9 +454,9 @@ impl SessionPersistence for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, visible_canvas_mount_ids_json,
+                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -473,6 +481,7 @@ impl SessionPersistence for PostgresSessionRepository {
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
                 companion_context_json = excluded.companion_context_json,
+                tab_layout_json = excluded.tab_layout_json,
                 visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json,
                 bootstrap_state = CASE
                     WHEN sessions.bootstrap_state = 'bootstrapped'
@@ -493,6 +502,7 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
         .bind(companion_context_json)
+        .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
@@ -1318,6 +1328,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
         };
@@ -1383,6 +1394,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
         };
@@ -1397,6 +1409,10 @@ mod tests {
         stale.last_execution_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
+        stale.tab_layout = Some(serde_json::json!({
+            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
+            "active_tab_uri": "session://main"
+        }));
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         let terminal = turn_terminal_envelope(&session_id, "t-new", "turn_completed", "done");
@@ -1419,6 +1435,14 @@ mod tests {
         assert_eq!(merged.last_turn_id.as_deref(), Some("t-new"));
         assert_eq!(merged.last_terminal_message.as_deref(), Some("done"));
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
+        assert_eq!(
+            merged
+                .tab_layout
+                .as_ref()
+                .and_then(|value| value.get("active_tab_uri"))
+                .and_then(|value| value.as_str()),
+            Some("session://main")
+        );
         assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 }

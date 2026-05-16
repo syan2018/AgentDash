@@ -67,11 +67,15 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   initialize: (sessionId, saved) => {
     // 尝试从后端加载已保存的布局（异步，不阻塞初始化）
     if (!saved && sessionId) {
-      void loadSessionTabLayout(sessionId).then((loaded) => {
-        if (loaded && get().sessionId === sessionId && get().tabs.every((t) => t.pinned)) {
-          get().initialize(sessionId, loaded);
-        }
-      });
+      void loadSessionTabLayout(sessionId)
+        .then((loaded) => {
+          if (loaded && get().sessionId === sessionId && get().tabs.every((t) => t.pinned)) {
+            get().initialize(sessionId, loaded);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("加载 session tab layout 失败", error);
+        });
     }
 
     if (saved && saved.tabs.length > 0) {
@@ -237,7 +241,9 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     persistTimer = setTimeout(() => {
       persistTimer = null;
       const layout = get().exportLayout();
-      void saveSessionTabLayout(sid, layout);
+      void saveSessionTabLayout(sid, layout).catch((error: unknown) => {
+        console.error("保存 session tab layout 失败", error);
+      });
     }, PERSIST_DEBOUNCE_MS);
   },
 

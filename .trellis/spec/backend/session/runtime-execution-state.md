@@ -58,11 +58,21 @@ turn_supervisor
 stream adapter。正常 stream 已结束时 abort 是幂等操作；取消、connector 错误或 hook
 runtime 清理路径则依赖该行为避免 adapter 在 terminal 后继续读取 stream。
 
+terminal event 持久化失败也必须释放 active turn。正确顺序是：
+
+```text
+persist terminal event -> clear_active_turn -> if persist failed: stop effects and return
+```
+
+不能把 `clear_active_turn` 放在 terminal persist 的 success 分支里；否则 event store
+短暂故障会让 session 永久停在 running。
+
 测试要求：
 
 - 登记后，active `TurnExecution.stream_adapter_abort` 必须为 `Some`。
 - `clear_active_turn` 必须中止 pending adapter task。
 - `clear_turn_and_hook` 必须中止 pending adapter task，并清空 hook runtime。
+- terminal event 持久化失败时，`has_active_turn(session_id)` 必须变为 `false`。
 
 ## Internal Follow-up
 
@@ -111,5 +121,7 @@ requested -> failed
 ```
 
 下一轮 prompt 只从 command store 查询 requested commands；connector accepted 后写
-applied，失败路径保留可审计状态用于恢复。旧 `pending` 状态不再作为 runtime command
-事实名使用；数据库迁移会把既有 runtime command 行更新为 `requested`。
+applied。若 applied 状态提交失败，必须立刻尝试把同一批 command 标记为 `failed`，
+清理 turn，并让本次 launch 返回错误；不能继续启动 processor，也不能保留 `requested`
+等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
+数据库迁移会把既有 runtime command 行更新为 `requested`。

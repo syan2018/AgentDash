@@ -237,6 +237,8 @@ pub struct SessionMeta {
     pub executor_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub companion_context: Option<CompanionSessionContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_layout: Option<serde_json::Value>,
     #[serde(default)]
     pub visible_canvas_mount_ids: Vec<String>,
     #[serde(default)]

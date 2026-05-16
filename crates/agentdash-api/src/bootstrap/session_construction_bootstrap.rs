@@ -44,6 +44,12 @@ use crate::routes::project_agents::{
 use crate::routes::task_execution;
 use crate::rpc::ApiError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionConstructionProjectionMode {
+    Launch,
+    Inspect,
+}
+
 pub(crate) async fn build_session_construction_for_launch(
     state: &Arc<AppState>,
     session_id: &str,
@@ -83,12 +89,13 @@ pub(crate) async fn build_session_construction_for_launch(
             SessionConstructionPlan::from_source_input(session_id, owner.clone(), user_input);
         if let Some(companion) = companion_input {
             let plan = build_companion_dispatch_prompt_request(state, plan, companion).await?;
-            return finalize_session_construction_for_launch(
+            return finalize_session_construction_projection(
                 state,
                 plan,
                 source_mcp_declarations,
                 local_relay_workspace_root,
                 &facts,
+                SessionConstructionProjectionMode::Launch,
             )
             .await;
         }
@@ -107,12 +114,13 @@ pub(crate) async fn build_session_construction_for_launch(
                     source_mcp_declarations,
                 )
                 .await?;
-                return finalize_session_construction_for_launch(
+                return finalize_session_construction_projection(
                     state,
                     plan,
                     Vec::new(),
                     local_relay_workspace_root,
                     &facts,
+                    SessionConstructionProjectionMode::Launch,
                 )
                 .await;
             }
@@ -151,12 +159,13 @@ pub(crate) async fn build_session_construction_for_launch(
                     source_mcp_declarations,
                 )
                 .await?;
-                return finalize_session_construction_for_launch(
+                return finalize_session_construction_projection(
                     state,
                     plan,
                     Vec::new(),
                     local_relay_workspace_root,
                     &facts,
+                    SessionConstructionProjectionMode::Launch,
                 )
                 .await;
             }
@@ -184,12 +193,13 @@ pub(crate) async fn build_session_construction_for_launch(
                     source_mcp_declarations,
                 )
                 .await?;
-                return finalize_session_construction_for_launch(
+                return finalize_session_construction_projection(
                     state,
                     plan,
                     Vec::new(),
                     local_relay_workspace_root,
                     &facts,
+                    SessionConstructionProjectionMode::Launch,
                 )
                 .await;
             }
@@ -201,12 +211,13 @@ pub(crate) async fn build_session_construction_for_launch(
     )))
 }
 
-async fn finalize_session_construction_for_launch(
+pub(crate) async fn finalize_session_construction_projection(
     state: &Arc<AppState>,
     mut plan: SessionConstructionPlan,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
     facts: &SessionConstructionProviderInput,
+    mode: SessionConstructionProjectionMode,
 ) -> Result<SessionConstructionPlan, ApiError> {
     plan.source.launch_source = Some(facts.command.reason_tag().to_string());
     plan.source.strictness = Some(format!("{:?}", facts.command.strictness()).to_lowercase());
@@ -359,6 +370,8 @@ async fn finalize_session_construction_for_launch(
         "source.user_input.executor_config"
     } else if facts.session_meta.executor_config.is_some() {
         "session.meta.executor_config"
+    } else if mode == SessionConstructionProjectionMode::Inspect {
+        "unresolved.inspect"
     } else {
         "unresolved"
     };
@@ -367,12 +380,12 @@ async fn finalize_session_construction_for_launch(
         .executor_config
         .clone()
         .or_else(|| facts.command.user_input().executor_config.clone())
-        .or_else(|| facts.session_meta.executor_config.clone())
-        .ok_or_else(|| {
-            ApiError::BadRequest(
-                "construction 未产出 executor_config，且来源/meta 中没有可复用配置".to_string(),
-            )
-        })?;
+        .or_else(|| facts.session_meta.executor_config.clone());
+    if executor_config.is_none() && mode == SessionConstructionProjectionMode::Launch {
+        return Err(ApiError::BadRequest(
+            "construction 未产出 executor_config，且来源/meta 中没有可复用配置".to_string(),
+        ));
+    }
 
     let mut base_capability_state = plan
         .projections
@@ -394,7 +407,7 @@ async fn finalize_session_construction_for_launch(
     final_capability_state.skill.skills = session_capabilities.skills.clone();
 
     plan.workspace.working_directory = Some(working_directory);
-    plan.execution_profile.executor_config = Some(executor_config);
+    plan.execution_profile.executor_config = executor_config;
     plan.surface.vfs = Some(effective_vfs.clone());
     plan.context_projection.vfs = Some(effective_vfs.clone());
     plan.context_projection.session_capabilities = Some(session_capabilities.clone());
@@ -447,7 +460,9 @@ async fn finalize_session_construction_for_launch(
                 .unwrap_or_default(),
         },
     ]);
-    plan.validate_for_launch().map_err(ApiError::BadRequest)?;
+    if mode == SessionConstructionProjectionMode::Launch {
+        plan.validate_for_launch().map_err(ApiError::BadRequest)?;
+    }
     Ok(plan)
 }
 

@@ -27,7 +27,7 @@ use super::identity_context_frame::{IdentityFrameInput, build_identity_context_f
 use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
 use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
-use super::persistence::SessionStoreSet;
+use super::persistence::{SessionRuntimeCommandStore, SessionStoreSet};
 use super::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::title_generator::SessionTitleGenerator;
@@ -745,16 +745,20 @@ impl SessionLaunchExecutor {
         );
         let _ = meta_store.save_session_meta(&session_meta).await;
 
-        if !pending_command_ids.is_empty()
-            && let Err(error) = runtime_command_store
-                .mark_runtime_commands_applied(&pending_command_ids)
+        if let Err(error) =
+            commit_runtime_commands_applied(&*runtime_command_store, &pending_command_ids, &sid)
                 .await
         {
-            tracing::warn!(
-                session_id = %sid,
-                error = %error,
-                "标记 requested runtime commands applied 失败"
+            deps.turn_supervisor.clear_turn_and_hook(session_id).await;
+            let failed = build_turn_terminal_envelope(
+                &sid,
+                &source,
+                &turn_id,
+                TurnTerminalKind::Failed,
+                Some(error.to_string()),
             );
+            let _ = deps.eventing.persist_notification(&sid, failed).await;
+            return Err(error);
         }
 
         // 首轮 prompt 且 title_source 非 User 时，异步触发标题生成。
@@ -1092,9 +1096,49 @@ fn enqueue_context_frames_for_transform_context(
     }
 }
 
+async fn commit_runtime_commands_applied(
+    runtime_command_store: &dyn SessionRuntimeCommandStore,
+    pending_command_ids: &[uuid::Uuid],
+    session_id: &str,
+) -> Result<(), ConnectorError> {
+    if pending_command_ids.is_empty() {
+        return Ok(());
+    }
+    if let Err(error) = runtime_command_store
+        .mark_runtime_commands_applied(pending_command_ids)
+        .await
+    {
+        let error_message = error.to_string();
+        tracing::error!(
+            session_id = %session_id,
+            error = %error_message,
+            "标记 requested runtime commands applied 失败，改写为 failed 以避免下一轮重复应用"
+        );
+        if let Err(failed_error) = runtime_command_store
+            .mark_runtime_commands_failed(pending_command_ids, error_message.clone())
+            .await
+        {
+            return Err(ConnectorError::Runtime(format!(
+                "runtime command applied/failed 状态提交均失败: applied_error={error_message}; failed_error={failed_error}"
+            )));
+        }
+        return Err(ConnectorError::Runtime(format!(
+            "runtime command applied 状态提交失败，已标记 failed: {error_message}"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::baseline_capabilities::build_session_baseline_capabilities;
+    use super::super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
+    use super::super::types::PendingCapabilityStateTransition;
+    use super::*;
+    use async_trait::async_trait;
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use uuid::Uuid;
 
     #[test]
     fn baseline_capabilities_built_from_skills() {
@@ -1107,5 +1151,66 @@ mod tests {
         }]);
         assert_eq!(caps.skills.len(), 1);
         assert_eq!(caps.skills[0].name, "my-skill");
+    }
+
+    #[tokio::test]
+    async fn runtime_command_apply_commit_failure_marks_failed_and_returns_error() {
+        let store = FailingApplyRuntimeCommandStore::default();
+        let command_id = Uuid::new_v4();
+
+        let err =
+            commit_runtime_commands_applied(&store, &[command_id], "sess-runtime-command-fails")
+                .await
+                .expect_err("applied failure should fail launch");
+
+        assert!(matches!(err, ConnectorError::Runtime(_)));
+        assert_eq!(store.apply_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(store.failed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[derive(Default)]
+    struct FailingApplyRuntimeCommandStore {
+        apply_calls: AtomicUsize,
+        failed_calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SessionRuntimeCommandStore for FailingApplyRuntimeCommandStore {
+        async fn upsert_runtime_command_request(
+            &self,
+            _session_id: &str,
+            _transition: PendingCapabilityStateTransition,
+        ) -> io::Result<RuntimeCommandRecord> {
+            Err(io::Error::other("not used"))
+        }
+
+        async fn list_requested_runtime_commands(
+            &self,
+            _session_id: &str,
+        ) -> io::Result<Vec<RuntimeCommandRecord>> {
+            Ok(Vec::new())
+        }
+
+        async fn mark_runtime_commands_applied(&self, _command_ids: &[Uuid]) -> io::Result<()> {
+            self.apply_calls.fetch_add(1, Ordering::SeqCst);
+            Err(io::Error::other("forced applied commit failure"))
+        }
+
+        async fn mark_runtime_commands_failed(
+            &self,
+            _command_ids: &[Uuid],
+            _error: String,
+        ) -> io::Result<()> {
+            self.failed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn list_runtime_commands_by_status(
+            &self,
+            _statuses: &[RuntimeCommandStatus],
+            _limit: u32,
+        ) -> io::Result<Vec<RuntimeCommandRecord>> {
+            Ok(Vec::new())
+        }
     }
 }

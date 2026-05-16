@@ -25,6 +25,7 @@
 - connector accepted 后 `mark_runtime_commands_applied` 失败只记录 warning，可能导致 requested command 下一轮重复应用。
 - 前端 `saveSessionTabLayout` / `loadSessionTabLayout` 对 `/sessions/{id}/meta` 的 `tab_layout` 做静默兼容，但后端 meta patch 当前只接受 `title`。
 - 用户已确认 `tab_layout` 按正式落库支持推进，不删除该功能。
+- 用户已确认可接受较高风险的边界清理，不要求只做保守表面补丁。
 
 ## Requirements
 
@@ -32,19 +33,27 @@
 - 修复 runtime command apply-once 语义：connector accepted 后不能因为 `applied` 标记失败而静默留下可重复应用的 requested command。
 - 统一 session context 查询与 launch construction 的最终投影口径，至少让 VFS、MCP、capability、runtime command overlay 与 context endpoint 的可见结果不再隐式分叉。
 - 清理前端 `tab_layout` 静默兼容路径：正式实现后端字段与迁移，移除前端“后端可能尚未支持”的静默回退。
-- 继续薄化 session 分层，但只做低风险收尾：优先减少 API/bootstrap 层业务逻辑、拆小过厚模块的边界说明和显式 use case，不做大规模 crate 拆分。
+- 继续薄化 session 分层：优先减少 API/bootstrap 层业务逻辑、抽出共享 projection/finalization use case，允许对现有高耦合边界做中等风险清理，但不拆新 crate。
 - 补覆盖关键风险的单元测试或集成测试，至少覆盖 turn cleanup、runtime command apply failure、context projection consistency、前端 tab_layout 行为。
 
 ## Acceptance Criteria
 
-- [ ] terminal event 持久化失败时，`TurnSupervisor` 中对应 session 不会残留 active turn；有回归测试覆盖。
-- [ ] runtime command 在 connector accepted 后应用状态更新失败时，不会在下一轮被静默重复应用；有测试覆盖失败路径。
-- [ ] `/sessions/{id}/context` 与 launch construction 共享同一最终 projection 或有明确、测试覆盖的投影模式差异；VFS/MCP/capability 不再漂移。
-- [ ] 前端 session tab layout 不再依赖静默失败；后端、数据库与前端 service 明确支持该字段。
-- [ ] session 启动主线仍保持 `LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> connector prompt -> terminal outbox`。
-- [ ] API route 不新增 session construction 业务分支；能下沉的逻辑已下沉到 application use case 或 bootstrap provider 的更薄接口。
-- [ ] `cargo check -p agentdash-application`、`cargo check -p agentdash-api` 通过。
-- [ ] 相关 Rust 测试和前端测试通过；无法运行的测试需记录原因。
+- [x] terminal event 持久化失败时，`TurnSupervisor` 中对应 session 不会残留 active turn；有回归测试覆盖。
+- [x] runtime command 在 connector accepted 后应用状态更新失败时，不会在下一轮被静默重复应用；有测试覆盖失败路径。
+- [x] `/sessions/{id}/context` 与 launch construction 共享同一最终 projection 或有明确、测试覆盖的投影模式差异；VFS/MCP/capability 不再漂移。
+- [x] 前端 session tab layout 不再依赖静默失败；后端、数据库与前端 service 明确支持该字段。
+- [x] session 启动主线仍保持 `LaunchCommand -> SessionConstructionPlan -> LaunchExecution -> connector prompt -> terminal outbox`。
+- [x] API route 不新增 session construction 业务分支；能下沉的逻辑已下沉到 application use case 或 bootstrap provider 的更薄接口。
+- [x] `cargo check -p agentdash-application`、`cargo check -p agentdash-api` 通过。
+- [x] 相关 Rust 测试和前端测试通过；无法运行的测试需记录原因。
+
+## Completion Notes
+
+- 已将 terminal persist failure 的 active turn cleanup 移到必达路径，并新增 `terminal_persist_failure_still_clears_active_turn`。
+- 已将 runtime command accepted 后的 apply 状态提交改为硬失败边界：`applied` 提交失败会尝试标记 `failed`，清理 turn，写 failed terminal，并返回错误；新增失败路径测试。
+- 已抽出 `finalize_session_construction_projection`，由 launch 与 context inspect 共享 VFS/MCP/capability/runtime command overlay 的最终投影。
+- 已正式落库 `SessionMeta.tab_layout`，覆盖 Postgres/SQLite schema、migration、repository 读写、API meta GET/PATCH 与前端 service/store。
+- 已通过 `cargo check -p agentdash-application`、`cargo check -p agentdash-api`、`cargo check -p agentdash-infrastructure`、`cargo test -p agentdash-application session::`、`cargo test -p agentdash-api session`、`cargo test -p agentdash-infrastructure session_repository`、`pnpm run frontend:check`、`pnpm --filter app-web lint`、`pnpm --filter app-web test -- --run`、`git diff --check`。
 
 ## Out of Scope
 

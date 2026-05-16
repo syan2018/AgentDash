@@ -95,10 +95,10 @@ finalize_session_construction_projection(plan, facts, mode) -> SessionConstructi
 
 ## Issue 5: 更薄的层
 
-本任务只做低风险薄化：
+用户已确认可以接受较高风险的边界清理。本任务可以从“低风险薄化”上调到“中等风险收口”，但仍避免无关重写：
 
 - API route：保持 prompt handler 仅 auth、DTO、launch service、错误映射。
-- API bootstrap：把 `finalize_session_construction_for_launch` 的纯逻辑拆成更小函数，命名为 projection/finalization use case，减少“request”旧命名。
+- API bootstrap：把 `finalize_session_construction_for_launch` 的纯逻辑抽成共享 projection/finalization use case，让 launch 和 context query 都走同一条裁决路径。
 - `assembler.rs`：不在本任务内大拆，但清理 stale 注释与对旧 `SessionRequestAssembler` 语义的外部暴露；必要时新增后续拆分 TODO 到 spec/task。
 - `prompt_pipeline.rs`：只修复副作用边界，不做大切块；避免同时改变过多行为。
 

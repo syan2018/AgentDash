@@ -1,11 +1,13 @@
-﻿use agentdash_spi::SessionMcpServer;
+use agentdash_spi::SessionMcpServer;
 use async_trait::async_trait;
+use std::io;
 
 use super::hub::SessionRuntimeInner;
 use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
     PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
 };
+use super::runtime_commands::RuntimeCommandRecord;
 use super::types::{CapabilityState, PendingCapabilityStateTransition};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
@@ -31,6 +33,17 @@ impl SessionCapabilityService {
 
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         self.hub.get_latest_capability_state(session_id).await
+    }
+
+    pub async fn list_requested_runtime_commands(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
+        self.hub
+            .stores
+            .runtime_commands
+            .list_requested_runtime_commands(session_id)
+            .await
     }
 
     pub async fn enqueue_pending_capability_state_transition(

@@ -404,7 +404,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/sessions/{id}/meta",
-            patch(acp_sessions::update_session_meta),
+            get(acp_sessions::get_session_meta).patch(acp_sessions::update_session_meta),
         )
         .route(
             "/sessions/{id}/hook-runtime",

@@ -15,6 +15,7 @@ import type {
   SessionExecutionStatus,
 } from "../types";
 import { isThinkingLevel } from "../types";
+import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
 
 function normalizeSessionBindingOwnerType(value: unknown): SessionBindingOwner["owner_type"] {
   switch (value) {
@@ -61,6 +62,7 @@ export interface SessionMeta {
   createdAt: number;
   updatedAt: number;
   lastEventSeq?: number;
+  tabLayout?: SessionTabLayout | null;
 }
 
 export interface PersistedSessionEvent {
@@ -249,45 +251,37 @@ export async function cancelSession(id: string): Promise<void> {
 
 // ─── Tab 布局持久化 ──────────────────────────────────
 
-import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+function isSessionTabLayout(value: unknown): value is SessionTabLayout {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return Array.isArray(record.tabs)
+    && (record.active_tab_uri == null || typeof record.active_tab_uri === "string");
+}
 
 /**
  * 保存 Tab 布局到 session meta。
- * 后端若尚未支持该字段，会静默失败。
  */
 export async function saveSessionTabLayout(
   sessionId: string,
   layout: SessionTabLayout,
 ): Promise<void> {
-  try {
-    await api.patch<unknown>(
-      `/sessions/${encodeURIComponent(sessionId)}/meta`,
-      { tab_layout: layout },
-    );
-  } catch {
-    // 后端可能尚未支持 tab_layout 字段，静默忽略
-  }
+  await api.patch<unknown>(
+    `/sessions/${encodeURIComponent(sessionId)}/meta`,
+    { tab_layout: layout },
+  );
 }
 
 /**
  * 从 session meta 加载 Tab 布局。
- * 返回 null 表示无已保存布局或后端不支持。
+ * 返回 null 表示无已保存布局。
  */
 export async function loadSessionTabLayout(
   sessionId: string,
 ): Promise<SessionTabLayout | null> {
-  try {
-    const raw = await api.get<Record<string, unknown>>(
-      `/sessions/${encodeURIComponent(sessionId)}/meta`,
-    );
-    const layout = raw.tab_layout;
-    if (layout && typeof layout === "object" && Array.isArray((layout as SessionTabLayout).tabs)) {
-      return layout as SessionTabLayout;
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const meta = await fetchSessionMeta(sessionId);
+  return isSessionTabLayout(meta.tabLayout) ? meta.tabLayout : null;
 }
 
 // ─── 项目会话列表 ─────────────────────────────────────

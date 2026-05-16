@@ -488,6 +488,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_config = incoming.executor_config.clone();
     current.executor_session_id = incoming.executor_session_id.clone();
     current.companion_context = incoming.companion_context.clone();
+    current.tab_layout = incoming.tab_layout.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
     if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
         current.bootstrap_state = incoming.bootstrap_state;
@@ -589,6 +590,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
         };
@@ -606,6 +608,10 @@ mod tests {
         stale.last_execution_status = ExecutionStatus::Running;
         stale.last_turn_id = Some("t-old".to_string());
         stale.executor_session_id = Some("exec-1".to_string());
+        stale.tab_layout = Some(serde_json::json!({
+            "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
+            "active_tab_uri": "session://main"
+        }));
         stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         persistence
@@ -627,6 +633,14 @@ mod tests {
             .expect("session 应存在");
         assert_eq!(merged.last_event_seq, 1);
         assert_eq!(merged.executor_session_id.as_deref(), Some("exec-1"));
+        assert_eq!(
+            merged
+                .tab_layout
+                .as_ref()
+                .and_then(|layout| layout.get("active_tab_uri"))
+                .and_then(|value| value.as_str()),
+            Some("session://main")
+        );
         assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 
@@ -646,6 +660,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
         };
@@ -715,6 +730,7 @@ mod tests {
             executor_config: None,
             executor_session_id: None,
             companion_context: None,
+            tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
         };

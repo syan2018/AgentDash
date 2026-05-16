@@ -159,6 +159,65 @@ requested/failed 事实供下一轮恢复。
 准备失败时，错误返回到 `SessionLaunchExecutor::execute_constructed_launch`，由 executor
 统一调用 `TurnSupervisor::clear_turn_and_hook`，确保规划阶段不直接执行 turn 清理副作用。
 
+## Scenario: Session Meta Tab Layout Persistence
+
+### 1. Scope / Trigger
+
+- Trigger: workspace panel 需要把 session tab layout 作为正式 session meta 持久化字段，而不是前端静默兼容路径。
+
+### 2. Signatures
+
+- API read: `GET /sessions/{id}/meta -> SessionMeta`
+- API write: `PATCH /sessions/{id}/meta { title?: string, tab_layout?: JsonValue } -> SessionMeta`
+- Rust meta: `SessionMeta { tab_layout: Option<serde_json::Value>, ... }`
+- DB column: `sessions.tab_layout_json TEXT`
+
+### 3. Contracts
+
+- request `title`：存在时必须 trim 后非空，并写入 `title_source = user`。
+- request `tab_layout`：存在时按 JSON 原样保存到 `SessionMeta.tab_layout`。
+- response `SessionMeta` 使用既有 `camelCase` serde，因此前端读取字段为 `tabLayout`。
+- 前端保存仍按 PATCH request 字段 `tab_layout` 发送，不能同时猜测 `tabLayout`/`tab_layout` 响应别名。
+
+### 4. Validation & Error Matrix
+
+- `{}` -> `400 BadRequest`，必须提供 `title` 或 `tab_layout`。
+- `{ "title": "   " }` -> `400 BadRequest`。
+- session 不存在 -> `404 NotFound`。
+- `tab_layout` 不是前端 `SessionTabLayout` 形状 -> 前端 `loadSessionTabLayout` 返回 `null`，不静默吞掉网络/API 错误。
+
+### 5. Good/Base/Bad Cases
+
+- Good: PATCH `{ "tab_layout": { "tabs": [...], "active_tab_uri": "session://main" } }` 后，GET meta 返回 `tabLayout`。
+- Base: 无已保存布局时，`tabLayout` 缺省或为 `null`，前端初始化默认 pinned tabs。
+- Bad: 前端 catch 所有错误并假装后端不支持；这会掩盖 schema/API 漏接线。
+
+### 6. Tests Required
+
+- Repository stale-save 测试必须断言 `tab_layout_json` 不因 event projection merge 丢失。
+- API/session check 必须覆盖 meta DTO 构造中的 `tab_layout` 字段。
+- Frontend check/lint/test 必须覆盖 tab layout service 的类型边界。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+try {
+  await api.patch(`/sessions/${id}/meta`, { tab_layout: layout });
+} catch {
+  // pretend backend does not support it
+}
+```
+
+#### Correct
+
+```typescript
+await api.patch(`/sessions/${id}/meta`, { tab_layout: layout });
+```
+
+调用方可以记录错误或展示失败状态，但 service 层不能把正式后端契约降级成静默兼容路径。
+
 ## Ready Gate
 
 云端 `AppState::new_with_plugins` 返回前必须完成 session 主链路依赖绑定：

@@ -41,6 +41,29 @@ connector 的 `update_session_tools`。
 热更新路径只更新 runtime tools/capability projection，不构造新的 prompt，也不把
 一次性 `ExecutionContext` 当成新的 session 事实源。
 
+## Turn Background Task Supervision
+
+`TurnSupervisor` 是 active turn 后台任务的唯一监督入口。prompt pipeline 可以创建
+processor / stream adapter，但一旦 adapter task 被 spawn，必须把 abort handle 登记到
+当前 `TurnExecution`：
+
+```rust
+let stream_adapter = SessionLaunchExecutor::spawn_stream_adapter(...);
+turn_supervisor
+    .register_stream_adapter_handle(session_id, stream_adapter.abort_handle())
+    .await;
+```
+
+`clear_active_turn` 与 `clear_turn_and_hook` 在释放 active turn 前必须中止已登记的
+stream adapter。正常 stream 已结束时 abort 是幂等操作；取消、connector 错误或 hook
+runtime 清理路径则依赖该行为避免 adapter 在 terminal 后继续读取 stream。
+
+测试要求：
+
+- 登记后，active `TurnExecution.stream_adapter_abort` 必须为 `Some`。
+- `clear_active_turn` 必须中止 pending adapter task。
+- `clear_turn_and_hook` 必须中止 pending adapter task，并清空 hook runtime。
+
 ## Internal Follow-up
 
 Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：

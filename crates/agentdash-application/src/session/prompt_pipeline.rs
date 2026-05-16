@@ -655,13 +655,16 @@ impl SessionLaunchExecutor {
             .register_processor_tx(&session_id, processor_tx.clone())
             .await;
 
-        Self::spawn_stream_adapter(
+        let stream_adapter = Self::spawn_stream_adapter(
             deps.turn_supervisor.clone(),
             session_id.to_string(),
             turn_id.clone(),
             &mut stream,
             processor_tx,
         );
+        deps.turn_supervisor
+            .register_stream_adapter_handle(&session_id, stream_adapter.abort_handle())
+            .await;
 
         Ok(turn_id)
     }
@@ -673,7 +676,7 @@ impl SessionLaunchExecutor {
         turn_id: String,
         stream: &mut agentdash_spi::ExecutionStream,
         processor_tx: tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         use futures::StreamExt;
         let mut stream = std::mem::replace(stream, Box::pin(futures::stream::empty()));
         tokio::spawn(async move {
@@ -702,7 +705,7 @@ impl SessionLaunchExecutor {
             let (kind, message) =
                 Self::resolve_stream_terminal(&turn_supervisor, &session_id, &turn_id, None).await;
             let _ = processor_tx.send(super::turn_processor::TurnEvent::Terminal { kind, message });
-        });
+        })
     }
 
     /// 根据 cancel 状态和错误信息决定 stream 结束时的 terminal kind。

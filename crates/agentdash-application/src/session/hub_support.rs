@@ -244,6 +244,9 @@ pub(super) struct TurnExecution {
     /// 活跃 turn 的事件处理 channel（由 SessionTurnProcessor 持有接收端）。
     /// relay 和 cloud-native 路径共用此通道发送 turn 事件。
     pub processor_tx: Option<tokio::sync::mpsc::UnboundedSender<super::turn_processor::TurnEvent>>,
+    /// connector stream adapter 后台任务的 abort handle。
+    /// 由 `TurnSupervisor` 在 turn 释放时中止，避免 terminal 后 adapter 继续悬挂。
+    pub stream_adapter_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl TurnExecution {
@@ -264,6 +267,7 @@ impl TurnExecution {
             context_audit_session_id,
             cancel_requested: false,
             processor_tx: None,
+            stream_adapter_abort: None,
         }
     }
 }

@@ -1,4 +1,5 @@
 use tokio::sync::{broadcast, mpsc};
+use tokio::task::AbortHandle;
 
 use super::hub_support::{SessionProfile, TurnExecution, TurnState, TurnTerminalKind};
 use super::persistence::PersistedSessionEvent;
@@ -85,6 +86,9 @@ impl TurnSupervisor {
         self.registry
             .with_runtime_mut(session_id, |runtime| {
                 if let Some(runtime) = runtime {
+                    if let Some(turn) = runtime.turn_state.active_turn_mut() {
+                        Self::abort_stream_adapter(turn);
+                    }
                     runtime.turn_state = TurnState::Idle;
                     runtime.hook_session = None;
                 }
@@ -96,6 +100,9 @@ impl TurnSupervisor {
         self.registry
             .with_runtime_mut(session_id, |runtime| {
                 if let Some(runtime) = runtime {
+                    if let Some(turn) = runtime.turn_state.active_turn_mut() {
+                        Self::abort_stream_adapter(turn);
+                    }
                     runtime.turn_state = TurnState::Idle;
                 }
             })
@@ -138,6 +145,28 @@ impl TurnSupervisor {
                 }
             })
             .await;
+    }
+
+    pub(super) async fn register_stream_adapter_handle(
+        &self,
+        session_id: &str,
+        abort_handle: AbortHandle,
+    ) {
+        self.registry
+            .with_runtime_mut(session_id, |runtime| {
+                if let Some(runtime) = runtime
+                    && let Some(turn) = runtime.turn_state.active_turn_mut()
+                {
+                    turn.stream_adapter_abort = Some(abort_handle);
+                }
+            })
+            .await;
+    }
+
+    fn abort_stream_adapter(turn: &mut TurnExecution) {
+        if let Some(handle) = turn.stream_adapter_abort.take() {
+            handle.abort();
+        }
     }
 
     pub(super) async fn find_stalled_sessions(&self, stall_timeout_ms: u64) -> Vec<String> {
@@ -256,5 +285,94 @@ mod tests {
 
         supervisor.clear_active_turn("session-1").await;
         assert!(!registry.has_active_turn("session-1").await);
+    }
+
+    #[tokio::test]
+    async fn register_stream_adapter_handle_sets_active_turn_abort_handle() {
+        let (_registry, supervisor) = test_supervisor();
+        supervisor
+            .claim_prompt("session-1")
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                "session-1",
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                test_turn("turn-1"),
+            )
+            .await;
+        let handle = tokio::spawn(async { futures::future::pending::<()>().await });
+
+        supervisor
+            .register_stream_adapter_handle("session-1", handle.abort_handle())
+            .await;
+
+        let has_abort_handle = supervisor
+            .registry
+            .with_runtime("session-1", |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .is_some_and(|turn| turn.stream_adapter_abort.is_some())
+            })
+            .await;
+        assert!(has_abort_handle);
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn clear_active_turn_aborts_stream_adapter_task() {
+        let (_registry, supervisor) = test_supervisor();
+        supervisor
+            .claim_prompt("session-1")
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                "session-1",
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                test_turn("turn-1"),
+            )
+            .await;
+        let handle = tokio::spawn(async { futures::future::pending::<()>().await });
+        supervisor
+            .register_stream_adapter_handle("session-1", handle.abort_handle())
+            .await;
+
+        supervisor.clear_active_turn("session-1").await;
+
+        let result = handle.await;
+        assert!(result.is_err_and(|error| error.is_cancelled()));
+    }
+
+    #[tokio::test]
+    async fn clear_turn_and_hook_aborts_stream_adapter_task() {
+        let (_registry, supervisor) = test_supervisor();
+        supervisor
+            .claim_prompt("session-1")
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                "session-1",
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                test_turn("turn-1"),
+            )
+            .await;
+        let handle = tokio::spawn(async { futures::future::pending::<()>().await });
+        supervisor
+            .register_stream_adapter_handle("session-1", handle.abort_handle())
+            .await;
+
+        supervisor.clear_turn_and_hook("session-1").await;
+
+        let result = handle.await;
+        assert!(result.is_err_and(|error| error.is_cancelled()));
     }
 }

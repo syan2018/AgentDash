@@ -21,8 +21,8 @@
 
 | 类型 | 前端规范 | 后端规范 | 示例 |
 |------|---------|---------|------|
-| 组件 | PascalCase `.tsx` | - | `AcpSessionList.tsx` |
-| Hook | camelCase, `use` 前缀 | - | `useAcpSession.ts` |
+| 组件 | PascalCase `.tsx` | - | `SessionChatView.tsx` |
+| Hook | camelCase, `use` 前缀 | - | `useSessionStream.ts` |
 | Store | camelCase | - | `workflowStore.ts` |
 | Service | camelCase | - | `workflow.ts` |
 | 工具函数 | camelCase | snake_case | `formatDate.ts` / `format_date.rs` |
@@ -44,11 +44,11 @@
 
 ```typescript
 /**
- * ACP 会话管理 Hook
+ * 会话事件流 Hook
  *
- * 整合流管理和条目聚合逻辑
+ * 整合 Backbone 事件流管理和条目聚合逻辑
  */
-export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
+export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   // ...
 }
 ```

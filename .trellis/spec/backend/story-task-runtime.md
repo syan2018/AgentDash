@@ -57,7 +57,7 @@ Story session 是 Story 在运行层的"外壳"。
 **性质**：
 
 - `SessionBinding(owner_type=Story, owner_id=story_id, label=?)` 1:1 绑定到 Story（见 §4 label 规范）。
-- 本身是一条完整 session：有 `sessions` / `session_bindings` / `session_events` 行，承载 ACP notification 与领域事件。
+- 本身是一条完整 session：有 `sessions` / `session_bindings` / `session_events` 行，承载 BackboneEnvelope 事件与领域事件。
 - **event stream 是 story 内一切状态变更的唯一审计源**。Task.status / Task.artifacts 的变化、LifecycleRun 的步骤推进、companion 消息……全部以 session event 落地。
 
 **职责**：
@@ -252,7 +252,7 @@ child session 是 Story session 下的子 session，覆盖以下场景：
 
 story 内一切状态变更的真相源是：
 
-1. **Story session event stream**（`session_events` 表，按 `session_id + event_seq` per-session 单调）——承载 ACP notification + 领域事件扩展（LifecycleRun/step state 变更通过 session event 发射）。
+1. **Story session event stream**（`session_events` 表，按 `session_id + event_seq` per-session 单调）——承载 BackboneEnvelope 事件 + 领域事件扩展（LifecycleRun/step state 变更通过 session event 发射）。
 2. **LifecycleRun / step state**（`lifecycle_runs` 表）——workflow 推进的专用状态。
 
 Task.status / Task.artifacts 作为**只读投影**由 step state 反投射。

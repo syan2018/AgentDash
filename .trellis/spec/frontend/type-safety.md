@@ -61,14 +61,14 @@ type StoryInput = Omit<Story, 'id' | 'createdAt'>;
 
 ```tsx
 // ✅ 导出 interface
-export interface AcpSessionListProps {
+export interface SessionChatViewProps {
   sessionId: string;
   endpoint?: string;
   className?: string;
   onError?: (error: Error) => void;
 }
 
-export function AcpSessionList(props: AcpSessionListProps) {
+export function SessionChatView(props: SessionChatViewProps) {
   // ...
 }
 ```
@@ -76,15 +76,15 @@ export function AcpSessionList(props: AcpSessionListProps) {
 ### Hook 返回类型
 
 ```ts
-export interface UseAcpSessionResult {
-  displayItems: AcpDisplayItem[];
+export interface UseSessionStreamResult {
+  entries: SessionFeedEntry[];
   isConnected: boolean;
   isLoading: boolean;
   error: Error | null;
   reconnect: () => void;
 }
 
-export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
+export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   // ...
 }
 ```
@@ -309,7 +309,7 @@ type CreateStoryInput = PartialBy<Story, 'id' | 'createdAt'>;
 ## 参考类型定义
 
 - `packages/app-web/src/types/index.ts` - Project, Workspace, Story, Task 等核心类型
-- `packages/app-web/src/features/session/model/types.ts` - ACP 相关类型
+- `packages/app-web/src/features/session/model/types.ts` - Backbone Protocol 事件类型
 - `packages/app-web/src/services/executor.ts` - ExecutorConfig 类型
 
 ---

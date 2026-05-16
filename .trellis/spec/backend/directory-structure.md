@@ -26,40 +26,52 @@ crates/
 ├── agentdash-api/               # Interface Layer (HTTP) — 薄 Transport 层
 │   └── src/
 │       ├── main.rs              # Axum 启动入口
+│       ├── lib.rs               # 库入口（模块声明）
 │       ├── app_state.rs         # 依赖注入（RepositorySet / ServiceSet / TaskRuntime / AppConfig）
 │       ├── routes.rs            # 路由注册
 │       ├── rpc.rs               # ApiError 统一错误处理
 │       ├── stream.rs            # 全局事件流（SSE + NDJSON）
-│       ├── dto/                 # Response DTO — 隔离 Domain 实体与 API 契约
-│       │   ├── mod.rs
-│       │   ├── project.rs       # ProjectResponse, ProjectDetailResponse
-│       │   ├── story.rs         # StoryResponse
-│       │   ├── task.rs          # TaskResponse
-│       │   └── workspace.rs     # WorkspaceResponse
-│       ├── session_plan.rs      # re-export → application
+│       ├── auth.rs              # 认证中间件
+│       ├── oauth_flow.rs        # OAuth 流程
+│       ├── plugins.rs           # 插件管理
+│       ├── title_generator.rs   # 标题生成
+│       ├── vfs_materialization.rs # VFS 物化
 │       ├── task_agent_context.rs # re-export → application
 │       ├── runtime_bridge.rs    # re-export → application
 │       ├── workspace_resolution.rs # 薄适配器（BackendAvailability → AppState）
-│       ├── vfs_access/ # 集成测试 only（re-export 已清除，API 层消费者直接导入 application::vfs）
-│       ├── execution_hooks/     # re-export → application::hooks
+│       ├── dto/                 # Response DTO — 隔离 Domain 实体与 API 契约
 │       ├── bootstrap/
-│       │   ├── task_execution_gateway.rs  # 薄适配器（~360行，含 relay dispatch）
+│       │   ├── task_execution_gateway.rs  # 薄适配器（含 relay dispatch）
 │       │   └── task_state_reconcile.rs
 │       ├── relay/               # WebSocket 后端中继
 │       │   ├── registry.rs
 │       │   └── ws_handler.rs
 │       └── routes/              # 路由处理函数（解析入参→调用用例→映射 DTO）
 │           ├── health.rs
+│           ├── me.rs                # 当前用户
+│           ├── auth_routes.rs       # 认证路由
+│           ├── identity_directory.rs # 身份目录
 │           ├── projects.rs
+│           ├── project_agents.rs    # 项目 Agent 配置
+│           ├── project_sessions.rs  # 项目会话
 │           ├── workspaces.rs
 │           ├── backends.rs
 │           ├── stories.rs
-│           ├── acp_sessions.rs
 │           ├── story_sessions.rs
+│           ├── acp_sessions.rs      # 会话事件流（SSE/NDJSON）
 │           ├── task_execution.rs
+│           ├── workflows.rs         # Workflow 管理
+│           ├── routines.rs          # 例程
 │           ├── settings.rs
+│           ├── llm_providers.rs     # LLM Provider 管理
+│           ├── agents.rs            # Agent 管理
+│           ├── canvases.rs          # Canvas 管理
+│           ├── mcp_presets.rs       # MCP 预设
+│           ├── terminals.rs         # 终端
 │           ├── vfs.rs
-│           ├── workspace_files.rs
+│           ├── vfs_surfaces.rs      # VFS Surface 管理
+│           ├── file_picker.rs       # 文件选择器
+│           ├── skill_assets.rs      # Skill 资产
 │           ├── discovery.rs
 │           └── discovered_options.rs
 │
@@ -90,7 +102,7 @@ crates/
 │       │   ├── mod.rs
 │       │   ├── artifact.rs      # Tool call artifact 构建
 │       │   ├── config.rs        # 执行器/Agent 配置解析
-│       │   ├── meta.rs          # ACP meta 构建与 turn 事件解析
+│       │   ├── meta.rs          # session meta 构建与 turn 事件解析
 │       │   ├── execution.rs     # TaskExecutionGateway trait
 │       │   ├── lock.rs          # Per-Task 异步锁
 │       │   ├── restart_tracker.rs # 重启追踪器
@@ -175,26 +187,40 @@ crates/
 ├── agentdash-executor/          # Infrastructure Layer (执行引擎)
 │   └── src/
 │       ├── lib.rs
-│       ├── hooks.rs             # Hook runtime port / snapshot / resolution
 │       ├── hook_events.rs       # Hook trace notification builder
 │       ├── adapters/
-│       │   └── normalized_to_acp.rs
+│       │   ├── normalized_to_backbone.rs   # NormalizedAgentEvent → BackboneEnvelope 适配
+│       │   ├── codex_config.rs             # Codex 配置适配
+│       │   └── vibe_kanban_config.rs       # VibeKanban 配置适配
+│       ├── mcp/                            # MCP 集成
+│       │   ├── relay.rs                    # MCP Relay（云端→本机 MCP 透传）
+│       │   └── direct.rs                   # 直连 MCP Server
 │       └── connectors/
 │           ├── mod.rs
-│           ├── pi_agent/                    # 云端原生 PiAgent 连接器（多文件模块）
-│           │   ├── mod.rs                   # 模块声明
+│           ├── context_frame_render.rs     # 上下文帧渲染
+│           ├── executor_session.rs         # 执行器会话管理
+│           ├── pi_agent/                    # 云端原生 PiAgent 连接器
+│           │   ├── mod.rs
 │           │   ├── connector.rs             # PiAgentConnector 实现
-│           │   ├── pi_agent_mcp.rs          # MCP 工具桥接
-│           │   ├── pi_agent_provider_registry.rs  # LLM Provider 注册
-│           │   ├── relay_mcp.rs             # MCP Relay 工具（云端→本机 MCP 透传）
-│           │   ├── rig_bridge.rs            # RigBridge<M> — rig-core LlmBridge 实现
-│           │   └── stream_mapper.rs         # Agent event → ACP notification 映射
-│           ├── vibe_kanban.rs   # 第三方 Agent 连接器（Claude Code / Codex 等子进程）
+│           │   ├── stream_mapper.rs         # AgentEvent → BackboneEnvelope 映射
+│           │   ├── system_prompt.rs         # 系统提示词构建
+│           │   ├── slash_commands.rs        # 斜杠命令处理
+│           │   ├── factory.rs              # 连接器工厂
+│           │   └── bridges/                # LLM Provider 桥接层
+│           │       ├── mod.rs
+│           │       ├── provider_registry.rs        # Provider 注册与路由
+│           │       ├── anthropic_bridge.rs         # Anthropic Claude
+│           │       ├── openai_responses_bridge.rs  # OpenAI Responses API
+│           │       ├── openai_completions_bridge.rs # OpenAI Chat Completions
+│           │       ├── openai_codex_responses_bridge.rs # OpenAI Codex
+│           │       └── sse.rs                     # SSE 流解析
+│           ├── codex_bridge.rs  # Codex 连接器
+│           ├── vibe_kanban.rs   # 第三方 Agent 连接器（Claude Code 等子进程）
 │           └── composite.rs     # 多连接器路由组合
 │
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
-├── agentdash-agent-protocol/    # Agent 通信协议（ACP 元数据、事件定义）
+├── agentdash-agent-protocol/    # Backbone Protocol（BackboneEnvelope / BackboneEvent + ACP 兼容层）
 ├── agentdash-agent-types/       # Agent 领域通用类型（AgentMessage/AgentTool/AgentContext/Delegate）
 ├── agentdash-agent/             # Agent 运行时核心（纯 loop + bridge trait，无 rig/spi 依赖）
 ├── agentdash-local/             # 本机后端
@@ -214,10 +240,10 @@ crates/
 | `/api/stories/{id}` | GET | Story 详情 |
 | `/api/stories/{id}/tasks` | GET | Story 下的 Task 列表 |
 | `/api/agents/discovery` | GET | 执行器发现 |
-| `/api/sessions/{id}/prompt` | POST | 启动 ACP 会话执行 |
+| `/api/sessions/{id}/prompt` | POST | 启动会话执行 |
 | `/api/sessions/{id}/cancel` | POST | 取消会话 |
-| `/api/acp/sessions/{id}/stream` | GET | ACP 会话流（SSE） |
-| `/api/acp/sessions/{id}/stream/ndjson` | GET | ACP 会话流（NDJSON） |
+| `/api/acp/sessions/{id}/stream` | GET | 会话事件流（SSE，BackboneEnvelope） |
+| `/api/acp/sessions/{id}/stream/ndjson` | GET | 会话事件流（NDJSON，BackboneEnvelope） |
 | `/api/events/stream` | GET | 全局事件流（SSE） |
 
 ### 连接器架构

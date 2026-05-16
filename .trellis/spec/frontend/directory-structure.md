@@ -38,7 +38,7 @@ packages/app-web/src/
 │   ├── origin.ts                   # API_ORIGIN / buildApiPath
 │   └── streamRegistry.ts           # 流连接追踪（HMR 安全）
 ├── components/                     # 共享 UI 组件
-│   ├── acp/                        # ACP 协议可视化组件
+│   ├── acp/                        # 会话内容可视化组件（content-block / tool-call / plan / confirmation）
 │   ├── layout/                     # 布局组件（WorkspaceLayout、侧边栏）
 │   ├── ui/                         # 通用 UI（StatusBadge, detail-panel 等）
 │   └── context-config-editor.tsx   # 上下文配置编辑器
@@ -64,7 +64,7 @@ packages/app-web/src/
 │   └── use-theme.ts                # 主题切换
 ├── pages/                          # 页面组件
 │   ├── DashboardPage.tsx           # Project 驱动的看板页
-│   ├── SessionPage.tsx             # 会话页（ExecutorSelector + ACP 流）
+│   ├── SessionPage.tsx             # 会话页（ExecutorSelector + Backbone 事件流）
 │   ├── StoryPage.tsx               # Story 详情页
 │   ├── ProjectSettingsPage.tsx     # 项目设置页
 │   ├── SettingsPage.tsx            # 全局设置页
@@ -96,7 +96,7 @@ packages/app-web/src/
 │   └── workspaceTabStore.ts        # 工作空间标签页状态
 ├── desktop/                        # Tauri 桌面端相关
 ├── generated/                      # 自动生成代码
-│   └── agentdash-acp-meta.ts       # ACP Meta TS 绑定
+│   └── backbone-protocol.ts        # Backbone Protocol TS 绑定（由 generate_backbone_protocol_ts 生成）
 ├── types/
 │   ├── index.ts                    # 全局类型（Project/Workspace/Story/Task 等）
 │   └── skill-asset.ts              # Skill 资产类型
@@ -169,7 +169,7 @@ interface Task {
 
 - **功能目录**：小写短横线，如 `session/`
 - **组件文件**：PascalCase，如 `SessionEntry.tsx`
-- **Hook 文件**：camelCase with `use` 前缀，如 `useAcpStream.ts`
+- **Hook 文件**：camelCase with `use` 前缀，如 `useSessionStream.ts`
 - **Store 文件**：camelCase，如 `workflowStore.ts`
 - **Service 文件**：camelCase，如 `workflow.ts`
 - **类型文件**：`types.ts`（Feature 内）或 `index.ts`（全局）

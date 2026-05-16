@@ -523,10 +523,10 @@ workflow_tool_directives: None
 
 | 消费者 | 文件 | 使用方式 |
 |--------|------|----------|
-| Project session prompt | `agentdash-api/src/routes/acp_sessions.rs` | `resolve_session_workflow_context(Project)` → `SessionPlanInput` |
-| Project session 预览 | `agentdash-api/src/routes/project_sessions.rs` | `resolve_session_workflow_context(Project)` → `Option<ToolContribution>` → `CapabilityResolverInput` |
-| Story session prompt | `agentdash-api/src/routes/acp_sessions.rs` | `resolve_session_workflow_context(Story)` → `SessionPlanInput` |
-| Story session 预览 | `agentdash-api/src/routes/story_sessions.rs` | `resolve_session_workflow_context(Story)` → `Option<ToolContribution>` → `CapabilityResolverInput` |
+| Project session prompt | `agentdash-application/src/session/` | `resolve_session_workflow_context(Project)` → `SessionPlanInput` |
+| Project session 预览 | `agentdash-application/src/capability/` | `resolve_session_workflow_context(Project)` → `Option<ToolContribution>` → `CapabilityResolverInput` |
+| Story session prompt | `agentdash-application/src/session/` | `resolve_session_workflow_context(Story)` → `SessionPlanInput` |
+| Story session 预览 | `agentdash-application/src/capability/` | `resolve_session_workflow_context(Story)` → `Option<ToolContribution>` → `CapabilityResolverInput` |
 | Project Agent (Routine) | `routine/executor.rs` | `resolve_session_workflow_context(Routine)` → `CapabilityResolver::resolve()` |
 | Task session runtime | `task/session_runtime_inputs.rs` | `tool_directives_from_active_workflow(primary_workflow)` → `CapabilityResolver::resolve()` |
 | Task turn context | `task/gateway/turn_context.rs` | `tool_directives_from_active_workflow(primary_workflow)` → `CapabilityResolver::resolve()` |

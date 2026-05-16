@@ -143,8 +143,8 @@ features/session/
 │   └── index.ts              # 统一导出
 ├── model/
 │   ├── types.ts              # 类型定义
-│   ├── useAcpSession.ts      # 业务 Hook
-│   ├── useAcpStream.ts       # 流管理 Hook
+│   ├── useSessionStream.ts   # 流管理 Hook
+│   ├── useSessionFeed.ts     # 事件聚合 Hook
 │   └── index.ts
 └── index.ts                  # Feature 入口
 ```

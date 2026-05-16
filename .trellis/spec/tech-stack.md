@@ -61,7 +61,7 @@
 - **样式方案：Tailwind CSS v4**（`^4.2.1`）
 - **状态管理：Zustand 5**（`^5.0.11`）
 - **路由：React Router 7**（`react-router-dom ^7.13.1`）
-- **ACP SDK**：`@agentclientprotocol/sdk ^0.14.1`
+- **ACP SDK**：`@agentclientprotocol/sdk ^0.14.1`（仅 relay 兼容层使用，前端主路径消费 `generated/backbone-protocol.ts`）
 - **测试：Vitest 4**（`^4.0.18`）
 - **拖拽：@dnd-kit**（core + sortable）
 - **Markdown 渲染：react-markdown + remark-gfm**
@@ -87,8 +87,10 @@
   - JSON over WebSocket
   - 详见 `docs/relay-protocol.md`
 
-- **交换标准：Agent Client Protocol (ACP) + MCP**
-  - 统一 Artifacts 和 Task 状态的语义结构
+- **内部事件流：Backbone Protocol（`BackboneEnvelope` / `BackboneEvent`）**
+  - 所有 connector 输出统一映射到 Backbone Protocol
+  - Relay 兼容层保留 ACP 双向转换（过渡期，P0.4 移除）
+- **对外能力暴露：MCP**
 
 - **数据格式：JSON / NDJSON**
   - 业务 HTTP DTO 统一使用 `snake_case`
@@ -109,7 +111,7 @@
 crates/
 ├── agentdash-agent-types/         # Agent 领域通用类型（零 runtime 核心）
 ├── agentdash-agent/               # Agent Loop 引擎（纯 loop + bridge trait）
-├── agentdash-agent-protocol/      # Agent 通信协议（ACP 元数据、事件定义）
+├── agentdash-agent-protocol/      # Backbone Protocol（BackboneEnvelope / BackboneEvent 事件流定义 + ACP 兼容层）
 ├── agentdash-domain/              # 领域层（实体、值对象、Repository trait）
 ├── agentdash-application/         # 应用层（用例编排、hooks、context、VFS）
 ├── agentdash-infrastructure/      # 基础设施层（PostgreSQL + SQLite Repository 实现）

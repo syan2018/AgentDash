@@ -159,7 +159,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 
 ### Hook Event Stream
 
-- `SessionUpdate::SessionInfoUpdate` + `_meta.agentdash.event.type=hook_event`
+- `BackboneEvent::Platform(PlatformEvent::HookTrace(payload))`
 - 纯噪音 trace（noop/allow/effects_applied）不强制发入事件流
 - 但只要带 `matched_rule_keys / diagnostics / completion / block_reason` 任一信息，必须发
 

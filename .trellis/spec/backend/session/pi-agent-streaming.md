@@ -1,52 +1,60 @@
-# Pi Agent 流式合并协议
+# Pi Agent 流式映射协议
 
-> Pi Agent 在 streaming 模式下的 chunk 发送与消费契约。
-> 从 `execution-hook-runtime.md` 拆分，独立维护。
+> Pi Agent 的 `stream_mapper` 将内部 `AgentEvent` 映射为 `BackboneEnvelope`/`BackboneEvent` 的契约。
 
 ---
 
-## Scenario: chunk 发送语义与完成边界
+## 发信层契约
 
-### 协议事实（ACP）
+`crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` 的 `convert_event_to_envelopes` 必须遵循：
 
-1. `session/update` 的 `*_message_chunk`（`agent_message_chunk` / `agent_thought_chunk` / `user_message_chunk`）在 ACP stable 中只表示“片段”，不包含“这是最后一个 chunk”的原生字段。
-2. 一次 turn 的完成信号来自 `session/prompt` 响应中的 `stopReason`（如 `end_turn` / `cancelled`），而不是某个 chunk。
-3. ACP unstable 提供 `ContentChunk.messageId`，用于标识“哪些 chunk 属于同一条消息”。
+### 1. TextDelta / ThinkingDelta
 
-### 发信层契约（Pi Agent）
+- 按增量发 `BackboneEvent::AgentMessageDelta` 或 `ReasoningTextDelta`；
+- 为同一 `(turn_id, entry_index, chunk_kind)` 复用同一个合成 `item_id`（格式 `{turn_id}:{entry_index}:{suffix}`）；
+- 记录已发送文本（`ChunkEmitState.emitted_text`）。
 
-`crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs::convert_event_to_notifications` 必须遵循：
+### 2. MessageEnd（拆分逻辑）
 
-1. **TextDelta / ThinkingDelta**
-   - 按增量发 chunk；
-   - 为同一 `(turn_id, entry_index, chunk_kind)` 复用同一个 `messageId`；
-   - 记录已发送文本（`chunk_emit_states`）。
+- 若该消息此前已发过 delta：
+  - `final_text` 以已发送文本为前缀：只发送"尾差量"（suffix）；
+  - `final_text == emitted_text`：不再发送 chunk（避免重复）；
+  - 二者不兼容：记录 warning，不再发送兜底快照（保持单路径约束）。
+- 若此前未发过 delta：发送完整文本 chunk（首发即全量）。
 
-2. **MessageEnd（拆分逻辑）**
-   - 若该消息此前已发过 delta：
-     - `final_text` 以已发送文本为前缀：只发送“尾差量”（suffix）；
-     - `final_text == emitted_text`：不再发送 chunk（避免重复）；
-     - 二者不兼容：记录 warning，不再发送兜底快照（保持单路径约束）。
-   - 若此前未发过 delta：发送完整文本 chunk（首发即全量，但不标记为 snapshot）。
+### 3. ToolCall 映射
 
-3. **entry_index 递增**
-   - 保持原契约：本条 assistant 消息处理完成后再递增 `entry_index`。
+- `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`（`ThreadItem::DynamicToolCall`）；
+- `ToolCallResult` 完成映射为 `BackboneEvent::ItemCompleted`；
+- `ToolCallEmitState` 追踪每个 `tool_call_id` 的 `entry_index` 和元数据。
 
-### 消费层契约（前端）
+### 4. Turn 生命周期
 
-前端 `useAcpStream` 合并优先级必须是：
+- Turn 开始产出 `BackboneEvent::TurnStarted`；
+- Turn 结束产出 `BackboneEvent::TurnCompleted`。
 
-1. `messageId` 命中（优先，协议层锚点）
-2. `turn_id + entry_index + sessionUpdate`（回退锚点）
-3. 最后才走相邻增量合并
+### 5. entry_index 递增
 
-### 为什么要这样拆
+- 保持原契约：本条 assistant 消息处理完成后再递增 `entry_index`。
 
-- 避免“delta + MessageEnd 全量快照”双发导致重复内容；
-- 将“消息边界识别”前移到发信层（messageId + sender state）；
-- 保持 turn 结束语义遵循 ACP（`stopReason`）。
+---
 
-### 关键文件
+## 消费层契约（前端）
 
-- `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` — 发信层拆分与 messageId
-- `packages/app-web/src/features/session/model/useAcpStream.ts` — chunk 合并消费策略
+前端 `useSessionFeed` 事件聚合优先级：
+
+1. `BackboneEvent` 变体类型匹配（主路径）
+2. `trace.turn_id + trace.entry_index`（同轮归并锚点）
+3. `item_id` 命中（工具调用关联）
+
+---
+
+## 关键文件
+
+- `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` — 事件映射与 ChunkEmitState
+- `packages/app-web/src/features/session/model/useSessionStream.ts` — 流管理 hook
+- `packages/app-web/src/features/session/model/useSessionFeed.ts` — 事件聚合消费
+
+---
+
+*重写：2026-05-16 — 从 ACP chunk 语义对齐到 BackboneEvent 变体映射*

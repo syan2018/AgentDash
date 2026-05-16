@@ -26,11 +26,11 @@
 - 全局 NDJSON：
   - `GET /api/events/stream/ndjson`
   - Header: `Last-Event-ID: <i64>`（可选）
-- ACP 会话 SSE：
+- 会话 SSE：
   - `GET /api/acp/sessions/{id}/stream`
   - Header: `Last-Event-ID: <u64>`（可选）
-  - `data`: `SessionEventEnvelope` JSON
-- ACP 会话 NDJSON：
+  - `data`: `PersistedSessionEvent` JSON（`notification` 字段为 `BackboneEnvelope`）
+- 会话 NDJSON：
   - `GET /api/acp/sessions/{id}/stream/ndjson`
   - Header: `x-stream-since-id: <u64>`（主方案）
   - Query: `?since_id=<u64>`（兼容）
@@ -46,15 +46,16 @@
   - 行内容为 `StreamEvent` JSON，每行一个对象
 - `GET /api/acp/sessions/{id}/stream`（SSE）：
   - `Event.id = event_seq`
-  - `data` 必须输出 `SessionEventEnvelope`
+  - `data` 必须输出 `PersistedSessionEvent` JSON
 - `GET /api/acp/sessions/{id}/stream/ndjson`：
   - 连接确认行：`{"type":"connected","last_event_id":<u64>}`
-  - 消息行：`{"type":"event","session_id":<string>,"event_seq":<u64>,"occurred_at_ms":<i64>,"committed_at_ms":<i64>,"session_update_type":<string>,"turn_id":<string|null>,"entry_index":<u32|null>,"tool_call_id":<string|null>,"notification":<SessionNotification>}`
+  - 消息行：`{"type":"event","session_id":<string>,"event_seq":<u64>,"occurred_at_ms":<i64>,"committed_at_ms":<i64>,"session_update_type":<string>,"turn_id":<string|null>,"entry_index":<u32|null>,"tool_call_id":<string|null>,"notification":<BackboneEnvelope>}`
   - 心跳行：`{"type":"heartbeat","timestamp":<i64>}`
-- `SessionEventEnvelope` 字段语义：
-  - `session_update_type`：后端归档的更新类型，前端不应自行猜测
+- 会话事件字段语义：
+  - `session_update_type`：后端归档的更新类型标签（如 `agent_message_delta` / `item_completed`），前端不应自行猜测
   - `turn_id / entry_index`：chunk 合并与同轮归并锚点
-  - `tool_call_id`：tool start/update/end 的稳定归并锚点；不能只依赖 `notification.update.toolCallId`
+  - `tool_call_id`：tool start/update/end 的稳定归并锚点
+  - `notification`：`BackboneEnvelope`（含 `event: BackboneEvent`、`source: SourceInfo`、`trace: TraceInfo`）
 - Header/缓存契约：
   - 必须返回 `Cache-Control: no-cache, no-transform`
   - 必须返回 `X-Content-Type-Options: nosniff`
@@ -88,7 +89,7 @@
 - Backend：
   - `events/stream` 在带 `Last-Event-ID` 时，返回事件 `id` 必须单调递增
   - `events/stream/ndjson` Content-Type 必须是 `application/x-ndjson`
-  - `acp/.../stream` 与 `acp/.../stream/ndjson` 都必须输出带完整 trace/tool 锚点的 `SessionEventEnvelope`
+  - `acp/.../stream` 与 `acp/.../stream/ndjson` 都必须输出带完整 `BackboneEnvelope`（含 trace/tool 锚点）
   - `x-stream-since-id` 与 `since_id` 同时存在时，header 优先
 - Frontend：
   - NDJSON 首次连接失败时，必须自动降级到 SSE

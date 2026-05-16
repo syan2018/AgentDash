@@ -35,3 +35,4 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 - 通过 PowerShell 把包含中文的 inline Node/Playwright 脚本直接管道给 `node -` 时，中文内容可能在进入浏览器前就被降成 `?`，会让会话输入框和 session 历史里都出现 `????`。如果要做中文端到端浏览器调试，优先使用 UTF-8 文件脚本、Unicode escape，或避免经由当前 PowerShell 管道直接注入中文字符串。
 - 如果你是 Codex Agent，在本项目中不建议使用 `spawn_agent` 或派发任何 subagent；当前项目环境下 Codex subagent 的身份标识存在问题。如果用户明确要求使用 subagent，在请求中明确表示对方身份，令其直接执行任务，并严禁其处理等待其它subagent返回相关行为。
+- 如果你是 Cursor Agent，除非用户明确要求，该项目严禁在任何情况下使用 subagent。

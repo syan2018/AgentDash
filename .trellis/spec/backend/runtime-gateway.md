@@ -6,36 +6,14 @@
 
 ## 核心抽象
 
-```rust
-pub struct RuntimeGateway;
+`RuntimeGateway`（`agentdash-application/src/runtime_gateway/gateway.rs`）：
 
-impl RuntimeGateway {
-    pub fn register(&mut self, provider: Arc<dyn RuntimeProvider>);
+- `register(provider)` — 注册 RuntimeProvider
+- `surface_for(context)` — 按 ActionKind 过滤（不做 actor 校验，仅调试用）
+- `surface_for_actor(actor, context)` — 完整 actor/context 校验（**消费端必须使用此入口**）
+- `invoke(request)` — 执行 action
 
-    pub fn surface_for(&self, context: RuntimeContext) -> RuntimeSurface;
-
-    pub fn surface_for_actor(
-        &self,
-        actor: RuntimeActor,
-        context: RuntimeContext,
-    ) -> Result<RuntimeSurface, RuntimeInvocationError>;
-
-    pub async fn invoke(
-        &self,
-        request: RuntimeInvocationRequest,
-    ) -> Result<RuntimeInvocationResult, RuntimeInvocationError>;
-}
-
-#[async_trait]
-pub trait RuntimeProvider: Send + Sync {
-    fn action_key(&self) -> &RuntimeActionKey;
-    fn action_kind(&self) -> RuntimeActionKind;
-    async fn invoke(
-        &self,
-        request: RuntimeInvocationRequest,
-    ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError>;
-}
-```
+`RuntimeProvider` trait：`action_key()` + `action_kind()` + `invoke()`
 
 ---
 
@@ -66,16 +44,7 @@ pub trait RuntimeProvider: Send + Sync {
 - `surface_for(context)` 只按 `RuntimeActionKind` 过滤 provider，**不做 actor 校验**，仅用于内部调试
 - `surface_for_actor(actor, context)` 做完整 actor/context 绑定校验，**消费端必须使用此入口**
 
-```rust
-// ❌ 不能作为授权 manifest
-let surface = gateway.surface_for(RuntimeContext::Session { session_id, .. });
-
-// ✅ 正确：消费端带 actor 查询
-let surface = gateway.surface_for_actor(
-    RuntimeActor::UserCanvas { session_id: session_id.clone(), canvas_id },
-    RuntimeContext::Session { session_id, project_id, workspace_id },
-)?;
-```
+消费端必须使用 `surface_for_actor`，`surface_for` 不能作为授权 manifest。
 
 ---
 
@@ -100,19 +69,7 @@ let surface = gateway.surface_for_actor(
 - Setup Action 不进入 Session Runtime Surface
 - HTTP route 保持原响应契约，不让前端看到 Gateway 内部 envelope
 
-```rust
-// ❌ route 直接调用底层业务函数
-let result = probe_transport(&transport, Some(relay)).await;
-
-// ✅ route 通过 Gateway 调用
-let request = RuntimeInvocationRequest::new(
-    RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION)?,
-    RuntimeActor::PlatformUser { user_id: Some(current_user.user_id.clone()) },
-    RuntimeContext::Setup { project_id: Some(project_id), .. },
-    serde_json::to_value(transport)?,
-);
-let invocation = state.services.runtime_gateway.invoke(request).await?;
-```
+API route 不直接调用底层业务函数，必须通过 Gateway invoke。
 
 ---
 
@@ -136,6 +93,3 @@ Canvas iframe 通过 Gateway 调用 Session Action 的约束：
 - Canvas 专用 `/runtime-invoke` 不接受 iframe 传入的 actor/context/trace
 - API route 必须再次校验 Session 与 Canvas Project 绑定关系
 
----
-
-*更新：2026-05-16 — 从4个完整7段式场景精简为统一 spec 指南，保留核心约束和错误矩阵*

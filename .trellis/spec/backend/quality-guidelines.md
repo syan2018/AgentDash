@@ -89,25 +89,9 @@ pub struct StoryMcpServer {
 - Request JSON：前端发 `snake_case`，后端按 `snake_case` 反序列化
 - 不允许：顶层 `snake_case` 内层 `camelCase`、前端 `fooBar ?? foo_bar` 长期兼容
 
-### Good / Bad
+### 关键约束
 
-```rust
-// ✅ Good
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentSummaryResponse {
-    pub display_name: String,
-    pub shared_context_mounts: Vec<ProjectAgentMountResponse>,
-}
-```
-
-```ts
-// ❌ Bad — 后端契约失效，前端被迫双风格
-const mountId = raw.mountId ?? raw.mount_id ?? "";
-
-// ✅ Correct — 后端保证 snake_case
-const mountId = String(raw.mount_id ?? "");
-```
+后端 DTO 必须 `#[serde(rename_all = "snake_case")]`，前端直接读 `raw.snake_case`，不允许 `raw.fooBar ?? raw.foo_bar` 双风格。
 
 ---
 
@@ -179,6 +163,3 @@ store.write_meta(&session_meta).await?;
 - [ ] 异步函数正确使用 `.await`
 - [ ] 业务 HTTP DTO 输出为 `snake_case`
 
----
-
-*更新：2026-04-14 — 精简 Session 持久化/Prompt Lifecycle 冗余描述，保留核心约束*

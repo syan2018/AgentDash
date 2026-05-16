@@ -27,26 +27,7 @@
 
 定义位置：`crates/agentdash-agent-protocol/src/backbone/envelope.rs`
 
-```rust
-pub struct BackboneEnvelope {
-    pub event: BackboneEvent,
-    pub session_id: String,
-    pub source: SourceInfo,
-    pub trace: TraceInfo,
-    pub observed_at: DateTime<Utc>,
-}
-
-pub struct SourceInfo {
-    pub connector_id: String,
-    pub connector_type: String,
-    pub executor_id: Option<String>,
-}
-
-pub struct TraceInfo {
-    pub turn_id: Option<String>,
-    pub entry_index: Option<u32>,
-}
-```
+字段：`event: BackboneEvent`、`session_id`、`source: SourceInfo`（connector_id / connector_type / executor_id）、`trace: TraceInfo`（turn_id / entry_index）、`observed_at`。
 
 ### 2.2 BackboneEvent
 
@@ -113,21 +94,9 @@ Codex 原生协议没有覆盖的平台能力，通过 `PlatformEvent` 扩展。
 
 ### 3.1 持久化 Session Event
 
-```rust
-pub struct PersistedSessionEvent {
-    pub session_id: String,
-    pub event_seq: u64,
-    pub occurred_at_ms: i64,
-    pub committed_at_ms: i64,
-    pub session_update_type: String,
-    pub turn_id: Option<String>,
-    pub entry_index: Option<u32>,
-    pub tool_call_id: Option<String>,
-    pub notification: BackboneEnvelope,
-}
-```
+定义在 `agentdash-application/src/session/persistence.rs`。
 
-`notification` 字段的内容即 `BackboneEnvelope`。`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是从 envelope 提取的便利索引字段。
+`PersistedSessionEvent` 的 `notification` 字段即 `BackboneEnvelope`。`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是从 envelope 提取的便利索引字段。
 
 ### 3.2 NDJSON 流
 
@@ -186,6 +155,3 @@ BackboneEnvelope (NDJSON)
 
 前端直接消费 `BackboneEnvelope` / `BackboneEvent` 类型（来自 `generated/backbone-protocol.ts`），不经过 ACP SDK 解析。
 
----
-
-*创建：2026-05-16 — 取代历史 acp-meta-warp.md，反映 Backbone Protocol 当前实现*

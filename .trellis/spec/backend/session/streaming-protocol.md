@@ -71,40 +71,10 @@
 | broadcast `Closed` | 记录关闭日志并结束流 | 触发重连策略 |
 | JSON 序列化失败 | 记录 `tracing::error!`，跳过该条 | 不中断整条连接 |
 
-### 5. Good/Base/Bad Cases
+### 5. 关键要求
 
-- Good：
-  - 客户端携带合法 `Last-Event-ID` 或 `x-stream-since-id`
-  - 服务端补发缺失消息后进入实时流
-  - 前端 UI 显示 `connected`
-- Base：
-  - 客户端不带 resume header
-  - 服务端从当前可读历史开始推送，随后实时流
-- Bad：
-  - 代理/HMR 频繁断连导致大量 `ECONNRESET`
-  - 处理：前端统一连接注册 + HMR dispose close，全局状态显示 `reconnecting` 而非 fatal
-
-### 6. Tests Required
-
-- Backend：
-  - `events/stream` 在带 `Last-Event-ID` 时，返回事件 `id` 必须单调递增
-  - `events/stream/ndjson` Content-Type 必须是 `application/x-ndjson`
-  - `acp/.../stream` 与 `acp/.../stream/ndjson` 都必须输出带完整 `BackboneEnvelope`（含 trace/tool 锚点）
-  - `x-stream-since-id` 与 `since_id` 同时存在时，header 优先
-- Frontend：
-  - NDJSON 首次连接失败时，必须自动降级到 SSE
-  - 断流后状态应进入 `reconnecting`，恢复后进入 `connected`
-  - HMR dispose 时，注册表中的流连接必须全部 close
-  - tool 生命周期事件连续到达时，开始态不能在同一批次里被完成态吞掉
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-- 全局 SSE 只 `data(json)` 不带 `Event.id`，重连后无法准确补发
-- Hook 直接绑定 `EventSource` 且无统一连接注册，HMR 后容易泄漏连接
-
-#### Correct
-
-- 全局 SSE 用 `state_changes.id` 作为稳定 `Event.id`，并读取 `Last-Event-ID` 先补发后实时
-- 前端通过 transport 抽象（`FetchNdjsonTransport` + `EventSourceTransport` fallback），并接入全局 stream registry
+- 全局 SSE 必须用 `state_changes.id` 作为 `Event.id`，支持 `Last-Event-ID` 重连补发
+- 前端通过 transport 抽象（`FetchNdjsonTransport` + `EventSourceTransport` fallback）接入全局 stream registry
+- NDJSON 首次连接失败自动降级到 SSE
+- HMR dispose 时注册表中的流连接必须全部 close
+- `x-stream-since-id` 与 `since_id` 同时存在时 header 优先

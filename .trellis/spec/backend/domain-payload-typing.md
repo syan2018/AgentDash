@@ -20,43 +20,11 @@
 
 ### 枚举 + 兜底变体
 
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum HookEventPayload {
-    ToolCallCompleted {
-        tool_name: String,
-        tool_call_id: String,
-        mount_id: Option<String>,
-        path: Option<String>,
-    },
-    TurnStart { turn_id: String },
-    TurnEnd { turn_id: String, terminal_message: Option<String> },
-    /// 兜底变体：未覆盖的 trigger 不丢失
-    Generic { data: serde_json::Value },
-}
-```
-
-要点：
-- `#[serde(tag = "kind")]` 内部标签，保持 JSON 序列化兼容
-- `Generic` 变体保留兜底能力，逐步收窄
-- 每次新增具体变体时，从 `Generic` 中提取该类型
+使用 `#[serde(tag = "kind")]` 内部标签，保持 JSON 兼容。`Generic { data: Value }` 变体保留兜底能力，逐步收窄。每次新增具体变体时从 `Generic` 中提取。
 
 ### 结构化错误
 
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum WorkflowValidationError {
-    #[error("missing required field: {field} in step {step_key}")]
-    MissingField { step_key: String, field: String },
-
-    #[error("invalid transition: {from} -> {to} in lifecycle {lifecycle_id}")]
-    InvalidTransition { lifecycle_id: String, from: String, to: String },
-
-    #[error("artifact not found: {artifact_key} in run {run_id}")]
-    ArtifactNotFound { run_id: String, artifact_key: String },
-}
-```
+使用 `thiserror::Error` 枚举，错误变体必须携带足够上下文（如 `step_key`、`lifecycle_id`）。
 
 ---
 
@@ -89,6 +57,3 @@ pub enum WorkflowValidationError {
 - 错误变体必须携带足够上下文供上层做日志/展示/重试决策
 - 见 [error-handling.md](./error-handling.md) 获取完整的分层错误体系
 
----
-
-*更新：2026-05-16 — 从迁移计划重构为类型化标准 spec，移除过时的文件路径盘点和时序性迁移计划*

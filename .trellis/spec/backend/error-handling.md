@@ -18,29 +18,13 @@
 
 ## 错误类型
 
-### DomainError
+### DomainError（`agentdash-domain/src/common/error.rs`）
 
-```rust
-pub enum DomainError {
-    NotFound { entity: &'static str, id: String },
-    InvalidTransition { from: String, to: String },
-    Serialization(#[from] serde_json::Error),
-    InvalidConfig(String),
-}
-```
+变体：`NotFound`、`InvalidTransition`、`Serialization`、`InvalidConfig`
 
-### ConnectorError
+### ConnectorError（`agentdash-spi/src/connector/mod.rs`）
 
-```rust
-pub enum ConnectorError {
-    InvalidConfig(String),
-    SpawnFailed(String),
-    Runtime(String),
-    ConnectionFailed(String),
-    Io(#[from] std::io::Error),
-    Json(#[from] serde_json::Error),
-}
-```
+变体：`InvalidConfig`、`SpawnFailed`、`Runtime`、`ConnectionFailed`、`Io`、`Json`
 
 ### ApiError HTTP 映射
 
@@ -74,6 +58,3 @@ pub enum ConnectorError {
 | 返回 `String` 作为错误 | 定义具体的错误枚举 |
 | 在领域层引用 `sqlx::Error` | 转换为 `DomainError::InvalidConfig` |
 
----
-
-*更新：2026-04-14 — 对齐实际 DomainError/ConnectorError 变体和文件位置*

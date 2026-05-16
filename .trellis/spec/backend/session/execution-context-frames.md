@@ -32,7 +32,7 @@ pub struct ExecutionSessionFrame {
     pub working_directory: PathBuf,
     pub environment_variables: HashMap<String, String>,
     pub executor_config: AgentConfig,
-    pub mcp_servers: Vec<McpServer>,
+    pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
     pub identity: Option<AuthIdentity>,
 }
@@ -59,7 +59,7 @@ pub struct ExecutionTurnFrame {
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
-    pub context_bundle: Option<SessionContextBundle>,
+    pub context_frames: Vec<ContextFrame>,
     pub assembled_tools: Vec<DynAgentTool>,
 }
 ```
@@ -70,7 +70,7 @@ pub struct ExecutionTurnFrame {
 | `capability_state` | construction capability projection + runtime command apply result | runtime tools、MCP/VFS diff |
 | `runtime_delegate` | launch hook plan | agent loop hook callbacks |
 | `restored_session_state` | restore plan | 支持 repository restore 的 connector |
-| `context_bundle` | construction context projection | connector context、Inspector/audit |
+| `context_frames` | construction context projection | connector context 消费（按 kind 分类或渲染为文本） |
 | `assembled_tools` | runtime tool provider + MCP tools projection | in-process connector tool execution |
 
 `TurnExecution` 在 active turn 内保存 session frame、capability state、context bundle、
@@ -81,12 +81,11 @@ cancel flag 与 processor channel。它是 per-turn runtime 快照，不承担 o
 
 | Connector | SessionFrame | TurnFrame |
 |---|---|---|
-| PiAgent | `turn_id`、`executor_config` | `assembled_tools`、`runtime_delegate`、`hook_session`、`restored_session_state`、`context_bundle` |
-| Relay | `mcp_servers`、`vfs`、`working_directory`、`environment_variables`、`executor_config`、`identity` | `context_bundle.rendered_system_prompt` 过渡消费 |
-| vibe_kanban | `vfs`、`working_directory`、`environment_variables`、`executor_config` | `context_bundle.rendered_system_prompt` 过渡消费 |
+| PiAgent | `turn_id`、`executor_config` | `assembled_tools`、`runtime_delegate`、`hook_session`、`restored_session_state`、`context_frames` |
+| Relay | `mcp_servers`、`vfs`、`working_directory`、`environment_variables`、`executor_config`、`identity` | `context_frames`（渲染为系统上下文） |
+| vibe_kanban | `vfs`、`working_directory`、`environment_variables`、`executor_config` | `context_frames`（渲染为系统上下文） |
 
-`rendered_system_prompt` 目前保留给 Relay / vibe_kanban / PiAgent 的过渡消费。动态
-Project Context、Workspace、Skills、Hook Runtime 等内容通过 ContextFrame/Bundle
+动态 Project Context、Workspace、Skills、Hook Runtime 等内容通过 ContextFrame
 进入，不作为 running turn 的 system prompt 重置。
 
 ## Tool Hot Update

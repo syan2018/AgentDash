@@ -13,27 +13,9 @@ Lifecycle 的 edge 有且仅有两种 kind：
 | `flow` | 控制流：前驱完成即激活后继 | **不可** 携带 `from_port` / `to_port` |
 | `artifact` | 数据依赖：端口级产出/消费 | **必须** 同时声明 `from_port` + `to_port` |
 
-### 1.1 Rust 类型
+定义在 `agentdash-domain/src/workflow/value_objects.rs`，`LifecycleEdge` 持有 `kind`（`Flow` / `Artifact`）、`from_node`、`to_node`、`from_port`、`to_port`。
 
-```rust
-// crates/agentdash-domain/src/workflow/value_objects.rs
-pub enum LifecycleEdgeKind { Flow, Artifact }
-
-pub struct LifecycleEdge {
-    pub kind: LifecycleEdgeKind,
-    pub from_node: String,
-    pub to_node: String,
-    pub from_port: Option<String>,  // 仅 artifact 使用
-    pub to_port: Option<String>,    // 仅 artifact 使用
-}
-
-impl LifecycleEdge {
-    pub fn flow(from: impl Into<String>, to: impl Into<String>) -> Self { ... }
-    pub fn artifact(from: impl Into<String>, from_port: ..., to: ..., to_port: ...) -> Self { ... }
-}
-```
-
-**强制使用构造器**：禁止通过 struct 字面量构造 edge（除非在特殊测试中显式构造非法 edge 用于校验断言）。构造器保证 kind/port 约束一致。
+**强制使用构造器**（`LifecycleEdge::flow()` / `LifecycleEdge::artifact()`），禁止 struct 字面量构造（除校验断言测试）。
 
 ---
 
@@ -41,23 +23,7 @@ impl LifecycleEdge {
 
 **核心规则**：`artifact: A.out → B.in` **自动等价于** flow edge `A → B`。
 
-```rust
-// node_deps_from_edges() 把 flow/artifact 两类边统一聚合为 node 级依赖
-pub fn node_deps_from_edges(edges: &[LifecycleEdge]) -> HashMap<&str, BTreeSet<&str>> {
-    let mut deps = HashMap::new();
-    for edge in edges {
-        deps.entry(edge.to_node.as_str())
-            .or_default()
-            .insert(edge.from_node.as_str());
-    }
-    deps
-}
-```
-
-**应用场景**：
-
-- 你声明 `artifact: plan.design → apply.design_input`，**不需要** 再加 `flow: plan → apply`
-- 只在"有顺序要求但无数据产出"时才显式加 flow edge（例如预热 step、清理 step）
+`node_deps_from_edges()` 把 flow/artifact 两类边统一聚合为 node 级依赖。声明 `artifact: plan.design → apply.design_input` 时**不需要**再加 `flow: plan → apply`。只在"有顺序要求但无数据产出"时才显式加 flow edge。
 
 ---
 

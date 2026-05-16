@@ -6,7 +6,7 @@ Bundle，LaunchExecution 把它投影到 connector `ExecutionContext`，Hook run
 
 ## Bundle Shape
 
-定义位置：`crates/agentdash-spi/src/session_context_bundle.rs`。
+定义位置：`crates/agentdash-spi/src/context/bundle.rs`。
 
 ```rust
 pub struct SessionContextBundle {
@@ -66,7 +66,7 @@ Hook 输出分三类，每类有独立承载通道：
 | Per-turn steering | `TransformContextOutput.steering_messages` | 当前 agent loop messages |
 | 控制流副作用 | `blocked`、`ToolCallDecision`、`StopDecision` | agent loop 阻断、拒绝、改写、续跑 |
 
-Bundle 改写由 application 层 hook delegate 写入 `TurnFrame.context_bundle.turn_delta`。
+Bundle 改写由 application 层 hook delegate 写入 `SessionContextBundle.turn_delta`。
 SPI hook decisions 不直接携带 Bundle delta，从而保持 agent-types 与 spi 的依赖方向。
 
 ## Audit And Inspector

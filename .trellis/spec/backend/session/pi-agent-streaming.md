@@ -55,6 +55,3 @@
 - `packages/app-web/src/features/session/model/useSessionStream.ts` — 流管理 hook
 - `packages/app-web/src/features/session/model/useSessionFeed.ts` — 事件聚合消费
 
----
-
-*重写：2026-05-16 — 从 ACP chunk 语义对齐到 BackboneEvent 变体映射*

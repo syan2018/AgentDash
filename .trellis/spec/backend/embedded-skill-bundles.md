@@ -76,31 +76,7 @@ ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
   - mutation/update 后已有 bundle 会同步新增/更新文件。
 - Skill 作者更新 `SKILL.md` 后，应运行 skill-creator `quick_validate.py` 校验 skill folder。
 
-## Wrong vs Correct
+## 禁止模式
 
-### Wrong
-
-```rust
-const MY_SKILL_MD: &str = include_str!("skills/my-skill/SKILL.md");
-const MY_REFERENCE: &str = include_str!("skills/my-skill/references/api.md");
-
-fn ensure_my_skill(files: &mut Vec<MyFile>) {
-    // 手写 find/update/push，多处重复
-}
-```
-
-问题：每个业务域复制同步逻辑，新增 reference 时容易漏同步或漏测试。
-
-### Correct
-
-```rust
-pub const MY_SKILL_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle { ... };
-
-fn ensure_my_skill(files: &mut Vec<MyFile>) -> bool {
-    ensure_embedded_skill_bundle(files, &MY_SKILL_BUNDLE)
-        .expect("embedded skill bundle should be valid")
-        .changed()
-}
-```
-
-这样新增文件只需要加入 bundle 声明，受管载体的同步规则保持一致。
+- 每个业务域手写 `include_str!` + find/update/push 同步逻辑（应使用 `ensure_embedded_skill_bundle`）
+- 新增文件时不加入 bundle 声明

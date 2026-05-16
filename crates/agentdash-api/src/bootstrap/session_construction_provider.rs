@@ -12,7 +12,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use agentdash_application::session::construction::SessionConstructionPlan;
-use agentdash_application::session::{LaunchCommand, SessionConstructionProvider};
+use agentdash_application::session::{
+    SessionConstructionProvider, SessionConstructionProviderInput,
+};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -75,16 +77,21 @@ fn api_error_to_connector(error: ApiError) -> ConnectorError {
 impl SessionConstructionProvider for AppStateSessionConstructionProvider {
     async fn build_construction(
         &self,
-        session_id: &str,
-        command: &LaunchCommand,
+        input: SessionConstructionProviderInput,
     ) -> Result<SessionConstructionPlan, ConnectorError> {
+        let session_id = input.session_id.clone();
+        let command = input.command.clone();
         build_session_construction_for_launch(
             &self.state,
-            session_id,
+            &session_id,
             command.user_input(),
             command.task_hint(),
             command.companion_hint(),
             command.local_relay_mcp_declarations().to_vec(),
+            command
+                .local_relay_workspace_root()
+                .map(std::path::PathBuf::from),
+            input,
         )
         .await
         .map_err(api_error_to_connector)

@@ -481,9 +481,6 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         let session_repo = Arc::new(SqliteSessionRepository::new(pool));
         session_repo.initialize().await?;
         let session_runtime = SessionRuntimeServices::new_with_hooks_and_persistence(
-            Some(agentdash_application::session::local_workspace_vfs(
-                &workspace_root,
-            )),
             connector.clone(),
             None,
             session_repo,

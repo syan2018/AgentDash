@@ -67,6 +67,8 @@ pub struct ServiceSet {
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
     pub vfs_service: Arc<RelayVfsService>,
+    /// 插件额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
+    pub extra_skill_dirs: Vec<std::path::PathBuf>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
@@ -345,8 +347,8 @@ impl AppState {
             inline_file_repo.clone(),
             state_change_repo.clone(),
         ));
+        let extra_skill_dirs = plugin_registration.extra_skill_dirs.clone();
         let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
-            None,
             connector.clone(),
             Some(hook_provider.clone()),
             session_repo,
@@ -505,6 +507,7 @@ impl AppState {
                 session_title,
                 connector,
                 vfs_service,
+                extra_skill_dirs,
                 backend_registry,
                 shell_output_registry,
                 terminal_cache,

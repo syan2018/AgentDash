@@ -1191,7 +1191,10 @@ impl<'a> SessionRequestAssembler<'a> {
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
-        let capability_state = cap_output.clone();
+        let mut capability_state = cap_output.clone();
+        let mut session_mcp_servers = spec.request_mcp_servers.to_vec();
+        session_mcp_servers.extend(capability_state.tool.mcp_servers.iter().cloned());
+        capability_state.tool.mcp_servers = session_mcp_servers.clone();
 
         // ── 6. 构造 task agent context（Bundle 路径） ──
         let (story_ref, project_ref, workspace_ref) = (spec.story, spec.project, spec.workspace);
@@ -1308,10 +1311,6 @@ impl<'a> SessionRequestAssembler<'a> {
         // Task 的业务上下文只进入 context_bundle/system prompt。这里保留一个非空
         // turn trigger，避免把完整 owner context 再渲染进用户消息和标题生成输入。
         let prompt_blocks = build_story_step_trigger_prompt_blocks(task_phase);
-
-        // ── 汇总 MCP 列表：platform + custom + contribution 产出 ──
-        let session_mcp_servers: Vec<agentdash_spi::SessionMcpServer> =
-            capability_state.tool.mcp_servers.clone();
 
         let mut builder = SessionAssemblyBuilder::new()
             .with_prompt_blocks(prompt_blocks)
@@ -1762,6 +1761,7 @@ pub struct StoryStepSpec<'a> {
     pub phase: StoryStepPhase,
     pub override_prompt: Option<&'a str>,
     pub additional_prompt: Option<&'a str>,
+    pub request_mcp_servers: &'a [agentdash_spi::SessionMcpServer],
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,

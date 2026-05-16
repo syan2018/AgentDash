@@ -5,8 +5,8 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::task::AgentBinding;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
-    AuthIdentity, CapabilityState, SessionBaselineCapabilities, SessionContextBundle,
-    SessionMcpServer, Vfs,
+    AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
+    SessionContextBundle, SessionMcpServer, Vfs,
 };
 use uuid::Uuid;
 
@@ -30,6 +30,7 @@ pub struct SessionConstructionPlan {
     pub identity: IdentityPlan,
     pub effects: ConstructionEffectPlan,
     pub projections: ConstructionProjections,
+    pub resolution: ConstructionResolutionPlan,
     pub context_projection: SessionConstructionContextProjection,
     pub trace: SessionConstructionTrace,
 }
@@ -94,6 +95,18 @@ pub struct ConstructionProjections {
     pub mcp_servers: Vec<SessionMcpServer>,
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConstructionResolutionPlan {
+    pub vfs_source: Option<String>,
+    pub mcp_source: Option<String>,
+    pub capability_source: Option<String>,
+    pub executor_source: Option<String>,
+    pub working_directory_source: Option<String>,
+    pub pending_overlay_applied: bool,
+    pub runtime_base_capability_state: Option<CapabilityState>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -115,26 +128,6 @@ pub struct SessionConstructionTrace {
 pub struct SessionConstructionTraceEntry {
     pub stage: &'static str,
     pub source: String,
-}
-
-pub struct SessionConstructionLaunchInput {
-    pub session_id: String,
-    pub owner: ResolvedSessionOwner,
-    pub source: SourceContractPlan,
-    pub workspace_id: Option<Uuid>,
-    pub working_directory: PathBuf,
-    pub executor_config: AgentConfig,
-    pub vfs: Option<Vfs>,
-    pub runtime_surface: Option<ResolvedVfsSurface>,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub continuation_context_frame: Option<ContextFrame>,
-    pub context_snapshot: Option<SessionContextSnapshot>,
-    pub identity: Option<AuthIdentity>,
-    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub capability_state: CapabilityState,
-    pub session_capabilities: Option<SessionBaselineCapabilities>,
-    pub trace_entries: Vec<SessionConstructionTraceEntry>,
 }
 
 impl SessionConstructionPlan {
@@ -194,82 +187,9 @@ impl SessionConstructionPlan {
             identity: IdentityPlan::default(),
             effects: ConstructionEffectPlan::default(),
             projections,
+            resolution: ConstructionResolutionPlan::default(),
             context_projection,
             trace,
-        }
-    }
-
-    pub fn from_launch(input: SessionConstructionLaunchInput) -> Self {
-        let context_projection = SessionConstructionContextProjection {
-            workspace_id: input.workspace_id,
-            agent_binding: None,
-            vfs: input.vfs.clone(),
-            runtime_surface: input.runtime_surface.clone(),
-            context_snapshot: input.context_snapshot.clone(),
-            session_capabilities: input.session_capabilities.clone(),
-        };
-        let bootstrap_fragment_count = input
-            .context_bundle
-            .as_ref()
-            .map(|bundle| bundle.bootstrap_fragments.len())
-            .unwrap_or_default();
-        let mut trace_entries = vec![
-            SessionConstructionTraceEntry {
-                stage: "owner",
-                source: input.owner.trace.selected_reason.clone(),
-            },
-            SessionConstructionTraceEntry {
-                stage: "source",
-                source: input
-                    .source
-                    .launch_source
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-            },
-        ];
-        trace_entries.extend(input.trace_entries);
-        Self {
-            session_id: input.session_id.clone(),
-            owner: input.owner,
-            session: SessionIdentityPlan {
-                session_id: input.session_id,
-            },
-            source: input.source,
-            workspace: WorkspacePlan {
-                workspace_id: input.workspace_id,
-                working_directory: Some(input.working_directory),
-            },
-            execution_profile: ExecutionProfilePlan {
-                executor_config: Some(input.executor_config),
-            },
-            surface: SessionSurfacePlan {
-                vfs: input.vfs.clone(),
-                runtime_surface: input.runtime_surface,
-            },
-            context: ContextPlan {
-                bundle: input.context_bundle.clone(),
-                bundle_id: input.context_bundle.as_ref().map(|bundle| bundle.bundle_id),
-                continuation_context_frame: input.continuation_context_frame,
-                context_snapshot: input.context_snapshot,
-                bootstrap_fragment_count,
-            },
-            prompt: ConstructionPromptPlan::default(),
-            identity: IdentityPlan {
-                identity: input.identity,
-            },
-            effects: ConstructionEffectPlan {
-                terminal_hook_effect_binding: input.terminal_hook_effect_binding,
-            },
-            projections: ConstructionProjections {
-                context: context_projection.clone(),
-                mcp_servers: input.mcp_servers,
-                capability_state: Some(input.capability_state),
-                session_capabilities: input.session_capabilities,
-            },
-            context_projection,
-            trace: SessionConstructionTrace {
-                entries: trace_entries,
-            },
         }
     }
 
@@ -288,11 +208,50 @@ impl SessionConstructionPlan {
         plan.execution_profile.executor_config = user_input.executor_config.clone();
         plan
     }
+
+    pub fn validate_for_launch(&self) -> Result<(), String> {
+        if self.workspace.working_directory.is_none() {
+            return Err(
+                "SessionConstructionPlan.workspace.working_directory 必须在 launch 前解析"
+                    .to_string(),
+            );
+        }
+        if self.execution_profile.executor_config.is_none() {
+            return Err(
+                "SessionConstructionPlan.execution_profile.executor_config 必须在 launch 前解析"
+                    .to_string(),
+            );
+        }
+        let Some(vfs) = self.surface.vfs.as_ref() else {
+            return Err("SessionConstructionPlan.surface.vfs 必须在 launch 前解析".to_string());
+        };
+        let Some(capability_state) = self.projections.capability_state.as_ref() else {
+            return Err(
+                "SessionConstructionPlan.projections.capability_state 必须在 launch 前解析"
+                    .to_string(),
+            );
+        };
+        if capability_state.vfs.active.as_ref() != Some(vfs) {
+            return Err(
+                "SessionConstructionPlan capability_state.vfs.active 必须等于 surface.vfs"
+                    .to_string(),
+            );
+        }
+        if capability_state.tool.mcp_servers != self.projections.mcp_servers {
+            return Err(
+                "SessionConstructionPlan capability_state.tool.mcp_servers 必须等于 projections.mcp_servers"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+    use agentdash_spi::Vfs;
 
     use super::*;
     use crate::session::ownership::SessionOwnerResolver;
@@ -335,34 +294,84 @@ mod tests {
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
         let bundle_id = bundle.bundle_id;
 
-        let plan = SessionConstructionPlan::from_launch(SessionConstructionLaunchInput {
-            session_id: "sess-launch-construction".to_string(),
+        let mut plan = SessionConstructionPlan::new(
+            "sess-launch-construction",
             owner,
-            source: SourceContractPlan {
-                launch_source: Some("http_prompt".to_string()),
-                preparation: None,
-                strictness: Some("strict".to_string()),
-            },
-            workspace_id: None,
-            working_directory: PathBuf::from("/workspace"),
-            executor_config: AgentConfig::new("PI_AGENT"),
-            vfs: None,
-            runtime_surface: None,
-            context_bundle: Some(bundle),
-            continuation_context_frame: None,
-            context_snapshot: None,
-            identity: None,
-            terminal_hook_effect_binding: None,
-            mcp_servers: Vec::new(),
-            capability_state: CapabilityState::default(),
-            session_capabilities: Some(SessionBaselineCapabilities::default()),
-            trace_entries: Vec::new(),
-        });
+            SessionConstructionContextProjection::default(),
+        );
+        plan.context.bundle = Some(bundle);
+        plan.context.bundle_id = plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id);
 
         assert_eq!(
             plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id),
             Some(bundle_id)
         );
         assert_eq!(plan.context.bundle_id, Some(bundle_id));
+    }
+
+    #[test]
+    fn validate_for_launch_requires_final_execution_facts() {
+        let binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-invalid-construction".to_string(),
+            SessionOwnerType::Project,
+            Uuid::new_v4(),
+            "execution",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let plan = SessionConstructionPlan::new(
+            "sess-invalid-construction",
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
+
+        assert!(
+            plan.validate_for_launch()
+                .expect_err("partial construction must be rejected")
+                .contains("working_directory")
+        );
+    }
+
+    #[test]
+    fn validate_for_launch_rejects_capability_surface_drift() {
+        let binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-drift-construction".to_string(),
+            SessionOwnerType::Project,
+            Uuid::new_v4(),
+            "execution",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "/workspace".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut plan = SessionConstructionPlan::new(
+            "sess-drift-construction",
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
+        plan.workspace.working_directory = Some(PathBuf::from("/workspace"));
+        plan.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
+        plan.surface.vfs = Some(vfs);
+        plan.projections.capability_state = Some(CapabilityState::default());
+
+        assert!(
+            plan.validate_for_launch()
+                .expect_err("capability/vfs drift must be rejected")
+                .contains("capability_state.vfs.active")
+        );
     }
 }

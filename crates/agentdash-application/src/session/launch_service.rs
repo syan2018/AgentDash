@@ -12,13 +12,10 @@ pub struct SessionLaunchService {
 impl SessionLaunchDeps {
     pub(in crate::session) fn from_inner(inner: &SessionRuntimeInner) -> Self {
         Self {
-            default_vfs: inner.default_vfs.clone(),
             connector: inner.connector.clone(),
             runtime_registry: inner.runtime_registry.clone(),
             turn_supervisor: inner.turn_supervisor.clone(),
             stores: inner.stores.clone(),
-            vfs_service: inner.vfs_service.clone(),
-            extra_skill_dirs: inner.extra_skill_dirs.clone(),
             title_generator: inner.title_generator.clone(),
             session_construction_provider: inner.session_construction_provider.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),

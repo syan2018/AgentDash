@@ -4,14 +4,23 @@
 //! 组装逻辑。它只返回 application construction plan；
 //! route 层不再承载 launch composition 主分支。
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
+use agentdash_application::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES;
+use agentdash_application::context::mount_file_discovery::discover_mount_files;
 use agentdash_application::session::UserPromptInput;
-use agentdash_application::session::construction::SessionConstructionPlan;
-use agentdash_application::session::construction_provider::{
-    CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource,
+use agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities;
+use agentdash_application::session::construction::{
+    ConstructionResolutionPlan, SessionConstructionPlan, SessionConstructionTraceEntry,
 };
+use agentdash_application::session::construction_provider::{
+    CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase, TaskLaunchSource,
+};
+use agentdash_application::session::local_workspace_vfs;
+use agentdash_application::session::merge_vfs_overlay;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
@@ -42,14 +51,10 @@ pub(crate) async fn build_session_construction_for_launch(
     task_input: Option<TaskLaunchSource>,
     companion_input: Option<CompanionLaunchSource>,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
+    local_relay_workspace_root: Option<PathBuf>,
+    facts: SessionConstructionProviderInput,
 ) -> Result<SessionConstructionPlan, ApiError> {
-    let meta = state
-        .services
-        .session_core
-        .get_session_meta(session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+    let meta = &facts.session_meta;
     let bindings = state
         .repos
         .session_binding_repo
@@ -61,11 +66,6 @@ pub(crate) async fn build_session_construction_for_launch(
         .executor_config
         .clone()
         .or_else(|| meta.executor_config.clone());
-    let has_live_executor_session = state
-        .services
-        .session_core
-        .has_live_executor_session(session_id)
-        .await;
     let supports_repository_restore = effective_executor.as_ref().is_some_and(|config| {
         state
             .services
@@ -73,8 +73,8 @@ pub(crate) async fn build_session_construction_for_launch(
             .supports_repository_restore(config.executor.as_str())
     });
     let lifecycle_kind = resolve_session_prompt_lifecycle(
-        &meta,
-        has_live_executor_session,
+        meta,
+        facts.had_existing_runtime,
         supports_repository_restore,
     );
 
@@ -82,21 +82,37 @@ pub(crate) async fn build_session_construction_for_launch(
         let plan =
             SessionConstructionPlan::from_source_input(session_id, owner.clone(), user_input);
         if let Some(companion) = companion_input {
-            return build_companion_dispatch_prompt_request(state, plan, companion).await;
+            let plan = build_companion_dispatch_prompt_request(state, plan, companion).await?;
+            return finalize_session_construction_for_launch(
+                state,
+                plan,
+                source_mcp_declarations,
+                local_relay_workspace_root,
+                &facts,
+            )
+            .await;
         }
         match owner.owner_type {
             SessionOwnerType::Task => {
-                return build_task_owner_prompt_request(
+                let plan = build_task_owner_prompt_request(
                     state,
                     session_id,
                     user_input,
                     plan,
                     owner.owner_id,
-                    &meta,
+                    meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
                     task_input,
                     source_mcp_declarations,
+                )
+                .await?;
+                return finalize_session_construction_for_launch(
+                    state,
+                    plan,
+                    Vec::new(),
+                    local_relay_workspace_root,
+                    &facts,
                 )
                 .await;
             }
@@ -121,7 +137,7 @@ pub(crate) async fn build_session_construction_for_launch(
                     })?;
                 let workspace = resolve_project_workspace(state, &project).await?;
 
-                return build_story_owner_prompt_request(
+                let plan = build_story_owner_prompt_request(
                     state,
                     session_id,
                     user_input,
@@ -129,10 +145,18 @@ pub(crate) async fn build_session_construction_for_launch(
                     &story,
                     &project,
                     workspace.as_ref(),
-                    &meta,
+                    meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
                     source_mcp_declarations,
+                )
+                .await?;
+                return finalize_session_construction_for_launch(
+                    state,
+                    plan,
+                    Vec::new(),
+                    local_relay_workspace_root,
+                    &facts,
                 )
                 .await;
             }
@@ -147,17 +171,25 @@ pub(crate) async fn build_session_construction_for_launch(
                         ApiError::NotFound(format!("Project {} 不存在", owner.owner_id))
                     })?;
 
-                return build_project_owner_prompt_request(
+                let plan = build_project_owner_prompt_request(
                     state,
                     session_id,
                     user_input,
                     plan,
                     &project,
                     &owner.label,
-                    &meta,
+                    meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
                     source_mcp_declarations,
+                )
+                .await?;
+                return finalize_session_construction_for_launch(
+                    state,
+                    plan,
+                    Vec::new(),
+                    local_relay_workspace_root,
+                    &facts,
                 )
                 .await;
             }
@@ -169,26 +201,269 @@ pub(crate) async fn build_session_construction_for_launch(
     )))
 }
 
-fn apply_plain_lifecycle_request(
+async fn finalize_session_construction_for_launch(
+    state: &Arc<AppState>,
+    mut plan: SessionConstructionPlan,
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
+    local_relay_workspace_root: Option<PathBuf>,
+    facts: &SessionConstructionProviderInput,
+) -> Result<SessionConstructionPlan, ApiError> {
+    plan.source.launch_source = Some(facts.command.reason_tag().to_string());
+    plan.source.strictness = Some(format!("{:?}", facts.command.strictness()).to_lowercase());
+    if plan.identity.identity.is_none() {
+        plan.identity.identity = facts.command.identity();
+    }
+
+    let (base_vfs, vfs_source) = if let Some(vfs) = plan.surface.vfs.clone() {
+        (vfs, "construction.surface.vfs".to_string())
+    } else if let Some(root) = local_relay_workspace_root.as_ref() {
+        (
+            local_workspace_vfs(root),
+            "source.local_relay_workspace_root".to_string(),
+        )
+    } else if let Some(vfs) = facts
+        .cached_capability_state
+        .as_ref()
+        .and_then(|state| state.vfs.active.clone())
+    {
+        (vfs, "runtime.cached_capability_state.vfs".to_string())
+    } else {
+        return Err(ApiError::BadRequest(
+            "construction 未产出 VFS，且来源事实中没有可解析 workspace root".to_string(),
+        ));
+    };
+
+    let mut effective_vfs = base_vfs.clone();
+    let mut pending_overlay_applied = false;
+    if let Some(pending_vfs) = facts
+        .requested_runtime_commands
+        .last()
+        .and_then(|command| command.transition.state.vfs.active.as_ref())
+    {
+        effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
+        pending_overlay_applied = true;
+    }
+    let working_directory = effective_vfs
+        .default_mount()
+        .map(|mount| PathBuf::from(mount.root_ref.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| {
+            ApiError::BadRequest("vfs 缺少 default_mount 或 root_ref 无效".to_string())
+        })?;
+
+    let (base_mcp_servers, base_mcp_source) = if !plan.projections.mcp_servers.is_empty() {
+        (
+            plan.projections.mcp_servers.clone(),
+            "construction.projections.mcp_servers".to_string(),
+        )
+    } else if !source_mcp_declarations.is_empty() {
+        (
+            source_mcp_declarations,
+            "source.mcp_declarations".to_string(),
+        )
+    } else if let Some(cached) = facts.cached_capability_state.as_ref()
+        && !cached.tool.mcp_servers.is_empty()
+    {
+        (
+            cached.tool.mcp_servers.clone(),
+            "runtime.cached_capability_state.mcp_servers".to_string(),
+        )
+    } else {
+        (Vec::new(), "empty".to_string())
+    };
+    let (mcp_servers, mcp_source) =
+        if let Some(pending_state) = facts.requested_runtime_commands.last() {
+            (
+                pending_state.transition.state.tool.mcp_servers.clone(),
+                "runtime_command.pending_transition".to_string(),
+            )
+        } else {
+            (base_mcp_servers.clone(), base_mcp_source)
+        };
+
+    let mut skills = {
+        let result = agentdash_application::skill::load_skills_from_vfs(
+            &state.services.vfs_service,
+            &effective_vfs,
+        )
+        .await;
+        for diag in &result.diagnostics {
+            tracing::warn!(
+                skill_name = %diag.name,
+                path = %diag.file_path.display(),
+                "skill 诊断: {}",
+                diag.message
+            );
+        }
+        result.skills
+    };
+    if !state.services.extra_skill_dirs.is_empty() {
+        let existing_names: HashMap<String, String> = skills
+            .iter()
+            .map(|skill| {
+                (
+                    skill.name.clone(),
+                    skill.file_path.to_string_lossy().to_string(),
+                )
+            })
+            .collect();
+        let result = agentdash_application::skill::load_skills_from_local_dirs(
+            &state.services.extra_skill_dirs,
+            &existing_names,
+        );
+        for diag in &result.diagnostics {
+            tracing::warn!(
+                skill_name = %diag.name,
+                path = %diag.file_path.display(),
+                "skill 诊断 (plugin): {}",
+                diag.message
+            );
+        }
+        skills.extend(result.skills);
+    }
+    let session_capabilities = build_session_baseline_capabilities(&skills);
+    let guideline_result = discover_mount_files(
+        &state.services.vfs_service,
+        &effective_vfs,
+        BUILTIN_GUIDELINE_RULES,
+    )
+    .await;
+    for diag in &guideline_result.diagnostics {
+        tracing::warn!(
+            rule_key = %diag.rule_key,
+            mount_id = %diag.mount_id,
+            path = %diag.path,
+            "guideline 发现诊断: {}",
+            diag.message
+        );
+    }
+    let discovered_guidelines = guideline_result
+        .files
+        .into_iter()
+        .map(|file| agentdash_spi::DiscoveredGuideline {
+            file_name: file
+                .path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&file.path)
+                .to_string(),
+            mount_id: file.mount_id,
+            path: file.path,
+            content: file.content,
+        })
+        .collect::<Vec<_>>();
+
+    let executor_source = if plan.execution_profile.executor_config.is_some() {
+        "construction.execution_profile.executor_config"
+    } else if facts.command.user_input().executor_config.is_some() {
+        "source.user_input.executor_config"
+    } else if facts.session_meta.executor_config.is_some() {
+        "session.meta.executor_config"
+    } else {
+        "unresolved"
+    };
+    let executor_config = plan
+        .execution_profile
+        .executor_config
+        .clone()
+        .or_else(|| facts.command.user_input().executor_config.clone())
+        .or_else(|| facts.session_meta.executor_config.clone())
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "construction 未产出 executor_config，且来源/meta 中没有可复用配置".to_string(),
+            )
+        })?;
+
+    let mut base_capability_state = plan
+        .projections
+        .capability_state
+        .clone()
+        .or_else(|| facts.cached_capability_state.clone())
+        .unwrap_or_default();
+    base_capability_state.vfs.active = Some(base_vfs);
+    base_capability_state.tool.mcp_servers = base_mcp_servers;
+    base_capability_state.skill.skills = session_capabilities.skills.clone();
+
+    let mut final_capability_state = facts
+        .requested_runtime_commands
+        .last()
+        .map(|command| command.transition.state.clone())
+        .unwrap_or_else(|| base_capability_state.clone());
+    final_capability_state.vfs.active = Some(effective_vfs.clone());
+    final_capability_state.tool.mcp_servers = mcp_servers.clone();
+    final_capability_state.skill.skills = session_capabilities.skills.clone();
+
+    plan.workspace.working_directory = Some(working_directory);
+    plan.execution_profile.executor_config = Some(executor_config);
+    plan.surface.vfs = Some(effective_vfs.clone());
+    plan.context_projection.vfs = Some(effective_vfs.clone());
+    plan.context_projection.session_capabilities = Some(session_capabilities.clone());
+    plan.projections.context.vfs = Some(effective_vfs);
+    plan.projections.context.session_capabilities = Some(session_capabilities.clone());
+    plan.projections.mcp_servers = mcp_servers;
+    plan.projections.capability_state = Some(final_capability_state);
+    plan.projections.session_capabilities = Some(session_capabilities);
+    plan.projections.discovered_guidelines = discovered_guidelines;
+    plan.resolution = ConstructionResolutionPlan {
+        vfs_source: Some(if pending_overlay_applied {
+            "runtime_command.pending_vfs_overlay".to_string()
+        } else {
+            vfs_source
+        }),
+        mcp_source: Some(mcp_source),
+        capability_source: Some(if facts.requested_runtime_commands.is_empty() {
+            "construction.base_capability_state".to_string()
+        } else {
+            "runtime_command.pending_transition".to_string()
+        }),
+        executor_source: Some(executor_source.to_string()),
+        working_directory_source: Some("vfs.default_mount.root_ref".to_string()),
+        pending_overlay_applied,
+        runtime_base_capability_state: Some(base_capability_state),
+    };
+    plan.trace.entries.extend([
+        SessionConstructionTraceEntry {
+            stage: "vfs_source",
+            source: plan.resolution.vfs_source.clone().unwrap_or_default(),
+        },
+        SessionConstructionTraceEntry {
+            stage: "mcp_source",
+            source: plan.resolution.mcp_source.clone().unwrap_or_default(),
+        },
+        SessionConstructionTraceEntry {
+            stage: "capability_source",
+            source: plan
+                .resolution
+                .capability_source
+                .clone()
+                .unwrap_or_default(),
+        },
+        SessionConstructionTraceEntry {
+            stage: "working_directory_source",
+            source: plan
+                .resolution
+                .working_directory_source
+                .clone()
+                .unwrap_or_default(),
+        },
+    ]);
+    plan.validate_for_launch().map_err(ApiError::BadRequest)?;
+    Ok(plan)
+}
+
+fn clear_plain_lifecycle_context(
     user_input: &UserPromptInput,
     mut plan: SessionConstructionPlan,
-    context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    continuation_context_frame: Option<ContextFrame>,
 ) -> Result<SessionConstructionPlan, ApiError> {
     let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
         .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
     plan.prompt.prompt_blocks = Some(user_prompt_blocks);
-    plan.context.bundle = context_bundle;
-    plan.context.bundle_id = plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id);
-    plan.context.bootstrap_fragment_count = plan
-        .context
-        .bundle
-        .as_ref()
-        .map(|bundle| bundle.bootstrap_fragments.len())
-        .unwrap_or_default();
-    plan.context.continuation_context_frame = continuation_context_frame;
+    plan.context.bundle = None;
+    plan.context.bundle_id = None;
+    plan.context.bootstrap_fragment_count = 0;
+    plan.context.continuation_context_frame = None;
     Ok(plan)
 }
 
@@ -205,10 +480,6 @@ async fn build_story_owner_prompt_request(
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<SessionConstructionPlan, ApiError> {
-    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, plan, None, None);
-    }
-
     let effective_executor_config = user_input
         .executor_config
         .clone()
@@ -275,6 +546,9 @@ async fn build_story_owner_prompt_request(
         .map_err(ApiError::BadRequest)?;
 
     plan.context.continuation_context_frame = continuation_context_frame;
+    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
+        return clear_plain_lifecycle_context(user_input, plan);
+    }
     Ok(plan)
 }
 
@@ -290,10 +564,6 @@ async fn build_project_owner_prompt_request(
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<SessionConstructionPlan, ApiError> {
-    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, plan, None, None);
-    }
-
     if binding_label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX) {
         return build_lifecycle_node_prompt_request(
             state,
@@ -391,6 +661,9 @@ async fn build_project_owner_prompt_request(
         .map_err(ApiError::BadRequest)?;
 
     plan.context.continuation_context_frame = continuation_context_frame;
+    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
+        return clear_plain_lifecycle_context(user_input, plan);
+    }
     Ok(plan)
 }
 
@@ -401,10 +674,6 @@ async fn build_lifecycle_node_prompt_request(
     plan: SessionConstructionPlan,
     lifecycle_kind: SessionPromptLifecycle,
 ) -> Result<SessionConstructionPlan, ApiError> {
-    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
-        return apply_plain_lifecycle_request(user_input, plan, None, None);
-    }
-
     let runs = state
         .repos
         .lifecycle_run_repo
@@ -446,7 +715,7 @@ async fn build_lifecycle_node_prompt_request(
     };
     let audit_bus = Some(state.services.audit_bus.clone());
 
-    compose_lifecycle_node_prompt_with_audit(
+    let plan = compose_lifecycle_node_prompt_with_audit(
         plan,
         &state.repos,
         &state.config.platform_config,
@@ -461,7 +730,12 @@ async fn build_lifecycle_node_prompt_request(
         Some(session_id),
     )
     .await
-    .map_err(ApiError::BadRequest)
+    .map_err(ApiError::BadRequest)?;
+
+    if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
+        return clear_plain_lifecycle_context(user_input, plan);
+    }
+    Ok(plan)
 }
 
 async fn build_companion_dispatch_prompt_request(
@@ -590,7 +864,7 @@ async fn build_task_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     task_input: Option<TaskLaunchSource>,
-    _source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
 ) -> Result<SessionConstructionPlan, ApiError> {
     let story = state
         .repos
@@ -665,6 +939,7 @@ async fn build_task_owner_prompt_request(
                 additional_prompt: task_input
                     .as_ref()
                     .and_then(|input| input.additional_prompt.as_deref()),
+                request_mcp_servers: &source_mcp_declarations,
                 explicit_executor_config: effective_executor_config.clone(),
                 strict_config_resolution: true,
                 active_workflow: Some(active_workflow.clone()),
@@ -721,4 +996,91 @@ async fn build_task_owner_prompt_request(
     plan.context.continuation_context_frame = continuation_context_frame;
 
     Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_application::session::construction::{
+        SessionConstructionContextProjection, SessionConstructionPlan,
+    };
+    use agentdash_application::session::ownership::SessionOwnerResolver;
+    use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+    use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer, Vfs};
+
+    use super::*;
+
+    fn project_plan() -> SessionConstructionPlan {
+        let binding = SessionBinding::new(
+            uuid::Uuid::new_v4(),
+            "sess-plain".to_string(),
+            SessionOwnerType::Project,
+            uuid::Uuid::new_v4(),
+            "project_agent:test",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let mut plan = SessionConstructionPlan::new(
+            "sess-plain",
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "/workspace".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mcp = SessionMcpServer {
+            name: "request-mcp".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://127.0.0.1:18080/mcp".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+        };
+        let mut capability = CapabilityState::default();
+        capability.vfs.active = Some(vfs.clone());
+        capability.tool.mcp_servers = vec![mcp.clone()];
+
+        plan.surface.vfs = Some(vfs.clone());
+        plan.context.bundle = Some(agentdash_spi::SessionContextBundle::new(
+            uuid::Uuid::new_v4(),
+            "project_agent",
+        ));
+        plan.context.bundle_id = plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id);
+        plan.context.bootstrap_fragment_count = 1;
+        plan.projections.mcp_servers = vec![mcp];
+        plan.projections.capability_state = Some(capability);
+        plan
+    }
+
+    #[test]
+    fn plain_lifecycle_cleanup_keeps_resolved_execution_surface() {
+        let user_input = UserPromptInput::from_text("continue");
+        let plan = clear_plain_lifecycle_context(&user_input, project_plan())
+            .expect("plain cleanup should keep execution facts");
+
+        assert!(plan.context.bundle.is_none());
+        assert!(plan.context.bundle_id.is_none());
+        assert_eq!(plan.context.bootstrap_fragment_count, 0);
+        assert!(plan.surface.vfs.is_some());
+        assert_eq!(plan.projections.mcp_servers.len(), 1);
+        assert!(
+            plan.projections
+                .capability_state
+                .as_ref()
+                .and_then(|state| state.vfs.active.as_ref())
+                .is_some()
+        );
+    }
 }

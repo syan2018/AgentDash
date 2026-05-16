@@ -66,7 +66,8 @@ pub use capability_state::{
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
-    SharedSessionConstructionProvider, TaskLaunchPhase, TaskLaunchSource,
+    SessionConstructionProviderInput, SharedSessionConstructionProvider, TaskLaunchPhase,
+    TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
 pub use control::SessionControlService;

@@ -1,4 +1,4 @@
-﻿use std::path::Path;
+use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -7,12 +7,14 @@ use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SessionHookSnapshot,
     SessionHookSnapshotQuery, SharedHookSessionRuntime,
 };
-use agentdash_spi::{AgentConnector, ConnectorError, McpRelayProvider, Vfs};
+use agentdash_spi::{AgentConnector, ConnectorError, McpRelayProvider};
 
 use super::assignment_context_frame::build_assignment_context_frame;
 use super::capability_service::SessionCapabilityService;
 use super::construction::SessionConstructionPlan;
-use super::construction_provider::SharedSessionConstructionProvider;
+use super::construction_provider::{
+    SessionConstructionProviderInput, SharedSessionConstructionProvider,
+};
 use super::core::SessionCoreService;
 use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
@@ -35,13 +37,10 @@ use crate::context::SharedContextAuditBus;
 
 #[derive(Clone)]
 pub(super) struct SessionLaunchDeps {
-    pub(super) default_vfs: Option<Vfs>,
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) runtime_registry: SessionRuntimeRegistry,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
-    pub(super) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
-    pub(super) extra_skill_dirs: Vec<std::path::PathBuf>,
     pub(super) title_generator: Option<Arc<dyn SessionTitleGenerator>>,
     pub(super) session_construction_provider:
         Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
@@ -206,19 +205,88 @@ impl SessionLaunchExecutor {
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let reason = command.reason_tag();
-        let strictness = command.strictness();
-        let construction = match strictness {
+        let provider = match command.strictness() {
             LaunchStrictness::Strict => {
                 let Some(provider) = self.deps.current_session_construction_provider().await else {
                     return Err(ConnectorError::Runtime(format!(
                         "session_construction_provider 未注入，拒绝 strict launch: {reason}"
                     )));
                 };
-                provider.build_construction(session_id, &command).await?
+                provider
             }
             LaunchStrictness::Relaxed => {
-                self.build_construction_relaxed_command(session_id, &command, reason)
-                    .await?
+                let Some(provider) = self.deps.current_session_construction_provider().await else {
+                    return Err(ConnectorError::Runtime(format!(
+                        "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
+                    )));
+                };
+                provider
+            }
+        };
+        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+        let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
+        let cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
+        let sid = session_id.to_string();
+        let meta_store = self.deps.stores.meta.clone();
+        let runtime_command_store = self.deps.stores.runtime_commands.clone();
+        let session_meta = match meta_store.get_session_meta(&sid).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) => {
+                self.deps
+                    .turn_supervisor
+                    .clear_turn_and_hook(session_id)
+                    .await;
+                return Err(ConnectorError::Runtime(format!(
+                    "session {sid} 不存在，请先调用 create_session 再 prompt"
+                )));
+            }
+            Err(e) => {
+                self.deps
+                    .turn_supervisor
+                    .clear_turn_and_hook(session_id)
+                    .await;
+                return Err(ConnectorError::Runtime(format!(
+                    "读取 session {sid} meta 失败: {e}"
+                )));
+            }
+        };
+        let requested_runtime_commands = match runtime_command_store
+            .list_requested_runtime_commands(&sid)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "读取 session `{sid}` requested runtime commands 失败: {error}"
+                ))
+            }) {
+            Ok(commands) => commands,
+            Err(error) => {
+                self.deps
+                    .turn_supervisor
+                    .clear_turn_and_hook(session_id)
+                    .await;
+                return Err(error);
+            }
+        };
+        let construction = match provider
+            .build_construction(SessionConstructionProviderInput {
+                session_id: sid.clone(),
+                command: command.clone(),
+                session_meta: session_meta.clone(),
+                had_existing_runtime,
+                cached_capability_state: cached_continuation
+                    .as_ref()
+                    .map(|profile| profile.capability_state.clone()),
+                requested_runtime_commands: requested_runtime_commands.clone(),
+            })
+            .await
+        {
+            Ok(construction) => construction,
+            Err(error) => {
+                self.deps
+                    .turn_supervisor
+                    .clear_turn_and_hook(session_id)
+                    .await;
+                return Err(error);
             }
         };
         let context_sources = construction
@@ -233,26 +301,20 @@ impl SessionLaunchExecutor {
             })
             .unwrap_or_default();
         let turn_id = self
-            .execute_constructed_launch(session_id, &command, construction)
+            .execute_constructed_launch(
+                session_id,
+                &command,
+                construction,
+                turn_id,
+                had_existing_runtime,
+                session_meta,
+                requested_runtime_commands,
+            )
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
             context_sources,
         })
-    }
-
-    async fn build_construction_relaxed_command(
-        &self,
-        session_id: &str,
-        command: &LaunchCommand,
-        reason: &str,
-    ) -> Result<SessionConstructionPlan, ConnectorError> {
-        let Some(provider) = self.deps.current_session_construction_provider().await else {
-            return Err(ConnectorError::Runtime(format!(
-                "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
-            )));
-        };
-        provider.build_construction(session_id, command).await
     }
 
     #[cfg(test)]
@@ -267,8 +329,101 @@ impl SessionLaunchExecutor {
             executor_config: construction.execution_profile.executor_config.clone(),
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
-        self.execute_constructed_launch(session_id, &command, construction)
+        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
+        let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
+        let _cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
+        let sid = session_id.to_string();
+        let session_meta = self
+            .deps
+            .stores
+            .meta
+            .get_session_meta(&sid)
             .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let Some(session_meta) = session_meta else {
+            self.deps
+                .turn_supervisor
+                .clear_turn_and_hook(session_id)
+                .await;
+            return Err(ConnectorError::Runtime(format!("session {sid} 不存在")));
+        };
+        let requested_runtime_commands = self
+            .deps
+            .stores
+            .runtime_commands
+            .list_requested_runtime_commands(&sid)
+            .await
+            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        let construction =
+            Self::finalize_construction_for_test(construction, &requested_runtime_commands);
+        self.execute_constructed_launch(
+            session_id,
+            &command,
+            construction,
+            turn_id,
+            had_existing_runtime,
+            session_meta,
+            requested_runtime_commands,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    fn finalize_construction_for_test(
+        mut construction: SessionConstructionPlan,
+        requested_runtime_commands: &[super::runtime_commands::RuntimeCommandRecord],
+    ) -> SessionConstructionPlan {
+        let mut base_capability_state = construction
+            .projections
+            .capability_state
+            .clone()
+            .unwrap_or_default();
+        if let Some(vfs) = construction.surface.vfs.clone() {
+            base_capability_state.vfs.active = Some(vfs);
+        }
+        base_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
+
+        let mut final_capability_state = requested_runtime_commands
+            .last()
+            .map(|command| command.transition.state.clone())
+            .unwrap_or_else(|| base_capability_state.clone());
+        if let Some(base_vfs) = construction.surface.vfs.clone() {
+            let effective_vfs = requested_runtime_commands
+                .last()
+                .and_then(|command| command.transition.state.vfs.active.as_ref())
+                .map(|pending_vfs| {
+                    super::capability_state::merge_vfs_overlay(base_vfs.clone(), pending_vfs)
+                })
+                .unwrap_or(base_vfs);
+            construction.workspace.working_directory = effective_vfs
+                .default_mount()
+                .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
+                .filter(|path| !path.as_os_str().is_empty())
+                .or(construction.workspace.working_directory);
+            construction.surface.vfs = Some(effective_vfs.clone());
+            final_capability_state.vfs.active = Some(effective_vfs);
+        }
+        if let Some(pending_mcp) = requested_runtime_commands
+            .last()
+            .map(|command| command.transition.state.tool.mcp_servers.clone())
+        {
+            construction.projections.mcp_servers = pending_mcp.clone();
+            final_capability_state.tool.mcp_servers = pending_mcp;
+        } else {
+            final_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
+        }
+        construction.projections.capability_state = Some(final_capability_state);
+        construction.resolution.runtime_base_capability_state = Some(base_capability_state);
+        if requested_runtime_commands.is_empty() {
+            construction.resolution.pending_overlay_applied = false;
+        } else {
+            construction.resolution.vfs_source = Some("test.pending_runtime_command".to_string());
+            construction.resolution.mcp_source = Some("test.pending_runtime_command".to_string());
+            construction.resolution.capability_source =
+                Some("test.pending_runtime_command".to_string());
+            construction.resolution.pending_overlay_applied = true;
+        }
+        construction
     }
 
     /// 已完成 construction plan 准备后的执行段。生产入口只能从 `execute_command` 进入。
@@ -277,45 +432,22 @@ impl SessionLaunchExecutor {
         session_id: &str,
         command: &LaunchCommand,
         construction: SessionConstructionPlan,
+        turn_id: String,
+        had_existing_runtime: bool,
+        mut session_meta: SessionMeta,
+        requested_runtime_commands: Vec<super::runtime_commands::RuntimeCommandRecord>,
     ) -> Result<String, ConnectorError> {
         let deps = &self.deps;
-        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
-        let had_existing_runtime = deps.connector.has_live_session(session_id).await;
-
-        let cached_continuation = deps.turn_supervisor.claim_prompt(session_id).await?;
-
+        let sid = session_id.to_string();
         let meta_store = deps.stores.meta.clone();
         let runtime_command_store = deps.stores.runtime_commands.clone();
-        let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let mut session_meta = match meta_store.get_session_meta(&sid).await {
-            Ok(Some(meta)) => meta,
-            Ok(None) => {
-                return Err(ConnectorError::Runtime(format!(
-                    "session {sid} 不存在，请先调用 create_session 再 prompt"
-                )));
-            }
-            Err(e) => {
-                return Err(ConnectorError::Runtime(format!(
-                    "读取 session {sid} meta 失败: {e}"
-                )));
-            }
-        };
-        let requested_runtime_commands = runtime_command_store
-            .list_requested_runtime_commands(&sid)
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "读取 session `{sid}` requested runtime commands 失败: {error}"
-                ))
-            })?;
         let launch_execution = match SessionLaunchPlanner::new(deps.clone())
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
                 command,
                 had_existing_runtime,
-                cached_continuation,
                 session_meta: &session_meta,
                 requested_runtime_commands,
                 construction,

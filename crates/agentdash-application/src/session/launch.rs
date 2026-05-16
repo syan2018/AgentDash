@@ -36,6 +36,7 @@ pub enum LaunchStrictness {
     Relaxed,
 }
 
+#[derive(Clone)]
 pub struct LaunchCommand {
     user_input: UserPromptInput,
     source: LaunchSource,
@@ -238,30 +239,6 @@ impl LaunchCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LaunchVfsSource {
-    Request,
-    LocalRelayWorkspaceRoot,
-    CachedSessionProfile,
-    HubDefault,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LaunchMcpSource {
-    Request,
-    CachedSessionProfile,
-    Empty,
-    PendingCapabilityTransition,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LaunchCapabilitySource {
-    Request,
-    CachedSessionProfile,
-    Default,
-    PendingCapabilityTransition,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
     SessionMeta,
@@ -285,10 +262,10 @@ pub struct LaunchSummary {
     pub follow_up_session_id: Option<String>,
     pub follow_up_source: LaunchFollowUpSource,
     pub pending_transition_count: usize,
-    pub vfs_source: LaunchVfsSource,
+    pub vfs_source: Option<String>,
     pub pending_vfs_overlay_applied: bool,
-    pub mcp_source: LaunchMcpSource,
-    pub capability_source: LaunchCapabilitySource,
+    pub mcp_source: Option<String>,
+    pub capability_source: Option<String>,
     pub working_directory: PathBuf,
     pub has_vfs: bool,
     pub mcp_server_count: usize,
@@ -375,17 +352,12 @@ pub struct LaunchExecutionInput {
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub base_capability_state: CapabilityState,
-    pub vfs_source: LaunchVfsSource,
-    pub pending_vfs_overlay_applied: bool,
-    pub mcp_source: LaunchMcpSource,
-    pub capability_source: LaunchCapabilitySource,
     pub environment_variables: HashMap<String, String>,
     pub hook_session: Option<SharedHookSessionRuntime>,
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
-    pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
 impl LaunchExecution {
@@ -429,10 +401,10 @@ impl LaunchExecution {
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
             pending_transition_count,
-            vfs_source: input.vfs_source,
-            pending_vfs_overlay_applied: input.pending_vfs_overlay_applied,
-            mcp_source: input.mcp_source,
-            capability_source: input.capability_source,
+            vfs_source: input.construction.resolution.vfs_source.clone(),
+            pending_vfs_overlay_applied: input.construction.resolution.pending_overlay_applied,
+            mcp_source: input.construction.resolution.mcp_source.clone(),
+            capability_source: input.construction.resolution.capability_source.clone(),
             working_directory: working_directory.clone(),
             has_vfs: vfs.is_some(),
             mcp_server_count: mcp_servers.len(),
@@ -508,7 +480,7 @@ impl LaunchExecution {
         Self {
             resolved_payload: input.resolved_payload,
             title_hint,
-            discovered_guidelines: input.discovered_guidelines,
+            discovered_guidelines: input.construction.projections.discovered_guidelines.clone(),
             construction: input.construction,
             lifecycle,
             restore,
@@ -525,10 +497,12 @@ impl LaunchExecution {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+    use agentdash_spi::Vfs;
 
     use super::super::construction::{
-        SessionConstructionLaunchInput, SessionConstructionPlan, SourceContractPlan,
+        ConstructionResolutionPlan, SessionConstructionContextProjection, SessionConstructionPlan,
     };
     use super::super::ownership::SessionOwnerResolver;
     use super::super::types::UserPromptInput;
@@ -543,29 +517,42 @@ mod tests {
             "execution",
         );
         let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
-        let construction = SessionConstructionPlan::from_launch(SessionConstructionLaunchInput {
-            session_id: "sess-launch".to_string(),
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "/workspace".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut capability_state = CapabilityState::default();
+        capability_state.vfs.active = Some(vfs.clone());
+        let mut construction = SessionConstructionPlan::new(
+            "sess-launch",
             owner,
-            source: SourceContractPlan {
-                launch_source: Some("test".to_string()),
-                preparation: None,
-                strictness: Some("strict".to_string()),
-            },
-            workspace_id: None,
-            working_directory: PathBuf::from("/workspace/project"),
-            executor_config: AgentConfig::new("PI_AGENT"),
-            vfs: None,
-            runtime_surface: None,
-            context_bundle: None,
-            continuation_context_frame: None,
-            context_snapshot: None,
-            identity: None,
-            terminal_hook_effect_binding: None,
-            mcp_servers: Vec::new(),
-            capability_state: CapabilityState::default(),
-            session_capabilities: None,
-            trace_entries: Vec::new(),
-        });
+            SessionConstructionContextProjection::default(),
+        );
+        construction.workspace.working_directory = Some(PathBuf::from("/workspace/project"));
+        construction.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
+        construction.surface.vfs = Some(vfs);
+        construction.projections.capability_state = Some(capability_state);
+        construction.resolution = ConstructionResolutionPlan {
+            vfs_source: Some("construction.test".to_string()),
+            mcp_source: Some("construction.test".to_string()),
+            capability_source: Some("construction.test".to_string()),
+            executor_source: Some("construction.test".to_string()),
+            working_directory_source: Some("construction.test".to_string()),
+            pending_overlay_applied: false,
+            runtime_base_capability_state: None,
+        };
         let resolved_payload = UserPromptInput::from_text("hello")
             .resolve_prompt_payload()
             .expect("resolved payload");
@@ -604,17 +591,12 @@ mod tests {
                 },
             ],
             base_capability_state: CapabilityState::default(),
-            vfs_source: LaunchVfsSource::Request,
-            pending_vfs_overlay_applied: false,
-            mcp_source: LaunchMcpSource::Request,
-            capability_source: LaunchCapabilitySource::Request,
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
             hook_session: None,
             capability_state: CapabilityState::default(),
             runtime_delegate: None,
             restored_session_state: None,
             post_turn_handler: None,
-            discovered_guidelines: Vec::new(),
         }
     }
 
@@ -641,13 +623,19 @@ mod tests {
             LaunchFollowUpSource::None
         );
         assert_eq!(execution.summary.pending_transition_count, 2);
-        assert_eq!(execution.summary.vfs_source, LaunchVfsSource::Request);
-        assert_eq!(execution.summary.mcp_source, LaunchMcpSource::Request);
         assert_eq!(
-            execution.summary.capability_source,
-            LaunchCapabilitySource::Request
+            execution.summary.vfs_source.as_deref(),
+            Some("construction.test")
         );
-        assert!(!execution.summary.has_vfs);
+        assert_eq!(
+            execution.summary.mcp_source.as_deref(),
+            Some("construction.test")
+        );
+        assert_eq!(
+            execution.summary.capability_source.as_deref(),
+            Some("construction.test")
+        );
+        assert!(execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);
         assert_eq!(execution.construction.session_id.as_str(), "sess-launch");
         assert_eq!(
@@ -696,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_summary_records_fallback_sources() {
+    fn launch_summary_records_construction_sources() {
         let mut input = input_for(SessionPromptLifecycle::Plain);
         input.follow_up_session_id = Some("executor-session-1".to_string());
         input.follow_up_source = LaunchFollowUpSource::SessionMeta;
@@ -710,10 +698,13 @@ mod tests {
             created_at: 3,
             source_turn_id: None,
         }];
-        input.vfs_source = LaunchVfsSource::CachedSessionProfile;
-        input.pending_vfs_overlay_applied = true;
-        input.mcp_source = LaunchMcpSource::PendingCapabilityTransition;
-        input.capability_source = LaunchCapabilitySource::PendingCapabilityTransition;
+        input.construction.resolution.vfs_source =
+            Some("runtime_command.pending_vfs_overlay".to_string());
+        input.construction.resolution.pending_overlay_applied = true;
+        input.construction.resolution.mcp_source =
+            Some("runtime_command.pending_transition".to_string());
+        input.construction.resolution.capability_source =
+            Some("runtime_command.pending_transition".to_string());
 
         let execution = LaunchExecution::build(input);
 
@@ -727,17 +718,17 @@ mod tests {
         );
         assert_eq!(execution.summary.pending_transition_count, 1);
         assert_eq!(
-            execution.summary.vfs_source,
-            LaunchVfsSource::CachedSessionProfile
+            execution.summary.vfs_source.as_deref(),
+            Some("runtime_command.pending_vfs_overlay")
         );
         assert!(execution.summary.pending_vfs_overlay_applied);
         assert_eq!(
-            execution.summary.mcp_source,
-            LaunchMcpSource::PendingCapabilityTransition
+            execution.summary.mcp_source.as_deref(),
+            Some("runtime_command.pending_transition")
         );
         assert_eq!(
-            execution.summary.capability_source,
-            LaunchCapabilitySource::PendingCapabilityTransition
+            execution.summary.capability_source.as_deref(),
+            Some("runtime_command.pending_transition")
         );
     }
 }

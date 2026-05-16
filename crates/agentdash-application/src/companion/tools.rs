@@ -2238,7 +2238,6 @@ mod companion_tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::{
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider,
-        local_workspace_vfs,
     };
     use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
 
@@ -2535,11 +2534,11 @@ mod companion_tests {
     impl SessionConstructionProvider for SpyConstructionProvider {
         async fn build_construction(
             &self,
-            _session_id: &str,
-            command: &crate::session::LaunchCommand,
+            input: crate::session::SessionConstructionProviderInput,
         ) -> Result<SessionConstructionPlan, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let prompt_text = command
+            let prompt_text = input
+                .command
                 .user_input()
                 .prompt_blocks
                 .as_ref()
@@ -2549,7 +2548,7 @@ mod companion_tests {
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = prompt_text;
             self.captured_mcp_len.store(
-                command.local_relay_mcp_declarations().len(),
+                input.command.local_relay_mcp_declarations().len(),
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(
@@ -2560,9 +2559,8 @@ mod companion_tests {
 
     #[tokio::test]
     async fn companion_parent_resume_routes_through_provider() {
-        let root = tempfile::tempdir().expect("workspace");
+        let _root = tempfile::tempdir().expect("workspace");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-            Some(local_workspace_vfs(root.path())),
             Arc::new(NoopConnector),
             None,
             Arc::new(MemorySessionPersistence::default()),

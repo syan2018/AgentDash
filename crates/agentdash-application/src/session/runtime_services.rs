@@ -1,7 +1,7 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
+use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
-use agentdash_spi::{AgentConnector, Vfs};
 
 use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
@@ -20,13 +20,11 @@ pub struct SessionRuntimeServices {
 
 impl SessionRuntimeServices {
     pub fn new_with_hooks_and_persistence(
-        default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         let inner = SessionRuntimeInner::new_with_hooks_and_persistence(
-            default_vfs,
             connector,
             hook_provider,
             persistence,

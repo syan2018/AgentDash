@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use agentdash_domain::{
     agent::{Agent, ProjectAgentLink},
     common::{AgentConfig, AgentPresetConfig},
@@ -38,10 +36,7 @@ use crate::{
     },
 };
 
-use super::construction::{
-    SessionConstructionContextProjection, SessionConstructionLaunchInput, SessionConstructionPlan,
-    SessionConstructionTraceEntry,
-};
+use super::construction::{SessionConstructionContextProjection, SessionConstructionPlan};
 use super::ownership::ResolvedSessionOwner;
 
 pub struct SessionConstructionPlanner;
@@ -58,26 +53,6 @@ pub struct ResolvedProjectAgentContext {
     pub source: String,
     pub preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     pub link: ProjectAgentLink,
-}
-
-pub(super) struct SessionConstructionPlannerInput {
-    pub session_id: String,
-    pub owner: Option<ResolvedSessionOwner>,
-    pub source: super::construction::SourceContractPlan,
-    pub local_relay_workspace_root: Option<PathBuf>,
-    pub working_directory: PathBuf,
-    pub executor_config: agentdash_domain::common::AgentConfig,
-    pub vfs: Option<agentdash_spi::Vfs>,
-    pub context_bundle: Option<agentdash_spi::SessionContextBundle>,
-    pub continuation_context_frame: Option<agentdash_spi::hooks::ContextFrame>,
-    pub identity: Option<agentdash_spi::AuthIdentity>,
-    pub terminal_hook_effect_binding: Option<super::post_turn_handler::TerminalHookEffectBinding>,
-    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub capability_state: agentdash_spi::CapabilityState,
-    pub session_capabilities: agentdash_spi::SessionBaselineCapabilities,
-    pub prompt_lifecycle: super::types::SessionPromptLifecycle,
-    pub capability_source: super::launch::LaunchCapabilitySource,
-    pub vfs_source: super::launch::LaunchVfsSource,
 }
 
 impl SessionConstructionPlanner {
@@ -454,55 +429,6 @@ impl SessionConstructionPlanner {
         projection: SessionConstructionContextProjection,
     ) -> SessionConstructionPlan {
         SessionConstructionPlan::new(session_id, owner, projection)
-    }
-
-    pub(super) fn plan_launch(
-        input: SessionConstructionPlannerInput,
-    ) -> Result<SessionConstructionPlan, String> {
-        let owner = input
-            .owner
-            .ok_or_else(|| "launch 缺少 resolved session owner".to_string())?;
-        let mut trace_entries = vec![
-            SessionConstructionTraceEntry {
-                stage: "launch_lifecycle",
-                source: format!("{:?}", input.prompt_lifecycle),
-            },
-            SessionConstructionTraceEntry {
-                stage: "capability_source",
-                source: format!("{:?}", input.capability_source),
-            },
-            SessionConstructionTraceEntry {
-                stage: "vfs_source",
-                source: format!("{:?}", input.vfs_source),
-            },
-        ];
-        if let Some(root) = input.local_relay_workspace_root.as_ref() {
-            trace_entries.push(SessionConstructionTraceEntry {
-                stage: "local_relay_workspace_root",
-                source: root.to_string_lossy().replace('\\', "/"),
-            });
-        }
-        Ok(SessionConstructionPlan::from_launch(
-            SessionConstructionLaunchInput {
-                session_id: input.session_id,
-                owner,
-                source: input.source,
-                workspace_id: None,
-                working_directory: input.working_directory,
-                executor_config: input.executor_config,
-                vfs: input.vfs,
-                runtime_surface: None,
-                context_bundle: input.context_bundle,
-                continuation_context_frame: input.continuation_context_frame,
-                context_snapshot: None,
-                identity: input.identity,
-                terminal_hook_effect_binding: input.terminal_hook_effect_binding,
-                mcp_servers: input.mcp_servers,
-                capability_state: input.capability_state,
-                session_capabilities: Some(input.session_capabilities),
-                trace_entries,
-            },
-        ))
     }
 }
 

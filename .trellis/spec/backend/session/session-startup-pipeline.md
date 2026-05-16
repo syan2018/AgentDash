@@ -51,15 +51,36 @@ command 边界不传内存 `post_turn_handler` 或其它 trait object。
 ## Construction Contract
 
 `SessionConstructionProvider::build_construction` 直接输出 `SessionConstructionPlan`。
+输出必须是 launch-ready final facts，不是 seed、partial plan 或等待 LaunchPlanner 补齐的
+中间形态。
 
 `SessionConstructionPlan` 至少覆盖：
 
 - `ResolvedSessionOwner`，owner 解析顺序统一为 `Task -> Story -> Project`。
-- workspace 与 typed working directory。
-- VFS、MCP declaration resolution、capability state。
+- workspace 与 typed working directory。`workspace.working_directory` 必须在进入
+  `SessionLaunchPlanner` 前为 `Some`。
+- VFS、MCP declaration resolution、capability state。`surface.vfs`、
+  `projections.mcp_servers` 与 `projections.capability_state` 必须已经完成最终裁决。
 - `SessionContextBundle` 与 continuation/context frames。
 - identity、source contract、query/audit/inspector projections。
 - resolution trace，用于审计为什么选择某个 owner/workspace/context。
+
+Launch 前必须调用 `SessionConstructionPlan::validate_for_launch()` 或等价 gate：
+
+- 缺少 `workspace.working_directory`、`execution_profile.executor_config`、
+  `surface.vfs`、`projections.capability_state` 时拒绝 launch。
+- `projections.capability_state.vfs.active` 必须等于 `surface.vfs`。
+- `projections.capability_state.tool.mcp_servers` 必须等于
+  `projections.mcp_servers`。
+- pending runtime command 的 overlay 由 Construction 阶段形成 final
+  `capability_state`，但 command store 的 `requested -> applied` 副作用仍只能在
+  connector prompt accepted 后提交。
+
+Construction 可以消费 runtime facts（session meta、live runtime 状态、requested
+runtime commands、cached runtime capability snapshot），但这些 facts 一旦进入
+`SessionConstructionPlan` 就必须体现在 `resolution` trace 中。LaunchPlanner 不允许再读取
+cached profile、hub default VFS、local relay workspace root 或 source MCP declaration 来补齐
+VFS/MCP/capability/executor facts。
 
 Context endpoint、权限展示、audit 和 inspector 都投影同一份
 `SessionConstructionPlan`。API route 的职责是 auth/permission、DTO 转换、
@@ -85,9 +106,26 @@ API/bootstrap 只传 parent 引用与 dispatch policy。
 - launch trace。
 
 Connector input 的 working directory、executor config、MCP、VFS、identity、
-capability state 和 context frame 都从 `SessionConstructionPlan` 与
+capability state 和 context frame 都从 final `SessionConstructionPlan` 与
 `LaunchExecution` 投影生成。`prompt_pipeline` 的职责是执行该计划，而不是重新解析
 owner、context、VFS、MCP 或 capability。
+
+`SessionLaunchPlanner` 只能处理 runtime-only planning：
+
+- resolved prompt payload；
+- lifecycle / restore / hook / follow-up；
+- requested runtime command apply plan；
+- terminal effect plan；
+- connector input projection。
+
+禁止在 LaunchPlanner 中出现 VFS/MCP/capability/executor fallback chain，尤其是：
+
+- hub default VFS；
+- cached session profile VFS/MCP/capability；
+- local relay workspace root 到 VFS 的转换；
+- source MCP declaration 合并；
+- skill / guideline discovery；
+- `SessionConstructionPlanner::plan_launch` 这类二次 construction。
 
 ## Terminal Effects
 

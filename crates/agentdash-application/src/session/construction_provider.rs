@@ -18,6 +18,8 @@ use async_trait::async_trait;
 
 use super::construction::SessionConstructionPlan;
 use super::launch::LaunchCommand;
+use super::runtime_commands::RuntimeCommandRecord;
+use super::types::{CapabilityState, SessionMeta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLaunchPhase {
@@ -49,6 +51,16 @@ pub struct CompanionLaunchSource {
     pub workflow: Option<CompanionLaunchWorkflowSource>,
 }
 
+#[derive(Clone)]
+pub struct SessionConstructionProviderInput {
+    pub session_id: String,
+    pub command: LaunchCommand,
+    pub session_meta: SessionMeta,
+    pub had_existing_runtime: bool,
+    pub cached_capability_state: Option<CapabilityState>,
+    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
+}
+
 /// 用于把 source command 构建成与主通道一致的 construction plan。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
@@ -56,8 +68,7 @@ pub trait SessionConstructionProvider: Send + Sync {
     /// 补齐后端注入字段（mcp_servers / vfs / capability_state / context_bundle 等）。
     async fn build_construction(
         &self,
-        session_id: &str,
-        command: &LaunchCommand,
+        input: SessionConstructionProviderInput,
     ) -> Result<SessionConstructionPlan, ConnectorError>;
 }
 

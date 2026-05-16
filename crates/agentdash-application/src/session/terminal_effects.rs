@@ -585,7 +585,6 @@ mod tests {
             .expect("session should be created");
 
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-            None,
             Arc::new(NoopConnector),
             None,
             persistence.clone(),

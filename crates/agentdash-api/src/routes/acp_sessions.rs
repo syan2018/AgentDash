@@ -380,7 +380,10 @@ pub struct SessionBindingOwnerResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_application::session::{ExecutionStatus, SessionBootstrapState, TitleSource};
+    use agentdash_application::session::{
+        ExecutionStatus, SessionBootstrapState, SessionPromptLifecycle,
+        SessionRepositoryRehydrateMode, TitleSource, resolve_session_prompt_lifecycle,
+    };
 
     #[test]
     fn session_binding_owner_response_serializes_as_snake_case() {

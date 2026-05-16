@@ -24,7 +24,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
 use super::super::RuntimeCommandStatus;
-use super::super::construction::SessionConstructionPlan;
+use super::super::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -37,12 +37,11 @@ use super::super::types::{
 use super::SessionRuntimeInner;
 
 fn test_hub(
-    mount_root: PathBuf,
+    _mount_root: PathBuf,
     connector: Arc<dyn AgentConnector>,
     hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
 ) -> SessionRuntimeInner {
     SessionRuntimeInner::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&mount_root)),
         connector,
         hook_provider,
         Arc::new(MemorySessionPersistence::default()),
@@ -62,7 +61,25 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
         "test-project",
     );
     let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
-    SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
+    let mut construction =
+        SessionConstructionPlan::from_source_input("test-session", owner, &user_input);
+    let root = std::env::current_dir().expect("current dir");
+    let vfs = local_workspace_vfs(&root);
+    let mut capability_state = CapabilityState::default();
+    capability_state.vfs.active = Some(vfs.clone());
+    construction.workspace.working_directory = Some(root);
+    construction.surface.vfs = Some(vfs.clone());
+    construction.projections.capability_state = Some(capability_state);
+    construction.resolution = ConstructionResolutionPlan {
+        vfs_source: Some("test.local_workspace_vfs".to_string()),
+        mcp_source: Some("test.empty".to_string()),
+        capability_source: Some("test.capability_state".to_string()),
+        executor_source: Some("test.executor_config".to_string()),
+        working_directory_source: Some("test.current_dir".to_string()),
+        pending_overlay_applied: false,
+        runtime_base_capability_state: None,
+    };
+    construction
 }
 
 fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionConstructionPlan {
@@ -1316,9 +1333,7 @@ async fn owner_bootstrap_marks_session_meta_bootstrapped() {
 #[tokio::test]
 async fn continuation_context_frame_strips_owner_resource_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
-    let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
         persistence,
@@ -1388,9 +1403,7 @@ async fn continuation_context_frame_strips_owner_resource_blocks() {
 #[tokio::test]
 async fn build_projected_transcript_reconstructs_tool_history_without_owner_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
-    let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
         persistence,
@@ -1596,9 +1609,7 @@ fn inject_compaction_envelope(
 #[tokio::test]
 async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
     let persistence = Arc::new(MemorySessionPersistence::default());
-    let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
         persistence,
@@ -1690,9 +1701,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
 #[tokio::test]
 async fn continuation_context_frame_uses_compacted_projection() {
     let persistence = Arc::new(MemorySessionPersistence::default());
-    let base = tempfile::tempdir().expect("tempdir");
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
-        Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
         persistence,
@@ -1923,6 +1932,27 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
         .expect("runtime commands should load");
     assert_eq!(requested_commands.len(), 1);
     assert_eq!(requested_commands[0].transition_id, "transition-fail");
+}
+
+#[tokio::test]
+async fn start_prompt_releases_claim_when_session_meta_is_missing() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
+    let missing_session_id = "missing-session";
+
+    let error = hub
+        .start_prompt(missing_session_id, simple_prompt_request("hello"))
+        .await
+        .expect_err("missing session should fail before connector prompt");
+    assert!(error.to_string().contains("不存在"));
+
+    let is_running = hub
+        .runtime_registry
+        .with_runtime(missing_session_id, |runtime| {
+            runtime.is_some_and(|runtime| runtime.turn_state.is_running())
+        })
+        .await;
+    assert!(!is_running, "missing session claim should be released");
 }
 
 #[tokio::test]
@@ -2176,7 +2206,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
 
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_provider() {
-    use crate::session::{LaunchCommand, SessionConstructionProvider};
+    use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -2189,11 +2219,11 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
     impl SessionConstructionProvider for SpyConstructionProvider {
         async fn build_construction(
             &self,
-            _session_id: &str,
-            command: &LaunchCommand,
+            input: SessionConstructionProviderInput,
         ) -> Result<SessionConstructionPlan, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let text = command
+            let text = input
+                .command
                 .user_input()
                 .prompt_blocks
                 .as_ref()
@@ -2203,7 +2233,7 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
                 .map(ToString::to_string);
             *self.captured_prompt.lock().await = text;
             self.captured_mcp_len.store(
-                command.local_relay_mcp_declarations().len(),
+                input.command.local_relay_mcp_declarations().len(),
                 Ordering::SeqCst,
             );
             Err(ConnectorError::InvalidConfig(

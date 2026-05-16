@@ -2,7 +2,7 @@
 
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
-use agentdash_spi::{AgentConnector, McpRelayProvider, Vfs};
+use agentdash_spi::{AgentConnector, McpRelayProvider};
 
 use super::capability_service::SessionCapabilityService;
 use super::companion_wait::CompanionWaitRegistry;
@@ -26,14 +26,12 @@ pub struct SessionRuntimeBuilder {
 
 impl SessionRuntimeBuilder {
     pub fn new_with_hooks_and_persistence(
-        default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
         Self {
             inner: SessionRuntimeInner::new_with_hooks_and_persistence(
-                default_vfs,
                 connector,
                 hook_provider,
                 persistence,

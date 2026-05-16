@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 构造与依赖注入。
+//! `SessionRuntimeInner` 构造与依赖注入。
 //!
 //! 集中 `new_with_hooks_and_persistence` + `with_*` builder 链 + `set_*`
 //! 运行时注入方法。AppState / local main / companion tool 构造 hub 的
@@ -15,8 +15,8 @@ use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionRuntimeInner;
 use crate::context::SharedContextAuditBus;
+use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
-use agentdash_spi::{AgentConnector, Vfs};
 
 impl SessionRuntimeInner {
     pub fn core_service(&self) -> super::super::core::SessionCoreService {
@@ -85,7 +85,6 @@ impl SessionRuntimeInner {
     }
 
     pub fn new_with_hooks_and_persistence(
-        default_vfs: Option<Vfs>,
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
         persistence: Arc<dyn SessionPersistence>,
@@ -95,7 +94,6 @@ impl SessionRuntimeInner {
         let turn_supervisor = TurnSupervisor::new(runtime_registry.clone());
         let stores = SessionStoreSet::from_persistence(persistence.clone());
         Self {
-            default_vfs,
             connector,
             hook_provider,
             runtime_registry,

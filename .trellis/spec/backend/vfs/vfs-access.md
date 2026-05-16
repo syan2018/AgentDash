@@ -1,490 +1,81 @@
-# Scenario: 统一 VFS / Runtime Access Layer（跨层契约）
+# 统一 VFS（跨层契约）
 
-### 1. Scope / Trigger
-
-- **Trigger**: 当功能同时涉及云端上下文注入、本机文件访问、Agent 运行时工具调用、多 workspace 挂载或非物理 workspace（KM / Snapshot / 资源库）时，必须使用统一的 VFS 抽象，而不是继续新增独立访问链路。
-- **影响面**: `task_agent_context`、`declared sources`、relay `workspace_files` / `tool.`*、本机 `ToolExecutor`、PiAgent runtime tools、`Project / Story` 级上下文容器、未来 KM warp。
+> Agent 和上层用例不直接感知 `backend_id + absolute path`，统一使用 `mount + relative path` 模型。
 
 ---
 
-### 2. Signatures（目标接口 / 类型 / 工具面）
+## 核心设计
 
-#### 2.1 核心对象
+所有资源访问统一为 `mount + relative path`：
 
-```rust
-struct Mount {
-    id: String,
-    provider: String,
-    root_ref: String,
-    capabilities: CapSet,
-    default_write: bool,
-    display_name: String,
-}
+- `mount` 是会话级挂载 ID（如 `main` / `spec` / `brief` / `lifecycle`）
+- `path` 是相对 mount 根的路径
+- 每个 session 启动时生成一份 mount table
 
-struct ResourceRef {
-    mount_id: String,
-    path: String,
-}
-```
+## 运行时工具集
 
-#### 2.2 Provider 抽象
+稳定的小工具集合：
 
-```rust
-#[async_trait]
-trait VfsProvider {
-    async fn read(&self, target: &ResourceRef, opts: ReadOpts) -> Result<ReadResult, AccessError>;
-    async fn write(&self, target: &ResourceRef, content: WriteContent) -> Result<WriteResult, AccessError>;
-    async fn list(&self, target: &ResourceRef, opts: ListOpts) -> Result<ListResult, AccessError>;
-    async fn search(&self, query: SearchQuery) -> Result<SearchResult, AccessError>;
-    async fn stat(&self, target: &ResourceRef) -> Result<StatResult, AccessError>;
-    async fn exec(&self, req: ExecRequest) -> Result<ExecResult, AccessError>;
-}
-```
+- `mounts.list` — 列出当前会话可访问的 mount 清单
+- `fs.read` / `fs.write` / `fs.apply_patch` — 文件读写
+- `fs.list` / `fs.search` — 目录和内容搜索
+- `shell.exec` — 命令执行（仅限声明了 `exec` 能力的 mount）
 
-#### 2.2.1 命名注意（当前代码现状）
+所有工具使用统一参数模型：`{ "mount": "main", "path": "relative/path" }`
 
-- 当前代码中 VFS descriptor provider（位于 `agentdash-spi` 的 context/injection 模块）仅用于暴露 VFS descriptor，服务 `/api/vfs` 能力发现。
-- 它还不是本规范这里的统一读写 provider，不承担 `read / write / list / search / exec`。
-- 后续落地时必须显式决定是：
-  - 扩展现有 descriptor provider
-  - 另抽一层真正的 runtime provider
-  - 或重命名其中一层
-- 禁止在实现中默认把这两个同名概念视为同一层抽象，否则很容易造成“接口已存在”的误判。
+## Provider 能力矩阵
 
-#### 2.3 运行时工具面
+| 能力 | 物理 workspace | KM / Snapshot | Lifecycle VFS |
+| --- | --- | --- | --- |
+| `read` | 必须 | 必须 | 必须 |
+| `write` | 可选 | 按 provider | 受限（artifacts/records） |
+| `list` | 必须 | 必须 | 必须 |
+| `search` | 推荐 | 推荐 | — |
+| `exec` | 可选 | 不支持 | 不支持 |
+| `watch` | — | — | 可选（通知机制） |
 
-必须优先收敛为稳定的小工具集合：
+当前已落地的 provider：
+- `relay_fs`：通过 relay 访问本机物理工作空间
+- `inline_fs`：云端 Project/Story 配置导出的内联只读文件
+- `lifecycle_vfs`：将 LifecycleRun 暴露为虚拟文件系统
 
-- `mounts.list`
-- `fs.read`
-- `fs.write`
-- `fs.apply_patch`
-- `fs.list`
-- `fs.search`
-- `shell.exec`
+## 错误矩阵
 
-公共定位参数：
+| 条件 | 错误语义 |
+| --- | --- |
+| mount 不存在 | `NotFound` |
+| path 为绝对路径或含 `..` 越界 | `InvalidPath` / `PathEscapesMount` |
+| mount 不支持该能力 | `CapabilityDenied` |
+| 目标 backend 不在线 | `BackendOffline` |
+| relay 超时 | `Timeout` |
 
-```json
-{ "mount": "main", "path": "crates/agentdash-api/src/app_state.rs" }
-```
+## 关键契约
 
-执行参数：
+1. **资源定位**：Agent 不应直接感知 `backend_id` 或绝对路径
+2. **一致性**：声明式来源解析与运行时工具访问共享同一套 provider 底座
+3. **relay 隔离**：relay 是 transport，不是 mount 模型；上层不直接拼接 `RelayMessage`
+4. **写入约束**：`fs.write` 默认只允许 `default_write=true` 的 mount；`fs.apply_patch` 受 `write` 能力约束
+5. **物化路径**：VFS URI 转本机 path 必须遵守 [vfs-materialization.md](./vfs-materialization.md)
 
-```json
-{ "mount": "main", "cwd": ".", "command": "cargo test -p agentdash-api" }
-```
+## 内核扩展能力
 
----
+### Extended Attributes
 
-### 3. Contracts（字段、能力、边界）
+Provider 可在 `read` / `list` / `stat` 结果中附带结构化元数据（`attributes` 字段），替代在文件内容开头嵌入 YAML frontmatter 的做法。
 
-#### 3.1 资源定位契约
+### Projection（虚拟文件）
 
-- Agent 和上层用例**不应直接感知** `backend_id + absolute path`。
-- 统一定位方式为 `mount + relative path`。
-- `mount` 是会话级挂载 ID，例如 `main / spec / km / snapshot`。
-- `path` 必须是相对 mount 根的路径。
+`is_virtual=true` 标记条目是 provider 动态投影的内容（物理存储中不存在），如 `lifecycle_vfs` 的 `active/*`、`nodes/*`、`runs/*` 路径。
 
-#### 3.2 Session Mount Table 契约
+### Mount Link
 
-- 每个 Task / Story / Session 启动时必须生成一份 mount table。
-- mount table 至少包含：
-  - `id`
-  - `provider`
-  - `root_ref`
-  - `capabilities`
-  - `default_write`
-- `main` mount 代表当前 Task 绑定的执行 workspace（若策略允许暴露本地工作空间）。
-- 非物理上下文容器可由 `Project / Story` 派生进入同一份 mount table。
-- 对于只读空间（如 `spec` / `snapshot`），必须显式声明不支持 `write` / `exec`。
+声明式的 mount 级重定向（不是通用 symlink），`parse_mount_uri` 自动跳转。最大跳转深度 5 层。用于 workflow step input 引用上游 output、共享文档引用等场景。
 
-#### 3.3 Provider 能力契约
+### Watch / 事件通知
 
-
-| 能力       | 说明        | 物理 workspace    | KM / Snapshot |
-| -------- | --------- | --------------- | ------------- |
-| `read`   | 读取文本/资源内容 | 必须支持            | 必须支持          |
-| `write`  | 写入资源      | 可支持             | 按 provider 决定 |
-| `list`   | 列出目录或条目   | 必须支持            | 必须支持          |
-| `search` | 搜索内容/路径   | 推荐支持            | 推荐支持          |
-| `stat`   | 查询元信息     | 推荐支持            | 推荐支持          |
-| `exec`   | 执行命令      | 仅物理可执行 mount 支持 | 默认不支持         |
-
-
-补充说明：
-
-- 当前已落地的 provider 至少包括：
-  - `relay_fs`：通过 relay 访问本机物理工作空间（实现位于 `application::vfs::relay_service`）
-  - `inline_fs`：由云端 `Project / Story` 配置直接导出的内联只读文件容器（实现位于 `application::vfs::inline_persistence`）
-- `inline_fs` 的首轮目标是让内置数据结构也能走统一 mount 模型，而不是继续散落在 prompt 拼接逻辑中。
-- 运行时工具实现（`fs.read/write/apply_patch/list/search`、`shell.exec`、`mounts.list`）位于 `application::vfs::tools`，API 层通过 re-export 引用。
-- `RuntimeToolProvider`（为 relay session 提供 tool 注册）位于 `application::vfs::tools::provider`。
-- 针对编辑类操作，provider 还可以额外声明 `MountEditCapabilities`：
-  - `create`
-  - `delete`
-  - `rename`
-- `apply_patch` 的默认方向不是要求每个 provider 自己实现 patch 引擎，而是：
-  - 共享层解析 patch
-  - 根据 patch 内容推导所需编辑 primitive
-  - 结合 `MountEditCapabilities` 选择组合执行或拒绝
-  - provider 只在需要原生优化时覆盖自己的 `apply_patch`
-
-#### 3.4 relay 契约
-
-- relay 是访问本机 provider 的 transport，不是 mount 模型本身。
-- 上层逻辑不应直接在 `context resolver` 或 runtime tool 中拼接 `RelayMessage`。
-- 物理 workspace 的 cloud 访问可由 `relay_fs_provider` 实现，内部再使用：
-  - `command.workspace_files.`*
-  - `command.tool.*`
-
-#### 3.5 context provider / runtime tool 一致性契约
-
-- 声明式来源解析与运行时工具访问必须共享同一套 provider 底座。
-- `File / ProjectSnapshot` 不应长期保留专属实现路径。
-- 如果某资源可被 context 注入读取，也应能在 runtime tool 中以相同 mount/path 访问。
-- 当本机 shell、relay MCP 或 URL-only 消费者需要把 VFS URI 转成本机 path / workdir / URL 时，必须遵守
-  [VFS 资源本机物化契约](./vfs-materialization.md)，不得自行使用 `session_id / plan_id / backend_id`
-  拼接临时目录。
-
-#### 3.6 非物理 workspace warp 契约
-
-- KM / Snapshot / 资源库应呈现为“受限 VFS”。
-- 暂不承诺完整 POSIX 语义。
-- 默认不支持：
-  - `shell.exec`
-  - symlink
-  - chmod
-  - file lock
-  - watch
-  - 原子 rename
+Provider 可通过 broadcast channel 推送 `MountEvent`（Created/Modified/Deleted/Renamed），供 Application 层内部消费（Workflow 编排、Hook runtime），暂不在 Agent tool 层暴露。
 
 ---
 
-### 4. Validation & Error Matrix
-
-
-| 条件                      | 预期行为             | 错误语义                  |
-| ----------------------- | ---------------- | --------------------- |
-| `mount` 不存在             | 拒绝执行             | `NotFound`            |
-| `path` 为绝对路径            | 拒绝执行             | `InvalidPath`         |
-| `path` 含 `..` 越界        | 拒绝执行             | `PathEscapesMount`    |
-| mount 不支持该能力            | 拒绝执行             | `CapabilityDenied`    |
-| 目标 backend 不在线          | 拒绝执行             | `BackendOffline`      |
-| provider 不可用            | 拒绝执行             | `ProviderUnavailable` |
-| relay 超时                | 标记为 transport 失败 | `Timeout`             |
-| KM / Snapshot 请求 `exec` | 直接拒绝             | `CapabilityDenied`    |
-
-
-补充规则：
-
-- `shell.exec` 只允许在声明了 `exec` 能力的 mount 上执行。
-- `fs.write` 默认只允许写入 `default_write = true` 的 mount，除非上层显式授权。
-- `fs.apply_patch` 同样受 `write` 能力约束；patch 内所有路径都必须是相对 mount 根目录的路径。
-- `fs.write` 适合新建文件、整文件覆盖或明确 append；涉及局部修改、多文件修改时应优先使用 `fs.apply_patch`。
-- `fs.apply_patch` 在运行前还应按 patch 内容推导需要的编辑 primitive：
-  - `Add File` 需要 `create`
-  - `Delete File` 需要 `delete`
-  - `Move to` 需要 `rename`，或回退到 `create + delete`
-- 若共享层组合执行缺失必要 primitive，可以回退到 provider 原生 `apply_patch`；若 provider 也不支持，应返回明确的 capability 缺失错误，而不是笼统报 write 失败。
-- `fs.apply_patch` 的补丁语法固定为：
-
-```text
-*** Begin Patch
-*** Add File: path
-+new line
-*** Update File: path
-*** Move to: new/path
-@@
- context line
--old line
-+new line
-*** Delete File: path
-*** End Patch
-```
-
-- `*** Move to:` 只能跟在 `*** Update File:` 后面；新增文件内容每一行都必须以前缀 `+` 开头；更新块中的行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。
-
----
-
-### 5. Good / Base / Bad Cases
-
-#### Good
-
-- Task session 同时挂载物理工作空间、Project 级规范容器和 Story 级 brief 容器：
-
-```json
-{ "tool": "fs.read", "mount": "main", "path": "Cargo.toml" }
-{ "tool": "fs.read", "mount": "spec", "path": "backend/vfs-access.md" }
-{ "tool": "fs.read", "mount": "brief", "path": "brief.md" }
-```
-
-#### Base
-
-- 当前阶段 provider 内部仍可暂时复用现有 relay `workspace_files` 协议，只要上层接口已统一到 provider。
-
-#### Bad
-
-- 直接把 `backend_id` 和绝对路径暴露给 Agent：
-
-```json
-{
-  "backend_id": "backend-a",
-  "workspace_root": "/home/user/my-project",
-  "path": "crates/agentdash-api/src/app_state.rs"
-}
-```
-
-问题：
-
-- Agent 需要理解部署细节
-- 多 mount / 非物理空间无法统一
-- 上下文注入和 runtime tool 无法共享同一定位模型
-
----
-
-### 6. Tests Required（断言点）
-
-#### Provider 层
-
-- 给定 `mount=main, path=foo/bar.rs`，能正确路由到目标 provider。
-- `path` 为绝对路径或含 `..` 时必须被拒绝。
-- provider 能力矩阵正确生效：无 `exec` 的 mount 不允许执行命令。
-- `inline_fs` 至少支持 `read / list / search`，且结果与 mount/path 模型一致。
-- `lifecycle_vfs` 支持 `read / list / search / write`（写入限 `artifacts/{port_key}` 与 `records/{name}` / `nodes/{step_key}/records/{name}` 子路径）。
-
-#### Lifecycle VFS Provider（`lifecycle_vfs`）
-
-`LifecycleMountProvider` 负责将 `LifecycleRun` 暴露为虚拟文件系统。
-
-**读写路径**：
-
-
-| 路径                                                             | 操作         | 说明                                                |
-| -------------------------------------------------------------- | ---------- | ------------------------------------------------- |
-| `artifacts/{port_key}`                                         | read/write | Port output 产出，写入持久化到 `LifecycleRun.port_outputs` |
-| `active`, `active/steps/`*, `active/artifacts/*`, `active/log` | read       | Run 概览/步骤/旧产物/日志                                  |
-| `nodes/*`, `runs/*`                                            | read       | Node 状态视图和历史 run                                  |
-
-
-**写入约束**：
-
-- `artifacts/{port_key}` 路径可写，可写范围由 mount metadata 中的 `writable_port_keys` 控制（即当前 node 的 output port keys）
-- `records/{name}` 与 `nodes/{step_key}/records/{name}` 作为 journey record overlay 可写，用于把当前推理/审阅记录沉淀回 lifecycle 投影空间
-- 无 `writable_port_keys` 时，`artifacts/*` 不可写；records overlay 仍按 provider 路径规则开放
-
-**构建函数**：
-
-- `build_lifecycle_mount(run_id, lifecycle_key)` — 构建 lifecycle 投影 mount，`artifacts/*` 无 port 白名单
-- `build_lifecycle_mount_with_ports(run_id, lifecycle_key, &writable_port_keys)` — 构建 lifecycle 投影 mount，并开放指定 port output 写入
-
-#### relay / local provider
-
-- `Task.workspace_id -> Workspace.backend_id` 路由正确。
-- `workspace_root` 真正影响本机执行根目录，而非仅记录日志。
-- 本机路径写入不会逃逸出 mount 根目录。
-
-#### context resolver
-
-- `File / ProjectSnapshot` 来源通过 provider 成功读取。
-- provider 失败时 required source 直接报错，optional source 产生 warning。
-
-#### runtime tools
-
-- `mounts.list` 返回当前会话可访问的 mount 清单。
-- `fs.read/write/list/search` 使用统一的 `mount + path` 参数模型。
-- `fs.apply_patch` 使用统一的 `mount + patch` 参数模型，patch 内文件路径相对 mount 根目录解析。
-- `Project / Story` 派生出的容器能和 `main` 一起进入最终 session mount table。
-
----
-
-### 7. Wrong vs Correct
-
-#### Wrong：为每种访问场景单独长一套协议
-
-```text
-context source -> command.workspace_files.*
-PiAgent runtime -> BuiltinToolset::for_workspace(...)
-future KM -> km_tool.*
-future snapshot -> snapshot_tool.*
-```
-
-问题：
-
-- 四套定位模型
-- 权限和错误语义无法统一
-- 多 workspace / 非物理空间难以复用
-
-#### Correct：先统一到底层 VFS，再暴露稳定工具面
-
-```text
-declared source
-runtime tool
-frontend read-only browse
-        ↓
-VFS Provider
-        ↓
-relay_fs / local_fs / km / snapshot
-```
-
-优势：
-
-- 定位模型统一
-- 安全边界统一
-- transport 与领域抽象解耦
-
----
-
-### 8. First Implementation Slice
-
-- 先修复本机 prompt 执行真正 honor `workspace_root`
-- 先补强本机路径边界
-- 再抽 `VfsProvider`
-- 再让 declared source 优先接入 provider
-- 最后推动 PiAgent runtime tool 迁移
-
----
-
-### 9. Design Decision
-
-#### 决策：采用“统一 provider + 小工具集合”，不采用“万能工具”
-
-**Context**:
-
-- 当前系统已存在 `workspace_files`、`tool.`*、内置工具三套访问路径
-- 后续还需要支持多 workspace 和非物理 workspace
-
-**Decision**:
-
-- 底层统一为 VFS Provider
-- 上层统一为 `mount + relative path`
-- Agent 工具保持小而稳定
-
-**Why**:
-
-- 更利于模型稳定调用
-- 更利于权限控制和错误矩阵定义
-- 更适合与 context provider 共享实现
-
-
----
-
-## 8. 内核能力拓展（2026-04-17）
-
-以下是 04-17 落地的四项 VFS 内核能力拓展，对应任务 `04-17-address-space-kernel-extensions`。
-
-### 8.1 Extended Attributes（文件级元数据分通道）
-
-**动机**：外部 provider（如 KM 插件）有丰富的文件元数据。之前没有标准通道，只能以 YAML frontmatter 嵌入文件正文开头，导致内容污染、搜索干扰、写回困难。
-
-**契约**：
-
-```rust
-pub struct ReadResult {
-    pub path: String,
-    pub content: String,
-    pub attributes: Option<serde_json::Map<String, Value>>,  // 新增
-}
-
-pub struct RuntimeFileEntry {
-    pub path: String,
-    pub size: Option<u64>,
-    pub modified_at: Option<i64>,
-    pub is_dir: bool,
-    pub is_virtual: bool,                                     // 新增
-    pub attributes: Option<serde_json::Map<String, Value>>,   // 新增
-}
-
-// MountProvider trait 新增可选方法（默认 NotSupported）
-async fn stat(&self, mount: &Mount, path: &str, ctx: &MountOperationContext)
-    -> Result<RuntimeFileEntry, MountError>;
-```
-
-**约定**：
-
-- `read_text` 返回时可附带 `attributes`（如果 provider 支持）
-- `stat` 只返回元数据，不读内容（轻量查询）；`list` 返回的 entries 可以带 attributes
-- Agent tool `fs.read` 输出中，metadata 与 content 应分区展示
-- **不再接受**：在 content 开头嵌入 YAML frontmatter 作为元数据来源
-
-### 8.2 Projection 约定（/proc 风格虚拟文件）
-
-**契约**：`RuntimeFileEntry.is_virtual = true` 标记该条目是 provider 动态投影的内容（物理存储中不存在）。
-
-**约定**：
-
-- Provider 的 `read_text` 可以返回动态内容（不要求同路径多次读结果一致）
-- `list` 可以返回不存在于物理存储的虚拟条目
-- 对 projection 条目，`size` 和 `modified_at` 通常为 `None`（内容是动态的，size 无意义）
-
-**当前实现**：
-
-- `lifecycle_vfs` 的 `active/*`、`nodes/*`、`runs/*` 路径已标记 `is_virtual = true`
-- `lifecycle_vfs` 的 `artifacts/*` 与 `records/*` 是真实 inline_file overlay 存储，不是 virtual
-
-### 8.3 Mount Link（声明式 symlink alias）
-
-**契约**：
-
-```rust
-pub struct MountLink {
-    pub from_mount_id: String,
-    pub from_path: String,
-    pub to_mount_id: String,
-    pub to_path: String,
-}
-
-pub struct Vfs {
-    pub mounts: Vec<Mount>,
-    pub default_mount_id: Option<String>,
-    pub links: Vec<MountLink>,  // 新增
-    // ...
-}
-```
-
-**语义**：
-
-- Link 是 VFS 构建时声明式定义的 mount 级重定向，不是通用 symlink（避免循环检测、权限穿透等复杂性）
-- `parse_mount_uri` 在返回 `ResourceRef` 前自动跳转 link
-- 匹配规则：`from_mount_id` 相等，且 path 等于 `from_path` 或以 `from_path/` 为前缀（目录级别透明重定向，尾部保留）
-- 最大跳转深度 5 层，超过报错（防循环）
-
-**典型场景**：
-
-- Workflow step input 声明为 link → 上游 step output mount 的某路径
-- Agent knowledge 引用 project 级别的共享文档（不复制）
-- Canvas 引用 workspace 文件（只读视图）
-
-### 8.4 Watch / 事件通知
-
-**契约**：
-
-```rust
-pub enum MountCapability {
-    Read, Write, List, Search, Exec,
-    Watch,  // 新增
-}
-
-pub enum MountEventKind { Created, Modified, Deleted, Renamed }
-
-pub struct MountEvent {
-    pub mount_id: String,
-    pub path: String,
-    pub kind: MountEventKind,
-    pub timestamp_ms: i64,
-}
-
-pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
-
-// MountProvider trait 新增可选方法（默认 NotSupported）
-async fn watch(&self, mount: &Mount, path: &str, ctx: &MountOperationContext)
-    -> Result<MountEventReceiver, MountError>;
-```
-
-**当前实现**：
-
-- `InlineContentOverlay` 在 write/delete 时通过 broadcast channel 推送 `MountEvent`
-- 订阅方式：`overlay.subscribe_events() -> MountEventReceiver`
-- 事件 kind 根据前后状态区分 `Created`/`Modified`/`Deleted`
-
-**消费侧定位**：暂不在 Agent tool 层暴露（Agent 无需主动 watch），主要供 Application 层内部的 Workflow 编排引擎、Hook runtime 消费，替代轮询。
+*创建：2026-04-17 — 统一 VFS 跨层契约*
+*精简：2026-05-16 — 移除代码复述、测试列表、实施计划；保留核心契约和能力矩阵*

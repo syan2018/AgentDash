@@ -23,7 +23,7 @@ pub struct UserPromptInput {
 
 /// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费 pending commands，把最后一个 state
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把最后一个 state
 /// 作为本轮生效状态，并将 command 标记为 applied。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

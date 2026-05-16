@@ -1222,7 +1222,7 @@ pub struct ContextAuditQuery {
 pub struct ContextAuditEventDto {
     pub event_id: uuid::Uuid,
     pub bundle_id: uuid::Uuid,
-    /// session 外部 ID（SessionHub 分配的 `sess-<ms>-<short>`）。
+    /// session 外部 ID（session runtime 分配的 `sess-<ms>-<short>`）。
     pub session_id: String,
     /// Bundle 内部追踪 UUID（可能是占位值，与 `session_id` 不同）。
     pub bundle_session_uuid: uuid::Uuid,

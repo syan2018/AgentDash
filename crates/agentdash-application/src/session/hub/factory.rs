@@ -1,4 +1,4 @@
-//! `SessionHub` 构造与依赖注入。
+﻿//! `SessionRuntimeInner` 构造与依赖注入。
 //!
 //! 集中 `new_with_hooks_and_persistence` + `with_*` builder 链 + `set_*`
 //! 运行时注入方法。AppState / local main / companion tool 构造 hub 的
@@ -13,12 +13,12 @@ use super::super::construction_provider::SharedSessionConstructionProvider;
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
-use super::SessionHub;
+use super::SessionRuntimeInner;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, Vfs};
 
-impl SessionHub {
+impl SessionRuntimeInner {
     pub fn core_service(&self) -> super::super::core::SessionCoreService {
         super::super::core::SessionCoreService::new(
             self.stores.clone(),
@@ -62,11 +62,22 @@ impl SessionHub {
     }
 
     pub fn effects_service(&self) -> super::super::effects_service::SessionEffectsService {
-        super::super::effects_service::SessionEffectsService::new(self.clone())
+        super::super::effects_service::SessionEffectsService::new(
+            super::super::terminal_effects::TerminalEffectDeps {
+                terminal_effects: self.stores.terminal_effects.clone(),
+                hook_trigger: Arc::new(self.clone()),
+                terminal_callback: self.terminal_callback.clone(),
+                hook_effect_handler_registry: self.hook_effect_handler_registry.clone(),
+                auto_resume: Arc::new(self.clone()),
+            },
+        )
     }
 
     pub fn title_service(&self) -> super::super::title_service::SessionTitleService {
-        super::super::title_service::SessionTitleService::new(self.clone())
+        super::super::title_service::SessionTitleService::new(
+            self.core_service(),
+            self.eventing_service(),
+        )
     }
 
     pub fn capability_service(&self) -> super::super::capability_service::SessionCapabilityService {
@@ -155,7 +166,7 @@ impl SessionHub {
 
     /// 注入 session 终态全局回调（如 LifecycleOrchestrator）。
     ///
-    /// 可在 SessionHub 构造完成后调用（支持延迟注入解决循环依赖）。
+    /// 可在 SessionRuntimeInner 构造完成后调用（支持延迟注入解决循环依赖）。
     /// 由于 `terminal_callback` 是共享状态（`Arc<RwLock<...>>`），
     /// 调用后所有已 clone 的 hub 实例都会生效。
     pub async fn set_terminal_callback(
@@ -174,7 +185,7 @@ impl SessionHub {
 
     /// 注入 session construction provider（owner / MCP / flow capabilities / system context 等）。
     ///
-    /// **何时必须注入**：只要 SessionHub 会在内部发起 strict launch（如
+    /// **何时必须注入**：只要 SessionRuntimeInner 会在内部发起 strict launch（如
     /// hook auto-resume、未来可能的其他系统驱动续跑），就必须注入此 construction provider——否则
     /// auto-resume 的 prompt 与 HTTP 主通道漂移，Agent 会失去工作流背景并倾向复读。
     ///
@@ -201,22 +212,22 @@ impl SessionHub {
     /// 避免把“稍后注入”的空值暴露给正式运行态。
     pub async fn assert_ready_for_app_state(&self) -> Result<(), String> {
         if self.runtime_tool_provider.is_none() {
-            return Err("SessionHub 缺少 runtime_tool_provider".to_string());
+            return Err("SessionRuntimeInner 缺少 runtime_tool_provider".to_string());
         }
         if self.mcp_relay_provider.is_none() {
-            return Err("SessionHub 缺少 mcp_relay_provider".to_string());
+            return Err("SessionRuntimeInner 缺少 mcp_relay_provider".to_string());
         }
         if self.terminal_callback.read().await.is_none() {
-            return Err("SessionHub 缺少 terminal_callback".to_string());
+            return Err("SessionRuntimeInner 缺少 terminal_callback".to_string());
         }
         if self.hook_effect_handler_registry.read().await.is_none() {
-            return Err("SessionHub 缺少 hook_effect_handler_registry".to_string());
+            return Err("SessionRuntimeInner 缺少 hook_effect_handler_registry".to_string());
         }
         if self.session_construction_provider.read().await.is_none() {
-            return Err("SessionHub 缺少 session_construction_provider".to_string());
+            return Err("SessionRuntimeInner 缺少 session_construction_provider".to_string());
         }
         if self.context_audit_bus.read().await.is_none() {
-            return Err("SessionHub 缺少 context_audit_bus".to_string());
+            return Err("SessionRuntimeInner 缺少 context_audit_bus".to_string());
         }
         Ok(())
     }

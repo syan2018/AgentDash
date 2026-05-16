@@ -17,7 +17,7 @@ use super::launch::{
 };
 use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use super::prompt_pipeline::SessionLaunchDeps;
-use super::runtime_commands::PendingRuntimeCommandRecord;
+use super::runtime_commands::RuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
     resolve_session_prompt_lifecycle,
@@ -35,7 +35,7 @@ pub(super) struct SessionLaunchPlannerInput<'a> {
     pub had_existing_runtime: bool,
     pub cached_continuation: Option<SessionProfile>,
     pub session_meta: &'a SessionMeta,
-    pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
+    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub construction: SessionConstructionPlan,
 }
 
@@ -87,7 +87,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .resolve_prompt_payload()
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
         let pending_capability_transitions = input
-            .pending_runtime_commands
+            .requested_runtime_commands
             .iter()
             .map(|command| command.transition.clone())
             .collect::<Vec<_>>();
@@ -112,7 +112,8 @@ impl<'a> SessionLaunchPlanner<'a> {
             (vfs, LaunchVfsSource::HubDefault)
         } else {
             return Err(ConnectorError::InvalidConfig(
-                "prompt 缺少 vfs，且 session 无缓存、SessionHub 未配置默认 vfs".to_string(),
+                "prompt 缺少 vfs，且 session 无缓存、SessionRuntimeInner 未配置默认 vfs"
+                    .to_string(),
             ));
         };
         let mut effective_vfs = base_effective_vfs.clone();
@@ -174,13 +175,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .await
         {
             Ok(hs) => hs,
-            Err(error) => {
-                self.deps
-                    .turn_supervisor
-                    .clear_turn_and_hook(input.session_id)
-                    .await;
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         };
 
         let hook_snapshot_contribution = hook_session.as_ref().map(|hs| {
@@ -354,7 +349,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             hook_snapshot_contribution,
             follow_up_session_id: resolved_follow_up_session_id.clone(),
             follow_up_source,
-            pending_runtime_commands: input.pending_runtime_commands,
+            requested_runtime_commands: input.requested_runtime_commands,
             pending_capability_transitions,
             base_capability_state: base_capability_state.clone(),
             vfs_source,

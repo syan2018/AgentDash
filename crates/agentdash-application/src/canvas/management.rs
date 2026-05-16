@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH, Canvas, CanvasDataBinding, CanvasFile,
-    CanvasSandboxConfig, ensure_canvas_system_skill, is_canvas_system_skill_path,
+    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, ensure_canvas_system_skill,
+    is_canvas_system_skill_path,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -276,6 +276,7 @@ pub fn normalize_canvas_mount_id(raw: &str) -> Result<String, DomainError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::canvas::CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH;
 
     #[test]
     fn build_canvas_uses_react_default_and_seed_file() {

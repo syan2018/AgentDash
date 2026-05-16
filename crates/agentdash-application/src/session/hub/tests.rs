@@ -1,4 +1,4 @@
-//! `SessionHub` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+﻿//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -34,14 +34,14 @@ use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
     PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
-use super::SessionHub;
+use super::SessionRuntimeInner;
 
 fn test_hub(
     mount_root: PathBuf,
     connector: Arc<dyn AgentConnector>,
     hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
-) -> SessionHub {
-    SessionHub::new_with_hooks_and_persistence(
+) -> SessionRuntimeInner {
+    SessionRuntimeInner::new_with_hooks_and_persistence(
         Some(local_workspace_vfs(&mount_root)),
         connector,
         hook_provider,
@@ -1317,7 +1317,7 @@ async fn owner_bootstrap_marks_session_meta_bootstrapped() {
 async fn continuation_context_frame_strips_owner_resource_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = SessionHub::new_with_hooks_and_persistence(
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
@@ -1389,7 +1389,7 @@ async fn continuation_context_frame_strips_owner_resource_blocks() {
 async fn build_projected_transcript_reconstructs_tool_history_without_owner_blocks() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = SessionHub::new_with_hooks_and_persistence(
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
@@ -1597,7 +1597,7 @@ fn inject_compaction_envelope(
 async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = SessionHub::new_with_hooks_and_persistence(
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
@@ -1691,7 +1691,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
 async fn continuation_context_frame_uses_compacted_projection() {
     let persistence = Arc::new(MemorySessionPersistence::default());
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = SessionHub::new_with_hooks_and_persistence(
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         Some(local_workspace_vfs(&base.path().to_path_buf())),
         Arc::new(SessionStartAwareConnector::default()),
         None,
@@ -1829,7 +1829,7 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
 }
 
 #[tokio::test]
-async fn connector_setup_failure_does_not_commit_bootstrap_or_pending_commands() {
+async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands() {
     struct FailingConnector;
 
     #[async_trait::async_trait]
@@ -1916,13 +1916,13 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_pending_commands()
         .expect("session should exist");
     assert_eq!(meta.bootstrap_state, SessionBootstrapState::Pending);
 
-    let pending_commands = hub
+    let requested_commands = hub
         .persistence
-        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Pending], 10)
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Requested], 10)
         .await
         .expect("runtime commands should load");
-    assert_eq!(pending_commands.len(), 1);
-    assert_eq!(pending_commands[0].transition_id, "transition-fail");
+    assert_eq!(requested_commands.len(), 1);
+    assert_eq!(requested_commands[0].transition_id, "transition-fail");
 }
 
 #[tokio::test]

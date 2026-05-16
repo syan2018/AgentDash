@@ -23,7 +23,7 @@ pub mod hook_events;
 mod hook_messages;
 pub mod hook_runtime;
 pub mod hooks_service;
-pub mod hub;
+pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
@@ -38,9 +38,11 @@ pub mod plan;
 pub mod post_turn_handler;
 mod prompt_pipeline;
 mod prompt_vfs;
+pub mod runtime_builder;
 pub mod runtime_commands;
 pub mod runtime_control;
 mod runtime_registry;
+pub mod runtime_services;
 pub mod stall_detector;
 pub mod terminal_cache;
 pub mod terminal_effects;
@@ -75,7 +77,6 @@ pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hooks_service::SessionHookService;
-pub use hub::SessionHub;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, LaunchStrictness};
 pub use launch_service::SessionLaunchService;
@@ -89,8 +90,10 @@ pub use post_turn_handler::{
     TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
-pub use runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
+pub use runtime_builder::SessionRuntimeBuilder;
+pub use runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 pub use runtime_control::SessionRuntimeService;
+pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };

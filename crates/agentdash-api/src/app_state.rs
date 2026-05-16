@@ -24,7 +24,7 @@ use agentdash_application::runtime_gateway::{
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionHub, SessionLaunchService,
+    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeBuilder,
     SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryStepActivationService;
@@ -54,7 +54,6 @@ use agentdash_plugin_api::AuthMode;
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
-    pub session_hub: SessionHub,
     pub session_core: SessionCoreService,
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
@@ -346,7 +345,7 @@ impl AppState {
             inline_file_repo.clone(),
             state_change_repo.clone(),
         ));
-        let mut session_hub = SessionHub::new_with_hooks_and_persistence(
+        let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
             None,
             connector.clone(),
             Some(hook_provider.clone()),
@@ -357,22 +356,23 @@ impl AppState {
         .with_runtime_tool_provider(runtime_tool_provider)
         .with_mcp_relay_provider(mcp_relay_provider);
         if let Some((base_sp, user_prefs)) = prompt_config {
-            session_hub = session_hub.with_system_prompt_config(base_sp, user_prefs);
+            session_runtime_builder =
+                session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
         }
         if let Some(bridge) = title_bridge {
-            session_hub = session_hub.with_title_generator(Arc::new(
+            session_runtime_builder = session_runtime_builder.with_title_generator(Arc::new(
                 crate::title_generator::LlmTitleGenerator::new(bridge),
             ));
         }
-        let session_core = session_hub.core_service();
-        let session_eventing = session_hub.eventing_service();
-        let session_runtime = session_hub.runtime_service();
-        let session_control = session_hub.control_service();
-        let session_launch = session_hub.launch_service();
-        let session_hooks = session_hub.hook_service();
-        let session_capability = session_hub.capability_service();
-        let session_effects = session_hub.effects_service();
-        let session_title = session_hub.title_service();
+        let session_core = session_runtime_builder.core_service();
+        let session_eventing = session_runtime_builder.eventing_service();
+        let session_runtime = session_runtime_builder.runtime_service();
+        let session_control = session_runtime_builder.control_service();
+        let session_launch = session_runtime_builder.launch_service();
+        let session_hooks = session_runtime_builder.hook_service();
+        let session_capability = session_runtime_builder.capability_service();
+        let session_effects = session_runtime_builder.effects_service();
+        let session_title = session_runtime_builder.title_service();
 
         // Lifecycle DAG Orchestrator — 在 session 终态后评估后继 node 并启动新 session
         {
@@ -385,7 +385,9 @@ impl AppState {
                     repos.clone(),
                     platform_config.clone(),
                 ));
-            session_hub.set_terminal_callback(orchestrator).await;
+            session_runtime_builder
+                .set_terminal_callback(orchestrator)
+                .await;
         }
 
         session_services_handle
@@ -396,7 +398,7 @@ impl AppState {
                 launch: session_launch.clone(),
                 hooks: session_hooks.clone(),
                 capability: session_capability.clone(),
-                companion_wait_registry: session_hub.companion_wait_registry.clone(),
+                companion_wait_registry: session_runtime_builder.companion_wait_registry(),
             })
             .await;
 
@@ -475,7 +477,9 @@ impl AppState {
             crate::bootstrap::turn_dispatcher::AppStateTurnDispatcher::new(session_runtime.clone());
 
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
-        session_hub.set_context_audit_bus(audit_bus.clone()).await;
+        session_runtime_builder
+            .set_context_audit_bus(audit_bus.clone())
+            .await;
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
@@ -490,7 +494,6 @@ impl AppState {
         let state = Self {
             repos,
             services: ServiceSet {
-                session_hub,
                 session_core,
                 session_eventing,
                 session_runtime,
@@ -525,7 +528,7 @@ impl AppState {
 
         let mut state = Arc::new(state);
 
-        // 注入 SessionConstructionProvider：让 SessionHub 的 auto-resume 等内部 prompt
+        // 注入 SessionConstructionProvider：让 session 内部 auto-resume 等 prompt
         // 路径与 HTTP 主通道共享同一条 `build_session_construction_for_launch`，
         // 避免 owner / MCP / capability_state / context_bundle 漂移。
         {
@@ -534,9 +537,7 @@ impl AppState {
                     state.clone(),
                 ),
             );
-            state
-                .services
-                .session_hub
+            session_runtime_builder
                 .set_session_construction_provider(provider)
                 .await;
         }
@@ -547,16 +548,12 @@ impl AppState {
                     repos: state.repos.clone(),
                 },
             );
-            state
-                .services
-                .session_hub
+            session_runtime_builder
                 .set_hook_effect_handler_registry(registry)
                 .await;
         }
 
-        state
-            .services
-            .session_hub
+        session_runtime_builder
             .assert_ready_for_app_state()
             .await
             .map_err(|err| anyhow::anyhow!("AppState session 依赖未 ready: {err}"))?;
@@ -652,7 +649,7 @@ struct PiAgentConnectorDeps {
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
 }
 
-/// 构建结果：connector 本体 + 需要注入到 SessionHub 的 provider
+/// 构建结果：connector 本体 + 需要注入到 session runtime 的 provider
 struct PiAgentConnectorBuildResult {
     connector: agentdash_executor::connectors::pi_agent::PiAgentConnector,
 }

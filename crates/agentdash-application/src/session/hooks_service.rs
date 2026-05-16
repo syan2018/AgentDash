@@ -1,17 +1,17 @@
-use std::path::Path;
+﻿use std::path::Path;
 
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{HookSessionRuntimeAccess, SharedHookSessionRuntime};
 
-use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionHub};
+use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
 
 #[derive(Clone)]
 pub struct SessionHookService {
-    hub: SessionHub,
+    hub: SessionRuntimeInner,
 }
 
 impl SessionHookService {
-    pub(super) fn new(hub: SessionHub) -> Self {
+    pub(super) fn new(hub: SessionRuntimeInner) -> Self {
         Self { hub }
     }
 

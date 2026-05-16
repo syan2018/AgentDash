@@ -3,7 +3,7 @@ use std::io;
 use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use agentdash_application::session::{
-    ExecutionStatus, PendingRuntimeCommandRecord, PersistedSessionEvent, RuntimeCommandStatus,
+    ExecutionStatus, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
     SessionBootstrapState, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
     TerminalEffectRecord, TerminalEffectStatus, TitleSource,
 };
@@ -270,16 +270,14 @@ impl PostgresSessionRepository {
         Ok(())
     }
 
-    fn runtime_command_from_row(
-        row: &sqlx::postgres::PgRow,
-    ) -> io::Result<PendingRuntimeCommandRecord> {
+    fn runtime_command_from_row(row: &sqlx::postgres::PgRow) -> io::Result<RuntimeCommandRecord> {
         let id_raw = row.get::<String, _>("id");
         let id = uuid::Uuid::parse_str(&id_raw)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
         let payload_json = row.get::<String, _>("payload_json");
         let transition = serde_json::from_str::<PendingCapabilityStateTransition>(&payload_json)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-        Ok(PendingRuntimeCommandRecord {
+        Ok(RuntimeCommandRecord {
             id,
             session_id: row.get::<String, _>("session_id"),
             transition_id: row.get::<String, _>("transition_id"),
@@ -311,7 +309,7 @@ impl PostgresSessionRepository {
             let (applied_at_ms, failed_at_ms, last_error) = match status {
                 RuntimeCommandStatus::Applied => (Some(now), None, None),
                 RuntimeCommandStatus::Failed => (None, Some(now), error.clone()),
-                RuntimeCommandStatus::Pending => (None, None, None),
+                RuntimeCommandStatus::Requested => (None, None, None),
             };
             let result = sqlx::query(
                 r#"
@@ -861,11 +859,11 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(records)
     }
 
-    async fn upsert_pending_runtime_command(
+    async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<PendingRuntimeCommandRecord> {
+    ) -> io::Result<RuntimeCommandRecord> {
         let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
         let now = chrono::Utc::now().timestamp_millis();
         sqlx::query(
@@ -881,20 +879,20 @@ impl SessionPersistence for PostgresSessionRepository {
         .bind(RuntimeCommandStatus::Failed.as_str())
         .bind(now)
         .bind(now)
-        .bind("superseded_by_new_pending_command")
+        .bind("superseded_by_new_requested_command")
         .bind(session_id)
         .bind(&transition.phase_node)
-        .bind(RuntimeCommandStatus::Pending.as_str())
+        .bind(RuntimeCommandStatus::Requested.as_str())
         .execute(&mut *tx)
         .await
         .map_err(sqlx_to_io)?;
 
-        let record = PendingRuntimeCommandRecord {
+        let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
             session_id: session_id.to_string(),
             transition_id: transition.id.clone(),
             phase_node: transition.phase_node.clone(),
-            status: RuntimeCommandStatus::Pending,
+            status: RuntimeCommandStatus::Requested,
             transition,
             created_at_ms: now,
             updated_at_ms: now,
@@ -930,10 +928,10 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(record)
     }
 
-    async fn list_pending_runtime_commands(
+    async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT id, session_id, transition_id, phase_node, status, payload_json,
@@ -944,7 +942,7 @@ impl SessionPersistence for PostgresSessionRepository {
             "#,
         )
         .bind(session_id)
-        .bind(RuntimeCommandStatus::Pending.as_str())
+        .bind(RuntimeCommandStatus::Requested.as_str())
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
@@ -969,7 +967,7 @@ impl SessionPersistence for PostgresSessionRepository {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT id, session_id, transition_id, phase_node, status, payload_json,

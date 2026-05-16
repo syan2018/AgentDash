@@ -1,4 +1,4 @@
-//! Hub 的 hook 调度职责。
+﻿//! Hub 的 hook 调度职责。
 //!
 //! 集中：
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
@@ -17,8 +17,11 @@ use super::super::hook_messages as msg;
 use super::super::hook_runtime::HookSessionRuntime;
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
+use super::super::terminal_effects::{
+    TerminalAutoResumePort, TerminalHookTriggerPort, TerminalHookTriggerRequest,
+};
 use super::super::types::UserPromptInput;
-use super::SessionHub;
+use super::SessionRuntimeInner;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
@@ -45,7 +48,7 @@ pub(crate) struct HookTriggerDispatchResult {
     pub effects: Vec<HookEffect>,
 }
 
-impl SessionHub {
+impl SessionRuntimeInner {
     /// 评估 session hook 并广播 trace 事件。返回 hook 产出的 effects 列表，
     /// 由调用方决定是否/如何执行这些副作用。
     ///
@@ -285,5 +288,35 @@ impl SessionHub {
                 );
             }
         });
+    }
+}
+
+#[async_trait::async_trait]
+impl TerminalHookTriggerPort for SessionRuntimeInner {
+    async fn emit_terminal_hook_trigger(
+        &self,
+        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+        input: TerminalHookTriggerRequest<'_>,
+    ) -> Vec<HookEffect> {
+        self.emit_session_hook_trigger(
+            hook_session,
+            &HookTriggerInput {
+                session_id: input.session_id,
+                turn_id: input.turn_id,
+                trigger: input.trigger,
+                payload: input.payload,
+                refresh_reason: input.refresh_reason,
+                source: input.source,
+            },
+        )
+        .await
+        .effects
+    }
+}
+
+#[async_trait::async_trait]
+impl TerminalAutoResumePort for SessionRuntimeInner {
+    async fn request_hook_auto_resume(&self, session_id: String) -> bool {
+        SessionRuntimeInner::request_hook_auto_resume(self, session_id).await
     }
 }

@@ -31,7 +31,7 @@ struct Cli {
     #[arg(long)]
     backend_id: Option<String>,
 
-    /// 禁用 SessionHub（仅保留 ToolExecutor 能力）
+    /// 禁用 session runtime（仅保留 ToolExecutor 能力）
     #[arg(long, default_value_t = false)]
     no_executor: bool,
 }

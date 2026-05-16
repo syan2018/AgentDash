@@ -1,4 +1,4 @@
-use std::path::Path;
+﻿use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -18,7 +18,7 @@ use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hook_runtime::HookSessionRuntime;
 use super::hooks_service::SessionHookService;
-use super::hub::SessionHub;
+use super::hub::SessionRuntimeInner;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
@@ -301,15 +301,15 @@ impl SessionLaunchExecutor {
                 )));
             }
         };
-        let pending_runtime_commands = runtime_command_store
-            .list_pending_runtime_commands(&sid)
+        let requested_runtime_commands = runtime_command_store
+            .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!(
-                    "读取 session `{sid}` pending runtime commands 失败: {error}"
+                    "读取 session `{sid}` requested runtime commands 失败: {error}"
                 ))
             })?;
-        let launch_execution = SessionLaunchPlanner::new(deps.clone())
+        let launch_execution = match SessionLaunchPlanner::new(deps.clone())
             .plan(SessionLaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
@@ -317,10 +317,17 @@ impl SessionLaunchExecutor {
                 had_existing_runtime,
                 cached_continuation,
                 session_meta: &session_meta,
-                pending_runtime_commands,
+                requested_runtime_commands,
                 construction,
             })
-            .await?;
+            .await
+        {
+            Ok(launch_execution) => launch_execution,
+            Err(error) => {
+                deps.turn_supervisor.clear_turn_and_hook(session_id).await;
+                return Err(error);
+            }
+        };
         let resolved_payload = launch_execution.resolved_payload.clone();
         let title_hint = launch_execution.title_hint.clone();
         let resolved_follow_up_session_id = launch_execution.summary.follow_up_session_id.clone();
@@ -410,7 +417,7 @@ impl SessionLaunchExecutor {
 
         let pending_command_ids = launch_execution
             .runtime_commands
-            .pending_commands
+            .requested_commands
             .iter()
             .map(|command| command.id)
             .collect::<Vec<_>>();
@@ -614,7 +621,7 @@ impl SessionLaunchExecutor {
             tracing::warn!(
                 session_id = %sid,
                 error = %error,
-                "标记 pending runtime commands applied 失败"
+                "标记 requested runtime commands applied 失败"
             );
         }
 
@@ -752,7 +759,7 @@ impl SessionLaunchExecutor {
     }
 }
 
-impl SessionHub {
+impl SessionRuntimeInner {
     /// 解析 hook runtime：决定 reload / refresh / skip。
     ///
     /// 三条路径：

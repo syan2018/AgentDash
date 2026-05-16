@@ -1,7 +1,7 @@
 //! `SessionConstructionProvider` 的 API 层实现。
 //!
 //! 把原始 prompt 输入代入与 HTTP 主通道同一条 `build_session_construction_for_launch`
-//! 路径，使 hub auto-resume 与用户手动 prompt 完全对齐。
+//! 路径，使 session auto-resume 与用户手动 prompt 完全对齐。
 //!
 //! 为什么放这里：construction 逻辑依赖 `Arc<AppState>`（repos、services、platform_config），
 //! 这些都是 API 层构造的；把 trait impl 也放在 API 层最自然，也不必把依赖下沉到
@@ -19,8 +19,8 @@ use crate::app_state::AppState;
 use crate::bootstrap::session_construction_bootstrap::build_session_construction_for_launch;
 use crate::rpc::ApiError;
 
-/// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后通过
-/// `SessionHub::set_session_construction_provider` 注入。
+/// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后注入
+/// session runtime builder。
 pub struct AppStateSessionConstructionProvider {
     state: Arc<AppState>,
 }

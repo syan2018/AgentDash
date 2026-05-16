@@ -1,4 +1,4 @@
-//! LifecycleOrchestrator — DAG 编排引擎
+﻿//! LifecycleOrchestrator — DAG 编排引擎
 //!
 //! 职责：当某个 lifecycle node 的 session 终止后，评估后继 node 的可达性，
 //! 为 AgentNode 类型的后继创建独立 session 并启动 prompt。
@@ -6,7 +6,7 @@
 //! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / SessionBinding / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
 //!
-//! 实现 `SessionTerminalCallback`，由 `SessionHub` 在 session 完全终止后自动调用。
+//! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
 
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{

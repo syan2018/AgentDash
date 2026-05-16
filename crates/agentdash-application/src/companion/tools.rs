@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use crate::session::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, CompanionSessionContext, LaunchCommand,
@@ -2235,8 +2235,9 @@ mod companion_tests {
     use uuid::Uuid;
 
     use crate::session::construction::SessionConstructionPlan;
+    use crate::session::hub::SessionRuntimeInner;
     use crate::session::{
-        CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider, SessionHub,
+        CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider,
         local_workspace_vfs,
     };
     use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
@@ -2560,7 +2561,7 @@ mod companion_tests {
     #[tokio::test]
     async fn companion_parent_resume_routes_through_provider() {
         let root = tempfile::tempdir().expect("workspace");
-        let hub = SessionHub::new_with_hooks_and_persistence(
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Some(local_workspace_vfs(root.path())),
             Arc::new(NoopConnector),
             None,

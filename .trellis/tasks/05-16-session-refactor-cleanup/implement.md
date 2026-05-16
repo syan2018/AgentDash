@@ -1,25 +1,33 @@
-# Session 重构收尾清理 Implement
+﻿# Session 重构彻底收尾 Implement
 
-## Steps
+## Completed
 
-1. 在 `session/hub_support.rs` 的 `TurnExecution` 增加 stream adapter abort handle 字段，并在构造函数初始化为 `None`。
-2. 在 `session/turn_supervisor.rs` 增加：
-   - 清理 active turn 时中止 adapter handle 的内部 helper。
-   - `register_stream_adapter_handle` 方法。
-   - 覆盖登记与清理的单元测试。
-3. 修改 `session/prompt_pipeline.rs`：
-   - `spawn_stream_adapter` 返回 `JoinHandle<()>`。
-   - spawn 后通过 supervisor 登记 abort handle。
-4. 运行验证：
-   - `cargo test -p agentdash-application turn_supervisor --lib`
-   - `cargo test -p agentdash-application connector_setup_failure_does_not_commit_bootstrap_or_pending_commands --lib`
-   - `cargo test -p agentdash-application launch_prompt_strict_requires_session_construction_provider --lib`
+- [x] `TurnExecution` 记录 stream adapter abort handle。
+- [x] `TurnSupervisor` 登记并在 active turn 清理时中止 adapter task。
+- [x] `prompt_pipeline` spawn adapter 后通过 supervisor 登记。
+- [x] 相关 `turn_supervisor`、bootstrap/provider 回归测试通过。
+- [x] `SessionEffectsService` 改为持有 terminal effect deps，dispatcher 不再反向依赖 `SessionRuntimeInner`。
+- [x] terminal effect hook trigger / auto-resume 改为 port，callback/registry/store 显式注入。
+- [x] `SessionLaunchPlanner` 删除 hook resolve 失败时的 turn 清理，`SessionLaunchExecutor` 统一释放 claim/hook。
+- [x] API `ServiceSet.session_hub` 删除，构造期改用 `SessionRuntimeBuilder`。
+- [x] 本机 relay 改持有 `SessionRuntimeServices`，不再向 command handler / ws config 传内部 runtime 装配对象。
+- [x] 删除 `SessionRuntimeInner` facade 中无人使用的历史代理方法，不用 `allow(dead_code)` 掩盖残壳。
+- [x] 删除 `SessionHub` 代码符号，内部残余装配对象改为 crate-private `SessionRuntimeInner`。
+- [x] runtime command record/status/API 从 pending 命名收敛为 requested，并新增 PostgreSQL migration。
 
-## Risk Notes
+## Next Steps
 
-- adapter task 中止必须只发生在 active turn 清理时，不能影响 session 级 hook runtime 或 profile。
-- 清理逻辑需要接受 active turn 不存在的幂等情况。
+1. 执行最终 git diff 审核。
+2. 提交本轮重构收尾。
 
-## Review Gate
+## Validation
 
-用户已明确要求“直接开始执行”；本 task 的 planning artifacts 记录上述范围后即可 `task.py start`。
+- `cargo test -p agentdash-application terminal_effect --lib`
+- `cargo test -p agentdash-application turn_supervisor --lib`
+- `cargo test -p agentdash-application connector_setup_failure_does_not_commit_bootstrap_or_requested_commands --lib`
+- `cargo test -p agentdash-application launch_prompt_strict_requires_session_construction_provider --lib`
+- `cargo test -p agentdash-application session::hub --lib`
+- `cargo test -p agentdash-application runtime_command --lib`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
+- `cargo check -p agentdash-local`

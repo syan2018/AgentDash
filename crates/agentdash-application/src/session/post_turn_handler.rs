@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
@@ -72,7 +72,7 @@ pub type DynTerminalHookEffectHandlerRegistry = Arc<dyn TerminalHookEffectHandle
 /// Session 进入终态后的全局回调。
 ///
 /// 与 `PostTurnHandler`（per-session、由调用方传入）不同，
-/// `SessionTerminalCallback` 是平台级基础设施，由 `SessionHub` 持有。
+/// `SessionTerminalCallback` 是平台级基础设施，由 `SessionRuntimeInner` 持有。
 /// 典型用途：LifecycleOrchestrator 在 session 终止后评估后继 node 并启动新 session。
 #[async_trait::async_trait]
 pub trait SessionTerminalCallback: Send + Sync + 'static {

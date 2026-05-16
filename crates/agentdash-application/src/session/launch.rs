@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
@@ -12,7 +12,7 @@ use agentdash_spi::{
 use super::construction::SessionConstructionPlan;
 use super::construction_provider::{CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource};
 use super::post_turn_handler::DynPostTurnHandler;
-use super::runtime_commands::PendingRuntimeCommandRecord;
+use super::runtime_commands::RuntimeCommandRecord;
 use super::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle, UserPromptInput,
@@ -314,7 +314,7 @@ pub struct HookLaunchPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCommandLaunchPlan {
-    pub pending_commands: Vec<PendingRuntimeCommandRecord>,
+    pub requested_commands: Vec<RuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub base_capability_state: CapabilityState,
     pub apply_after_connector_accept: bool,
@@ -372,7 +372,7 @@ pub struct LaunchExecutionInput {
     pub hook_snapshot_contribution: Option<Vec<ContextFragment>>,
     pub follow_up_session_id: Option<String>,
     pub follow_up_source: LaunchFollowUpSource,
-    pub pending_runtime_commands: Vec<PendingRuntimeCommandRecord>,
+    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub base_capability_state: CapabilityState,
     pub vfs_source: LaunchVfsSource,
@@ -451,7 +451,7 @@ impl LaunchExecution {
             snapshot_contribution: input.hook_snapshot_contribution,
         };
         let runtime_commands = RuntimeCommandLaunchPlan {
-            pending_commands: input.pending_runtime_commands,
+            requested_commands: input.requested_runtime_commands,
             pending_capability_transitions: input.pending_capability_transitions,
             base_capability_state: input.base_capability_state,
             apply_after_connector_accept: true,
@@ -580,7 +580,7 @@ mod tests {
             hook_snapshot_contribution: None,
             follow_up_session_id: None,
             follow_up_source: LaunchFollowUpSource::None,
-            pending_runtime_commands: Vec::new(),
+            requested_runtime_commands: Vec::new(),
             pending_capability_transitions: vec![
                 PendingCapabilityStateTransition {
                     id: "pending-1".to_string(),

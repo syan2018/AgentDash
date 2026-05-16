@@ -1,4 +1,4 @@
-//! Hub 的工具构建与运行时 MCP 热更职责。
+﻿//! Hub 的工具构建与运行时 MCP 热更职责。
 //!
 //! 集中：
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
@@ -16,10 +16,10 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_executor::mcp::DiscoveredMcpTool;
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
 
-use super::SessionHub;
+use super::SessionRuntimeInner;
 use crate::session::types::CapabilityState;
 
-impl SessionHub {
+impl SessionRuntimeInner {
     /// 读取 session 当前 turn 生效的 MCP server 列表（由 prompt pipeline 维护）。
     pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<SessionMcpServer> {
         self.runtime_registry

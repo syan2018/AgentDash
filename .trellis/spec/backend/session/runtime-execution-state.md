@@ -96,7 +96,7 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect
 | `SessionMetaStore` | session meta CRUD 与投影字段合并写回 |
 | `SessionEventStore` | append/read/list session events |
 | `SessionTerminalEffectStore` | terminal effect outbox 写入、状态迁移和查询 |
-| `SessionRuntimeCommandStore` | runtime command upsert、pending 查询、applied/failed 状态迁移 |
+| `SessionRuntimeCommandStore` | runtime command request upsert、requested 查询、applied/failed 状态迁移 |
 
 `SessionPersistence` 可以作为装配层组合接口存在；runtime、effects、pending 的业务逻辑
 依赖对应 store 边界。
@@ -106,9 +106,10 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect
 Runtime context / capability transition 的事实源是 runtime command store：
 
 ```text
-pending -> applied
-pending -> failed
+requested -> applied
+requested -> failed
 ```
 
-下一轮 prompt 只从 command store 查询 pending commands；connector accepted 后写
-applied，失败路径保留可审计状态用于恢复。
+下一轮 prompt 只从 command store 查询 requested commands；connector accepted 后写
+applied，失败路径保留可审计状态用于恢复。旧 `pending` 状态不再作为 runtime command
+事实名使用；数据库迁移会把既有 runtime command 行更新为 `requested`。

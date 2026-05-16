@@ -1,4 +1,4 @@
-//! `SessionRequestAssembler` — 统一 session 启动请求组装。
+﻿//! `SessionRequestAssembler` — 统一 session 启动请求组装。
 //!
 //! ## 设计
 //!
@@ -628,7 +628,7 @@ pub struct OwnerBootstrapSpec<'a> {
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// Session lifecycle 三态判定结果,决定 context bundle / prompt_blocks 组装方式。
     pub lifecycle: OwnerPromptLifecycle,
-    /// 审计总线用于索引的 session key（SessionHub 分配的 `sess-<ms>-<short>`）。
+    /// 审计总线用于索引的 session key（SessionRuntimeInner 分配的 `sess-<ms>-<short>`）。
     ///
     /// 为 `None` 时跳过审计 emit（例如 session 尚未创建的 bootstrap 路径）。
     pub audit_session_key: Option<String>,
@@ -636,11 +636,11 @@ pub struct OwnerBootstrapSpec<'a> {
     pub caller_agent_id: Option<Uuid>,
 }
 
-/// Owner bootstrap 阶段 session_hub 判定出的 prompt lifecycle 模式,决定 compose
+/// Owner bootstrap 阶段 session_runtime_inner 判定出的 prompt lifecycle 模式,决定 compose
 /// 如何组装 context bundle + prompt_blocks。
 ///
 /// 与 `SessionPromptLifecycle` 结构等价,但这里只暴露 compose 所需的 3 个分支,
-/// continuation bundle(来自 SessionHub)由调用方在 Spec 里预先算好传入。
+/// continuation bundle(来自 SessionRuntimeInner)由调用方在 Spec 里预先算好传入。
 pub enum OwnerPromptLifecycle {
     /// owner 首次启动,需要把 owner 上下文 Bundle 注入并包到 prompt blocks。
     OwnerBootstrap,
@@ -648,7 +648,7 @@ pub enum OwnerPromptLifecycle {
     /// 不支持原生 repository restore 时）或直接复用 owner context bundle
     /// （当 connector 支持原生消息历史恢复时）。
     RepositoryRehydrate {
-        /// 由 SessionHub 预先把历史事件渲染成 continuation Bundle，用于不支持
+        /// 由 SessionRuntimeInner 预先把历史事件渲染成 continuation Bundle，用于不支持
         /// `supports_repository_restore` 的 connector。
         prebuilt_continuation_bundle: Option<SessionContextBundle>,
         /// 是否把 owner context bundle 也一并附加（true = 继续用 owner bundle；
@@ -832,7 +832,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
     /// 若存在审计总线且 session_key 可用，则把 bundle 的所有 fragment 批量 emit。
     ///
-    /// `session_key` 应由调用方（spec.audit_session_key）提供，对应 SessionHub 分配的
+    /// `session_key` 应由调用方（spec.audit_session_key）提供，对应 SessionRuntimeInner 分配的
     /// `sess-<ms>-<short>` 字符串 ID。若为 `None`（例如 owner bootstrap 创建新 session 时
     /// 尚未分配 ID 的场景），跳过 emit。
     fn audit_bundle(

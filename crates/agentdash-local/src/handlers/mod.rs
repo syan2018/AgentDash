@@ -27,14 +27,14 @@ use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
 use crate::terminal_manager::TerminalManager;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
 
 /// 命令处理器，路由云端命令到本地执行组件
 #[derive(Clone)]
 pub struct CommandHandler {
     pub(crate) tool_executor: ToolExecutor,
-    pub(crate) session_hub: Option<SessionHub>,
+    pub(crate) session_runtime: Option<SessionRuntimeServices>,
     pub(crate) connector: Option<Arc<dyn AgentConnector>>,
     pub(crate) mcp_manager: Option<Arc<McpClientManager>>,
     pub(crate) workspace_contract_config: WorkspaceContractRuntimeConfig,
@@ -47,7 +47,7 @@ impl CommandHandler {
     pub fn new(
         backend_id: String,
         tool_executor: ToolExecutor,
-        session_hub: Option<SessionHub>,
+        session_runtime: Option<SessionRuntimeServices>,
         connector: Option<Arc<dyn AgentConnector>>,
         mcp_manager: Option<Arc<McpClientManager>>,
         workspace_contract_config: WorkspaceContractRuntimeConfig,
@@ -57,7 +57,7 @@ impl CommandHandler {
         let materialization_store = Arc::new(MaterializationStore::new(backend_id));
         Self {
             tool_executor,
-            session_hub,
+            session_runtime,
             connector,
             mcp_manager,
             workspace_contract_config,

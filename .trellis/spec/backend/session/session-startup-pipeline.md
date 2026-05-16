@@ -117,6 +117,10 @@ requested -> failed
 connector.prompt accepted 后再标记 applied；connector.prompt 失败时保留
 requested/failed 事实供下一轮恢复。
 
+`SessionLaunchPlanner` 不负责释放 turn claim 或清理 hook runtime。hook runtime
+准备失败时，错误返回到 `SessionLaunchExecutor::execute_constructed_launch`，由 executor
+统一调用 `TurnSupervisor::clear_turn_and_hook`，确保规划阶段不直接执行 turn 清理副作用。
+
 ## Ready Gate
 
 云端 `AppState::new_with_plugins` 返回前必须完成 session 主链路依赖绑定：

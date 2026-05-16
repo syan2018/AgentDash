@@ -3,7 +3,7 @@
 use agentdash_relay::*;
 use tokio::sync::mpsc;
 
-use agentdash_application::session::{LaunchCommand, SessionHub, UserPromptInput};
+use agentdash_application::session::{LaunchCommand, SessionRuntimeServices, UserPromptInput};
 
 use super::CommandHandler;
 use super::relay_mcp_servers::parse_relay_mcp_servers;
@@ -14,13 +14,13 @@ impl CommandHandler {
         id: String,
         payload: CommandPromptPayload,
     ) -> RelayMessage {
-        let hub = match &self.session_hub {
-            Some(hub) => hub.clone(),
+        let session_runtime = match &self.session_runtime {
+            Some(session_runtime) => session_runtime.clone(),
             None => {
                 return RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
-                    error: Some(RelayError::runtime_error("SessionHub 未初始化")),
+                    error: Some(RelayError::runtime_error("Session runtime 未初始化")),
                 };
             }
         };
@@ -128,18 +128,18 @@ impl CommandHandler {
 
         let event_tx = self.event_tx.clone();
 
-        match hub
-            .launch_service()
+        match session_runtime
+            .launch
             .launch_command(&session_id, command)
             .await
         {
             Ok(turn_id) => {
-                let hub_clone = hub.clone();
+                let session_runtime = session_runtime.clone();
                 let sid = session_id.clone();
                 let tid = turn_id.clone();
 
                 tokio::spawn(async move {
-                    forward_session_notifications(hub_clone, &sid, &tid, event_tx).await;
+                    forward_session_notifications(session_runtime, &sid, &tid, event_tx).await;
                 });
 
                 RelayMessage::ResponsePrompt {
@@ -167,19 +167,19 @@ impl CommandHandler {
         id: String,
         payload: CommandCancelPayload,
     ) -> RelayMessage {
-        let hub = match &self.session_hub {
-            Some(hub) => hub,
+        let session_runtime = match &self.session_runtime {
+            Some(session_runtime) => session_runtime,
             None => {
                 return RelayMessage::ResponseCancel {
                     id,
                     payload: None,
-                    error: Some(RelayError::runtime_error("SessionHub 未初始化")),
+                    error: Some(RelayError::runtime_error("Session runtime 未初始化")),
                 };
             }
         };
 
         tracing::info!(session_id = %payload.session_id, "收到 command.cancel");
-        match hub.runtime_service().cancel(&payload.session_id).await {
+        match session_runtime.runtime.cancel(&payload.session_id).await {
             Ok(()) => RelayMessage::ResponseCancel {
                 id,
                 payload: Some(ResponseCancelPayload {
@@ -222,14 +222,14 @@ impl CommandHandler {
     }
 }
 
-/// 订阅 SessionHub 的通知流并通过事件通道转发到 WebSocket
+/// 订阅 session 通知流并通过事件通道转发到 WebSocket
 async fn forward_session_notifications(
-    hub: SessionHub,
+    session_runtime: SessionRuntimeServices,
     session_id: &str,
     _turn_id: &str,
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 ) {
-    let mut rx = hub.eventing_service().ensure_session(session_id).await;
+    let mut rx = session_runtime.eventing.ensure_session(session_id).await;
 
     loop {
         match rx.recv().await {

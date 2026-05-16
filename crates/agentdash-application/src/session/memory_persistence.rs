@@ -9,7 +9,7 @@ use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
 };
-use super::runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
+use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
 };
@@ -27,7 +27,7 @@ struct MemorySessionPersistenceState {
     metas: HashMap<String, SessionMeta>,
     events: HashMap<String, Vec<PersistedSessionEvent>>,
     terminal_effects: Vec<TerminalEffectRecord>,
-    runtime_commands: Vec<PendingRuntimeCommandRecord>,
+    runtime_commands: Vec<RuntimeCommandRecord>,
 }
 
 #[async_trait::async_trait]
@@ -300,11 +300,11 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(records)
     }
 
-    async fn upsert_pending_runtime_command(
+    async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<PendingRuntimeCommandRecord> {
+    ) -> io::Result<RuntimeCommandRecord> {
         let mut guard = self.inner.lock().await;
         if !guard.metas.contains_key(session_id) {
             return Err(io::Error::new(
@@ -316,19 +316,19 @@ impl SessionPersistence for MemorySessionPersistence {
         for command in guard.runtime_commands.iter_mut().filter(|command| {
             command.session_id == session_id
                 && command.phase_node == transition.phase_node
-                && command.status == RuntimeCommandStatus::Pending
+                && command.status == RuntimeCommandStatus::Requested
         }) {
             command.status = RuntimeCommandStatus::Failed;
             command.updated_at_ms = now;
             command.failed_at_ms = Some(now);
-            command.last_error = Some("superseded_by_new_pending_command".to_string());
+            command.last_error = Some("superseded_by_new_requested_command".to_string());
         }
-        let record = PendingRuntimeCommandRecord {
+        let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
             session_id: session_id.to_string(),
             transition_id: transition.id.clone(),
             phase_node: transition.phase_node.clone(),
-            status: RuntimeCommandStatus::Pending,
+            status: RuntimeCommandStatus::Requested,
             transition,
             created_at_ms: now,
             updated_at_ms: now,
@@ -340,16 +340,17 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(record)
     }
 
-    async fn list_pending_runtime_commands(
+    async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         let guard = self.inner.lock().await;
         let mut records = guard
             .runtime_commands
             .iter()
             .filter(|command| {
-                command.session_id == session_id && command.status == RuntimeCommandStatus::Pending
+                command.session_id == session_id
+                    && command.status == RuntimeCommandStatus::Requested
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -375,7 +376,7 @@ impl SessionPersistence for MemorySessionPersistence {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         let guard = self.inner.lock().await;
         let limit = usize::try_from(limit.max(1))
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
@@ -443,7 +444,7 @@ impl MemorySessionPersistence {
                     command.failed_at_ms = Some(now);
                     command.last_error = error.clone();
                 }
-                RuntimeCommandStatus::Pending => {}
+                RuntimeCommandStatus::Requested => {}
             }
         }
         Ok(())
@@ -733,18 +734,18 @@ mod tests {
             source_turn_id: None,
         };
         let first = persistence
-            .upsert_pending_runtime_command("sess-runtime-command", transition("cmd-1"))
+            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-1"))
             .await
             .expect("应能写入第一条 command");
         let second = persistence
-            .upsert_pending_runtime_command("sess-runtime-command", transition("cmd-2"))
+            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-2"))
             .await
             .expect("应能写入第二条 command");
 
         let pending = persistence
-            .list_pending_runtime_commands("sess-runtime-command")
+            .list_requested_runtime_commands("sess-runtime-command")
             .await
-            .expect("应能查询 pending command");
+            .expect("应能查询 requested command");
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, second.id);
 
@@ -756,7 +757,7 @@ mod tests {
         assert_eq!(failed[0].id, first.id);
         assert_eq!(
             failed[0].last_error.as_deref(),
-            Some("superseded_by_new_pending_command")
+            Some("superseded_by_new_requested_command")
         );
 
         persistence

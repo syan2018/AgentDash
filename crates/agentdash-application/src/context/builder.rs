@@ -1,4 +1,4 @@
-//! Context builder — 统一的 session 上下文 Bundle 构建入口。
+﻿//! Context builder — 统一的 session 上下文 Bundle 构建入口。
 //!
 //! 本模块的公共 API（`ContextBuildPhase` / `SessionContextConfig` /
 //! `Contribution` / `build_session_context_bundle`）**不依赖任何 domain 类型**，
@@ -132,7 +132,7 @@ pub fn build_session_context_bundle(
 /// 把预构建的 continuation Markdown 包装成 `SessionContextBundle`。
 ///
 /// 当 session 冷启动进入 RepositoryRehydrate 且 connector 不支持原生 repository
-/// restore 时，SessionHub 先根据历史事件渲染出连贯的 Markdown，再由此函数
+/// restore 时，session runtime 先根据历史事件渲染出连贯的 Markdown，再由此函数
 /// 封装为 Bundle 供 connector 层统一消费。
 ///
 /// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、

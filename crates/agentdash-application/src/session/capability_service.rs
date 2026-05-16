@@ -1,7 +1,7 @@
-use agentdash_spi::SessionMcpServer;
+﻿use agentdash_spi::SessionMcpServer;
 use async_trait::async_trait;
 
-use super::hub::SessionHub;
+use super::hub::SessionRuntimeInner;
 use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
     PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
@@ -13,11 +13,11 @@ use crate::runtime_gateway::{
 
 #[derive(Clone)]
 pub struct SessionCapabilityService {
-    hub: SessionHub,
+    hub: SessionRuntimeInner,
 }
 
 impl SessionCapabilityService {
-    pub(super) fn new(hub: SessionHub) -> Self {
+    pub(super) fn new(hub: SessionRuntimeInner) -> Self {
         Self { hub }
     }
 

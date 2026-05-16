@@ -15,7 +15,7 @@ use crate::handlers::CommandHandler;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::SessionHub;
+use agentdash_application::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
 
 #[derive(Clone)]
@@ -26,7 +26,7 @@ pub struct Config {
     pub name: String,
     pub accessible_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
-    pub session_hub: Option<SessionHub>,
+    pub session_runtime: Option<SessionRuntimeServices>,
     pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
@@ -98,7 +98,7 @@ async fn run_session(
     let handler = CommandHandler::new(
         config.backend_id.clone(),
         config.tool_executor.clone(),
-        config.session_hub.clone(),
+        config.session_runtime.clone(),
         config.connector.clone(),
         config.mcp_manager.clone(),
         config.workspace_contract_config.clone(),

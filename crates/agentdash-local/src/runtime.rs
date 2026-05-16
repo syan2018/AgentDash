@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application::session::{SessionExecutionState, SessionHub};
+use agentdash_application::session::{SessionExecutionState, SessionRuntimeServices};
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
@@ -118,7 +118,7 @@ pub struct LocalRuntimeManager {
 
 struct RunningRuntime {
     config: LocalRuntimeConfig,
-    session_hub: Option<SessionHub>,
+    session_runtime: Option<SessionRuntimeServices>,
     shutdown_tx: watch::Sender<bool>,
     status_tx: watch::Sender<LocalRuntimeStatus>,
     status_rx: watch::Receiver<LocalRuntimeStatus>,
@@ -163,7 +163,7 @@ impl LocalRuntimeManager {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
-        let session_hub = ws_config.session_hub.clone();
+        let session_runtime = ws_config.session_runtime.clone();
 
         let join = tokio::spawn({
             let status_tx = status_tx.clone();
@@ -212,7 +212,7 @@ impl LocalRuntimeManager {
 
         *guard = Some(RunningRuntime {
             config,
-            session_hub,
+            session_runtime,
             shutdown_tx,
             status_tx,
             status_rx,
@@ -259,7 +259,7 @@ impl LocalRuntimeManager {
                 anyhow::bail!("本机 runtime 未运行");
             };
 
-            let active_sessions = count_active_sessions(running.session_hub.as_ref()).await?;
+            let active_sessions = count_active_sessions(running.session_runtime.as_ref()).await?;
             if active_sessions > 0 {
                 self.record_log(
                     "warn",
@@ -337,11 +337,13 @@ async fn push_log(
     }
 }
 
-async fn count_active_sessions(session_hub: Option<&SessionHub>) -> anyhow::Result<usize> {
-    let Some(session_hub) = session_hub else {
+async fn count_active_sessions(
+    session_runtime: Option<&SessionRuntimeServices>,
+) -> anyhow::Result<usize> {
+    let Some(session_runtime) = session_runtime else {
         return Ok(0);
     };
-    let session_core = session_hub.core_service();
+    let session_core = &session_runtime.core;
 
     let sessions = session_core.list_sessions().await?;
     if sessions.is_empty() {
@@ -425,7 +427,7 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
     if config.accessible_roots.is_empty() {
-        tracing::warn!("未指定 accessible_roots，将使用当前目录作为 SessionHub 工作目录兜底");
+        tracing::warn!("未指定 accessible_roots，将使用当前目录作为 session runtime 工作目录兜底");
     }
 
     tracing::info!(
@@ -449,7 +451,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         )))
     };
 
-    let (session_hub, connector) = if config.executor_enabled {
+    let (session_runtime, connector) = if config.executor_enabled {
         let workspace_root = config
             .accessible_roots
             .first()
@@ -476,7 +478,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         .await?;
         let session_repo = Arc::new(SqliteSessionRepository::new(pool));
         session_repo.initialize().await?;
-        let hub = SessionHub::new_with_hooks_and_persistence(
+        let session_runtime = SessionRuntimeServices::new_with_hooks_and_persistence(
             Some(agentdash_application::session::local_workspace_vfs(
                 &workspace_root,
             )),
@@ -485,14 +487,14 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             session_repo,
         );
 
-        if let Err(error) = hub.runtime_service().recover_interrupted_sessions().await {
+        if let Err(error) = session_runtime.runtime.recover_interrupted_sessions().await {
             tracing::warn!(error = %error, "启动恢复 session 状态失败（非致命）");
         }
 
-        tracing::info!("SessionHub 已初始化");
-        (Some(hub), Some(connector))
+        tracing::info!("Session runtime 已初始化");
+        (Some(session_runtime), Some(connector))
     } else {
-        tracing::info!("SessionHub 已禁用");
+        tracing::info!("Session runtime 已禁用");
         (None, None)
     };
 
@@ -503,7 +505,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         name: config.name.clone(),
         accessible_roots: config.accessible_roots.clone(),
         tool_executor,
-        session_hub,
+        session_runtime,
         connector,
         mcp_manager,
         workspace_contract_config: local_backend_config.workspace_contract,
@@ -608,7 +610,7 @@ fn status_from_ws_config(
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
-        executor_enabled: config.session_hub.is_some(),
+        executor_enabled: config.session_runtime.is_some(),
         mcp_server_count: config
             .mcp_manager
             .as_ref()

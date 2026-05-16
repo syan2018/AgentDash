@@ -1,11 +1,11 @@
-use std::{io, sync::Arc};
+﻿use std::{io, sync::Arc};
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::runtime_commands::{PendingRuntimeCommandRecord, RuntimeCommandStatus};
+use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
 };
@@ -56,7 +56,7 @@ pub trait SessionMetaStore: Send + Sync {
     /// `last_terminal_message`）受 DB 层 `CASE WHEN` 保护，不会被旧快照回滚。
     /// 但非投影字段（`executor_session_id` / `companion_context` 等）会被直接覆盖。
     ///
-    /// 优先使用 `SessionHub::update_session_meta()` 做 get-modify-save 原子操作。
+    /// 优先使用 `SessionRuntimeInner::update_session_meta()` 做 get-modify-save 原子操作。
     async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()>;
 
     async fn delete_session(&self, session_id: &str) -> io::Result<()>;
@@ -114,16 +114,16 @@ pub trait SessionTerminalEffectStore: Send + Sync {
 
 #[async_trait]
 pub trait SessionRuntimeCommandStore: Send + Sync {
-    async fn upsert_pending_runtime_command(
+    async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<PendingRuntimeCommandRecord>;
+    ) -> io::Result<RuntimeCommandRecord>;
 
-    async fn list_pending_runtime_commands(
+    async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>>;
+    ) -> io::Result<Vec<RuntimeCommandRecord>>;
 
     async fn mark_runtime_commands_applied(&self, command_ids: &[Uuid]) -> io::Result<()>;
 
@@ -137,7 +137,7 @@ pub trait SessionRuntimeCommandStore: Send + Sync {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>>;
+    ) -> io::Result<Vec<RuntimeCommandRecord>>;
 }
 
 #[async_trait]
@@ -196,16 +196,16 @@ pub trait SessionPersistence: Send + Sync {
         limit: u32,
     ) -> io::Result<Vec<TerminalEffectRecord>>;
 
-    async fn upsert_pending_runtime_command(
+    async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<PendingRuntimeCommandRecord>;
+    ) -> io::Result<RuntimeCommandRecord>;
 
-    async fn list_pending_runtime_commands(
+    async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>>;
+    ) -> io::Result<Vec<RuntimeCommandRecord>>;
 
     async fn mark_runtime_commands_applied(&self, command_ids: &[Uuid]) -> io::Result<()>;
 
@@ -219,7 +219,7 @@ pub trait SessionPersistence: Send + Sync {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>>;
+    ) -> io::Result<Vec<RuntimeCommandRecord>>;
 }
 
 #[derive(Clone)]
@@ -354,22 +354,22 @@ impl SessionTerminalEffectStore for SessionPersistenceStoreAdapter {
 
 #[async_trait]
 impl SessionRuntimeCommandStore for SessionPersistenceStoreAdapter {
-    async fn upsert_pending_runtime_command(
+    async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<PendingRuntimeCommandRecord> {
+    ) -> io::Result<RuntimeCommandRecord> {
         self.persistence
-            .upsert_pending_runtime_command(session_id, transition)
+            .upsert_runtime_command_request(session_id, transition)
             .await
     }
 
-    async fn list_pending_runtime_commands(
+    async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         self.persistence
-            .list_pending_runtime_commands(session_id)
+            .list_requested_runtime_commands(session_id)
             .await
     }
 
@@ -393,7 +393,7 @@ impl SessionRuntimeCommandStore for SessionPersistenceStoreAdapter {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<PendingRuntimeCommandRecord>> {
+    ) -> io::Result<Vec<RuntimeCommandRecord>> {
         self.persistence
             .list_runtime_commands_by_status(statuses, limit)
             .await

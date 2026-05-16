@@ -1,4 +1,4 @@
-//! Companion 子域的 notification 构造 helpers。
+﻿//! Companion 子域的 notification 构造 helpers。
 //!
 //! PR 7d：`build_companion_human_response_notification` 从
 //! `session/continuation.rs` 挪出来。原位置是因为早期把所有"历史事件
@@ -14,7 +14,7 @@ use agentdash_agent_protocol::{
 
 /// 构造 companion "人类回应" 事件通知。
 ///
-/// 调用方：`SessionHub::respond_companion_request`（hub/facade.rs）。
+/// 调用方：`session runtime::respond_companion_request`（hub/facade.rs）。
 /// 被 registered 的 companion tool 在 pending 状态等待时，HTTP 层触发此
 /// 函数产出 `BackboneEnvelope`，进事件流供 Inspector 可视化。
 pub fn build_companion_human_response_notification(

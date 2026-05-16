@@ -1,14 +1,19 @@
-use std::io;
+﻿use std::io;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::hooks::{HookEffect, HookTraceTrigger, HookTrigger, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{
+    HookEffect, HookSessionRuntimeAccess, HookTraceTrigger, HookTrigger, SharedHookSessionRuntime,
+};
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use super::hub::{HookTriggerInput, SessionHub};
 use super::hub_support::TurnTerminalKind;
-use super::post_turn_handler::{DynPostTurnHandler, DynSessionTerminalCallback};
+use super::persistence::SessionTerminalEffectStore;
+use super::post_turn_handler::{
+    DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -141,22 +146,44 @@ pub(crate) struct TerminalEffectDispatchInput {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
-pub(crate) struct SessionTerminalEffectDispatcher<'a> {
-    deps: TerminalEffectDeps<'a>,
+pub(crate) struct SessionTerminalEffectDispatcher {
+    deps: TerminalEffectDeps,
 }
 
-pub(crate) struct TerminalEffectDeps<'a> {
-    hub: &'a SessionHub,
+#[derive(Clone)]
+pub(crate) struct TerminalEffectDeps {
+    pub terminal_effects: Arc<dyn SessionTerminalEffectStore>,
+    pub hook_trigger: Arc<dyn TerminalHookTriggerPort>,
+    pub terminal_callback: Arc<RwLock<Option<DynSessionTerminalCallback>>>,
+    pub hook_effect_handler_registry: Arc<RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
+    pub auto_resume: Arc<dyn TerminalAutoResumePort>,
 }
 
-impl<'a> TerminalEffectDeps<'a> {
-    pub(crate) fn from_hub(hub: &'a SessionHub) -> Self {
-        Self { hub }
-    }
+pub(crate) struct TerminalHookTriggerRequest<'a> {
+    pub session_id: &'a str,
+    pub turn_id: Option<&'a str>,
+    pub trigger: HookTrigger,
+    pub payload: Option<serde_json::Value>,
+    pub refresh_reason: &'static str,
+    pub source: SourceInfo,
 }
 
-impl<'a> SessionTerminalEffectDispatcher<'a> {
-    pub fn new(deps: TerminalEffectDeps<'a>) -> Self {
+#[async_trait::async_trait]
+pub(crate) trait TerminalHookTriggerPort: Send + Sync {
+    async fn emit_terminal_hook_trigger(
+        &self,
+        hook_session: &dyn HookSessionRuntimeAccess,
+        input: TerminalHookTriggerRequest<'_>,
+    ) -> Vec<HookEffect>;
+}
+
+#[async_trait::async_trait]
+pub(crate) trait TerminalAutoResumePort: Send + Sync {
+    async fn request_hook_auto_resume(&self, session_id: String) -> bool;
+}
+
+impl SessionTerminalEffectDispatcher {
+    pub fn new(deps: TerminalEffectDeps) -> Self {
         Self { deps }
     }
 
@@ -170,10 +197,10 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         if let Some(hook_session) = input.hook_session.as_ref() {
             let effects = self
                 .deps
-                .hub
-                .emit_session_hook_trigger(
+                .hook_trigger
+                .emit_terminal_hook_trigger(
                     hook_session.as_ref(),
-                    &HookTriggerInput {
+                    TerminalHookTriggerRequest {
                         session_id: &input.session_id,
                         turn_id: Some(&input.turn_id),
                         trigger: HookTrigger::SessionTerminal,
@@ -185,8 +212,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                         source: input.source.clone(),
                     },
                 )
-                .await
-                .effects;
+                .await;
 
             if !effects.is_empty() {
                 let supported_effect_kinds = input
@@ -221,7 +247,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             }
         }
 
-        if let Some(callback) = self.deps.hub.terminal_callback.read().await.clone() {
+        if let Some(callback) = self.deps.terminal_callback.read().await.clone() {
             self.enqueue(
                 &mut batch,
                 NewTerminalEffectRecord {
@@ -269,8 +295,6 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
     ) {
         match self
             .deps
-            .hub
-            .stores
             .terminal_effects
             .insert_terminal_effect(effect)
             .await
@@ -303,8 +327,6 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
     pub async fn replay_durable_outbox(&self, limit: u32) -> io::Result<usize> {
         let records = self
             .deps
-            .hub
-            .stores
             .terminal_effects
             .list_terminal_effects_by_status(
                 &[
@@ -336,7 +358,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         match record.effect_type {
             TerminalEffectType::HookAutoResume => TerminalEffectExecutor::HookAutoResume,
             TerminalEffectType::SessionTerminalCallback => {
-                match self.deps.hub.terminal_callback.read().await.clone() {
+                match self.deps.terminal_callback.read().await.clone() {
                     Some(callback) => TerminalEffectExecutor::SessionTerminalCallback {
                         callback,
                         terminal_state: record
@@ -375,14 +397,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
                 };
             }
         };
-        let Some(registry) = self
-            .deps
-            .hub
-            .hook_effect_handler_registry
-            .read()
-            .await
-            .clone()
-        else {
+        let Some(registry) = self.deps.hook_effect_handler_registry.read().await.clone() else {
             return TerminalEffectExecutor::Unavailable {
                 reason: "hook_effects 缺少 durable handler registry".to_string(),
             };
@@ -405,8 +420,6 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
     async fn execute_one(&self, item: EnqueuedTerminalEffect) -> io::Result<()> {
         let next_attempt_count = item.record.attempt_count.saturating_add(1);
         self.deps
-            .hub
-            .stores
             .terminal_effects
             .mark_terminal_effect_running(item.record.id)
             .await?;
@@ -427,7 +440,7 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             TerminalEffectExecutor::HookAutoResume => {
                 let _ = self
                     .deps
-                    .hub
+                    .auto_resume
                     .request_hook_auto_resume(item.record.session_id.clone())
                     .await;
                 Ok(())
@@ -438,8 +451,6 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
         match result {
             Ok(()) => {
                 self.deps
-                    .hub
-                    .stores
                     .terminal_effects
                     .mark_terminal_effect_succeeded(item.record.id)
                     .await
@@ -447,15 +458,11 @@ impl<'a> SessionTerminalEffectDispatcher<'a> {
             Err(error) => {
                 if next_attempt_count >= MAX_TERMINAL_EFFECT_ATTEMPTS {
                     self.deps
-                        .hub
-                        .stores
                         .terminal_effects
                         .mark_terminal_effect_dead_letter(item.record.id, error.clone())
                         .await?;
                 } else {
                     self.deps
-                        .hub
-                        .stores
                         .terminal_effects
                         .mark_terminal_effect_failed(item.record.id, error.clone())
                         .await?;
@@ -525,6 +532,7 @@ mod tests {
     use futures::stream;
     use tokio::sync::Mutex;
 
+    use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
     use crate::session::{MemorySessionPersistence, SessionPersistence};
@@ -576,7 +584,7 @@ mod tests {
             .await
             .expect("session should be created");
 
-        let hub = SessionHub::new_with_hooks_and_persistence(
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             None,
             Arc::new(NoopConnector),
             None,

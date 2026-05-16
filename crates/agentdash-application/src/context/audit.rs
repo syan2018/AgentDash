@@ -1,4 +1,4 @@
-//! Session 上下文审计总线 —— Bundle/Fragment 产出与消费的可观测轨迹。
+﻿//! Session 上下文审计总线 —— Bundle/Fragment 产出与消费的可观测轨迹。
 //!
 //! 审计总线是 PRD Step 10 的核心：任何 `ContextFragment` 进入 `SessionContextBundle`
 //! （由 compose_* 产出 / Hook 每轮合并 / Continuation 等）都会发一条 `ContextAuditEvent`，
@@ -20,7 +20,7 @@ use uuid::Uuid;
 /// 审计总线用于索引 session 的 key。
 ///
 /// 与 `SessionContextBundle.session_id`（`Uuid`）不同，这里使用 `String`：
-/// 因为生产环境 session ID 的形式是 `sess-<ms>-<shortuuid>`（见 `SessionHub`），
+/// 因为生产环境 session ID 的形式是 `sess-<ms>-<shortuuid>`（见 `session runtime`），
 /// 不是纯 UUID。`Uuid` 仅用于 bundle 内部追踪。
 pub type AuditSessionKey = String;
 
@@ -73,7 +73,7 @@ fn scope_tag(scope: FragmentScope) -> &'static str {
 pub struct ContextAuditEvent {
     pub event_id: Uuid,
     pub bundle_id: Uuid,
-    /// session ID（与 `SessionHub` 分配的 `sess-<ms>-<short>` 形式一致）。
+    /// session ID（与 `session runtime` 分配的 `sess-<ms>-<short>` 形式一致）。
     pub session_id: AuditSessionKey,
     /// 内部 Bundle 追踪用的 UUID —— 可能是占位值，不等于 `session_id`。
     pub bundle_session_uuid: Uuid,
@@ -187,7 +187,7 @@ fn hash_content(content: &str) -> u64 {
 
 /// 把 Bundle 内所有 fragment 发送为一批审计事件（共用 trigger / bundle_id / session_id）。
 ///
-/// `session_key` 是 session 的外部 ID（SessionHub 分配的 `sess-<ms>-<short>`），
+/// `session_key` 是 session 的外部 ID（session runtime 分配的 `sess-<ms>-<short>`），
 /// 与 `bundle.session_id`（内部 UUID，占位）不同。
 pub fn emit_bundle_fragments(
     bus: &dyn ContextAuditBus,

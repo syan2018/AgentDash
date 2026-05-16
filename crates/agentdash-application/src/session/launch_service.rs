@@ -1,6 +1,6 @@
-use agentdash_spi::ConnectorError;
+﻿use agentdash_spi::ConnectorError;
 
-use super::hub::SessionHub;
+use super::hub::SessionRuntimeInner;
 use super::launch::{LaunchCommand, LaunchCommandOutcome};
 use super::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
 
@@ -10,36 +10,36 @@ pub struct SessionLaunchService {
 }
 
 impl SessionLaunchDeps {
-    pub(in crate::session) fn from_hub(hub: &SessionHub) -> Self {
+    pub(in crate::session) fn from_inner(inner: &SessionRuntimeInner) -> Self {
         Self {
-            default_vfs: hub.default_vfs.clone(),
-            connector: hub.connector.clone(),
-            runtime_registry: hub.runtime_registry.clone(),
-            turn_supervisor: hub.turn_supervisor.clone(),
-            stores: hub.stores.clone(),
-            vfs_service: hub.vfs_service.clone(),
-            extra_skill_dirs: hub.extra_skill_dirs.clone(),
-            title_generator: hub.title_generator.clone(),
-            session_construction_provider: hub.session_construction_provider.clone(),
-            hook_effect_handler_registry: hub.hook_effect_handler_registry.clone(),
-            context_audit_bus: hub.context_audit_bus.clone(),
-            base_system_prompt: hub.base_system_prompt.clone(),
-            user_preferences: hub.user_preferences.clone(),
-            runtime_tool_provider: hub.runtime_tool_provider.clone(),
-            mcp_relay_provider: hub.mcp_relay_provider.clone(),
-            eventing: hub.eventing_service(),
-            core: hub.core_service(),
-            hooks: hub.hook_service(),
-            capability: hub.capability_service(),
-            effects: hub.effects_service(),
+            default_vfs: inner.default_vfs.clone(),
+            connector: inner.connector.clone(),
+            runtime_registry: inner.runtime_registry.clone(),
+            turn_supervisor: inner.turn_supervisor.clone(),
+            stores: inner.stores.clone(),
+            vfs_service: inner.vfs_service.clone(),
+            extra_skill_dirs: inner.extra_skill_dirs.clone(),
+            title_generator: inner.title_generator.clone(),
+            session_construction_provider: inner.session_construction_provider.clone(),
+            hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
+            context_audit_bus: inner.context_audit_bus.clone(),
+            base_system_prompt: inner.base_system_prompt.clone(),
+            user_preferences: inner.user_preferences.clone(),
+            runtime_tool_provider: inner.runtime_tool_provider.clone(),
+            mcp_relay_provider: inner.mcp_relay_provider.clone(),
+            eventing: inner.eventing_service(),
+            core: inner.core_service(),
+            hooks: inner.hook_service(),
+            capability: inner.capability_service(),
+            effects: inner.effects_service(),
         }
     }
 }
 
 impl SessionLaunchService {
-    pub(super) fn new(hub: SessionHub) -> Self {
+    pub(super) fn new(inner: SessionRuntimeInner) -> Self {
         Self {
-            deps: SessionLaunchDeps::from_hub(&hub),
+            deps: SessionLaunchDeps::from_inner(&inner),
         }
     }
 

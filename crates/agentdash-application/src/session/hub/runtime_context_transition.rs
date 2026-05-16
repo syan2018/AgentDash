@@ -1,4 +1,4 @@
-//! Workflow runtime context transition 的统一应用入口。
+﻿//! Workflow runtime context transition 的统一应用入口。
 //!
 //! 这里刻意放在 Hub 层：transition 应用需要同时触碰 live connector、SessionRuntime、
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
 use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
-use super::SessionHub;
+use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
@@ -86,7 +86,7 @@ pub(crate) fn build_initial_capability_state_frame(
     )
 }
 
-impl SessionHub {
+impl SessionRuntimeInner {
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
         hook_session: &SharedHookSessionRuntime,

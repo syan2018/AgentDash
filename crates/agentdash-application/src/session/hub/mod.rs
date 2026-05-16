@@ -1,4 +1,4 @@
-//! `SessionHub` 装配对象与尚待下沉的 session 内部实现。
+﻿//! `SessionRuntimeInner` 装配对象与尚待下沉的 session 内部实现。
 //!
 //! 按能力服务拆分后的剩余范围：
 //! - [`facade`]：测试入口与少量 session 内部 helper。
@@ -40,7 +40,7 @@ pub(crate) use runtime_context_transition::{
 };
 
 #[derive(Clone)]
-pub struct SessionHub {
+pub struct SessionRuntimeInner {
     /// 当 construction request 未提供 VFS 时回退使用（如云宿主 cwd、本机首个 accessible root）。
     pub(super) default_vfs: Option<Vfs>,
     pub(super) connector: Arc<dyn AgentConnector>,

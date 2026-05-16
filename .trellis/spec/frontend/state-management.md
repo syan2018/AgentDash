@@ -33,6 +33,11 @@
 | `settingsStore` | 全局设置 | LLM API keys、系统配置 |
 | `currentUserStore` | 当前用户 | 用户信息 |
 | `activeSessionsStore` | 活跃会话追踪 | 运行中的 session 列表 |
+| `llmProviderStore` | LLM Provider 管理 | provider 列表、配置 |
+| `routineStore` | Routine 管理 | routine 定义、触发状态 |
+| `authStore` | 认证状态 | token、登录状态 |
+| `sidebarSessionsStore` | 侧边栏会话列表 | 会话摘要、分组 |
+| `workspaceTabStore` | 工作空间标签页 | 当前 tab、tab 列表 |
 
 ---
 
@@ -116,4 +121,4 @@ fetchWorkspaces: async (projectId) => {
 
 ---
 
-*更新：2026-03-29 — 对齐实际 10 个 Store 清单，示例改用 projectId 驱动*
+*更新：2026-05-16 — 对齐实际 15 个 Store 清单，补全 llmProviderStore / routineStore / authStore / sidebarSessionsStore / workspaceTabStore*

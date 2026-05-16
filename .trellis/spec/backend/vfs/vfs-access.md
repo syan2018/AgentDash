@@ -43,7 +43,7 @@ trait VfsProvider {
 
 #### 2.2.1 命名注意（当前代码现状）
 
-- 当前代码里的 `agentdash-injection::VfsProvider` 仅用于暴露 VFS descriptor，服务 `/api/vfs` 能力发现。
+- 当前代码中 VFS descriptor provider（位于 `agentdash-spi` 的 context/injection 模块）仅用于暴露 VFS descriptor，服务 `/api/vfs` 能力发现。
 - 它还不是本规范这里的统一读写 provider，不承担 `read / write / list / search / exec`。
 - 后续落地时必须显式决定是：
   - 扩展现有 descriptor provider

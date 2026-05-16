@@ -6,83 +6,60 @@
 
 ## 设计原则
 
-前端目录结构按**功能模块（FSD 风格）**组织：
+前端采用 monorepo 多包结构，核心应用按**功能模块（FSD 风格）**组织：
 - 各模块独立，通过共享类型交互
 - 视图组件（`ui/`）和状态逻辑（`model/`）分离
 - 全局状态收敛到 `stores/`
+- 通用 UI 基础件抽取到独立 `@agentdash/ui` 包
 
 ---
 
-## 实际目录布局（React 19 + TypeScript 5.9 + Vite 7 + Tailwind v4）
+## Monorepo 包结构
 
 ```
-frontend/src/
+packages/
+├── app-web/           # 主 Web 应用（React 19 + TypeScript 5.9 + Vite 7 + Tailwind v4）
+├── app-tauri/         # Tauri 桌面端入口
+├── ui/                # 共享 UI 基础件（Button / Select / Notice 等）
+├── core/              # 共享核心逻辑（local-runtime 等）
+└── views/             # 共享视图组件（LocalRuntimeView 等）
+```
+
+---
+
+## 主应用布局（packages/app-web/src/）
+
+```
+packages/app-web/src/
 ├── api/                            # API 调用层
-│   ├── client.ts                   # 统一 HTTP 客户端（GET/POST/PUT/PATCH/DELETE）
-│   ├── eventStream.ts              # SSE 事件流（Dashboard 用）
+│   ├── client.ts                   # 统一 HTTP 客户端
+│   ├── mappers.ts                  # API 响应映射
+│   ├── eventStream.ts              # SSE 事件流
 │   ├── origin.ts                   # API_ORIGIN / buildApiPath
-│   ├── settings.ts                 # Settings API
 │   └── streamRegistry.ts           # 流连接追踪（HMR 安全）
 ├── components/                     # 共享 UI 组件
 │   ├── acp/                        # ACP 协议可视化组件
 │   ├── layout/                     # 布局组件（WorkspaceLayout、侧边栏）
-│   ├── ui/                         # 通用 UI（StatusBadge, ThemeToggle 等）
-│   ├── context-config-editor.tsx   # 上下文配置编辑器
-│   └── context-config-defaults.ts  # 上下文配置默认值
+│   ├── ui/                         # 通用 UI（StatusBadge, detail-panel 等）
+│   └── context-config-editor.tsx   # 上下文配置编辑器
 ├── features/                       # 功能模块（FSD 风格：model/ + ui/）
-│   ├── acp-session/                # ACP 会话流展示
-│   │   ├── model/                  # types, useAcpStream, useAcpSession, agentdashMeta
-│   │   └── ui/                     # SessionChatView, AcpSessionEntry, AcpMessageCard,
-│   │                               #   AcpToolCallCard, AcpSystemEventCard/Guard,
-│   │                               #   AcpTaskEventCard, AcpOwnerContextCard, EventCards 等
+│   ├── session/                    # 会话流展示（stream / chat view / event cards）
 │   ├── executor-selector/          # 执行器/模型选择器
-│   │   ├── model/                  # types, useExecutorConfig, useExecutorDiscoveredOptions
-│   │   └── ui/                     # ExecutorSelector
-│   ├── project/                    # 项目管理
-│   │   ├── project-selector.tsx    # 项目选择器 + 创建表单
-│   │   ├── project-agent-view.tsx  # 项目 Agent 配置视图
-│   │   └── agent-preset-editor.tsx # Agent 预设编辑器
+│   ├── project/                    # 项目管理（selector / agent view / preset）
 │   ├── workspace/                  # 工作空间管理
-│   │   ├── workspace-list.tsx      # 工作空间列表 + 创建面板
-│   │   └── directory-browser-dialog.tsx # 目录浏览对话框
+│   ├── workspace-panel/            # 工作空间面板（tab system / context overview）
 │   ├── story/                      # Story 管理
-│   │   ├── story-tab-view.tsx      # Story 标签页视图
-│   │   ├── story-list-view.tsx     # Story 列表视图
-│   │   ├── story-detail-panels.tsx # Story 详情面板
-│   │   ├── story-session-panel.tsx # Story 会话面板
-│   │   ├── create-task-panel.tsx   # 创建 Task 面板
-│   │   └── context-source-utils.ts # 上下文来源工具函数
 │   ├── task/                       # Task 管理
-│   │   ├── task-drawer.tsx         # Task 抽屉面板
-│   │   ├── task-agent-session-panel.tsx # Task Agent 会话面板
-│   │   └── agent-binding-fields.tsx    # Agent 绑定字段
-│   ├── workflow/                   # Workflow 管理
-│   │   ├── workflow-tab-view.tsx   # Workflow 标签页
-│   │   ├── workflow-editor.tsx     # Workflow 编辑器
-│   │   ├── lifecycle-editor.tsx    # Lifecycle 编辑器
-│   │   ├── binding-editor.tsx      # Binding 编辑器
-│   │   ├── project-workflow-panel.tsx  # 项目 Workflow 面板
-│   │   ├── task-workflow-panel.tsx     # Task Workflow 面板
-│   │   ├── shared-labels.ts       # 共享标签常量
-│   │   └── ui/                    # step-summary, validation-panel
-│   ├── agent/                      # Agent 管理
-│   │   ├── agent-tab-view.tsx      # Agent 标签页视图
-│   │   └── active-session-list.tsx # 活跃会话列表
-│   ├── address-space/              # 寻址空间浏览
-│   │   ├── vfs-browser.tsx
-│   │   └── index.ts
-│   ├── file-reference/             # 文件引用（prompt 附件选择）
-│   │   ├── FilePickerPopup.tsx
-│   │   ├── RichInput.tsx
-│   │   ├── useFileReference.ts
-│   │   └── buildPromptBlocks.ts
+│   ├── workflow/                   # Workflow + Lifecycle DAG 编辑器
+│   ├── agent/                      # Agent 管理（tab view / active sessions）
+│   ├── assets-panel/               # 资产面板（MCP / Workflow 分类）
+│   ├── canvas-panel/               # Canvas 运行时预览与绑定
 │   ├── session-context/            # 会话上下文展示
-│   │   ├── context-panels.tsx
-│   │   ├── hook-runtime-cards.tsx
-│   │   ├── surface-card.tsx
-│   │   ├── utils.ts
-│   │   └── index.ts
-│   └── context-source/             # 上下文来源配置
+│   ├── file-reference/             # 文件引用（prompt 附件选择）
+│   ├── vfs/                        # VFS 浏览器
+│   ├── context-source/             # 上下文来源配置
+│   ├── mcp-shared/                 # MCP Server 配置共享组件
+│   └── routine/                    # Routine 自动触发
 ├── hooks/                          # 全局 hooks
 │   └── use-theme.ts                # 主题切换
 ├── pages/                          # 页面组件
@@ -91,15 +68,14 @@ frontend/src/
 │   ├── StoryPage.tsx               # Story 详情页
 │   ├── ProjectSettingsPage.tsx     # 项目设置页
 │   ├── SettingsPage.tsx            # 全局设置页
-│   ├── WorkflowEditorPage.tsx      # Workflow 编辑页
-│   └── LifecycleEditorPage.tsx     # Lifecycle 编辑页
+│   ├── LifecycleEditorShellPage.tsx # Lifecycle 编辑页
+│   └── LoginPage.tsx               # 登录页
 ├── services/                       # 服务层（API 封装）
 │   ├── executor.ts                 # ExecutorConfig + promptSession API
 │   ├── session.ts                  # Session 管理 API
 │   ├── workflow.ts                 # Workflow 管理 API
-│   ├── vfs.ts            # VFS API
+│   ├── vfs.ts                      # VFS API
 │   ├── browseDirectory.ts          # 目录浏览 API
-│   ├── directory.ts                # 目录服务
 │   ├── filePicker.ts               # 文件选择器 API
 │   └── currentUser.ts              # 当前用户 API
 ├── stores/                         # 全局 Zustand stores
@@ -112,12 +88,18 @@ frontend/src/
 │   ├── sessionHistoryStore.ts      # 会话历史
 │   ├── settingsStore.ts            # 全局设置
 │   ├── currentUserStore.ts         # 当前用户
-│   └── activeSessionsStore.ts      # 活跃会话追踪
+│   ├── activeSessionsStore.ts      # 活跃会话追踪
+│   ├── llmProviderStore.ts         # LLM Provider 管理
+│   ├── routineStore.ts             # Routine 管理
+│   ├── authStore.ts                # 认证状态
+│   ├── sidebarSessionsStore.ts     # 侧边栏会话列表
+│   └── workspaceTabStore.ts        # 工作空间标签页状态
+├── desktop/                        # Tauri 桌面端相关
 ├── generated/                      # 自动生成代码
 │   └── agentdash-acp-meta.ts       # ACP Meta TS 绑定
-├── styles/                         # Tailwind v4 主题变量（HSL 色系）
 ├── types/
-│   └── index.ts                    # 全局类型（Project/Workspace/Story/Task 等）
+│   ├── index.ts                    # 全局类型（Project/Workspace/Story/Task 等）
+│   └── skill-asset.ts              # Skill 资产类型
 ├── App.tsx                         # 路由根组件
 └── main.tsx                        # 入口
 ```
@@ -185,8 +167,8 @@ interface Task {
 
 ## 命名规范
 
-- **功能目录**：小写短横线，如 `acp-session/`
-- **组件文件**：PascalCase，如 `AcpSessionEntry.tsx`
+- **功能目录**：小写短横线，如 `session/`
+- **组件文件**：PascalCase，如 `SessionEntry.tsx`
 - **Hook 文件**：camelCase with `use` 前缀，如 `useAcpStream.ts`
 - **Store 文件**：camelCase，如 `workflowStore.ts`
 - **Service 文件**：camelCase，如 `workflow.ts`
@@ -194,19 +176,7 @@ interface Task {
 
 ---
 
-## executor-selector 模块
-
-提供执行器发现（从后端 `GET /api/agents/discovery` 获取）、
-配置管理（localStorage 持久化）、最近使用追踪（LRU 最多 8 条）。
-
-| Hook | 职责 |
-|------|------|
-| `useExecutorDiscoveredOptions` | 获取可用执行器列表 + 连接器能力 |
-| `useExecutorConfig` | 管理选择状态 + 持久化 + 最近使用追踪 |
-
----
-
-## 技术栈决策
+## 技术栈
 
 - [x] 前端框架：React 19
 - [x] 状态管理：Zustand 5
@@ -215,8 +185,8 @@ interface Task {
 - [x] 样式方案：Tailwind CSS v4
 - [x] 路由：React Router 7
 - [x] 测试：Vitest 4
-- [ ] UI 组件库选型（当前使用自研组件 + shadcn 模式）
+- [x] UI 组件：自研组件 + shadcn 模式（`@agentdash/ui` 包）
 
 ---
 
-*更新：2026-03-29 — 对齐前端实际目录结构、features、stores、pages、services*
+*更新：2026-05-16 — 对齐 monorepo packages 结构、实际 features/stores/pages 清单*

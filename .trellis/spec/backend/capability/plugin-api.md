@@ -85,7 +85,7 @@ run_server(plugins).await
 
 当前属于 experimental / incubating 的范围：
 
-- 当前 `agentdash_injection::VfsProvider`
+- 当前 VFS descriptor provider（原 `agentdash-injection`，现归入 `agentdash-spi`）
 - `SourceResolver`
 - `ExternalServiceClient`
 
@@ -118,7 +118,7 @@ run_server(plugins).await
 ### 4.2 不要把过渡态 VFS 抽象直接冻结给企业仓
 
 根据 [vfs-access.md](../vfs/vfs-access.md)，当前
-`agentdash_injection::VfsProvider` 只是 descriptor / discovery provider，
+VFS descriptor provider 只是 descriptor / discovery provider，
 并不是统一的 runtime `read / write / list / search / exec` provider。
 
 因此：

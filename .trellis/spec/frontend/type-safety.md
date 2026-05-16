@@ -17,7 +17,7 @@
 ### 目录结构
 
 ```
-frontend/src/
+packages/app-web/src/
 ├── types/
 │   └── index.ts           # 全局共享类型
 ├── features/
@@ -126,7 +126,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
 
 ### 业务 API 映射边界
 
-- 前端业务类型以 `frontend/src/types/index.ts` 为准，字段名统一 `snake_case`
+- 前端业务类型以 `packages/app-web/src/types/index.ts` 为准，字段名统一 `snake_case`
 - store/service mapper 只负责：
   - `unknown -> typed object`
   - 状态值归一化
@@ -308,9 +308,9 @@ type CreateStoryInput = PartialBy<Story, 'id' | 'createdAt'>;
 
 ## 参考类型定义
 
-- `frontend/src/types/index.ts` - Project, Workspace, Story, Task 等核心类型
-- `frontend/src/features/acp-session/model/types.ts` - ACP 相关类型
-- `frontend/src/services/executor.ts` - ExecutorConfig 类型
+- `packages/app-web/src/types/index.ts` - Project, Workspace, Story, Task 等核心类型
+- `packages/app-web/src/features/session/model/types.ts` - ACP 相关类型
+- `packages/app-web/src/services/executor.ts` - ExecutorConfig 类型
 
 ---
 

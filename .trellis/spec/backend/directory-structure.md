@@ -192,13 +192,13 @@ crates/
 │           ├── vibe_kanban.rs   # 第三方 Agent 连接器（Claude Code / Codex 等子进程）
 │           └── composite.rs     # 多连接器路由组合
 │
-├── agentdash-injection/         # Context Injection (声明式上下文解析)
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
-├── agentdash-acp-meta/          # ACP 元数据 TypeScript 绑定
+├── agentdash-agent-protocol/    # Agent 通信协议（ACP 元数据、事件定义）
 ├── agentdash-agent-types/       # Agent 领域通用类型（AgentMessage/AgentTool/AgentContext/Delegate）
 ├── agentdash-agent/             # Agent 运行时核心（纯 loop + bridge trait，无 rig/spi 依赖）
-└── agentdash-local/             # 本机后端执行器
+├── agentdash-local/             # 本机后端
+└── agentdash-local-tauri/       # Tauri 桌面端封装
 ```
 
 ### 关键 API 端点

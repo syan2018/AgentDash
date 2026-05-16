@@ -18,7 +18,7 @@
 ### 目录组织
 
 ```
-frontend/src/
+packages/app-web/src/
 ├── components/ui/          # 基础 UI 组件
 ├── components/layout/      # 布局组件
 ├── features/
@@ -136,7 +136,7 @@ border-border, border-input
 每个 feature 遵循统一结构：
 
 ```
-features/acp-session/
+features/session/
 ├── ui/
 │   ├── AcpSessionList.tsx    # 列表组件
 │   ├── AcpSessionEntry.tsx   # 条目组件
@@ -144,7 +144,7 @@ features/acp-session/
 ├── model/
 │   ├── types.ts              # 类型定义
 │   ├── useAcpSession.ts      # 业务 Hook
-│   ├── useAcpStream.ts       # 基础 Hook
+│   ├── useAcpStream.ts       # 流管理 Hook
 │   └── index.ts
 └── index.ts                  # Feature 入口
 ```
@@ -152,7 +152,7 @@ features/acp-session/
 ### Feature 入口文件
 
 ```ts
-// features/acp-session/index.ts
+// features/session/index.ts
 export * from "./ui";
 export * from "./model";
 ```
@@ -172,7 +172,7 @@ export * from "./model";
 
 ## 示例：完整 Feature 组件
 
-参考 `features/acp-session/ui/AcpSessionList.tsx`：
+参考 `features/session/ui/AcpSessionList.tsx`：
 
 - 使用 TypeScript interface 定义 props
 - 文档注释说明组件用途

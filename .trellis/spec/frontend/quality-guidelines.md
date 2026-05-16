@@ -9,7 +9,7 @@
 - **Linting**: ESLint + typescript-eslint
 - **构建**: TypeScript 严格模式（`~5.9.3`）
 - **测试**: Vitest（`^4.0.18`）
-- **检查命令**: `pnpm --filter frontend run check`（typecheck + lint + test）
+- **检查命令**: `pnpm --filter app-web run check`（typecheck + lint + test）
 
 代码提交前必须通过 lint 和类型检查。
 
@@ -45,7 +45,7 @@
 
 - 关键功能使用 Vitest 编写单元测试
 - Feature model 层（hooks、reducer、mapper）优先覆盖
-- 测试命令：`pnpm --filter frontend test`
+- 测试命令：`pnpm --filter app-web test`
 
 关键测试场景：
 1. 基础功能（输入、点击、提交）

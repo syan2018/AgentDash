@@ -129,11 +129,12 @@ Workspace (1) → (*) WorkspaceBinding
 | [Repository 模式](./repository-pattern.md) | Repository trait 定义、依赖注入、测试 | ✅ 已更新 |
 | [数据库指南](./database-guidelines.md) | PostgreSQL + SQLite + SQLx 存储规范 | ✅ 已更新 |
 | [错误处理](./error-handling.md) | 分层错误体系、错误边界规则 | ✅ 已更新 |
-| [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 类型化盘点和迁移路线 | ✅ 已创建 |
+| [领域类型化标准](./domain-payload-typing.md) | `serde_json::Value` 治理规则：何时类型化、何时保留灵活性 | ✅ 已更新 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill 文档包、references/scripts/assets 批量同步到受管载体的契约 | ✅ 已创建 |
 | [质量规范](./quality-guidelines.md) | 代码标准、DTO 命名契约、Session 状态持久化 | ✅ 已更新 |
 | [日志规范](./logging-guidelines.md) | 结构化日志、级别约定 | ✅ 已更新 |
-| [Runtime Gateway](./runtime-gateway.md) | Runtime Action / Provider / Setup Action 跨层调用契约 | ✅ 已创建 |
+| [Runtime Gateway](./runtime-gateway.md) | Runtime Action / Provider / Setup Action 跨层调用契约 | ✅ 已更新 |
+| [Story Task Runtime](./story-task-runtime.md) | Story/Task/Session 目标架构设计（Model C），M1-M7 基线 | ⚠️ 目标架构 |
 | [Relay Protocol](../../../docs/relay-protocol.md) | 云端↔本机 WebSocket 通信协议 | ✅ 已创建 |
 
 ### 模块专属契约
@@ -225,4 +226,4 @@ Workspace (1) → (*) WorkspaceBinding
 
 ---
 
-*更新：2026-05-15 — session/ 目录对齐 LaunchCommand → SessionConstructionPlan → LaunchExecution 主线，精简迁移期描述。*
+*更新：2026-05-16 — 全量 spec review：修正 crate 列表、精简 runtime-gateway、重写 domain-payload-typing、添加 story-task-runtime 索引*

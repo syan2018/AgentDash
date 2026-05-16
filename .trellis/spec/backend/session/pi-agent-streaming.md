@@ -49,4 +49,4 @@
 ### 关键文件
 
 - `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` — 发信层拆分与 messageId
-- `frontend/src/features/acp-session/model/useAcpStream.ts` — chunk 合并消费策略
+- `packages/app-web/src/features/session/model/useAcpStream.ts` — chunk 合并消费策略

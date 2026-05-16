@@ -107,20 +107,20 @@
 
 ```
 crates/
-├── agentdash-agent-types/       # Agent 领域通用类型（零 runtime 核心）
-├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
-├── agentdash-domain/            # 领域层（实体、值对象、Repository trait）
-├── agentdash-application/       # 应用层（用例编排、hooks、context、VFS）
-├── agentdash-infrastructure/    # 基础设施层（PostgreSQL + SQLite Repository 实现）
-├── agentdash-executor/          # 执行器（连接器、RigBridge、hook runtime）
-├── agentdash-spi/               # SPI（re-export agent-types + Connector/Hook trait）
-├── agentdash-api/               # 接口层（HTTP 路由、DTO、中间件）
-├── agentdash-injection/         # 上下文注入（声明式来源解析）
-├── agentdash-mcp/               # MCP Server 实现
-├── agentdash-relay/             # WebSocket Relay 协议
-├── agentdash-acp-meta/          # ACP 元数据 TypeScript 绑定
-├── agentdash-local/             # 本机后端执行器
-├── agentdash-plugin-api/        # 插件 API 契约
+├── agentdash-agent-types/         # Agent 领域通用类型（零 runtime 核心）
+├── agentdash-agent/               # Agent Loop 引擎（纯 loop + bridge trait）
+├── agentdash-agent-protocol/      # Agent 通信协议（ACP 元数据、事件定义）
+├── agentdash-domain/              # 领域层（实体、值对象、Repository trait）
+├── agentdash-application/         # 应用层（用例编排、hooks、context、VFS）
+├── agentdash-infrastructure/      # 基础设施层（PostgreSQL + SQLite Repository 实现）
+├── agentdash-executor/            # 执行器（连接器、RigBridge、hook runtime）
+├── agentdash-spi/                 # SPI（re-export agent-types + Connector/Hook trait）
+├── agentdash-api/                 # 接口层（HTTP 路由、DTO、中间件）
+├── agentdash-mcp/                 # MCP Server 实现
+├── agentdash-relay/               # WebSocket Relay 协议
+├── agentdash-local/               # 本机后端
+├── agentdash-local-tauri/         # Tauri 桌面端封装
+├── agentdash-plugin-api/          # 插件 API 契约
 └── agentdash-first-party-plugins/ # 内置插件
 ```
 

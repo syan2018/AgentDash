@@ -1,8 +1,12 @@
 # Story / Task 运行时建模（Story-as-durable-session）
 
-> 定义 Story / Task / Story session / LifecycleRun / child session 五件套的精确关系与职责边界。
-> 与 [repository-pattern.md](./repository-pattern.md) / [database-guidelines.md](./database-guidelines.md) / [workflow/lifecycle-edge.md](./workflow/lifecycle-edge.md) 一起参考。
-> 本 spec 是主线任务 `04-27-slim-runtime-layer-session-owner` M1-M7 重构的架构基线；所有 story/task 相关的代码修改必须先对齐本文。
+> **文档定位：目标架构设计文档（Model C）**
+>
+> 本文定义 Story / Task / Story session / LifecycleRun / child session 的目标关系与职责边界。
+> 这是主线任务 `04-27-slim-runtime-layer-session-owner` M1-M7 的架构基线，**部分设计尚未完全落地**。
+> 与 [repository-pattern.md](./repository-pattern.md)（当前实现状态）对照阅读时注意：
+> - 本文 §5.1 提出删除 `TaskRepository`，但 `repository-pattern.md` 仍记录了当前实现中的 `TaskRepository`
+> - 当两者冲突时，以当前代码实现为准，本文描述的是演进方向
 
 ---
 

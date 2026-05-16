@@ -44,7 +44,7 @@ pub enum ThinkingLevel {
 ### 前端定义
 
 ```ts
-// frontend/src/types/index.ts
+// packages/app-web/src/types/index.ts
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 ```
 
@@ -110,7 +110,7 @@ pub struct AgentConfig {
 ### 前端类型
 
 ```ts
-// frontend/src/features/executor-selector/model/types.ts
+// packages/app-web/src/features/executor-selector/model/types.ts
 export interface ModelInfo {
   id: string;
   name: string;

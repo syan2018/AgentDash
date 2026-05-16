@@ -16,9 +16,9 @@
 - **Rust 类型（ACP）**: `agent_client_protocol::{SessionNotification, SessionUpdate, Meta}`
 - **TS 类型（ACP）**: `@agentclientprotocol/sdk` 的 `SessionNotification/SessionUpdate`
 - **AgentDash meta schema（共享）**:
-  - Rust: `crates/agentdash-acp-meta/src/lib.rs`
-  - 生成 TS: `frontend/src/generated/agentdash-acp-meta.ts`
-  - 生成命令: `cargo run -p agentdash-acp-meta --bin generate_agentdash_acp_meta_ts`
+  - Rust: `crates/agentdash-agent-protocol/src/lib.rs`
+  - 生成 TS: `packages/app-web/src/generated/agentdash-acp-meta.ts`
+  - 生成命令: `cargo run -p agentdash-agent-protocol --bin generate_agentdash_acp_meta_ts`
 
 ---
 
@@ -76,7 +76,7 @@
   - `AssistantMessage` → `AgentMessageChunk` 且 `chunk.meta` 存在且可解析 `agentdash`（v=1）
   - `SystemMessage` → `SessionInfoUpdate` 且 meta.event.type = `system_message`
   - `TokenUsageInfo` → `UsageUpdate` 且 `update.meta` 可解析
-- **Frontend**（`frontend/src/features/acp-session/model/agentdashMeta.test.ts`）:
+- **Frontend**（`packages/app-web/src/features/session/model/agentdashMeta.test.ts`）:
   - `parseAgentDashMeta` 版本判断
   - `extractAgentDashMetaFromUpdate` 能从 `update._meta` 或 `update.content._meta` 提取
 

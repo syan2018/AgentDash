@@ -64,7 +64,7 @@ Agent 执行是异步的，前端需要：
 | [目录结构](./directory-structure.md) | FSD 模块组织、features/stores/pages 布局 | ✅ 已更新 |
 | [组件规范](./component-guidelines.md) | 组件模式、Props、样式约定 | ✅ 已更新 |
 | [Hook 规范](./hook-guidelines.md) | 自定义 hooks、ACP 事件归并契约 | ✅ 已更新 |
-| [状态管理](./state-management.md) | Zustand 5、10 个 Store 清单 | ✅ 已更新 |
+| [状态管理](./state-management.md) | Zustand 5、15 个 Store 清单 | ✅ 已更新 |
 | [质量规范](./quality-guidelines.md) | 代码标准、禁止模式 | ✅ 已更新 |
 | [类型安全](./type-safety.md) | snake_case 直接映射、类型守卫 | ✅ 已更新 |
 
@@ -113,4 +113,4 @@ Agent 执行是异步的，前端需要：
 
 ---
 
-*更新：2026-03-29 — 清理模板残留，对齐规范索引*
+*更新：2026-05-16 — 对齐 monorepo 路径、补全 15 个 Store、修正 filter 命令*

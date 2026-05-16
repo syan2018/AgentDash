@@ -22,7 +22,7 @@ export function useTheme() {
 位于 `features/{feature}/model/`，封装特定业务：
 
 ```ts
-// features/acp-session/model/useAcpSession.ts
+// features/session/model/useAcpSession.ts
 export function useAcpSession(options: UseAcpSessionOptions): UseAcpSessionResult {
   // ACP 会话管理逻辑
 }
@@ -120,8 +120,8 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 
 ## 参考实现
 
-- `features/acp-session/model/useAcpStream.ts` - ACP 流管理 + 事件归并 reducer
-- `features/acp-session/model/useAcpSession.ts` - 聚合逻辑 + tokenUsage 暴露
-- `features/acp-session/model/streamTransport.ts` - NDJSON/SSE 双通道传输
+- `features/session/model/useAcpStream.ts` - ACP 流管理 + 事件归并 reducer
+- `features/session/model/useAcpSession.ts` - 聚合逻辑 + tokenUsage 暴露
+- `features/session/model/streamTransport.ts` - NDJSON/SSE 双通道传输
 
 *更新：2026-04-14 — 移除与后端 execution-hook-runtime.md 重叠的 hook_event visibility 详细规则，改为引用*

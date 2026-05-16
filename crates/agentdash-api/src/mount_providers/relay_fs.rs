@@ -4,8 +4,7 @@ use agentdash_application::runtime::Mount;
 use agentdash_application::vfs::{
     ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, PROVIDER_RELAY_FS,
-    ReadResult, SearchMatch, SearchQuery, SearchResult, join_root_ref,
-    normalize_mount_relative_path,
+    ReadResult, SearchMatch, SearchQuery, SearchResult, normalize_mount_relative_path,
 };
 use agentdash_relay::{
     RelayMessage, ToolApplyPatchPayload, ToolFileDeletePayload, ToolFileListPayload,
@@ -318,9 +317,13 @@ impl MountProvider for RelayFsMountProvider {
                     id: RelayMessage::new_id("mp-search"),
                     payload: ToolSearchPayload {
                         call_id: RelayMessage::new_id("call"),
-                        mount_root_ref: join_root_ref(&mount.root_ref, &base_path),
+                        mount_root_ref: mount.root_ref.clone(),
                         query: query.pattern.clone(),
-                        path: None,
+                        path: if base_path.is_empty() {
+                            None
+                        } else {
+                            Some(base_path)
+                        },
                         is_regex: false,
                         include_glob: None,
                         max_results,

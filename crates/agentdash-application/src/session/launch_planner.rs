@@ -126,10 +126,10 @@ impl<'a> SessionLaunchPlanner<'a> {
         }
         let default_mount_root = effective_vfs
             .default_mount()
-            .map(|m| PathBuf::from(m.root_ref.trim()))
-            .filter(|p| !p.as_os_str().is_empty())
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("vfs 缺少 default_mount 或 root_ref 无效".to_string())
+            .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))
+            .and_then(|mount| {
+                super::path_policy::resolve_session_working_directory(&mount.root_ref)
+                    .map_err(ConnectorError::InvalidConfig)
             })?;
         let working_directory = default_mount_root.clone();
 

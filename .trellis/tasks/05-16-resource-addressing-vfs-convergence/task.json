@@ -1,0 +1,52 @@
+{
+  "id": "resource-addressing-vfs-convergence",
+  "name": "resource-addressing-vfs-convergence",
+  "title": "统一资源寻址与 VFS 路径收敛",
+  "description": "结合 docs/reviews/AgentDash_review_report.md 与最新 session/local runtime 进展，追踪资源寻址、VFS 路径策略、Relay/local 边界、Lifecycle catalog 与 API/前端契约收敛重构。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend/runtime-vfs/relay-local/frontend-contract",
+  "package": null,
+  "priority": "P0",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-16",
+  "completedAt": "2026-05-16",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/reviews/AgentDash_review_report.md",
+    "docs/reviews/AgentDash_session_refactor_plan.md",
+    ".trellis/tasks/05-16-session-refactor-cleanup/prd.md",
+    ".trellis/tasks/05-16-session-refactor-cleanup/implement.md",
+    ".trellis/tasks/04-08-cross-mount-shell-materialization/prd.md",
+    ".trellis/spec/backend/vfs/vfs-access.md",
+    ".trellis/spec/backend/vfs/vfs-materialization.md",
+    "crates/agentdash-domain/src/common/mount.rs",
+    "crates/agentdash-application/src/vfs/path.rs",
+    "crates/agentdash-application/src/vfs/mount.rs",
+    "crates/agentdash-application/src/vfs/relay_service.rs",
+    "crates/agentdash-application/src/vfs/provider_lifecycle.rs",
+    "crates/agentdash-application/src/session/launch_planner.rs",
+    "crates/agentdash-application/src/session/path_policy.rs",
+    "crates/agentdash-api/src/mount_providers/relay_fs.rs",
+    "crates/agentdash-local/src/tool_executor.rs",
+    "packages/app-web/src/features/vfs/vfs-browser.tsx"
+  ],
+  "notes": "2026-05-16 review：SessionHub 公开入口删除和 terminal effect/runtime command 收尾已由 05-16-session-refactor-cleanup 覆盖；本 task 聚焦报告中仍有效的统一资源寻址、VFS 路径策略、Relay/local 边界、Lifecycle catalog、API/前端契约生成与文档权威化。2026-05-16 已按 5 个顺序 commit 完成核心重构；前端 typecheck 因 node_modules/tsc 缺失未运行。",
+  "meta": {
+    "review_source": "docs/reviews/AgentDash_review_report.md",
+    "reviewed_at": "2026-05-16",
+    "latest_progress_considered": [
+      "05-16-session-refactor-cleanup",
+      "deb00254 fix(local): 修复 local 启动爆栈",
+      "584ff3c9 refactor(session): 删除 SessionHub 并收口 runtime 边界"
+    ]
+  }
+}

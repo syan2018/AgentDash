@@ -1,0 +1,8 @@
+{"file":"docs/reviews/AgentDash_review_report.md","reason":"本 task 的原始评估来源，包含 P0/P1/P2 路线图与路径/VFS/API/front-end 风险清单。"}
+{"file":"docs/reviews/AgentDash_session_refactor_plan.md","reason":"用于区分已由 session 收尾任务完成的历史 SessionHub 风险与仍需跟进的 working_dir/addressing 风险。"}
+{"file":".trellis/tasks/05-16-session-refactor-cleanup/prd.md","reason":"最新 session 重构完成范围，避免重复追踪 SessionHub 删除和 terminal effect 收尾。"}
+{"file":".trellis/tasks/04-08-cross-mount-shell-materialization/prd.md","reason":"相关 VFS URI 物化任务，明确本 task 与物化/URL rewrite 的边界。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"VFS provider/runtime tool 的当前权威契约，后续地址模型变更需同步。"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"VFS URI 物化契约，需要复用本 task 产出的地址解析与路径策略。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"Session launch 主线契约，working directory 与 VFS surface 改动必须保持一致。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务横跨 domain/application/api/local/frontend，需要按跨层数据流审查。"}

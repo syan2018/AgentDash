@@ -86,6 +86,27 @@ trait VfsProvider {
 - `mount` 是会话级挂载 ID，例如 `main / spec / km / snapshot`。
 - `path` 必须是相对 mount 根的路径。
 
+#### 3.1.1 地址类型与路径策略（当前实现）
+
+Application 层已经引入最小地址类型，原始字符串只能存在于 UI/API/relay/tool 输入边界：
+
+```rust
+MountId
+MountRelativePath
+VfsUri
+RootRef::LocalPath | RootRef::ProviderUri
+PathPolicy
+```
+
+约束：
+
+- `parse_mount_uri` 返回 `ResourceRef` 前必须完成 mount 相对路径规范化。
+- `MountRelativePath` 拒绝绝对路径、Windows drive、UNC/root path 和越界 `..`。
+- `RootRef` 必须区分本机路径和 provider URI；`lifecycle://`、`skill-assets://`、`canvas://` 等虚拟 root 不得被隐式转为 OS `PathBuf`。
+- session connector working directory 只能来自本机路径 root。虚拟 mount 需要先经过物化契约转成本机路径。
+- `Vfs` 构建/派生后必须执行 hard validation，至少检查 mount id 唯一、default mount 存在、root_ref/provider scheme 合法、link target 存在且无环。
+- 本项目仍处预研期，不保留旧路径行为回退；发现非法地址应直接失败并补测试。
+
 #### 3.2 Session Mount Table 契约
 
 - 每个 Task / Story / Session 启动时必须生成一份 mount table。
@@ -204,6 +225,14 @@ trait VfsProvider {
 ```
 
 - `*** Move to:` 只能跟在 `*** Update File:` 后面；新增文件内容每一行都必须以前缀 `+` 开头；更新块中的行必须以前缀空格 / `-` / `+` 表示上下文、删除、新增。
+- `fs.apply_patch` 的共享层必须同时解析 primary path 与 `Move to` target。跨 mount move 默认禁止；若未来需要支持，必须作为事务化 copy/delete 独立设计，不能在单 mount patch 中隐式执行。
+
+#### 4.1.1 relay / local root 与 path 边界
+
+- relay search payload 必须保持 `mount_root_ref` 与 `path` 分离，不得把 search base path 拼进 root。
+- local runtime 对 file/list/search/shell cwd 使用同一套 workspace root 边界。
+- shell cwd 默认只接受相对 workspace root 的路径；绝对 cwd 即使落在 workspace 内也应拒绝，除非未来引入显式 `ShellCwd { allow_absolute_inside_root: true }` 策略并同步审计。
+- search/list 无法将结果 strip 为 workspace 相对路径时，不得 fallback 返回本机绝对路径。
 
 ---
 

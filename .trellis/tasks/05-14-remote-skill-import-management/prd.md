@@ -1,4 +1,4 @@
-# Pi Agent 优先的远端 Skill 导入与管理交互
+# 远端 Skill 导入与管理交互
 
 ## Goal
 

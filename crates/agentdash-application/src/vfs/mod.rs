@@ -1,6 +1,7 @@
 pub mod apply_patch;
 pub mod binding_resolver;
 pub mod inline_persistence;
+pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
 pub mod path;

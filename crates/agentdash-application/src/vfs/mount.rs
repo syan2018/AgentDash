@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::lifecycle_catalog::lifecycle_directory_hint;
 use super::path::{normalize_mount_relative_path, validate_vfs};
 use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
@@ -651,40 +652,7 @@ pub fn build_lifecycle_mount_with_ports(
             "run_id": run_id.to_string(),
             "lifecycle_key": lifecycle_key,
             "writable_port_keys": writable_port_keys,
-            "directory_hint": {
-                "description": "Lifecycle journey VFS，包含当前 node/session 投影、tool call 索引、port 产出和可写 records overlay",
-                "index": [
-                    { "path": "active", "description": "当前活跃 run 的概览（JSON）" },
-                    { "path": "active/steps", "description": "各步骤执行状态，子路径为 step_key" },
-                    { "path": "active/steps/{step_key}", "description": "单步骤详情（JSON）" },
-                    { "path": "artifacts", "description": "Port output 产出，子路径为 port_key" },
-                    { "path": "artifacts/{port_key}", "description": "指定 port 的产出内容（纯文本；写入受 writable_port_keys 限制）" },
-                    { "path": "state", "description": "当前 node 步骤状态（JSON）" },
-                    { "path": "session/meta", "description": "当前 node 关联 session 元信息" },
-                    { "path": "session/summary", "description": "当前 node session 摘要" },
-                    { "path": "session/turns", "description": "当前 node session turn 列表" },
-                    { "path": "session/turns/{turn_id}/events.json", "description": "当前 node 单 turn 原始事件投影" },
-                    { "path": "session/events.json", "description": "当前 node session 原始事件投影" },
-                    { "path": "session/terminal", "description": "当前 node session 终端输出聚合" },
-                    { "path": "tool-calls", "description": "当前 node session 的 tool call 索引；MCP 也是 tool call" },
-                    { "path": "tool-calls/{tool_call_id}/raw.json", "description": "指定 tool call 的原始事件投影" },
-                    { "path": "tool-calls/{tool_call_id}/request.json", "description": "指定 tool call 的请求结构" },
-                    { "path": "tool-calls/{tool_call_id}/result.json", "description": "指定 tool call 的结果结构" },
-                    { "path": "tool-calls/{tool_call_id}/stdout.txt", "description": "指定 tool call 的输出文本" },
-                    { "path": "writes", "description": "当前 node session 的写入类 tool call 索引" },
-                    { "path": "records/{name}", "description": "当前 node 的可写 journey record overlay" },
-                    { "path": "nodes/{step_key}/state", "description": "Node 步骤状态（JSON）" },
-                    { "path": "nodes/{step_key}/session/meta", "description": "Node 关联 session 元信息" },
-                    { "path": "nodes/{step_key}/session/summary", "description": "Node session 摘要" },
-                    { "path": "nodes/{step_key}/session/turns", "description": "Node session turn 列表" },
-                    { "path": "nodes/{step_key}/session/turns/{turn_id}/events.json", "description": "指定 node 单 turn 原始事件投影" },
-                    { "path": "nodes/{step_key}/session/tool-calls", "description": "指定 node session 的 tool call 索引" },
-                    { "path": "nodes/{step_key}/session/writes", "description": "指定 node session 的写入类 tool call 索引" },
-                    { "path": "nodes/{step_key}/records/{name}", "description": "指定 node 的可写 journey record overlay" },
-                    { "path": "active/log", "description": "执行日志（JSON 数组）" },
-                    { "path": "runs", "description": "历史 run 列表" }
-                ]
-            }
+            "directory_hint": lifecycle_directory_hint()
         }),
     }
 }

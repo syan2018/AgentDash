@@ -364,7 +364,9 @@ async fn count_active_sessions(
 /// standalone CLI 入口：保持原有无限重连行为。
 pub async fn run_standalone(config: LocalRuntimeConfig) -> anyhow::Result<()> {
     let ws_config = build_ws_config(&config).await?;
-    ws_client::run(ws_config).await
+    tokio::spawn(async move { ws_client::run(ws_config).await })
+        .await
+        .map_err(|error| anyhow::anyhow!("standalone runtime task join 失败: {error}"))?
 }
 
 pub fn canonicalize_accessible_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {

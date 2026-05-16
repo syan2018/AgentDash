@@ -1,4 +1,5 @@
 import { api } from "../api/client";
+import { vfsRoutes } from "./vfsRoutes";
 
 export interface FileEntry {
   relPath: string;
@@ -41,14 +42,14 @@ export async function listFiles(
   params.set("workspace_id", workspaceId);
   if (pattern) params.set("pattern", pattern);
 
-  return api.get<ListFilesResponse>(`/file-picker?${params}`);
+  return api.get<ListFilesResponse>(vfsRoutes.filePicker.list(params));
 }
 
 export async function batchReadFiles(
   workspaceId: string,
   paths: string[],
 ): Promise<BatchReadFilesResponse> {
-  return api.post<BatchReadFilesResponse>("/file-picker/batch-read", {
+  return api.post<BatchReadFilesResponse>(vfsRoutes.filePicker.batchRead, {
     workspace_id: workspaceId,
     paths,
   });

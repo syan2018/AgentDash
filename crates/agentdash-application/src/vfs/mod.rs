@@ -1,6 +1,7 @@
 pub mod apply_patch;
 pub mod binding_resolver;
 pub mod inline_persistence;
+pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
 pub mod path;
@@ -39,8 +40,9 @@ pub use mount::{
     parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
 };
 pub use path::{
-    capability_name, format_mount_uri, join_root_ref, normalize_mount_relative_path,
-    parse_mount_uri, resolve_mount, resolve_mount_id,
+    MountId, MountRelativePath, PathPolicy, RootRef, VfsUri, capability_name, format_mount_uri,
+    join_root_ref, normalize_mount_relative_path, parse_mount_uri, resolve_mount, resolve_mount_id,
+    validate_vfs,
 };
 pub use provider::{
     ConfigurableProviderInfo, MountEditCapabilities, MountError, MountOperationContext,

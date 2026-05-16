@@ -81,7 +81,11 @@ impl<'a> SessionLaunchPlanner<'a> {
             .vfs
             .as_ref()
             .and_then(|vfs| vfs.default_mount())
-            .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
+            .map(|mount| {
+                super::path_policy::resolve_session_working_directory(&mount.root_ref)
+                    .map_err(ConnectorError::InvalidConfig)
+            })
+            .transpose()?
             .unwrap_or_else(|| working_directory.clone());
         let executor_config = construction
             .execution_profile

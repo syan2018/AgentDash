@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::lifecycle_catalog::{lifecycle_active_entries, lifecycle_root_entries};
 use super::mount::{PROVIDER_LIFECYCLE_VFS, list_inline_entries};
 use super::path::normalize_mount_relative_path;
 use super::provider::{
@@ -459,34 +460,12 @@ impl MountProvider for LifecycleMountProvider {
         let active = load_active_run(&self.lifecycle_run_repo, mount).await?;
 
         let entries = match segs.as_slice() {
-            [] => {
-                let mut entries = vec![
-                    RuntimeFileEntry::dir("active").as_virtual(),
-                    RuntimeFileEntry::dir("artifacts"),
-                    RuntimeFileEntry::file("state").as_virtual(),
-                    RuntimeFileEntry::dir("session").as_virtual(),
-                    RuntimeFileEntry::dir("tool-calls").as_virtual(),
-                    RuntimeFileEntry::file("writes").as_virtual(),
-                    RuntimeFileEntry::dir("records"),
-                    RuntimeFileEntry::dir("nodes").as_virtual(),
-                    RuntimeFileEntry::dir("runs").as_virtual(),
-                ];
-                if lifecycle_mount_has_skills(mount) {
-                    entries.push(RuntimeFileEntry::dir("skills").as_virtual());
-                }
-                entries
-            }
-            ["active"] => vec![
-                RuntimeFileEntry::dir("active/steps").as_virtual(),
-                RuntimeFileEntry::dir("active/artifacts"),
-                RuntimeFileEntry::file("active/log")
-                    .with_size(
-                        serde_json::to_string(&active.execution_log)
-                            .map(|content| content.len() as u64)
-                            .unwrap_or(0),
-                    )
-                    .as_virtual(),
-            ],
+            [] => lifecycle_root_entries(lifecycle_mount_has_skills(mount)),
+            ["active"] => lifecycle_active_entries(
+                serde_json::to_string(&active.execution_log)
+                    .map(|content| content.len() as u64)
+                    .unwrap_or(0),
+            ),
             ["active", "steps"] => active
                 .step_states
                 .iter()

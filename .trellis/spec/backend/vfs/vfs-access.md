@@ -12,6 +12,16 @@
 - `path` 是相对 mount 根的路径
 - 每个 session 启动时生成一份 mount table
 
+Application 层的最小地址类型包括：
+
+- `MountId`
+- `MountRelativePath`
+- `VfsUri`
+- `RootRef::LocalPath | RootRef::ProviderUri`
+- `PathPolicy`
+
+原始字符串只能存在于 UI/API/relay/tool 输入边界；进入 application 内部前必须 parse/normalize 成结构化地址。
+
 ## 运行时工具集
 
 稳定的小工具集合：
@@ -56,6 +66,9 @@
 3. **relay 隔离**：relay 是 transport，不是 mount 模型；上层不直接拼接 `RelayMessage`
 4. **写入约束**：`fs.write` 默认只允许 `default_write=true` 的 mount；`fs.apply_patch` 受 `write` 能力约束
 5. **物化路径**：VFS URI 转本机 path 必须遵守 [vfs-materialization.md](./vfs-materialization.md)
+6. **root_ref 类型化**：`RootRef` 必须区分本机路径和 provider URI；`lifecycle://`、`skill-assets://`、`canvas://` 等虚拟 root 不得隐式转为 OS `PathBuf`
+7. **路径硬校验**：`Vfs` 构建/派生后必须执行 hard validation，至少检查 mount id 唯一、系统保留 mount id 未被错误 provider 占用、default mount 存在、root_ref/provider scheme 合法、内置 provider capability 与支持范围一致、link target 存在且无环
+8. **预研期约束**：不保留旧路径行为回退；发现非法地址应直接失败并补测试
 
 ## 内核扩展能力
 
@@ -79,3 +92,4 @@ Provider 可通过 broadcast channel 推送 `MountEvent`（Created/Modified/Dele
 
 *创建：2026-04-17 — 统一 VFS 跨层契约*
 *精简：2026-05-16 — 移除代码复述、测试列表、实施计划；保留核心契约和能力矩阵*
+*更新：2026-05-16 — 补充资源地址类型、root_ref 类型化与 VFS hard validation 契约*

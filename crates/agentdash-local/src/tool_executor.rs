@@ -176,13 +176,9 @@ impl ToolExecutor {
         }
 
         if is_absolute_like(requested) {
-            let absolute = PathBuf::from(requested);
-            let canonical = std::fs::canonicalize(&absolute)
-                .map_err(|_| ToolError::InvalidPath(requested.to_string()))?;
-            if !canonical.starts_with(&ws) {
-                return Err(ToolError::PathNotAccessible(requested.to_string()));
-            }
-            return Ok(canonical);
+            return Err(ToolError::InvalidPath(
+                "shell cwd 必须是相对于 workspace root 的路径".to_string(),
+            ));
         }
 
         resolve_existing_path_with_root(&ws, requested)
@@ -453,11 +449,14 @@ async fn run_ripgrep(
             .and_then(|t| t.as_str())
             .unwrap_or("");
 
-        let rel_path = Path::new(abs_path)
-            .strip_prefix(workspace_root)
-            .unwrap_or(Path::new(abs_path))
-            .to_string_lossy()
-            .replace('\\', "/");
+        let Ok(rel_path) = workspace_relative_path(Path::new(abs_path), workspace_root) else {
+            tracing::warn!(
+                path = abs_path,
+                workspace_root = %workspace_root.display(),
+                "ripgrep returned path outside workspace root"
+            );
+            continue;
+        };
 
         let line_number = data
             .get("line_number")
@@ -594,12 +593,14 @@ impl FallbackCollector<'_> {
             Err(_) => return,
         };
         let lines: Vec<&str> = content.lines().collect();
-        let rel = entry
-            .path()
-            .strip_prefix(self.workspace_root)
-            .unwrap_or(&entry.path())
-            .to_string_lossy()
-            .replace('\\', "/");
+        let Ok(rel) = workspace_relative_path(&entry.path(), self.workspace_root) else {
+            tracing::warn!(
+                path = %entry.path().display(),
+                workspace_root = %self.workspace_root.display(),
+                "fallback search skipped path outside workspace root"
+            );
+            return;
+        };
 
         for (idx, line) in lines.iter().enumerate() {
             let matched = match &self.regex {
@@ -717,6 +718,18 @@ fn is_absolute_like(raw: &str) -> bool {
             .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
 }
 
+fn workspace_relative_path(path: &Path, workspace_root: &Path) -> Result<String, ToolError> {
+    path.strip_prefix(workspace_root)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| {
+            ToolError::PathNotAccessible(format!(
+                "{} is outside {}",
+                path.display(),
+                workspace_root.display()
+            ))
+        })
+}
+
 async fn collect_entries(
     dir: &Path,
     workspace_root: &Path,
@@ -731,11 +744,7 @@ async fn collect_entries(
         let is_dir = file_type.is_dir();
         let path = entry.path();
 
-        let relative = path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative = workspace_relative_path(&path, workspace_root)?;
 
         let matches = glob_matcher
             .as_ref()
@@ -901,7 +910,23 @@ mod tests {
             .resolve_shell_cwd(&root, Some(&outside_path))
             .expect_err("outside absolute cwd should be rejected");
 
-        assert!(matches!(error, ToolError::PathNotAccessible(_)));
+        assert!(matches!(error, ToolError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn resolve_shell_cwd_rejects_absolute_directory_inside_workspace_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let child = temp.path().join("nested");
+        std::fs::create_dir_all(&child).expect("mkdir");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+        let child_path = child.to_string_lossy().to_string();
+
+        let error = executor
+            .resolve_shell_cwd(&root, Some(&child_path))
+            .expect_err("absolute cwd should be rejected even inside root");
+
+        assert!(matches!(error, ToolError::InvalidPath(_)));
     }
 
     #[tokio::test]

@@ -1,0 +1,7 @@
+{"file":"docs/reviews/AgentDash_review_report.md","reason":"验收时回看原报告，确认仍有效项已被完成或明确拆分。"}
+{"file":".trellis/tasks/05-16-resource-addressing-vfs-convergence/prd.md","reason":"本 task 验收标准。"}
+{"file":".trellis/tasks/05-16-resource-addressing-vfs-convergence/design.md","reason":"本 task 技术边界与 non-goals。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"确认实现后的 VFS 访问契约与规范同步。"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"确认物化契约没有重复实现路径解析策略。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"确认 session working directory 与 launch pipeline 契约一致。"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"确认 cloud/local runtime 边界、relay/local path 策略没有漂移。"}

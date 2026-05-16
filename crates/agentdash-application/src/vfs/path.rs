@@ -1,3 +1,6 @@
+use std::collections::{BTreeSet, HashSet};
+use std::fmt;
+
 use super::types::ResourceRef;
 use crate::runtime::{Mount, MountCapability, Vfs};
 
@@ -5,6 +8,179 @@ const URI_SEPARATOR: &str = "://";
 
 /// Link 跳转最大深度，防止循环与链条过长。
 const MAX_LINK_DEPTH: usize = 5;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MountId(String);
+
+impl MountId {
+    pub fn parse(input: &str) -> Result<Self, String> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err("mount ID 不能为空".to_string());
+        }
+        if trimmed.contains(URI_SEPARATOR)
+            || trimmed.contains('/')
+            || trimmed.contains('\\')
+            || trimmed.chars().any(char::is_whitespace)
+        {
+            return Err(format!("mount ID `{trimmed}` 含非法字符"));
+        }
+        Ok(Self(trimmed.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for MountId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<MountId> for String {
+    fn from(value: MountId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MountRelativePath(String);
+
+impl MountRelativePath {
+    pub fn parse(input: &str, allow_empty: bool) -> Result<Self, String> {
+        normalize_mount_relative_path(input, allow_empty).map(Self)
+    }
+
+    pub fn root() -> Self {
+        Self(String::new())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for MountRelativePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<MountRelativePath> for String {
+    fn from(value: MountRelativePath) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VfsUri {
+    pub mount_id: MountId,
+    pub path: MountRelativePath,
+}
+
+impl VfsUri {
+    pub fn parse(input: &str, vfs: &Vfs, allow_empty_path: bool) -> Result<Self, String> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err("路径不能为空".to_string());
+        }
+
+        let (mount_id, raw_path) = if let Some(sep_pos) = trimmed.find(URI_SEPARATOR) {
+            let mount_id = MountId::parse(&trimmed[..sep_pos])?;
+            let path = trimmed[sep_pos + URI_SEPARATOR.len()..].trim_start_matches('/');
+            (mount_id, path.to_string())
+        } else {
+            let mount_id = MountId::parse(&resolve_mount_id(vfs, None)?)?;
+            (mount_id, trimmed.to_string())
+        };
+        let path = MountRelativePath::parse(&raw_path, allow_empty_path)?;
+        Ok(Self { mount_id, path })
+    }
+
+    pub fn into_resource_ref(self) -> ResourceRef {
+        ResourceRef {
+            mount_id: self.mount_id.into(),
+            path: self.path.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootRef {
+    LocalPath(String),
+    ProviderUri { scheme: String, remainder: String },
+}
+
+impl RootRef {
+    pub fn parse(input: &str) -> Result<Self, String> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err("root_ref 不能为空".to_string());
+        }
+        if let Some(sep_pos) = trimmed.find(URI_SEPARATOR) {
+            let scheme = trimmed[..sep_pos].trim();
+            let remainder = trimmed[sep_pos + URI_SEPARATOR.len()..].trim();
+            if scheme.is_empty() || remainder.is_empty() {
+                return Err(format!("root_ref URI 格式错误: {trimmed}"));
+            }
+            if scheme
+                .chars()
+                .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '+'))
+            {
+                return Err(format!("root_ref scheme `{scheme}` 含非法字符"));
+            }
+            Ok(Self::ProviderUri {
+                scheme: scheme.to_string(),
+                remainder: remainder.to_string(),
+            })
+        } else {
+            Ok(Self::LocalPath(trimmed.to_string()))
+        }
+    }
+
+    pub fn is_local_path(&self) -> bool {
+        matches!(self, Self::LocalPath(_))
+    }
+
+    pub fn scheme(&self) -> Option<&str> {
+        match self {
+            Self::LocalPath(_) => None,
+            Self::ProviderUri { scheme, .. } => Some(scheme),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathPolicy {
+    VfsRead,
+    VfsWrite,
+    VfsList,
+    VfsSearchBase,
+    PatchTarget,
+    PatchMoveTarget,
+    ShellCwd { allow_absolute_inside_root: bool },
+    SessionWorkingDir,
+    MaterializationTarget,
+}
+
+impl PathPolicy {
+    pub fn allows_empty(self) -> bool {
+        matches!(
+            self,
+            Self::VfsList | Self::VfsSearchBase | Self::ShellCwd { .. } | Self::SessionWorkingDir
+        )
+    }
+
+    pub fn parse_mount_relative_path(self, input: &str) -> Result<MountRelativePath, String> {
+        MountRelativePath::parse(input, self.allows_empty())
+    }
+}
 
 /// 解析统一 URI 路径为 `ResourceRef`。
 ///
@@ -15,29 +191,7 @@ const MAX_LINK_DEPTH: usize = 5;
 /// 命中 VFS 的 `links` 表时会透明跳转到目标 `(mount_id, path)`，
 /// 最多跳转 `MAX_LINK_DEPTH` 次。
 pub fn parse_mount_uri(input: &str, vfs: &Vfs) -> Result<ResourceRef, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err("路径不能为空".to_string());
-    }
-
-    let raw_ref = if let Some(sep_pos) = trimmed.find(URI_SEPARATOR) {
-        let mount_id = &trimmed[..sep_pos];
-        if mount_id.is_empty() {
-            return Err("URI 格式错误: mount ID 不能为空".to_string());
-        }
-        let path = &trimmed[sep_pos + URI_SEPARATOR.len()..];
-        let path = path.trim_start_matches('/');
-        ResourceRef {
-            mount_id: mount_id.to_string(),
-            path: path.to_string(),
-        }
-    } else {
-        let mount_id = resolve_mount_id(vfs, None)?;
-        ResourceRef {
-            mount_id,
-            path: trimmed.to_string(),
-        }
-    };
+    let raw_ref = VfsUri::parse(input, vfs, true)?.into_resource_ref();
 
     resolve_links(vfs, raw_ref)
 }
@@ -71,7 +225,7 @@ fn resolve_links(vfs: &Vfs, mut current: ResourceRef) -> Result<ResourceRef, Str
 
         current = ResourceRef {
             mount_id: link.to_mount_id.clone(),
-            path: next_path,
+            path: normalize_mount_relative_path(&next_path, true)?,
         };
     }
 
@@ -212,6 +366,112 @@ pub fn join_root_ref(root_ref: &str, relative_path: &str) -> String {
     }
 }
 
+pub fn validate_vfs(vfs: &Vfs) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    for mount in &vfs.mounts {
+        MountId::parse(&mount.id)?;
+        if !ids.insert(mount.id.as_str()) {
+            return Err(format!("VFS mount id 重复: {}", mount.id));
+        }
+        if mount.provider.trim().is_empty() {
+            return Err(format!("mount `{}` provider 不能为空", mount.id));
+        }
+        validate_mount_root_ref(mount)?;
+    }
+
+    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
+        && !vfs.mounts.iter().any(|mount| mount.id == default_mount_id)
+    {
+        return Err(format!(
+            "default_mount_id 指向不存在的 mount: {default_mount_id}"
+        ));
+    }
+
+    validate_links(vfs)
+}
+
+fn validate_mount_root_ref(mount: &Mount) -> Result<(), String> {
+    let root_ref = RootRef::parse(&mount.root_ref)
+        .map_err(|error| format!("mount `{}` root_ref 无效: {error}", mount.id))?;
+    match mount.provider.as_str() {
+        "relay_fs" | "local_fs" if !root_ref.is_local_path() => Err(format!(
+            "mount `{}` provider `{}` 需要本机路径 root_ref",
+            mount.id, mount.provider
+        )),
+        "lifecycle_vfs" if root_ref.scheme() != Some("lifecycle") => Err(format!(
+            "mount `{}` lifecycle_vfs root_ref 必须使用 lifecycle://",
+            mount.id
+        )),
+        "skill_asset_fs" if root_ref.scheme() != Some("skill-assets") => Err(format!(
+            "mount `{}` skill_asset_fs root_ref 必须使用 skill-assets://",
+            mount.id
+        )),
+        "canvas_fs" if root_ref.scheme() != Some("canvas") => Err(format!(
+            "mount `{}` canvas_fs root_ref 必须使用 canvas://",
+            mount.id
+        )),
+        "inline_fs" if root_ref.is_local_path() => Err(format!(
+            "mount `{}` inline_fs root_ref 必须使用 provider URI",
+            mount.id
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn validate_links(vfs: &Vfs) -> Result<(), String> {
+    let ids: BTreeSet<&str> = vfs.mounts.iter().map(|mount| mount.id.as_str()).collect();
+    let mut link_keys = HashSet::new();
+    for link in &vfs.links {
+        if !ids.contains(link.from_mount_id.as_str()) {
+            return Err(format!(
+                "VFS link from_mount_id 不存在: {}",
+                link.from_mount_id
+            ));
+        }
+        if !ids.contains(link.to_mount_id.as_str()) {
+            return Err(format!("VFS link to_mount_id 不存在: {}", link.to_mount_id));
+        }
+        let from_path = normalize_mount_relative_path(&link.from_path, true)?;
+        let to_path = normalize_mount_relative_path(&link.to_path, true)?;
+        let key = (link.from_mount_id.clone(), from_path.clone());
+        if !link_keys.insert(key) {
+            return Err(format!(
+                "VFS link 重复: {}://{}",
+                link.from_mount_id, from_path
+            ));
+        }
+        detect_link_cycle(vfs, &link.from_mount_id, &from_path)?;
+        if to_path.is_empty() && link.to_mount_id.is_empty() {
+            return Err("VFS link target 不能为空".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn detect_link_cycle(vfs: &Vfs, mount_id: &str, path: &str) -> Result<(), String> {
+    let mut current = ResourceRef {
+        mount_id: mount_id.to_string(),
+        path: path.to_string(),
+    };
+    let mut seen = HashSet::new();
+    for _ in 0..=MAX_LINK_DEPTH {
+        let key = (current.mount_id.clone(), current.path.clone());
+        if !seen.insert(key) {
+            return Err(format!("VFS link 存在循环: {mount_id}://{path}"));
+        }
+        let Some(link) = vfs.find_link(&current.mount_id, &current.path) else {
+            return Ok(());
+        };
+        current = ResourceRef {
+            mount_id: link.to_mount_id.clone(),
+            path: normalize_mount_relative_path(&link.to_path, true)?,
+        };
+    }
+    Err(format!(
+        "VFS link 解析超过最大深度 {MAX_LINK_DEPTH}: {mount_id}://{path}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,7 +482,7 @@ mod tests {
             id: id.to_string(),
             provider: "inline_fs".to_string(),
             backend_id: String::new(),
-            root_ref: String::new(),
+            root_ref: format!("context://inline/{id}"),
             capabilities: vec![MountCapability::Read, MountCapability::List],
             default_write: false,
             display_name: id.to_string(),
@@ -335,5 +595,52 @@ mod tests {
         let result = parse_mount_uri("notes.md", &vfs).expect("resolve");
         assert_eq!(result.mount_id, "src");
         assert_eq!(result.path, "notes.md");
+    }
+
+    #[test]
+    fn parse_mount_uri_normalizes_before_returning() {
+        let vfs = make_vfs(vec![]);
+        let result = parse_mount_uri("src://docs//guide/../intro.md", &vfs).expect("resolve");
+        assert_eq!(result.mount_id, "src");
+        assert_eq!(result.path, "docs/intro.md");
+    }
+
+    #[test]
+    fn typed_paths_reject_absolute_and_escape() {
+        assert!(MountRelativePath::parse("../secret", false).is_err());
+        assert!(MountRelativePath::parse("C:/repo/file.rs", false).is_err());
+        assert_eq!(
+            MountRelativePath::parse("./src//lib.rs", false)
+                .expect("normalize")
+                .as_str(),
+            "src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn root_ref_distinguishes_local_and_provider_uri() {
+        assert!(matches!(
+            RootRef::parse("/workspace/repo").expect("root"),
+            RootRef::LocalPath(_)
+        ));
+        assert_eq!(
+            RootRef::parse("lifecycle://run/123")
+                .expect("root")
+                .scheme(),
+            Some("lifecycle")
+        );
+    }
+
+    #[test]
+    fn validate_vfs_rejects_duplicate_mounts_and_bad_default() {
+        let mut vfs = make_vfs(vec![]);
+        vfs.mounts.push(vfs.mounts[0].clone());
+        let err = validate_vfs(&vfs).expect_err("duplicate id");
+        assert!(err.contains("重复"));
+
+        let mut vfs = make_vfs(vec![]);
+        vfs.default_mount_id = Some("missing".to_string());
+        let err = validate_vfs(&vfs).expect_err("bad default");
+        assert!(err.contains("default_mount_id"));
     }
 }

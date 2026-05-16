@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::path::normalize_mount_relative_path;
+use super::path::{normalize_mount_relative_path, validate_vfs};
 use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{
@@ -85,13 +85,15 @@ pub fn build_derived_vfs(
         mounts.first().map(|mount| mount.id.clone())
     };
 
-    Ok(Vfs {
+    let vfs = Vfs {
         mounts,
         default_mount_id,
         source_project_id: Some(project.id.to_string()),
         source_story_id: story.map(|s| s.id.to_string()),
         links: Vec::new(),
-    })
+    };
+    validate_vfs(&vfs)?;
+    Ok(vfs)
 }
 
 /// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
@@ -147,6 +149,7 @@ pub fn build_project_agent_knowledge_vfs(link: &ProjectAgentLink) -> Result<Vfs,
     };
     append_agent_knowledge_mounts(&mut vfs, link)?;
     vfs.default_mount_id = vfs.mounts.first().map(|mount| mount.id.clone());
+    validate_vfs(&vfs)?;
     Ok(vfs)
 }
 
@@ -189,13 +192,15 @@ pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgent
 
 /// 为 Workspace 创建简易单 mount VFS
 pub fn build_workspace_vfs(workspace: &Workspace) -> Result<Vfs, String> {
-    Ok(Vfs {
+    let vfs = Vfs {
         mounts: vec![workspace_mount(workspace)?],
         default_mount_id: Some("main".to_string()),
         source_project_id: None,
         source_story_id: None,
         links: Vec::new(),
-    })
+    };
+    validate_vfs(&vfs)?;
+    Ok(vfs)
 }
 
 pub fn workspace_mount(workspace: &Workspace) -> Result<Mount, String> {

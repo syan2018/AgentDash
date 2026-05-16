@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-05-14
+- **Total Sessions**: 13
+- **Last Active**: 2026-05-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~567 | Active |
+| `journal-1.md` | ~600 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-05-16 | 瓦解 Session Construction Launch 边界 | `ae883db3` | `main` |
 | 12 | 2026-05-14 | 完成 Tauri 桌面端统一架构 MVP | `3c26bbf8`, `8aae9ffe`, `db133e90`, `2ffeedff`, `a9b2dc02`, `4a1c2ee6`, `17529709`, `ed0f8c35`, `64ae8ebd`, `c44ed3b8`, `110e998e`, `23bcff35`, `6bfda9fd` | `codex/tauri-desktop-local-runtime` |
 | 11 | 2026-05-09 | Capability 管道全链路重构 (AgentPresetConfig + ContextContributions + 命名统一) | `35ff5ac`, `106aca9`, `f067940`, `04bd5d2`, `bbe3dfd` | `main` |
 | 10 | 2026-03-29 | Task/Session 运行时解耦与 Workflow Binding 收口 | `f99b8a2` |

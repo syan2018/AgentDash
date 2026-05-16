@@ -565,3 +565,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: 瓦解 Session Construction Launch 边界
+
+**Date**: 2026-05-16
+**Task**: 瓦解 Session Construction Launch 边界
+**Branch**: `main`
+
+### Summary
+
+完成 session launch 边界重构：ConstructionProvider 产出 final SessionConstructionPlan，LaunchPlanner 删除 VFS/MCP/capability fallback 与二次 construction，并补齐校验、测试和 spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae883db3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

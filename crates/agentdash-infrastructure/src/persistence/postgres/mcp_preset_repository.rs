@@ -4,6 +4,7 @@ use agentdash_domain::DomainError;
 use agentdash_domain::mcp_preset::{
     McpPreset, McpPresetRepository, McpPresetSource, McpRoutePolicy, McpTransportConfig,
 };
+use agentdash_domain::shared_library::InstalledAssetSource;
 
 pub struct PostgresMcpPresetRepository {
     pool: PgPool,
@@ -29,6 +30,11 @@ impl PostgresMcpPresetRepository {
                 route_policy TEXT NOT NULL,
                 source TEXT NOT NULL,
                 builtin_key TEXT,
+                library_asset_id TEXT,
+                source_ref TEXT,
+                source_version TEXT,
+                source_digest TEXT,
+                installed_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CONSTRAINT mcp_presets_source_check CHECK (source IN ('builtin', 'user')),
@@ -64,17 +70,19 @@ impl PostgresMcpPresetRepository {
         .await
         .map_err(db_err)?;
 
+        add_installed_source_columns(&self.pool).await?;
+
         Ok(())
     }
 }
 
-const COLS: &str = "id,project_id,key,display_name,description,transport,route_policy,source,builtin_key,created_at,updated_at";
+const COLS: &str = "id,project_id,key,display_name,description,transport,route_policy,source,builtin_key,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl McpPresetRepository for PostgresMcpPresetRepository {
     async fn create(&self, preset: &McpPreset) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"
         ))
         .bind(preset.id.to_string())
         .bind(preset.project_id.to_string())
@@ -85,6 +93,11 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(serde_json::to_string(&preset.route_policy)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
+        .bind(installed_library_asset_id(&preset.installed_source))
+        .bind(installed_source_ref(&preset.installed_source))
+        .bind(installed_source_version(&preset.installed_source))
+        .bind(installed_source_digest(&preset.installed_source))
+        .bind(installed_at(&preset.installed_source))
         .bind(preset.created_at.to_rfc3339())
         .bind(preset.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -135,7 +148,7 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
 
     async fn update(&self, preset: &McpPreset) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE mcp_presets SET key=$1, display_name=$2, description=$3, transport=$4, route_policy=$5, source=$6, builtin_key=$7, updated_at=$8 WHERE id=$9",
+            "UPDATE mcp_presets SET key=$1, display_name=$2, description=$3, transport=$4, route_policy=$5, source=$6, builtin_key=$7, library_asset_id=$8, source_ref=$9, source_version=$10, source_digest=$11, installed_at=$12, updated_at=$13 WHERE id=$14",
         )
         .bind(&preset.key)
         .bind(&preset.display_name)
@@ -144,6 +157,11 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(serde_json::to_string(&preset.route_policy)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
+        .bind(installed_library_asset_id(&preset.installed_source))
+        .bind(installed_source_ref(&preset.installed_source))
+        .bind(installed_source_version(&preset.installed_source))
+        .bind(installed_source_digest(&preset.installed_source))
+        .bind(installed_at(&preset.installed_source))
         .bind(preset.updated_at.to_rfc3339())
         .bind(preset.id.to_string())
         .execute(&self.pool)
@@ -214,6 +232,76 @@ fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
 }
 
+async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for column in [
+        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
+        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_ref TEXT",
+        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_version TEXT",
+        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_digest TEXT",
+        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS installed_at TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_presets_library_asset_id ON mcp_presets(library_asset_id)",
+    ] {
+        sqlx::query(column).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
+fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.library_asset_id.to_string())
+}
+
+fn installed_source_ref(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_ref.as_str())
+}
+
+fn installed_source_version(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_version.as_str())
+}
+
+fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_digest.as_str())
+}
+
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.installed_at.to_rfc3339())
+}
+
+fn parse_installed_source(
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
+) -> Result<Option<InstalledAssetSource>, DomainError> {
+    let Some(library_asset_id) = library_asset_id else {
+        return Ok(None);
+    };
+    Ok(Some(InstalledAssetSource {
+        library_asset_id: library_asset_id.parse().map_err(|_| {
+            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+        })?,
+        source_ref: source_ref.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+        })?,
+        source_version: source_version.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+        })?,
+        source_digest: source_digest.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+        })?,
+        installed_at: super::parse_pg_timestamp_checked(
+            installed_at.as_deref().ok_or_else(|| {
+                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
+            })?,
+            "installed_source.installed_at",
+        )?,
+    }))
+}
+
 #[derive(sqlx::FromRow)]
 struct McpPresetRow {
     id: String,
@@ -225,6 +313,11 @@ struct McpPresetRow {
     route_policy: String,
     source: String,
     builtin_key: Option<String>,
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -276,6 +369,13 @@ impl TryFrom<McpPresetRow> for McpPreset {
             transport,
             route_policy,
             source,
+            installed_source: parse_installed_source(
+                row.library_asset_id,
+                row.source_ref,
+                row.source_version,
+                row.source_digest,
+                row.installed_at,
+            )?,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
                 "mcp_presets.created_at",

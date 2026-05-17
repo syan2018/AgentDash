@@ -136,6 +136,34 @@ pub enum SharedLibrarySourceStatus {
     SourceMissing,
 }
 
+impl SharedLibrarySourceStatus {
+    pub fn from_installed_source(
+        installed: &InstalledAssetSource,
+        current_version: Option<&str>,
+        current_digest: Option<&str>,
+        current_deprecated: bool,
+    ) -> Self {
+        if current_deprecated || current_version.is_none() || current_digest.is_none() {
+            return Self::SourceMissing;
+        }
+        if current_version == Some(installed.source_version.as_str())
+            && current_digest == Some(installed.source_digest.as_str())
+        {
+            Self::UpToDate
+        } else {
+            Self::UpdateAvailable
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up_to_date",
+            Self::UpdateAvailable => "update_available",
+            Self::SourceMissing => "source_missing",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "asset_type", content = "payload", rename_all = "snake_case")]
 pub enum LibraryAssetPayload {

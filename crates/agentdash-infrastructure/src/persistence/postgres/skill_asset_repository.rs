@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 
 use agentdash_domain::DomainError;
+use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository, SkillAssetSource,
 };
@@ -28,6 +29,11 @@ impl PostgresSkillAssetRepository {
                 remote_source_url TEXT,
                 remote_imported_at TEXT,
                 remote_digest TEXT,
+                library_asset_id TEXT,
+                source_ref TEXT,
+                source_version TEXT,
+                source_digest TEXT,
+                installed_at TEXT,
                 disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -77,11 +83,12 @@ impl PostgresSkillAssetRepository {
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
+        add_installed_source_columns(&self.pool).await?;
         Ok(())
     }
 }
 
-const ASSET_COLS: &str = "id,project_id,key,display_name,description,source,builtin_key,remote_source_url,remote_imported_at,remote_digest,disable_model_invocation,created_at,updated_at";
+const ASSET_COLS: &str = "id,project_id,key,display_name,description,source,builtin_key,remote_source_url,remote_imported_at,remote_digest,library_asset_id,source_ref,source_version,source_digest,installed_at,disable_model_invocation,created_at,updated_at";
 const FILE_COLS: &str = "id,skill_asset_id,path,content,kind,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -167,7 +174,7 @@ impl SkillAssetRepository for PostgresSkillAssetRepository {
     async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let result = sqlx::query(
-            "UPDATE skill_assets SET key=$1, display_name=$2, description=$3, source=$4, builtin_key=$5, remote_source_url=$6, remote_imported_at=$7, remote_digest=$8, disable_model_invocation=$9, updated_at=$10 WHERE id=$11",
+            "UPDATE skill_assets SET key=$1, display_name=$2, description=$3, source=$4, builtin_key=$5, remote_source_url=$6, remote_imported_at=$7, remote_digest=$8, library_asset_id=$9, source_ref=$10, source_version=$11, source_digest=$12, installed_at=$13, disable_model_invocation=$14, updated_at=$15 WHERE id=$16",
         )
         .bind(&asset.key)
         .bind(&asset.display_name)
@@ -177,6 +184,11 @@ impl SkillAssetRepository for PostgresSkillAssetRepository {
         .bind(remote_source_url(&asset.source))
         .bind(remote_imported_at(&asset.source))
         .bind(remote_digest(&asset.source))
+        .bind(installed_library_asset_id(&asset.installed_source))
+        .bind(installed_source_ref(&asset.installed_source))
+        .bind(installed_source_version(&asset.installed_source))
+        .bind(installed_source_digest(&asset.installed_source))
+        .bind(installed_at(&asset.installed_source))
         .bind(asset.disable_model_invocation)
         .bind(asset.updated_at.to_rfc3339())
         .bind(asset.id.to_string())
@@ -215,7 +227,7 @@ async fn insert_asset(
     asset: &SkillAsset,
 ) -> Result<(), DomainError> {
     sqlx::query(&format!(
-        "INSERT INTO skill_assets ({ASSET_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+        "INSERT INTO skill_assets ({ASSET_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"
     ))
     .bind(asset.id.to_string())
     .bind(asset.project_id.to_string())
@@ -227,6 +239,11 @@ async fn insert_asset(
     .bind(remote_source_url(&asset.source))
     .bind(remote_imported_at(&asset.source))
     .bind(remote_digest(&asset.source))
+    .bind(installed_library_asset_id(&asset.installed_source))
+    .bind(installed_source_ref(&asset.installed_source))
+    .bind(installed_source_version(&asset.installed_source))
+    .bind(installed_source_digest(&asset.installed_source))
+    .bind(installed_at(&asset.installed_source))
     .bind(asset.disable_model_invocation)
     .bind(asset.created_at.to_rfc3339())
     .bind(asset.updated_at.to_rfc3339())
@@ -291,6 +308,11 @@ struct SkillAssetRow {
     remote_source_url: Option<String>,
     remote_imported_at: Option<String>,
     remote_digest: Option<String>,
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
     disable_model_invocation: bool,
     created_at: String,
     updated_at: String,
@@ -380,6 +402,13 @@ impl SkillAssetRow {
             display_name: self.display_name,
             description: self.description,
             source,
+            installed_source: parse_installed_source(
+                self.library_asset_id,
+                self.source_ref,
+                self.source_version,
+                self.source_digest,
+                self.installed_at,
+            )?,
             disable_model_invocation: self.disable_model_invocation,
             files: Vec::new(),
             created_at: super::parse_pg_timestamp_checked(
@@ -475,4 +504,74 @@ fn remote_digest(source: &SkillAssetSource) -> Option<&str> {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
+}
+
+async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for query in [
+        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
+        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_ref TEXT",
+        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_version TEXT",
+        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_digest TEXT",
+        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS installed_at TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_skill_assets_library_asset_id ON skill_assets(library_asset_id)",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
+fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.library_asset_id.to_string())
+}
+
+fn installed_source_ref(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_ref.as_str())
+}
+
+fn installed_source_version(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_version.as_str())
+}
+
+fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_digest.as_str())
+}
+
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.installed_at.to_rfc3339())
+}
+
+fn parse_installed_source(
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
+) -> Result<Option<InstalledAssetSource>, DomainError> {
+    let Some(library_asset_id) = library_asset_id else {
+        return Ok(None);
+    };
+    Ok(Some(InstalledAssetSource {
+        library_asset_id: library_asset_id.parse().map_err(|_| {
+            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+        })?,
+        source_ref: source_ref.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+        })?,
+        source_version: source_version.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+        })?,
+        source_digest: source_digest.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+        })?,
+        installed_at: super::parse_pg_timestamp_checked(
+            installed_at.as_deref().ok_or_else(|| {
+                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
+            })?,
+            "installed_source.installed_at",
+        )?,
+    }))
 }

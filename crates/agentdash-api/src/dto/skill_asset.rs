@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile, SkillAssetSource};
 
+use super::InstalledAssetSourceResponse;
+
 #[derive(Debug, Serialize)]
 pub struct SkillAssetResponse {
     pub id: Uuid,
@@ -16,6 +18,8 @@ pub struct SkillAssetResponse {
     pub builtin_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_source: Option<RemoteSkillAssetSourceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSourceResponse>,
     pub disable_model_invocation: bool,
     pub files: Vec<SkillAssetFileDto>,
     pub created_at: DateTime<Utc>,
@@ -73,6 +77,7 @@ impl From<SkillAsset> for SkillAssetResponse {
             source,
             builtin_key,
             remote_source,
+            installed_source: asset.installed_source.map(Into::into),
             disable_model_invocation: asset.disable_model_invocation,
             files: asset.files.into_iter().map(Into::into).collect(),
             created_at: asset.created_at,

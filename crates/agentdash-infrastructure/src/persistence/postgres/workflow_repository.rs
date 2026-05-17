@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 
 use agentdash_domain::common::error::DomainError;
+use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
     WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
@@ -22,6 +23,7 @@ impl PostgresWorkflowRepository {
             name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
             binding_kinds TEXT NOT NULL DEFAULT '["story"]',
             source TEXT NOT NULL, version INTEGER NOT NULL, contract TEXT NOT NULL,
+            library_asset_id TEXT, source_ref TEXT, source_version TEXT, source_digest TEXT, installed_at TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
         )"#,
@@ -37,6 +39,7 @@ impl PostgresWorkflowRepository {
             binding_kinds TEXT NOT NULL DEFAULT '["story"]',
             source TEXT NOT NULL, version INTEGER NOT NULL,
             entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
+            library_asset_id TEXT, source_ref TEXT, source_version TEXT, source_digest TEXT, installed_at TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
         )"#,
@@ -61,24 +64,31 @@ impl PostgresWorkflowRepository {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_lifecycle_runs_project_id ON lifecycle_runs(project_id)")
             .execute(&self.pool).await.map_err(db_err)?;
 
+        add_installed_source_columns(&self.pool).await?;
+
         Ok(())
     }
 }
 
-const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,created_at,updated_at";
-const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,created_at,updated_at";
+const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
+const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
 const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO workflow_definitions ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"))
+        sqlx::query(&format!("INSERT INTO workflow_definitions ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"))
             .bind(workflow.id.to_string()).bind(workflow.project_id.to_string())
             .bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
             .bind(serde_json::to_string(&workflow.binding_kinds)?)
             .bind(serde_json::to_string(&workflow.source)?)
             .bind(workflow.version).bind(serde_json::to_string(&workflow.contract)?)
+            .bind(installed_library_asset_id(&workflow.installed_source))
+            .bind(installed_source_ref(&workflow.installed_source))
+            .bind(installed_source_version(&workflow.installed_source))
+            .bind(installed_source_digest(&workflow.installed_source))
+            .bind(installed_at(&workflow.installed_source))
             .bind(workflow.created_at.to_rfc3339()).bind(workflow.updated_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
@@ -156,12 +166,17 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,updated_at=$9 WHERE id=$10")
+        let result = sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,library_asset_id=$9,source_ref=$10,source_version=$11,source_digest=$12,installed_at=$13,updated_at=$14 WHERE id=$15")
             .bind(workflow.project_id.to_string())
             .bind(&workflow.key).bind(&workflow.name).bind(&workflow.description)
             .bind(serde_json::to_string(&workflow.binding_kinds)?)
             .bind(serde_json::to_string(&workflow.source)?)
             .bind(workflow.version).bind(serde_json::to_string(&workflow.contract)?)
+            .bind(installed_library_asset_id(&workflow.installed_source))
+            .bind(installed_source_ref(&workflow.installed_source))
+            .bind(installed_source_version(&workflow.installed_source))
+            .bind(installed_source_digest(&workflow.installed_source))
+            .bind(installed_at(&workflow.installed_source))
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(workflow.id.to_string()).execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "workflow_definition", &workflow.id)
@@ -180,13 +195,18 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO lifecycle_definitions ({LC_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"))
+        sqlx::query(&format!("INSERT INTO lifecycle_definitions ({LC_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"))
             .bind(lifecycle.id.to_string()).bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
             .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
             .bind(serde_json::to_string(&lifecycle.edges)?)
+            .bind(installed_library_asset_id(&lifecycle.installed_source))
+            .bind(installed_source_ref(&lifecycle.installed_source))
+            .bind(installed_source_version(&lifecycle.installed_source))
+            .bind(installed_source_digest(&lifecycle.installed_source))
+            .bind(installed_at(&lifecycle.installed_source))
             .bind(lifecycle.created_at.to_rfc3339()).bind(lifecycle.updated_at.to_rfc3339())
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
@@ -264,13 +284,18 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,steps=$9,edges=$10,updated_at=$11 WHERE id=$12")
+        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,steps=$9,edges=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
             .bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key).bind(&lifecycle.name).bind(&lifecycle.description)
             .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version).bind(&lifecycle.entry_step_key).bind(serde_json::to_string(&lifecycle.steps)?)
             .bind(serde_json::to_string(&lifecycle.edges)?)
+            .bind(installed_library_asset_id(&lifecycle.installed_source))
+            .bind(installed_source_ref(&lifecycle.installed_source))
+            .bind(installed_source_version(&lifecycle.installed_source))
+            .bind(installed_source_digest(&lifecycle.installed_source))
+            .bind(installed_at(&lifecycle.installed_source))
             .bind(chrono::Utc::now().to_rfc3339()).bind(lifecycle.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(
@@ -395,6 +420,26 @@ fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
 }
 
+async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for query in [
+        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
+        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_ref TEXT",
+        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_version TEXT",
+        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_digest TEXT",
+        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS installed_at TEXT",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_ref TEXT",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_version TEXT",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_digest TEXT",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS installed_at TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_workflow_definitions_library_asset_id ON workflow_definitions(library_asset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_lifecycle_definitions_library_asset_id ON lifecycle_definitions(library_asset_id)",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
 fn ensure_rows_affected(
     rows_affected: u64,
     entity: &'static str,
@@ -421,6 +466,11 @@ struct WorkflowDefinitionRow {
     source: String,
     version: i32,
     contract: String,
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -439,6 +489,13 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
                 "workflow_definitions.binding_kinds",
             )?,
             source: serde_json::from_str(&row.source)?,
+            installed_source: parse_installed_source(
+                row.library_asset_id,
+                row.source_ref,
+                row.source_version,
+                row.source_digest,
+                row.installed_at,
+            )?,
             version: row.version,
             contract: serde_json::from_str(&row.contract)?,
             created_at: parse_time(&row.created_at)?,
@@ -460,6 +517,11 @@ struct LifecycleDefinitionRow {
     entry_step_key: String,
     steps: String,
     edges: String,
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -478,6 +540,13 @@ impl TryFrom<LifecycleDefinitionRow> for LifecycleDefinition {
                 "lifecycle_definitions.binding_kinds",
             )?,
             source: serde_json::from_str(&row.source)?,
+            installed_source: parse_installed_source(
+                row.library_asset_id,
+                row.source_ref,
+                row.source_version,
+                row.source_digest,
+                row.installed_at,
+            )?,
             version: row.version,
             entry_step_key: row.entry_step_key,
             steps: serde_json::from_str(&row.steps)?,
@@ -551,4 +620,60 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
 
 fn parse_time(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
     super::parse_pg_timestamp_checked(raw, "workflow.timestamp")
+}
+
+fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.library_asset_id.to_string())
+}
+
+fn installed_source_ref(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_ref.as_str())
+}
+
+fn installed_source_version(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_version.as_str())
+}
+
+fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_digest.as_str())
+}
+
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.installed_at.to_rfc3339())
+}
+
+fn parse_installed_source(
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
+) -> Result<Option<InstalledAssetSource>, DomainError> {
+    let Some(library_asset_id) = library_asset_id else {
+        return Ok(None);
+    };
+    Ok(Some(InstalledAssetSource {
+        library_asset_id: library_asset_id.parse().map_err(|_| {
+            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+        })?,
+        source_ref: source_ref.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+        })?,
+        source_version: source_version.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+        })?,
+        source_digest: source_digest.ok_or_else(|| {
+            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+        })?,
+        installed_at: super::parse_pg_timestamp_checked(
+            installed_at.as_deref().ok_or_else(|| {
+                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
+            })?,
+            "installed_source.installed_at",
+        )?,
+    }))
 }

@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_domain::shared_library::SharedLibrarySourceStatus;
 use agentdash_domain::shared_library::{
-    LibraryAsset, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
+    InstalledAssetSource, LibraryAsset, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
 };
 
 #[derive(Debug, Serialize)]
@@ -69,6 +70,78 @@ pub struct SeedBuiltinLibraryAssetsRequest {
     pub asset_type: Option<String>,
     #[serde(default)]
     pub key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstallLibraryAssetRequest {
+    pub library_asset_id: Uuid,
+    #[serde(default)]
+    pub target_key: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "asset_kind", rename_all = "snake_case")]
+pub enum InstallLibraryAssetResponse {
+    ProjectAgent {
+        agent_id: Uuid,
+        project_agent_link_id: Uuid,
+    },
+    McpPreset {
+        id: Uuid,
+    },
+    WorkflowTemplate {
+        workflow_ids: Vec<Uuid>,
+        lifecycle_id: Uuid,
+    },
+    SkillAsset {
+        id: Uuid,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectAssetSourceStatusResponse {
+    pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
+    pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectAssetSourceStatusItemResponse {
+    pub asset_kind: &'static str,
+    pub project_asset_id: Uuid,
+    pub project_asset_key: String,
+    pub installed_source: InstalledAssetSourceResponse,
+    pub source_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_source_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_source_digest: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstalledAssetSourceResponse {
+    pub library_asset_id: Uuid,
+    pub source_ref: String,
+    pub source_version: String,
+    pub source_digest: String,
+    pub installed_at: DateTime<Utc>,
+}
+
+impl From<InstalledAssetSource> for InstalledAssetSourceResponse {
+    fn from(source: InstalledAssetSource) -> Self {
+        Self {
+            library_asset_id: source.library_asset_id,
+            source_ref: source.source_ref,
+            source_version: source.source_version,
+            source_digest: source.source_digest,
+            installed_at: source.installed_at,
+        }
+    }
+}
+
+pub fn source_status_tag(status: SharedLibrarySourceStatus) -> &'static str {
+    status.as_str()
 }
 
 pub fn parse_asset_type(raw: &str) -> Result<LibraryAssetType, String> {

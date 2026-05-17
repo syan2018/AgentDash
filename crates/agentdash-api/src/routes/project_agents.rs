@@ -831,6 +831,7 @@ async fn resolve_lifecycle_key_for_link(
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
                 binding_kinds: workflow.binding_kinds.clone(),
                 source: WorkflowDefinitionSource::UserAuthored,
+                installed_source: None,
                 version: 1,
                 steps: vec![LifecycleStepDefinition {
                     key: "main".to_string(),

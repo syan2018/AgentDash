@@ -7,6 +7,8 @@ use agentdash_domain::mcp_preset::{
     McpPreset, McpPresetSource, McpRoutePolicy, McpTransportConfig,
 };
 
+use super::InstalledAssetSourceResponse;
+
 /// MCP Preset HTTP 响应 DTO。
 ///
 /// - `source` 序列化为字符串 `"builtin" | "user"`（前端友好）
@@ -26,6 +28,8 @@ pub struct McpPresetResponse {
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSourceResponse>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -47,6 +51,7 @@ impl From<McpPreset> for McpPresetResponse {
             route_policy: preset.route_policy,
             source,
             builtin_key,
+            installed_source: preset.installed_source.map(Into::into),
             created_at: preset.created_at,
             updated_at: preset.updated_at,
         }

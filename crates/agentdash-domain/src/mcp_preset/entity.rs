@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{McpPresetSource, McpRoutePolicy, McpTransportConfig};
+use crate::shared_library::InstalledAssetSource;
 
 /// MCP Preset — Project 级单个 MCP Server 配置模板。
 ///
@@ -23,6 +24,8 @@ pub struct McpPreset {
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
     pub source: McpPresetSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -47,6 +50,7 @@ impl McpPreset {
             transport,
             route_policy,
             source: McpPresetSource::User,
+            installed_source: None,
             created_at: now,
             updated_at: now,
         }
@@ -75,6 +79,7 @@ impl McpPreset {
             transport,
             route_policy,
             source: McpPresetSource::Builtin { key: source_key },
+            installed_source: None,
             created_at: now,
             updated_at: now,
         }

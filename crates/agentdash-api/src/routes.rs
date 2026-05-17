@@ -442,6 +442,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/shared-library/assets/{id}",
             get(shared_library::get_library_asset),
         )
+        .route(
+            "/projects/{project_id}/shared-library/install",
+            post(shared_library::install_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/source-status",
+            get(shared_library::get_project_asset_source_status),
+        )
         // ACP Sessions — CRUD
         .route(
             "/sessions",

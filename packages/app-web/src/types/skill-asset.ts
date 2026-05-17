@@ -51,10 +51,6 @@ export interface UpdateSkillAssetRequest {
   files?: SkillAssetFileDto[];
 }
 
-export interface BootstrapSkillAssetRequest {
-  builtin_key?: string;
-}
-
 export interface ImportRemoteSkillAssetRequest {
   url: string;
 }

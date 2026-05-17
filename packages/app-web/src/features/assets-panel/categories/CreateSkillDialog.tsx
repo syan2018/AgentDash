@@ -4,18 +4,14 @@
  * 提供三种方式：
  * - Manual：手动从零创建（回调父组件打开 SkillEditorDialog）
  * - URL Import：从 GitHub / ClawHub / skills.sh 远端导入
- * - Workspace Scan：装载内嵌 Skill + 上传 ZIP/目录
+ * - Workspace Scan：上传 ZIP/目录
  *
  * 参照 multica create-skill-dialog 的 method chooser 分步体验。
  */
 
 import { type ReactElement, useCallback, useRef, useState } from "react";
 
-import {
-  bootstrapSkillAssets,
-  importRemoteSkillAsset,
-  uploadSkillAssets,
-} from "../../../services/skillAsset";
+import { importRemoteSkillAsset, uploadSkillAssets } from "../../../services/skillAsset";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -29,7 +25,7 @@ const METHOD_META: Record<
 > = {
   manual: { title: "手动创建", desc: "从零填写 Skill 名称、描述和内容" },
   url: { title: "远端导入", desc: "从 GitHub 等远端 URL 导入已有 Skill" },
-  workspace: { title: "工作区导入", desc: "装载内嵌 Skill 或上传本地 Skill 包" },
+  workspace: { title: "工作区导入", desc: "上传本地 Skill 包" },
 };
 
 // ─── Source detection ────────────────────────────────────
@@ -195,7 +191,7 @@ function MethodChooser({
       method: "workspace",
       icon: FolderIcon,
       title: "工作区导入",
-      desc: "装载项目内嵌 Skill 或从本地 ZIP / 目录上传 Skill 包",
+      desc: "从本地 ZIP / 目录上传 Skill 包",
       onClick: () => onChoose("workspace"),
     },
   ];
@@ -363,23 +359,6 @@ function WorkspaceScanPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleBootstrap = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const result = await bootstrapSkillAssets(projectId);
-      if (result.length === 0) {
-        setError("未发现新的内嵌 Skill（可能已全部装载）");
-        setLoading(false);
-      } else {
-        onCreated(`已装载 ${result.length} 个内嵌 Skill`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "装载内嵌 Skill 失败");
-      setLoading(false);
-    }
-  }, [projectId, onCreated]);
-
   const handleUpload = useCallback(
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
@@ -402,29 +381,6 @@ function WorkspaceScanPanel({
   return (
     <>
       <div className="flex-1 space-y-4 overflow-y-auto p-5">
-        {/* Bootstrap Section */}
-        <section className="rounded-[8px] border border-border bg-background p-4">
-          <div className="flex items-start gap-3">
-            <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary/50 text-muted-foreground">
-              <BoxIcon />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">装载内嵌 Skill</p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                从项目内嵌定义中导入预置的 Skill 资产，包括系统和模板 Skill。
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleBootstrap()}
-                disabled={loading}
-                className="agentdash-button-secondary mt-3"
-              >
-                {loading ? "装载中…" : "装载内嵌 Skill"}
-              </button>
-            </div>
-          </div>
-        </section>
-
         {/* Upload Section */}
         <section className="rounded-[8px] border border-border bg-background p-4">
           <div className="flex items-start gap-3">
@@ -517,16 +473,6 @@ function FolderIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
-
-function BoxIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-      <path d="m3.3 7 8.7 5 8.7-5" />
-      <path d="M12 22V12" />
     </svg>
   );
 }

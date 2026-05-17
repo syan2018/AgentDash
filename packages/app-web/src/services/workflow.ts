@@ -25,8 +25,6 @@ import type {
   WorkflowStepExecutionStatus,
   WorkflowStepState,
   WorkflowTargetKind,
-  WorkflowTemplate,
-  WorkflowTemplateWorkflow,
   WorkflowValidationResult,
 } from "../types";
 
@@ -234,15 +232,6 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
   };
 }
 
-function mapWorkflowTemplateWorkflow(raw: Record<string, unknown>): WorkflowTemplateWorkflow {
-  return {
-    key: requireStringField(raw, "key"),
-    name: requireStringField(raw, "name"),
-    description: optStringField(raw, "description"),
-    contract: mapWorkflowContract(raw.contract),
-  };
-}
-
 function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
   const value = asRecord(raw);
   if (!value) {
@@ -321,32 +310,6 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     edges: Array.isArray(raw.edges) ? raw.edges.map(mapLifecycleEdge) : [],
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
-  };
-}
-
-export function mapWorkflowTemplate(raw: Record<string, unknown>): WorkflowTemplate {
-  const lifecycleRaw = asRecord(raw.lifecycle);
-  if (!lifecycleRaw) {
-    throw new Error("workflow template 缺少 lifecycle");
-  }
-  return {
-    key: requireStringField(raw, "key"),
-    name: requireStringField(raw, "name"),
-    description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.binding_kinds, "workflow template target kinds"),
-    workflows: asRecordArray(raw.workflows).map(mapWorkflowTemplateWorkflow),
-    lifecycle: {
-      key: requireStringField(lifecycleRaw, "key"),
-      name: requireStringField(lifecycleRaw, "name"),
-      description: optStringField(lifecycleRaw, "description"),
-      entry_step_key: requireStringField(lifecycleRaw, "entry_step_key"),
-      steps: Array.isArray(lifecycleRaw.steps)
-        ? lifecycleRaw.steps.map(mapLifecycleStepDefinition)
-        : [],
-      edges: Array.isArray(lifecycleRaw.edges)
-        ? lifecycleRaw.edges.map(mapLifecycleEdge)
-        : [],
-    },
   };
 }
 
@@ -475,19 +438,6 @@ export async function validateLifecycleDefinition(input: {
 
 export async function deleteLifecycleDefinition(id: string): Promise<void> {
   await api.delete(`/lifecycle-definitions/${id}`);
-}
-
-export async function fetchWorkflowTemplates(): Promise<WorkflowTemplate[]> {
-  const raw = await api.get<Record<string, unknown>[]>("/workflow-templates");
-  return raw.map(mapWorkflowTemplate);
-}
-
-export async function bootstrapWorkflowTemplate(builtinKey: string, projectId: string): Promise<LifecycleDefinition> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/workflow-templates/${encodeURIComponent(builtinKey)}/bootstrap`,
-    { project_id: projectId },
-  );
-  return mapLifecycleDefinition(raw);
 }
 
 export async function fetchWorkflowRunsBySession(

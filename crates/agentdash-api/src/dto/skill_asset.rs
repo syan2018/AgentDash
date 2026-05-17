@@ -117,12 +117,6 @@ pub struct UpdateSkillAssetRequest {
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub struct BootstrapSkillAssetRequest {
-    #[serde(default)]
-    pub builtin_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub struct ListSkillAssetQuery {
     /// 期望值：`"user"` / `"builtin_seed"` / `"github"` / None（不过滤）
     #[serde(default)]

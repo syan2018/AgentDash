@@ -79,13 +79,6 @@ export interface CloneMcpPresetRequest {
 }
 
 /**
- * 装载 builtin Preset 的请求体。
- */
-export interface BootstrapMcpPresetRequest {
-  builtin_key?: string;
-}
-
-/**
  * 列表查询参数。
  */
 export interface ListMcpPresetQuery {

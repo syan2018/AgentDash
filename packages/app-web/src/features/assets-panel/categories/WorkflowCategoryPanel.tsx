@@ -7,11 +7,10 @@
  * - 只读预览：用 step/edge 计数文字代替 DAG 缩略（避免重造渲染器）
  * - 行动作：
  *   - `编辑` / `查看` → `navigate("/workflow/:id")`（统一编辑器，按 step 规模自适应 Form / DAG）
- *   - 删除：走 removeLifecycle；Builtin 来源目前视为"取消注册"，展示警告确认
- * - 顶部"装载内置 Bundle"按钮：bootstrap 未注册的内置模板。
+ *   - 删除：走 removeLifecycle；Marketplace 安装包的级联清理由后端负责。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useProjectStore } from "../../../stores/projectStore";
@@ -19,7 +18,6 @@ import { useWorkflowStore } from "../../../stores/workflowStore";
 import type {
   LifecycleDefinition,
   WorkflowDefinitionSource,
-  WorkflowTemplate,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 
@@ -29,14 +27,11 @@ export function WorkflowCategoryPanel() {
   const navigate = useNavigate();
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
 
-  const templates = useWorkflowStore((s) => s.templates);
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const error = useWorkflowStore((s) => s.error);
 
-  const fetchTemplates = useWorkflowStore((s) => s.fetchTemplates);
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
-  const bootstrapTemplate = useWorkflowStore((s) => s.bootstrapTemplate);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
 
   const [message, setMessage] = useState<string | null>(null);
@@ -44,43 +39,16 @@ export function WorkflowCategoryPanel() {
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
 
   useEffect(() => {
-    void fetchTemplates();
     if (!currentProjectId) return;
     void fetchDefinitions({ projectId: currentProjectId });
     void fetchLifecycles({ projectId: currentProjectId });
-  }, [currentProjectId, fetchTemplates, fetchDefinitions, fetchLifecycles]);
+  }, [currentProjectId, fetchDefinitions, fetchLifecycles]);
 
   useEffect(() => {
     if (!message) return;
     const t = setTimeout(() => setMessage(null), 4000);
     return () => clearTimeout(t);
   }, [message]);
-
-  const unregisteredTemplates = useMemo(
-    () => templates.filter((tpl) => !lifecycles.some((lc) => lc.key === tpl.lifecycle.key)),
-    [templates, lifecycles],
-  );
-
-  const handleBootstrapAll = useCallback(
-    async (list: WorkflowTemplate[]) => {
-      if (!currentProjectId || list.length === 0) return;
-      setBusyKey("__bootstrap__");
-      const registered: string[] = [];
-      for (const tpl of list) {
-        const lc = await bootstrapTemplate(tpl.key, currentProjectId);
-        if (lc) registered.push(tpl.name);
-      }
-      if (registered.length > 0) {
-        setMessage(
-          registered.length === list.length
-            ? `已注册 ${registered.length} 个内置 Bundle：${registered.join("、")}`
-            : `已注册 ${registered.length}/${list.length}：${registered.join("、")}`,
-        );
-      }
-      setBusyKey(null);
-    },
-    [bootstrapTemplate, currentProjectId],
-  );
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
@@ -111,19 +79,6 @@ export function WorkflowCategoryPanel() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {unregisteredTemplates.length > 0 && (
-            <button
-              type="button"
-              onClick={() => void handleBootstrapAll(unregisteredTemplates)}
-              disabled={busyKey != null}
-              className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-              title={unregisteredTemplates.map((tpl) => tpl.name).join("、")}
-            >
-              {busyKey === "__bootstrap__"
-                ? `注册中…(${unregisteredTemplates.length})`
-                : `注册内置 Bundle (${unregisteredTemplates.length})`}
-            </button>
-          )}
           <button
             type="button"
             onClick={() => navigate("/workflow/new")}
@@ -228,7 +183,7 @@ function LifecycleAssetGrid({
       <div className="rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
         <p className="text-sm text-foreground">暂无 Lifecycle 定义</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          可通过顶部"注册内置 Bundle"装载内置模板，或"+ Lifecycle"新建用户定义。
+          可从资源市场安装公共模板，或"+ Lifecycle"新建用户定义。
         </p>
       </div>
     );

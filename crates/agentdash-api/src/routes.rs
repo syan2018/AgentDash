@@ -175,10 +175,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(mcp_presets::list_mcp_presets).post(mcp_presets::create_mcp_preset),
         )
         .route(
-            "/projects/{project_id}/mcp-presets/bootstrap",
-            post(mcp_presets::bootstrap_mcp_presets),
-        )
-        .route(
             "/projects/{project_id}/mcp-presets/probe",
             post(mcp_presets::probe_mcp_transport_handler),
         )
@@ -206,18 +202,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(skill_assets::import_remote_skill_asset),
         )
         .route(
-            "/projects/{project_id}/skill-assets/bootstrap",
-            post(skill_assets::bootstrap_skill_assets),
-        )
-        .route(
             "/projects/{project_id}/skill-assets/{id}",
             get(skill_assets::get_skill_asset)
                 .patch(skill_assets::update_skill_asset)
                 .delete(skill_assets::delete_skill_asset),
-        )
-        .route(
-            "/projects/{project_id}/skill-assets/{id}/reset-from-builtin",
-            post(skill_assets::reset_skill_asset_from_builtin),
         )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
@@ -362,14 +350,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/hook-presets/custom/{key}",
             delete(workflows::delete_hook_preset),
-        )
-        .route(
-            "/workflow-templates",
-            get(workflows::list_workflow_templates),
-        )
-        .route(
-            "/workflow-templates/{builtin_key}/bootstrap",
-            post(workflows::bootstrap_workflow_template),
         )
         .route("/lifecycle-runs", post(workflows::start_lifecycle_run))
         .route("/lifecycle-runs/{id}", get(workflows::get_lifecycle_run))

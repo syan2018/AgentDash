@@ -2,7 +2,6 @@ import { api } from "../api/client";
 import { asRecord } from "../api/mappers";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
-  BootstrapMcpPresetRequest,
   CloneMcpPresetRequest,
   CreateMcpPresetRequest,
   ListMcpPresetQuery,
@@ -129,17 +128,6 @@ export async function cloneMcpPreset(
     input,
   );
   return mapMcpPreset(raw);
-}
-
-export async function bootstrapMcpPresets(
-  projectId: string,
-  input: BootstrapMcpPresetRequest = {},
-): Promise<McpPresetDto[]> {
-  const raw = await api.post<Record<string, unknown>[]>(
-    `/projects/${encodeURIComponent(projectId)}/mcp-presets/bootstrap`,
-    input,
-  );
-  return raw.map(mapMcpPreset);
 }
 
 /**

@@ -9,10 +9,9 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand, BuiltinWorkflowTemplateBundle, CompleteLifecycleStepCommand,
-    LifecycleOrchestrator, LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
-    build_builtin_workflow_bundle, build_step_projector_from_repos,
-    list_builtin_workflow_templates,
+    ActivateLifecycleStepCommand, CompleteLifecycleStepCommand, LifecycleOrchestrator,
+    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
+    build_step_projector_from_repos,
 };
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
@@ -191,34 +190,6 @@ pub async fn create_lifecycle_definition(
     );
     let saved = service.upsert_lifecycle_definition(definition).await?;
     Ok(Json(saved))
-}
-
-pub async fn list_workflow_templates() -> Result<Json<Vec<BuiltinWorkflowTemplateBundle>>, ApiError>
-{
-    Ok(Json(
-        list_builtin_workflow_templates().map_err(ApiError::BadRequest)?,
-    ))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BootstrapWorkflowTemplateRequest {
-    pub project_id: String,
-}
-
-pub async fn bootstrap_workflow_template(
-    State(state): State<Arc<AppState>>,
-    Path(builtin_key): Path<String>,
-    Json(req): Json<BootstrapWorkflowTemplateRequest>,
-) -> Result<Json<LifecycleDefinition>, ApiError> {
-    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
-    let service = WorkflowCatalogService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
-    );
-    let bundle =
-        build_builtin_workflow_bundle(project_id, &builtin_key).map_err(ApiError::BadRequest)?;
-    let saved = service.upsert_bundle(bundle).await?;
-    Ok(Json(saved.lifecycle))
 }
 
 pub async fn start_lifecycle_run(

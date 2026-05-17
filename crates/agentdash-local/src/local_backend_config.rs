@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use agentdash_domain::mcp_preset::McpTransportConfig;
 use serde::{Deserialize, Serialize};
 
 pub const LOCAL_BACKEND_CONFIG_FILENAME: &str = "local-backend.json";
@@ -47,22 +48,7 @@ pub struct P4WorkspaceRuntimeConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpLocalServerEntry {
     pub name: String,
-    /// "stdio" | "http" | "sse"
-    pub transport: String,
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-    #[serde(default)]
-    pub env: Option<Vec<McpEnvEntry>>,
-    #[serde(default)]
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct McpEnvEntry {
-    pub name: String,
-    pub value: String,
+    pub transport: McpTransportConfig,
 }
 
 pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendConfigFile {
@@ -153,22 +139,24 @@ mod tests {
 
     #[test]
     fn save_and_load_local_backend_config_round_trips_mcp_servers() {
+        use agentdash_domain::mcp_preset::{McpEnvVar, McpTransportConfig};
+
         let temp = tempfile::tempdir().expect("tempdir");
         let config = LocalBackendConfigFile {
             mcp_servers: vec![McpLocalServerEntry {
                 name: "filesystem".to_string(),
-                transport: "stdio".to_string(),
-                command: Some("npx".to_string()),
-                args: Some(vec![
-                    "-y".to_string(),
-                    "@modelcontextprotocol/server-filesystem".to_string(),
-                    temp.path().to_string_lossy().to_string(),
-                ]),
-                env: Some(vec![McpEnvEntry {
-                    name: "NODE_ENV".to_string(),
-                    value: "test".to_string(),
-                }]),
-                url: None,
+                transport: McpTransportConfig::Stdio {
+                    command: "npx".to_string(),
+                    args: vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-filesystem".to_string(),
+                        temp.path().to_string_lossy().to_string(),
+                    ],
+                    env: vec![McpEnvVar {
+                        name: "NODE_ENV".to_string(),
+                        value: "test".to_string(),
+                    }],
+                },
             }],
             workspace_contract: WorkspaceContractRuntimeConfig {
                 enabled: true,
@@ -188,8 +176,11 @@ mod tests {
         let loaded = load_local_backend_config_for_root(temp.path());
         assert_eq!(loaded.mcp_servers.len(), 1);
         assert_eq!(loaded.mcp_servers[0].name, "filesystem");
-        assert_eq!(loaded.mcp_servers[0].transport, "stdio");
-        assert_eq!(loaded.mcp_servers[0].command.as_deref(), Some("npx"));
+        assert_eq!(loaded.mcp_servers[0].transport.transport_kind(), "stdio");
+        match &loaded.mcp_servers[0].transport {
+            McpTransportConfig::Stdio { command, .. } => assert_eq!(command, "npx"),
+            _ => panic!("expected stdio transport"),
+        }
         assert!(loaded.workspace_contract.enabled);
         assert!(loaded.workspace_contract.git.allow_branch_sync);
         assert_eq!(

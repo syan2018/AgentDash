@@ -178,20 +178,11 @@ export interface DirectoryGroup {
 
 // ─── Project ──────────────────────────────────────────
 
-export interface McpHttpHeader {
-  name: string;
-  value: string;
-}
-
-export interface McpEnvVar {
-  name: string;
-  value: string;
-}
-
-export type McpTransportConfig =
-  | { type: 'http'; url: string; headers?: McpHttpHeader[] }
-  | { type: 'sse'; url: string; headers?: McpHttpHeader[] }
-  | { type: 'stdio'; command: string; args?: string[]; env?: McpEnvVar[] }
+export type {
+  McpHttpHeader,
+  McpEnvVar,
+  McpTransportConfig,
+} from '@agentdash/core/local-runtime'
 
 export type McpRoutePolicy = 'auto' | 'relay' | 'direct';
 

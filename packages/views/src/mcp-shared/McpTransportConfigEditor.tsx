@@ -1,10 +1,13 @@
 /**
  * 共享 MCP transport 编辑器。
  *
- * 只负责 transport 连接参数，不再承载 server name 或 route policy 语义。
+ * 只负责 transport 连接参数，不承载 server name 或 route policy 语义。
+ * 在 views 包中定义以便 local-runtime / app-web 等消费方共享。
  */
 
-import type { McpEnvVar, McpHttpHeader, McpTransportConfig } from "../../types";
+import type { McpEnvVar, McpHttpHeader, McpTransportConfig } from '@agentdash/core/local-runtime'
+
+// ── Key-Value 列表 ──
 
 export function KeyValueList({
   items,
@@ -13,11 +16,11 @@ export function KeyValueList({
   valuePlaceholder,
   disabled,
 }: {
-  items: McpHttpHeader[] | McpEnvVar[];
-  onChange: (items: McpHttpHeader[]) => void;
-  keyPlaceholder: string;
-  valuePlaceholder: string;
-  disabled?: boolean;
+  items: McpHttpHeader[] | McpEnvVar[]
+  onChange: (items: McpHttpHeader[]) => void
+  keyPlaceholder: string
+  valuePlaceholder: string
+  disabled?: boolean
 }) {
   return (
     <div className="space-y-1">
@@ -26,9 +29,9 @@ export function KeyValueList({
           <input
             value={item.name}
             onChange={(e) => {
-              const next = [...items] as McpHttpHeader[];
-              next[i] = { ...next[i], name: e.target.value };
-              onChange(next);
+              const next = [...items] as McpHttpHeader[]
+              next[i] = { ...next[i], name: e.target.value }
+              onChange(next)
             }}
             placeholder={keyPlaceholder}
             disabled={disabled}
@@ -37,9 +40,9 @@ export function KeyValueList({
           <input
             value={item.value}
             onChange={(e) => {
-              const next = [...items] as McpHttpHeader[];
-              next[i] = { ...next[i], value: e.target.value };
-              onChange(next);
+              const next = [...items] as McpHttpHeader[]
+              next[i] = { ...next[i], value: e.target.value }
+              onChange(next)
             }}
             placeholder={valuePlaceholder}
             disabled={disabled}
@@ -49,8 +52,8 @@ export function KeyValueList({
             <button
               type="button"
               onClick={() => {
-                const next = items.filter((_, j) => j !== i) as McpHttpHeader[];
-                onChange(next);
+                const next = items.filter((_, j) => j !== i) as McpHttpHeader[]
+                onChange(next)
               }}
               className="shrink-0 rounded-[6px] border border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10"
             >
@@ -62,15 +65,17 @@ export function KeyValueList({
       {!disabled && (
         <button
           type="button"
-          onClick={() => onChange([...(items as McpHttpHeader[]), { name: "", value: "" }])}
+          onClick={() => onChange([...(items as McpHttpHeader[]), { name: '', value: '' }])}
           className="text-[10px] text-muted-foreground hover:text-foreground"
         >
           + 添加
         </button>
       )}
     </div>
-  );
+  )
 }
+
+// ── 字符串列表 ──
 
 export function StringList({
   items,
@@ -78,10 +83,10 @@ export function StringList({
   placeholder,
   disabled,
 }: {
-  items: string[];
-  onChange: (items: string[]) => void;
-  placeholder: string;
-  disabled?: boolean;
+  items: string[]
+  onChange: (items: string[]) => void
+  placeholder: string
+  disabled?: boolean
 }) {
   return (
     <div className="space-y-1">
@@ -90,9 +95,9 @@ export function StringList({
           <input
             value={item}
             onChange={(e) => {
-              const next = [...items];
-              next[i] = e.target.value;
-              onChange(next);
+              const next = [...items]
+              next[i] = e.target.value
+              onChange(next)
             }}
             placeholder={placeholder}
             disabled={disabled}
@@ -112,20 +117,22 @@ export function StringList({
       {!disabled && (
         <button
           type="button"
-          onClick={() => onChange([...items, ""])}
+          onClick={() => onChange([...items, ''])}
           className="text-[10px] text-muted-foreground hover:text-foreground"
         >
           + 添加
         </button>
       )}
     </div>
-  );
+  )
 }
 
+// ── Transport 编辑器 ──
+
 export interface McpTransportConfigEditorProps {
-  value: McpTransportConfig;
-  onChange: (next: McpTransportConfig) => void;
-  disabled?: boolean;
+  value: McpTransportConfig
+  onChange: (next: McpTransportConfig) => void
+  disabled?: boolean
 }
 
 export function McpTransportConfigEditor({
@@ -135,39 +142,28 @@ export function McpTransportConfigEditor({
 }: McpTransportConfigEditorProps) {
   return (
     <div className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
-      <div className="flex items-center gap-2">
+      <div>
+        <label className="agentdash-form-label">Transport</label>
         <select
           value={value.type}
           onChange={(e) => {
-            const t = e.target.value as McpTransportConfig["type"];
-            if (t === "stdio") {
-              onChange({
-                type: "stdio",
-                command: "",
-                args: [],
-                env: [],
-              });
+            const t = e.target.value as McpTransportConfig['type']
+            if (t === 'stdio') {
+              onChange({ type: 'stdio', command: '', args: [], env: [] })
             } else {
-              onChange({
-                type: t,
-                url: "",
-                headers: [],
-              });
+              onChange({ type: t, url: '', headers: [] })
             }
           }}
           disabled={disabled}
-          className="agentdash-form-select w-24"
+          className="agentdash-form-select w-full"
         >
-          <option value="http">HTTP</option>
-          <option value="sse">SSE</option>
-          <option value="stdio">Stdio</option>
+          <option value="stdio">Stdio (本地进程)</option>
+          <option value="http">HTTP (Streamable)</option>
+          <option value="sse">SSE (Server-Sent Events)</option>
         </select>
-        <span className="text-xs text-muted-foreground">
-          这里只配置 transport 参数；工具标识和路由策略在外层单独配置
-        </span>
       </div>
 
-      {(value.type === "http" || value.type === "sse") && (
+      {(value.type === 'http' || value.type === 'sse') && (
         <>
           <div>
             <label className="agentdash-form-label">URL</label>
@@ -192,7 +188,7 @@ export function McpTransportConfigEditor({
         </>
       )}
 
-      {value.type === "stdio" && (
+      {value.type === 'stdio' && (
         <>
           <div>
             <label className="agentdash-form-label">Command</label>
@@ -226,5 +222,5 @@ export function McpTransportConfigEditor({
         </>
       )}
     </div>
-  );
+  )
 }

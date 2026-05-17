@@ -36,18 +36,24 @@ export interface LocalRuntimeProfile extends RuntimeStartRequest {
   relay_ws_url?: string | null
 }
 
-export interface McpEnvEntry {
+export interface McpEnvVar {
   name: string
   value: string
 }
 
+export interface McpHttpHeader {
+  name: string
+  value: string
+}
+
+export type McpTransportConfig =
+  | { type: 'http'; url: string; headers?: McpHttpHeader[] }
+  | { type: 'sse'; url: string; headers?: McpHttpHeader[] }
+  | { type: 'stdio'; command: string; args?: string[]; env?: McpEnvVar[] }
+
 export interface McpLocalServerEntry {
   name: string
-  transport: 'stdio' | 'http' | 'sse'
-  command?: string | null
-  args?: string[] | null
-  env?: McpEnvEntry[] | null
-  url?: string | null
+  transport: McpTransportConfig
 }
 
 export interface McpProbeResult {
@@ -66,8 +72,8 @@ export interface LocalRuntimeClient {
   runtimeRestart(): Promise<LocalRuntimeStatus>
   logsTail(limit?: number): Promise<LocalLogEvent[]>
   logsClear(): Promise<void>
-  mcpServersLoad(root: string): Promise<McpLocalServerEntry[]>
-  mcpServersSave(root: string, servers: McpLocalServerEntry[]): Promise<void>
+  mcpServersLoad(): Promise<McpLocalServerEntry[]>
+  mcpServersSave(servers: McpLocalServerEntry[]): Promise<void>
   mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResult>
 }
 
@@ -82,7 +88,7 @@ export function parseRuntimeLines(value: string) {
     .filter(Boolean)
 }
 
-export function parseRuntimeEnv(value: string): McpEnvEntry[] {
+export function parseRuntimeEnv(value: string): McpEnvVar[] {
   return value
     .split('\n')
     .map((line) => line.trim())
@@ -102,26 +108,40 @@ export function parseRuntimeEnv(value: string): McpEnvEntry[] {
 
 export function normalizeMcpLocalServer(server: McpLocalServerEntry): McpLocalServerEntry {
   const name = server.name.trim()
-  if (server.transport === 'stdio') {
-    const args = server.args?.map((arg) => arg.trim()).filter(Boolean) ?? []
-    const env = server.env?.filter((entry) => entry.name.trim()) ?? []
+  const t = server.transport
+
+  if (t.type === 'stdio') {
+    const args = t.args?.map((a) => a.trim()).filter(Boolean) ?? []
+    const env = t.env?.filter((e) => e.name.trim()) ?? []
     return {
       name,
-      transport: 'stdio',
-      command: server.command?.trim() || null,
-      args: args.length ? args : null,
-      env: env.length ? env : null,
-      url: null,
+      transport: {
+        type: 'stdio',
+        command: t.command.trim(),
+        ...(args.length ? { args } : {}),
+        ...(env.length ? { env } : {}),
+      },
     }
   }
 
   return {
     name,
-    transport: server.transport,
-    command: null,
-    args: null,
-    env: null,
-    url: server.url?.trim() || null,
+    transport: { type: t.type, url: t.url.trim(), ...(t.headers?.length ? { headers: t.headers } : {}) },
+  }
+}
+
+/** 创建指定 transport 类型的空白 MCP Server 条目 */
+export function createDefaultMcpLocalServer(
+  transportType: McpTransportConfig['type'],
+  name: string,
+): McpLocalServerEntry {
+  switch (transportType) {
+    case 'stdio':
+      return { name, transport: { type: 'stdio', command: '', args: [], env: [] } }
+    case 'http':
+      return { name, transport: { type: 'http', url: '' } }
+    case 'sse':
+      return { name, transport: { type: 'sse', url: '' } }
   }
 }
 

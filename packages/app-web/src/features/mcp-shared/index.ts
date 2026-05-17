@@ -1,14 +1,14 @@
 /**
  * MCP 共享 UI 组件（跨 feature 复用）。
  *
- * 目前仅导出单条 MCP transport 的编辑器；如后续有 MCP 相关通用 UI
- * （如 badge / preview card）可在此继续收敛。
+ * 组件实现已迁至 @agentdash/views/mcp-shared，此处仅做 re-export
+ * 以保持 app-web 内部引用路径不变。
  */
 
 export {
   McpTransportConfigEditor,
   KeyValueList,
   StringList,
-} from "./McpServerDeclEditor";
-export type { McpTransportConfigEditorProps } from "./McpServerDeclEditor";
-export { createDefaultMcpTransportConfig } from "./helpers";
+} from '@agentdash/views/mcp-shared'
+export type { McpTransportConfigEditorProps } from '@agentdash/views/mcp-shared'
+export { createDefaultMcpTransportConfig } from './helpers'

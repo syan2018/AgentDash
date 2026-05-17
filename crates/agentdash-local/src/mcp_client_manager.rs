@@ -35,7 +35,7 @@ impl McpClientManager {
             .iter()
             .map(|entry| McpServerInfoRelay {
                 name: entry.name.clone(),
-                transport: entry.transport.clone(),
+                transport: entry.transport.transport_kind().to_string(),
             })
             .collect()
     }
@@ -119,7 +119,6 @@ impl McpClientManager {
 
     /// 惰性连接——如果 client 不存在则创建
     async fn ensure_connected(&self, server_name: &str) -> Result<(), anyhow::Error> {
-        // 快路径：已连接
         {
             let clients = self.clients.read().await;
             if clients.contains_key(server_name) {
@@ -134,65 +133,36 @@ impl McpClientManager {
             .ok_or_else(|| anyhow::anyhow!("未知的 MCP server: {server_name}"))?
             .clone();
 
-        let client = match entry.transport.as_str() {
-            "stdio" => self.connect_stdio(&entry).await?,
-            "http" | "sse" => self.connect_http(&entry).await?,
-            other => anyhow::bail!("不支持的 MCP transport: {other}"),
+        let transport_kind = entry.transport.transport_kind();
+        let client = match &entry.transport {
+            agentdash_domain::mcp_preset::McpTransportConfig::Stdio { command, args, env } => {
+                let mut cmd = tokio::process::Command::new(command);
+                cmd.args(args);
+                for var in env {
+                    cmd.env(&var.name, &var.value);
+                }
+                let transport = TokioChildProcess::new(cmd)
+                    .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;
+                ().serve(transport)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("stdio MCP 握手失败: {e}"))?
+            }
+            agentdash_domain::mcp_preset::McpTransportConfig::Http { url, .. }
+            | agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, .. } => {
+                let worker = StreamableHttpClientWorker::new(
+                    reqwest::Client::new(),
+                    StreamableHttpClientTransportConfig::with_uri(url.clone()),
+                );
+                ().serve(worker)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?
+            }
         };
 
         let mut clients = self.clients.write().await;
         clients.insert(server_name.to_string(), client);
-        tracing::info!(server = %server_name, transport = %entry.transport, "MCP client 已连接");
+        tracing::info!(server = %server_name, transport = %transport_kind, "MCP client 已连接");
         Ok(())
-    }
-
-    async fn connect_stdio(
-        &self,
-        entry: &McpLocalServerEntry,
-    ) -> Result<RunningService<RoleClient, ()>, anyhow::Error> {
-        let command = entry
-            .command
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("stdio MCP server '{}' 缺少 command", entry.name))?;
-
-        let mut cmd = tokio::process::Command::new(command);
-        if let Some(args) = &entry.args {
-            cmd.args(args);
-        }
-        if let Some(env_vars) = &entry.env {
-            for var in env_vars {
-                cmd.env(&var.name, &var.value);
-            }
-        }
-
-        let transport = TokioChildProcess::new(cmd)
-            .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;
-
-        let client =
-            ().serve(transport)
-                .await
-                .map_err(|e| anyhow::anyhow!("stdio MCP 握手失败: {e}"))?;
-
-        Ok(client)
-    }
-
-    async fn connect_http(
-        &self,
-        entry: &McpLocalServerEntry,
-    ) -> Result<RunningService<RoleClient, ()>, anyhow::Error> {
-        let url = entry
-            .url
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("HTTP MCP server '{}' 缺少 url", entry.name))?;
-
-        let worker = StreamableHttpClientWorker::new(
-            reqwest::Client::new(),
-            StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-        );
-
-        let client = ().serve(worker).await.map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?;
-
-        Ok(client)
     }
 }
 

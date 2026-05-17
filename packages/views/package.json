@@ -8,7 +8,9 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./local-runtime": "./src/local-runtime/index.ts"
+    "./directory-browser": "./src/directory-browser/index.ts",
+    "./local-runtime": "./src/local-runtime/index.ts",
+    "./mcp-shared": "./src/mcp-shared/index.ts"
   },
   "dependencies": {
     "@agentdash/core": "workspace:*",

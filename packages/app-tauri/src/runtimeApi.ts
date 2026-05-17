@@ -77,14 +77,14 @@ async function logsClear(): Promise<void> {
   return invoke('logs_clear')
 }
 
-async function mcpServersLoad(root: string): Promise<McpLocalServerEntry[]> {
+async function mcpServersLoad(): Promise<McpLocalServerEntry[]> {
   ensureTauriHost()
-  return invoke('mcp_servers_load', { root })
+  return invoke('mcp_servers_load')
 }
 
-async function mcpServersSave(root: string, servers: McpLocalServerEntry[]): Promise<void> {
+async function mcpServersSave(servers: McpLocalServerEntry[]): Promise<void> {
   ensureTauriHost()
-  return invoke('mcp_servers_save', { root, servers })
+  return invoke('mcp_servers_save', { servers })
 }
 
 async function mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResult> {

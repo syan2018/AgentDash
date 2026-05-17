@@ -4,7 +4,7 @@
  * 独立于组件文件，避免 React Fast Refresh 对混合导出告警。
  */
 
-import type { McpTransportConfig } from "../../types";
+import type { McpTransportConfig } from "@agentdash/core/local-runtime";
 
 /**
  * 构造一个空白的 MCP transport（默认 http）。

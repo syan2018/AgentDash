@@ -5,8 +5,7 @@ use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, load_mcp_servers_for_root, load_or_create_machine_identity, probe_mcp_server,
-    save_mcp_servers_for_root,
+    StopReason, load_or_create_machine_identity, probe_mcp_server,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -14,6 +13,7 @@ use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
+const DESKTOP_MCP_SERVERS_FILE: &str = "local-mcp-servers.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
@@ -213,39 +213,42 @@ async fn runtime_snapshot(
 
 #[tauri::command]
 async fn mcp_servers_load(
+    app: AppHandle,
     state: State<'_, DesktopState>,
-    root: PathBuf,
 ) -> Result<Vec<McpLocalServerEntry>, String> {
+    let path = mcp_servers_path(&app)?;
     state
         .runtime
-        .record_log(
-            "info",
-            "mcp",
-            format!("加载 MCP servers: root={}", root.display()),
-        )
+        .record_log("info", "mcp", format!("加载 MCP servers: {}", path.display()))
         .await;
-    load_mcp_servers_for_root(root).map_err(|error| error.to_string())
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str::<Vec<McpLocalServerEntry>>(&content)
+        .map_err(|e| format!("解析 MCP servers 配置失败: {e}"))
 }
 
 #[tauri::command]
 async fn mcp_servers_save(
+    app: AppHandle,
     state: State<'_, DesktopState>,
-    root: PathBuf,
     servers: Vec<McpLocalServerEntry>,
 ) -> Result<(), String> {
+    let path = mcp_servers_path(&app)?;
     state
         .runtime
         .record_log(
             "info",
             "mcp",
-            format!(
-                "保存 MCP servers: root={}, count={}",
-                root.display(),
-                servers.len()
-            ),
+            format!("保存 MCP servers: count={}", servers.len()),
         )
         .await;
-    save_mcp_servers_for_root(root, servers).map_err(|error| error.to_string())
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -821,5 +824,12 @@ fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(DESKTOP_PROFILE_FILE))
+        .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
+}
+
+fn mcp_servers_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join(DESKTOP_MCP_SERVERS_FILE))
         .map_err(|error| format!("无法定位桌面端配置目录: {error}"))
 }

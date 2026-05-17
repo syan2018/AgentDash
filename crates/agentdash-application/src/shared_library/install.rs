@@ -43,6 +43,8 @@ pub enum InstallLibraryAssetOutput {
 pub struct ProjectAssetSourceStatus {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
+    pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
+    pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,9 +141,51 @@ pub async fn list_project_asset_source_status(
         }
     }
 
+    let mut workflow_definitions = Vec::new();
+    for workflow in repos
+        .workflow_definition_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        if let Some(installed_source) = workflow.installed_source {
+            workflow_definitions.push(
+                source_status_item(
+                    repos,
+                    "workflow_definition",
+                    workflow.id,
+                    workflow.key,
+                    installed_source,
+                )
+                .await?,
+            );
+        }
+    }
+
+    let mut lifecycle_definitions = Vec::new();
+    for lifecycle in repos
+        .lifecycle_definition_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        if let Some(installed_source) = lifecycle.installed_source {
+            lifecycle_definitions.push(
+                source_status_item(
+                    repos,
+                    "lifecycle_definition",
+                    lifecycle.id,
+                    lifecycle.key,
+                    installed_source,
+                )
+                .await?,
+            );
+        }
+    }
+
     Ok(ProjectAssetSourceStatus {
         mcp_presets,
         skill_assets,
+        workflow_definitions,
+        lifecycle_definitions,
     })
 }
 

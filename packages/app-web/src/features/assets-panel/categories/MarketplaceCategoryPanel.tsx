@@ -10,6 +10,8 @@ import type {
   LibraryAssetDto,
   LibraryAssetType,
   ProjectAssetSourceStatusDto,
+  ProjectAssetSourceStatusItemDto,
+  SharedLibrarySourceStatus,
 } from "../../../types";
 
 const ASSET_TYPE_OPTIONS: Array<{ value: LibraryAssetType | "all"; label: string }> = [
@@ -38,9 +40,29 @@ export function MarketplaceCategoryPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const statusItems = useMemo(
-    () => [...(sourceStatus?.mcp_presets ?? []), ...(sourceStatus?.skill_assets ?? [])],
+    () => [
+      ...(sourceStatus?.mcp_presets ?? []),
+      ...(sourceStatus?.skill_assets ?? []),
+      ...(sourceStatus?.workflow_definitions ?? []),
+      ...(sourceStatus?.lifecycle_definitions ?? []),
+    ],
     [sourceStatus],
   );
+
+  const statusByLibraryAssetId = useMemo(() => {
+    const next = new Map<string, ProjectAssetSourceStatusItemDto>();
+    for (const item of statusItems) {
+      const key = item.installed_source.library_asset_id;
+      const current = next.get(key);
+      if (
+        !current
+        || sourceStatusPriority(item.source_status) > sourceStatusPriority(current.source_status)
+      ) {
+        next.set(key, item);
+      }
+    }
+    return next;
+  }, [statusItems]);
 
   const load = async () => {
     if (!currentProjectId) return;
@@ -85,7 +107,7 @@ export function MarketplaceCategoryPanel() {
     }
   };
 
-  const install = async (asset: LibraryAssetDto) => {
+  const install = async (asset: LibraryAssetDto, overwrite: boolean) => {
     if (!currentProjectId) return;
     setBusyAssetId(asset.id);
     setError(null);
@@ -93,7 +115,7 @@ export function MarketplaceCategoryPanel() {
     try {
       await installLibraryAsset(currentProjectId, {
         library_asset_id: asset.id,
-        overwrite: true,
+        overwrite,
       });
       setMessage(`已安装 ${asset.display_name}`);
       await load();
@@ -176,8 +198,9 @@ export function MarketplaceCategoryPanel() {
             <LibraryAssetCard
               key={asset.id}
               asset={asset}
+              sourceStatus={statusByLibraryAssetId.get(asset.id)?.source_status}
               busy={busyAssetId === asset.id}
-              onInstall={() => void install(asset)}
+              onInstall={(overwrite) => void install(asset, overwrite)}
             />
           ))
         )}
@@ -191,11 +214,14 @@ export function MarketplaceCategoryPanel() {
         <div className="grid gap-2 md:grid-cols-2">
           {statusItems.length === 0 ? (
             <div className="rounded-[8px] border border-border p-4 text-sm text-muted-foreground">
-              当前项目还没有来自资源市场的 MCP Preset 或 Skill Asset
+              当前项目还没有来自资源市场的项目资源
             </div>
           ) : (
             statusItems.map((item) => (
-              <div key={`${item.asset_kind}:${item.project_asset_id}`} className="rounded-[8px] border border-border p-3">
+              <div
+                key={`${item.asset_kind}:${item.project_asset_id}`}
+                className="rounded-[8px] border border-border p-3"
+              >
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-medium text-foreground">{item.project_asset_key}</p>
                   <SourceStatusBadge status={item.source_status} />
@@ -215,13 +241,17 @@ export function MarketplaceCategoryPanel() {
 
 function LibraryAssetCard({
   asset,
+  sourceStatus,
   busy,
   onInstall,
 }: {
   asset: LibraryAssetDto;
+  sourceStatus?: SharedLibrarySourceStatus;
   busy: boolean;
-  onInstall: () => void;
+  onInstall: (overwrite: boolean) => void;
 }) {
+  const isInstalled = sourceStatus === "up_to_date";
+  const hasUpdate = sourceStatus === "update_available";
   return (
     <article className="rounded-[8px] border border-border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
@@ -242,18 +272,32 @@ function LibraryAssetCard({
         <span className="text-xs text-muted-foreground">v{asset.version}</span>
         <button
           type="button"
-          onClick={onInstall}
-          disabled={busy || asset.deprecated}
+          onClick={() => onInstall(hasUpdate)}
+          disabled={busy || asset.deprecated || isInstalled}
           className="h-8 rounded-[8px] bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
         >
-          {busy ? "安装中..." : asset.deprecated ? "已废弃" : "安装到项目"}
+          {busy
+            ? "安装中..."
+            : asset.deprecated
+              ? "已废弃"
+              : isInstalled
+                ? "已安装"
+                : hasUpdate
+                  ? "更新到项目"
+                  : "安装到项目"}
         </button>
       </div>
     </article>
   );
 }
 
-function SourceStatusBadge({ status }: { status: string }) {
+function sourceStatusPriority(status: SharedLibrarySourceStatus): number {
+  if (status === "source_missing") return 3;
+  if (status === "update_available") return 2;
+  return 1;
+}
+
+function SourceStatusBadge({ status }: { status: SharedLibrarySourceStatus }) {
   const label =
     status === "update_available" ? "有新版" : status === "source_missing" ? "来源不可用" : "已是最新";
   return (

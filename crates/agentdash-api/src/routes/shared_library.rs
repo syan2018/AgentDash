@@ -191,6 +191,16 @@ fn project_source_status_response(
             .into_iter()
             .map(source_status_item_response)
             .collect(),
+        workflow_definitions: status
+            .workflow_definitions
+            .into_iter()
+            .map(source_status_item_response)
+            .collect(),
+        lifecycle_definitions: status
+            .lifecycle_definitions
+            .into_iter()
+            .map(source_status_item_response)
+            .collect(),
     }
 }
 

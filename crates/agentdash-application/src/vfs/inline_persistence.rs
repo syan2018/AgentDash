@@ -251,7 +251,9 @@ pub async fn sync_container_inline_files(
                 inline_file_repo
                     .upsert_file(&inline_file)
                     .await
-                    .map_err(|e| format!("同步 VFS Mount {} 初始文件失败: {e}", container.mount_id))?;
+                    .map_err(|e| {
+                        format!("同步 VFS Mount {} 初始文件失败: {e}", container.mount_id)
+                    })?;
             }
         }
     }

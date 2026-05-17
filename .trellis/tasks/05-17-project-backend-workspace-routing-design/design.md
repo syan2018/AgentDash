@@ -161,14 +161,61 @@ RuntimeResolution 选择 binding 前必须额外校验：
 
 首版可以不持久化 candidate：`candidates` 可由 inventory + current Workspace 即时投影得到。若 UI 需要可复现审核流，再升级为持久化 candidate。
 
+## 目标操作流程
+
+用户对齐时优先使用操作流程，而不是先看字段和接口。目标态按“谁拥有决策权”拆成三条线：
+
+### 1. Backend owner 管理自己的可用性
+
+入口：`Settings → Backend / Local Runtime`，主语是 backend。
+
+流程：
+
+1. Backend owner 在本机 runtime 或 backend 设置中维护 accessible roots、能力槽、机器/镜像标签。
+2. Backend 自己刷新 workspace inventory，cloud 保存该 backend 最近一次可用 workspace 快照。
+3. Backend owner 在 backend 设置里选择“允许哪些 Project 使用这个 backend / capability slot”。
+4. 授权后系统生成或更新 ProjectBackendAccess。
+5. 如果 backend 在线，授权动作可以顺手触发 inventory refresh；离线时仅保留授权，等待下次上线刷新。
+
+这里的核心不是 Project 去“拿” backend，而是 backend owner 把自己可用能力开放给某些 Project。
+
+### 2. Project owner 消费 backend 授权
+
+入口：`Project Settings → Workspace`，主语是 Project。
+
+流程：
+
+1. Project owner 看到“哪些 backend 已经授权给当前 Project 使用”，但默认不在这里新增 backend 授权。
+2. Project Workspace 页面展示 logical Workspace 列表、matched bindings、unmatched candidates。
+3. 已有 logical Workspace 能匹配 inventory 时，系统自动 upsert WorkspaceBinding。
+4. 未匹配 inventory 只生成 candidate preview，由 Project owner 确认是否创建新的 logical Workspace。
+5. Project owner 只维护业务语义：Workspace identity、默认 Workspace、runtime resolution preview。
+
+Project 页面应该是“我能用什么、会解析到哪里、哪些候选需要确认”，不是“我去打开哪个 backend 的权限”。
+
+### 3. Runtime 自动路由
+
+入口：Task / Story / Project session 启动。
+
+流程：
+
+1. 运行时从 Task / Story / Project 找到 effective Workspace。
+2. WorkspaceResolution 只考虑当前 Project 已被授权的 backend。
+3. 优先使用 default binding；否则选择在线且 priority 最高的 binding。
+4. 如果没有 ProjectBackendAccess、binding 不匹配 inventory、backend 离线或能力不足，返回明确诊断，不回退到第一个 Workspace 或第一个 backend。
+
+### 4. 例外与高级入口
+
+- 手动输入 `root_ref`、编辑 `identity_payload` JSON、手工调整 binding status 仍可保留，但放在 Workspace 高级编辑中。
+- “同一 backend 只给某个 Project 用其中某个 root”暂不进入主流程，只作为 root policy backlog。
+- server 侧批量扩展 backend accessible roots / worktree 创建治理由 `05-17-backend-capability-expansion-governance` 处理。
+
 ## 前端信息架构
 
-Project Settings 的 Workspace 区域建议拆成四块：
+目标态应拆成两处：
 
-1. **Backend Access**：显示 Project 已授权 backend、状态、capability slot、priority、刷新入口。
-2. **Logical Workspaces**：显示 Project 下 Workspace 列表、identity 摘要、默认 workspace。
-3. **Discovered Candidates**：展示 inventory 匹配结果、自动 upsert 状态、未匹配候选、新建 workspace 草案。
-4. **Runtime Preview**：展示当前 default workspace 会解析到哪个 backend/root，以及为什么。
+1. **Backend 设置页**：backend inventory、accessible roots、授权给哪些 Project、刷新入口、backend 级诊断。
+2. **Project Workspace 页**：已授权 backend 摘要、logical Workspace、discovered candidates、runtime preview。
 
 高级操作：
 

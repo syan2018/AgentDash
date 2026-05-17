@@ -380,6 +380,8 @@ function BackendAccessPanel({
   const { backends, fetchBackends } = useCoordinatorStore();
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [inventoriesByAccessId, setInventoriesByAccessId] = useState<Record<string, BackendWorkspaceInventory[]>>({});
+  const [expandedInventoryAccessIds, setExpandedInventoryAccessIds] = useState<Record<string, boolean>>({});
+  const [loadingInventoryAccessIds, setLoadingInventoryAccessIds] = useState<Record<string, boolean>>({});
   const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
   const [selectedBackendId, setSelectedBackendId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -461,12 +463,21 @@ function BackendAccessPanel({
   };
 
   const handleLoadInventory = async (access: ProjectBackendAccess) => {
+    const isExpanded = expandedInventoryAccessIds[access.id] === true;
+    if (isExpanded) {
+      setExpandedInventoryAccessIds((current) => ({ ...current, [access.id]: false }));
+      return;
+    }
+    setExpandedInventoryAccessIds((current) => ({ ...current, [access.id]: true }));
     setError(null);
+    setLoadingInventoryAccessIds((current) => ({ ...current, [access.id]: true }));
     try {
       const items = await listBackendWorkspaceInventory(projectId, access.id);
       setInventoriesByAccessId((current) => ({ ...current, [access.id]: items }));
     } catch (inventoryError) {
       setError((inventoryError as Error).message);
+    } finally {
+      setLoadingInventoryAccessIds((current) => ({ ...current, [access.id]: false }));
     }
   };
 
@@ -543,6 +554,8 @@ function BackendAccessPanel({
         <div className="space-y-3">
           {accesses.map((access) => {
             const inventory = inventoriesByAccessId[access.id] ?? [];
+            const inventoryExpanded = expandedInventoryAccessIds[access.id] === true;
+            const inventoryLoading = loadingInventoryAccessIds[access.id] === true;
             return (
               <div key={access.id} className="rounded-[12px] border border-border bg-background px-4 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -564,7 +577,7 @@ function BackendAccessPanel({
                       onClick={() => void handleLoadInventory(access)}
                       className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
                     >
-                      查看 Inventory
+                      {inventoryExpanded ? "收起 Inventory" : "查看 Inventory"}
                     </button>
                     <button
                       type="button"
@@ -593,15 +606,25 @@ function BackendAccessPanel({
                   </div>
                 </div>
 
-                {inventory.length > 0 && (
+                {inventoryExpanded && (
                   <div className="mt-3 space-y-2 border-t border-border/70 pt-3">
-                    {inventory.map((item) => (
-                      <div key={item.id} className="grid gap-2 rounded-[10px] bg-muted/25 px-3 py-2 text-xs md:grid-cols-[120px_minmax(0,1fr)_100px]">
-                        <span className="text-muted-foreground">{item.identity_kind}</span>
-                        <span className="truncate font-mono text-foreground">{item.root_ref}</span>
-                        <span className="text-muted-foreground">{INVENTORY_STATUS_LABELS[item.status]}</span>
-                      </div>
-                    ))}
+                    {inventoryLoading ? (
+                      <p className="rounded-[10px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
+                        正在加载 inventory...
+                      </p>
+                    ) : inventory.length === 0 ? (
+                      <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                        当前还没有 inventory 快照。请先刷新，或等待 backend 上报可访问 workspace。
+                      </p>
+                    ) : (
+                      inventory.map((item) => (
+                        <div key={item.id} className="grid gap-2 rounded-[10px] bg-muted/25 px-3 py-2 text-xs md:grid-cols-[120px_minmax(0,1fr)_100px]">
+                          <span className="text-muted-foreground">{item.identity_kind}</span>
+                          <span className="truncate font-mono text-foreground">{item.root_ref}</span>
+                          <span className="text-muted-foreground">{INVENTORY_STATUS_LABELS[item.status]}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
               </div>

@@ -150,6 +150,7 @@ export interface StateChange {
 export type StreamEvent =
   | { type: "Connected"; data: { last_event_id: number } }
   | { type: "StateChanged"; data: StateChange }
+  | { type: "BackendRuntimeChanged"; data: { backend_id: string } }
   | { type: "Heartbeat"; data: { timestamp: number } };
 
 // ─── 项目活跃会话条目 ──────────────────────────────────

@@ -1,8 +1,10 @@
 import type {
   BackendConfig,
+  BackendWorkspaceInventoryStatus,
   ProjectBackendAccess,
   Workspace,
   WorkspaceBinding,
+  WorkspaceBindingStatus,
   WorkspaceIdentityKind,
   WorkspaceInventoryCandidate,
 } from "../../../types";
@@ -167,10 +169,16 @@ export function candidateToBindingInput(candidate: WorkspaceInventoryCandidate):
     id: crypto.randomUUID(),
     backend_id: candidate.backend_id,
     root_ref: candidate.root_ref,
-    status: candidate.status === "available" ? "ready" : "pending",
+    status: inventoryStatusToBindingStatus(candidate.status),
     detected_facts: candidate.detected_facts,
     priority: 0,
   };
+}
+
+function inventoryStatusToBindingStatus(status: BackendWorkspaceInventoryStatus): WorkspaceBindingStatus {
+  if (status === "available") return "ready";
+  if (status === "offline") return "offline";
+  return "error";
 }
 
 export function candidateToDraft(candidate: WorkspaceInventoryCandidate): WorkspaceDraft {

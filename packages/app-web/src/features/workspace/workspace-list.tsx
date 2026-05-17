@@ -57,7 +57,7 @@ const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
 };
 
 const bindingStatusLabels: Record<WorkspaceBindingStatus, string> = {
-  pending: "待校验",
+  pending: "未确认",
   ready: "可用",
   offline: "离线",
   error: "异常",
@@ -84,11 +84,40 @@ function WorkspaceStatusBadge({ status }: { status: WorkspaceStatus }) {
 }
 
 function BindingStatusBadge({ status }: { status: WorkspaceBindingStatus }) {
+  const tone = status === "ready"
+    ? "bg-success"
+    : status === "offline"
+      ? "bg-muted-foreground/45"
+      : "bg-destructive";
   return (
-    <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+    <span className="inline-flex w-fit items-center gap-1.5 self-start whitespace-nowrap text-[11px] text-muted-foreground">
+      <span className={`h-1.5 w-1.5 rounded-full ${tone}`} />
       {bindingStatusLabels[status]}
     </span>
   );
+}
+
+function bindingDraftKey(binding: Pick<WorkspaceBindingInput, "backend_id" | "root_ref">): string {
+  const backendId = binding.backend_id.trim();
+  const rootRef = binding.root_ref.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+  return `${backendId}:${rootRef}`;
+}
+
+function candidateDraftKey(candidate: WorkspaceInventoryCandidate): string {
+  return bindingDraftKey({
+    backend_id: candidate.backend_id,
+    root_ref: candidate.root_ref,
+  });
+}
+
+function dedupeBindings(bindings: WorkspaceBindingInput[]): WorkspaceBindingInput[] {
+  const seen = new Set<string>();
+  return bindings.filter((binding) => {
+    const key = bindingDraftKey(binding);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function ResolutionBadge({ state }: { state: "resolved" | "warning" | "blocked" }) {
@@ -199,158 +228,11 @@ function IdentityFields({
   );
 }
 
-interface WorkspaceBindingEditorProps {
-  bindings: WorkspaceBindingInput[];
-  defaultBindingId: string | null;
-  selectableBackends: BackendConfig[];
-  onChange: (bindings: WorkspaceBindingInput[]) => void;
-  onDefaultBindingChange: (bindingId: string | null) => void;
-}
-
-function WorkspaceBindingEditor({
-  bindings,
-  defaultBindingId,
-  selectableBackends,
-  onChange,
-  onDefaultBindingChange,
-}: WorkspaceBindingEditorProps) {
-  const [browseIndex, setBrowseIndex] = useState<number | null>(null);
-
-  const updateBinding = (index: number, patch: Partial<WorkspaceBindingInput>) => {
-    onChange(bindings.map((binding, itemIndex) => (
-      itemIndex === index ? { ...binding, ...patch } : binding
-    )));
-  };
-
-  const removeBinding = (index: number) => {
-    const next = bindings.filter((_, itemIndex) => itemIndex !== index);
-    onChange(next);
-    const removed = bindings[index];
-    if (removed?.id && removed.id === defaultBindingId) {
-      onDefaultBindingChange(next[0]?.id ?? null);
-    }
-  };
-
-  const browseBinding = browseIndex !== null ? bindings[browseIndex] : null;
-
-  return (
-    <div className="space-y-3">
-      {bindings.length === 0 && (
-        <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-          当前还没有 binding。可以等待 backend inventory 自动匹配，或通过本机目录识别/发现项补充。
-        </p>
-      )}
-
-      {bindings.map((binding, index) => (
-        <div
-          key={binding.id ?? `${binding.backend_id}-${binding.root_ref}-${index}`}
-          className="rounded-[10px] border border-border bg-background px-3 py-3"
-        >
-          <div className="grid gap-3 md:grid-cols-[1fr_1.4fr_120px_96px_auto]">
-            <select
-              value={binding.backend_id}
-              onChange={(event) => updateBinding(index, { backend_id: event.target.value })}
-              className="agentdash-form-select"
-            >
-              <option value="">选择 backend</option>
-              {selectableBackends.map((backend) => (
-                <option key={backend.id} value={backend.id}>
-                  {backend.name} {backend.online ? "(online)" : "(offline)"}
-                </option>
-              ))}
-            </select>
-
-            <div className="flex gap-1.5">
-              <input
-                value={binding.root_ref}
-                onChange={(event) => updateBinding(index, { root_ref: event.target.value })}
-                placeholder="backend 上的目录根路径"
-                className="agentdash-form-input min-w-0 flex-1"
-              />
-              <button
-                type="button"
-                onClick={() => setBrowseIndex(index)}
-                disabled={!binding.backend_id}
-                title={binding.backend_id ? "浏览目录" : "请先选择 backend"}
-                className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                浏览
-              </button>
-            </div>
-
-            <select
-              value={binding.status ?? "pending"}
-              onChange={(event) => updateBinding(index, {
-                status: event.target.value as WorkspaceBindingStatus,
-              })}
-              className="agentdash-form-select"
-            >
-              <option value="pending">待校验</option>
-              <option value="ready">可用</option>
-              <option value="offline">离线</option>
-              <option value="error">异常</option>
-            </select>
-
-            <label className="flex items-center gap-2 rounded-[8px] border border-border px-3 py-2 text-xs text-foreground">
-              <input
-                type="radio"
-                checked={defaultBindingId === (binding.id ?? null)}
-                onChange={() => onDefaultBindingChange(binding.id ?? null)}
-              />
-              默认
-            </label>
-
-            <button
-              type="button"
-              onClick={() => removeBinding(index)}
-              className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive transition-colors hover:bg-destructive/10"
-            >
-              删除
-            </button>
-          </div>
-        </div>
-      ))}
-
-      <button
-        type="button"
-        onClick={() => onChange([
-          ...bindings,
-          {
-            id: crypto.randomUUID(),
-            backend_id: selectableBackends[0]?.id ?? "",
-            root_ref: "",
-            status: "pending",
-            detected_facts: {},
-            priority: 0,
-          },
-        ])}
-        disabled={selectableBackends.length === 0}
-        className="rounded-[8px] border border-border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        + 手工添加 binding
-      </button>
-
-      {browseBinding && (
-        <DirectoryBrowserDialog
-          open={browseIndex !== null}
-          backendId={browseBinding.backend_id}
-          initialPath={browseBinding.root_ref || undefined}
-          onSelect={(path) => {
-            if (browseIndex !== null) {
-              updateBinding(browseIndex, { root_ref: path });
-            }
-          }}
-          onClose={() => setBrowseIndex(null)}
-        />
-      )}
-    </div>
-  );
-}
-
 interface CandidateListProps {
   candidates: WorkspaceInventoryCandidate[];
   backends: BackendConfig[];
   selectedKey?: string | null;
+  emptyText?: string;
   onSelect?: (candidate: WorkspaceInventoryCandidate) => void;
   onAddBinding?: (candidate: WorkspaceInventoryCandidate) => void;
 }
@@ -363,13 +245,14 @@ function CandidateList({
   candidates,
   backends,
   selectedKey,
+  emptyText = "暂无未匹配的 backend inventory 发现项。可以刷新 Inventory 或使用本机目录识别。",
   onSelect,
   onAddBinding,
 }: CandidateListProps) {
   if (candidates.length === 0) {
     return (
       <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-        暂无未匹配的 backend inventory 发现项。可以刷新 Inventory 或使用本机目录识别。
+        {emptyText}
       </p>
     );
   }
@@ -436,6 +319,7 @@ interface WorkspaceEditorDrawerProps {
   workspace: Workspace | null;
   candidates: WorkspaceInventoryCandidate[];
   accesses: ProjectBackendAccess[];
+  canManageBindings: boolean;
   onClose: () => void;
   onSetDefault?: (workspaceId: string | null) => void;
   onCandidatesChanged: () => void | Promise<void>;
@@ -449,6 +333,7 @@ function WorkspaceEditorDrawer({
   workspace,
   candidates,
   accesses,
+  canManageBindings,
   onClose,
   onSetDefault,
   onCandidatesChanged,
@@ -462,10 +347,14 @@ function WorkspaceEditorDrawer({
     updateStatus,
     updateWorkspace,
   } = useWorkspaceStore();
-  const { backends } = useCoordinatorStore();
+  const backends = useCoordinatorStore((state) => state.backends);
   const selectableBackends = useMemo(() => authorizedBackends(backends, accesses), [accesses, backends]);
   const localBackends = useMemo(() => localAuthorizedBackends(backends, accesses), [accesses, backends]);
   const fallbackDetectBackends = localBackends.length > 0 ? localBackends : selectableBackends;
+  const visibleCreateModes = useMemo<CreateMode[]>(
+    () => canManageBindings ? ["candidate", "logical", "local_detect"] : ["candidate", "logical"],
+    [canManageBindings],
+  );
   const initialBinding = workspace ? findWorkspaceBinding(workspace) : null;
   const [createMode, setCreateMode] = useState<CreateMode>("candidate");
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null);
@@ -502,6 +391,22 @@ function WorkspaceEditorDrawer({
   const [isDetectBrowseOpen, setIsDetectBrowseOpen] = useState(false);
   const [setAsDefault, setSetAsDefault] = useState(false);
   const effectiveDetectBackendId = detectBackendId || fallbackDetectBackends[0]?.id || "";
+  const existingBindingKeys = useMemo(
+    () => new Set(workspace?.bindings.map((binding) => bindingDraftKey(binding)) ?? []),
+    [workspace],
+  );
+  const candidateBindingKeys = useMemo(
+    () => new Set(candidates.map(candidateDraftKey)),
+    [candidates],
+  );
+
+  const bindingsAllowedForCurrentUser = () => {
+    if (canManageBindings) return true;
+    return bindings.every((binding) => {
+      const key = bindingDraftKey(binding);
+      return existingBindingKeys.has(key) || candidateBindingKeys.has(key);
+    });
+  };
 
   const syncPayload = (payload: Record<string, unknown>) => {
     setIdentityPayload(payload);
@@ -526,6 +431,10 @@ function WorkspaceEditorDrawer({
 
   const handleAddCandidateBinding = (candidate: WorkspaceInventoryCandidate) => {
     const binding = candidateToBindingInput(candidate);
+    if (bindings.some((item) => bindingDraftKey(item) === bindingDraftKey(binding))) {
+      setMessage("这个 backend/root 已经在当前 binding 中");
+      return;
+    }
     setBindings((current) => [...current, binding]);
     if (!defaultBindingId) {
       setDefaultBindingId(binding.id ?? null);
@@ -551,6 +460,19 @@ function WorkspaceEditorDrawer({
     if (!name.trim()) {
       setName(buildDefaultWorkspaceName(detected.identity_kind, detected.binding.root_ref));
     }
+    setMessage(null);
+  };
+
+  const handleDetectInventoryRegistration = async () => {
+    const backendId = effectiveDetectBackendId.trim();
+    const rootRef = detectRootRef.trim();
+    if (!backendId || !rootRef) {
+      setMessage("请先选择已授权 backend 并填写目录根路径");
+      return;
+    }
+    const detected = await detectWorkspace(projectId, backendId, rootRef);
+    if (!detected) return;
+    setDetectionResult(detected);
     setMessage(null);
   };
 
@@ -591,6 +513,15 @@ function WorkspaceEditorDrawer({
       setMessage("请先选择一个发现项");
       return;
     }
+    if (!bindingsAllowedForCurrentUser()) {
+      setMessage("当前权限只能从既有候选项确认 binding，不能登记新的 backend inventory");
+      return;
+    }
+
+    const normalizedBindings = dedupeBindings(bindings);
+    if (normalizedBindings.length !== bindings.length) {
+      setBindings(normalizedBindings);
+    }
 
     setMessage(null);
 
@@ -599,7 +530,7 @@ function WorkspaceEditorDrawer({
         identity_kind: identityKind,
         identity_payload: identityPayload,
         resolution_policy: resolutionPolicy,
-        bindings,
+        bindings: normalizedBindings,
         mount_capabilities: mountCapabilities,
       });
       if (!created) return;
@@ -618,7 +549,7 @@ function WorkspaceEditorDrawer({
       identity_payload: identityPayload,
       resolution_policy: resolutionPolicy,
       default_binding_id: defaultBindingId,
-      bindings,
+      bindings: normalizedBindings,
       mount_capabilities: mountCapabilities,
     });
     if (!updated) return;
@@ -696,34 +627,31 @@ function WorkspaceEditorDrawer({
           {mode === "create" && (
             <DetailSection
               title="创建入口"
-              description="默认使用 backend inventory 的发现项；个人本机用户可以直接使用本机目录识别。"
+              description={canManageBindings
+                ? "默认使用 backend inventory 的发现项；管理员可使用本机目录识别登记新 inventory。"
+                : "默认使用 backend inventory 的发现项；当前权限只能从既有候选项创建带 binding 的 Workspace。"}
             >
               <div className="grid gap-2 md:grid-cols-3">
-                {Object.entries(createModeLabels).map(([value, label]) => (
+                {visibleCreateModes.map((value) => (
                   <button
                     key={value}
                     type="button"
-                    onClick={() => setCreateMode(value as CreateMode)}
+                    onClick={() => setCreateMode(value)}
                     className={`rounded-[10px] border px-3 py-2 text-left text-xs transition-colors ${
                       createMode === value
                         ? "border-primary/35 bg-primary/10 text-primary"
                         : "border-border bg-background text-muted-foreground hover:bg-secondary"
                     }`}
                   >
-                    {label}
+                    {createModeLabels[value]}
                   </button>
                 ))}
               </div>
 
               {createMode === "candidate" && (
-                <div className="mt-3">
-                  <CandidateList
-                    candidates={candidates}
-                    backends={backends}
-                    selectedKey={selectedCandidateKey}
-                    onSelect={handleSelectCandidate}
-                  />
-                </div>
+                <p className="mt-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                  在下方 Backend Bindings 中选择一个发现项，确认后会生成 Workspace identity 和初始 binding。
+                </p>
               )}
 
               {createMode === "logical" && (
@@ -732,7 +660,7 @@ function WorkspaceEditorDrawer({
                 </p>
               )}
 
-              {createMode === "local_detect" && (
+              {canManageBindings && createMode === "local_detect" && (
                 <div className="mt-3 space-y-3">
                   <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)_auto]">
                     <select
@@ -780,14 +708,6 @@ function WorkspaceEditorDrawer({
                       当前没有已授权且在线的 backend。请先在 Backend Access 中授权本机 backend。
                     </p>
                   )}
-
-                  <DirectoryBrowserDialog
-                    open={isDetectBrowseOpen}
-                    backendId={effectiveDetectBackendId}
-                    initialPath={detectRootRef || undefined}
-                    onSelect={(path) => setDetectRootRef(path)}
-                    onClose={() => setIsDetectBrowseOpen(false)}
-                  />
 
                   {detectionResult && (
                     <div className="rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
@@ -929,46 +849,148 @@ function WorkspaceEditorDrawer({
           )}
 
           <DetailSection
-            title="Bindings"
-            description="已确认的 backend/root 落点。默认 binding 是 Workspace 内部默认，不等于 Project 默认 Workspace。"
+            title="Backend Bindings"
+            description={canManageBindings
+              ? "在同一处确认候选项、查看当前 binding，并按需登记新的 backend inventory。"
+              : "当前权限只能从 backend inventory 的既有候选项确认 binding。"}
           >
-            <div className="space-y-2">
-              {bindings.length > 0 && bindings.map((binding) => (
-                <div
-                  key={binding.id ?? `${binding.backend_id}:${binding.root_ref}`}
-                  className="grid gap-2 rounded-[10px] border border-border bg-background px-3 py-3 text-xs md:grid-cols-[minmax(0,1fr)_120px_96px]"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-foreground">
-                      {backendDisplayName(backends, binding.backend_id)} @ {binding.root_ref || "未填写 root"}
-                    </p>
-                    <p className="mt-1 truncate text-muted-foreground">
-                      priority {binding.priority ?? 0}
-                    </p>
-                  </div>
-                  <BindingStatusBadge status={binding.status ?? "pending"} />
-                  <span className="text-muted-foreground">
-                    {defaultBindingId === (binding.id ?? null) ? "Workspace 默认" : ""}
-                  </span>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-foreground">当前 binding</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    默认 binding 是 Workspace 内部默认，不等于 Project 默认 Workspace。
+                  </p>
                 </div>
-              ))}
-              {selectedBindingSummary && (
-                <p className="text-xs text-muted-foreground">{selectedBindingSummary}</p>
+                {dedupeBindings(bindings).length === 0 ? (
+                  <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    当前还没有 binding。请从下方候选项确认一个 backend/root。
+                  </p>
+                ) : (
+                  dedupeBindings(bindings).map((binding) => (
+                    <div
+                      key={binding.id ?? `${binding.backend_id}:${binding.root_ref}`}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {backendDisplayName(backends, binding.backend_id)}
+                        </p>
+                        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                          {binding.root_ref || "未填写 root"}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <BindingStatusBadge status={binding.status ?? "pending"} />
+                        {defaultBindingId === (binding.id ?? null) && (
+                          <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
+                            Workspace 默认
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {selectedBindingSummary && (
+                  <p className="text-xs text-muted-foreground">{selectedBindingSummary}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-foreground">可确认候选项</p>
+                <CandidateList
+                  candidates={candidates}
+                  backends={backends}
+                  emptyText={canManageBindings
+                    ? "暂无未匹配的 backend inventory 发现项。可以刷新 Inventory 或使用本机目录识别。"
+                    : "暂无可确认的 backend inventory 候选项。请让管理员先登记或刷新 backend inventory。"}
+                  onAddBinding={mode === "detail" ? handleAddCandidateBinding : undefined}
+                  selectedKey={selectedCandidateKey}
+                  onSelect={mode === "create" ? handleSelectCandidate : undefined}
+                />
+              </div>
+
+              {canManageBindings ? (
+                <details className="rounded-[10px] border border-border bg-background px-3 py-3">
+                  <summary className="cursor-pointer text-xs font-medium text-foreground">
+                    Advanced Inventory Registration
+                  </summary>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    仅管理员用于识别目录并登记 backend inventory。状态、identity 和 detected_facts 都来自 detect 结果，不手工填写。
+                  </p>
+                  <div className="mt-3 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)_auto]">
+                      <select
+                        value={effectiveDetectBackendId}
+                        onChange={(event) => setDetectBackendId(event.target.value)}
+                        className="agentdash-form-select"
+                      >
+                        <option value="">选择已授权 backend</option>
+                        {fallbackDetectBackends.map((backend) => (
+                          <option key={backend.id} value={backend.id}>
+                            {backend.name} {backend.backend_type === "local" ? "(本机)" : "(远程)"}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex gap-1.5">
+                        <input
+                          value={detectRootRef}
+                          onChange={(event) => setDetectRootRef(event.target.value)}
+                          placeholder="选择或填写 backend 上的目录"
+                          className="agentdash-form-input min-w-0 flex-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setIsDetectBrowseOpen(true)}
+                          disabled={!effectiveDetectBackendId}
+                          className="shrink-0 rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          浏览
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleDetectInventoryRegistration()}
+                        disabled={!effectiveDetectBackendId || !detectRootRef.trim()}
+                        className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        识别目录
+                      </button>
+                    </div>
+
+                    {detectionResult && (
+                      <div className="rounded-[10px] border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                        <p>
+                          识别结果：{identityKindLabels[detectionResult.identity_kind]} · confidence: {detectionResult.confidence}
+                        </p>
+                        <p className="mt-1">
+                          解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleRegisterInventory()}
+                            disabled={isRegisteringInventory}
+                            className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isRegisteringInventory ? "登记中..." : "登记到 Backend Inventory"}
+                          </button>
+                          <span className="self-center text-[11px] text-muted-foreground">
+                            登记后从候选项确认 binding。
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ) : (
+                <p className="rounded-[10px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
+                  无管理员权限时不开放新的 backend inventory 登记入口。
+                </p>
               )}
             </div>
-          </DetailSection>
-
-          <DetailSection
-            title="Candidates"
-            description="来自 backend inventory 的未匹配发现项，可用于创建 Workspace 或补充 binding。"
-          >
-            <CandidateList
-              candidates={candidates}
-              backends={backends}
-              onAddBinding={mode === "detail" ? handleAddCandidateBinding : undefined}
-              selectedKey={selectedCandidateKey}
-              onSelect={mode === "create" ? handleSelectCandidate : undefined}
-            />
           </DetailSection>
 
           <DetailSection title="挂载能力">
@@ -999,19 +1021,6 @@ function WorkspaceEditorDrawer({
             </div>
           </DetailSection>
 
-          <DetailSection
-            title="Advanced Maintenance"
-            description="仅用于维护当前 Workspace 的 binding，不会登记或修改 backend inventory。"
-          >
-            <WorkspaceBindingEditor
-              bindings={bindings}
-              defaultBindingId={defaultBindingId}
-              selectableBackends={selectableBackends}
-              onChange={setBindings}
-              onDefaultBindingChange={setDefaultBindingId}
-            />
-          </DetailSection>
-
           {(message || error) && (
             <p className="text-xs text-destructive">{message || error}</p>
           )}
@@ -1039,6 +1048,14 @@ function WorkspaceEditorDrawer({
             </button>
           </div>
         </div>
+
+        <DirectoryBrowserDialog
+          open={isDetectBrowseOpen}
+          backendId={effectiveDetectBackendId}
+          initialPath={detectRootRef || undefined}
+          onSelect={(path) => setDetectRootRef(path)}
+          onClose={() => setIsDetectBrowseOpen(false)}
+        />
       </DetailPanel>
 
       {workspace && (
@@ -1065,6 +1082,7 @@ interface WorkspaceListProps {
   projectId: string;
   workspaces: Workspace[];
   defaultWorkspaceId?: string | null;
+  canManageBindings?: boolean;
   onSetDefault?: (workspaceId: string | null) => void;
   onInventoryChanged?: () => void | Promise<void>;
 }
@@ -1073,20 +1091,17 @@ export function WorkspaceList({
   projectId,
   workspaces,
   defaultWorkspaceId,
+  canManageBindings = false,
   onSetDefault,
   onInventoryChanged,
 }: WorkspaceListProps) {
-  const { backends, fetchBackends } = useCoordinatorStore();
+  const backends = useCoordinatorStore((state) => state.backends);
+  const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const workspaceRefreshSignature = useMemo(
-    () => workspaces.map((workspace) => `${workspace.id}:${workspace.updated_at}`).join("|"),
-    [workspaces],
-  );
-
   const loadRoutingInputs = useCallback(async () => {
     setLoadError(null);
     try {
@@ -1107,7 +1122,7 @@ export function WorkspaceList({
       void loadRoutingInputs();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [fetchBackends, loadRoutingInputs, workspaceRefreshSignature]);
+  }, [fetchBackends, loadRoutingInputs]);
 
   const handleToggleDefault = (workspaceId: string, event: MouseEvent) => {
     event.stopPropagation();
@@ -1247,6 +1262,7 @@ export function WorkspaceList({
         workspace={null}
         candidates={candidates}
         accesses={accesses}
+        canManageBindings={canManageBindings}
         onClose={() => setIsCreateOpen(false)}
         onSetDefault={onSetDefault}
         onCandidatesChanged={loadRoutingInputs}
@@ -1261,6 +1277,7 @@ export function WorkspaceList({
         workspace={selectedWorkspace}
         candidates={candidates}
         accesses={accesses}
+        canManageBindings={canManageBindings}
         onClose={() => setSelectedWorkspace(null)}
         onSetDefault={onSetDefault}
         onCandidatesChanged={loadRoutingInputs}

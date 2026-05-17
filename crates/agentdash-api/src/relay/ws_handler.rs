@@ -174,8 +174,10 @@ async fn handle_backend_connection(
     };
     if send_relay(&mut ws_tx, &ack).await.is_err() {
         state.services.backend_registry.unregister(&bid).await;
+        notify_backend_runtime_changed(&state, &bid);
         return;
     }
+    notify_backend_runtime_changed(&state, &bid);
 
     tracing::info!(backend_id = %bid, "本机后端注册完成，进入消息循环");
 
@@ -240,6 +242,7 @@ async fn handle_backend_connection(
     {
         tracing::warn!(backend_id = %bid, error = %error, "写入 runtime health 离线状态失败");
     }
+    notify_backend_runtime_changed(&state, &bid);
 
     // 标记该后端名下的所有终端为 Lost 并推送 platform event
     let lost_terminal_ids = state
@@ -385,6 +388,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             {
                 tracing::warn!(backend_id = %backend_id, error = %error, "更新 runtime health capabilities 失败");
             }
+            notify_backend_runtime_changed(state, backend_id);
         }
         RelayMessage::EventToolShellOutput { payload, .. } => {
             if !state.services.shell_output_registry.route(payload) {
@@ -505,6 +509,13 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             );
         }
     }
+}
+
+fn notify_backend_runtime_changed(state: &AppState, backend_id: &str) {
+    let _ = state
+        .services
+        .backend_runtime_events
+        .send(backend_id.to_string());
 }
 
 fn is_pending_response_message(msg: &RelayMessage) -> bool {

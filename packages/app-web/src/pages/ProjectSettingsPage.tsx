@@ -35,7 +35,6 @@ import {
   listWorkspaceInventoryCandidates,
   refreshBackendWorkspaceInventory,
   revokeProjectBackendAccess,
-  syncWorkspaceBackendBindings,
   updateProjectBackendAccess,
 } from "../services/backendAccess";
 
@@ -372,14 +371,13 @@ function BackendAccessPanel({
   projectId,
   canEdit,
   inventoryRefreshKey = 0,
-  onWorkspaceSynced,
 }: {
   projectId: string;
   canEdit: boolean;
   inventoryRefreshKey?: number;
-  onWorkspaceSynced: () => void;
 }) {
-  const { backends, fetchBackends } = useCoordinatorStore();
+  const backends = useCoordinatorStore((state) => state.backends);
+  const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [inventoriesByAccessId, setInventoriesByAccessId] = useState<Record<string, BackendWorkspaceInventory[]>>({});
   const [expandedInventoryAccessIds, setExpandedInventoryAccessIds] = useState<Record<string, boolean>>({});
@@ -487,11 +485,14 @@ function BackendAccessPanel({
     setError(null);
     try {
       const result = await refreshBackendWorkspaceInventory(projectId, access.id);
+      const [items, nextCandidates] = await Promise.all([
+        listBackendWorkspaceInventory(projectId, access.id),
+        listWorkspaceInventoryCandidates(projectId),
+      ]);
       setInventoriesByAccessId((current) => ({
         ...current,
-        [access.id]: result.items,
+        [access.id]: items,
       }));
-      const nextCandidates = await listWorkspaceInventoryCandidates(projectId);
       setCandidates(nextCandidates);
       setMessage(`已刷新 ${result.refreshed} 个 workspace，失败 ${result.failed} 个`);
     } catch (refreshError) {
@@ -538,19 +539,6 @@ function BackendAccessPanel({
       setMessage("已撤销 backend 访问");
     } catch (revokeError) {
       setError((revokeError as Error).message);
-    }
-  };
-
-  const handleSync = async () => {
-    setError(null);
-    try {
-      const result = await syncWorkspaceBackendBindings(projectId);
-      const nextCandidates = await listWorkspaceInventoryCandidates(projectId);
-      setCandidates(nextCandidates);
-      onWorkspaceSynced();
-      setMessage(`已创建 ${result.created_bindings} 个 binding，更新 ${result.updated_bindings} 个 binding`);
-    } catch (syncError) {
-      setError((syncError as Error).message);
     }
   };
 
@@ -671,20 +659,9 @@ function BackendAccessPanel({
       </ContentGroup>
 
       <ContentGroup title="Discovered Candidates">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            {candidates.length} 个 inventory 项尚未匹配现有 Workspace。
-          </p>
-          <button
-            type="button"
-            onClick={() => void handleSync()}
-            disabled={!canEdit}
-            className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            同步已有 Workspace Binding
-          </button>
-        </div>
-
+        <p className="text-xs text-muted-foreground">
+          {candidates.length} 个 inventory 项尚未匹配现有 Workspace。请在下方 Workspace 详情中从候选项确认 binding。
+        </p>
         {candidates.length > 0 && (
           <div className="space-y-2">
             {candidates.map((candidate) => (
@@ -1203,7 +1180,6 @@ export function ProjectSettingsPage() {
                       projectId={project.id}
                       canEdit={canEditProject}
                       inventoryRefreshKey={workspaceInventoryRefreshKey}
-                      onWorkspaceSynced={() => void fetchWorkspaces(project.id)}
                     />
                   </SectionCard>
 
@@ -1215,6 +1191,7 @@ export function ProjectSettingsPage() {
                       projectId={project.id}
                       workspaces={workspaces}
                       defaultWorkspaceId={project.config.default_workspace_id}
+                      canManageBindings={canManageSharing}
                       onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
                       onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
                     />

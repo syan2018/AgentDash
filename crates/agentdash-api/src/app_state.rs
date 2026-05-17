@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 
 use crate::mount_providers::RelayFsMountProvider;
 use crate::plugins::{
@@ -52,6 +53,8 @@ use agentdash_infrastructure::{
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
 
+const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
+
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub session_core: SessionCoreService,
@@ -71,6 +74,8 @@ pub struct ServiceSet {
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
     pub backend_registry: Arc<BackendRegistry>,
+    /// Backend runtime 在线/离线/能力变化事件 — 供全局事件流驱动前端刷新
+    pub backend_runtime_events: broadcast::Sender<String>,
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     /// 交互式终端运行时状态缓存
@@ -239,6 +244,8 @@ impl AppState {
         };
 
         let backend_registry = BackendRegistry::new();
+        let (backend_runtime_events, _) =
+            broadcast::channel(BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY);
         let mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
         let setup_action_transport: Arc<
             dyn agentdash_application::backend_transport::BackendTransport,
@@ -517,6 +524,7 @@ impl AppState {
                 vfs_service,
                 extra_skill_dirs,
                 backend_registry,
+                backend_runtime_events,
                 shell_output_registry,
                 terminal_cache,
                 vfs_registry,

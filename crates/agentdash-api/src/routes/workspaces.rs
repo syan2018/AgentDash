@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -386,6 +387,7 @@ async fn derive_workspace_shape(
         .into_iter()
         .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
         .collect::<Result<Vec<_>, _>>()?;
+    ensure_unique_bindings(&parsed_bindings)?;
 
     if let Some(identity_kind) = identity_kind {
         let identity_payload = identity_payload.ok_or_else(|| {
@@ -428,6 +430,7 @@ async fn derive_workspace_shape(
         updated_at: first_binding.updated_at,
     };
     parsed_bindings[0] = replacement_binding;
+    ensure_unique_bindings(&parsed_bindings)?;
 
     let detected_identity_kind = detected.identity_kind.clone();
     Ok((
@@ -467,6 +470,25 @@ fn binding_input_to_binding(
     created.status = binding.status.unwrap_or(WorkspaceBindingStatus::Pending);
     created.priority = binding.priority.unwrap_or_default();
     Ok(created)
+}
+
+fn ensure_unique_bindings(bindings: &[WorkspaceBinding]) -> Result<(), ApiError> {
+    let mut seen = HashSet::new();
+    for binding in bindings {
+        let key = binding_unique_key(&binding.backend_id, &binding.root_ref);
+        if !seen.insert(key) {
+            return Err(ApiError::BadRequest(
+                "同一个 Workspace 中不能重复绑定相同 backend/root".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn binding_unique_key(backend_id: &str, root_ref: &str) -> String {
+    let root = root_ref.trim().replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    format!("{}:{root}", backend_id.trim())
 }
 
 fn derive_workspace_status(bindings: &[WorkspaceBinding]) -> WorkspaceStatus {

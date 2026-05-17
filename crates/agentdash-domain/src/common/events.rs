@@ -11,5 +11,6 @@ use crate::story::StateChange;
 pub enum StreamEvent {
     Connected { last_event_id: i64 },
     StateChanged(StateChange),
+    BackendRuntimeChanged { backend_id: String },
     Heartbeat { timestamp: i64 },
 }

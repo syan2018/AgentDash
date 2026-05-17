@@ -179,9 +179,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!currentUser) return;
     if (!getDesktopLocalRuntimeClient()) return;
-    ensureDesktopLocalRuntimeStarted(getStoredToken() ?? "").catch((error: unknown) => {
-      console.warn("desktop local runtime auto-start failed", error);
-    });
+    ensureDesktopLocalRuntimeStarted(getStoredToken() ?? "")
+      .catch((error: unknown) => {
+        console.warn("desktop local runtime auto-start failed", error);
+      });
   }, [currentUser]);
 
   // ── 渲染状态机 ──
@@ -230,19 +231,10 @@ function AppContent() {
   const { fetchProjects, currentProjectId } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect, disconnect } = useEventStore();
-  const hasDesktopLocalRuntime = !!getDesktopLocalRuntimeClient();
 
   useEffect(() => {
     void Promise.allSettled([fetchBackends(), fetchProjects()]);
   }, [fetchBackends, fetchProjects]);
-
-  useEffect(() => {
-    if (!hasDesktopLocalRuntime) return;
-    const timer = window.setInterval(() => {
-      void fetchBackends();
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [fetchBackends, hasDesktopLocalRuntime]);
 
   useEffect(() => {
     if (!currentProjectId) {

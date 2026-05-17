@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
@@ -100,6 +101,7 @@ pub async fn event_stream(
         poll_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut heartbeat_tick = tokio::time::interval(STREAM_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut backend_runtime_rx = state.services.backend_runtime_events.subscribe();
 
         loop {
             tokio::select! {
@@ -115,6 +117,23 @@ pub async fn event_stream(
                         }
                         Err(err) => {
                             tracing::error!(project_id = %project.id, error = %err, "Project 事件流轮询 state_changes 失败");
+                        }
+                    }
+                }
+                event = backend_runtime_rx.recv() => {
+                    match event {
+                        Ok(backend_id) => {
+                            let runtime_event = StreamEvent::BackendRuntimeChanged { backend_id };
+                            if let Some(event) = build_sse_event(&runtime_event, None) {
+                                yield Ok(event);
+                            }
+                        }
+                        Err(RecvError::Lagged(skipped)) => {
+                            tracing::warn!(project_id = %project.id, skipped, "Project 事件流 backend runtime 事件滞后");
+                        }
+                        Err(RecvError::Closed) => {
+                            tracing::warn!(project_id = %project.id, "Project 事件流 backend runtime 事件通道已关闭");
+                            break;
                         }
                     }
                 }
@@ -205,6 +224,7 @@ pub async fn event_stream_ndjson(
         poll_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut heartbeat_tick = tokio::time::interval(STREAM_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut backend_runtime_rx = state.services.backend_runtime_events.subscribe();
 
         loop {
             tokio::select! {
@@ -220,6 +240,23 @@ pub async fn event_stream_ndjson(
                         }
                         Err(err) => {
                             tracing::error!(project_id = %project.id, error = %err, "Project NDJSON 事件流轮询 state_changes 失败");
+                        }
+                    }
+                }
+                event = backend_runtime_rx.recv() => {
+                    match event {
+                        Ok(backend_id) => {
+                            let runtime_event = StreamEvent::BackendRuntimeChanged { backend_id };
+                            if let Some(line) = to_ndjson_line(&runtime_event) {
+                                yield Ok::<Bytes, std::convert::Infallible>(line);
+                            }
+                        }
+                        Err(RecvError::Lagged(skipped)) => {
+                            tracing::warn!(project_id = %project.id, skipped, "Project NDJSON 事件流 backend runtime 事件滞后");
+                        }
+                        Err(RecvError::Closed) => {
+                            tracing::warn!(project_id = %project.id, "Project NDJSON 事件流 backend runtime 事件通道已关闭");
+                            break;
                         }
                     }
                 }

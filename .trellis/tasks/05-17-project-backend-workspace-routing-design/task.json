@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "05-17-workspace-list-editor-flow-redesign"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

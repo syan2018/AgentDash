@@ -13,7 +13,8 @@ pub fn schema_value<T: JsonSchema>() -> Value {
 pub fn sanitize_tool_schema(mut schema: Value) -> Value {
     sanitize_schema_in_place(&mut schema);
     let snapshot = schema.clone();
-    inline_local_refs_in_combinators(&mut schema, &snapshot);
+    inline_local_refs(&mut schema, &snapshot, &mut Vec::new());
+    remove_definition_tables(&mut schema);
     schema
 }
 
@@ -120,32 +121,39 @@ fn sanitize_object_schema(map: &mut Map<String, Value>) {
         .or_insert(Value::Bool(false));
 }
 
-fn inline_local_refs_in_combinators(schema: &mut Value, root: &Value) {
+fn inline_local_refs(schema: &mut Value, root: &Value, ref_stack: &mut Vec<String>) {
     let Some(map) = schema.as_object_mut() else {
         if let Some(items) = schema.as_array_mut() {
             for item in items {
-                inline_local_refs_in_combinators(item, root);
+                inline_local_refs(item, root, ref_stack);
             }
         }
         return;
     };
 
+    if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_string)
+        && reference.starts_with('#')
+        && !ref_stack.contains(&reference)
+        && let Some(resolved) = resolve_local_ref(root, &reference)
+    {
+        ref_stack.push(reference);
+        *schema = resolved;
+        inline_local_refs(schema, root, ref_stack);
+        ref_stack.pop();
+        return;
+    }
+
     for key in ["anyOf", "allOf", "oneOf"] {
         if let Some(items) = map.get_mut(key).and_then(Value::as_array_mut) {
             for item in items.iter_mut() {
-                if let Some(reference) = extract_local_ref(item)
-                    && let Some(resolved) = resolve_local_ref(root, reference)
-                {
-                    *item = resolved;
-                }
-                inline_local_refs_in_combinators(item, root);
+                inline_local_refs(item, root, ref_stack);
             }
         }
     }
 
     if let Some(properties) = map.get_mut("properties").and_then(Value::as_object_mut) {
         for property in properties.values_mut() {
-            inline_local_refs_in_combinators(property, root);
+            inline_local_refs(property, root, ref_stack);
         }
     }
 
@@ -158,7 +166,7 @@ fn inline_local_refs_in_combinators(schema: &mut Value, root: &Value) {
         "else",
     ] {
         if let Some(child) = map.get_mut(key) {
-            inline_local_refs_in_combinators(child, root);
+            inline_local_refs(child, root, ref_stack);
         }
     }
 
@@ -170,27 +178,16 @@ fn inline_local_refs_in_combinators(schema: &mut Value, root: &Value) {
     ] {
         if let Some(children) = map.get_mut(key).and_then(Value::as_object_mut) {
             for child in children.values_mut() {
-                inline_local_refs_in_combinators(child, root);
+                inline_local_refs(child, root, ref_stack);
             }
         }
     }
 
     if let Some(items) = map.get_mut("prefixItems").and_then(Value::as_array_mut) {
         for item in items {
-            inline_local_refs_in_combinators(item, root);
+            inline_local_refs(item, root, ref_stack);
         }
     }
-}
-
-fn extract_local_ref(value: &Value) -> Option<&str> {
-    let object = value.as_object()?;
-    if object.len() != 1 {
-        return None;
-    }
-    object
-        .get("$ref")?
-        .as_str()
-        .filter(|reference| reference.starts_with('#'))
 }
 
 fn resolve_local_ref(root: &Value, reference: &str) -> Option<Value> {
@@ -203,6 +200,24 @@ fn resolve_local_ref(root: &Value, reference: &str) -> Option<Value> {
     }
 
     Some(current.clone())
+}
+
+fn remove_definition_tables(schema: &mut Value) {
+    let Some(map) = schema.as_object_mut() else {
+        if let Some(items) = schema.as_array_mut() {
+            for item in items {
+                remove_definition_tables(item);
+            }
+        }
+        return;
+    };
+
+    map.remove("$defs");
+    map.remove("definitions");
+
+    for value in map.values_mut() {
+        remove_definition_tables(value);
+    }
 }
 
 fn make_nullable(schema: &mut Value) {
@@ -262,6 +277,27 @@ mod tests {
     use serde::Deserialize;
     use serde_json::Value;
 
+    fn assert_no_schema_keyword(value: &Value, keyword: &str) {
+        match value {
+            Value::Object(map) => {
+                assert!(
+                    !map.contains_key(keyword),
+                    "schema 不应残留 `{keyword}`: {}",
+                    serde_json::to_string_pretty(value).unwrap_or_default()
+                );
+                for child in map.values() {
+                    assert_no_schema_keyword(child, keyword);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    assert_no_schema_keyword(item, keyword);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[derive(Debug, Deserialize, JsonSchema)]
     #[allow(dead_code)]
     struct ExampleParams {
@@ -314,10 +350,9 @@ mod tests {
     #[test]
     fn nested_defs_are_also_sanitized_for_openai() {
         let schema = schema_value::<NestedBatchParams>();
-        let defs = schema["$defs"].as_object().expect("should contain defs");
-        let nested = defs
-            .get("NestedTaskInput")
-            .expect("nested task input schema should exist");
+        assert_no_schema_keyword(&schema, "$defs");
+        assert_no_schema_keyword(&schema, "$ref");
+        let nested = &schema["properties"]["tasks"]["items"];
 
         let required = nested["required"]
             .as_array()
@@ -360,18 +395,17 @@ mod tests {
     #[test]
     fn decorative_keywords_are_removed_and_const_becomes_enum() {
         let schema = schema_value::<SchemaKeywordParams>();
-        let defs = schema["$defs"].as_object().expect("should contain defs");
-        let tagged_mode = defs.get("TaggedMode").expect("tagged enum should exist");
+        assert_no_schema_keyword(&schema, "$defs");
+        assert_no_schema_keyword(&schema, "$ref");
+        let tagged_mode = &schema["properties"]["mode"];
         let any_of = tagged_mode["anyOf"].as_array().expect("anyOf should exist");
         let first_branch = any_of.first().expect("first branch should exist");
         let kind_schema = &first_branch["properties"]["kind"];
 
         assert!(schema.get("$schema").is_none());
         assert!(schema.get("title").is_none());
-        assert!(
-            defs.values()
-                .all(|value| value.get("title").is_none() && value.get("default").is_none())
-        );
+        assert_no_schema_keyword(&schema, "title");
+        assert_no_schema_keyword(&schema, "default");
         assert!(schema["properties"]["count"].get("format").is_none());
         assert_eq!(kind_schema["enum"], serde_json::json!(["inline"]));
         assert!(kind_schema.get("const").is_none());
@@ -386,6 +420,8 @@ mod tests {
             .expect("optional tagged wrapper should use anyOf");
         let first_branch = any_of.first().expect("anyOf should have first branch");
 
+        assert_no_schema_keyword(&schema, "$defs");
+        assert_no_schema_keyword(&schema, "$ref");
         assert!(first_branch.get("$ref").is_none());
         assert_eq!(first_branch["anyOf"].as_array().map(Vec::len), Some(2));
         assert!(first_branch.get("oneOf").is_none());

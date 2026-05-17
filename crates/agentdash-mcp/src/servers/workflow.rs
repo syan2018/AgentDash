@@ -751,6 +751,42 @@ mod tests {
         }
     }
 
+    fn assert_schema_omits_keyword(value: &Value, keyword: &str) {
+        match value {
+            Value::Object(object) => {
+                assert!(
+                    !object.contains_key(keyword),
+                    "Responses tool schema 不应包含 `{keyword}`: {}",
+                    serde_json::to_string_pretty(value).unwrap_or_default()
+                );
+                for child in object.values() {
+                    assert_schema_omits_keyword(child, keyword);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    assert_schema_omits_keyword(item, keyword);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn assert_responses_schema_compatible(schema: &Value) {
+        for keyword in [
+            "$defs",
+            "$ref",
+            "definitions",
+            "oneOf",
+            "allOf",
+            "default",
+            "format",
+            "$schema",
+        ] {
+            assert_schema_omits_keyword(schema, keyword);
+        }
+    }
+
     #[test]
     fn upsert_workflow_schema_is_openai_compatible() {
         let tool = WorkflowMcpServer::tool_router()
@@ -763,6 +799,7 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         assert_schema_objects_have_type(&schema);
+        assert_responses_schema_compatible(&schema);
     }
 
     #[test]
@@ -777,6 +814,7 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         assert_schema_objects_have_type(&schema);
+        assert_responses_schema_compatible(&schema);
     }
 
     #[test]

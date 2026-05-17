@@ -106,6 +106,20 @@ Resolver 在 agent baseline（auto_granted）上应用 reduction：
 
 所有工具发现入口必须调用 `capability_state.is_capability_tool_enabled()` 进行 capability-aware 判定。
 
+## 工具 schema 与模型可见说明
+
+运行时工具更新必须同时维护两条链路：
+
+- Provider `tools[]` 携带完整机器 schema，用于 OpenAI/Codex Responses 等服务解析工具调用。
+- `tool_schema_delta` 的模型可见文本携带可调用说明，用工具名、用途、来源、参数名、必填性、类型和关键嵌套字段摘要指导模型调用。
+
+模型可见文本禁止直接 dump 完整 pretty JSON Schema。复杂工具应输出结构化参数摘要，并依赖 provider
+`tools[]` 保留完整机器契约。
+
+进入 Responses API 的工具 schema 必须先经过 sanitizer：递归内联本地 `$ref`，移除 `$defs` /
+`definitions` 与装饰性关键字，确保 object/array 结构、nullable 与组合器表达在目标 provider
+可解析的 JSON Schema 子集内。
+
 ## CapabilityResolver
 
 - 协议类型：`agentdash-spi/src/tool_capability.rs`

@@ -177,7 +177,7 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
                     "name": t.name,
                     "description": t.description,
                     "parameters": t.parameters,
-                    "strict": null,
+                    "strict": false,
                 })
             })
             .collect();
@@ -641,6 +641,7 @@ async fn process_sse_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent::types::ToolDefinition;
 
     fn jwt_with_account(account_id: &str) -> String {
         let payload = serde_json::json!({
@@ -685,5 +686,37 @@ mod tests {
         let input = body["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["role"], "user");
+    }
+
+    #[test]
+    fn builds_codex_tool_with_boolean_strict_false() {
+        let body = build_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: Some("system".to_string()),
+                messages: vec![AgentMessage::user("hello")],
+                tools: vec![ToolDefinition {
+                    name: "demo_tool".to_string(),
+                    description: "Demo tool".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "value": { "type": "string" }
+                        },
+                        "required": ["value"],
+                        "additionalProperties": false
+                    }),
+                }],
+            },
+        );
+
+        let tool = body["tools"]
+            .as_array()
+            .and_then(|tools| tools.first())
+            .expect("tool should be serialized");
+        assert_eq!(tool["type"], "function");
+        assert_eq!(tool["name"], "demo_tool");
+        assert_eq!(tool["strict"], false);
+        assert_eq!(tool["parameters"]["properties"]["value"]["type"], "string");
     }
 }

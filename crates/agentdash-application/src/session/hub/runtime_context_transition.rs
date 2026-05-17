@@ -591,12 +591,10 @@ mod tests {
                 .contains("mcp_agentdash_workflow_tools_upsert_workflow_tool")
         );
         assert!(notice.rendered_text.contains("创建或更新 Workflow 定义"));
-        assert!(notice.rendered_text.contains("\"required\": ["));
-        assert!(
-            notice
-                .rendered_text
-                .contains("\"description\": \"Workflow key\"")
-        );
+        assert!(notice.rendered_text.contains("参数说明："));
+        assert!(notice.rendered_text.contains("`key` (required, string)"));
+        assert!(!notice.rendered_text.contains("```json"));
+        assert!(notice.rendered_text.contains("Workflow key"));
     }
 
     #[test]

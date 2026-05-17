@@ -7,6 +7,7 @@ use agentdash_spi::hooks::{ContextFrameSection, RuntimeToolSchemaEntry};
 use agentdash_spi::platform::tool_capability::{
     PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
 };
+use serde_json::Value;
 
 use super::DimensionDelta;
 use crate::session::CapabilityStateDelta;
@@ -106,8 +107,6 @@ pub(crate) fn runtime_tool_schema_entries_from_tools(
 
 fn format_tool_schema_entry(entry: &RuntimeToolSchemaEntry) -> String {
     let description = entry.description.trim();
-    let parameters = serde_json::to_string_pretty(&entry.parameters_schema)
-        .unwrap_or_else(|_| entry.parameters_schema.to_string());
 
     let mut lines = vec![format!("### `{}`", entry.name)];
     let mut meta = Vec::new();
@@ -126,9 +125,201 @@ fn format_tool_schema_entry(entry: &RuntimeToolSchemaEntry) -> String {
     if !description.is_empty() {
         lines.push(description.to_string());
     }
-    lines.push("参数 schema：".to_string());
-    lines.push(format!("```json\n{parameters}\n```"));
+    lines.push("参数说明：".to_string());
+    lines.extend(format_parameter_summary(&entry.parameters_schema));
     lines.join("\n\n")
+}
+
+fn format_parameter_summary(schema: &Value) -> Vec<String> {
+    const MAX_FIELDS: usize = 48;
+    const MAX_DEPTH: usize = 2;
+
+    let mut lines = Vec::new();
+    collect_schema_fields(schema, "", 0, MAX_DEPTH, MAX_FIELDS, &mut lines, &mut false);
+    if lines.is_empty() {
+        lines.push("- 无参数。".to_string());
+    }
+    lines
+}
+
+fn collect_schema_fields(
+    schema: &Value,
+    prefix: &str,
+    depth: usize,
+    max_depth: usize,
+    max_fields: usize,
+    lines: &mut Vec<String>,
+    truncated: &mut bool,
+) {
+    if lines.len() >= max_fields {
+        if !*truncated {
+            lines.push(
+                "- 其余嵌套字段已省略；完整机器 schema 已通过 provider tools 字段提供。"
+                    .to_string(),
+            );
+            *truncated = true;
+        }
+        return;
+    }
+
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        if prefix.is_empty() {
+            lines.push(format!("- 参数整体类型：{}", schema_type_summary(schema)));
+        }
+        return;
+    };
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut names = properties.keys().collect::<Vec<_>>();
+    names.sort();
+
+    for name in names {
+        if lines.len() >= max_fields {
+            if !*truncated {
+                lines.push(
+                    "- 其余嵌套字段已省略；完整机器 schema 已通过 provider tools 字段提供。"
+                        .to_string(),
+                );
+                *truncated = true;
+            }
+            return;
+        }
+
+        let field_schema = &properties[name];
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        let requirement = if required.contains(name.as_str()) {
+            "required"
+        } else {
+            "optional"
+        };
+        let description = schema_description(field_schema);
+        let suffix = if description.is_empty() {
+            String::new()
+        } else {
+            format!(": {description}")
+        };
+        lines.push(format!(
+            "- `{path}` ({requirement}, {}){suffix}",
+            schema_type_summary(field_schema)
+        ));
+
+        if depth >= max_depth {
+            continue;
+        }
+
+        if field_schema.get("properties").is_some() {
+            collect_schema_fields(
+                field_schema,
+                &path,
+                depth + 1,
+                max_depth,
+                max_fields,
+                lines,
+                truncated,
+            );
+        } else if let Some(items) = field_schema.get("items")
+            && items.get("properties").is_some()
+        {
+            collect_schema_fields(
+                items,
+                &format!("{path}[]"),
+                depth + 1,
+                max_depth,
+                max_fields,
+                lines,
+                truncated,
+            );
+        }
+    }
+}
+
+fn schema_description(schema: &Value) -> String {
+    schema
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            const MAX_DESCRIPTION_CHARS: usize = 140;
+            let mut output = value
+                .split('\n')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if output.chars().count() > MAX_DESCRIPTION_CHARS {
+                output = output
+                    .chars()
+                    .take(MAX_DESCRIPTION_CHARS)
+                    .collect::<String>();
+                output.push_str("...");
+            }
+            output
+        })
+        .unwrap_or_default()
+}
+
+fn schema_type_summary(schema: &Value) -> String {
+    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
+        let mut variants = any_of.iter().map(schema_type_summary).collect::<Vec<_>>();
+        variants.sort();
+        variants.dedup();
+        return variants.join(" | ");
+    }
+
+    let Some(schema_type) = schema.get("type") else {
+        if schema.get("properties").is_some() {
+            return "object".to_string();
+        }
+        if schema.get("items").is_some() {
+            return "array".to_string();
+        }
+        if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+            return format!("enum{}", enum_values_summary(values));
+        }
+        return "any".to_string();
+    };
+
+    match schema_type {
+        Value::String(value) if value == "array" => {
+            let item = schema
+                .get("items")
+                .map(schema_type_summary)
+                .unwrap_or_else(|| "any".to_string());
+            format!("array<{item}>")
+        }
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ => "any".to_string(),
+    }
+}
+
+fn enum_values_summary(values: &[Value]) -> String {
+    let items = values
+        .iter()
+        .map(|value| match value {
+            Value::String(text) => text.clone(),
+            _ => value.to_string(),
+        })
+        .take(6)
+        .collect::<Vec<_>>();
+    format!("({})", items.join(" | "))
 }
 
 #[derive(Debug, Clone)]

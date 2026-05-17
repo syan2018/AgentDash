@@ -9,7 +9,7 @@
  * 参照 multica create-skill-dialog 的 method chooser 分步体验。
  */
 
-import { useCallback, useRef, useState } from "react";
+import { type ReactElement, useCallback, useRef, useState } from "react";
 
 import {
   bootstrapSkillAssets,
@@ -172,7 +172,7 @@ function MethodChooser({
 }) {
   const cards: Array<{
     method: Method;
-    icon: () => JSX.Element;
+    icon: () => ReactElement;
     title: string;
     desc: string;
     onClick: () => void;

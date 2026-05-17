@@ -19,6 +19,7 @@ import {
 import type { ExecutionVfs, ResolvedVfsSurface } from "../../types";
 import { VfsFileTree } from "./vfs-file-tree";
 import { VfsCodeEditor } from "./vfs-code-editor";
+import { isVfsMountBrowsable, resolveDefaultMountId } from "./vfs-browser-panel-policy";
 
 export interface VfsBrowserPanelProps {
   surface?: ResolvedVfsSurface | null;
@@ -38,6 +39,8 @@ export interface VfsBrowserPanelMountOption {
   id: string;
   displayName: string;
   provider: string;
+  backendOnline?: boolean | null;
+  browsable: boolean;
   canWrite: boolean;
   editCapabilities: {
     create: boolean;
@@ -95,6 +98,8 @@ export function VfsBrowserPanel({
       id: m.id,
       displayName: m.display_name || m.id,
       provider: m.provider,
+      backendOnline: "backend_online" in m ? m.backend_online : null,
+      browsable: isVfsMountBrowsable(m),
       canWrite: m.default_write || m.capabilities.includes("write"),
       editCapabilities: "edit_capabilities" in m
         ? m.edit_capabilities
@@ -111,35 +116,41 @@ export function VfsBrowserPanel({
     [mounts, selectedMountId],
   );
 
-  // 默认选中第一个 mount
+  const selectedMountBrowsable = selectedMount?.browsable ?? false;
+
+  // 默认选中第一个可浏览 mount，避免离线 relay_fs 在预览页自动触发 503。
   useEffect(() => {
     if (selectedMountId && mounts.some((m) => m.id === selectedMountId)) return;
-    const defaultId = initialMountId && mounts.some((m) => m.id === initialMountId)
-      ? initialMountId
-      : mounts[0]?.id ?? null;
+    const defaultId = resolveDefaultMountId(mounts, initialMountId, surface?.default_mount_id);
     setSelectedMountId(defaultId);
     if (!initialFilePath) {
       setSelectedFilePath(null);
       setFileContent(null);
     }
     setOperationError(null);
-  }, [mounts, selectedMountId, initialMountId, initialFilePath]);
+  }, [mounts, selectedMountId, initialMountId, surface?.default_mount_id, initialFilePath]);
 
   // 有 initialFilePath 时自动加载文件内容
   const initialLoadDone = useRef(false);
   useEffect(() => {
-    if (initialLoadDone.current || !initialFilePath || !surfaceRef || !selectedMountId) return;
+    if (
+      initialLoadDone.current
+      || !initialFilePath
+      || !surfaceRef
+      || !selectedMountId
+      || !selectedMountBrowsable
+    ) return;
     initialLoadDone.current = true;
     setFileLoading(true);
     readSurfaceFile({ surfaceRef, mountId: selectedMountId, path: initialFilePath })
       .then((result) => setFileContent(result.content))
       .catch((err) => setFileContent(`读取失败: ${err instanceof Error ? err.message : "未知错误"}`))
       .finally(() => setFileLoading(false));
-  }, [initialFilePath, surfaceRef, selectedMountId]);
+  }, [initialFilePath, surfaceRef, selectedMountId, selectedMountBrowsable]);
 
   const handleSelectFile = useCallback(
     async (path: string) => {
-      if (!surfaceRef || !selectedMountId) return;
+      if (!surfaceRef || !selectedMountId || !selectedMountBrowsable) return;
       setSelectedFilePath(path);
       setOperationError(null);
       onNavigate?.(selectedMountId, path);
@@ -157,12 +168,12 @@ export function VfsBrowserPanel({
         setFileLoading(false);
       }
     },
-    [surfaceRef, selectedMountId, onNavigate],
+    [surfaceRef, selectedMountId, selectedMountBrowsable, onNavigate],
   );
 
   const handleSave = useCallback(
     async (content: string) => {
-      if (!surfaceRef || !selectedMountId || !selectedFilePath) return;
+      if (!surfaceRef || !selectedMountId || !selectedFilePath || !selectedMountBrowsable) return;
       await writeSurfaceFile({
         surfaceRef,
         mountId: selectedMountId,
@@ -171,7 +182,7 @@ export function VfsBrowserPanel({
       });
       setFileContent(content);
     },
-    [surfaceRef, selectedMountId, selectedFilePath],
+    [surfaceRef, selectedMountId, selectedFilePath, selectedMountBrowsable],
   );
 
   const refreshTree = useCallback(() => {
@@ -179,7 +190,7 @@ export function VfsBrowserPanel({
   }, []);
 
   const handleCreateFile = useCallback(async () => {
-    if (!surfaceRef || !selectedMountId || !selectedMount?.editCapabilities.create) return;
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedMount?.editCapabilities.create) return;
     const suggestedPath = selectedFilePath
       ? `${parentPath(toScopedDisplayPath(selectedFilePath, scopedRootPath))}new-file.txt`
       : "new-file.txt";
@@ -205,10 +216,10 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate]);
 
   const handleDeleteFile = useCallback(async () => {
-    if (!surfaceRef || !selectedMountId || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
     if (!window.confirm(`删除文件「${toScopedDisplayPath(selectedFilePath, scopedRootPath)}」？`)) return;
 
     setOperationBusy(true);
@@ -228,10 +239,10 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
 
   const handleRenameFile = useCallback(async () => {
-    if (!surfaceRef || !selectedMountId || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
     const path = window.prompt("重命名为", toScopedDisplayPath(selectedFilePath, scopedRootPath));
     const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath || normalizedPath === selectedFilePath) return;
@@ -253,7 +264,7 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
 
   if (mounts.length === 0) {
     return (
@@ -321,21 +332,21 @@ export function VfsBrowserPanel({
         <div className="flex shrink-0 items-center gap-1">
           <FileActionButton
             title="新建文件"
-            disabled={operationBusy || !selectedMount?.editCapabilities.create}
+            disabled={operationBusy || !selectedMountBrowsable || !selectedMount?.editCapabilities.create}
             onClick={() => void handleCreateFile()}
           >
             <PlusIcon />
           </FileActionButton>
           <FileActionButton
             title="重命名当前文件"
-            disabled={operationBusy || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.rename}
+            disabled={operationBusy || !selectedMountBrowsable || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.rename}
             onClick={() => void handleRenameFile()}
           >
             <RenameIcon />
           </FileActionButton>
           <FileActionButton
             title="删除当前文件"
-            disabled={operationBusy || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.delete}
+            disabled={operationBusy || !selectedMountBrowsable || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.delete}
             onClick={() => void handleDeleteFile()}
             danger
           >
@@ -354,7 +365,7 @@ export function VfsBrowserPanel({
         {/* 左栏：文件树 */}
         <Panel defaultSize="30%" minSize="15%" maxSize="50%">
           <div className="h-full overflow-y-auto border-r border-border/50">
-            {selectedMountId && (
+            {selectedMountId && selectedMountBrowsable && (
               <VfsFileTree
                 surfaceRef={surfaceRef}
                 mountId={selectedMountId}
@@ -363,6 +374,9 @@ export function VfsBrowserPanel({
                 rootPath={scopedRootPath}
                 refreshKey={treeRefreshKey}
               />
+            )}
+            {selectedMountId && !selectedMountBrowsable && (
+              <OfflineMountNotice mount={selectedMount} />
             )}
           </div>
         </Panel>
@@ -389,7 +403,9 @@ export function VfsBrowserPanel({
           {!fileLoading && fileContent == null && (
             <div className="flex h-full items-center justify-center px-6">
               <p className="text-center text-sm text-muted-foreground">
-                在左侧文件树中选择一个文件以查看内容
+                {selectedMountBrowsable
+                  ? "在左侧文件树中选择一个文件以查看内容"
+                  : "当前 Mount 的 Backend 离线，连接后即可浏览文件。"}
               </p>
             </div>
           )}
@@ -409,6 +425,17 @@ export function VfsBrowserPanel({
           </>
         )}
       </Group>
+    </div>
+  );
+}
+
+function OfflineMountNotice({ mount }: { mount: VfsBrowserPanelMountOption | null }) {
+  return (
+    <div className="px-3 py-4 text-xs leading-5 text-muted-foreground">
+      <p className="font-medium text-foreground">Backend 离线</p>
+      <p className="mt-1">
+        {mount?.displayName ?? "当前 Mount"} 暂时不可浏览。预览页不会主动请求离线 backend 的文件列表。
+      </p>
     </div>
   );
 }

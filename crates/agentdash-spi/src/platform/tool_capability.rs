@@ -399,7 +399,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "update_project_context_config",
             "Update Project Context Config",
-            "更新 Project 的上下文容器与挂载策略配置",
+            "更新 Project 的 VFS Mount 配置",
             PlatformMcpScope::Relay,
             CAP_RELAY_MANAGEMENT,
         ),
@@ -407,14 +407,14 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "get_story_context",
             "Get Story Context",
-            "获取当前 Story 的完整上下文信息（声明式来源与容器）",
+            "获取当前 Story 的完整上下文信息（声明式来源与 VFS Mount）",
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),
         ToolDescriptor::platform_mcp(
             "update_story_context",
             "Update Story Context",
-            "更新 Story 上下文：声明式 source_refs / 容器 / 会话编排",
+            "更新 Story 上下文：声明式 source_refs / VFS Mount / 会话编排",
             PlatformMcpScope::Story,
             CAP_STORY_MANAGEMENT,
         ),

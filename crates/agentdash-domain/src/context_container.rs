@@ -5,10 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::MountCapability;
 
-fn bool_true() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerFile {
     pub path: String,
@@ -28,31 +24,7 @@ pub enum ContextContainerProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct ContextContainerExposure {
-    #[serde(default = "bool_true")]
-    pub include_in_project_sessions: bool,
-    #[serde(default = "bool_true")]
-    pub include_in_task_sessions: bool,
-    #[serde(default = "bool_true")]
-    pub include_in_story_sessions: bool,
-    #[serde(default)]
-    pub allowed_agent_types: Vec<String>,
-}
-
-impl Default for ContextContainerExposure {
-    fn default() -> Self {
-        Self {
-            include_in_project_sessions: true,
-            include_in_task_sessions: true,
-            include_in_story_sessions: true,
-            allowed_agent_types: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ContextContainerDefinition {
-    pub id: String,
     pub mount_id: String,
     pub display_name: String,
     pub provider: ContextContainerProvider,
@@ -60,26 +32,16 @@ pub struct ContextContainerDefinition {
     pub capabilities: Vec<MountCapability>,
     #[serde(default)]
     pub default_write: bool,
-    #[serde(default)]
-    pub exposure: ContextContainerExposure,
 }
 
 pub fn validate_context_containers(
     containers: &[ContextContainerDefinition],
 ) -> Result<(), String> {
-    let mut seen_ids = BTreeSet::new();
     let mut seen_mount_ids = BTreeSet::new();
 
     for (index, container) in containers.iter().enumerate() {
         validate_context_container(container)
             .map_err(|error| format!("context_containers[{index}]: {error}"))?;
-
-        let id = container.id.trim();
-        if !seen_ids.insert(id.to_string()) {
-            return Err(format!(
-                "context_containers[{index}]: container id 重复: {id}"
-            ));
-        }
 
         let mount_id = container.mount_id.trim();
         if !seen_mount_ids.insert(mount_id.to_string()) {
@@ -93,11 +55,10 @@ pub fn validate_context_containers(
 }
 
 pub fn validate_context_container(container: &ContextContainerDefinition) -> Result<(), String> {
-    let _ = validate_identifier(&container.id, "id", false)?;
     let mount_id = validate_identifier(&container.mount_id, "mount_id", true)?;
 
     if mount_id.eq_ignore_ascii_case("main") {
-        return Err("mount_id `main` 为保留字，不能用于自定义上下文容器".to_string());
+        return Err("mount_id `main` 为保留字，不能用于自定义 VFS Mount".to_string());
     }
 
     if container.default_write
@@ -153,14 +114,6 @@ pub fn validate_context_container(container: &ContextContainerDefinition) -> Res
         }
     }
 
-    for (index, agent_type) in container.exposure.allowed_agent_types.iter().enumerate() {
-        if agent_type.trim().is_empty() {
-            return Err(format!(
-                "exposure.allowed_agent_types[{index}] 不能为空字符串"
-            ));
-        }
-    }
-
     Ok(())
 }
 
@@ -170,7 +123,7 @@ pub fn validate_disabled_container_ids(
 ) -> Result<(), String> {
     let available = inherited_containers
         .iter()
-        .map(|item| item.id.trim().to_string())
+        .map(|item| item.mount_id.trim().to_string())
         .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
 
@@ -184,7 +137,7 @@ pub fn validate_disabled_container_ids(
         }
         if !available.contains(trimmed) {
             return Err(format!(
-                "disabled_container_ids[{index}] 引用了不存在的项目级容器: {trimmed}"
+                "disabled_container_ids[{index}] 引用了不存在的项目级 VFS Mount: {trimmed}"
             ));
         }
     }
@@ -246,7 +199,6 @@ mod tests {
 
     fn inline_container(path: &str) -> ContextContainerDefinition {
         ContextContainerDefinition {
-            id: "spec-docs".to_string(),
             mount_id: "spec".to_string(),
             display_name: "Spec".to_string(),
             provider: ContextContainerProvider::InlineFiles {
@@ -261,7 +213,6 @@ mod tests {
                 MountCapability::Search,
             ],
             default_write: false,
-            exposure: ContextContainerExposure::default(),
         }
     }
 
@@ -285,7 +236,6 @@ mod tests {
     #[test]
     fn validate_context_containers_allows_write_on_external_service() {
         let container = ContextContainerDefinition {
-            id: "km".to_string(),
             mount_id: "km".to_string(),
             display_name: "KM".to_string(),
             provider: ContextContainerProvider::ExternalService {
@@ -298,7 +248,6 @@ mod tests {
                 MountCapability::List,
             ],
             default_write: false,
-            exposure: ContextContainerExposure::default(),
         };
 
         validate_context_containers(&[container])
@@ -310,6 +259,6 @@ mod tests {
         let available = vec![inline_container("docs/spec.md")];
         let error = validate_disabled_container_ids(&["missing".to_string()], &available)
             .expect_err("fail");
-        assert!(error.contains("不存在的项目级容器"));
+        assert!(error.contains("不存在的项目级 VFS Mount"));
     }
 }

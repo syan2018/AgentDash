@@ -240,13 +240,18 @@ pub async fn sync_container_inline_files(
         if let ContextContainerProvider::InlineFiles { files } = &container.provider {
             for file in files {
                 let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
-                    .map_err(|e| format!("容器 {} 文件路径无效: {e}", container.id))?;
-                let inline_file =
-                    InlineFile::new(owner_kind, owner_id, &container.id, path, &file.content);
+                    .map_err(|e| format!("VFS Mount {} 文件路径无效: {e}", container.mount_id))?;
+                let inline_file = InlineFile::new(
+                    owner_kind,
+                    owner_id,
+                    &container.mount_id,
+                    path,
+                    &file.content,
+                );
                 inline_file_repo
                     .upsert_file(&inline_file)
                     .await
-                    .map_err(|e| format!("同步容器 {} 初始文件失败: {e}", container.id))?;
+                    .map_err(|e| format!("同步 VFS Mount {} 初始文件失败: {e}", container.mount_id))?;
             }
         }
     }

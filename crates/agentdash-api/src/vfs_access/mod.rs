@@ -24,8 +24,7 @@ mod tests {
 
     // `MountCapability` 统一使用 agentdash_spi 版本，避免重复导入
     use agentdash_domain::context_container::{
-        ContextContainerDefinition, ContextContainerExposure, ContextContainerFile,
-        ContextContainerProvider,
+        ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
     use agentdash_domain::workspace::Workspace;
 
@@ -53,15 +52,13 @@ mod tests {
     }
 
     fn inline_container(
-        id: &str,
         mount_id: &str,
         path: &str,
         content: &str,
     ) -> ContextContainerDefinition {
         ContextContainerDefinition {
-            id: id.to_string(),
             mount_id: mount_id.to_string(),
-            display_name: id.to_string(),
+            display_name: mount_id.to_string(),
             provider: ContextContainerProvider::InlineFiles {
                 files: vec![ContextContainerFile {
                     path: path.to_string(),
@@ -74,7 +71,6 @@ mod tests {
                 MountCapability::Search,
             ],
             default_write: false,
-            exposure: ContextContainerExposure::default(),
         }
     }
 
@@ -313,7 +309,6 @@ mod tests {
         let service = RelayVfsService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![inline_container(
-            "project-spec",
             "spec",
             "backend/spec.md",
             "# spec",
@@ -322,7 +317,6 @@ mod tests {
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
         story.context.context_containers = vec![inline_container(
-            "story-brief",
             "brief",
             "brief.md",
             "story brief",
@@ -359,15 +353,14 @@ mod tests {
         let service = RelayVfsService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         project.config.context_containers = vec![
-            inline_container("project-spec", "shared", "spec.md", "project spec"),
-            inline_container("project-km", "km", "index.md", "project km"),
+            inline_container("shared", "spec.md", "project spec"),
+            inline_container("km", "index.md", "project km"),
         ];
 
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
-        story.context.disabled_container_ids = vec!["project-km".into()];
+        story.context.disabled_container_ids = vec!["km".into()];
         story.context.context_containers = vec![inline_container(
-            "story-spec",
             "shared",
             "spec.md",
             "story override",
@@ -389,7 +382,7 @@ mod tests {
         // 验证 mount metadata 包含 container_id 和 owner 坐标
         assert_eq!(
             mount.metadata.get("container_id").and_then(|v| v.as_str()),
-            Some("story-spec")
+            Some("shared")
         );
     }
 

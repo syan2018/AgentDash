@@ -340,7 +340,7 @@ impl RelayMcpServer {
         ))]))
     }
 
-    #[tool(description = "更新 Project 的上下文容器与挂载策略配置")]
+    #[tool(description = "更新 Project 的 VFS Mount 配置")]
     async fn update_project_context_config(
         &self,
         Parameters(params): Parameters<UpdateProjectContextConfigParams>,

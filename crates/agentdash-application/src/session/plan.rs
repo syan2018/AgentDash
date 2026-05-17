@@ -391,7 +391,7 @@ fn build_workflow_markdown(input: &SessionPlanInput<'_>) -> String {
         SessionPlanPhase::TaskStart => (
             "task_start",
             vec![
-                "先理解任务、Story、上下文容器与工具边界".to_string(),
+                "先理解任务、Story、VFS Mount 与工具边界".to_string(),
                 "优先用声明的 mounts 和 tools 读取信息，不要猜测".to_string(),
                 "完成实现后明确说明验证结果与剩余风险".to_string(),
             ],

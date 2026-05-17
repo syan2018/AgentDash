@@ -34,8 +34,8 @@ pub use mount::{
     build_context_container_mount, build_derived_vfs, build_lifecycle_mount,
     build_lifecycle_mount_with_ports, build_project_agent_knowledge_vfs,
     build_project_skill_asset_management_mount, build_skill_asset_mount, build_workspace_vfs,
-    container_visible_for_target, effective_context_containers,
-    filter_project_containers_by_whitelist, list_inline_entries, mount_container_id,
+    effective_context_containers, filter_project_containers_by_whitelist, list_inline_entries,
+    mount_container_id,
     mount_owner_id, mount_owner_kind, mount_purpose, normalize_inline_files,
     parse_inline_mount_owner, selected_workspace_binding, workspace_mount,
 };

@@ -20,7 +20,7 @@ import { WorkspaceList } from "../features/workspace/workspace-list";
 import { VfsBrowser } from "../features/vfs";
 import {
   ContextContainersEditor,
-} from "../components/context-config-editor";
+} from "../components/vfs-config-editor";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
 import {
@@ -44,8 +44,8 @@ interface SettingsTabItem {
 
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
-  { key: "context", label: "上下文资源", description: "context containers 与挂载策略" },
-  { key: "workspace", label: "工作空间", description: "默认 workspace、运行落点与 runtime preview" },
+  { key: "context", label: "VFS 资源", description: "项目级 VFS Mount、解析结果与 runtime preview" },
+  { key: "workspace", label: "工作空间", description: "默认 workspace 与运行落点" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
 
@@ -217,7 +217,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
   if (mounts.length === 0) {
     return (
       <p className="rounded-[10px] border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
-        当前配置下没有可用的 Mount。请先配置工作空间或上下文容器。
+        当前配置下没有可用的 VFS Mount。请先配置工作空间或项目级 VFS Mount。
       </p>
     );
   }
@@ -327,13 +327,13 @@ function ContextTabContent({
   return (
     <>
       <SectionCard
-        title="上下文容器"
-        description="项目级上下文容器，可以是内联文件或外部服务。Agent 会话运行时会根据可见性规则自动挂载。"
+        title="VFS Mount 配置"
+        description="项目级 VFS Mount 可以来自内联文件或外部服务，Agent 会话运行时会直接挂载这些地址空间。"
       >
         <ContextContainersEditor
           value={contextContainers}
           domain="project"
-          emptyText="暂无项目级容器"
+          emptyText="暂无项目级 VFS Mount"
           isSaving={false}
           readOnly={!canEdit}
           onSave={handleContainerSave}
@@ -341,10 +341,17 @@ function ContextTabContent({
       </SectionCard>
 
       <SectionCard
-        title="当前可用 Mount"
-        description="基于当前 Workspace 和上下文容器配置，系统派生出的所有挂载点及其能力概览。"
+        title="解析后的 VFS Mount"
+        description="基于当前 Workspace 与项目级 VFS 配置派生出的运行时挂载点概览。"
       >
         <MountOverviewList projectId={project.id} refreshKey={mountRefreshKey} />
+      </SectionCard>
+
+      <SectionCard
+        title="Runtime Preview"
+        description="VFS 预览明确作为派生结果展示，用来解释当前默认配置会解析出什么挂载。"
+      >
+        <VfsBrowser source={{ source_type: "project_preview", project_id: project.id }} />
       </SectionCard>
     </>
   );
@@ -670,7 +677,6 @@ export function ProjectSettingsPage() {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [stallTimeoutMs, setStallTimeoutMs] = useState("");
   const [workspaceInventoryRefreshKey, setWorkspaceInventoryRefreshKey] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -706,7 +712,6 @@ export function ProjectSettingsPage() {
     setGrantRole("viewer");
     setActiveTab("overview");
     setWorkspaceInventoryRefreshKey(0);
-    setMessage(null);
     setError(null);
   }, [project]);
 
@@ -798,7 +803,6 @@ export function ProjectSettingsPage() {
       return;
     }
     setError(null);
-    setMessage("已保存基础信息");
   };
 
   const saveScheduling = async () => {
@@ -821,7 +825,6 @@ export function ProjectSettingsPage() {
     });
     if (!result) { setError("调度配置保存失败"); return; }
     setError(null);
-    setMessage("已保存调度配置");
   };
 
   const saveDefaultWorkspace = async (workspaceId: string | null) => {
@@ -840,21 +843,19 @@ export function ProjectSettingsPage() {
       return;
     }
     setError(null);
-    setMessage(workspaceId ? "已设为默认工作空间" : "已取消默认工作空间");
   };
 
   const saveContext = async (payload: Parameters<typeof updateProject>[1]) => {
     if (!canEditProject) {
-      setError("当前权限不允许修改上下文资源");
+      setError("当前权限不允许修改 VFS 资源");
       return;
     }
     const result = await updateProject(project.id, payload);
     if (!result) {
-      setError("上下文资源保存失败");
+      setError("VFS 资源保存失败");
       return;
     }
     setError(null);
-    setMessage("已保存上下文资源");
   };
 
   const saveTemplateSettings = async () => {
@@ -875,7 +876,6 @@ export function ProjectSettingsPage() {
       return;
     }
     setError(null);
-    setMessage("已保存模板策略");
   };
 
   const submitGrant = async () => {
@@ -899,7 +899,6 @@ export function ProjectSettingsPage() {
     }
 
     setError(null);
-    setMessage(`已更新${shareTargetType === "user" ? "用户" : "用户组"}授权`);
   };
 
   const revokeGrant = async (grant: ProjectSubjectGrant) => {
@@ -911,7 +910,6 @@ export function ProjectSettingsPage() {
       return;
     }
     setError(null);
-    setMessage("已撤销授权");
   };
 
   const handleCloneProject = async () => {
@@ -923,7 +921,6 @@ export function ProjectSettingsPage() {
       return;
     }
     setError(null);
-    setMessage(`已克隆私有 Project：${cloned.name}`);
     selectProject(cloned.id);
     navigate(`/projects/${cloned.id}/settings`);
   };
@@ -963,7 +960,7 @@ export function ProjectSettingsPage() {
                   <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Project Settings</p>
                   <h1 className="text-[2rem] font-semibold tracking-[-0.03em] text-foreground">{project.name}</h1>
                   <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                    设置页按概览、上下文资源、工作空间和管理动作分栏收纳，让逻辑 workspace、运行时派生结果和项目级配置分开表达。
+                    设置页按概览、VFS 资源、工作空间和管理动作分栏收纳，让逻辑 workspace、运行时派生结果和项目级配置分开表达。
                   </p>
                 </div>
               </div>
@@ -1132,12 +1129,6 @@ export function ProjectSettingsPage() {
                     />
                   </SectionCard>
 
-                  <SectionCard
-                    title="Runtime Preview"
-                    description="VFS 预览明确作为派生结果展示，用来解释当前默认配置会解析出什么挂载。"
-                  >
-                    <VfsBrowser source={{ source_type: "project_preview", project_id: project.id }} />
-                  </SectionCard>
                 </>
               )}
 
@@ -1370,13 +1361,9 @@ export function ProjectSettingsPage() {
                 </>
               )}
 
-              {(message || error) && (
-                <div className={`rounded-[12px] border px-4 py-3 text-sm ${
-                  error
-                    ? "border-destructive/40 bg-destructive/10 text-destructive"
-                    : "border-emerald-400/40 bg-emerald-50 text-emerald-700"
-                }`}>
-                  {error ?? message}
+              {error && (
+                <div className="rounded-[12px] border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {error}
                 </div>
               )}
             </div>

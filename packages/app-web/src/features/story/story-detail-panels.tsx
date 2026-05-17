@@ -19,7 +19,7 @@ import {
   ContextContainersEditor,
   DisabledContainerIdsEditor,
   SessionCompositionEditor,
-} from "../../components/context-config-editor";
+} from "../../components/vfs-config-editor";
 import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
@@ -260,36 +260,36 @@ export function ContextPanel({
       <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            Story 追加容器
+            Story 追加 VFS Mount
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            这里追加的是 Story 覆盖层容器，只影响当前 Story 派生出来的会话。
+            这里追加的是 Story 覆盖层 VFS Mount，只影响当前 Story 派生出来的会话。
           </p>
         </div>
         <ContextContainersEditor
           value={ctx.context_containers}
           domain="story"
           isSaving={isSaving}
-          addLabel="添加 Story 容器"
-          emptyText="暂无 Story 级容器"
-          onSave={(next) => persistStoryContext({ context_containers: next }, "已保存 Story 容器")}
+          addLabel="添加 Story VFS Mount"
+          emptyText="暂无 Story 级 VFS Mount"
+          onSave={(next) => persistStoryContext({ context_containers: next }, "已保存 Story VFS Mount")}
         />
       </div>
 
       <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            禁用 Project 容器
+            禁用 Project VFS Mount
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            这里不是删除 Project 默认容器，而是只在当前 Story 的继承链里把它们摘掉。
+            这里不是删除 Project 默认 VFS Mount，而是只在当前 Story 的继承链里把它们摘掉。
           </p>
         </div>
         <DisabledContainerIdsEditor
           value={ctx.disabled_container_ids}
           availableContainers={inheritedProjectContainers}
           isSaving={isSaving}
-          onSave={(next) => persistStoryContext({ disabled_container_ids: next }, "已保存禁用容器列表")}
+          onSave={(next) => persistStoryContext({ disabled_container_ids: next }, "已保存禁用 VFS Mount 列表")}
         />
       </div>
 

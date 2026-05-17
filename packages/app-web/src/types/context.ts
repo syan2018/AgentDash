@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "./index";
 
-// ─── 上下文容器 / 挂载策略 / 会话编排 ──────────────────
+// ─── VFS Mount 配置 / 会话编排 ──────────────────
 
 export type ContextContainerCapability = "read" | "write" | "list" | "search" | "exec";
 
@@ -13,21 +13,12 @@ export type ContextContainerProvider =
   | { kind: "inline_files"; files: ContextContainerFile[] }
   | { kind: "external_service"; service_id: string; root_ref: string };
 
-export interface ContextContainerExposure {
-  include_in_project_sessions: boolean;
-  include_in_task_sessions: boolean;
-  include_in_story_sessions: boolean;
-  allowed_agent_types: string[];
-}
-
 export interface ContextContainerDefinition {
-  id: string;
   mount_id: string;
   display_name: string;
   provider: ContextContainerProvider;
   capabilities: ContextContainerCapability[];
   default_write: boolean;
-  exposure: ContextContainerExposure;
 }
 
 export interface SessionRequiredContextBlock {

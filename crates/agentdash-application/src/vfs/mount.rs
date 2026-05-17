@@ -5,7 +5,7 @@ use super::path::{normalize_mount_relative_path, validate_vfs};
 use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{
-    ContextContainerDefinition, ContextContainerExposure, ContextContainerProvider,
+    ContextContainerDefinition, ContextContainerProvider,
 };
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
@@ -56,8 +56,8 @@ pub fn build_derived_vfs(
     project: &Project,
     story: Option<&Story>,
     workspace: Option<&Workspace>,
-    agent_type: Option<&str>,
-    target: SessionMountTarget,
+    _agent_type: Option<&str>,
+    _target: SessionMountTarget,
 ) -> Result<Vfs, String> {
     let mut mounts = Vec::new();
 
@@ -66,9 +66,6 @@ pub fn build_derived_vfs(
     }
 
     for (container, owner_scope) in effective_context_containers_with_origin(project, story) {
-        if !container_visible_for_target(&container, target, agent_type) {
-            continue;
-        }
         let mut mount = build_context_container_mount(&container)?;
         let (owner_kind_str, owner_id) = match owner_scope {
             ContextContainerOwnerScope::Project => ("project", project.id),
@@ -103,7 +100,6 @@ pub fn build_derived_vfs(
 /// container_id = "knowledge"，按 ProjectAgentLink 隔离。
 fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String> {
     let container = ContextContainerDefinition {
-        id: "knowledge".to_string(),
         mount_id: "agent-knowledge".to_string(),
         display_name: "Agent 知识库".to_string(),
         provider: ContextContainerProvider::InlineFiles { files: vec![] },
@@ -114,7 +110,6 @@ fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String>
             MountCapability::Search,
         ],
         default_write: false,
-        exposure: ContextContainerExposure::default(),
     };
     let mut mount = build_context_container_mount(&container)?;
     annotate_context_mount_owner(
@@ -280,13 +275,12 @@ fn effective_context_containers_with_origin(
             .map(|item| item.to_string())
             .collect::<BTreeSet<_>>();
         if !disabled.is_empty() {
-            owned.retain(|(container, _)| !disabled.contains(container.id.trim()));
+            owned.retain(|(container, _)| !disabled.contains(container.mount_id.trim()));
         }
 
         for container in &story.context.context_containers {
             owned.retain(|(item, _)| {
-                item.id.trim() != container.id.trim()
-                    && item.mount_id.trim() != container.mount_id.trim()
+                item.mount_id.trim() != container.mount_id.trim()
             });
             owned.push((container.clone(), ContextContainerOwnerScope::Story));
         }
@@ -294,41 +288,12 @@ fn effective_context_containers_with_origin(
     owned
 }
 
-pub fn container_visible_for_target(
-    container: &ContextContainerDefinition,
-    target: SessionMountTarget,
-    agent_type: Option<&str>,
-) -> bool {
-    let exposure = &container.exposure;
-    let target_enabled = match target {
-        SessionMountTarget::Project => exposure.include_in_project_sessions,
-        SessionMountTarget::Story => exposure.include_in_story_sessions,
-        SessionMountTarget::Task => exposure.include_in_task_sessions,
-    };
-    if !target_enabled {
-        return false;
-    }
-
-    if exposure.allowed_agent_types.is_empty() {
-        return true;
-    }
-
-    let Some(agent_type) = agent_type.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-
-    exposure
-        .allowed_agent_types
-        .iter()
-        .any(|item| item.trim().eq_ignore_ascii_case(agent_type))
-}
-
 pub fn build_context_container_mount(
     container: &ContextContainerDefinition,
 ) -> Result<Mount, String> {
     let id = non_empty_trimmed(&container.mount_id, "mount_id")?.to_string();
     let display_name = if container.display_name.trim().is_empty() {
-        container.id.trim().to_string()
+        id.clone()
     } else {
         container.display_name.trim().to_string()
     };
@@ -342,7 +307,7 @@ pub fn build_context_container_mount(
         container.capabilities.to_vec()
     };
 
-    let container_id_trimmed = container.id.trim();
+    let container_id_trimmed = container.mount_id.trim();
     let (provider, root_ref, metadata) = match &container.provider {
         ContextContainerProvider::InlineFiles { .. } => (
             PROVIDER_INLINE_FS.to_string(),
@@ -512,15 +477,13 @@ fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, St
 mod tests {
     use super::*;
     use agentdash_domain::context_container::{
-        ContextContainerDefinition, ContextContainerExposure, ContextContainerFile,
-        ContextContainerProvider,
+        ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
 
-    fn inline_container(id: &str, mount_id: &str, path: &str) -> ContextContainerDefinition {
+    fn inline_container(mount_id: &str, path: &str) -> ContextContainerDefinition {
         ContextContainerDefinition {
-            id: id.to_string(),
             mount_id: mount_id.to_string(),
-            display_name: id.to_string(),
+            display_name: mount_id.to_string(),
             provider: ContextContainerProvider::InlineFiles {
                 files: vec![ContextContainerFile {
                     path: path.to_string(),
@@ -529,17 +492,16 @@ mod tests {
             },
             capabilities: vec![],
             default_write: false,
-            exposure: ContextContainerExposure::default(),
         }
     }
 
     #[test]
     fn story_override_container_is_marked_as_story_owned() {
         let mut project = Project::new("proj".to_string(), "desc".to_string());
-        project.config.context_containers = vec![inline_container("brief", "brief", "project.md")];
+        project.config.context_containers = vec![inline_container("brief", "project.md")];
 
         let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
-        story.context.context_containers = vec![inline_container("brief", "brief", "story.md")];
+        story.context.context_containers = vec![inline_container("brief", "story.md")];
 
         let vfs = build_derived_vfs(
             &project,
@@ -577,7 +539,7 @@ mod tests {
     #[test]
     fn inherited_project_container_is_marked_as_project_owned() {
         let mut project = Project::new("proj".to_string(), "desc".to_string());
-        project.config.context_containers = vec![inline_container("spec", "spec", "project.md")];
+        project.config.context_containers = vec![inline_container("spec", "project.md")];
 
         let story = Story::new(project.id, "story".to_string(), "desc".to_string());
 

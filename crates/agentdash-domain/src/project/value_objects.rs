@@ -13,7 +13,7 @@ pub struct ProjectConfig {
     /// Agent 预设列表
     #[serde(default)]
     pub agent_presets: Vec<AgentPreset>,
-    /// 项目级上下文容器定义
+    /// 项目级 VFS Mount 定义
     #[serde(default)]
     pub context_containers: Vec<ContextContainerDefinition>,
     /// 自主调度相关配置（stall 检测、turn 限制、定时唤醒等）

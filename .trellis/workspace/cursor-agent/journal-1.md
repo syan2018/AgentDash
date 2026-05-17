@@ -702,3 +702,39 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Shared Library 资产收束清理
+
+**Date**: 2026-05-18
+**Task**: Shared Library 资产收束清理
+**Branch**: `codex/shared-library-asset-cleanup`
+
+### Summary
+
+收束公共配置资产市场入口，清理旧 builtin/bootstrap 通道，补齐 Agent 安装来源与 Workflow 删除重装闭环。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b15d6134` | (see git log) |
+| `f62f2c73` | (see git log) |
+| `14e529d9` | (see git log) |
+| `f38945e9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-05-17
+- **Total Sessions**: 16
+- **Last Active**: 2026-05-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~667 | Active |
+| `journal-1.md` | ~704 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-05-18 | Shared Library 公共配置资产化 | `f1eb47f8`, `a2e5491a`, `49bfa120`, `68afe188`, `fc9ee5d6` | `codex/agent-config-assets` |
 | 15 | 2026-05-17 | 收敛 ToolSchema 提示与 Responses schema | `51449cfd` | `main` |
 | 14 | 2026-05-16 | Session 重构最终收尾清洁 | `99cb5b63`, `1c3a5b64` | `main` |
 | 13 | 2026-05-16 | 瓦解 Session Construction Launch 边界 | `ae883db3` | `main` |

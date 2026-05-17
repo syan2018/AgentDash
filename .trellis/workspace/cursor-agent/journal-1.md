@@ -665,3 +665,40 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Shared Library 公共配置资产化
+
+**Date**: 2026-05-18
+**Task**: Shared Library 公共配置资产化
+**Branch**: `codex/agent-config-assets`
+
+### Summary
+
+完成 Agent/MCP/Workflow/Skill 公共配置资产化基座：规划收束、Shared Library JSONB 资产表与 seed、项目资源 installed source、Marketplace 安装入口和验证修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1eb47f8` | (see git log) |
+| `a2e5491a` | (see git log) |
+| `49bfa120` | (see git log) |
+| `68afe188` | (see git log) |
+| `fc9ee5d6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import { asRecord } from "../api/mappers";
+import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   BootstrapMcpPresetRequest,
   CloneMcpPresetRequest,
@@ -55,6 +56,7 @@ export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
       raw.builtin_key === null || raw.builtin_key === undefined
         ? null
         : String(raw.builtin_key),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
   };

@@ -2,6 +2,8 @@
 //
 // 对齐后端 DTO：crates/agentdash-api/src/dto/skill_asset.rs
 
+import type { InstalledAssetSourceDto } from "./shared-library";
+
 export type SkillAssetSource = "builtin_seed" | "user" | "github";
 
 export interface SkillAssetFileDto {
@@ -19,6 +21,7 @@ export interface SkillAssetDto {
   source: SkillAssetSource;
   builtin_key?: string | null;
   remote_source?: RemoteSkillAssetSourceDto | null;
+  installed_source?: InstalledAssetSourceDto | null;
   disable_model_invocation: boolean;
   files: SkillAssetFileDto[];
   created_at: string;

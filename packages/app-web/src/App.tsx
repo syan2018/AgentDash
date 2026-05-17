@@ -78,6 +78,11 @@ const AssetsMcpPresetPanel = lazy(async () => {
   return { default: m.McpPresetCategoryPanel };
 });
 
+const AssetsMarketplacePanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.MarketplaceCategoryPanel };
+});
+
 const AssetsSkillPanel = lazy(async () => {
   const m = await import("./features/assets-panel");
   return { default: m.SkillCategoryPanel };
@@ -258,6 +263,7 @@ function AppContent() {
             <Route path="assets" element={<AssetsTabView />}>
               <Route index element={<Navigate to="workflow" replace />} />
               <Route path="workflow" element={<AssetsWorkflowPanel />} />
+              <Route path="marketplace" element={<AssetsMarketplacePanel />} />
               <Route path="canvas" element={<AssetsCanvasPanel />} />
               <Route path="mcp-preset" element={<AssetsMcpPresetPanel />} />
               <Route path="skill" element={<AssetsSkillPanel />} />

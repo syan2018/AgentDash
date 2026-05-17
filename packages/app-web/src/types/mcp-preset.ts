@@ -6,6 +6,7 @@
 // 字段命名严格 snake_case，与后端 JSON 保持一致；无需做 camelCase 转换。
 
 import type { McpRoutePolicy, McpTransportConfig } from "./index";
+import type { InstalledAssetSourceDto } from "./shared-library";
 
 /**
  * MCP Preset 来源标签。
@@ -34,6 +35,7 @@ export interface McpPresetDto {
   source: McpPresetSource;
   /** 仅 `source === "builtin"` 时非空 */
   builtin_key?: string | null;
+  installed_source?: InstalledAssetSourceDto | null;
   created_at: string;
   updated_at: string;
 }

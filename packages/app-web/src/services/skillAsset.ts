@@ -1,6 +1,7 @@
 import { api, authenticatedFetch } from "../api/client";
 import { buildApiPath } from "../api/origin";
 import { asRecord } from "../api/mappers";
+import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   BootstrapSkillAssetRequest,
   CreateSkillAssetRequest,
@@ -85,6 +86,7 @@ export function mapSkillAsset(raw: Record<string, unknown>): SkillAssetDto {
         ? null
         : String(raw.builtin_key),
     remote_source: mapRemoteSource(raw.remote_source),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
     disable_model_invocation: Boolean(raw.disable_model_invocation),
     files,
     created_at: String(raw.created_at ?? new Date().toISOString()),

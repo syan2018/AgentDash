@@ -632,3 +632,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 收敛 ToolSchema 提示与 Responses schema
+
+**Date**: 2026-05-17
+**Task**: 收敛 ToolSchema 提示与 Responses schema
+**Branch**: `main`
+
+### Summary
+
+修复 tool_schema_delta 过度 verbose 与 Codex Responses 工具 schema 无法解析问题：模型文本改为参数摘要，provider tools 保留完整机器 schema；schema sanitizer 递归内联本地引用并移除 defs；Codex strict 改为布尔 false，并补充 workflow/schema/request body 回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51449cfd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

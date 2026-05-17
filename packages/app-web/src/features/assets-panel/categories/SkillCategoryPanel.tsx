@@ -366,6 +366,14 @@ const ORIGIN_STYLE: Record<
 };
 
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {
+  if (skill.installed_source) {
+    return (
+      <span className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
+
   const style = ORIGIN_STYLE[skill.source] ?? ORIGIN_STYLE.user;
   const remoteUrl = skill.remote_source?.url;
 

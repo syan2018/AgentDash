@@ -3,7 +3,7 @@
  *
  * 职责：
  * - 从 `useWorkflowStore` 拉取 Lifecycle 定义（= Workflow 资产）
- * - 每行展示：name、key、description、来源 chip（builtin/user）、更新时间、step/edge 计数
+ * - 每行展示：name、key、description、来源 chip、更新时间、step/edge 计数
  * - 只读预览：用 step/edge 计数文字代替 DAG 缩略（避免重造渲染器）
  * - 行动作：
  *   - `编辑` / `查看` → `navigate("/workflow/:id")`（统一编辑器，按 step 规模自适应 Form / DAG）
@@ -75,7 +75,7 @@ export function WorkflowCategoryPanel() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">Workflow 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {lifecycles.length} 个 Workflow 资产 · builtin / user 来源区分
+            {lifecycles.length} 个 Workflow 资产 · 支持 Marketplace 安装来源追踪
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -132,11 +132,6 @@ export function WorkflowCategoryPanel() {
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
               确定要删除 Workflow{" "}
               <span className="font-medium text-foreground">{confirmDelete.name}</span> 吗？
-              {confirmDelete.source === "builtin_seed" && (
-                <span className="mt-1 block text-destructive">
-                  当前项删除的是 builtin 实例（取消注册），该资产会从项目可用列表移除。
-                </span>
-              )}
               <span className="mt-1 block">此操作不可撤销。</span>
             </p>
             <div className="mt-4 flex justify-end gap-2">
@@ -227,7 +222,7 @@ function LifecycleAssetCard({
           <p className="truncate text-sm font-medium leading-6 text-foreground">{item.name}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.key}</p>
         </div>
-        <SourceBadge source={item.source} />
+        <SourceBadge source={item.source} installed={Boolean(item.installed_source)} />
       </header>
 
       {item.description && (
@@ -274,7 +269,14 @@ function LifecycleAssetCard({
 
 /* ─── 公共：来源 chip ─── */
 
-function SourceBadge({ source }: { source: WorkflowDefinitionSource }) {
+function SourceBadge({ source, installed }: { source: WorkflowDefinitionSource; installed: boolean }) {
+  if (installed) {
+    return (
+      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
   if (source === "builtin_seed") {
     return (
       <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">

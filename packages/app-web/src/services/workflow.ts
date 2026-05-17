@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optString, optStringField } from "../api/mappers";
+import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   CapabilityDirective,
   HookRulePreset,
@@ -288,6 +289,7 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
     description: optStringField(raw, "description"),
     target_kinds: normalizeTargetKinds(raw.binding_kinds, "workflow target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     contract: mapWorkflowContract(raw.contract),
     created_at: requireStringField(raw, "created_at"),
@@ -304,6 +306,7 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
     description: optStringField(raw, "description"),
     target_kinds: normalizeTargetKinds(raw.binding_kinds, "lifecycle target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "lifecycle definition source"),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
     entry_step_key: requireStringField(raw, "entry_step_key"),
     steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],

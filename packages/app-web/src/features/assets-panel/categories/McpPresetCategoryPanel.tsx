@@ -491,7 +491,7 @@ function McpPresetCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <RoutePolicyBadge policy={preset.route_policy} />
-          <SourceBadge source={preset.source} />
+          <SourceBadge source={preset.source} installed={Boolean(preset.installed_source)} />
         </div>
       </header>
 
@@ -1026,7 +1026,14 @@ function ConfirmDeleteDialog({
 
 /* ─── Badges ─── */
 
-function SourceBadge({ source }: { source: "builtin" | "user" }) {
+function SourceBadge({ source, installed }: { source: "builtin" | "user"; installed: boolean }) {
+  if (installed) {
+    return (
+      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
   if (source === "builtin") {
     return (
       <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">

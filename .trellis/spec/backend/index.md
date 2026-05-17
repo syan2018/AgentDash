@@ -50,6 +50,7 @@
 | [日志规范](./logging-guidelines.md) | 结构化日志 |
 | [Runtime Gateway](./runtime-gateway.md) | Runtime Action 跨层调用 |
 | [Story Task Runtime](./story-task-runtime.md) | Story/Task/Session 架构（Model C） |
+| [Shared Library](./shared-library.md) | 公共配置资产、builtin seed、Project 安装来源 |
 
 ### 模块专属契约
 

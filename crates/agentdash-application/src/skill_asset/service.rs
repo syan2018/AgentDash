@@ -9,6 +9,22 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+fn url_encode(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                write!(out, "%{byte:02X}").unwrap();
+            }
+        }
+    }
+    out
+}
+
 use crate::skill::parse_skill_file;
 
 use super::definition::{
@@ -276,14 +292,45 @@ where
         &self,
         input: ImportRemoteSkillAssetInput,
     ) -> Result<SkillAsset, SkillAssetApplicationError> {
-        let source = parse_github_skill_source(&input.url)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|error| SkillAssetApplicationError::Internal(error.to_string()))?;
-        let files = fetch_github_skill_files(&client, &source).await?;
-        self.create_from_remote_files(input.project_id, source.normalized_url, files)
-            .await
+
+        let detected = detect_import_source(&input.url)?;
+        match detected {
+            DetectedImportSource::Github(source) => {
+                let files = fetch_github_skill_files(&client, &source).await?;
+                self.create_from_remote_files_typed(
+                    input.project_id,
+                    RemoteSourceType::Github,
+                    source.normalized_url,
+                    files,
+                )
+                .await
+            }
+            DetectedImportSource::Clawhub { normalized_url } => {
+                let files = fetch_clawhub_skill_files(&client, &normalized_url).await?;
+                self.create_from_remote_files_typed(
+                    input.project_id,
+                    RemoteSourceType::Clawhub,
+                    normalized_url,
+                    files,
+                )
+                .await
+            }
+            DetectedImportSource::SkillsSh { normalized_url } => {
+                let files =
+                    fetch_skills_sh_skill_files(&client, &normalized_url).await?;
+                self.create_from_remote_files_typed(
+                    input.project_id,
+                    RemoteSourceType::SkillsSh,
+                    normalized_url,
+                    files,
+                )
+                .await
+            }
+        }
     }
 
     async fn create_from_builtin_template(
@@ -314,9 +361,10 @@ where
         Ok(asset)
     }
 
-    async fn create_from_remote_files(
+    async fn create_from_remote_files_typed(
         &self,
         project_id: Uuid,
+        source_type: RemoteSourceType,
         source_url: String,
         input_files: Vec<SkillAssetFileInput>,
     ) -> Result<SkillAsset, SkillAssetApplicationError> {
@@ -338,15 +386,35 @@ where
         )?;
 
         let digest = digest_skill_files(&files);
-        let mut asset = SkillAsset::new_github_import(
-            project_id,
-            meta.name.clone(),
-            meta.name,
-            meta.description,
-            meta.disable_model_invocation,
-            source_url,
-            digest,
-        );
+        let mut asset = match source_type {
+            RemoteSourceType::Github => SkillAsset::new_github_import(
+                project_id,
+                meta.name.clone(),
+                meta.name,
+                meta.description,
+                meta.disable_model_invocation,
+                source_url,
+                digest,
+            ),
+            RemoteSourceType::Clawhub => SkillAsset::new_clawhub_import(
+                project_id,
+                meta.name.clone(),
+                meta.name,
+                meta.description,
+                meta.disable_model_invocation,
+                source_url,
+                digest,
+            ),
+            RemoteSourceType::SkillsSh => SkillAsset::new_skills_sh_import(
+                project_id,
+                meta.name.clone(),
+                meta.name,
+                meta.description,
+                meta.disable_model_invocation,
+                source_url,
+                digest,
+            ),
+        };
         asset.files = files
             .into_iter()
             .map(|mut file| {
@@ -375,6 +443,62 @@ where
     }
 }
 
+// ─── Source detection ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteSourceType {
+    Github,
+    Clawhub,
+    SkillsSh,
+}
+
+#[derive(Debug)]
+enum DetectedImportSource {
+    Github(GithubSkillSource),
+    Clawhub { normalized_url: String },
+    SkillsSh { normalized_url: String },
+}
+
+fn detect_import_source(raw: &str) -> Result<DetectedImportSource, SkillAssetApplicationError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "远端 Skill URL 不能为空".to_string(),
+        ));
+    }
+
+    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+
+    let url = Url::parse(&with_scheme).map_err(|_| {
+        SkillAssetApplicationError::BadRequest("远端 Skill URL 格式非法".to_string())
+    })?;
+
+    let host = url.host_str().unwrap_or("").to_lowercase();
+    match host.as_str() {
+        "github.com" | "www.github.com" => {
+            let source = parse_github_skill_source(trimmed)?;
+            Ok(DetectedImportSource::Github(source))
+        }
+        "clawhub.ai" | "www.clawhub.ai" | "clawhub.com" | "www.clawhub.com" => {
+            Ok(DetectedImportSource::Clawhub {
+                normalized_url: with_scheme,
+            })
+        }
+        "skills.sh" | "www.skills.sh" => Ok(DetectedImportSource::SkillsSh {
+            normalized_url: with_scheme,
+        }),
+        _ => Err(SkillAssetApplicationError::BadRequest(format!(
+            "不支持的来源: {host}（支持 github.com / clawhub.ai / skills.sh）"
+        ))),
+    }
+}
+
+// ─── GitHub types ────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GithubSkillSource {
     owner: String,
@@ -402,9 +526,14 @@ fn parse_github_skill_source(raw: &str) -> Result<GithubSkillSource, SkillAssetA
     let url = Url::parse(raw.trim()).map_err(|_| {
         SkillAssetApplicationError::BadRequest("远端 Skill URL 必须是合法 URL".to_string())
     })?;
-    if url.scheme() != "https" || url.host_str() != Some("github.com") {
+    if url.scheme() != "https"
+        || !matches!(
+            url.host_str(),
+            Some("github.com") | Some("www.github.com")
+        )
+    {
         return Err(SkillAssetApplicationError::BadRequest(
-            "当前只支持 https://github.com/... Skill URL".to_string(),
+            "GitHub URL 必须以 https://github.com/ 开头".to_string(),
         ));
     }
 
@@ -674,6 +803,343 @@ fn relative_github_path(base_dir: &str, path: &str) -> String {
             .to_string()
     }
 }
+
+// ─── ClawHub import ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ClawhubGetSkillResponse {
+    skill: ClawhubSkill,
+    #[serde(rename = "latestVersion")]
+    latest_version: Option<ClawhubLatestVersion>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ClawhubSkill {
+    slug: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    summary: Option<String>,
+    tags: Option<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClawhubLatestVersion {
+    version: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClawhubVersionDetailResponse {
+    version: ClawhubVersionDetail,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClawhubVersionDetail {
+    files: Vec<ClawhubFileEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClawhubFileEntry {
+    path: String,
+}
+
+fn parse_clawhub_slug(raw: &str) -> Result<String, SkillAssetApplicationError> {
+    let url = Url::parse(raw).map_err(|_| {
+        SkillAssetApplicationError::BadRequest("ClawHub URL 格式非法".to_string())
+    })?;
+    let parts: Vec<&str> = url
+        .path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    // clawhub.ai/{owner}/{slug} → slug is last segment
+    if parts.len() == 2 {
+        return Ok(parts[1].to_string());
+    }
+    if parts.len() == 1 && !parts[0].is_empty() {
+        return Ok(parts[0].to_string());
+    }
+    Err(SkillAssetApplicationError::BadRequest(
+        "ClawHub URL 缺少 skill slug".to_string(),
+    ))
+}
+
+async fn fetch_clawhub_skill_files(
+    client: &reqwest::Client,
+    raw_url: &str,
+) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
+    let slug = parse_clawhub_slug(raw_url)?;
+    let api_base = "https://clawhub.ai/api/v1";
+
+    // 1. Fetch skill metadata
+    let skill_resp: ClawhubGetSkillResponse = client
+        .get(format!("{api_base}/skills/{}", url_encode(&slug)))
+        .send()
+        .await
+        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("ClawHub 请求失败: {e}")))?
+        .error_for_status()
+        .map_err(|e| {
+            SkillAssetApplicationError::BadRequest(format!(
+                "ClawHub skill 未找到: {slug} ({e})"
+            ))
+        })?
+        .json()
+        .await
+        .map_err(|e| {
+            SkillAssetApplicationError::BadRequest(format!("ClawHub 响应解析失败: {e}"))
+        })?;
+
+    // 2. Determine latest version
+    let latest_version = skill_resp
+        .skill
+        .tags
+        .as_ref()
+        .and_then(|tags| tags.get("latest").cloned())
+        .or(skill_resp.latest_version.map(|v| v.version));
+
+    // 3. Fetch file list from version detail
+    let file_paths: Vec<String> = if let Some(ref version) = latest_version {
+        let version_url = format!(
+            "{api_base}/skills/{}/versions/{}",
+            url_encode(&slug),
+            url_encode(version)
+        );
+        match client.get(&version_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let detail: ClawhubVersionDetailResponse =
+                    resp.json().await.unwrap_or(ClawhubVersionDetailResponse {
+                        version: ClawhubVersionDetail { files: vec![] },
+                    });
+                detail.version.files.into_iter().map(|f| f.path).collect()
+            }
+            _ => vec!["SKILL.md".to_string()],
+        }
+    } else {
+        vec!["SKILL.md".to_string()]
+    };
+
+    // 4. Download each file
+    let mut files = Vec::new();
+    let mut total_size = 0usize;
+    for fp in &file_paths {
+        let mut file_url = format!(
+            "{api_base}/skills/{}/file?path={}",
+            url_encode(&slug),
+            url_encode(fp)
+        );
+        if let Some(ref version) = latest_version {
+            file_url.push_str(&format!("&version={}", url_encode(version)));
+        }
+
+        let resp = client.get(&file_url).send().await;
+        let body = match resp {
+            Ok(r) if r.status().is_success() => r.text().await.ok(),
+            _ => None,
+        };
+
+        let Some(content) = body else {
+            if fp == "SKILL.md" {
+                return Err(SkillAssetApplicationError::BadRequest(format!(
+                    "ClawHub 导入失败: 无法下载 SKILL.md ({slug})"
+                )));
+            }
+            continue;
+        };
+
+        if content.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
+            return Err(SkillAssetApplicationError::BadRequest(format!(
+                "ClawHub 文件过大: {fp}"
+            )));
+        }
+        total_size = total_size.saturating_add(content.len());
+        if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
+            return Err(SkillAssetApplicationError::BadRequest(format!(
+                "ClawHub 导入总大小超出限制 ({} KB)",
+                MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES / 1024
+            )));
+        }
+
+        files.push(SkillAssetFileInput {
+            path: fp.clone(),
+            content,
+        });
+    }
+
+    if !files.iter().any(|f| f.path == "SKILL.md") {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "ClawHub skill 缺少 SKILL.md: {slug}"
+        )));
+    }
+    Ok(files)
+}
+
+// ─── skills.sh import (GitHub-backed) ────────────────────────────────────────
+
+/// skills.sh URL format: https://skills.sh/{owner}/{repo}/{skill-name}
+fn parse_skills_sh_parts(
+    raw: &str,
+) -> Result<(String, String, String), SkillAssetApplicationError> {
+    let url = Url::parse(raw).map_err(|_| {
+        SkillAssetApplicationError::BadRequest("skills.sh URL 格式非法".to_string())
+    })?;
+    let parts: Vec<&str> = url
+        .path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.len() != 3 {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "skills.sh URL 需要 skills.sh/{{owner}}/{{repo}}/{{skill-name}} 格式，当前路径: {}",
+            url.path()
+        )));
+    }
+    Ok((
+        parts[0].to_string(),
+        parts[1].to_string(),
+        parts[2].to_string(),
+    ))
+}
+
+async fn fetch_skills_sh_skill_files(
+    client: &reqwest::Client,
+    raw_url: &str,
+) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
+    let (owner, repo, skill_name) = parse_skills_sh_parts(raw_url)?;
+
+    // Get default branch
+    let default_branch = fetch_skills_sh_default_branch(client, &owner, &repo).await;
+    let raw_prefix = format!(
+        "https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}"
+    );
+
+    // Try candidate paths for SKILL.md
+    let candidate_dirs = [
+        format!("skills/{skill_name}"),
+        format!(".claude/skills/{skill_name}"),
+        format!("plugin/skills/{skill_name}"),
+        skill_name.clone(),
+    ];
+
+    let mut skill_md_content: Option<String> = None;
+    let mut skill_dir = String::new();
+    for dir in &candidate_dirs {
+        let url = format!("{raw_prefix}/{dir}/SKILL.md");
+        if let Ok(content) = fetch_raw_text_file(client, &url).await {
+            skill_md_content = Some(content);
+            skill_dir = dir.clone();
+            break;
+        }
+    }
+
+    // Try root-level SKILL.md as fallback
+    if skill_md_content.is_none() {
+        let url = format!("{raw_prefix}/SKILL.md");
+        if let Ok(content) = fetch_raw_text_file(client, &url).await {
+            skill_md_content = Some(content);
+            skill_dir = String::new();
+        }
+    }
+
+    let skill_md_content = skill_md_content.ok_or_else(|| {
+        SkillAssetApplicationError::BadRequest(format!(
+            "skills.sh 导入失败: 在 {owner}/{repo} 中未找到 skill `{skill_name}` 的 SKILL.md"
+        ))
+    })?;
+
+    let mut files = vec![SkillAssetFileInput {
+        path: "SKILL.md".to_string(),
+        content: skill_md_content,
+    }];
+
+    // List supporting files via GitHub API
+    let github_source = GithubSkillSource {
+        owner,
+        repo,
+        ref_name: Some(default_branch.clone()),
+        skill_dir: skill_dir.clone(),
+        normalized_url: raw_url.to_string(),
+    };
+    let mut entries = Vec::new();
+    if collect_github_directory_entries(client, &github_source, &default_branch, &skill_dir, &mut entries)
+        .await
+        .is_ok()
+    {
+        let mut total_size = files[0].content.len();
+        for entry in entries
+            .into_iter()
+            .filter(|e| e.entry_type == "file")
+        {
+            let relative_path = relative_github_path(&skill_dir, &entry.path);
+            if relative_path.is_empty() || relative_path == "SKILL.md" {
+                continue;
+            }
+            if let Some(download_url) = entry.download_url {
+                if let Ok(content) = fetch_raw_text_file(client, &download_url).await {
+                    total_size = total_size.saturating_add(content.len());
+                    if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
+                        break;
+                    }
+                    files.push(SkillAssetFileInput {
+                        path: relative_path,
+                        content,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(files)
+}
+
+async fn fetch_skills_sh_default_branch(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> String {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}");
+    match github_get(client, &url).await {
+        Ok(value) => value
+            .get("default_branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main")
+            .to_string(),
+        Err(_) => "main".to_string(),
+    }
+}
+
+/// Generic raw file fetch (unlike `fetch_github_text_file` which returns specific errors)
+async fn fetch_raw_text_file(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<String, SkillAssetApplicationError> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "AgentDash")
+        .send()
+        .await
+        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("下载失败: {e}")))?;
+    if !response.status().is_success() {
+        return Err(SkillAssetApplicationError::BadRequest(format!(
+            "HTTP {}",
+            response.status()
+        )));
+    }
+    let bytes = response.bytes().await.map_err(|e| {
+        SkillAssetApplicationError::BadRequest(format!("读取响应失败: {e}"))
+    })?;
+    if bytes.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
+        return Err(SkillAssetApplicationError::BadRequest(
+            "文件过大".to_string(),
+        ));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|_| {
+        SkillAssetApplicationError::BadRequest("文件非 UTF-8 文本".to_string())
+    })
+}
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
 
 fn digest_skill_files(files: &[SkillAssetFile]) -> String {
     let mut hasher = Sha256::new();

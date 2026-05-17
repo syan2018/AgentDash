@@ -47,28 +47,24 @@ const SOURCE_CARDS: Array<{
   label: string;
   host: string;
   browseUrl: string;
-  supported: boolean;
 }> = [
   {
     key: "github",
     label: "GitHub",
     host: "github.com",
     browseUrl: "https://github.com/topics/agent-skill",
-    supported: true,
   },
   {
     key: "clawhub",
     label: "ClawHub",
     host: "clawhub.ai",
     browseUrl: "https://clawhub.ai",
-    supported: false,
   },
   {
     key: "skills_sh",
     label: "Skills.sh",
     host: "skills.sh",
     browseUrl: "https://skills.sh",
-    supported: false,
   },
 ];
 
@@ -300,14 +296,7 @@ function UrlImportForm({
                     : "border-border bg-background"
                 }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-medium text-foreground">{card.label}</span>
-                  {!card.supported && (
-                    <span className="rounded-[4px] border border-amber-500/30 bg-amber-500/10 px-1 py-px text-[9px] text-amber-600 dark:text-amber-400">
-                      即将支持
-                    </span>
-                  )}
-                </div>
+                <span className="text-xs font-medium text-foreground">{card.label}</span>
                 <a
                   href={card.browseUrl}
                   target="_blank"

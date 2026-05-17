@@ -371,6 +371,18 @@ const ORIGIN_STYLE: Record<
     bg: "bg-sky-500/10",
     text: "text-sky-700 dark:text-sky-300",
   },
+  clawhub: {
+    label: "clawhub",
+    border: "border-emerald-500/30",
+    bg: "bg-emerald-500/10",
+    text: "text-emerald-700 dark:text-emerald-300",
+  },
+  skills_sh: {
+    label: "skills.sh",
+    border: "border-orange-500/30",
+    bg: "bg-orange-500/10",
+    text: "text-orange-700 dark:text-orange-300",
+  },
 };
 
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {

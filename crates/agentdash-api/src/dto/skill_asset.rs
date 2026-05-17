@@ -53,7 +53,7 @@ impl From<SkillAsset> for SkillAssetResponse {
         let source = asset.source.tag();
         let builtin_key = match &asset.source {
             SkillAssetSource::BuiltinSeed { key } => Some(key.clone()),
-            SkillAssetSource::Github { .. } | SkillAssetSource::User => None,
+            _ => None,
         };
         let remote_source = asset
             .source

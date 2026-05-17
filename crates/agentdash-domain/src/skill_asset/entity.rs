@@ -114,6 +114,52 @@ impl SkillAsset {
         )
     }
 
+    pub fn new_clawhub_import(
+        project_id: Uuid,
+        key: impl Into<String>,
+        display_name: impl Into<String>,
+        description: impl Into<String>,
+        disable_model_invocation: bool,
+        url: impl Into<String>,
+        digest: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            project_id,
+            key,
+            display_name,
+            description,
+            SkillAssetSource::Clawhub {
+                url: url.into(),
+                imported_at: Utc::now(),
+                digest: digest.into(),
+            },
+            disable_model_invocation,
+        )
+    }
+
+    pub fn new_skills_sh_import(
+        project_id: Uuid,
+        key: impl Into<String>,
+        display_name: impl Into<String>,
+        description: impl Into<String>,
+        disable_model_invocation: bool,
+        url: impl Into<String>,
+        digest: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            project_id,
+            key,
+            display_name,
+            description,
+            SkillAssetSource::SkillsSh {
+                url: url.into(),
+                imported_at: Utc::now(),
+                digest: digest.into(),
+            },
+            disable_model_invocation,
+        )
+    }
+
     fn new(
         project_id: Uuid,
         key: impl Into<String>,

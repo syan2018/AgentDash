@@ -326,6 +326,46 @@ impl SkillAssetRow {
                     )
                 })?,
             },
+            "clawhub" => SkillAssetSource::Clawhub {
+                url: self.remote_source_url.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=clawhub 但 remote_source_url 为空".to_string(),
+                    )
+                })?,
+                imported_at: super::parse_pg_timestamp_checked(
+                    self.remote_imported_at.as_deref().ok_or_else(|| {
+                        DomainError::InvalidConfig(
+                            "skill_assets.source=clawhub 但 remote_imported_at 为空".to_string(),
+                        )
+                    })?,
+                    "skill_assets.remote_imported_at",
+                )?,
+                digest: self.remote_digest.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=clawhub 但 remote_digest 为空".to_string(),
+                    )
+                })?,
+            },
+            "skills_sh" => SkillAssetSource::SkillsSh {
+                url: self.remote_source_url.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=skills_sh 但 remote_source_url 为空".to_string(),
+                    )
+                })?,
+                imported_at: super::parse_pg_timestamp_checked(
+                    self.remote_imported_at.as_deref().ok_or_else(|| {
+                        DomainError::InvalidConfig(
+                            "skill_assets.source=skills_sh 但 remote_imported_at 为空".to_string(),
+                        )
+                    })?,
+                    "skill_assets.remote_imported_at",
+                )?,
+                digest: self.remote_digest.clone().ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=skills_sh 但 remote_digest 为空".to_string(),
+                    )
+                })?,
+            },
             "user" => SkillAssetSource::User,
             other => {
                 return Err(DomainError::InvalidConfig(format!(
@@ -408,21 +448,27 @@ fn parse_file_kind(raw: &str) -> Result<SkillAssetFileKind, DomainError> {
 
 fn remote_source_url(source: &SkillAssetSource) -> Option<&str> {
     match source {
-        SkillAssetSource::Github { url, .. } => Some(url.as_str()),
+        SkillAssetSource::Github { url, .. }
+        | SkillAssetSource::Clawhub { url, .. }
+        | SkillAssetSource::SkillsSh { url, .. } => Some(url.as_str()),
         SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
     }
 }
 
 fn remote_imported_at(source: &SkillAssetSource) -> Option<String> {
     match source {
-        SkillAssetSource::Github { imported_at, .. } => Some(imported_at.to_rfc3339()),
+        SkillAssetSource::Github { imported_at, .. }
+        | SkillAssetSource::Clawhub { imported_at, .. }
+        | SkillAssetSource::SkillsSh { imported_at, .. } => Some(imported_at.to_rfc3339()),
         SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
     }
 }
 
 fn remote_digest(source: &SkillAssetSource) -> Option<&str> {
     match source {
-        SkillAssetSource::Github { digest, .. } => Some(digest.as_str()),
+        SkillAssetSource::Github { digest, .. }
+        | SkillAssetSource::Clawhub { digest, .. }
+        | SkillAssetSource::SkillsSh { digest, .. } => Some(digest.as_str()),
         SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
     }
 }

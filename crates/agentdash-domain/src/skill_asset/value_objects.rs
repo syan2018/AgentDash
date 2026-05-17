@@ -16,6 +16,16 @@ pub enum SkillAssetSource {
         imported_at: DateTime<Utc>,
         digest: String,
     },
+    Clawhub {
+        url: String,
+        imported_at: DateTime<Utc>,
+        digest: String,
+    },
+    SkillsSh {
+        url: String,
+        imported_at: DateTime<Utc>,
+        digest: String,
+    },
     User,
 }
 
@@ -24,6 +34,8 @@ impl SkillAssetSource {
         match self {
             Self::BuiltinSeed { .. } => "builtin_seed",
             Self::Github { .. } => "github",
+            Self::Clawhub { .. } => "clawhub",
+            Self::SkillsSh { .. } => "skills_sh",
             Self::User => "user",
         }
     }
@@ -31,7 +43,7 @@ impl SkillAssetSource {
     pub fn builtin_key(&self) -> Option<&str> {
         match self {
             Self::BuiltinSeed { key } => Some(key.as_str()),
-            Self::Github { .. } | Self::User => None,
+            _ => None,
         }
     }
 
@@ -47,6 +59,26 @@ impl SkillAssetSource {
                 digest,
             } => Some(RemoteSkillAssetSource {
                 source_type: "github",
+                url,
+                imported_at,
+                digest,
+            }),
+            Self::Clawhub {
+                url,
+                imported_at,
+                digest,
+            } => Some(RemoteSkillAssetSource {
+                source_type: "clawhub",
+                url,
+                imported_at,
+                digest,
+            }),
+            Self::SkillsSh {
+                url,
+                imported_at,
+                digest,
+            } => Some(RemoteSkillAssetSource {
+                source_type: "skills_sh",
                 url,
                 imported_at,
                 digest,

@@ -54,9 +54,11 @@ pub async fn list_skill_assets(
         Some("user") => assets.retain(|asset| asset.source.tag() == "user"),
         Some("builtin_seed") => assets.retain(SkillAsset::is_builtin_seed),
         Some("github") => assets.retain(|asset| asset.source.tag() == "github"),
+        Some("clawhub") => assets.retain(|asset| asset.source.tag() == "clawhub"),
+        Some("skills_sh") => assets.retain(|asset| asset.source.tag() == "skills_sh"),
         Some(other) if !other.is_empty() => {
             return Err(ApiError::BadRequest(format!(
-                "无效的 source 过滤值: {other}（可选 user | builtin_seed | github）"
+                "无效的 source 过滤值: {other}（可选 user | builtin_seed | github | clawhub | skills_sh）"
             )));
         }
         _ => {}

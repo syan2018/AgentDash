@@ -8,6 +8,7 @@ import type {
   McpProbeResult,
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
+import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
 
 declare global {
   interface Window {
@@ -90,6 +91,11 @@ async function mcpServersSave(servers: McpLocalServerEntry[]): Promise<void> {
 async function mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResult> {
   ensureTauriHost()
   return invoke('mcp_server_probe', { server })
+}
+
+export async function tauriBrowseDirectory(path?: string): Promise<BrowseDirectoryResult> {
+  ensureTauriHost()
+  return invoke('desktop_browse_directory', { path: path ?? null })
 }
 
 function isTauriHost() {

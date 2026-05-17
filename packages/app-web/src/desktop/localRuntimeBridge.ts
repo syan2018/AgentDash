@@ -4,17 +4,24 @@ import {
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
 } from '@agentdash/core/local-runtime';
 import type { LocalRuntimeClient, LocalRuntimeProfile } from '@agentdash/core/local-runtime';
+import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser';
 import { API_ORIGIN } from '../api/origin';
 
 declare global {
   interface Window {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient;
+    __AGENTDASH_DESKTOP_BROWSE_DIRECTORY__?: (path?: string) => Promise<BrowseDirectoryResult>;
   }
 }
 
 export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
   if (typeof window === 'undefined') return null;
   return window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ ?? null;
+}
+
+export function getDesktopBrowseDirectory(): ((path?: string) => Promise<BrowseDirectoryResult>) | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__;
 }
 
 export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {

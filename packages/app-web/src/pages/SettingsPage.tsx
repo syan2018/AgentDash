@@ -15,7 +15,7 @@ import { llmProvidersApi } from "../api/llmProviders";
 import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
-import { getDesktopLocalRuntimeClient } from "../desktop/localRuntimeBridge";
+import { getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../desktop/localRuntimeBridge";
 import { hasDesktopExternalBrowserOpener, openDesktopExternalBrowser } from "../desktop/externalBrowser";
 
 // ---------------------------------------------------------------------------
@@ -135,11 +135,13 @@ function Field({
 
 function DesktopLocalRuntimePanel() {
   const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
+  const browseDirectory = useMemo(() => getDesktopBrowseDirectory(), []);
   if (!client) return null;
 
   return (
     <LocalRuntimeView
       client={client}
+      onBrowseDirectory={browseDirectory}
       defaultAccessToken={getStoredToken() ?? ""}
       defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
     />

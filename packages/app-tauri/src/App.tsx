@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import WebDashboardApp from 'app-web'
 import { Button, Card, cn } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
-import { createTauriLocalRuntimeClient } from './runtimeApi'
+import { createTauriLocalRuntimeClient, tauriBrowseDirectory } from './runtimeApi'
 import type { LocalRuntimeClient } from '@agentdash/core/local-runtime'
+import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
 
 type DashboardApiState = 'checking' | 'ready' | 'unavailable'
 type DesktopApiSnapshot = {
@@ -18,6 +19,7 @@ const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
 declare global {
   interface Window {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient
+    __AGENTDASH_DESKTOP_BROWSE_DIRECTORY__?: (path?: string) => Promise<BrowseDirectoryResult>
     __AGENTDASH_DESKTOP_OPEN_EXTERNAL__?: (url: string) => Promise<void>
   }
 }
@@ -27,9 +29,11 @@ function App() {
 
   useEffect(() => {
     window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = client
+    window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__ = tauriBrowseDirectory
     window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__ = (url: string) => invoke<void>('open_external_url', { url })
     return () => {
       delete window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__
+      delete window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__
       delete window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__
     }
   }, [client])

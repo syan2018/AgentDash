@@ -74,6 +74,7 @@ export function LocalRuntimeView({
   const [logs, setLogs] = useState<LocalLogEvent[]>([])
   const [logLevel, setLogLevel] = useState('all')
   const [browseDialogOpen, setBrowseDialogOpen] = useState(false)
+  const [browseTargetIndex, setBrowseTargetIndex] = useState<number | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -411,7 +412,7 @@ export function LocalRuntimeView({
           <Field label="可访问根目录">
             <div className="space-y-1.5">
               {accessibleRoots.map((root, i) => (
-                <div key={i} className="flex gap-1.5">
+                <div key={i} className="flex items-center gap-1.5">
                   <TextInput
                     className="flex-1"
                     value={root}
@@ -423,36 +424,42 @@ export function LocalRuntimeView({
                     placeholder="绝对路径"
                     readOnly={!isEditing}
                   />
+                  {isEditing && onBrowseDirectory && (
+                    <Button
+                      size="sm"
+                      type="button"
+                      onClick={() => { setBrowseTargetIndex(i); setBrowseDialogOpen(true) }}
+                    >
+                      浏览
+                    </Button>
+                  )}
                   {isEditing && (
-                    <button
+                    <Button
+                      size="sm"
                       type="button"
                       onClick={() => setAccessibleRoots(accessibleRoots.filter((_, j) => j !== i))}
-                      className="shrink-0 rounded-[6px] border border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10"
                     >
                       ×
-                    </button>
+                    </Button>
                   )}
                 </div>
               ))}
               {isEditing && (
-                <div className="flex gap-1.5">
-                  {onBrowseDirectory && (
-                    <button
-                      type="button"
-                      onClick={() => setBrowseDialogOpen(true)}
-                      className="rounded-[6px] border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    >
-                      浏览…
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setAccessibleRoots([...accessibleRoots, ''])}
-                    className="text-[10px] text-muted-foreground hover:text-foreground"
-                  >
-                    + 手动添加
-                  </button>
-                </div>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => {
+                    if (onBrowseDirectory) {
+                      setBrowseTargetIndex(accessibleRoots.length)
+                      setAccessibleRoots([...accessibleRoots, ''])
+                      setBrowseDialogOpen(true)
+                    } else {
+                      setAccessibleRoots([...accessibleRoots, ''])
+                    }
+                  }}
+                >
+                  添加目录
+                </Button>
               )}
               {accessibleRoots.length === 0 && !isEditing && (
                 <p className="text-xs text-muted-foreground">（未配置）</p>
@@ -585,12 +592,18 @@ export function LocalRuntimeView({
           open={browseDialogOpen}
           onBrowse={onBrowseDirectory}
           onSelect={(path) => {
-            if (!accessibleRoots.includes(path)) {
-              setAccessibleRoots([...accessibleRoots, path])
+            if (browseTargetIndex !== null) {
+              const next = [...accessibleRoots]
+              if (browseTargetIndex < next.length) {
+                next[browseTargetIndex] = path
+              } else {
+                next.push(path)
+              }
+              setAccessibleRoots(next)
             }
-            setBrowseDialogOpen(false)
+            setBrowseTargetIndex(null)
           }}
-          onClose={() => setBrowseDialogOpen(false)}
+          onClose={() => { setBrowseDialogOpen(false); setBrowseTargetIndex(null) }}
         />
       )}
     </div>

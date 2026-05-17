@@ -43,11 +43,11 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
-    PostgresMcpPresetRepository, PostgresProjectRepository, PostgresRoutineExecutionRepository,
-    PostgresRoutineRepository, PostgresRuntimeHealthRepository, PostgresSessionBindingRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresSkillAssetRepository,
-    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
-    PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresMcpPresetRepository, PostgresProjectBackendAccessRepository, PostgresProjectRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
+    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
+    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -156,6 +156,12 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("runtime_health 表初始化失败: {e}"))?;
+        let project_backend_access_repo =
+            Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
+        project_backend_access_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("project_backend_access 表初始化失败: {e}"))?;
 
         let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
@@ -214,6 +220,8 @@ impl AppState {
             session_binding_repo: session_binding_repo.clone(),
             backend_repo: backend_repo.clone(),
             runtime_health_repo: runtime_health_repo.clone(),
+            project_backend_access_repo: project_backend_access_repo.clone(),
+            backend_workspace_inventory_repo: project_backend_access_repo.clone(),
             auth_session_repo: auth_session_repo.clone(),
             user_directory_repo: user_directory_repo.clone(),
             settings_repo: settings_repo.clone(),

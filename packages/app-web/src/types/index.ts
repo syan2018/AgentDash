@@ -29,6 +29,14 @@ export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "ar
 export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
 export type WorkspaceBindingStatus = "pending" | "ready" | "offline" | "error";
 export type WorkspaceResolutionPolicy = "prefer_default_binding" | "prefer_online";
+export type ProjectBackendAccessStatus = "active" | "paused" | "revoked";
+export type ProjectBackendAccessMode = "use_inventory";
+export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";
+export type BackendWorkspaceInventorySource =
+  | "runtime_register"
+  | "manual_refresh"
+  | "scheduled_refresh"
+  | "capability_expansion_ack";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AuthMode = "personal" | "enterprise";
 export type ProjectVisibility = "private" | "template_visible";
@@ -350,6 +358,64 @@ export interface WorkspaceDetectionResult {
   confidence: string;
   warnings: string[];
   matched_workspace_ids: string[];
+}
+
+export interface ProjectBackendAccess {
+  id: string;
+  project_id: string;
+  backend_id: string;
+  status: ProjectBackendAccessStatus;
+  access_mode: ProjectBackendAccessMode;
+  priority: number;
+  root_policy: Record<string, unknown>;
+  capability_policy: Record<string, unknown>;
+  note?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackendWorkspaceInventory {
+  id: string;
+  backend_id: string;
+  root_ref: string;
+  identity_kind: WorkspaceIdentityKind;
+  identity_payload: Record<string, unknown>;
+  detected_facts: Record<string, unknown>;
+  status: BackendWorkspaceInventoryStatus;
+  source: BackendWorkspaceInventorySource;
+  last_seen_at: string;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceInventoryCandidate {
+  backend_id: string;
+  root_ref: string;
+  identity_kind: WorkspaceIdentityKind;
+  identity_payload: Record<string, unknown>;
+  detected_facts: Record<string, unknown>;
+  status: BackendWorkspaceInventoryStatus;
+  matched_workspace_ids: string[];
+  reason: string;
+}
+
+export interface WorkspaceBindingSyncResult {
+  updated_workspace_ids: string[];
+  created_bindings: number;
+  updated_bindings: number;
+  candidates: WorkspaceInventoryCandidate[];
+  conflicts: WorkspaceInventoryCandidate[];
+}
+
+export interface InventoryRefreshResult {
+  access_id: string;
+  backend_id: string;
+  refreshed: number;
+  failed: number;
+  items: BackendWorkspaceInventory[];
+  warnings: string[];
 }
 
 // ─── Story ────────────────────────────────────────────

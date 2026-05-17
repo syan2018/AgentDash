@@ -27,7 +27,6 @@ import type {
 } from "../types";
 
 const EMPTY_SESSION_BINDINGS: SessionBindingOwner[] = [];
-const EMPTY_WORKSPACES: [] = [];
 
 // ─── SessionPage ────────────────────────────────────────
 
@@ -312,11 +311,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
-  const projectWorkspaces = useWorkspaceStore((s) =>
-    ownerProjectId ? s.workspacesByProjectId[ownerProjectId] : undefined,
-  );
-  const ownerProjectWorkspaces = projectWorkspaces ?? EMPTY_WORKSPACES;
-
   useEffect(() => {
     if (!ownerProjectId) return;
     void fetchWorkspaces(ownerProjectId);
@@ -348,7 +342,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     sessionWorkspaceId
     ?? ownerStory?.default_workspace_id
     ?? ownerProject?.config.default_workspace_id
-    ?? ownerProjectWorkspaces[0]?.id
     ?? null;
 
   const handleCreateSession = useCallback(async (title: string) => {

@@ -49,6 +49,14 @@ pub async fn resolve_workspace_binding(
     availability: &dyn BackendAvailability,
     workspace: &Workspace,
 ) -> Result<ResolvedWorkspaceBinding, WorkspaceResolutionError> {
+    resolve_workspace_binding_with_allowed_backends(availability, workspace, None).await
+}
+
+pub async fn resolve_workspace_binding_with_allowed_backends(
+    availability: &dyn BackendAvailability,
+    workspace: &Workspace,
+    allowed_backend_ids: Option<&std::collections::HashSet<String>>,
+) -> Result<ResolvedWorkspaceBinding, WorkspaceResolutionError> {
     if workspace.bindings.is_empty() {
         return Err(WorkspaceResolutionError::NoBindings(format!(
             "Workspace `{}` 当前还没有任何可解析 binding",
@@ -62,6 +70,14 @@ pub async fn resolve_workspace_binding(
         let backend_id = binding.backend_id.trim();
         if backend_id.is_empty() {
             warnings.push(format!("binding `{}` 缺少 backend_id", binding.id));
+            continue;
+        }
+        if let Some(allowed_backend_ids) = allowed_backend_ids
+            && !allowed_backend_ids.contains(backend_id)
+        {
+            warnings.push(format!(
+                "backend `{backend_id}` 未被 Project 授权访问，已跳过"
+            ));
             continue;
         }
         if !identity_payload_matches_detected_facts(

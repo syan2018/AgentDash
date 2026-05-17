@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::workspace::WorkspaceIdentityKind;
 
 /// 后端连接配置
 ///
@@ -187,4 +190,159 @@ pub struct RuntimeHealthOnlineUpdate {
     pub accessible_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBackendAccessStatus {
+    Active,
+    Paused,
+    Revoked,
+}
+
+impl ProjectBackendAccessStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Revoked => "revoked",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectBackendAccessMode {
+    UseInventory,
+}
+
+impl ProjectBackendAccessMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UseInventory => "use_inventory",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectBackendAccess {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub backend_id: String,
+    pub status: ProjectBackendAccessStatus,
+    pub access_mode: ProjectBackendAccessMode,
+    pub priority: i32,
+    pub root_policy: serde_json::Value,
+    pub capability_policy: serde_json::Value,
+    pub note: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ProjectBackendAccess {
+    pub fn new(project_id: Uuid, backend_id: String, created_by: Option<String>) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            project_id,
+            backend_id,
+            status: ProjectBackendAccessStatus::Active,
+            access_mode: ProjectBackendAccessMode::UseInventory,
+            priority: 0,
+            root_policy: serde_json::json!({ "kind": "backend_inventory" }),
+            capability_policy: serde_json::json!({}),
+            note: None,
+            created_by,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status == ProjectBackendAccessStatus::Active
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendWorkspaceInventoryStatus {
+    Available,
+    Stale,
+    Offline,
+    Error,
+}
+
+impl BackendWorkspaceInventoryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Stale => "stale",
+            Self::Offline => "offline",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendWorkspaceInventorySource {
+    RuntimeRegister,
+    ManualRefresh,
+    ScheduledRefresh,
+    CapabilityExpansionAck,
+}
+
+impl BackendWorkspaceInventorySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeRegister => "runtime_register",
+            Self::ManualRefresh => "manual_refresh",
+            Self::ScheduledRefresh => "scheduled_refresh",
+            Self::CapabilityExpansionAck => "capability_expansion_ack",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendWorkspaceInventory {
+    pub id: Uuid,
+    pub backend_id: String,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: serde_json::Value,
+    pub detected_facts: serde_json::Value,
+    pub status: BackendWorkspaceInventoryStatus,
+    pub source: BackendWorkspaceInventorySource,
+    pub last_seen_at: chrono::DateTime<chrono::Utc>,
+    pub last_error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl BackendWorkspaceInventory {
+    pub fn available(
+        backend_id: String,
+        root_ref: String,
+        identity_kind: WorkspaceIdentityKind,
+        identity_payload: serde_json::Value,
+        detected_facts: serde_json::Value,
+        source: BackendWorkspaceInventorySource,
+    ) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            backend_id,
+            root_ref,
+            identity_kind,
+            identity_payload,
+            detected_facts,
+            status: BackendWorkspaceInventoryStatus::Available,
+            source,
+            last_seen_at: now,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }

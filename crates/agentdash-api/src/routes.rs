@@ -1,6 +1,7 @@
 pub mod acp_sessions;
 pub mod agents;
 pub mod auth_routes;
+pub mod backend_access;
 pub mod backends;
 pub mod canvases;
 pub mod discovered_options;
@@ -237,6 +238,36 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/workspaces/detect",
             post(workspaces::detect_workspace),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/candidates",
+            get(backend_access::list_workspace_candidates),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/sync-backend-bindings",
+            post(backend_access::sync_workspace_bindings),
+        )
+        .route(
+            "/projects/{project_id}/backend-access",
+            get(backend_access::list_project_backend_access)
+                .post(backend_access::create_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}",
+            patch(backend_access::update_project_backend_access)
+                .delete(backend_access::revoke_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory",
+            get(backend_access::list_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/refresh",
+            post(backend_access::refresh_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/browse",
+            post(backend_access::browse_project_backend_access),
         )
         .route("/workspaces/detect-git", post(workspaces::detect_git))
         .route(

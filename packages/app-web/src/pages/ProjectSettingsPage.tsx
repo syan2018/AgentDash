@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
   ContextContainerDefinition,
   DirectoryGroup,
   DirectoryUser,
+  BackendWorkspaceInventory,
+  ProjectBackendAccess,
   Project,
   ProjectRole,
   ProjectSubjectGrant,
   Workspace,
+  WorkspaceInventoryCandidate,
 } from "../types";
 import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
+import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { VfsBrowser } from "../features/vfs";
 import {
@@ -24,6 +28,16 @@ import {
   DangerConfirmDialog,
 } from "../components/ui/detail-panel";
 import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
+import {
+  createProjectBackendAccess,
+  listBackendWorkspaceInventory,
+  listProjectBackendAccess,
+  listWorkspaceInventoryCandidates,
+  refreshBackendWorkspaceInventory,
+  revokeProjectBackendAccess,
+  syncWorkspaceBackendBindings,
+  updateProjectBackendAccess,
+} from "../services/backendAccess";
 
 type SettingsTab = "overview" | "context" | "workspace" | "management";
 
@@ -338,6 +352,311 @@ function ContextTabContent({
         <MountOverviewList projectId={project.id} refreshKey={mountRefreshKey} />
       </SectionCard>
     </>
+  );
+}
+
+const ACCESS_STATUS_LABELS: Record<ProjectBackendAccess["status"], string> = {
+  active: "已启用",
+  paused: "已暂停",
+  revoked: "已撤销",
+};
+
+const INVENTORY_STATUS_LABELS: Record<BackendWorkspaceInventory["status"], string> = {
+  available: "可用",
+  stale: "过期",
+  offline: "离线",
+  error: "异常",
+};
+
+function BackendAccessPanel({
+  projectId,
+  canEdit,
+  onWorkspaceSynced,
+}: {
+  projectId: string;
+  canEdit: boolean;
+  onWorkspaceSynced: () => void;
+}) {
+  const { backends, fetchBackends } = useCoordinatorStore();
+  const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
+  const [inventoriesByAccessId, setInventoriesByAccessId] = useState<Record<string, BackendWorkspaceInventory[]>>({});
+  const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
+  const [selectedBackendId, setSelectedBackendId] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [nextAccesses, nextCandidates] = await Promise.all([
+        listProjectBackendAccess(projectId),
+        listWorkspaceInventoryCandidates(projectId),
+      ]);
+      setAccesses(nextAccesses);
+      setCandidates(nextCandidates);
+    } catch (loadError) {
+      setError((loadError as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void fetchBackends();
+    void load();
+  }, [fetchBackends, load]);
+
+  const authorizedBackendIds = useMemo(
+    () => new Set(accesses.map((access) => access.backend_id)),
+    [accesses],
+  );
+  const selectableBackends = useMemo(
+    () => backends.filter((backend) => !authorizedBackendIds.has(backend.id)),
+    [authorizedBackendIds, backends],
+  );
+
+  useEffect(() => {
+    if (selectedBackendId && selectableBackends.some((backend) => backend.id === selectedBackendId)) return;
+    setSelectedBackendId(selectableBackends[0]?.id ?? "");
+  }, [selectableBackends, selectedBackendId]);
+
+  const backendName = (backendId: string) => backends.find((backend) => backend.id === backendId)?.name ?? backendId;
+
+  const handleAddAccess = async () => {
+    if (!selectedBackendId) {
+      setError("请选择 backend");
+      return;
+    }
+    setError(null);
+    try {
+      const access = await createProjectBackendAccess(projectId, {
+        backend_id: selectedBackendId,
+      });
+      setAccesses((current) => {
+        const next = current.filter((item) => item.id !== access.id);
+        return [...next, access].sort((a, b) => b.priority - a.priority);
+      });
+      setMessage("已添加 backend 访问权限");
+    } catch (addError) {
+      setError((addError as Error).message);
+    }
+  };
+
+  const handleRefresh = async (access: ProjectBackendAccess) => {
+    setError(null);
+    try {
+      const result = await refreshBackendWorkspaceInventory(projectId, access.id);
+      setInventoriesByAccessId((current) => ({
+        ...current,
+        [access.id]: result.items,
+      }));
+      const nextCandidates = await listWorkspaceInventoryCandidates(projectId);
+      setCandidates(nextCandidates);
+      setMessage(`已刷新 ${result.refreshed} 个 workspace，失败 ${result.failed} 个`);
+    } catch (refreshError) {
+      setError((refreshError as Error).message);
+    }
+  };
+
+  const handleLoadInventory = async (access: ProjectBackendAccess) => {
+    setError(null);
+    try {
+      const items = await listBackendWorkspaceInventory(projectId, access.id);
+      setInventoriesByAccessId((current) => ({ ...current, [access.id]: items }));
+    } catch (inventoryError) {
+      setError((inventoryError as Error).message);
+    }
+  };
+
+  const handleToggleStatus = async (access: ProjectBackendAccess) => {
+    const nextStatus = access.status === "active" ? "paused" : "active";
+    setError(null);
+    try {
+      const updated = await updateProjectBackendAccess(projectId, access.id, { status: nextStatus });
+      setAccesses((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setMessage(nextStatus === "active" ? "已启用 backend 访问" : "已暂停 backend 访问");
+    } catch (statusError) {
+      setError((statusError as Error).message);
+    }
+  };
+
+  const handleRevoke = async (access: ProjectBackendAccess) => {
+    setError(null);
+    try {
+      await revokeProjectBackendAccess(projectId, access.id);
+      setAccesses((current) => current.filter((item) => item.id !== access.id));
+      setMessage("已撤销 backend 访问");
+    } catch (revokeError) {
+      setError((revokeError as Error).message);
+    }
+  };
+
+  const handleSync = async () => {
+    setError(null);
+    try {
+      const result = await syncWorkspaceBackendBindings(projectId);
+      const nextCandidates = await listWorkspaceInventoryCandidates(projectId);
+      setCandidates(nextCandidates);
+      onWorkspaceSynced();
+      setMessage(`已创建 ${result.created_bindings} 个 binding，更新 ${result.updated_bindings} 个 binding`);
+    } catch (syncError) {
+      setError((syncError as Error).message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <ContentGroup title="Backend Access">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          <select
+            value={selectedBackendId}
+            onChange={(event) => setSelectedBackendId(event.target.value)}
+            disabled={!canEdit}
+            className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <option value="">选择 backend</option>
+            {selectableBackends.map((backend) => (
+              <option key={backend.id} value={backend.id}>
+                {backend.name} {backend.online ? "(online)" : "(offline)"}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => void handleAddAccess()}
+            disabled={!canEdit || !selectedBackendId}
+            className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            授权 Backend
+          </button>
+        </div>
+
+        {isLoading && <p className="text-xs text-muted-foreground">正在加载 backend access...</p>}
+        {accesses.length === 0 && !isLoading && (
+          <p className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
+            当前 Project 还没有 backend 访问权限。
+          </p>
+        )}
+
+        <div className="space-y-3">
+          {accesses.map((access) => {
+            const inventory = inventoriesByAccessId[access.id] ?? [];
+            return (
+              <div key={access.id} className="rounded-[12px] border border-border bg-background px-4 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-medium text-foreground">{backendName(access.backend_id)}</p>
+                      <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {ACCESS_STATUS_LABELS[access.status]}
+                      </span>
+                      <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                        priority {access.priority}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{access.backend_id}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleLoadInventory(access)}
+                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
+                    >
+                      查看 Inventory
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRefresh(access)}
+                      disabled={!canEdit || access.status !== "active"}
+                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      刷新
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleStatus(access)}
+                      disabled={!canEdit || access.status === "revoked"}
+                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {access.status === "active" ? "暂停" : "启用"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRevoke(access)}
+                      disabled={!canEdit}
+                      className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      撤销
+                    </button>
+                  </div>
+                </div>
+
+                {inventory.length > 0 && (
+                  <div className="mt-3 space-y-2 border-t border-border/70 pt-3">
+                    {inventory.map((item) => (
+                      <div key={item.id} className="grid gap-2 rounded-[10px] bg-muted/25 px-3 py-2 text-xs md:grid-cols-[120px_minmax(0,1fr)_100px]">
+                        <span className="text-muted-foreground">{item.identity_kind}</span>
+                        <span className="truncate font-mono text-foreground">{item.root_ref}</span>
+                        <span className="text-muted-foreground">{INVENTORY_STATUS_LABELS[item.status]}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </ContentGroup>
+
+      <ContentGroup title="Discovered Candidates">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {candidates.length} 个 inventory 项尚未匹配现有 Workspace。
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleSync()}
+            disabled={!canEdit}
+            className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            同步已有 Workspace Binding
+          </button>
+        </div>
+
+        {candidates.length > 0 && (
+          <div className="space-y-2">
+            {candidates.map((candidate) => (
+              <div
+                key={`${candidate.backend_id}:${candidate.root_ref}`}
+                className="rounded-[10px] border border-dashed border-border bg-background px-3 py-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                    {candidate.identity_kind}
+                  </span>
+                  <span className="truncate font-mono text-xs text-foreground">{candidate.root_ref}</span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {backendName(candidate.backend_id)} · {candidate.reason}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </ContentGroup>
+
+      {(message || error) && (
+        <div className={`rounded-[12px] border px-4 py-3 text-sm ${
+          error
+            ? "border-destructive/40 bg-destructive/10 text-destructive"
+            : "border-emerald-400/40 bg-emerald-50 text-emerald-700"
+        }`}>
+          {error ?? message}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -815,8 +1134,19 @@ export function ProjectSettingsPage() {
               {activeTab === "workspace" && (
                 <>
                   <SectionCard
+                    title="Backend Access"
+                    description="Project 先授权 backend，再从 backend inventory 自动同步可用 Workspace binding。"
+                  >
+                    <BackendAccessPanel
+                      projectId={project.id}
+                      canEdit={canEditProject}
+                      onWorkspaceSynced={() => void fetchWorkspaces(project.id)}
+                    />
+                  </SectionCard>
+
+                  <SectionCard
                     title="工作空间"
-                    description="逻辑 Workspace、bindings 以及 backend 快捷入口。点击卡片上的「设为默认」可指定项目默认 Workspace。"
+                    description="逻辑 Workspace 只表达身份；物理 backend/root binding 优先由上方 inventory 同步产生。"
                   >
                     <WorkspaceList
                       projectId={project.id}

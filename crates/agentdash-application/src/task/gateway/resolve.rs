@@ -13,7 +13,7 @@ use agentdash_domain::workspace::Workspace;
 
 use crate::repository_set::RepositorySet;
 use crate::task::execution::TaskExecutionError;
-use crate::workspace::{BackendAvailability, resolve_workspace_binding};
+use crate::workspace::{BackendAvailability, resolve_workspace_binding_with_allowed_backends};
 
 use super::errors::{map_domain_error, map_internal_error};
 
@@ -130,9 +130,22 @@ pub async fn resolve_task_backend_id(
                     .to_string(),
             )
         })?;
-    let binding = resolve_workspace_binding(availability, &workspace)
+    let accesses = repos
+        .project_backend_access_repo
+        .list_active_by_project(workspace.project_id)
         .await
-        .map_err(map_internal_error)?;
+        .map_err(map_domain_error)?;
+    let allowed_backend_ids = accesses
+        .into_iter()
+        .map(|access| access.backend_id)
+        .collect::<std::collections::HashSet<_>>();
+    let binding = resolve_workspace_binding_with_allowed_backends(
+        availability,
+        &workspace,
+        Some(&allowed_backend_ids),
+    )
+    .await
+    .map_err(map_internal_error)?;
     if let Ok(bid) = normalize_backend_id(&binding.backend_id) {
         return Ok(bid.to_string());
     }

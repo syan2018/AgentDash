@@ -1,8 +1,10 @@
 use super::entity::{
-    BackendConfig, LocalBackendClaim, RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences,
+    BackendConfig, BackendWorkspaceInventory, LocalBackendClaim, ProjectBackendAccess,
+    ProjectBackendAccessStatus, RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences,
     ViewConfig,
 };
 use crate::common::error::DomainError;
+use uuid::Uuid;
 
 /// Backend 仓储接口（Port）
 #[async_trait::async_trait]
@@ -46,4 +48,43 @@ pub trait RuntimeHealthRepository: Send + Sync {
         backend_id: &str,
     ) -> Result<Option<RuntimeHealth>, DomainError>;
     async fn list_runtime_health(&self) -> Result<Vec<RuntimeHealth>, DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait ProjectBackendAccessRepository: Send + Sync {
+    async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError>;
+    async fn update(&self, access: &ProjectBackendAccess) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<ProjectBackendAccess>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
+    async fn list_active_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
+    async fn get_active_for_project_backend(
+        &self,
+        project_id: Uuid,
+        backend_id: &str,
+    ) -> Result<Option<ProjectBackendAccess>, DomainError>;
+    async fn set_status(
+        &self,
+        id: Uuid,
+        status: ProjectBackendAccessStatus,
+    ) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait BackendWorkspaceInventoryRepository: Send + Sync {
+    async fn upsert(&self, item: &BackendWorkspaceInventory) -> Result<(), DomainError>;
+    async fn upsert_many(&self, items: &[BackendWorkspaceInventory]) -> Result<(), DomainError>;
+    async fn list_by_backend(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<BackendWorkspaceInventory>, DomainError>;
+    async fn list_by_backends(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<Vec<BackendWorkspaceInventory>, DomainError>;
 }

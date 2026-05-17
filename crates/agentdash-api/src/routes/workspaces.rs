@@ -25,6 +25,7 @@ use crate::auth::{
     load_workspace_and_project_with_permission,
 };
 use crate::dto::{WorkspaceBindingResponse, WorkspaceResponse};
+use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,6 +142,8 @@ pub async fn create_workspace(
     let workspace_name = normalize_workspace_name(&req.name)?;
     let (identity_kind, identity_payload, initial_bindings) = derive_workspace_shape(
         &state,
+        project_id,
+        Some(current_user.user_id.as_str()),
         req.identity_kind,
         req.identity_payload,
         req.bindings,
@@ -224,6 +227,10 @@ pub async fn update_workspace(
             .into_iter()
             .map(|binding| binding_input_to_binding(workspace.id, binding))
             .collect::<Result<Vec<_>, _>>()?;
+        for binding in &next_bindings {
+            ensure_project_backend_access(&state, workspace.project_id, &binding.backend_id)
+                .await?;
+        }
         workspace.set_bindings(next_bindings);
     }
     if let Some(default_binding_id) = req.default_binding_id {
@@ -299,6 +306,7 @@ pub async fn detect_workspace(
     )
     .await?;
 
+    ensure_project_backend_access(&state, project_id, &req.backend_id).await?;
     let detected = invoke_workspace_detect(
         &state,
         Some(current_user.user_id.as_str()),
@@ -359,6 +367,8 @@ pub async fn detect_git(
 
 async fn derive_workspace_shape(
     state: &Arc<AppState>,
+    project_id: Uuid,
+    user_id: Option<&str>,
     identity_kind: Option<WorkspaceIdentityKind>,
     identity_payload: Option<Value>,
     bindings: Option<Vec<WorkspaceBindingInput>>,
@@ -394,10 +404,13 @@ async fn derive_workspace_shape(
         ));
     };
 
+    if project_id != Uuid::nil() {
+        ensure_project_backend_access(state, project_id, &first_binding.backend_id).await?;
+    }
     let detected = invoke_workspace_detect(
         state,
-        None,
-        Uuid::nil(),
+        user_id,
+        project_id,
         &first_binding.backend_id,
         &first_binding.root_ref,
     )

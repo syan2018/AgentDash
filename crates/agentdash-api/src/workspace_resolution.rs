@@ -20,7 +20,7 @@ use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::rpc::ApiError;
 
 pub use agentdash_application::workspace::WorkspaceDetectionResult;
-pub use agentdash_application::workspace::resolve_workspace_binding as resolve_workspace_binding_core;
+pub use agentdash_application::workspace::resolve_workspace_binding_with_allowed_backends as resolve_workspace_binding_core;
 
 fn map_backend_command_error(error: BackendCommandError) -> TransportError {
     match error {
@@ -334,12 +334,26 @@ pub async fn resolve_workspace_binding(
     state: &Arc<AppState>,
     workspace: &Workspace,
 ) -> Result<ResolvedWorkspaceBinding, ApiError> {
-    resolve_workspace_binding_core(state.services.backend_registry.as_ref(), workspace)
-        .await
-        .map_err(|err| match err {
-            WorkspaceResolutionError::NoBindings(msg)
-            | WorkspaceResolutionError::NoAvailable(msg) => ApiError::Conflict(msg),
-        })
+    let accesses = state
+        .repos
+        .project_backend_access_repo
+        .list_active_by_project(workspace.project_id)
+        .await?;
+    let allowed_backend_ids = accesses
+        .into_iter()
+        .map(|access| access.backend_id)
+        .collect::<std::collections::HashSet<_>>();
+    resolve_workspace_binding_core(
+        state.services.backend_registry.as_ref(),
+        workspace,
+        Some(&allowed_backend_ids),
+    )
+    .await
+    .map_err(|err| match err {
+        WorkspaceResolutionError::NoBindings(msg) | WorkspaceResolutionError::NoAvailable(msg) => {
+            ApiError::Conflict(msg)
+        }
+    })
 }
 
 /// 薄 API adapter：探测远程 workspace（错误映射到 ApiError）

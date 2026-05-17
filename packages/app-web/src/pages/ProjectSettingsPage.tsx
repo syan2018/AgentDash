@@ -11,7 +11,6 @@ import type {
   ProjectRole,
   ProjectSubjectGrant,
   Workspace,
-  WorkspaceInventoryCandidate,
 } from "../types";
 import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
@@ -32,10 +31,7 @@ import {
   createProjectBackendAccess,
   listBackendWorkspaceInventory,
   listProjectBackendAccess,
-  listWorkspaceInventoryCandidates,
-  refreshBackendWorkspaceInventory,
   revokeProjectBackendAccess,
-  updateProjectBackendAccess,
 } from "../services/backendAccess";
 
 type SettingsTab = "overview" | "context" | "workspace" | "management";
@@ -49,7 +45,7 @@ interface SettingsTabItem {
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
   { key: "context", label: "上下文资源", description: "context containers 与挂载策略" },
-  { key: "workspace", label: "工作空间", description: "默认 workspace、bindings 与 runtime preview" },
+  { key: "workspace", label: "工作空间", description: "默认 workspace、运行落点与 runtime preview" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
 
@@ -382,22 +378,17 @@ function BackendAccessPanel({
   const [inventoriesByAccessId, setInventoriesByAccessId] = useState<Record<string, BackendWorkspaceInventory[]>>({});
   const [expandedInventoryAccessIds, setExpandedInventoryAccessIds] = useState<Record<string, boolean>>({});
   const [loadingInventoryAccessIds, setLoadingInventoryAccessIds] = useState<Record<string, boolean>>({});
-  const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
   const [selectedBackendId, setSelectedBackendId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hasObservedBackendRuntimeRef = useRef(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [nextAccesses, nextCandidates] = await Promise.all([
-        listProjectBackendAccess(projectId),
-        listWorkspaceInventoryCandidates(projectId),
-      ]);
+      const nextAccesses = await listProjectBackendAccess(projectId);
       setAccesses(nextAccesses);
-      setCandidates(nextCandidates);
     } catch (loadError) {
       setError((loadError as Error).message);
     } finally {
@@ -410,10 +401,7 @@ function BackendAccessPanel({
     void load();
   }, [fetchBackends, load]);
 
-  useEffect(() => {
-    if (inventoryRefreshKey === 0) return;
-    void load();
-
+  const reloadExpandedInventories = useCallback(async () => {
     const expandedAccessIds = Object.entries(expandedInventoryAccessIds)
       .filter(([, expanded]) => expanded)
       .map(([accessId]) => accessId);
@@ -423,27 +411,31 @@ function BackendAccessPanel({
     for (const accessId of expandedAccessIds) {
       setLoadingInventoryAccessIds((current) => ({ ...current, [accessId]: true }));
     }
-    void (async () => {
-      try {
-        const inventoryEntries = await Promise.all(
-          expandedAccessIds.map(async (accessId) => [
-            accessId,
-            await listBackendWorkspaceInventory(projectId, accessId),
-          ] as const),
-        );
-        setInventoriesByAccessId((current) => ({
-          ...current,
-          ...Object.fromEntries(inventoryEntries),
-        }));
-      } catch (inventoryError) {
-        setError((inventoryError as Error).message);
-      } finally {
-        for (const accessId of expandedAccessIds) {
-          setLoadingInventoryAccessIds((current) => ({ ...current, [accessId]: false }));
-        }
+    try {
+      const inventoryEntries = await Promise.all(
+        expandedAccessIds.map(async (accessId) => [
+          accessId,
+          await listBackendWorkspaceInventory(projectId, accessId),
+        ] as const),
+      );
+      setInventoriesByAccessId((current) => ({
+        ...current,
+        ...Object.fromEntries(inventoryEntries),
+      }));
+    } catch (inventoryError) {
+      setError((inventoryError as Error).message);
+    } finally {
+      for (const accessId of expandedAccessIds) {
+        setLoadingInventoryAccessIds((current) => ({ ...current, [accessId]: false }));
       }
-    })();
-  }, [expandedInventoryAccessIds, inventoryRefreshKey, load, projectId]);
+    }
+  }, [expandedInventoryAccessIds, projectId]);
+
+  useEffect(() => {
+    if (inventoryRefreshKey === 0) return;
+    void load();
+    void reloadExpandedInventories();
+  }, [inventoryRefreshKey, load, reloadExpandedInventories]);
 
   const authorizedBackendIds = useMemo(
     () => new Set(accesses.map((access) => access.backend_id)),
@@ -453,6 +445,27 @@ function BackendAccessPanel({
     () => backends.filter((backend) => !authorizedBackendIds.has(backend.id)),
     [authorizedBackendIds, backends],
   );
+  const backendRuntimeSignature = useMemo(
+    () => backends
+      .map((backend) => [
+        backend.id,
+        backend.online ? "online" : "offline",
+        backend.runtime_health?.status ?? "",
+        backend.runtime_health?.updated_at ?? "",
+      ].join(":"))
+      .join("|"),
+    [backends],
+  );
+
+  useEffect(() => {
+    if (!backendRuntimeSignature) return;
+    if (!hasObservedBackendRuntimeRef.current) {
+      hasObservedBackendRuntimeRef.current = true;
+      return;
+    }
+    void load();
+    void reloadExpandedInventories();
+  }, [backendRuntimeSignature, load, reloadExpandedInventories]);
 
   useEffect(() => {
     if (selectedBackendId && selectableBackends.some((backend) => backend.id === selectedBackendId)) return;
@@ -475,28 +488,8 @@ function BackendAccessPanel({
         const next = current.filter((item) => item.id !== access.id);
         return [...next, access].sort((a, b) => b.priority - a.priority);
       });
-      setMessage("已添加 backend 访问权限");
     } catch (addError) {
       setError((addError as Error).message);
-    }
-  };
-
-  const handleRefresh = async (access: ProjectBackendAccess) => {
-    setError(null);
-    try {
-      const result = await refreshBackendWorkspaceInventory(projectId, access.id);
-      const [items, nextCandidates] = await Promise.all([
-        listBackendWorkspaceInventory(projectId, access.id),
-        listWorkspaceInventoryCandidates(projectId),
-      ]);
-      setInventoriesByAccessId((current) => ({
-        ...current,
-        [access.id]: items,
-      }));
-      setCandidates(nextCandidates);
-      setMessage(`已刷新 ${result.refreshed} 个 workspace，失败 ${result.failed} 个`);
-    } catch (refreshError) {
-      setError((refreshError as Error).message);
     }
   };
 
@@ -519,24 +512,11 @@ function BackendAccessPanel({
     }
   };
 
-  const handleToggleStatus = async (access: ProjectBackendAccess) => {
-    const nextStatus = access.status === "active" ? "paused" : "active";
-    setError(null);
-    try {
-      const updated = await updateProjectBackendAccess(projectId, access.id, { status: nextStatus });
-      setAccesses((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setMessage(nextStatus === "active" ? "已启用 backend 访问" : "已暂停 backend 访问");
-    } catch (statusError) {
-      setError((statusError as Error).message);
-    }
-  };
-
   const handleRevoke = async (access: ProjectBackendAccess) => {
     setError(null);
     try {
       await revokeProjectBackendAccess(projectId, access.id);
       setAccesses((current) => current.filter((item) => item.id !== access.id));
-      setMessage("已撤销 backend 访问");
     } catch (revokeError) {
       setError((revokeError as Error).message);
     }
@@ -565,7 +545,7 @@ function BackendAccessPanel({
             disabled={!canEdit || !selectedBackendId}
             className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
           >
-            授权 Backend
+            绑定 Backend
           </button>
         </div>
 
@@ -600,25 +580,10 @@ function BackendAccessPanel({
                     <button
                       type="button"
                       onClick={() => void handleLoadInventory(access)}
-                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
+                      className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
                     >
-                      {inventoryExpanded ? "收起 Inventory" : "查看 Inventory"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleRefresh(access)}
-                      disabled={!canEdit || access.status !== "active"}
-                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      刷新
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleToggleStatus(access)}
-                      disabled={!canEdit || access.status === "revoked"}
-                      className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {access.status === "active" ? "暂停" : "启用"}
+                      <span className="text-[10px]">{inventoryExpanded ? "▾" : "▸"}</span>
+                      <span>{inventoryExpanded ? "收起 Inventory" : "展开 Inventory"}</span>
                     </button>
                     <button
                       type="button"
@@ -626,7 +591,7 @@ function BackendAccessPanel({
                       disabled={!canEdit}
                       className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      撤销
+                      解绑
                     </button>
                   </div>
                 </div>
@@ -639,7 +604,7 @@ function BackendAccessPanel({
                       </p>
                     ) : inventory.length === 0 ? (
                       <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                        当前还没有 inventory 快照。请先刷新，或等待 backend 上报可访问 workspace。
+                        当前还没有可用目录快照。等待 backend 上报，或在 Workspace 详情中登记新的可用目录。
                       </p>
                     ) : (
                       inventory.map((item) => (
@@ -658,39 +623,9 @@ function BackendAccessPanel({
         </div>
       </ContentGroup>
 
-      <ContentGroup title="Discovered Candidates">
-        <p className="text-xs text-muted-foreground">
-          {candidates.length} 个 inventory 项尚未匹配现有 Workspace。请在下方 Workspace 详情中从候选项确认 binding。
-        </p>
-        {candidates.length > 0 && (
-          <div className="space-y-2">
-            {candidates.map((candidate) => (
-              <div
-                key={`${candidate.backend_id}:${candidate.root_ref}`}
-                className="rounded-[10px] border border-dashed border-border bg-background px-3 py-3"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                    {candidate.identity_kind}
-                  </span>
-                  <span className="truncate font-mono text-xs text-foreground">{candidate.root_ref}</span>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {backendName(candidate.backend_id)} · {candidate.reason}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </ContentGroup>
-
-      {(message || error) && (
-        <div className={`rounded-[12px] border px-4 py-3 text-sm ${
-          error
-            ? "border-destructive/40 bg-destructive/10 text-destructive"
-            : "border-emerald-400/40 bg-emerald-50 text-emerald-700"
-        }`}>
-          {error ?? message}
+      {error && (
+        <div className="rounded-[12px] border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
         </div>
       )}
     </div>
@@ -1174,7 +1109,7 @@ export function ProjectSettingsPage() {
                 <>
                   <SectionCard
                     title="Backend Access"
-                    description="Project 先授权 backend，再从 backend inventory 自动同步可用 Workspace binding。"
+                    description="Project 绑定可使用的 backend；可用目录由 backend 上报或在 Workspace 详情中登记。"
                   >
                     <BackendAccessPanel
                       projectId={project.id}
@@ -1185,7 +1120,7 @@ export function ProjectSettingsPage() {
 
                   <SectionCard
                     title="工作空间"
-                    description="逻辑 Workspace 只表达身份；物理 backend/root binding 优先由上方 inventory 同步产生。"
+                    description="逻辑 Workspace 只表达身份；物理 backend/root 落点由可用目录确认。"
                   >
                     <WorkspaceList
                       projectId={project.id}

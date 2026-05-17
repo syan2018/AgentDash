@@ -50,7 +50,7 @@ type CreateMode = "candidate" | "logical" | "local_detect";
 const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
   pending: { label: "待完善", cls: "border-border bg-secondary text-muted-foreground" },
   preparing: { label: "准备中", cls: "border-info/20 bg-info/10 text-info" },
-  ready: { label: "可解析", cls: "border-success/20 bg-success/10 text-success" },
+  ready: { label: "可用", cls: "border-success/20 bg-success/10 text-success" },
   active: { label: "使用中", cls: "border-primary/20 bg-primary/10 text-primary" },
   archived: { label: "已归档", cls: "border-border bg-secondary text-muted-foreground" },
   error: { label: "异常", cls: "border-destructive/20 bg-destructive/10 text-destructive" },
@@ -61,11 +61,6 @@ const bindingStatusLabels: Record<WorkspaceBindingStatus, string> = {
   ready: "可用",
   offline: "离线",
   error: "异常",
-};
-
-const resolutionPolicyLabels: Record<WorkspaceResolutionPolicy, string> = {
-  prefer_default_binding: "优先默认 binding",
-  prefer_online: "优先在线 backend",
 };
 
 const createModeLabels: Record<CreateMode, string> = {
@@ -150,6 +145,30 @@ function updatePayloadField(
   value: string,
 ): Record<string, unknown> {
   return { ...payload, [key]: value };
+}
+
+function stringField(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function detectionPrimaryText(result: WorkspaceDetectionResult): string {
+  if (result.identity_kind === "git_repo") {
+    return stringField(result.binding.detected_facts, "remote_url")
+      || stringField(result.identity_payload, "remote_url")
+      || stringField(result.identity_payload, "repo_url")
+      || stringField(result.identity_payload, "repo_key")
+      || result.binding.root_ref;
+  }
+
+  if (result.identity_kind === "p4_workspace") {
+    const server = stringField(result.identity_payload, "server_address");
+    const stream = stringField(result.identity_payload, "stream");
+    const client = stringField(result.identity_payload, "client_name");
+    return [server, stream || client].filter(Boolean).join(" · ") || result.binding.root_ref;
+  }
+
+  return stringField(result.identity_payload, "path_key") || result.binding.root_ref;
 }
 
 interface IdentityFieldsProps {
@@ -245,7 +264,7 @@ function CandidateList({
   candidates,
   backends,
   selectedKey,
-  emptyText = "暂无未匹配的 backend inventory 发现项。可以刷新 Inventory 或使用本机目录识别。",
+  emptyText = "暂无未匹配的可用目录发现项。可以使用本机目录识别登记新的可用目录。",
   onSelect,
   onAddBinding,
 }: CandidateListProps) {
@@ -300,7 +319,7 @@ function CandidateList({
                     onClick={() => onAddBinding(candidate)}
                     className="agentdash-button-secondary text-xs"
                   >
-                    添加 binding
+                    添加落点
                   </button>
                 )}
               </div>
@@ -344,7 +363,6 @@ function WorkspaceEditorDrawer({
     deleteWorkspace,
     detectWorkspace,
     error,
-    updateStatus,
     updateWorkspace,
   } = useWorkspaceStore();
   const backends = useCoordinatorStore((state) => state.backends);
@@ -366,22 +384,18 @@ function WorkspaceEditorDrawer({
     workspace?.identity_payload ?? emptyPayload("git_repo"),
   );
   const [payloadText, setPayloadText] = useState(normalizePayloadText(workspace?.identity_payload ?? emptyPayload("git_repo")));
-  const [resolutionPolicy, setResolutionPolicy] = useState<WorkspaceResolutionPolicy>(
-    workspace?.resolution_policy ?? "prefer_online",
-  );
+  const resolutionPolicy: WorkspaceResolutionPolicy = "prefer_online";
   const [defaultBindingId, setDefaultBindingId] = useState<string | null>(
     workspace?.default_binding_id ?? workspace?.bindings[0]?.id ?? null,
   );
   const [bindings, setBindings] = useState<WorkspaceBindingInput[]>(
     workspace?.bindings.map(bindingToInput) ?? [],
   );
-  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>(
-    workspace?.status ?? "pending",
-  );
   const [detectBackendId, setDetectBackendId] = useState(initialBinding?.backend_id ?? fallbackDetectBackends[0]?.id ?? "");
   const [detectRootRef, setDetectRootRef] = useState(initialBinding?.root_ref ?? "");
   const [detectionResult, setDetectionResult] = useState<WorkspaceDetectionResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [isDetectingDirectory, setIsDetectingDirectory] = useState(false);
   const [isRegisteringInventory, setIsRegisteringInventory] = useState(false);
   const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>(
     workspace?.mount_capabilities ?? [...ALL_CAPABILITIES],
@@ -432,48 +446,76 @@ function WorkspaceEditorDrawer({
   const handleAddCandidateBinding = (candidate: WorkspaceInventoryCandidate) => {
     const binding = candidateToBindingInput(candidate);
     if (bindings.some((item) => bindingDraftKey(item) === bindingDraftKey(binding))) {
-      setMessage("这个 backend/root 已经在当前 binding 中");
+      setMessage("这个 backend/root 已经在当前落点中");
       return;
     }
     setBindings((current) => [...current, binding]);
     if (!defaultBindingId) {
       setDefaultBindingId(binding.id ?? null);
     }
-    setMessage("已加入 binding，保存后生效");
+    setMessage("已加入落点，保存后生效");
   };
 
-  const handleDetectLocalDirectory = async () => {
+  const handleDetectLocalDirectory = async (rootRefOverride?: string) => {
     const backendId = effectiveDetectBackendId.trim();
-    const rootRef = detectRootRef.trim();
+    const rootRef = (rootRefOverride ?? detectRootRef).trim();
     if (!backendId || !rootRef) {
       setMessage("请先选择已授权 backend 并填写目录根路径");
       return;
     }
-    const detected = await detectWorkspace(projectId, backendId, rootRef);
-    if (!detected) return;
-    setDetectionResult(detected);
-    setIdentityKind(detected.identity_kind);
-    syncPayload(detected.identity_payload);
-    const detectedBinding = bindingToInput(detected.binding);
-    setBindings([detectedBinding]);
-    setDefaultBindingId(detectedBinding.id ?? null);
-    if (!name.trim()) {
-      setName(buildDefaultWorkspaceName(detected.identity_kind, detected.binding.root_ref));
-    }
+    setIsDetectingDirectory(true);
     setMessage(null);
+    try {
+      const detected = await detectWorkspace(projectId, backendId, rootRef);
+      if (!detected) return;
+      setDetectionResult(detected);
+      setIdentityKind(detected.identity_kind);
+      syncPayload(detected.identity_payload);
+      const detectedBinding = bindingToInput(detected.binding);
+      setBindings([detectedBinding]);
+      setDefaultBindingId(detectedBinding.id ?? null);
+      if (!name.trim()) {
+        setName(buildDefaultWorkspaceName(detected.identity_kind, detected.binding.root_ref));
+      }
+      setMessage(null);
+    } finally {
+      setIsDetectingDirectory(false);
+    }
   };
 
-  const handleDetectInventoryRegistration = async () => {
+  const handleDetectInventoryRegistration = async (rootRefOverride?: string) => {
     const backendId = effectiveDetectBackendId.trim();
-    const rootRef = detectRootRef.trim();
+    const rootRef = (rootRefOverride ?? detectRootRef).trim();
     if (!backendId || !rootRef) {
       setMessage("请先选择已授权 backend 并填写目录根路径");
       return;
     }
-    const detected = await detectWorkspace(projectId, backendId, rootRef);
-    if (!detected) return;
-    setDetectionResult(detected);
+    setIsDetectingDirectory(true);
     setMessage(null);
+    try {
+      const detected = await detectWorkspace(projectId, backendId, rootRef);
+      if (!detected) return;
+      setDetectionResult(detected);
+      setMessage(null);
+    } finally {
+      setIsDetectingDirectory(false);
+    }
+  };
+
+  const handleDetectPathCommitted = (path: string) => {
+    const normalizedPath = path.trim();
+    setDetectRootRef(normalizedPath);
+    if (!normalizedPath) return;
+    if (mode === "create" && createMode === "local_detect") {
+      void handleDetectLocalDirectory(normalizedPath);
+      return;
+    }
+    void handleDetectInventoryRegistration(normalizedPath);
+  };
+
+  const handleDetectRootBlur = () => {
+    if (!detectRootRef.trim() || detectionResult?.binding.root_ref === detectRootRef.trim()) return;
+    handleDetectPathCommitted(detectRootRef);
   };
 
   const handleRegisterInventory = async () => {
@@ -495,7 +537,7 @@ function WorkspaceEditorDrawer({
       await registerBackendWorkspaceInventory(projectId, access.id, { root_ref: rootRef });
       await onCandidatesChanged();
       await onInventoryChanged?.();
-      setMessage("已登记到 Backend Inventory，可从发现项创建或同步 binding");
+      setMessage("已登记为可用目录，可从候选项确认落点");
     } catch (registerError) {
       setMessage((registerError as Error).message);
     } finally {
@@ -514,7 +556,7 @@ function WorkspaceEditorDrawer({
       return;
     }
     if (!bindingsAllowedForCurrentUser()) {
-      setMessage("当前权限只能从既有候选项确认 binding，不能登记新的 backend inventory");
+      setMessage("当前权限只能从既有候选项确认落点，不能登记新的可用目录");
       return;
     }
 
@@ -554,9 +596,6 @@ function WorkspaceEditorDrawer({
     });
     if (!updated) return;
 
-    if (workspace.status !== workspaceStatus) {
-      await updateStatus(workspace.id, workspaceStatus);
-    }
     onCandidatesChanged();
     onClose();
   };
@@ -583,7 +622,7 @@ function WorkspaceEditorDrawer({
     identity_payload: identityPayload,
     resolution_policy: resolutionPolicy,
     default_binding_id: defaultBindingId,
-    status: workspaceStatus,
+    status: workspace?.status ?? "pending",
     bindings: bindings.map((binding) => ({
       id: binding.id ?? `${binding.backend_id}:${binding.root_ref}`,
       workspace_id: workspace?.id ?? "draft",
@@ -606,7 +645,7 @@ function WorkspaceEditorDrawer({
         open={open}
         title={mode === "create" ? "新建 Workspace" : "Workspace 详情"}
         subtitle={mode === "create"
-          ? "选择创建路径，再确认 logical identity 与 binding"
+          ? "选择创建路径，再确认 Workspace 身份与运行落点"
           : workspace
             ? `ID: ${workspace.id}`
             : undefined}
@@ -628,8 +667,8 @@ function WorkspaceEditorDrawer({
             <DetailSection
               title="创建入口"
               description={canManageBindings
-                ? "默认使用 backend inventory 的发现项；管理员可使用本机目录识别登记新 inventory。"
-                : "默认使用 backend inventory 的发现项；当前权限只能从既有候选项创建带 binding 的 Workspace。"}
+                ? "默认使用已登记目录的发现项；管理员可识别本机目录并登记为可用目录。"
+                : "默认使用已登记目录的发现项；当前权限只能从既有候选项创建带落点的 Workspace。"}
             >
               <div className="grid gap-2 md:grid-cols-3">
                 {visibleCreateModes.map((value) => (
@@ -650,19 +689,19 @@ function WorkspaceEditorDrawer({
 
               {createMode === "candidate" && (
                 <p className="mt-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  在下方 Backend Bindings 中选择一个发现项，确认后会生成 Workspace identity 和初始 binding。
+                  在下方 Backend 路由中选择一个发现项，确认后会生成 Workspace 身份和初始落点。
                 </p>
               )}
 
               {createMode === "logical" && (
                 <p className="mt-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                  先创建 logical identity，后续由已授权 backend inventory 自动匹配 binding。适合先建 Project contract，再让设备补齐可用目录。
+                  先创建 logical identity，后续由已授权 backend 的可用目录自动匹配 binding。适合先建 Project contract，再让设备补齐可用目录。
                 </p>
               )}
 
               {canManageBindings && createMode === "local_detect" && (
                 <div className="mt-3 space-y-3">
-                  <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)_auto]">
+                  <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
                     <select
                       value={effectiveDetectBackendId}
                       onChange={(event) => setDetectBackendId(event.target.value)}
@@ -680,6 +719,13 @@ function WorkspaceEditorDrawer({
                       <input
                         value={detectRootRef}
                         onChange={(event) => setDetectRootRef(event.target.value)}
+                        onBlur={handleDetectRootBlur}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleDetectPathCommitted(detectRootRef);
+                          }
+                        }}
                         placeholder="选择或填写 backend 上的目录"
                         className="agentdash-form-input min-w-0 flex-1"
                       />
@@ -692,16 +738,10 @@ function WorkspaceEditorDrawer({
                         浏览
                       </button>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleDetectLocalDirectory()}
-                      disabled={!effectiveDetectBackendId || !detectRootRef.trim()}
-                      className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      识别目录
-                    </button>
                   </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {isDetectingDirectory ? "正在识别目录..." : "选择目录后会自动识别；手动填写时按 Enter 或离开输入框确认。"}
+                  </p>
 
                   {fallbackDetectBackends.length === 0 && (
                     <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
@@ -710,33 +750,36 @@ function WorkspaceEditorDrawer({
                   )}
 
                   {detectionResult && (
-                    <div className="rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
-                      <p>
-                        识别结果：{identityKindLabels[detectionResult.identity_kind]} · confidence: {detectionResult.confidence}
-                      </p>
-                      <p className="mt-1">
-                        解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
-                      </p>
-                      {detectionResult.matched_workspace_ids.length > 0 && (
-                        <p className="mt-1 text-warning">
-                          检测到可能匹配的已有 Workspace：{detectionResult.matched_workspace_ids.join(", ")}
+                    <div className="flex flex-wrap items-start justify-between gap-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                      <div className="min-w-0 flex-1">
+                        <p>
+                          识别结果：{identityKindLabels[detectionResult.identity_kind]}
+                          <span className="text-muted-foreground/60"> · </span>
+                          <span className="font-mono text-foreground">
+                            {detectionPrimaryText(detectionResult)}
+                          </span>
                         </p>
-                      )}
-                      {detectionResult.warnings.map((warning) => (
-                        <p key={warning} className="mt-1 text-warning">{warning}</p>
-                      ))}
-                      <div className="mt-3 flex flex-wrap gap-2">
+                        <p className="mt-1">
+                          解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
+                        </p>
+                        {detectionResult.matched_workspace_ids.length > 0 && (
+                          <p className="mt-1 text-warning">
+                            检测到可能匹配的已有 Workspace：{detectionResult.matched_workspace_ids.join(", ")}
+                          </p>
+                        )}
+                        {detectionResult.warnings.map((warning) => (
+                          <p key={warning} className="mt-1 text-warning">{warning}</p>
+                        ))}
+                      </div>
+                      <div className="shrink-0">
                         <button
                           type="button"
                           onClick={() => void handleRegisterInventory()}
                           disabled={isRegisteringInventory}
                           className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {isRegisteringInventory ? "登记中..." : "登记到 Backend Inventory"}
+                          {isRegisteringInventory ? "登记中..." : "登记为可用目录"}
                         </button>
-                        <span className="self-center text-[11px] text-muted-foreground">
-                          登记后会进入发现项和自动 sync 流程。
-                        </span>
                       </div>
                     </div>
                   )}
@@ -746,8 +789,8 @@ function WorkspaceEditorDrawer({
           )}
 
           <DetailSection
-            title="Identity"
-            description="维护 logical workspace contract；它描述 Workspace 是谁，而不是固定某台 backend。"
+            title="Workspace 身份"
+            description="描述这个工作空间代表哪个仓库、P4 workspace 或本地目录。"
           >
             <div className="grid gap-3 md:grid-cols-2">
               <input
@@ -766,30 +809,6 @@ function WorkspaceEditorDrawer({
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
-
-              <select
-                value={resolutionPolicy}
-                onChange={(event) => setResolutionPolicy(event.target.value as WorkspaceResolutionPolicy)}
-                className="agentdash-form-select"
-              >
-                {Object.entries(resolutionPolicyLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-
-              {mode === "detail" && (
-                <select
-                  value={workspaceStatus}
-                  onChange={(event) => setWorkspaceStatus(event.target.value as WorkspaceStatus)}
-                  className="agentdash-form-select"
-                >
-                  <option value="pending">待完善</option>
-                  <option value="ready">可解析</option>
-                  <option value="active">使用中</option>
-                  <option value="archived">已归档</option>
-                  <option value="error">异常</option>
-                </select>
-              )}
             </div>
 
             <IdentityFields
@@ -828,8 +847,8 @@ function WorkspaceEditorDrawer({
 
           {mode === "detail" && resolutionSummary && (
             <DetailSection
-              title="Resolution"
-              description="展示当前 Project 会如何解析这个 logical Workspace。"
+              title="当前路由预览"
+              description="展示保存后的配置会落到哪个 backend/root。"
             >
               <div className="rounded-[10px] border border-border bg-background px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -849,22 +868,17 @@ function WorkspaceEditorDrawer({
           )}
 
           <DetailSection
-            title="Backend Bindings"
+            title="Backend 路由"
             description={canManageBindings
-              ? "在同一处确认候选项、查看当前 binding，并按需登记新的 backend inventory。"
-              : "当前权限只能从 backend inventory 的既有候选项确认 binding。"}
+              ? "选择这个 Workspace 可以落到哪些 backend/root；运行时会优先使用在线 backend。"
+              : "当前权限只能从既有候选项确认落点。"}
           >
             <div className="space-y-4">
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-medium text-foreground">当前 binding</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    默认 binding 是 Workspace 内部默认，不等于 Project 默认 Workspace。
-                  </p>
-                </div>
+                <p className="text-xs font-medium text-foreground">当前落点</p>
                 {dedupeBindings(bindings).length === 0 ? (
                   <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    当前还没有 binding。请从下方候选项确认一个 backend/root。
+                    当前还没有可用落点。请从下方候选项确认一个 backend/root。
                   </p>
                 ) : (
                   dedupeBindings(bindings).map((binding) => (
@@ -882,11 +896,6 @@ function WorkspaceEditorDrawer({
                       </div>
                       <div className="flex shrink-0 items-center gap-3">
                         <BindingStatusBadge status={binding.status ?? "pending"} />
-                        {defaultBindingId === (binding.id ?? null) && (
-                          <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
-                            Workspace 默认
-                          </span>
-                        )}
                       </div>
                     </div>
                   ))
@@ -902,8 +911,8 @@ function WorkspaceEditorDrawer({
                   candidates={candidates}
                   backends={backends}
                   emptyText={canManageBindings
-                    ? "暂无未匹配的 backend inventory 发现项。可以刷新 Inventory 或使用本机目录识别。"
-                    : "暂无可确认的 backend inventory 候选项。请让管理员先登记或刷新 backend inventory。"}
+                    ? "暂无未匹配的可用目录发现项。可以使用本机目录识别登记新的可用目录。"
+                    : "暂无可确认的目录候选项。请让管理员先登记可用目录。"}
                   onAddBinding={mode === "detail" ? handleAddCandidateBinding : undefined}
                   selectedKey={selectedCandidateKey}
                   onSelect={mode === "create" ? handleSelectCandidate : undefined}
@@ -913,13 +922,13 @@ function WorkspaceEditorDrawer({
               {canManageBindings ? (
                 <details className="rounded-[10px] border border-border bg-background px-3 py-3">
                   <summary className="cursor-pointer text-xs font-medium text-foreground">
-                    Advanced Inventory Registration
+                    登记新的可用目录
                   </summary>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    仅管理员用于识别目录并登记 backend inventory。状态、identity 和 detected_facts 都来自 detect 结果，不手工填写。
+                    仅管理员可使用。选择目录后自动识别，状态、identity 和 detected_facts 都来自 backend detect 结果。
                   </p>
                   <div className="mt-3 space-y-3">
-                    <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)_auto]">
+                    <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
                       <select
                         value={effectiveDetectBackendId}
                         onChange={(event) => setDetectBackendId(event.target.value)}
@@ -937,6 +946,13 @@ function WorkspaceEditorDrawer({
                         <input
                           value={detectRootRef}
                           onChange={(event) => setDetectRootRef(event.target.value)}
+                          onBlur={handleDetectRootBlur}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              handleDetectPathCommitted(detectRootRef);
+                            }
+                          }}
                           placeholder="选择或填写 backend 上的目录"
                           className="agentdash-form-input min-w-0 flex-1"
                         />
@@ -949,37 +965,34 @@ function WorkspaceEditorDrawer({
                           浏览
                         </button>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => void handleDetectInventoryRegistration()}
-                        disabled={!effectiveDetectBackendId || !detectRootRef.trim()}
-                        className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        识别目录
-                      </button>
                     </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {isDetectingDirectory ? "正在识别目录..." : "选择目录后会自动识别；手动填写时按 Enter 或离开输入框确认。"}
+                    </p>
 
                     {detectionResult && (
-                      <div className="rounded-[10px] border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
-                        <p>
-                          识别结果：{identityKindLabels[detectionResult.identity_kind]} · confidence: {detectionResult.confidence}
-                        </p>
-                        <p className="mt-1">
-                          解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[10px] border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                        <div className="min-w-0 flex-1">
+                          <p>
+                            识别结果：{identityKindLabels[detectionResult.identity_kind]}
+                            <span className="text-muted-foreground/60"> · </span>
+                            <span className="font-mono text-foreground">
+                              {detectionPrimaryText(detectionResult)}
+                            </span>
+                          </p>
+                          <p className="mt-1">
+                            解析目录：<span className="font-mono text-foreground">{detectionResult.binding.root_ref}</span>
+                          </p>
+                        </div>
+                        <div className="shrink-0">
                           <button
                             type="button"
                             onClick={() => void handleRegisterInventory()}
                             disabled={isRegisteringInventory}
                             className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {isRegisteringInventory ? "登记中..." : "登记到 Backend Inventory"}
+                            {isRegisteringInventory ? "登记中..." : "登记为可用目录"}
                           </button>
-                          <span className="self-center text-[11px] text-muted-foreground">
-                            登记后从候选项确认 binding。
-                          </span>
                         </div>
                       </div>
                     )}
@@ -987,7 +1000,7 @@ function WorkspaceEditorDrawer({
                 </details>
               ) : (
                 <p className="rounded-[10px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
-                  无管理员权限时不开放新的 backend inventory 登记入口。
+                  无管理员权限时不开放新的可用目录登记入口。
                 </p>
               )}
             </div>
@@ -1053,7 +1066,7 @@ function WorkspaceEditorDrawer({
           open={isDetectBrowseOpen}
           backendId={effectiveDetectBackendId}
           initialPath={detectRootRef || undefined}
-          onSelect={(path) => setDetectRootRef(path)}
+          onSelect={handleDetectPathCommitted}
           onClose={() => setIsDetectBrowseOpen(false)}
         />
       </DetailPanel>
@@ -1137,7 +1150,7 @@ export function WorkspaceList({
           <div>
             <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">逻辑 Workspace</p>
             <p className="text-xs text-muted-foreground">
-              Workspace 表达 identity，binding 表达已授权 backend/root 的运行时落点。
+              Workspace 表达身份；运行落点来自已授权 backend/root 的可用目录。
             </p>
           </div>
           <button
@@ -1159,7 +1172,7 @@ export function WorkspaceList({
           <div className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
             <p>当前还没有 logical Workspace。</p>
             <p className="mt-1 text-xs">
-              可以从 backend inventory 发现项创建，或使用本机目录识别快速从本机 backend 添加。
+              可以从可用目录发现项创建，或使用本机目录识别快速从本机 backend 添加。
             </p>
           </div>
         )}
@@ -1195,10 +1208,10 @@ export function WorkspaceList({
                     <ResolutionBadge state={resolution.state} />
                   </div>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    Identity: {identitySummary(workspace.identity_kind, workspace.identity_payload)}
+                    身份：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
                   </p>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    Resolution: {resolution.label} · {resolution.description}
+                    路由：{resolution.label} · {resolution.description}
                   </p>
                   {factSummary && (
                     <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -1215,13 +1228,13 @@ export function WorkspaceList({
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="text-right">
                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      bindings
+                      落点
                     </p>
                     <p className="text-sm font-medium text-foreground">
                       {availability.online}/{availability.total}
                     </p>
                     <p className="text-[10px] text-muted-foreground">
-                      ready {availability.ready} · authorized {availability.authorized}
+                      可用 {availability.ready} · 已授权 {availability.authorized}
                     </p>
                     {primaryBinding && <BindingStatusBadge status={primaryBinding.status} />}
                   </div>

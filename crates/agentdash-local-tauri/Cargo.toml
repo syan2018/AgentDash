@@ -9,6 +9,7 @@ build = "build.rs"
 [dependencies]
 agentdash-api = { path = "../agentdash-api" }
 agentdash-local = { path = "../agentdash-local", default-features = false }
+agentdash-relay = { path = "../agentdash-relay" }
 
 anyhow.workspace = true
 serde.workspace = true

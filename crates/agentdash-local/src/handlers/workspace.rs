@@ -129,7 +129,7 @@ impl CommandHandler {
 
 // ─── 目录浏览实现 ─────────────────────────────────────────
 
-fn browse_directory(path: Option<&str>) -> Result<(String, Vec<BrowseDirectoryEntry>), String> {
+pub fn browse_directory(path: Option<&str>) -> Result<(String, Vec<BrowseDirectoryEntry>), String> {
     let path = path.map(|p| p.trim()).filter(|p| !p.is_empty());
 
     match path {

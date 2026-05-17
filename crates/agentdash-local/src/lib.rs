@@ -3,6 +3,7 @@
 //! CLI 与后续 Tauri desktop 都应把这里作为本机能力入口；二进制入口只负责参数解析和宿主启动。
 
 mod handlers;
+pub use handlers::browse_directory;
 pub mod local_backend_config;
 mod machine_identity;
 mod materialization;

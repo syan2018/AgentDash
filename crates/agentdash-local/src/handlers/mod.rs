@@ -16,6 +16,7 @@ pub(crate) mod relay_mcp_servers;
 mod terminal;
 mod tool_calls;
 mod workspace;
+pub use workspace::browse_directory;
 
 use std::sync::Arc;
 

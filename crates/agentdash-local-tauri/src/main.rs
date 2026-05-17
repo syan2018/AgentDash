@@ -5,8 +5,9 @@ use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, load_or_create_machine_identity, probe_mcp_server,
+    StopReason, browse_directory, load_or_create_machine_identity, probe_mcp_server,
 };
+use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
@@ -266,6 +267,21 @@ async fn mcp_server_probe(
         )
         .await;
     Ok(result)
+}
+
+#[derive(Serialize)]
+struct BrowseDirectoryResponse {
+    current_path: String,
+    entries: Vec<BrowseDirectoryEntry>,
+}
+
+#[tauri::command]
+async fn desktop_browse_directory(path: Option<String>) -> Result<BrowseDirectoryResponse, String> {
+    let (current_path, entries) =
+        tokio::task::spawn_blocking(move || browse_directory(path.as_deref()))
+            .await
+            .map_err(|e| format!("目录浏览任务失败: {e}"))??;
+    Ok(BrowseDirectoryResponse { current_path, entries })
 }
 
 #[tauri::command]
@@ -668,6 +684,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_api_snapshot,
+            desktop_browse_directory,
             profile_delete,
             profile_load,
             profile_save,

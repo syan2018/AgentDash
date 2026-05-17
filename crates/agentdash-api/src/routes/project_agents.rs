@@ -592,7 +592,10 @@ pub async fn list_project_agent_links(
 
 #[derive(Debug, Deserialize)]
 pub struct CreateProjectAgentLinkRequest {
-    pub agent_id: String,
+    pub name: String,
+    pub agent_type: String,
+    #[serde(default)]
+    pub base_config: Option<serde_json::Value>,
     #[serde(default)]
     pub config_override: Option<serde_json::Value>,
     #[serde(default)]
@@ -605,7 +608,7 @@ pub struct CreateProjectAgentLinkRequest {
     pub is_default_for_task: bool,
 }
 
-/// POST /projects/{id}/agent-links — 将 Agent 关联到项目
+/// POST /projects/{id}/agent-links — 创建项目私有 Agent
 pub async fn create_project_agent_link(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -621,23 +624,33 @@ pub async fn create_project_agent_link(
     )
     .await?;
 
-    let agent_id = parse_agent_id(&req.agent_id)?;
-    let agent = state
-        .repos
-        .agent_repo
-        .get_by_id(agent_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("Agent {agent_id} 不存在")))?;
-
-    let existing = state
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("name 不能为空".into()));
+    }
+    let agent_type = req.agent_type.trim().to_string();
+    if agent_type.is_empty() {
+        return Err(ApiError::BadRequest("agent_type 不能为空".into()));
+    }
+    let project_links = state
         .repos
         .agent_link_repo
-        .find_by_project_and_agent(project_id, agent_id)
+        .list_by_project(project_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if existing.is_some() {
-        return Err(ApiError::Conflict("该 Agent 已关联到此项目".into()));
+    for link in project_links {
+        if let Some(agent) = state
+            .repos
+            .agent_repo
+            .get_by_id(link.agent_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            && agent.name == name
+        {
+            return Err(ApiError::Conflict(format!(
+                "Project Agent key 已存在: {name}"
+            )));
+        }
     }
 
     let lifecycle_key = resolve_lifecycle_key_for_link(
@@ -648,7 +661,18 @@ pub async fn create_project_agent_link(
     )
     .await?;
 
-    let mut link = ProjectAgentLink::new(project_id, agent_id);
+    let mut agent = Agent::new(name, agent_type);
+    if let Some(config) = req.base_config {
+        agent.base_config = config;
+    }
+    state
+        .repos
+        .agent_repo
+        .create(&agent)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut link = ProjectAgentLink::new(project_id, agent.id);
     link.config_override = req.config_override;
     link.default_lifecycle_key = lifecycle_key;
     link.is_default_for_story = req.is_default_for_story;
@@ -666,6 +690,12 @@ pub async fn create_project_agent_link(
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateProjectAgentLinkRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub agent_type: Option<String>,
+    #[serde(default)]
+    pub base_config: Option<serde_json::Value>,
     #[serde(default)]
     pub config_override: Option<serde_json::Value>,
     #[serde(default)]
@@ -706,6 +736,7 @@ pub async fn update_project_agent_link(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Agent {agent_id} 不存在")))?;
+    let mut agent = agent;
 
     let mut link = state
         .repos
@@ -717,6 +748,23 @@ pub async fn update_project_agent_link(
 
     if req.config_override.is_some() {
         link.config_override = req.config_override;
+    }
+    if let Some(name) = req.name {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("name 不能为空".into()));
+        }
+        agent.name = trimmed;
+    }
+    if let Some(agent_type) = req.agent_type {
+        let trimmed = agent_type.trim().to_string();
+        if trimmed.is_empty() {
+            return Err(ApiError::BadRequest("agent_type 不能为空".into()));
+        }
+        agent.agent_type = trimmed;
+    }
+    if let Some(config) = req.base_config {
+        agent.base_config = config;
     }
     if req.default_lifecycle_key.is_some() || req.default_workflow_key.is_some() {
         link.default_lifecycle_key = resolve_lifecycle_key_for_link(
@@ -740,7 +788,14 @@ pub async fn update_project_agent_link(
         link.project_container_ids = ids;
     }
     link.updated_at = chrono::Utc::now();
+    agent.updated_at = chrono::Utc::now();
 
+    state
+        .repos
+        .agent_repo
+        .update(&agent)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     state
         .repos
         .agent_link_repo

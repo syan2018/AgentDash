@@ -102,6 +102,7 @@ pub enum InstallLibraryAssetResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ProjectAssetSourceStatusResponse {
+    pub project_agents: Vec<ProjectAssetSourceStatusItemResponse>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,

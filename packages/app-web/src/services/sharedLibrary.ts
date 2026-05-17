@@ -133,6 +133,9 @@ export async function fetchProjectAssetSourceStatus(
     `/projects/${encodeURIComponent(projectId)}/shared-library/source-status`,
   );
   return {
+    project_agents: Array.isArray(raw.project_agents)
+      ? raw.project_agents.map(mapSourceStatusItem)
+      : [],
     mcp_presets: Array.isArray(raw.mcp_presets) ? raw.mcp_presets.map(mapSourceStatusItem) : [],
     skill_assets: Array.isArray(raw.skill_assets) ? raw.skill_assets.map(mapSourceStatusItem) : [],
     workflow_definitions: Array.isArray(raw.workflow_definitions)

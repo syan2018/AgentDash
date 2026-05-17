@@ -1,5 +1,4 @@
 pub mod acp_sessions;
-pub mod agents;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
@@ -86,17 +85,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{id}/grants/groups/{group_id}",
             put(projects::grant_project_group).delete(projects::revoke_project_group),
-        )
-        // Agent CRUD（顶层实体）
-        .route(
-            "/agents",
-            get(agents::list_agents).post(agents::create_agent),
-        )
-        .route(
-            "/agents/{id}",
-            get(agents::get_agent)
-                .put(agents::update_agent)
-                .delete(agents::delete_agent),
         )
         // LLM Provider CRUD
         .route(

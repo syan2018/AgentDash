@@ -220,7 +220,7 @@ function CreateAgentDialog({
   siblingAgents: Array<{ name: string; display_name: string }>;
   onClose: () => void;
 }) {
-  const { createAgent, createProjectAgentLink, fetchProjectAgents, fetchAgents } = useProjectStore();
+  const { createProjectAgentLink, fetchProjectAgents } = useProjectStore();
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const definitions = useWorkflowStore((s) => s.definitions);
@@ -240,15 +240,10 @@ function CreateAgentDialog({
     setIsSaving(true);
     try {
       const preset = formToPreset(form);
-      const agent = await createAgent({
+      const linkPayload: Parameters<typeof createProjectAgentLink>[1] = {
         name: preset.name,
         agent_type: preset.agent_type,
         base_config: preset.config,
-      });
-      if (!agent) return;
-
-      const linkPayload: Parameters<typeof createProjectAgentLink>[1] = {
-        agent_id: agent.id,
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
         linkPayload.default_lifecycle_key = selectedLifecycleKey;
@@ -257,7 +252,6 @@ function CreateAgentDialog({
       }
       await createProjectAgentLink(projectId, linkPayload);
       await fetchProjectAgents(projectId);
-      await fetchAgents();
       onClose();
     } finally {
       setIsSaving(false);
@@ -362,127 +356,6 @@ function CreateAgentDialog({
   );
 }
 
-// ─── 关联已有 Agent 对话框 ───
-
-function LinkExistingAgentDialog({
-  open,
-  projectId,
-  excludeAgentIds,
-  onClose,
-}: {
-  open: boolean;
-  projectId: string;
-  excludeAgentIds: Set<string>;
-  onClose: () => void;
-}) {
-  const { agents, fetchAgents, createProjectAgentLink, fetchProjectAgents } = useProjectStore();
-  const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
-  const definitions = useWorkflowStore((s) => s.definitions);
-
-  const [selectedAgentId, setSelectedAgentId] = useState("");
-  const [selectedLifecycleKey, setSelectedLifecycleKey] = useState("");
-  const [selectedWorkflowKey, setSelectedWorkflowKey] = useState("");
-  const [bindMode, setBindMode] = useState<"lifecycle" | "workflow" | "none">("none");
-  const [isSaving, setIsSaving] = useState(false);
-  const loaded = useRef(false);
-
-  useEffect(() => {
-    if (open && !loaded.current) {
-      loaded.current = true;
-      void fetchAgents();
-    }
-  }, [open, fetchAgents]);
-
-  if (!open) return null;
-
-  const available = agents.filter((a) => !excludeAgentIds.has(a.id));
-  // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
-  const activeLifecycles = lifecycles;
-  const activeWorkflows = definitions;
-
-  const handleSave = async () => {
-    if (!selectedAgentId) return;
-    setIsSaving(true);
-    try {
-      const payload: Parameters<typeof createProjectAgentLink>[1] = {
-        agent_id: selectedAgentId,
-      };
-      if (bindMode === "lifecycle" && selectedLifecycleKey) {
-        payload.default_lifecycle_key = selectedLifecycleKey;
-      } else if (bindMode === "workflow" && selectedWorkflowKey) {
-        payload.default_workflow_key = selectedWorkflowKey;
-      }
-      await createProjectAgentLink(projectId, payload);
-      await fetchProjectAgents(projectId);
-      onClose();
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="w-[440px] rounded-[14px] border border-border bg-background p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-foreground">关联已有 Agent</h3>
-
-        <div className="mt-4 space-y-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">选择 Agent</label>
-            <select
-              value={selectedAgentId}
-              onChange={(e) => setSelectedAgentId(e.target.value)}
-              className="mt-1 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-            >
-              <option value="">选择…</option>
-              {available.map((a) => (
-                <option key={a.id} value={a.id}>{a.name} ({a.agent_type})</option>
-              ))}
-            </select>
-            {available.length === 0 && <p className="mt-1 text-xs text-muted-foreground">没有可关联的 Agent，请先新建</p>}
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">默认工作流</label>
-            <div className="mt-1 flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-0.5">
-              {(["none", "lifecycle", "workflow"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setBindMode(mode)}
-                  className={`flex-1 rounded-[6px] px-2 py-1 text-xs transition-colors ${
-                    bindMode === mode ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {mode === "none" ? "无" : mode === "lifecycle" ? "Lifecycle" : "Workflow"}
-                </button>
-              ))}
-            </div>
-            {bindMode === "lifecycle" && (
-              <select value={selectedLifecycleKey} onChange={(e) => setSelectedLifecycleKey(e.target.value)} className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
-                <option value="">选择 Lifecycle…</option>
-                {activeLifecycles.map((l) => <option key={l.key} value={l.key}>{l.name}</option>)}
-              </select>
-            )}
-            {bindMode === "workflow" && (
-              <select value={selectedWorkflowKey} onChange={(e) => setSelectedWorkflowKey(e.target.value)} className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
-                <option value="">选择 Workflow…</option>
-                {activeWorkflows.map((w) => <option key={w.key} value={w.key}>{w.name}</option>)}
-              </select>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-[8px] border border-border px-3.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary">取消</button>
-          <button type="button" onClick={() => void handleSave()} disabled={!selectedAgentId || isSaving} className="rounded-[8px] border border-primary bg-primary px-3.5 py-1.5 text-sm text-primary-foreground transition-colors hover:opacity-95 disabled:opacity-50">
-            {isSaving ? "关联中…" : "关联"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── 主视图 ───
 
 export function ProjectAgentView({
@@ -493,12 +366,11 @@ export function ProjectAgentView({
   onOpenAgent,
   onForceNewSession,
 }: ProjectAgentViewProps) {
-  const { deleteProjectAgentLink, fetchProjectAgents, updateAgent, updateProjectAgentLink } = useProjectStore();
+  const { deleteProjectAgentLink, fetchProjectAgents, updateProjectAgentLink } = useProjectStore();
   const agentLinks = useProjectStore((s) => s.agentLinksByProjectId[project.id]) ?? EMPTY_LINKS;
   const fetchLinks = useProjectStore((s) => s.fetchProjectAgentLinks);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isLinkOpen, setIsLinkOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -507,11 +379,6 @@ export function ProjectAgentView({
   useEffect(() => {
     void fetchLinks(project.id);
   }, [fetchLinks, project.id]);
-
-  const linkedAgentIds = useMemo(
-    () => new Set(agentLinks.map((l) => l.agent_id)),
-    [agentLinks],
-  );
 
   const findLinkForAgent = (agent: ProjectAgentSummary): ProjectAgentLink | undefined => {
     return agentLinks.find((l) => l.agent_id === agent.key);
@@ -539,7 +406,7 @@ export function ProjectAgentView({
     if (!editingAgent) return;
     setIsEditSaving(true);
     try {
-      await updateAgent(editingAgent.agentId, {
+      await updateProjectAgentLink(project.id, editingAgent.agentId, {
         name: preset.name,
         agent_type: preset.agent_type,
         base_config: preset.config,
@@ -623,13 +490,6 @@ export function ProjectAgentView({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setIsLinkOpen(true)}
-              className="h-8 rounded-[8px] border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-secondary"
-            >
-              + 关联已有
-            </button>
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
@@ -1003,7 +863,7 @@ export function ProjectAgentView({
           </div>
 
           {agents.length === 0 && (
-            <p className="mt-6 px-4 text-center text-sm text-muted-foreground">暂无 Agent，点击右上角新建或关联已有</p>
+            <p className="mt-6 px-4 text-center text-sm text-muted-foreground">暂无 Agent，点击右上角新建</p>
           )}
           {agents.length > 0 && visibleAgents.length === 0 && (
             <p className="mt-6 px-4 text-center text-sm text-muted-foreground">未匹配到 agent，试试其他关键词</p>
@@ -1016,13 +876,6 @@ export function ProjectAgentView({
         projectId={project.id}
         siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
         onClose={() => setIsCreateOpen(false)}
-      />
-
-      <LinkExistingAgentDialog
-        open={isLinkOpen}
-        projectId={project.id}
-        excludeAgentIds={linkedAgentIds}
-        onClose={() => setIsLinkOpen(false)}
       />
 
       <SinglePresetDialog

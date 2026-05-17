@@ -181,6 +181,11 @@ fn project_source_status_response(
     status: ProjectAssetSourceStatus,
 ) -> ProjectAssetSourceStatusResponse {
     ProjectAssetSourceStatusResponse {
+        project_agents: status
+            .project_agents
+            .into_iter()
+            .map(source_status_item_response)
+            .collect(),
         mcp_presets: status
             .mcp_presets
             .into_iter()

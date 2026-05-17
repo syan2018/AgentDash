@@ -41,6 +41,7 @@ pub enum InstallLibraryAssetOutput {
 
 #[derive(Debug, Clone)]
 pub struct ProjectAssetSourceStatus {
+    pub project_agents: Vec<ProjectAssetSourceStatusItem>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
@@ -121,6 +122,28 @@ pub async fn list_project_asset_source_status(
     repos: &RepositorySet,
     project_id: Uuid,
 ) -> Result<ProjectAssetSourceStatus, DomainError> {
+    let mut project_agents = Vec::new();
+    for link in repos.agent_link_repo.list_by_project(project_id).await? {
+        if let Some(installed_source) = link.installed_source {
+            let project_asset_key = repos
+                .agent_repo
+                .get_by_id(link.agent_id)
+                .await?
+                .map(|agent| agent.name)
+                .unwrap_or_else(|| link.agent_id.to_string());
+            project_agents.push(
+                source_status_item(
+                    repos,
+                    "project_agent",
+                    link.id,
+                    project_asset_key,
+                    installed_source,
+                )
+                .await?,
+            );
+        }
+    }
+
     let mut mcp_presets = Vec::new();
     for preset in repos.mcp_preset_repo.list_by_project(project_id).await? {
         if let Some(installed_source) = preset.installed_source {
@@ -182,6 +205,7 @@ pub async fn list_project_asset_source_status(
     }
 
     Ok(ProjectAssetSourceStatus {
+        project_agents,
         mcp_presets,
         skill_assets,
         workflow_definitions,
@@ -196,6 +220,7 @@ async fn install_agent_template(
     config: agentdash_domain::shared_library::AgentTemplateConfig,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
     let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
+    let installed_source = installed_source_from_asset(&asset);
     let mut agent = Agent::new(
         key,
         config
@@ -222,7 +247,8 @@ async fn install_agent_template(
     };
     agent.base_config = serde_json::to_value(base_config).map_err(DomainError::Serialization)?;
     repos.agent_repo.create(&agent).await?;
-    let link = ProjectAgentLink::new(input.project_id, agent.id);
+    let mut link = ProjectAgentLink::new(input.project_id, agent.id);
+    link.installed_source = Some(installed_source);
     repos.agent_link_repo.create(&link).await?;
     Ok(InstallLibraryAssetOutput::ProjectAgent {
         agent_id: agent.id,

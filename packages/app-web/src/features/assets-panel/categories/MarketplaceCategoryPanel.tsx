@@ -41,6 +41,7 @@ export function MarketplaceCategoryPanel() {
 
   const statusItems = useMemo(
     () => [
+      ...(sourceStatus?.project_agents ?? []),
       ...(sourceStatus?.mcp_presets ?? []),
       ...(sourceStatus?.skill_assets ?? []),
       ...(sourceStatus?.workflow_definitions ?? []),

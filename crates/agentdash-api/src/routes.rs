@@ -17,6 +17,7 @@ pub mod project_sessions;
 pub mod projects;
 pub mod routines;
 pub mod settings;
+pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_sessions;
@@ -428,6 +429,19 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(settings::list_settings).put(settings::update_settings),
         )
         .route("/settings/{key}", delete(settings::delete_setting))
+        // Shared Library（公共资源库，Marketplace 的后端资产入口）
+        .route(
+            "/shared-library/assets",
+            get(shared_library::list_library_assets),
+        )
+        .route(
+            "/shared-library/assets/seed-builtin",
+            post(shared_library::seed_builtin_library_assets),
+        )
+        .route(
+            "/shared-library/assets/{id}",
+            get(shared_library::get_library_asset),
+        )
         // ACP Sessions — CRUD
         .route(
             "/sessions",

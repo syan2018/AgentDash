@@ -1646,8 +1646,9 @@ mod tests {
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
         let created = service
-            .create_from_remote_files(
+            .create_from_remote_files_typed(
                 project_id,
+                RemoteSourceType::Github,
                 "https://github.com/acme/skills/tree/main/writer".to_string(),
                 vec![
                     skill_file("writer", "写作辅助"),

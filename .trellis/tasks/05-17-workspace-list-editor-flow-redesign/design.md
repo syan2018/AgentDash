@@ -56,7 +56,10 @@ Resolution 在本任务内优先使用前端派生摘要：
    - 默认筛选 `backend_type === "local"`、online、已授权的 backend。
    - 支持目录浏览和 root_ref 输入。
    - 调用 `detectWorkspace(projectId, backendId, rootRef)`，展示 identity、binding、warnings、匹配到的现有 Workspace。
-   - 用户确认后创建 Workspace 或补充当前 Workspace binding。
+   - 用户确认后有两条动作：
+     - `登记到 Backend Inventory`：把识别结果 upsert 到 backend inventory，让它进入 candidate / sync 流程。
+     - `创建 Workspace`：直接用识别结果创建 logical Workspace 和初始 binding。
+   - 这两条动作语义必须分开，避免用户误以为 Advanced Maintenance 会自动上报 inventory。
 
 ### Detail Flow
 
@@ -99,8 +102,24 @@ candidate 创建 Workspace 可复用现有 `createWorkspace`：
 本机目录识别复用现有 detect API：
 
 - detect 只负责识别和预填，不直接保存。
-- 保存时仍走 `createWorkspace` 或 `updateWorkspace`。
+- 登记 backend inventory 时走 ProjectBackendAccess inventory endpoint，后端负责再次 detect 并 upsert `BackendWorkspaceInventory`。
+- 保存 Workspace 时仍走 `createWorkspace` 或 `updateWorkspace`。
 - detect 返回 matched workspace ids 时，UI 需要提示用户可能应该打开已有 Workspace，而不是重复创建。
+
+### Backend Inventory Register
+
+新增 Project-scoped endpoint：
+
+- `POST /projects/{project_id}/backend-access/{access_id}/inventory/register`
+- 输入：`root_ref`
+- 行为：
+  - 校验当前用户对 Project 有 edit 权限。
+  - 校验 access 属于 Project 且 active。
+  - 通过 Runtime Gateway 调用 `workspace.detect`。
+  - 将检测成功结果 upsert 为 `BackendWorkspaceInventorySource::CapabilityExpansionAck` 或等价的能力扩展来源。
+  - 返回登记后的 inventory item。
+
+这个 endpoint 不扩大 local runtime 的 `accessible_roots`。如果目录不在 backend 可访问边界内，detect 会失败并把错误返回给 UI。
 
 ## Boundaries
 
@@ -109,13 +128,14 @@ candidate 创建 Workspace 可复用现有 `createWorkspace`：
 - Workspace list/card 的信息架构调整。
 - Workspace create/detail drawer 的模式和分区调整。
 - Candidate 创建入口。
-- 本机目录识别入口。
+- 本机目录识别入口与登记 backend inventory 动作。
 - Inventory 展示点击与刷新链路的回归验证。
+- Workspace 抽屉登记成功后通知 Backend Access 面板刷新 candidates 和已展开 Inventory。
 
 本任务不包含：
 
 - Backend 设置页承载 backend owner 授权 Project 的正式迁移。
-- server-side 高权限用户批量拓展 backend roots 的权限模型。
+- server-side 高权限用户批量拓展 local runtime accessible roots 的权限模型。
 - worktree 创建能力。
 - 同一个 backend 只给某个 Project 使用单一 root 的精细 root policy 编辑。
 

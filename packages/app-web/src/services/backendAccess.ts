@@ -69,6 +69,17 @@ export function refreshBackendWorkspaceInventory(
   );
 }
 
+export function registerBackendWorkspaceInventory(
+  projectId: string,
+  accessId: string,
+  payload: { root_ref: string },
+): Promise<BackendWorkspaceInventory> {
+  return api.post<BackendWorkspaceInventory>(
+    `/projects/${projectId}/backend-access/${accessId}/inventory/register`,
+    payload,
+  );
+}
+
 export function listWorkspaceInventoryCandidates(
   projectId: string,
 ): Promise<WorkspaceInventoryCandidate[]> {

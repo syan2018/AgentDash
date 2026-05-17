@@ -27,6 +27,7 @@ import {
 import {
   listProjectBackendAccess,
   listWorkspaceInventoryCandidates,
+  registerBackendWorkspaceInventory,
 } from "../../services/backendAccess";
 import { DirectoryBrowserDialog } from "./directory-browser-dialog";
 import {
@@ -437,7 +438,8 @@ interface WorkspaceEditorDrawerProps {
   accesses: ProjectBackendAccess[];
   onClose: () => void;
   onSetDefault?: (workspaceId: string | null) => void;
-  onCandidatesChanged: () => void;
+  onCandidatesChanged: () => void | Promise<void>;
+  onInventoryChanged?: () => void | Promise<void>;
 }
 
 function WorkspaceEditorDrawer({
@@ -450,6 +452,7 @@ function WorkspaceEditorDrawer({
   onClose,
   onSetDefault,
   onCandidatesChanged,
+  onInventoryChanged,
 }: WorkspaceEditorDrawerProps) {
   const {
     createWorkspace,
@@ -490,6 +493,7 @@ function WorkspaceEditorDrawer({
   const [detectRootRef, setDetectRootRef] = useState(initialBinding?.root_ref ?? "");
   const [detectionResult, setDetectionResult] = useState<WorkspaceDetectionResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [isRegisteringInventory, setIsRegisteringInventory] = useState(false);
   const [mountCapabilities, setMountCapabilities] = useState<ContextContainerCapability[]>(
     workspace?.mount_capabilities ?? [...ALL_CAPABILITIES],
   );
@@ -548,6 +552,33 @@ function WorkspaceEditorDrawer({
       setName(buildDefaultWorkspaceName(detected.identity_kind, detected.binding.root_ref));
     }
     setMessage(null);
+  };
+
+  const handleRegisterInventory = async () => {
+    const backendId = effectiveDetectBackendId.trim();
+    const rootRef = (detectionResult?.binding.root_ref ?? detectRootRef).trim();
+    if (!backendId || !rootRef) {
+      setMessage("请先选择已授权 backend 并识别或填写目录");
+      return;
+    }
+    const access = accesses.find((item) => item.backend_id === backendId && item.status === "active");
+    if (!access) {
+      setMessage("当前 Project 尚未授权这个 backend，无法登记 inventory");
+      return;
+    }
+
+    setIsRegisteringInventory(true);
+    setMessage(null);
+    try {
+      await registerBackendWorkspaceInventory(projectId, access.id, { root_ref: rootRef });
+      await onCandidatesChanged();
+      await onInventoryChanged?.();
+      setMessage("已登记到 Backend Inventory，可从发现项创建或同步 binding");
+    } catch (registerError) {
+      setMessage((registerError as Error).message);
+    } finally {
+      setIsRegisteringInventory(false);
+    }
   };
 
   const handleSave = async () => {
@@ -774,6 +805,19 @@ function WorkspaceEditorDrawer({
                       {detectionResult.warnings.map((warning) => (
                         <p key={warning} className="mt-1 text-warning">{warning}</p>
                       ))}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleRegisterInventory()}
+                          disabled={isRegisteringInventory}
+                          className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isRegisteringInventory ? "登记中..." : "登记到 Backend Inventory"}
+                        </button>
+                        <span className="self-center text-[11px] text-muted-foreground">
+                          登记后会进入发现项和自动 sync 流程。
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -957,7 +1001,7 @@ function WorkspaceEditorDrawer({
 
           <DetailSection
             title="Advanced Maintenance"
-            description="仅用于维护已确认 binding 的 backend/root/status/detected_facts。"
+            description="仅用于维护当前 Workspace 的 binding，不会登记或修改 backend inventory。"
           >
             <WorkspaceBindingEditor
               bindings={bindings}
@@ -1022,6 +1066,7 @@ interface WorkspaceListProps {
   workspaces: Workspace[];
   defaultWorkspaceId?: string | null;
   onSetDefault?: (workspaceId: string | null) => void;
+  onInventoryChanged?: () => void | Promise<void>;
 }
 
 export function WorkspaceList({
@@ -1029,6 +1074,7 @@ export function WorkspaceList({
   workspaces,
   defaultWorkspaceId,
   onSetDefault,
+  onInventoryChanged,
 }: WorkspaceListProps) {
   const { backends, fetchBackends } = useCoordinatorStore();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -1203,7 +1249,8 @@ export function WorkspaceList({
         accesses={accesses}
         onClose={() => setIsCreateOpen(false)}
         onSetDefault={onSetDefault}
-        onCandidatesChanged={() => void loadRoutingInputs()}
+        onCandidatesChanged={loadRoutingInputs}
+        onInventoryChanged={onInventoryChanged}
       />
 
       <WorkspaceEditorDrawer
@@ -1216,7 +1263,8 @@ export function WorkspaceList({
         accesses={accesses}
         onClose={() => setSelectedWorkspace(null)}
         onSetDefault={onSetDefault}
-        onCandidatesChanged={() => void loadRoutingInputs()}
+        onCandidatesChanged={loadRoutingInputs}
+        onInventoryChanged={onInventoryChanged}
       />
     </>
   );

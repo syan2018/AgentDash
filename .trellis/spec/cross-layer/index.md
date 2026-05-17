@@ -10,6 +10,7 @@
 |------|------|------|
 | [Backbone Protocol](./backbone-protocol.md) | 平台内部事件流统一传输协议（BackboneEnvelope / BackboneEvent） | ✅ 已更新 |
 | [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面端托管 API、Local Runtime command、profile 与打包契约 | ✅ 已创建 |
+| [Project Backend Workspace Routing](./project-backend-workspace-routing.md) | Project backend access、workspace inventory、binding 自动路由契约 | ✅ 已创建 |
 
 ---
 
@@ -30,4 +31,3 @@
 - [后端开发指南](../backend/index.md)
 - [前端开发指南](../frontend/index.md)
 - [前后端共享规范](../shared/index.md)
-

@@ -85,9 +85,21 @@ Workspace 列表和详情不得再暗示 Project 能任意选择 backend/root。
 
 - 默认筛选本机、在线、已授权 backend。
 - 支持目录浏览按钮，减少手填路径。
-- detect 成功后展示 identity、root_ref、warnings、可能匹配的现有 Workspace，再由用户确认保存。
+- detect 成功后展示 identity、root_ref、warnings、可能匹配的现有 Workspace，再由用户确认保存或登记。
+- 本机目录识别必须支持把当前 root_ref 登记到对应 backend 的 inventory，使它成为 Project 可消费的 candidate / sync 来源。
 - 若当前 Project 尚未授权该本机 backend，入口应引导先授权 backend，而不是静默失败或绕过授权。
 - server-side 的大规模 backend 能力拓展、backend owner 给 Project 授权等能力属于后续 Backend 设置页任务，本任务只把 Workspace 侧消费流程整理好。
+
+### R8. 区分 Workspace Binding 维护与 Backend Inventory 登记
+
+Advanced Maintenance 只维护当前 Workspace 的 bindings，不得暗示它会修改 backend inventory。
+
+需要新增明确动作：
+
+- `登记到 Backend Inventory`：对已授权 backend + root_ref 调用 detect，并把识别结果 upsert 到该 backend 的 inventory。
+- 登记成功后刷新 candidates / inventory 展示，让用户可以从发现项创建 Workspace 或同步 binding。
+- 如果 Backend Access 面板已展开对应 Inventory，登记成功后必须能看到最新快照，避免误判为没有上报。
+- 对于本机用户，这个动作是“把本机目录加入 backend 可上报清单”的核心路径。
 
 ## Acceptance Criteria
 
@@ -96,7 +108,9 @@ Workspace 列表和详情不得再暗示 Project 能任意选择 backend/root。
 - [ ] 新建 Workspace 默认入口不再优先引导用户填写 backend + root_ref。
 - [ ] Candidate 可作为创建 Workspace 的主入口，创建前展示预填 identity 和初始 binding。
 - [ ] 本机目录识别作为清晰可见的二级主入口保留，适合个人本机用户高频使用。
+- [ ] 本机目录识别可将目录登记到对应 backend inventory，并刷新 candidates。
 - [ ] 手工 backend/root/status/detected_facts 编辑移动到高级维护区域。
+- [ ] Advanced Maintenance 明确只改 Workspace binding，不会回写 backend inventory。
 - [ ] Project default workspace 与 Workspace default binding 的文案和交互明确区分。
 - [ ] 无授权 backend、无匹配 binding、backend 离线、identity 不匹配时给出明确诊断，不静默 fallback。
 - [ ] 前端类型检查、lint、build/test 通过。

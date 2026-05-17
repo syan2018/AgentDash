@@ -266,6 +266,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(backend_access::refresh_project_backend_inventory),
         )
         .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/register",
+            post(backend_access::register_project_backend_inventory),
+        )
+        .route(
             "/projects/{project_id}/backend-access/{access_id}/browse",
             post(backend_access::browse_project_backend_access),
         )

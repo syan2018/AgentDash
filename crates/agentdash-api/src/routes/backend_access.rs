@@ -94,6 +94,11 @@ pub struct BrowseAccessDirectoryRequest {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RegisterBackendWorkspaceInventoryRequest {
+    pub root_ref: String,
+}
+
 pub async fn list_project_backend_access(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -332,6 +337,7 @@ pub async fn refresh_project_backend_inventory(
                     root,
                     detected,
                     BackendWorkspaceInventoryStatus::Available,
+                    BackendWorkspaceInventorySource::ManualRefresh,
                     None,
                 ));
             }
@@ -366,6 +372,51 @@ pub async fn refresh_project_backend_inventory(
             .collect(),
         warnings,
     }))
+}
+
+pub async fn register_project_backend_inventory(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, access_id)): Path<(String, String)>,
+    Json(req): Json<RegisterBackendWorkspaceInventoryRequest>,
+) -> Result<Json<BackendWorkspaceInventoryResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    let access_id = parse_uuid(&access_id, "ProjectBackendAccess ID")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let access = load_access_for_project(&state, project_id, access_id).await?;
+    if !access.is_active() {
+        return Err(ApiError::Conflict("ProjectBackendAccess 当前未启用".into()));
+    }
+
+    let root_ref = normalize_required("root_ref", &req.root_ref)?;
+    let detected = invoke_workspace_detect(
+        &state,
+        Some(current_user.user_id.as_str()),
+        project_id,
+        &access.backend_id,
+        &root_ref,
+    )
+    .await?;
+    let item = inventory_from_detected(
+        access.backend_id,
+        root_ref,
+        detected,
+        BackendWorkspaceInventoryStatus::Available,
+        BackendWorkspaceInventorySource::CapabilityExpansionAck,
+        None,
+    );
+    state
+        .repos
+        .backend_workspace_inventory_repo
+        .upsert(&item)
+        .await?;
+    Ok(Json(BackendWorkspaceInventoryResponse::from(item)))
 }
 
 pub async fn list_workspace_candidates(
@@ -538,6 +589,7 @@ fn inventory_from_detected(
     root_ref: String,
     detected: WorkspaceDetectionResult,
     status: BackendWorkspaceInventoryStatus,
+    source: BackendWorkspaceInventorySource,
     last_error: Option<String>,
 ) -> BackendWorkspaceInventory {
     let mut item = BackendWorkspaceInventory::available(
@@ -546,7 +598,7 @@ fn inventory_from_detected(
         detected.identity_kind,
         detected.identity_payload,
         detected.binding.detected_facts,
-        BackendWorkspaceInventorySource::ManualRefresh,
+        source,
     );
     item.status = status;
     item.last_error = last_error;

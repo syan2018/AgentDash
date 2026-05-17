@@ -58,6 +58,16 @@
   - 本机目录识别可 detect 并创建。
   - 无授权 backend、无 binding、offline/error binding 有明确诊断。
 
+## Phase 9. Missed Inventory Registration Fix
+
+- [x] 补 PRD / design / implement，明确本机目录识别必须能登记 backend inventory。
+- [x] 新增 backend inventory register endpoint：已授权 access + root_ref -> detect -> upsert inventory。
+- [x] 前端 service 增加 register API。
+- [x] 本机目录识别区增加 `登记到 Backend Inventory` 动作，成功后刷新 candidates / inventory 输入。
+- [x] 区分登记 inventory 与创建 Workspace，Advanced Maintenance 只维护 bindings。
+- [x] 补齐 Workspace 抽屉登记成功后的 Backend Access 面板刷新，已展开 Inventory 会重新拉取。
+- [x] 补回归验证并重新运行 frontend/backend 相关检查。
+
 ## Risky Files
 
 - `packages/app-web/src/features/workspace/workspace-list.tsx`

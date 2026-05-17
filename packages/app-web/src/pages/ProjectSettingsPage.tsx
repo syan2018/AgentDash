@@ -371,10 +371,12 @@ const INVENTORY_STATUS_LABELS: Record<BackendWorkspaceInventory["status"], strin
 function BackendAccessPanel({
   projectId,
   canEdit,
+  inventoryRefreshKey = 0,
   onWorkspaceSynced,
 }: {
   projectId: string;
   canEdit: boolean;
+  inventoryRefreshKey?: number;
   onWorkspaceSynced: () => void;
 }) {
   const { backends, fetchBackends } = useCoordinatorStore();
@@ -409,6 +411,41 @@ function BackendAccessPanel({
     void fetchBackends();
     void load();
   }, [fetchBackends, load]);
+
+  useEffect(() => {
+    if (inventoryRefreshKey === 0) return;
+    void load();
+
+    const expandedAccessIds = Object.entries(expandedInventoryAccessIds)
+      .filter(([, expanded]) => expanded)
+      .map(([accessId]) => accessId);
+    if (expandedAccessIds.length === 0) return;
+
+    setError(null);
+    for (const accessId of expandedAccessIds) {
+      setLoadingInventoryAccessIds((current) => ({ ...current, [accessId]: true }));
+    }
+    void (async () => {
+      try {
+        const inventoryEntries = await Promise.all(
+          expandedAccessIds.map(async (accessId) => [
+            accessId,
+            await listBackendWorkspaceInventory(projectId, accessId),
+          ] as const),
+        );
+        setInventoriesByAccessId((current) => ({
+          ...current,
+          ...Object.fromEntries(inventoryEntries),
+        }));
+      } catch (inventoryError) {
+        setError((inventoryError as Error).message);
+      } finally {
+        for (const accessId of expandedAccessIds) {
+          setLoadingInventoryAccessIds((current) => ({ ...current, [accessId]: false }));
+        }
+      }
+    })();
+  }, [expandedInventoryAccessIds, inventoryRefreshKey, load, projectId]);
 
   const authorizedBackendIds = useMemo(
     () => new Set(accesses.map((access) => access.backend_id)),
@@ -720,6 +757,7 @@ export function ProjectSettingsPage() {
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [stallTimeoutMs, setStallTimeoutMs] = useState("");
+  const [workspaceInventoryRefreshKey, setWorkspaceInventoryRefreshKey] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -755,6 +793,7 @@ export function ProjectSettingsPage() {
     setSelectedGroupId("");
     setGrantRole("viewer");
     setActiveTab("overview");
+    setWorkspaceInventoryRefreshKey(0);
     setMessage(null);
     setError(null);
   }, [project]);
@@ -1163,6 +1202,7 @@ export function ProjectSettingsPage() {
                     <BackendAccessPanel
                       projectId={project.id}
                       canEdit={canEditProject}
+                      inventoryRefreshKey={workspaceInventoryRefreshKey}
                       onWorkspaceSynced={() => void fetchWorkspaces(project.id)}
                     />
                   </SectionCard>
@@ -1176,6 +1216,7 @@ export function ProjectSettingsPage() {
                       workspaces={workspaces}
                       defaultWorkspaceId={project.config.default_workspace_id}
                       onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
+                      onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
                     />
                   </SectionCard>
 

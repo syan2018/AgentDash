@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+/**
+ * SkillCategoryPanel — Assets 页 Skill 类目。
+ *
+ * 布局：
+ * - 简洁 header：标题 + 来源统计 + 刷新 + 新建按钮
+ * - 卡片网格：优化的 origin badge、来源 URL 展示
+ * - 新建/导入通过 CreateSkillDialog 分步体验（Manual / URL / Workspace）
+ * - 编辑仍使用 SkillEditorDialog（VFS 浏览器模式 + 创建表单模式）
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { VfsBrowser, VfsCodeEditor, type VfsBrowserPanelInspectorContext } from "../../vfs";
 import {
-  bootstrapSkillAssets,
   buildSkillYamlFrontmatter,
   createEmptySkillAssetDraft,
   createSkillAsset,
@@ -12,17 +21,18 @@ import {
   draftFromSkillAsset,
   dtoFilesFromDraft,
   fetchProjectSkillAssets,
-  importRemoteSkillAsset,
   normalizeSkillExtraPath,
   parseSkillMarkdown,
   resetSkillAssetFromBuiltin,
   updateSkillMarkdownFrontmatter,
   updateSkillAsset,
-  uploadSkillAssets,
   validateSkillAssetDraft,
   type SkillAssetDraft,
 } from "../../../services/skillAsset";
 import type { SkillAssetDto } from "../../../types";
+import { CreateSkillDialog } from "./CreateSkillDialog";
+
+// ─── Detail mode ─────────────────────────────────────────
 
 type DetailMode =
   | { kind: "closed" }
@@ -30,22 +40,19 @@ type DetailMode =
   | { kind: "edit"; assetId: string; originalKey: string };
 
 function cloneDraft(draft: SkillAssetDraft): SkillAssetDraft {
-  return {
-    ...draft,
-    files: draft.files.map((file) => ({ ...file })),
-  };
+  return { ...draft, files: draft.files.map((f) => ({ ...f })) };
 }
+
+// ─── Main Panel ──────────────────────────────────────────
 
 export function SkillCategoryPanel() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useMemo(
-    () => projects.find((project) => project.id === currentProjectId) ?? null,
+    () => projects.find((p) => p.id === currentProjectId) ?? null,
     [currentProjectId, projects],
   );
 
-  const zipInputRef = useRef<HTMLInputElement | null>(null);
-  const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const [skills, setSkills] = useState<SkillAssetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -53,9 +60,11 @@ export function SkillCategoryPanel() {
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
-  const [remoteUrl, setRemoteUrl] = useState("");
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Data loading ────────────────────────────────────
 
   const loadSkills = useCallback(async () => {
     if (!currentProjectId) return;
@@ -80,7 +89,20 @@ export function SkillCategoryPanel() {
     return () => clearTimeout(timer);
   }, [message]);
 
-  const openCreate = useCallback(() => {
+  // ── Stats ───────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const s of skills) {
+      const tag = s.source === "builtin_seed" ? "builtin" : s.source;
+      counts[tag] = (counts[tag] ?? 0) + 1;
+    }
+    return counts;
+  }, [skills]);
+
+  // ── Actions ─────────────────────────────────────────
+
+  const openManualCreate = useCallback(() => {
     setDraft(createEmptySkillAssetDraft());
     setError(null);
     setDetail({ kind: "create" });
@@ -100,16 +122,16 @@ export function SkillCategoryPanel() {
       display_name: draft.display_name.trim() || draft.key.trim(),
       description: draft.description.trim(),
       files: draft.files
-        .filter((file) => normalizeSkillExtraPath(file.relative_path))
-        .map((file) => ({
-          relative_path: normalizeSkillExtraPath(file.relative_path),
-          content: file.content,
+        .filter((f) => normalizeSkillExtraPath(f.relative_path))
+        .map((f) => ({
+          relative_path: normalizeSkillExtraPath(f.relative_path),
+          content: f.content,
         })),
     };
     const existingKeys =
       detail.kind === "edit"
-        ? skills.map((skill) => skill.key).filter((key) => key !== detail.originalKey)
-        : skills.map((skill) => skill.key);
+        ? skills.map((s) => s.key).filter((k) => k !== detail.originalKey)
+        : skills.map((s) => s.key);
     const validation = validateSkillAssetDraft(normalizedDraft, existingKeys);
     if (!validation.ok) {
       setError(validation.message ?? "Skill 表单校验失败");
@@ -166,62 +188,6 @@ export function SkillCategoryPanel() {
     }
   }, [confirmDelete, currentProjectId, detail, loadSkills]);
 
-  const handleUpload = useCallback(
-    async (fileList: FileList | null) => {
-      if (!currentProjectId || !fileList || fileList.length === 0) return;
-      setIsSaving(true);
-      setError(null);
-      try {
-        const uploaded = await uploadSkillAssets(currentProjectId, Array.from(fileList));
-        setMessage(`已导入 ${uploaded.length} 个 Skill`);
-        await loadSkills();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "上传 Skill 失败");
-      } finally {
-        setIsSaving(false);
-        if (zipInputRef.current) zipInputRef.current.value = "";
-        if (directoryInputRef.current) directoryInputRef.current.value = "";
-      }
-    },
-    [currentProjectId, loadSkills],
-  );
-
-  const handleBootstrap = useCallback(async () => {
-    if (!currentProjectId) return;
-    setIsSaving(true);
-    setError(null);
-    try {
-      const bootstrapped = await bootstrapSkillAssets(currentProjectId);
-      setMessage(`已装载 ${bootstrapped.length} 个内嵌 Skill`);
-      await loadSkills();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "装载内嵌 Skill 失败");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [currentProjectId, loadSkills]);
-
-  const handleRemoteImport = useCallback(async () => {
-    if (!currentProjectId) return;
-    const url = remoteUrl.trim();
-    if (!url) {
-      setError("请输入 GitHub Skill URL");
-      return;
-    }
-    setIsSaving(true);
-    setError(null);
-    try {
-      const imported = await importRemoteSkillAsset(currentProjectId, { url });
-      setMessage(`已导入 GitHub Skill：${imported.key}`);
-      setRemoteUrl("");
-      await loadSkills();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "导入远端 Skill 失败");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [currentProjectId, loadSkills, remoteUrl]);
-
   const handleReset = useCallback(
     async (skill: SkillAssetDto) => {
       if (!currentProjectId) return;
@@ -240,6 +206,17 @@ export function SkillCategoryPanel() {
     [currentProjectId, loadSkills],
   );
 
+  const handleCreateDialogCreated = useCallback(
+    (msg: string) => {
+      setMessage(msg);
+      setShowCreateDialog(false);
+      void loadSkills();
+    },
+    [loadSkills],
+  );
+
+  // ── Guard ───────────────────────────────────────────
+
   if (!currentProjectId || !currentProject) {
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -248,71 +225,48 @@ export function SkillCategoryPanel() {
     );
   }
 
+  // ── Render ──────────────────────────────────────────
+
+  const statsText = Object.entries(stats)
+    .map(([tag, count]) => `${count} 个 ${tag}`)
+    .join(" · ");
+
   return (
     <div className="flex h-full flex-col gap-4 p-6">
+      {/* ── Header ── */}
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">Skill 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {skills.length} 个 project Skill · Agent preset 可按 key 装载
+            {skills.length > 0
+              ? `${statsText} · Agent preset 可按 key 装载`
+              : "0 个 Skill · Agent preset 可按 key 装载"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <form
-            className="flex min-w-[280px] flex-1 items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleRemoteImport();
-            }}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void loadSkills()}
+            disabled={isLoading}
+            className="agentdash-button-secondary"
           >
-            <input
-              value={remoteUrl}
-              onChange={(event) => setRemoteUrl(event.target.value)}
-              disabled={isSaving}
-              className="agentdash-form-input h-9 min-w-0"
-              placeholder="https://github.com/org/repo/tree/main/skill"
-            />
-            <button type="submit" disabled={isSaving || !remoteUrl.trim()} className="agentdash-button-secondary">
-              GitHub 导入
-            </button>
-          </form>
-          <input
-            ref={zipInputRef}
-            type="file"
-            accept=".zip"
-            className="hidden"
-            onChange={(event) => void handleUpload(event.currentTarget.files)}
-          />
-          <input
-            ref={directoryInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(event) => void handleUpload(event.currentTarget.files)}
-            {...{ webkitdirectory: "true", directory: "true" }}
-          />
-          <button type="button" onClick={handleBootstrap} disabled={isSaving} className="agentdash-button-secondary">
-            Bootstrap
+            {isLoading ? "刷新中…" : "刷新"}
           </button>
-          <button type="button" onClick={() => directoryInputRef.current?.click()} disabled={isSaving} className="agentdash-button-secondary">
-            上传目录
-          </button>
-          <button type="button" onClick={() => zipInputRef.current?.click()} disabled={isSaving} className="agentdash-button-secondary">
-            上传 ZIP
-          </button>
-          <button type="button" onClick={openCreate} disabled={isSaving} className="agentdash-button-primary">
+          <button
+            type="button"
+            onClick={() => setShowCreateDialog(true)}
+            className="agentdash-button-primary"
+          >
             新建 Skill
           </button>
         </div>
       </header>
 
-      {message && (
-        <Notice tone="success" message={message} onClose={() => setMessage(null)} />
-      )}
-      {error && (
-        <Notice tone="danger" message={error} onClose={() => setError(null)} />
-      )}
+      {/* ── Notices ── */}
+      {message && <Notice tone="success" message={message} onClose={() => setMessage(null)} />}
+      {error && <Notice tone="danger" message={error} onClose={() => setError(null)} />}
 
+      {/* ── Grid ── */}
       {isLoading ? (
         <div className="rounded-[8px] border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">
           正在加载 Skill 资产…
@@ -327,6 +281,17 @@ export function SkillCategoryPanel() {
         />
       )}
 
+      {/* ── CreateSkillDialog ── */}
+      {showCreateDialog && (
+        <CreateSkillDialog
+          projectId={currentProjectId}
+          onClose={() => setShowCreateDialog(false)}
+          onCreated={handleCreateDialogCreated}
+          onOpenManualCreate={openManualCreate}
+        />
+      )}
+
+      {/* ── Editor Dialog ── */}
       {detail.kind !== "closed" && (
         <SkillEditorDialog
           mode={detail.kind}
@@ -342,6 +307,7 @@ export function SkillCategoryPanel() {
         />
       )}
 
+      {/* ── Delete Confirm ── */}
       {confirmDelete && (
         <ConfirmDeleteDialog
           skill={confirmDelete}
@@ -355,6 +321,8 @@ export function SkillCategoryPanel() {
 }
 
 export default SkillCategoryPanel;
+
+// ─── Notice ──────────────────────────────────────────────
 
 function Notice({
   tone,
@@ -379,6 +347,60 @@ function Notice({
   );
 }
 
+// ─── Origin Badge ────────────────────────────────────────
+
+const ORIGIN_STYLE: Record<
+  string,
+  { label: string; border: string; bg: string; text: string }
+> = {
+  builtin_seed: {
+    label: "builtin",
+    border: "border-border",
+    bg: "bg-secondary/50",
+    text: "text-muted-foreground",
+  },
+  user: {
+    label: "user",
+    border: "border-violet-500/30",
+    bg: "bg-violet-500/10",
+    text: "text-violet-700 dark:text-violet-300",
+  },
+  github: {
+    label: "github",
+    border: "border-sky-500/30",
+    bg: "bg-sky-500/10",
+    text: "text-sky-700 dark:text-sky-300",
+  },
+};
+
+function OriginBadge({ skill }: { skill: SkillAssetDto }) {
+  const style = ORIGIN_STYLE[skill.source] ?? ORIGIN_STYLE.user;
+  const remoteUrl = skill.remote_source?.url;
+
+  const shortUrl = remoteUrl
+    ? remoteUrl
+        .replace(/^https?:\/\//, "")
+        .replace(/^github\.com\//, "")
+        .slice(0, 36)
+    : null;
+
+  return (
+    <span
+      title={remoteUrl ?? undefined}
+      className={`inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border px-1.5 py-0.5 text-[10px] ${style.border} ${style.bg} ${style.text}`}
+    >
+      {style.label}
+      {shortUrl && (
+        <span className="truncate opacity-70" title={remoteUrl ?? undefined}>
+          · {shortUrl}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ─── Skill Grid ──────────────────────────────────────────
+
 function SkillGrid({
   skills,
   busyId,
@@ -394,8 +416,11 @@ function SkillGrid({
 }) {
   if (skills.length === 0) {
     return (
-      <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
+      <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-14 text-center">
         <p className="text-sm text-foreground">暂无 Skill 资产</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          点击上方"新建 Skill"添加手动创建、远端导入或工作区内嵌 Skill
+        </p>
       </div>
     );
   }
@@ -407,42 +432,46 @@ function SkillGrid({
           key={skill.id}
           className="flex flex-col rounded-[8px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30"
         >
+          {/* Card header: name + origin badge */}
           <header className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium leading-6 text-foreground">{skill.display_name}</p>
+              <p className="truncate text-sm font-medium leading-6 text-foreground">
+                {skill.display_name}
+              </p>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 skills/{skill.key}/SKILL.md
               </p>
             </div>
-            <span
-              title={skill.remote_source?.url ?? undefined}
-              className="shrink-0 rounded-[6px] border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-            >
-              {skill.source === "builtin_seed" ? "builtin" : skill.source}
-            </span>
+            <OriginBadge skill={skill} />
           </header>
 
+          {/* Description */}
           <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
             {skill.description}
           </p>
 
+          {/* Meta tags */}
           <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
             <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-              {skill.files.length} file
+              {skill.files.length} file{skill.files.length !== 1 ? "s" : ""}
             </span>
             {skill.disable_model_invocation && (
               <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
-                explicit
+                explicit only
               </span>
             )}
-            {skill.remote_source && (
-              <span className="max-w-full truncate rounded-[6px] border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
-                {skill.remote_source.digest.slice(0, 18)}
+            {skill.remote_source?.digest && (
+              <span
+                title={`digest: ${skill.remote_source.digest}`}
+                className="rounded-[6px] border border-border bg-secondary/30 px-1.5 py-0.5 text-muted-foreground/70"
+              >
+                imported
               </span>
             )}
           </div>
 
-          <footer className="mt-3 flex items-center justify-end gap-1 border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
+          {/* Card footer: actions */}
+          <footer className="mt-3 flex items-center justify-end gap-1 border-t border-border/70 pt-2.5">
             {skill.source === "builtin_seed" && (
               <button
                 type="button"
@@ -475,6 +504,10 @@ function SkillGrid({
   );
 }
 
+// ─── Skill Editor Dialog ─────────────────────────────────
+//
+// 复用原有编辑 / 创建逻辑，保持 VFS 浏览器模式。
+
 function SkillEditorDialog({
   mode,
   projectId,
@@ -502,7 +535,7 @@ function SkillEditorDialog({
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
         <div
           className="flex h-[88vh] w-[1120px] max-w-full flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
-          onClick={(event) => event.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           <header className="flex items-center justify-between border-b border-border px-5 py-4">
             <div>
@@ -523,7 +556,7 @@ function SkillEditorDialog({
               protectedFilePaths={[`${skillRootPath}/SKILL.md`]}
               browserHeightClassName="min-h-0 flex-1"
               className="flex h-full flex-col"
-              renderInspector={(context) => <SkillVfsInspector context={context} />}
+              renderInspector={(ctx) => <SkillVfsInspector context={ctx} />}
             />
           </div>
         </div>
@@ -535,7 +568,7 @@ function SkillEditorDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
         className="flex max-h-[88vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
-        onClick={(event) => event.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
@@ -555,22 +588,24 @@ function SkillEditorDialog({
           <section className="space-y-4">
             <label className="block space-y-1.5">
               <span className="agentdash-form-label">显示名称</span>
-              <input value={draft.display_name} onChange={(event) => updateField("display_name", event.target.value)} className="agentdash-form-input" placeholder="My Skill" />
+              <input
+                value={draft.display_name}
+                onChange={(e) => updateField("display_name", e.target.value)}
+                className="agentdash-form-input"
+                placeholder="My Skill"
+              />
             </label>
-
             <SkillYamlMetaPanel draft={draft} onChange={onDraftChange} />
-
             <SkillExtraFilesEditor
               files={draft.files}
               onChange={(files) => updateField("files", files)}
             />
           </section>
-
           <section className="flex min-h-[420px] flex-col space-y-1.5">
             <span className="agentdash-form-label">SKILL.md 正文</span>
             <textarea
               value={draft.body}
-              onChange={(event) => updateField("body", event.target.value)}
+              onChange={(e) => updateField("body", e.target.value)}
               className="min-h-[420px] flex-1 resize-y rounded-[8px] border border-border bg-background px-3 py-2 font-mono text-sm leading-6 outline-none transition-colors focus:border-primary"
               placeholder="# 使用说明"
             />
@@ -589,6 +624,8 @@ function SkillEditorDialog({
     </div>
   );
 }
+
+// ─── VFS Inspector ───────────────────────────────────────
 
 function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorContext }) {
   const isSkillDocument = context.displayPath === "SKILL.md";
@@ -624,8 +661,8 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
         disable_model_invocation: disableModelInvocation,
       });
       await context.saveFile(nextContent);
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "保存 YAML meta 失败");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "保存 YAML meta 失败");
     } finally {
       setSaving(false);
     }
@@ -661,44 +698,34 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
       <section className="space-y-3 rounded-[8px] border border-border bg-background p-3">
         <label className="block space-y-1.5">
           <span className="agentdash-form-label">name</span>
-          <input
-            value={parsed.name ?? ""}
-            readOnly
-            className="agentdash-form-input font-mono text-[12px] opacity-80"
-          />
+          <input value={parsed.name ?? ""} readOnly className="agentdash-form-input font-mono text-[12px] opacity-80" />
         </label>
-
         <label className="block space-y-1.5">
           <span className="agentdash-form-label">description</span>
           <textarea
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(e) => setDescription(e.target.value)}
             readOnly={context.readOnly}
             className="agentdash-form-textarea min-h-24"
             rows={4}
           />
         </label>
-
         <label className="flex items-center gap-2 rounded-[7px] border border-border bg-secondary/20 px-3 py-2">
           <input
             type="checkbox"
             checked={disableModelInvocation}
             disabled={context.readOnly}
-            onChange={(event) => setDisableModelInvocation(event.target.checked)}
+            onChange={(e) => setDisableModelInvocation(e.target.checked)}
           />
           <span className="text-xs text-foreground">disable-model-invocation</span>
         </label>
-
         {saveError && (
           <p className="rounded-[6px] border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
             {saveError}
           </p>
         )}
-
         <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-3">
-          <span className="text-[10px] text-muted-foreground">
-            {dirty ? "已修改" : "已同步"}
-          </span>
+          <span className="text-[10px] text-muted-foreground">{dirty ? "已修改" : "已同步"}</span>
           <button
             type="button"
             onClick={() => void saveMeta()}
@@ -732,12 +759,12 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
   );
 }
 
+// ─── Inspector Helpers ───────────────────────────────────
+
 function InspectorHeader({ title, badge }: { title: string; badge: string }) {
   return (
     <header className="flex items-center justify-between gap-3">
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </h4>
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
       <span className="max-w-[160px] truncate rounded-[6px] border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
         {badge}
       </span>
@@ -745,21 +772,11 @@ function InspectorHeader({ title, badge }: { title: string; badge: string }) {
   );
 }
 
-function InspectorRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function InspectorRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="space-y-1">
       <dt className="agentdash-form-label">{label}</dt>
-      <dd className={`break-words text-foreground/85 ${mono ? "font-mono text-[11px]" : ""}`}>
-        {value}
-      </dd>
+      <dd className={`break-words text-foreground/85 ${mono ? "font-mono text-[11px]" : ""}`}>{value}</dd>
     </div>
   );
 }
@@ -769,6 +786,8 @@ function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ─── YAML Meta Panel ─────────────────────────────────────
 
 function SkillYamlMetaPanel({
   draft,
@@ -789,42 +808,40 @@ function SkillYamlMetaPanel({
           SKILL.md
         </span>
       </div>
-
       <label className="block space-y-1.5">
         <span className="agentdash-form-label">name</span>
         <input
           value={draft.key}
-          onChange={(event) => patchDraft("key", event.target.value)}
+          onChange={(e) => patchDraft("key", e.target.value)}
           className="agentdash-form-input"
           placeholder="my-skill"
         />
       </label>
-
       <label className="block space-y-1.5">
         <span className="agentdash-form-label">description</span>
         <textarea
           value={draft.description}
-          onChange={(event) => patchDraft("description", event.target.value)}
+          onChange={(e) => patchDraft("description", e.target.value)}
           className="agentdash-form-textarea"
           rows={3}
         />
       </label>
-
       <label className="flex items-center gap-2 rounded-[7px] border border-border bg-background px-3 py-2">
         <input
           type="checkbox"
           checked={draft.disable_model_invocation}
-          onChange={(event) => patchDraft("disable_model_invocation", event.target.checked)}
+          onChange={(e) => patchDraft("disable_model_invocation", e.target.checked)}
         />
         <span className="text-xs text-foreground">disable-model-invocation</span>
       </label>
-
       <pre className="max-h-40 overflow-auto rounded-[7px] border border-border bg-background px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
         {buildSkillYamlFrontmatter(draft)}
       </pre>
     </section>
   );
 }
+
+// ─── Extra Files Editor ──────────────────────────────────
 
 function SkillExtraFilesEditor({
   files,
@@ -834,12 +851,12 @@ function SkillExtraFilesEditor({
   onChange: (files: SkillAssetDraft["files"]) => void;
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(files[0]?.relative_path ?? null);
-  const selectedFile = files.find((file) => file.relative_path === selectedPath) ?? files[0] ?? null;
+  const selectedFile = files.find((f) => f.relative_path === selectedPath) ?? files[0] ?? null;
 
   const createFile = () => {
     const path = window.prompt("新建附加文件路径", nextExtraFilePath(files));
     const normalizedPath = normalizeSkillExtraPath(path ?? "");
-    if (!normalizedPath || files.some((file) => file.relative_path === normalizedPath)) return;
+    if (!normalizedPath || files.some((f) => f.relative_path === normalizedPath)) return;
     onChange([...files, { relative_path: normalizedPath, content: "" }]);
     setSelectedPath(normalizedPath);
   };
@@ -849,12 +866,12 @@ function SkillExtraFilesEditor({
     const path = window.prompt("重命名附加文件", selectedFile.relative_path);
     const normalizedPath = normalizeSkillExtraPath(path ?? "");
     if (!normalizedPath || normalizedPath === selectedFile.relative_path) return;
-    if (files.some((file) => file.relative_path === normalizedPath)) return;
+    if (files.some((f) => f.relative_path === normalizedPath)) return;
     onChange(
-      files.map((file) =>
-        file.relative_path === selectedFile.relative_path
-          ? { ...file, relative_path: normalizedPath }
-          : file,
+      files.map((f) =>
+        f.relative_path === selectedFile.relative_path
+          ? { ...f, relative_path: normalizedPath }
+          : f,
       ),
     );
     setSelectedPath(normalizedPath);
@@ -863,7 +880,7 @@ function SkillExtraFilesEditor({
   const deleteFile = () => {
     if (!selectedFile) return;
     if (!window.confirm(`删除附加文件「${selectedFile.relative_path}」？`)) return;
-    const nextFiles = files.filter((file) => file.relative_path !== selectedFile.relative_path);
+    const nextFiles = files.filter((f) => f.relative_path !== selectedFile.relative_path);
     onChange(nextFiles);
     setSelectedPath(nextFiles[0]?.relative_path ?? null);
   };
@@ -871,8 +888,8 @@ function SkillExtraFilesEditor({
   const saveContent = (content: string) => {
     if (!selectedFile) return;
     onChange(
-      files.map((file) =>
-        file.relative_path === selectedFile.relative_path ? { ...file, content } : file,
+      files.map((f) =>
+        f.relative_path === selectedFile.relative_path ? { ...f, content } : f,
       ),
     );
   };
@@ -893,13 +910,10 @@ function SkillExtraFilesEditor({
           </SkillFileActionButton>
         </div>
       </header>
-
       <div className="grid min-h-[360px] grid-cols-[180px_minmax(0,1fr)]">
         <div className="border-r border-border bg-secondary/10">
           {files.length === 0 ? (
-            <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-              无附加文件
-            </div>
+            <div className="px-3 py-4 text-center text-xs text-muted-foreground">无附加文件</div>
           ) : (
             <div className="max-h-[360px] overflow-auto py-1">
               {files.map((file) => {
@@ -921,7 +935,6 @@ function SkillExtraFilesEditor({
             </div>
           )}
         </div>
-
         <div className="min-w-0">
           {selectedFile ? (
             <VfsCodeEditor
@@ -944,13 +957,15 @@ function SkillExtraFilesEditor({
 function nextExtraFilePath(files: SkillAssetDraft["files"]): string {
   let index = 1;
   let path = "references/notes.md";
-  const used = new Set(files.map((file) => file.relative_path));
+  const used = new Set(files.map((f) => f.relative_path));
   while (used.has(path)) {
     index += 1;
     path = `references/notes-${index}.md`;
   }
   return path;
 }
+
+// ─── Shared UI Atoms ─────────────────────────────────────
 
 function SkillFileActionButton({
   children,
@@ -1013,6 +1028,8 @@ function TrashIcon() {
   );
 }
 
+// ─── Confirm Delete Dialog ───────────────────────────────
+
 function ConfirmDeleteDialog({
   skill,
   busy,
@@ -1026,13 +1043,18 @@ function ConfirmDeleteDialog({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div className="w-[380px] rounded-[8px] border border-border bg-background p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="w-[380px] rounded-[8px] border border-border bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">
           确定要删除 Skill <span className="font-medium text-foreground">{skill.key}</span> 吗？
         </p>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="agentdash-button-secondary">取消</button>
+          <button type="button" onClick={onCancel} className="agentdash-button-secondary">
+            取消
+          </button>
           <button type="button" onClick={onConfirm} disabled={busy} className="agentdash-button-danger">
             {busy ? "删除中..." : "删除"}
           </button>

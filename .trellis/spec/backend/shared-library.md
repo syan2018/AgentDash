@@ -114,9 +114,12 @@ Project 资源不会因 builtin seed 更新而静默变化。
 - 从 Marketplace 安装默认创建可编辑 Project 副本。
 - Project 资源保留 `InstalledAssetSource`，用于审计、重装和版本提示。
 - Project 运行时只读取 Project 资源，不直接依赖 Shared Library。
+- `ProjectAgentLink` 也属于 Project 资源，Marketplace 安装 `AgentTemplate` 时必须在 link 上写入 `InstalledAssetSource`。
+- 删除 Marketplace 安装的 Workflow/Lifecycle bundle 时，删除 Lifecycle 后必须清理同一 `library_asset_id` 来源的 workflow definitions；若这些 workflow 被其它 lifecycle 引用，则拒绝删除并返回明确错误。
 
 ## 迁移原则
 
 - 现有 project-level builtin MCP/Skill/Workflow 视为“已安装副本”，不是公共 builtin 本体。
 - 旧资源专属 bootstrap API 在新 Marketplace install 路径可用后退役。
 - 现有 `AgentPresetConfig` 必须拆成 `AgentTemplateConfig` 与 `ProjectAgentConfigOverride` 等更窄类型。
+- 用户可见路径不提供“关联已有全局 Agent”；跨项目复用只发生在 `AgentTemplate`。

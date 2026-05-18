@@ -43,6 +43,7 @@ import {
   McpTransportConfigEditor,
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
+import { Notice, type NoticeData } from "../_shared/Notice";
 
 /* ─── 表单状态 ─── */
 //
@@ -146,8 +147,10 @@ export function McpPresetCategoryPanel() {
 
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
+  const showError = useCallback((msg: string) => setNotice({ tone: "danger", message: msg }), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
   const [isSaving, setIsSaving] = useState(false);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
@@ -156,17 +159,17 @@ export function McpPresetCategoryPanel() {
   const loadPresets = useCallback(
     async (projectId: string) => {
       setIsLoading(true);
-      setError(null);
+      clearNotice();
       try {
         const next = await fetchProjectMcpPresets(projectId);
         setPresets(next);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "加载 MCP Preset 失败");
+        showError(e instanceof Error ? e.message : "加载 MCP Preset 失败");
       } finally {
         setIsLoading(false);
       }
     },
-    [],
+    [clearNotice, showError],
   );
 
   useEffect(() => {
@@ -174,37 +177,31 @@ export function McpPresetCategoryPanel() {
     void loadPresets(currentProjectId);
   }, [currentProjectId, loadPresets]);
 
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 4000);
-    return () => clearTimeout(t);
-  }, [message]);
-
   const handleClone = useCallback(
     async (preset: McpPresetDto) => {
       if (!currentProjectId) return;
       setBusyRowId(preset.id);
-      setError(null);
+      clearNotice();
       try {
         const cloned = await cloneMcpPreset(currentProjectId, preset.id, {});
-        setMessage(`已复制为 user Preset：${cloned.display_name}`);
+        showSuccess(`已复制为 user Preset：${cloned.display_name}`);
         await loadPresets(currentProjectId);
       } catch (e) {
-        setError(friendlyError(e, `复制「${preset.display_name}」失败`));
+        showError(friendlyError(e, `复制「${preset.display_name}」失败`));
       } finally {
         setBusyRowId(null);
       }
     },
-    [currentProjectId, loadPresets],
+    [currentProjectId, loadPresets, clearNotice, showSuccess, showError],
   );
 
   const handleConfirmDelete = useCallback(async () => {
     if (!currentProjectId || !confirmDelete) return;
     setBusyRowId(confirmDelete.id);
-    setError(null);
+    clearNotice();
     try {
       await deleteMcpPreset(currentProjectId, confirmDelete.id);
-      setMessage(`已删除：${confirmDelete.display_name}`);
+      showSuccess(`已删除：${confirmDelete.display_name}`);
       setConfirmDelete(null);
       // 如果详情面板正在查看被删的 Preset，关闭它
       if (
@@ -215,11 +212,11 @@ export function McpPresetCategoryPanel() {
       }
       await loadPresets(currentProjectId);
     } catch (e) {
-      setError(friendlyError(e, `删除「${confirmDelete.display_name}」失败`));
+      showError(friendlyError(e, `删除「${confirmDelete.display_name}」失败`));
     } finally {
       setBusyRowId(null);
     }
-  }, [currentProjectId, confirmDelete, detail, loadPresets]);
+  }, [currentProjectId, confirmDelete, detail, loadPresets, clearNotice, showSuccess, showError]);
 
   if (!currentProjectId) {
     return (
@@ -263,30 +260,7 @@ export function McpPresetCategoryPanel() {
       </header>
 
       {/* 反馈消息 */}
-      {message && (
-        <div className="flex items-center justify-between rounded-[10px] border border-emerald-300/30 bg-emerald-500/5 px-3 py-2">
-          <p className="text-xs text-emerald-600">{message}</p>
-          <button
-            type="button"
-            onClick={() => setMessage(null)}
-            className="ml-2 text-xs text-emerald-600/60 hover:text-emerald-600"
-          >
-            ×
-          </button>
-        </div>
-      )}
-      {error && (
-        <div className="flex items-center justify-between rounded-[10px] border border-destructive/30 bg-destructive/5 px-3 py-2">
-          <p className="text-xs text-destructive">{error}</p>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="ml-2 text-xs text-destructive/60 hover:text-destructive"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      <Notice notice={notice} onDismiss={clearNotice} />
 
       {/* 列表 */}
       {isLoading && presets.length === 0 ? (
@@ -333,14 +307,14 @@ export function McpPresetCategoryPanel() {
           onCreate={async (input) => {
             if (!currentProjectId) return;
             setIsSaving(true);
-            setError(null);
+            clearNotice();
             try {
               const created = await createMcpPreset(currentProjectId, input);
-              setMessage(`已创建 Preset：${created.display_name}`);
+              showSuccess(`已创建 Preset：${created.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
-              setError(friendlyError(e, "创建 Preset 失败"));
+              showError(friendlyError(e, "创建 Preset 失败"));
             } finally {
               setIsSaving(false);
             }
@@ -348,14 +322,14 @@ export function McpPresetCategoryPanel() {
           onUpdate={async (presetId, patch) => {
             if (!currentProjectId) return;
             setIsSaving(true);
-            setError(null);
+            clearNotice();
             try {
               const updated = await updateMcpPreset(currentProjectId, presetId, patch);
-              setMessage(`已更新 Preset：${updated.display_name}`);
+              showSuccess(`已更新 Preset：${updated.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
-              setError(friendlyError(e, "更新 Preset 失败"));
+              showError(friendlyError(e, "更新 Preset 失败"));
             } finally {
               setIsSaving(false);
             }

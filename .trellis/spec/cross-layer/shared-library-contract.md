@@ -73,6 +73,92 @@ Project 内运行资源使用 Project 前缀或既有项目资源名：
 - API 可以返回 `payload`，但保存/安装前后端都必须按 `asset_type` 做类型化校验。
 - 前端 mapper 不做旧字段兼容兜底；后端 DTO 是权威契约。
 - 运行页面优先展示安装后的 Project 资源，不直接把 `LibraryAsset.payload` 当运行配置编辑。
+- 前端 `LibraryAssetDto.payload` 类型为 `unknown`：用于纯展示（卡片、详情抽屉）时必须做防御
+  式解析，未知形状降级为原始 JSON，永不 throw；用于安装时不解析，原样转发后端。
+
+## Payload Schema by `asset_type`
+
+权威源：`crates/agentdash-domain/src/shared_library/value_objects.rs::LibraryAssetPayload`。
+DTO 层 [crates/agentdash-api/src/dto/shared_library.rs](../../../crates/agentdash-api/src/dto/shared_library.rs) 直接透传 `serde_json::Value`，不重新结构化。
+
+### `agent_template`
+
+```jsonc
+{
+  "config": {
+    "executor": "string?",
+    "provider_id": "string?",
+    "model_id": "string?",
+    "agent_id": "string?",
+    "thinking_level": "ThinkingLevel?",
+    "permission_policy": "string?",
+    "system_prompt": "string?",
+    "system_prompt_mode": "SystemPromptMode?",
+    "capability_directives": ["ToolCapabilityDirective"],
+    "mcp_slots": [{ "key": "string", "description": "string?", "required": "bool" }]
+  }
+}
+```
+
+### `mcp_server_template`
+
+```jsonc
+{
+  "transport": "McpTransportConfig",     // 沿用 packages/app-web/src/types/mcp-preset.ts
+  "route_policy": "auto | relay | direct?",
+  "parameter_schema": "JSONSchema?",
+  "capabilities": ["string"]
+}
+```
+
+### `workflow_template`
+
+```jsonc
+{
+  "schema_version": "string?",
+  "template": {                          // BuiltinWorkflowTemplateBundle
+    "key": "string",
+    "name": "string",
+    "description": "string",
+    "binding_kinds": ["WorkflowBindingKind"],
+    "workflows": [{ "key": "...", "name": "...", "description": "...", "contract": "WorkflowContract" }],
+    "lifecycle": {
+      "key": "string",
+      "name": "string",
+      "description": "string",
+      "entry_step_key": "string",
+      "steps": ["LifecycleStepDefinition"],
+      "edges": ["LifecycleEdge"]
+    }
+  }
+}
+```
+
+### `skill_template`
+
+```jsonc
+{
+  "files": [{ "path": "string", "content": "string", "kind": "SkillAssetFileKind" }],
+  "disable_model_invocation": "bool"
+}
+```
+
+## InstallSummary 派生约定（前端）
+
+前端 Marketplace 卡片展示同一 `LibraryAsset` 在项目内的安装状态时，必须把
+`source-status` 返回的 5 个数组（`project_agents` / `mcp_presets` / `skill_assets` /
+`workflow_definitions` / `lifecycle_definitions`）按 `installed_source.library_asset_id`
+flatten + group：
+
+- 同一资产可能被装到多个 kind：每个 kind+key 都记一个 `installation` 子项。
+- `summary.status` 取所有 installation 的"最坏状态"：
+  优先级 `source_missing > update_available > up_to_date`。
+- 卡片上的 install 按钮文案以 `summary.status` 为准；hover tooltip 列出全部
+  installation（`asset_kind · project_asset_key (vN)`）。
+
+参考实现：
+[`packages/app-web/src/features/assets-panel/categories/MarketplaceCategoryPanel.tsx`](../../../packages/app-web/src/features/assets-panel/categories/MarketplaceCategoryPanel.tsx)
+中的 `installSummaryByAssetId` + `sourceStatusPriority`。
 
 ## 安装语义
 

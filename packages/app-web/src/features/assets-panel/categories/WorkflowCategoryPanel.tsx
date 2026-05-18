@@ -20,6 +20,7 @@ import type {
   WorkflowDefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
+import { Notice, type NoticeData } from "../_shared/Notice";
 
 type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
 
@@ -34,7 +35,7 @@ export function WorkflowCategoryPanel() {
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
 
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
 
@@ -44,17 +45,11 @@ export function WorkflowCategoryPanel() {
     void fetchLifecycles({ projectId: currentProjectId });
   }, [currentProjectId, fetchDefinitions, fetchLifecycles]);
 
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 4000);
-    return () => clearTimeout(t);
-  }, [message]);
-
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
     setBusyKey(`delete:${confirmDelete.id}`);
     const ok = await removeLifecycle(confirmDelete.id);
-    if (ok) setMessage(`已删除：${confirmDelete.name}`);
+    if (ok) setNotice({ tone: "success", message: `已删除：${confirmDelete.name}` });
     setConfirmDelete(null);
     setBusyKey(null);
   }, [confirmDelete, removeLifecycle]);
@@ -90,22 +85,15 @@ export function WorkflowCategoryPanel() {
       </header>
 
       {/* 反馈消息 */}
-      {message && (
-        <div className="flex items-center justify-between rounded-[10px] border border-emerald-300/30 bg-emerald-500/5 px-3 py-2">
-          <p className="text-xs text-emerald-600">{message}</p>
-          <button
-            type="button"
-            onClick={() => setMessage(null)}
-            className="ml-2 text-xs text-emerald-600/60 hover:text-emerald-600"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      <Notice notice={notice} onDismiss={() => setNotice(null)} />
       {error && (
-        <div className="rounded-[10px] border border-destructive/30 bg-destructive/5 px-3 py-2">
-          <p className="text-xs text-destructive">{error}</p>
-        </div>
+        <Notice
+          notice={{ tone: "danger", message: error }}
+          onDismiss={() => {
+            /* store 错误清理由 store 自身负责，这里不做 */
+          }}
+          autoHideMs={0}
+        />
       )}
 
       {/* 统一列表 */}

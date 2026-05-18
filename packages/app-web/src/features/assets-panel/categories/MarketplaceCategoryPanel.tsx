@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+/**
+ * MarketplaceCategoryPanel — 资源市场。
+ *
+ * 设计要点（见 .trellis/tasks/05-18-marketplace-ux-overhaul/design.md）：
+ * - flatten + group：把后端 5 个数组合并成 installSummaryByAssetId（以 library_asset_id 为键）
+ * - 卡片右上角同时展示 type chip + install-status chip；不再有底部独立"项目安装来源"区
+ * - 类型 segmented control + 前端搜索过滤
+ * - 详情抽屉按 asset_type 自适应 manifest 展示
+ * - 更新覆写走 ConfirmOverwriteDialog
+ * - seed 入口仅在 empty-state 出现
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useProjectStore } from "../../../stores/projectStore";
 import {
   fetchLibraryAssets,
@@ -10,65 +22,100 @@ import type {
   LibraryAssetDto,
   LibraryAssetType,
   ProjectAssetSourceStatusDto,
-  ProjectAssetSourceStatusItemDto,
   SharedLibrarySourceStatus,
 } from "../../../types";
+import { Notice, type NoticeData } from "../_shared/Notice";
+import {
+  ConfirmOverwriteDialog,
+  InstallStatusChip,
+  MarketplaceAssetDrawer,
+  type InstallSummary,
+} from "./MarketplaceAssetDrawer";
 
 const ASSET_TYPE_OPTIONS: Array<{ value: LibraryAssetType | "all"; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "agent_template", label: "Agent Template" },
-  { value: "mcp_server_template", label: "MCP Server Template" },
-  { value: "workflow_template", label: "Workflow Template" },
-  { value: "skill_template", label: "Skill Template" },
+  { value: "agent_template", label: "Agent" },
+  { value: "mcp_server_template", label: "MCP" },
+  { value: "workflow_template", label: "Workflow" },
+  { value: "skill_template", label: "Skill" },
 ];
 
 const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
-  agent_template: "Agent Template",
-  mcp_server_template: "MCP Server Template",
-  workflow_template: "Workflow Template",
-  skill_template: "Skill Template",
+  agent_template: "Agent",
+  mcp_server_template: "MCP",
+  workflow_template: "Workflow",
+  skill_template: "Skill",
 };
 
+type DrawerState = { kind: "closed" } | { kind: "open"; assetId: string };
+type OverwriteState =
+  | { kind: "closed" }
+  | { kind: "open"; asset: LibraryAssetDto; installedVersion: string };
+
 export function MarketplaceCategoryPanel() {
-  const currentProjectId = useProjectStore((state) => state.currentProjectId);
+  const currentProjectId = useProjectStore((s) => s.currentProjectId);
+
   const [assetType, setAssetType] = useState<LibraryAssetType | "all">("all");
+  const [searchTerm, setSearchTerm] = useState("");
   const [assets, setAssets] = useState<LibraryAssetDto[]>([]);
   const [sourceStatus, setSourceStatus] = useState<ProjectAssetSourceStatusDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyAssetId, setBusyAssetId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [drawer, setDrawer] = useState<DrawerState>({ kind: "closed" });
+  const [overwrite, setOverwrite] = useState<OverwriteState>({ kind: "closed" });
 
-  const statusItems = useMemo(
-    () => [
-      ...(sourceStatus?.project_agents ?? []),
-      ...(sourceStatus?.mcp_presets ?? []),
-      ...(sourceStatus?.skill_assets ?? []),
-      ...(sourceStatus?.workflow_definitions ?? []),
-      ...(sourceStatus?.lifecycle_definitions ?? []),
-    ],
-    [sourceStatus],
-  );
+  const showSuccess = useCallback((m: string) => setNotice({ tone: "success", message: m }), []);
+  const showError = useCallback((m: string) => setNotice({ tone: "danger", message: m }), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
 
-  const statusByLibraryAssetId = useMemo(() => {
-    const next = new Map<string, ProjectAssetSourceStatusItemDto>();
-    for (const item of statusItems) {
+  // installSummaryByAssetId: library_asset_id → InstallSummary（status 取最坏）
+  const installSummaryByAssetId = useMemo(() => {
+    const map = new Map<string, InstallSummary>();
+    if (!sourceStatus) return map;
+    const allItems = [
+      ...sourceStatus.project_agents,
+      ...sourceStatus.mcp_presets,
+      ...sourceStatus.skill_assets,
+      ...sourceStatus.workflow_definitions,
+      ...sourceStatus.lifecycle_definitions,
+    ];
+    for (const item of allItems) {
       const key = item.installed_source.library_asset_id;
-      const current = next.get(key);
-      if (
-        !current
-        || sourceStatusPriority(item.source_status) > sourceStatusPriority(current.source_status)
-      ) {
-        next.set(key, item);
+      const existing = map.get(key);
+      const installation = {
+        asset_kind: item.asset_kind,
+        project_asset_key: item.project_asset_key,
+        installed_version: item.installed_source.source_version,
+        current_source_version: item.current_source_version ?? null,
+        item_status: item.source_status,
+      };
+      if (!existing) {
+        map.set(key, { status: item.source_status, installations: [installation] });
+        continue;
+      }
+      existing.installations.push(installation);
+      if (sourceStatusPriority(item.source_status) > sourceStatusPriority(existing.status)) {
+        existing.status = item.source_status;
       }
     }
-    return next;
-  }, [statusItems]);
+    return map;
+  }, [sourceStatus]);
 
-  const load = async () => {
+  const visibleAssets = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return assets;
+    return assets.filter((a) =>
+      a.display_name.toLowerCase().includes(term) ||
+      (a.description ?? "").toLowerCase().includes(term) ||
+      a.key.toLowerCase().includes(term),
+    );
+  }, [assets, searchTerm]);
+
+  const load = useCallback(async () => {
     if (!currentProjectId) return;
     setLoading(true);
-    setError(null);
+    clearNotice();
     try {
       const [nextAssets, nextStatus] = await Promise.all([
         fetchLibraryAssets({
@@ -80,52 +127,67 @@ export function MarketplaceCategoryPanel() {
       setAssets(nextAssets);
       setSourceStatus(nextStatus);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载公共资源库失败");
+      showError(err instanceof Error ? err.message : "加载公共资源库失败");
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentProjectId, assetType, clearNotice, showError]);
 
   useEffect(() => {
     void load();
-    // load 依赖 UI 状态，直接展开依赖避免 useCallback 带来的额外噪音。
-  }, [currentProjectId, assetType]);
+  }, [load]);
 
   const seedBuiltins = async () => {
     setBusyAssetId("__seed__");
-    setError(null);
-    setMessage(null);
+    clearNotice();
     try {
       const seeded = await seedBuiltinLibraryAssets(
         assetType === "all" ? {} : { asset_type: assetType },
       );
-      setMessage(`已同步 ${seeded.length} 个内置资源`);
+      showSuccess(`已加载 ${seeded.length} 个内置示例`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "同步内置资源失败");
+      showError(err instanceof Error ? err.message : "加载内置示例失败");
     } finally {
       setBusyAssetId(null);
     }
   };
 
-  const install = async (asset: LibraryAssetDto, overwrite: boolean) => {
-    if (!currentProjectId) return;
-    setBusyAssetId(asset.id);
-    setError(null);
-    setMessage(null);
-    try {
-      await installLibraryAsset(currentProjectId, {
-        library_asset_id: asset.id,
-        overwrite,
-      });
-      setMessage(`已安装 ${asset.display_name}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "安装资源失败");
-    } finally {
-      setBusyAssetId(null);
-    }
-  };
+  const performInstall = useCallback(
+    async (asset: LibraryAssetDto, doOverwrite: boolean) => {
+      if (!currentProjectId) return;
+      setBusyAssetId(asset.id);
+      clearNotice();
+      try {
+        await installLibraryAsset(currentProjectId, {
+          library_asset_id: asset.id,
+          overwrite: doOverwrite,
+        });
+        showSuccess(doOverwrite ? `已更新 ${asset.display_name}` : `已安装 ${asset.display_name}`);
+        setOverwrite({ kind: "closed" });
+        setDrawer({ kind: "closed" });
+        await load();
+      } catch (err) {
+        showError(err instanceof Error ? err.message : "安装资源失败");
+      } finally {
+        setBusyAssetId(null);
+      }
+    },
+    [currentProjectId, load, clearNotice, showSuccess, showError],
+  );
+
+  // 卡片/抽屉统一入口：update_available 弹 confirm，首装直连
+  const tryInstall = useCallback(
+    (asset: LibraryAssetDto, summary: InstallSummary | undefined) => {
+      if (summary?.status === "update_available" && summary.installations.length > 0) {
+        const installedVersion = summary.installations[0].installed_version;
+        setOverwrite({ kind: "open", asset, installedVersion });
+        return;
+      }
+      void performInstall(asset, false);
+    },
+    [performInstall],
+  );
 
   if (!currentProjectId) {
     return (
@@ -134,6 +196,9 @@ export function MarketplaceCategoryPanel() {
       </div>
     );
   }
+
+  const drawerAsset =
+    drawer.kind === "open" ? assets.find((a) => a.id === drawer.assetId) ?? null : null;
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -144,168 +209,225 @@ export function MarketplaceCategoryPanel() {
           </p>
           <h2 className="text-lg font-semibold text-foreground">资源市场</h2>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={assetType}
-            onChange={(event) => setAssetType(event.target.value as LibraryAssetType | "all")}
-            className="h-9 rounded-[8px] border border-border bg-background px-3 text-sm text-foreground"
-          >
-            {ASSET_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => void seedBuiltins()}
-            disabled={busyAssetId === "__seed__"}
-            className="h-9 rounded-[8px] border border-border bg-secondary px-3 text-sm font-medium text-foreground hover:bg-secondary/80 disabled:opacity-60"
-          >
-            {busyAssetId === "__seed__" ? "同步中..." : "同步内置资源"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="h-9 rounded-[8px] border border-border bg-background px-3 text-sm text-foreground hover:bg-secondary/60"
-          >
-            刷新
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading}
+          className="agentdash-button-secondary"
+        >
+          {loading ? "刷新中…" : "刷新"}
+        </button>
       </header>
 
-      {error && (
-        <div className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {error}
+      {/* Toolbar：类型 segmented + 搜索 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1 rounded-[10px] border border-border bg-secondary/20 p-1">
+          {ASSET_TYPE_OPTIONS.map((option) => {
+            const active = assetType === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setAssetType(option.value)}
+                className={`h-7 rounded-[7px] px-2.5 text-xs transition-colors ${
+                  active
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </div>
-      )}
-      {message && (
-        <div className="rounded-[8px] border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-          {message}
-        </div>
-      )}
+        <input
+          type="search"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="按名称 / 描述 / key 搜索"
+          className="agentdash-form-input h-9 max-w-xs flex-1"
+        />
+      </div>
 
+      <Notice notice={notice} onDismiss={clearNotice} />
+
+      {/* Grid */}
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {loading ? (
           <div className="col-span-full rounded-[8px] border border-border p-6 text-sm text-muted-foreground">
-            正在加载公共资源...
+            正在加载公共资源…
           </div>
         ) : assets.length === 0 ? (
-          <div className="col-span-full rounded-[8px] border border-border p-6 text-sm text-muted-foreground">
-            暂无资源
+          <EmptyState
+            assetType={assetType}
+            busy={busyAssetId === "__seed__"}
+            onSeed={() => void seedBuiltins()}
+          />
+        ) : visibleAssets.length === 0 ? (
+          <div className="col-span-full rounded-[8px] border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+            没有匹配「{searchTerm}」的资源
           </div>
         ) : (
-          assets.map((asset) => (
-            <LibraryAssetCard
+          visibleAssets.map((asset) => (
+            <MarketplaceAssetCard
               key={asset.id}
               asset={asset}
-              sourceStatus={statusByLibraryAssetId.get(asset.id)?.source_status}
+              installSummary={installSummaryByAssetId.get(asset.id)}
               busy={busyAssetId === asset.id}
-              onInstall={(overwrite) => void install(asset, overwrite)}
+              onOpenDetail={() => setDrawer({ kind: "open", assetId: asset.id })}
+              onInstall={() => tryInstall(asset, installSummaryByAssetId.get(asset.id))}
             />
           ))
         )}
       </section>
 
-      <section className="border-t border-border pt-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">项目安装来源</h3>
-          <span className="text-xs text-muted-foreground">{statusItems.length} 个已追踪资源</span>
-        </div>
-        <div className="grid gap-2 md:grid-cols-2">
-          {statusItems.length === 0 ? (
-            <div className="rounded-[8px] border border-border p-4 text-sm text-muted-foreground">
-              当前项目还没有来自资源市场的项目资源
-            </div>
-          ) : (
-            statusItems.map((item) => (
-              <div
-                key={`${item.asset_kind}:${item.project_asset_id}`}
-                className="rounded-[8px] border border-border p-3"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">{item.project_asset_key}</p>
-                  <SourceStatusBadge status={item.source_status} />
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {item.asset_kind} · {item.installed_source.source_version}
-                  {item.current_source_version ? ` → ${item.current_source_version}` : ""}
-                </p>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      {/* 详情抽屉 */}
+      <MarketplaceAssetDrawer
+        asset={drawerAsset}
+        installSummary={drawerAsset ? installSummaryByAssetId.get(drawerAsset.id) : undefined}
+        busy={drawerAsset ? busyAssetId === drawerAsset.id : false}
+        onClose={() => setDrawer({ kind: "closed" })}
+        onInstall={() => {
+          if (!drawerAsset) return;
+          tryInstall(drawerAsset, installSummaryByAssetId.get(drawerAsset.id));
+        }}
+      />
+
+      {/* 覆写确认 */}
+      {overwrite.kind === "open" && (
+        <ConfirmOverwriteDialog
+          asset={overwrite.asset}
+          installedVersion={overwrite.installedVersion}
+          busy={busyAssetId === overwrite.asset.id}
+          onCancel={() => setOverwrite({ kind: "closed" })}
+          onConfirm={() => void performInstall(overwrite.asset, true)}
+        />
+      )}
     </div>
   );
 }
 
-function LibraryAssetCard({
-  asset,
-  sourceStatus,
+export default MarketplaceCategoryPanel;
+
+/* ─── EmptyState ─── */
+
+function EmptyState({
+  assetType,
   busy,
+  onSeed,
+}: {
+  assetType: LibraryAssetType | "all";
+  busy: boolean;
+  onSeed: () => void;
+}) {
+  const typeLabel = assetType === "all" ? "类目" : `${ASSET_TYPE_LABELS[assetType]} 类目`;
+  return (
+    <div className="col-span-full flex flex-col items-center rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-12 text-center">
+      <p className="text-sm text-foreground">当前{typeLabel}暂无资源</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        可点击下方按钮加载内置示例，不影响项目数据
+      </p>
+      <button
+        type="button"
+        onClick={onSeed}
+        disabled={busy}
+        className="agentdash-button-primary mt-4"
+      >
+        {busy ? "加载中…" : "加载内置示例"}
+      </button>
+    </div>
+  );
+}
+
+/* ─── Card ─── */
+
+function MarketplaceAssetCard({
+  asset,
+  installSummary,
+  busy,
+  onOpenDetail,
   onInstall,
 }: {
   asset: LibraryAssetDto;
-  sourceStatus?: SharedLibrarySourceStatus;
+  installSummary?: InstallSummary;
   busy: boolean;
-  onInstall: (overwrite: boolean) => void;
+  onOpenDetail: () => void;
+  onInstall: () => void;
 }) {
-  const isInstalled = sourceStatus === "up_to_date";
-  const hasUpdate = sourceStatus === "update_available";
+  const status = installSummary?.status;
+  const isInstalled = status === "up_to_date";
+  const hasUpdate = status === "update_available";
+  const sourceMissing = status === "source_missing";
+  const installDisabled = busy || asset.deprecated || isInstalled || sourceMissing;
+
   return (
-    <article className="rounded-[8px] border border-border bg-background p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <article className="flex flex-col rounded-[8px] border border-border bg-background p-4 transition-colors hover:border-primary/25">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
             {ASSET_TYPE_LABELS[asset.asset_type]}
           </p>
-          <h3 className="mt-1 text-sm font-semibold text-foreground">{asset.display_name}</h3>
+          <h3 className="mt-1 truncate text-sm font-semibold text-foreground">
+            {asset.display_name}
+          </h3>
         </div>
-        <span className="rounded-[6px] border border-border px-2 py-1 text-[11px] text-muted-foreground">
-          {asset.scope}
-        </span>
-      </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+          <InstallStatusChip summary={installSummary} />
+          {asset.deprecated && (
+            <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+              已废弃
+            </span>
+          )}
+        </div>
+      </header>
       <p className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
         {asset.description || asset.key}
       </p>
       <div className="mt-3 flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">v{asset.version}</span>
-        <button
-          type="button"
-          onClick={() => onInstall(hasUpdate)}
-          disabled={busy || asset.deprecated || isInstalled}
-          className="h-8 rounded-[8px] bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-        >
-          {busy
-            ? "安装中..."
-            : asset.deprecated
-              ? "已废弃"
-              : isInstalled
-                ? "已安装"
-                : hasUpdate
-                  ? "更新到项目"
-                  : "安装到项目"}
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={onOpenDetail}
+            className="rounded-[6px] border border-border px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:bg-secondary"
+          >
+            详情
+          </button>
+          <button
+            type="button"
+            onClick={onInstall}
+            disabled={installDisabled}
+            className="agentdash-button-primary h-7 px-3 text-xs"
+            title={
+              sourceMissing
+                ? "市场来源已废弃或不可用"
+                : isInstalled
+                  ? "项目已是最新版本"
+                  : undefined
+            }
+          >
+            {busy
+              ? "处理中…"
+              : asset.deprecated
+                ? "已废弃"
+                : sourceMissing
+                  ? "来源缺失"
+                  : isInstalled
+                    ? "已安装"
+                    : hasUpdate
+                      ? "更新"
+                      : "安装"}
+          </button>
+        </div>
       </div>
     </article>
   );
 }
+
+/* ─── Helpers ─── */
 
 function sourceStatusPriority(status: SharedLibrarySourceStatus): number {
   if (status === "source_missing") return 3;
   if (status === "update_available") return 2;
   return 1;
 }
-
-function SourceStatusBadge({ status }: { status: SharedLibrarySourceStatus }) {
-  const label =
-    status === "update_available" ? "有新版" : status === "source_missing" ? "来源不可用" : "已是最新";
-  return (
-    <span className="rounded-[6px] border border-border px-2 py-1 text-[11px] text-muted-foreground">
-      {label}
-    </span>
-  );
-}
-
-export default MarketplaceCategoryPanel;

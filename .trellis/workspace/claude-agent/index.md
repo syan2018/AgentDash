@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 37
+- **Total Sessions**: 38
 - **Last Active**: 2026-05-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~381 | Active |
+| `journal-2.md` | ~416 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-05-18 | Plugin Extension Asset 化 | `580c8a3f`, `d4e9ab4a`, `ce89a83d` | `main` |
 | 37 | 2026-05-18 | Marketplace 用户发布配置资产 | `578b2466` | `main` |
 | 36 | 2026-05-13 | 收口 VFS 本机物化路径 | `cfeab102`, `7cc2362b`, `d2cdfe52` | `main` |
 | 35 | 2026-05-11 | Workflow/Lifecycle 前端编辑统一为单 editor | `5cfa9674`, `0212f193`, `578abcfb` | `main` |

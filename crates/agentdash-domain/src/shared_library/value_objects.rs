@@ -16,6 +16,7 @@ pub enum LibraryAssetType {
     McpServerTemplate,
     WorkflowTemplate,
     SkillTemplate,
+    ExtensionTemplate,
 }
 
 impl LibraryAssetType {
@@ -25,6 +26,7 @@ impl LibraryAssetType {
             Self::McpServerTemplate => "mcp_server_template",
             Self::WorkflowTemplate => "workflow_template",
             Self::SkillTemplate => "skill_template",
+            Self::ExtensionTemplate => "extension_template",
         }
     }
 
@@ -34,6 +36,7 @@ impl LibraryAssetType {
             "mcp_server_template" => Ok(Self::McpServerTemplate),
             "workflow_template" => Ok(Self::WorkflowTemplate),
             "skill_template" => Ok(Self::SkillTemplate),
+            "extension_template" => Ok(Self::ExtensionTemplate),
             other => Err(DomainError::InvalidConfig(format!(
                 "library_assets.asset_type 非法: {other}"
             ))),
@@ -79,6 +82,7 @@ pub enum LibraryAssetSource {
     Builtin,
     UserAuthored,
     RemoteImported,
+    PluginEmbedded,
 }
 
 impl LibraryAssetSource {
@@ -87,6 +91,7 @@ impl LibraryAssetSource {
             Self::Builtin => "builtin",
             Self::UserAuthored => "user_authored",
             Self::RemoteImported => "remote_imported",
+            Self::PluginEmbedded => "plugin_embedded",
         }
     }
 
@@ -95,6 +100,7 @@ impl LibraryAssetSource {
             "builtin" => Ok(Self::Builtin),
             "user_authored" => Ok(Self::UserAuthored),
             "remote_imported" => Ok(Self::RemoteImported),
+            "plugin_embedded" => Ok(Self::PluginEmbedded),
             other => Err(DomainError::InvalidConfig(format!(
                 "library_assets.source 非法: {other}"
             ))),
@@ -171,6 +177,7 @@ pub enum LibraryAssetPayload {
     McpServerTemplate(McpServerTemplatePayload),
     WorkflowTemplate(WorkflowTemplatePayload),
     SkillTemplate(SkillTemplatePayload),
+    ExtensionTemplate(ExtensionTemplatePayload),
 }
 
 impl LibraryAssetPayload {
@@ -188,6 +195,12 @@ impl LibraryAssetPayload {
             LibraryAssetType::SkillTemplate => serde_json::from_value(value)
                 .map(Self::SkillTemplate)
                 .map_err(|error| payload_error("skill_template", error)),
+            LibraryAssetType::ExtensionTemplate => {
+                let payload = serde_json::from_value::<ExtensionTemplatePayload>(value)
+                    .map_err(|error| payload_error("extension_template", error))?;
+                payload.validate()?;
+                Ok(Self::ExtensionTemplate(payload))
+            }
         }
     }
 
@@ -299,6 +312,160 @@ pub struct SkillTemplateFilePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionTemplatePayload {
+    pub manifest_version: String,
+    pub extension_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<ExtensionCommandDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags: Vec<ExtensionFlagDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_renderers: Vec<ExtensionMessageRendererDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capability_directives: Vec<ToolCapabilityDirective>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_refs: Vec<ExtensionAssetRef>,
+}
+
+impl ExtensionTemplatePayload {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty(
+            "extension_template.manifest_version",
+            &self.manifest_version,
+        )?;
+        require_non_empty("extension_template.extension_id", &self.extension_id)?;
+        for command in &self.commands {
+            command.validate()?;
+        }
+        for flag in &self.flags {
+            flag.validate()?;
+        }
+        for renderer in &self.message_renderers {
+            renderer.validate()?;
+        }
+        for asset_ref in &self.asset_refs {
+            asset_ref.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionCommandDefinition {
+    pub name: String,
+    pub description: String,
+    pub handler: ExtensionCommandHandler,
+}
+
+impl ExtensionCommandDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty("extension_template.commands[].name", &self.name)?;
+        if self.name.starts_with('/') || self.name.contains('/') {
+            return Err(DomainError::InvalidConfig(
+                "extension_template command name 不应包含 `/`".to_string(),
+            ));
+        }
+        self.handler.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionCommandHandler {
+    InjectMessage { content: String },
+}
+
+impl ExtensionCommandHandler {
+    fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::InjectMessage { content } => {
+                require_non_empty("extension_template.commands[].handler.content", content)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionFlagType {
+    Bool,
+    String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionFlagDefinition {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub flag_type: ExtensionFlagType,
+    pub default: Value,
+    pub description: String,
+}
+
+impl ExtensionFlagDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty("extension_template.flags[].name", &self.name)?;
+        let valid_default = match self.flag_type {
+            ExtensionFlagType::Bool => self.default.is_boolean(),
+            ExtensionFlagType::String => self.default.is_string(),
+        };
+        if !valid_default {
+            return Err(DomainError::InvalidConfig(format!(
+                "extension_template flag `{}` 的 default 与 type 不匹配",
+                self.name
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionMessageRendererDefinition {
+    pub custom_type: String,
+    pub renderer: ExtensionRendererDeclaration,
+}
+
+impl ExtensionMessageRendererDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty(
+            "extension_template.message_renderers[].custom_type",
+            &self.custom_type,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionRendererDeclaration {
+    JsonCard,
+    Markdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionAssetRef {
+    pub asset_type: String,
+    pub key: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+impl ExtensionAssetRef {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty(
+            "extension_template.asset_refs[].asset_type",
+            &self.asset_type,
+        )?;
+        require_non_empty("extension_template.asset_refs[].key", &self.key)
+    }
+}
+
+fn require_non_empty(field: &str, value: &str) -> Result<(), DomainError> {
+    if value.trim().is_empty() {
+        return Err(DomainError::InvalidConfig(format!("{field} 不能为空")));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BuiltinSeed {
     pub asset_type: LibraryAssetType,
     pub key: String,
@@ -308,6 +475,23 @@ pub struct BuiltinSeed {
     pub version: String,
     pub payload_digest: String,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginLibraryAssetSeed {
+    pub asset_type: LibraryAssetType,
+    pub key: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub version: String,
+    pub payload: Value,
+}
+
+impl PluginLibraryAssetSeed {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        LibraryAssetPayload::validate(self.asset_type, &self.payload)
+    }
 }
 
 impl BuiltinSeed {
@@ -347,6 +531,52 @@ mod tests {
             LibraryAssetType::SkillTemplate,
             json!({"files": "not array"}),
         );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validates_extension_template_payload() {
+        let payload = json!({
+            "manifest_version": "1",
+            "extension_id": "gitlab-review",
+            "commands": [{
+                "name": "gitlab-review:prepare",
+                "description": "准备 review",
+                "handler": { "kind": "inject_message", "content": "请准备 review。" }
+            }],
+            "flags": [{
+                "name": "gitlab-review.verbose",
+                "type": "bool",
+                "default": false,
+                "description": "详细输出"
+            }],
+            "message_renderers": [{
+                "custom_type": "gitlab-review.summary",
+                "renderer": { "kind": "json_card" }
+            }]
+        });
+
+        let typed = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload)
+            .expect("valid extension template");
+
+        assert!(matches!(typed, LibraryAssetPayload::ExtensionTemplate(_)));
+    }
+
+    #[test]
+    fn rejects_extension_flag_default_type_mismatch() {
+        let payload = json!({
+            "manifest_version": "1",
+            "extension_id": "bad",
+            "flags": [{
+                "name": "bad.verbose",
+                "type": "bool",
+                "default": "yes",
+                "description": "bad"
+            }]
+        });
+
+        let result = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload);
 
         assert!(result.is_err());
     }

@@ -15,6 +15,7 @@ const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   mcp_server_template: "MCP Server",
   workflow_template: "Workflow",
   skill_template: "Skill",
+  extension_template: "Extension",
 };
 
 export interface InstallTarget {
@@ -75,6 +76,9 @@ export function MarketplaceAssetDrawer({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="rounded-[6px] border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 {ASSET_TYPE_LABELS[asset.asset_type]}
+              </span>
+              <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {sourceLabel(asset.source)}
               </span>
               <InstallStatusChip summary={installSummary} />
               {asset.deprecated && (
@@ -220,6 +224,8 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
       return <McpServerTemplateBody payload={asset.payload} />;
     case "agent_template":
       return <AgentTemplateBody payload={asset.payload} />;
+    case "extension_template":
+      return <ExtensionTemplateBody payload={asset.payload} />;
     default:
       return <RawPayloadFallback payload={asset.payload} />;
   }
@@ -515,6 +521,155 @@ function parseAgentPayload(raw: unknown): AgentParsed | null {
     mcpSlotCount: mcpSlots.length,
     capabilityCount: caps.length,
   };
+}
+
+/* Extension */
+
+function ExtensionTemplateBody({ payload }: { payload: unknown }) {
+  const parsed = useMemo(() => parseExtensionPayload(payload), [payload]);
+  if (!parsed) return <RawPayloadFallback payload={payload} />;
+  return (
+    <section className="space-y-3">
+      <SectionLabel>Extension 模板</SectionLabel>
+      <div className="flex flex-wrap gap-1.5">
+        <MetaChip>{parsed.commands.length} command</MetaChip>
+        <MetaChip>{parsed.flags.length} flag</MetaChip>
+        <MetaChip>{parsed.renderers.length} renderer</MetaChip>
+      </div>
+      <p className="font-mono text-[11px] text-muted-foreground">
+        {parsed.extensionId} · manifest v{parsed.manifestVersion}
+      </p>
+      {parsed.commands.length > 0 && (
+        <CompactList
+          title="commands"
+          items={parsed.commands.map((command) => ({
+            key: command.name,
+            meta: command.handlerKind,
+            description: command.description,
+          }))}
+        />
+      )}
+      {parsed.flags.length > 0 && (
+        <CompactList
+          title="flags"
+          items={parsed.flags.map((flag) => ({
+            key: flag.name,
+            meta: `${flag.type} = ${flag.defaultValue}`,
+            description: flag.description,
+          }))}
+        />
+      )}
+      {parsed.renderers.length > 0 && (
+        <CompactList
+          title="renderers"
+          items={parsed.renderers.map((renderer) => ({
+            key: renderer.customType,
+            meta: renderer.kind,
+            description: null,
+          }))}
+        />
+      )}
+    </section>
+  );
+}
+
+interface ExtensionParsed {
+  manifestVersion: string;
+  extensionId: string;
+  commands: Array<{ name: string; description: string; handlerKind: string }>;
+  flags: Array<{ name: string; type: string; defaultValue: string; description: string }>;
+  renderers: Array<{ customType: string; kind: string }>;
+}
+
+function parseExtensionPayload(raw: unknown): ExtensionParsed | null {
+  if (!isObject(raw)) return null;
+  const manifestVersion = asString(raw.manifest_version);
+  const extensionId = asString(raw.extension_id);
+  if (!manifestVersion || !extensionId) return null;
+  const commandsRaw = Array.isArray(raw.commands) ? raw.commands : [];
+  const commands = commandsRaw.flatMap((item) => {
+    if (!isObject(item)) return [];
+    const name = asString(item.name);
+    if (!name) return [];
+    const handler = isObject(item.handler) ? item.handler : null;
+    return [{
+      name,
+      description: asString(item.description) ?? "",
+      handlerKind: handler ? asString(handler.kind) ?? "unknown" : "unknown",
+    }];
+  });
+  const flagsRaw = Array.isArray(raw.flags) ? raw.flags : [];
+  const flags = flagsRaw.flatMap((item) => {
+    if (!isObject(item)) return [];
+    const name = asString(item.name);
+    if (!name) return [];
+    return [{
+      name,
+      type: asString(item.type) ?? "unknown",
+      defaultValue: stringifyLite(item.default),
+      description: asString(item.description) ?? "",
+    }];
+  });
+  const renderersRaw = Array.isArray(raw.message_renderers) ? raw.message_renderers : [];
+  const renderers = renderersRaw.flatMap((item) => {
+    if (!isObject(item)) return [];
+    const customType = asString(item.custom_type);
+    const renderer = isObject(item.renderer) ? item.renderer : null;
+    if (!customType) return [];
+    return [{ customType, kind: renderer ? asString(renderer.kind) ?? "unknown" : "unknown" }];
+  });
+  return { manifestVersion, extensionId, commands, flags, renderers };
+}
+
+function CompactList({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ key: string; meta: string; description: string | null }>;
+}) {
+  return (
+    <div className="rounded-[8px] border border-border">
+      <div className="border-b border-border bg-secondary/20 px-3 py-1.5">
+        <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{title}</p>
+      </div>
+      <ul className="divide-y divide-border">
+        {items.map((item) => (
+          <li key={item.key} className="px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[11px] text-foreground/85">{item.key}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">{item.meta}</span>
+            </div>
+            {item.description && (
+              <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                {item.description}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function stringifyLite(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  if (value == null) return "null";
+  return "json";
+}
+
+function sourceLabel(source: LibraryAssetDto["source"]): string {
+  switch (source) {
+    case "plugin_embedded":
+      return "Plugin";
+    case "user_authored":
+      return "User";
+    case "remote_imported":
+      return "Remote";
+    case "builtin":
+      return "Builtin";
+  }
 }
 
 /* Fallback */

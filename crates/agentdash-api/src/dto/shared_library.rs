@@ -117,6 +117,9 @@ pub enum InstallLibraryAssetResponse {
     SkillAsset {
         id: Uuid,
     },
+    ExtensionInstallation {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +129,7 @@ pub struct ProjectAssetSourceStatusResponse {
     pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
+    pub extension_installations: Vec<ProjectAssetSourceStatusItemResponse>,
 }
 
 #[derive(Debug, Serialize)]

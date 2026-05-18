@@ -47,12 +47,24 @@
 | `AuthProvider` | 单例，重复注册启动失败 |
 | Connector / Executor ID | 冲突启动失败 |
 | Descriptor / Provider ID | 冲突启动失败 |
+| Plugin embedded LibraryAsset | 同一 `asset_type + system scope + key` 冲突启动失败；同一 plugin 同一 seed 可幂等更新 |
 
 ---
 
 ## First-Party Plugin 策略
 
 开源仓必须用 first-party plugins 先验证插件合同的合理性，防止企业仓成为第一个消费者。当前 first-party 包括默认认证插件和默认连接器插件。
+
+## Plugin Embedded Shared Library Assets
+
+`AgentDashPlugin::library_asset_seeds()` 是 native plugin 向 Shared Library 贡献内嵌资产的启动期入口。
+
+约束：
+
+- plugin 只声明 `PluginLibraryAssetSeed`，不直接写数据库，也不修改 Project 运行配置。
+- 宿主统一计算 digest、设置 `scope=system`、`source=plugin_embedded` 和 `source_ref=plugin:{plugin_name}:{asset_type}:{key}`。
+- seed payload 必须通过 Shared Library typed validator；例如 runtime extension 走 `extension_template` schema。
+- 该入口继承 native plugin 的重启边界：管理员安装/更新 plugin 后重启服务，用户再从 Marketplace 显式安装到 Project。
 
 ---
 

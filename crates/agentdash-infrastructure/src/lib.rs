@@ -10,6 +10,7 @@ pub use persistence::postgres::PostgresInlineFileRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
 pub use persistence::postgres::PostgresProjectBackendAccessRepository;
+pub use persistence::postgres::PostgresProjectExtensionInstallationRepository;
 pub use persistence::postgres::PostgresProjectRepository;
 pub use persistence::postgres::PostgresRoutineExecutionRepository;
 pub use persistence::postgres::PostgresRoutineRepository;

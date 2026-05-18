@@ -2,10 +2,11 @@ export type LibraryAssetType =
   | "agent_template"
   | "mcp_server_template"
   | "workflow_template"
-  | "skill_template";
+  | "skill_template"
+  | "extension_template";
 
 export type LibraryAssetScope = "builtin" | "system" | "org" | "user";
-export type LibraryAssetSource = "builtin" | "user_authored" | "remote_imported";
+export type LibraryAssetSource = "builtin" | "user_authored" | "remote_imported" | "plugin_embedded";
 export type SharedLibrarySourceStatus = "up_to_date" | "update_available" | "source_missing";
 
 export interface InstalledAssetSourceDto {
@@ -73,7 +74,8 @@ export type InstallLibraryAssetResponse =
   | { asset_kind: "project_agent"; agent_id: string; project_agent_link_id: string }
   | { asset_kind: "mcp_preset"; id: string }
   | { asset_kind: "workflow_template"; workflow_ids: string[]; lifecycle_id: string }
-  | { asset_kind: "skill_asset"; id: string };
+  | { asset_kind: "skill_asset"; id: string }
+  | { asset_kind: "extension_installation"; id: string };
 
 export interface ProjectAssetSourceStatusItemDto {
   asset_kind: string;
@@ -91,4 +93,5 @@ export interface ProjectAssetSourceStatusDto {
   skill_assets: ProjectAssetSourceStatusItemDto[];
   workflow_definitions: ProjectAssetSourceStatusItemDto[];
   lifecycle_definitions: ProjectAssetSourceStatusItemDto[];
+  extension_installations: ProjectAssetSourceStatusItemDto[];
 }

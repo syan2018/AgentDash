@@ -20,6 +20,7 @@ Shared Library 中的共享配置统一使用 `*Template` 后缀：
 - `McpServerTemplate`
 - `WorkflowTemplate`
 - `SkillTemplate`
+- `ExtensionTemplate`
 
 Project 内运行资源使用 Project 前缀或既有项目资源名：
 
@@ -143,11 +144,29 @@ DTO 层 [crates/agentdash-api/src/dto/shared_library.rs](../../../crates/agentda
 }
 ```
 
+### `extension_template`
+
+```jsonc
+{
+  "manifest_version": "string",
+  "extension_id": "string",
+  "commands": [{
+    "name": "string",
+    "description": "string",
+    "handler": { "kind": "inject_message", "content": "string" }
+  }],
+  "flags": [{ "name": "string", "type": "bool | string", "default": "matching value", "description": "string" }],
+  "message_renderers": [{ "custom_type": "string", "renderer": { "kind": "json_card | markdown" } }],
+  "capability_directives": ["ToolCapabilityDirective"],
+  "asset_refs": [{ "asset_type": "string", "key": "string", "required": "bool" }]
+}
+```
+
 ## InstallSummary 派生约定（前端）
 
 前端 Marketplace 卡片展示同一 `LibraryAsset` 在项目内的安装状态时，必须把
 `source-status` 返回的 5 个数组（`project_agents` / `mcp_presets` / `skill_assets` /
-`workflow_definitions` / `lifecycle_definitions`）按 `installed_source.library_asset_id`
+`workflow_definitions` / `lifecycle_definitions` / `extension_installations`）按 `installed_source.library_asset_id`
 flatten + group：
 
 - 同一资产可能被装到多个 kind：每个 kind+key 都记一个 `installation` 子项。
@@ -226,6 +245,7 @@ Project Assets 发布行为：
   - `lifecycle_definitions`
 - 每个 status item 必须包含 `installed_source` 与 `source_status`。
 - 前端项目资源卡片展示来源时，若资源存在 `installed_source`，必须优先显示 Marketplace/Shared Library 来源，而不是只显示 `user`。
+- `extension_template` 安装后必须返回 `asset_kind = extension_installation`，并在 `source-status.extension_installations` 中出现。
 
 ### 4. Validation & Error Matrix
 

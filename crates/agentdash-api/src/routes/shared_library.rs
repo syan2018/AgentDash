@@ -219,6 +219,9 @@ fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryA
         InstallLibraryAssetOutput::SkillAsset { id } => {
             InstallLibraryAssetResponse::SkillAsset { id }
         }
+        InstallLibraryAssetOutput::ExtensionInstallation { id } => {
+            InstallLibraryAssetResponse::ExtensionInstallation { id }
+        }
     }
 }
 
@@ -248,6 +251,11 @@ fn project_source_status_response(
             .collect(),
         lifecycle_definitions: status
             .lifecycle_definitions
+            .into_iter()
+            .map(source_status_item_response)
+            .collect(),
+        extension_installations: status
+            .extension_installations
             .into_iter()
             .map(source_status_item_response)
             .collect(),

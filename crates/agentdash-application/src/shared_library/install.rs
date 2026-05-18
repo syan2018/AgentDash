@@ -5,7 +5,8 @@ use agentdash_domain::agent::{Agent, ProjectAgentLink};
 use agentdash_domain::common::AgentPresetConfig;
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
 use agentdash_domain::shared_library::{
-    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, SharedLibrarySourceStatus,
+    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, ProjectExtensionInstallation,
+    SharedLibrarySourceStatus,
 };
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 use agentdash_domain::workflow::WorkflowDefinitionSource;
@@ -37,6 +38,9 @@ pub enum InstallLibraryAssetOutput {
     SkillAsset {
         id: Uuid,
     },
+    ExtensionInstallation {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +50,7 @@ pub struct ProjectAssetSourceStatus {
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
+    pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +119,18 @@ pub async fn install_library_asset_to_project(
                 .map(|file| SkillAssetFile::new(skill.id, file.path, file.content, file.kind))
                 .collect();
             upsert_skill_asset(repos, skill, input.overwrite).await
+        }
+        LibraryAssetPayload::ExtensionTemplate(payload) => {
+            let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
+            let installed_source = installed_source_from_asset(&asset);
+            let installation = ProjectExtensionInstallation::new(
+                input.project_id,
+                key,
+                asset.display_name.clone(),
+                payload,
+                installed_source,
+            )?;
+            upsert_extension_installation(repos, installation, input.overwrite).await
         }
     }
 }
@@ -204,12 +221,31 @@ pub async fn list_project_asset_source_status(
         }
     }
 
+    let mut extension_installations = Vec::new();
+    for installation in repos
+        .project_extension_installation_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        extension_installations.push(
+            source_status_item(
+                repos,
+                "extension_installation",
+                installation.id,
+                installation.extension_key,
+                installation.installed_source,
+            )
+            .await?,
+        );
+    }
+
     Ok(ProjectAssetSourceStatus {
         project_agents,
         mcp_presets,
         skill_assets,
         workflow_definitions,
         lifecycle_definitions,
+        extension_installations,
     })
 }
 
@@ -378,6 +414,41 @@ async fn upsert_skill_asset(
     let id = skill.id;
     repos.skill_asset_repo.create(&skill).await?;
     Ok(InstallLibraryAssetOutput::SkillAsset { id })
+}
+
+async fn upsert_extension_installation(
+    repos: &RepositorySet,
+    installation: ProjectExtensionInstallation,
+    overwrite: bool,
+) -> Result<InstallLibraryAssetOutput, DomainError> {
+    if let Some(existing) = repos
+        .project_extension_installation_repo
+        .get_by_project_and_key(installation.project_id, &installation.extension_key)
+        .await?
+    {
+        if !overwrite {
+            return Err(DomainError::InvalidConfig(format!(
+                "Project Extension key 已存在: {}",
+                installation.extension_key
+            )));
+        }
+        let mut merged = installation;
+        merged.id = existing.id;
+        merged.created_at = existing.created_at;
+        merged.updated_at = chrono::Utc::now();
+        repos
+            .project_extension_installation_repo
+            .update(&merged)
+            .await?;
+        return Ok(InstallLibraryAssetOutput::ExtensionInstallation { id: merged.id });
+    }
+
+    let id = installation.id;
+    repos
+        .project_extension_installation_repo
+        .create(&installation)
+        .await?;
+    Ok(InstallLibraryAssetOutput::ExtensionInstallation { id })
 }
 
 async fn source_status_item(

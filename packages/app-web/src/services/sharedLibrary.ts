@@ -22,6 +22,7 @@ function normalizeAssetType(value: unknown): LibraryAssetType {
     || value === "mcp_server_template"
     || value === "workflow_template"
     || value === "skill_template"
+    || value === "extension_template"
   ) {
     return value;
   }
@@ -34,7 +35,7 @@ function normalizeScope(value: unknown): LibraryAssetScope {
 }
 
 function normalizeSource(value: unknown): LibraryAssetSource {
-  if (value === "user_authored" || value === "remote_imported") return value;
+  if (value === "user_authored" || value === "remote_imported" || value === "plugin_embedded") return value;
   return "builtin";
 }
 
@@ -155,6 +156,9 @@ export async function fetchProjectAssetSourceStatus(
       : [],
     lifecycle_definitions: Array.isArray(raw.lifecycle_definitions)
       ? raw.lifecycle_definitions.map(mapSourceStatusItem)
+      : [],
+    extension_installations: Array.isArray(raw.extension_installations)
+      ? raw.extension_installations.map(mapSourceStatusItem)
       : [],
   };
 }

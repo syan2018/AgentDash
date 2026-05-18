@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agentdash_application::shared_library::PluginEmbeddedLibraryAssetSeed;
 use agentdash_plugin_api::{AgentDashPlugin, AuthProvider};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
@@ -22,6 +23,7 @@ pub(crate) struct PluginHostRegistration {
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
     pub extra_skill_dirs: Vec<PathBuf>,
+    pub library_asset_seeds: Vec<PluginEmbeddedLibraryAssetSeed>,
 }
 
 #[derive(Debug, Error)]
@@ -58,6 +60,7 @@ pub(crate) fn collect_plugin_registration(
     let mut executor_owners: HashMap<String, String> = HashMap::new();
     let mut mount_providers = Vec::new();
     let mut extra_skill_dirs = Vec::new();
+    let mut library_asset_seeds = Vec::new();
 
     for plugin in plugins {
         let plugin_name = plugin.name().to_string();
@@ -90,6 +93,21 @@ pub(crate) fn collect_plugin_registration(
                 skill_dirs.len()
             );
             extra_skill_dirs.extend(skill_dirs);
+        }
+
+        let seeds = plugin.library_asset_seeds();
+        if !seeds.is_empty() {
+            tracing::info!(
+                "  插件 `{}` 声明了 {} 个 Shared Library asset",
+                plugin_name,
+                seeds.len()
+            );
+            library_asset_seeds.extend(seeds.into_iter().map(|seed| {
+                PluginEmbeddedLibraryAssetSeed {
+                    plugin_name: plugin_name.clone(),
+                    seed,
+                }
+            }));
         }
 
         for connector in plugin.agent_connectors() {
@@ -125,6 +143,7 @@ pub(crate) fn collect_plugin_registration(
         auth_provider,
         mount_providers,
         extra_skill_dirs,
+        library_asset_seeds,
     })
 }
 
@@ -156,6 +175,7 @@ mod tests {
 
     use agentdash_plugin_api::{
         AgentDashPlugin, AuthError, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+        LibraryAssetType, PluginLibraryAssetSeed,
     };
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -163,6 +183,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use futures::stream::{self, BoxStream};
+    use serde_json::json;
 
     use super::*;
 
@@ -170,6 +191,33 @@ mod tests {
         name: &'static str,
         auth: bool,
         executor_ids: Vec<&'static str>,
+    }
+
+    struct SeedPlugin;
+
+    impl AgentDashPlugin for SeedPlugin {
+        fn name(&self) -> &str {
+            "seed-plugin"
+        }
+
+        fn library_asset_seeds(&self) -> Vec<PluginLibraryAssetSeed> {
+            vec![PluginLibraryAssetSeed {
+                asset_type: LibraryAssetType::ExtensionTemplate,
+                key: "seed-extension".to_string(),
+                display_name: "Seed Extension".to_string(),
+                description: None,
+                version: "0.1.0".to_string(),
+                payload: json!({
+                    "manifest_version": "1",
+                    "extension_id": "seed-extension",
+                    "commands": [{
+                        "name": "seed-extension:run",
+                        "description": "run",
+                        "handler": { "kind": "inject_message", "content": "run" }
+                    }]
+                }),
+            }]
+        }
     }
 
     impl AgentDashPlugin for TestPlugin {
@@ -364,6 +412,22 @@ mod tests {
         assert!(registration.auth_provider.is_some());
         assert_eq!(registration.connectors.len(), 1);
         assert_eq!(registration.connectors[0].list_executors().len(), 2);
+    }
+
+    #[test]
+    fn collects_plugin_library_asset_seeds() {
+        let registration =
+            collect_plugin_registration(vec![Box::new(SeedPlugin)]).expect("collect");
+
+        assert_eq!(registration.library_asset_seeds.len(), 1);
+        assert_eq!(
+            registration.library_asset_seeds[0].plugin_name,
+            "seed-plugin"
+        );
+        assert_eq!(
+            registration.library_asset_seeds[0].seed.key,
+            "seed-extension"
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
 use crate::external::ExternalServiceClient;
+pub use agentdash_domain::shared_library::{LibraryAssetType, PluginLibraryAssetSeed};
 
 /// 插件错误
 #[derive(Debug, thiserror::Error)]
@@ -108,6 +109,15 @@ pub trait AgentDashPlugin: Send + Sync {
     /// （一级子目录 + SKILL.md frontmatter 解析）。
     /// 插件提供的 skill 优先级低于 VFS mount 内发现的同名 skill。
     fn extra_skill_dirs(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+
+    /// 声明由 native plugin 内嵌贡献的 Shared Library 资产。
+    ///
+    /// 宿主负责补齐 plugin 名称、计算 digest、校验 payload，并以
+    /// `source = plugin_embedded` 写入 Shared Library。插件不得绕过
+    /// LibraryAsset typed validator 直接修改 Project 运行配置。
+    fn library_asset_seeds(&self) -> Vec<PluginLibraryAssetSeed> {
         vec![]
     }
 

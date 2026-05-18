@@ -2,31 +2,31 @@
 
 ## Checklist
 
-- [ ] 阅读并遵守相关规范与任务：
+- [x] 阅读并遵守相关规范与任务：
   - `.trellis/spec/backend/capability/plugin-api.md`
   - `.trellis/spec/backend/shared-library.md`
   - `.trellis/spec/cross-layer/shared-library-contract.md`
   - `.trellis/tasks/04-12-plugin-extension-api/prd.md`
   - `.trellis/tasks/04-12-plugin-extension-api/dynamic-installation-discussion.md`
-- [ ] 扩展 shared library domain：
+- [x] 扩展 shared library domain：
   - `LibraryAssetType::ExtensionTemplate`
   - `LibraryAssetSource::PluginEmbedded`
   - `ExtensionTemplatePayload`
   - typed validator tests
-- [ ] 新增 DB migration：
+- [x] 新增 DB migration：
   - 更新 `library_assets.asset_type` check
   - 更新 `library_assets.source` check
   - 新建 `project_extension_installations`
-- [ ] 扩展 plugin API：
+- [x] 扩展 plugin API：
   - `PluginLibraryAssetSeed`
   - `AgentDashPlugin::library_asset_seeds`
   - contract crate 依赖保持轻量
-- [ ] 扩展 plugin registration：
+- [x] 扩展 plugin registration：
   - collect plugin seeds
   - fail-fast conflict check
   - 将 plugin seeds 接入 Shared Library seed/upsert 流程
-- [ ] first-party plugin 增加示例 embedded asset。
-- [ ] Shared Library install 支持 `extension_template`：
+- [x] first-party plugin 增加示例 embedded asset。
+- [x] Shared Library install 支持 `extension_template`：
   - application install 分支
   - Project extension repository
   - API response variant
@@ -36,12 +36,12 @@
   - 注册 slash commands
   - 注入 runtime flag defaults
   - 暴露 extension message renderer metadata
-- [ ] 前端类型和 service：
+- [x] 前端类型和 service：
   - `LibraryAssetType` 增加 `extension_template`
   - `LibraryAssetSource` 增加 `plugin_embedded`
   - install response 增加 extension variant
   - source-status DTO 增加 extension_installations
-- [ ] Marketplace UI：
+- [x] Marketplace UI：
   - Extension filter chip
   - Extension drawer body
   - plugin embedded source badge
@@ -51,13 +51,14 @@
 
 ## Validation
 
-- [ ] `cargo fmt --all`
-- [ ] `cargo test -p agentdash-domain shared_library`
-- [ ] `cargo test -p agentdash-api plugins`
-- [ ] `cargo test -p agentdash-application shared_library`
+- [x] `cargo fmt --all`
+- [x] `cargo test -p agentdash-domain shared_library`
+- [x] `cargo test -p agentdash-api plugins`
+- [x] `cargo test -p agentdash-first-party-plugins`
+- [x] `cargo test -p agentdash-application shared_library`
 - [ ] `cargo test -p agentdash-application session`
-- [ ] `pnpm --filter app-web typecheck`
-- [ ] `pnpm --filter app-web test`
+- [x] `pnpm --filter app-web typecheck`
+- [x] `pnpm --filter app-web test`
 - [ ] 手工验证：first-party plugin seed -> Marketplace -> install extension -> 新 session 可见 command/flag。
 
 ## Risk Points

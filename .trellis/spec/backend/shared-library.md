@@ -22,14 +22,14 @@
 
 `LibraryAsset` 使用单表 JSONB payload：
 
-- `asset_type`: `agent_template` / `mcp_server_template` / `workflow_template` / `skill_template`
+- `asset_type`: `agent_template` / `mcp_server_template` / `workflow_template` / `skill_template` / `extension_template`
 - `scope`: `builtin` / `system` / `org` / `user`
 - `owner_id`: scope owner，可为空
 - `key`
 - `display_name`
 - `description`
 - `version`
-- `source`: `builtin` / `user_authored` / `remote_imported`
+- `source`: `builtin` / `user_authored` / `remote_imported` / `plugin_embedded`
 - `source_ref`: builtin key、remote URL、digest 等来源引用
 - `payload_digest`
 - `deprecated`
@@ -109,6 +109,17 @@ Project 资源不会因 builtin seed 更新而静默变化。
 
 承接原 builtin workflow template 与 builtin skill seed。Project 中的 Workflow/SkillAsset 是安装后的 Project 资源副本。
 
+### ExtensionTemplate
+
+描述用户可动态安装的 runtime extension manifest。第一版支持声明式 slash command、runtime flag、schema-driven message renderer、capability directives 与资产引用占位。
+
+约束：
+
+- `extension_id` 与 `manifest_version` 必须非空。
+- command name 不带 `/`，handler 第一版只允许安全的声明式 `inject_message`。
+- flag type 只支持 `bool` / `string`，default 必须与 type 匹配。
+- message renderer 只允许平台内置 schema-driven renderer，不允许动态 React/TypeScript bundle。
+
 ## Project 资源安装语义
 
 - 从 Marketplace 安装默认创建可编辑 Project 副本。
@@ -127,6 +138,15 @@ Project 资源不会因 builtin seed 更新而静默变化。
 - `payload_digest` 使用 builtin seed 相同的 JSON sha256 规则，避免 source-status 对同一 payload 产生两套版本判断。
 - MCP Preset 发布必须拒绝 credential、header、env、本机路径、localhost/private network URL 等连接材料；无法证明可共享的连接配置应明确报错。
 - Workflow 发布必须以 lifecycle bundle 为单位，校验 lifecycle 引用的 workflow definitions 都存在后再发布。
+
+## Plugin Embedded 资产语义
+
+- Native plugin 可在启动期通过 `AgentDashPlugin::library_asset_seeds()` 声明内嵌 Shared Library assets。
+- 宿主负责补齐 plugin 名称、计算 digest、校验 payload，并以 `scope=system`、`source=plugin_embedded` 写入 Shared Library。
+- `source_ref` 使用 `plugin:{plugin_name}:{asset_type}:{key}`，用于 source-status 与审计。
+- plugin seed 必须走与 builtin/user asset 相同的 `LibraryAssetPayload` typed validator。
+- 同一 `asset_type + scope + key` 被不同 plugin 或不同 source 占用时启动期 fail-fast，不做隐式覆盖。
+- 同一 plugin 的同一 seed 可幂等更新，保留原 `LibraryAsset.id` 与 `created_at`。
 
 ## 迁移原则
 

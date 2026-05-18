@@ -2,8 +2,10 @@ use std::env;
 
 use agentdash_plugin_api::{
     AgentDashPlugin, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+    LibraryAssetType, PluginLibraryAssetSeed,
 };
 use async_trait::async_trait;
+use serde_json::json;
 
 const AUTH_MODE_ENV: &str = "AGENTDASH_AUTH_MODE";
 const PERSONAL_USER_ID_ENV: &str = "AGENTDASH_PERSONAL_USER_ID";
@@ -41,6 +43,43 @@ pub struct ConnectorCatalogPlugin;
 impl AgentDashPlugin for ConnectorCatalogPlugin {
     fn name(&self) -> &str {
         "builtin.connector_catalog"
+    }
+
+    fn library_asset_seeds(&self) -> Vec<PluginLibraryAssetSeed> {
+        vec![PluginLibraryAssetSeed {
+            asset_type: LibraryAssetType::ExtensionTemplate,
+            key: "builtin-session-notes".to_string(),
+            display_name: "Session Notes Extension".to_string(),
+            description: Some(
+                "示例 extension asset：注册一个注入会话备注的 slash command 与运行时 flag。"
+                    .to_string(),
+            ),
+            version: "0.1.0".to_string(),
+            payload: json!({
+                "manifest_version": "1",
+                "extension_id": "builtin-session-notes",
+                "commands": [{
+                    "name": "session-notes:add",
+                    "description": "向当前会话注入一条备注提示",
+                    "handler": {
+                        "kind": "inject_message",
+                        "content": "请基于当前上下文整理一条简短会话备注。"
+                    }
+                }],
+                "flags": [{
+                    "name": "session-notes.verbose",
+                    "type": "bool",
+                    "default": false,
+                    "description": "备注时输出更详细的上下文说明"
+                }],
+                "message_renderers": [{
+                    "custom_type": "session-notes.note",
+                    "renderer": { "kind": "json_card" }
+                }],
+                "capability_directives": [],
+                "asset_refs": []
+            }),
+        }]
     }
 }
 
@@ -159,5 +198,15 @@ mod tests {
                 "builtin.connector_catalog".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn connector_catalog_declares_extension_asset_seed() {
+        let plugin = ConnectorCatalogPlugin;
+        let seeds = plugin.library_asset_seeds();
+
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0].asset_type, LibraryAssetType::ExtensionTemplate);
+        assert_eq!(seeds[0].key, "builtin-session-notes");
     }
 }

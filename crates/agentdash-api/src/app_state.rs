@@ -28,6 +28,7 @@ use agentdash_application::session::{
     SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeBuilder,
     SessionRuntimeService, SessionTitleService,
 };
+use agentdash_application::shared_library::SharedLibraryService;
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::RelayVfsService;
@@ -44,7 +45,8 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
     PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
     PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
-    PostgresMcpPresetRepository, PostgresProjectBackendAccessRepository, PostgresProjectRepository,
+    PostgresMcpPresetRepository, PostgresProjectBackendAccessRepository,
+    PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
     PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
@@ -179,6 +181,14 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("library_assets 表初始化失败: {e}"))?;
 
+        let project_extension_installation_repo = Arc::new(
+            PostgresProjectExtensionInstallationRepository::new(pool.clone()),
+        );
+        project_extension_installation_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("project_extension_installations 表初始化失败: {e}"))?;
+
         let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
         agent_repo
             .initialize()
@@ -238,6 +248,7 @@ impl AppState {
             user_directory_repo: user_directory_repo.clone(),
             settings_repo: settings_repo.clone(),
             shared_library_repo: shared_library_repo.clone(),
+            project_extension_installation_repo: project_extension_installation_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
             mcp_preset_repo: mcp_preset_repo.clone(),
             skill_asset_repo: skill_asset_repo.clone(),
@@ -250,6 +261,20 @@ impl AppState {
             routine_execution_repo: routine_execution_repo.clone(),
             inline_file_repo: inline_file_repo.clone(),
         };
+
+        let plugin_asset_count = plugin_registration.library_asset_seeds.len();
+        if plugin_asset_count > 0 {
+            let service = SharedLibraryService::new(shared_library_repo.as_ref());
+            let seeded = service
+                .seed_plugin_embedded_assets(plugin_registration.library_asset_seeds.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("plugin embedded library assets 初始化失败: {e}"))?;
+            tracing::info!(
+                declared = plugin_asset_count,
+                seeded = seeded.len(),
+                "已同步 plugin embedded Shared Library assets"
+            );
+        }
 
         let backend_registry = BackendRegistry::new();
         let (backend_runtime_events, _) =

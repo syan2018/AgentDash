@@ -38,6 +38,7 @@ const ASSET_TYPE_OPTIONS: Array<{ value: LibraryAssetType | "all"; label: string
   { value: "mcp_server_template", label: "MCP" },
   { value: "workflow_template", label: "Workflow" },
   { value: "skill_template", label: "Skill" },
+  { value: "extension_template", label: "Extension" },
 ];
 
 const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
@@ -45,6 +46,7 @@ const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   mcp_server_template: "MCP",
   workflow_template: "Workflow",
   skill_template: "Skill",
+  extension_template: "Extension",
 };
 
 type DrawerState = { kind: "closed" } | { kind: "open"; assetId: string };
@@ -79,6 +81,7 @@ export function MarketplaceCategoryPanel() {
       ...sourceStatus.skill_assets,
       ...sourceStatus.workflow_definitions,
       ...sourceStatus.lifecycle_definitions,
+      ...sourceStatus.extension_installations,
     ];
     for (const item of allItems) {
       const key = item.installed_source.library_asset_id;
@@ -365,7 +368,7 @@ function MarketplaceAssetCard({
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-            {ASSET_TYPE_LABELS[asset.asset_type]}
+            {ASSET_TYPE_LABELS[asset.asset_type]} · {sourceLabel(asset.source)}
           </p>
           <h3 className="mt-1 truncate text-sm font-semibold text-foreground">
             {asset.display_name}
@@ -430,4 +433,11 @@ function sourceStatusPriority(status: SharedLibrarySourceStatus): number {
   if (status === "source_missing") return 3;
   if (status === "update_available") return 2;
   return 1;
+}
+
+function sourceLabel(source: LibraryAssetDto["source"]): string {
+  if (source === "plugin_embedded") return "Plugin";
+  if (source === "user_authored") return "User";
+  if (source === "remote_imported") return "Remote";
+  return "Builtin";
 }

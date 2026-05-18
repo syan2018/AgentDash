@@ -36,7 +36,7 @@ pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,
     ResourceEntry, ResourceStat, SearchHit, SearchScope,
 };
-pub use plugin::{AgentDashPlugin, PluginError};
+pub use plugin::{AgentDashPlugin, LibraryAssetType, PluginError, PluginLibraryAssetSeed};
 
 /// Mount I/O SPI — 供插件实现文件系统级操作。
 ///

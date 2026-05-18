@@ -10,6 +10,10 @@ import { useSidebarSessionsStore } from "../../stores/sidebarSessionsStore";
 import { useTheme } from "../../hooks/use-theme";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project, ProjectSessionEntry } from "../../types";
+import {
+  buildSessionShortcutRows,
+  type SessionShortcutRow,
+} from "./session-shortcut-rows";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
 type NavKey = "agent" | "story" | "assets" | "routine";
@@ -457,6 +461,48 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
 
 // ─── Session 快捷列表（容器高度自适应 + 末尾 ...） ──────────
 
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function getShortcutAgentLabel(session: ProjectSessionEntry): string | null {
+  const displayName = session.agent_display_name?.trim();
+  if (displayName) return displayName;
+
+  const agentKey = session.agent_key?.trim();
+  if (agentKey && !isUuidLike(agentKey)) return agentKey;
+  return null;
+}
+
+function getShortcutOwnerLabel(session: ProjectSessionEntry): string | null {
+  if (session.owner_type === "story") {
+    return session.owner_title?.trim() ? `Story · ${session.owner_title.trim()}` : "Story";
+  }
+  if (session.owner_type === "task") {
+    const taskTitle = session.owner_title?.trim() || "Task";
+    const storyTitle = session.story_title?.trim();
+    return storyTitle ? `Task · ${storyTitle} / ${taskTitle}` : `Task · ${taskTitle}`;
+  }
+  return null;
+}
+
+function getShortcutIndentClass(depth: number): string {
+  if (depth <= 0) return "pl-2.5";
+  if (depth === 1) return "pl-5";
+  return "pl-8";
+}
+
+function estimateShortcutRowHeight(row: SessionShortcutRow): number {
+  const titleLength = row.session.session_title?.trim().length ?? 0;
+  const hasMeta = Boolean(
+    row.isCompanion ||
+      getShortcutAgentLabel(row.session) ||
+      getShortcutOwnerLabel(row.session),
+  );
+  if (titleLength > 34 || hasMeta) return 58;
+  return 42;
+}
+
 function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -468,13 +514,7 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const activeSessionId = sessionRouteMatch?.params.sessionId ?? null;
 
-  const sorted = useMemo(() => {
-    return [...sessions].sort((a, b) => {
-      const ta = a.last_activity ?? 0;
-      const tb = b.last_activity ?? 0;
-      return tb - ta;
-    });
-  }, [sessions]);
+  const rows = useMemo(() => buildSessionShortcutRows(sessions), [sessions]);
 
   // 监听容器高度变化
   useEffect(() => {
@@ -510,50 +550,59 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [sorted]);
+  }, [rows]);
 
   // 用已知行高 + 容器高度决定可见数量；未知行用保守估算
   const { displayed, hasMore } = useMemo(() => {
-    if (sorted.length === 0 || containerH <= 0) {
-      return { displayed: sorted, hasMore: false };
+    if (rows.length === 0 || containerH <= 0) {
+      return { displayed: rows, hasMore: false };
     }
-    const estH = (s: ProjectSessionEntry) =>
-      rowHeights.get(s.session_id) ?? (s.agent_display_name?.trim() ? 52 : 36);
+    const estH = (row: SessionShortcutRow) =>
+      rowHeights.get(row.session.session_id) ?? estimateShortcutRowHeight(row);
     let acc = 0;
     let count = 0;
-    for (const s of sorted) {
-      const h = estH(s);
+    for (const row of rows) {
+      const h = estH(row);
       if (acc + h > containerH) break;
       acc += h;
       count += 1;
     }
-    if (count >= sorted.length) {
-      return { displayed: sorted, hasMore: false };
+    if (count >= rows.length) {
+      return { displayed: rows, hasMore: false };
     }
-    return { displayed: sorted.slice(0, Math.max(1, count)), hasMore: true };
-  }, [sorted, containerH, rowHeights]);
+    return { displayed: rows.slice(0, Math.max(1, count)), hasMore: true };
+  }, [rows, containerH, rowHeights]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-border">
       {/* 标题行：左右各 px-4，与 ProjectDropdown 对齐 */}
       <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
         <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">最近会话</span>
-        {sorted.length > 0 && (
+        {rows.length > 0 && (
           <span className="text-[10px] text-muted-foreground/70">
-            {hasMore ? `${displayed.length} / ${sorted.length}` : sorted.length}
+            {hasMore ? `${displayed.length} / ${rows.length}` : rows.length}
           </span>
         )}
       </div>
-      {sorted.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="px-4 pb-3 text-xs text-muted-foreground">暂无活跃会话</p>
       ) : (
         <>
           <div ref={listRef} className="min-h-0 flex-1 overflow-hidden px-3">
-            {displayed.map((session) => {
+            {displayed.map((row) => {
+              const { session } = row;
               const isActive = session.session_id === activeSessionId;
               const title = session.session_title?.trim() || "无标题会话";
-              const agent = session.agent_display_name?.trim() || null;
+              const agent = getShortcutAgentLabel(session);
+              const owner = getShortcutOwnerLabel(session);
               const time = formatRelativeTime(session.last_activity);
+              const indentClass = getShortcutIndentClass(row.depth);
+              const metaParts = [
+                row.isCompanion ? "Subagent" : null,
+                agent,
+                owner,
+              ].filter((part): part is string => Boolean(part));
+              const meta = metaParts.join(" · ");
               return (
                 <button
                   key={session.session_id}
@@ -566,18 +615,27 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
                     if (location.pathname === `/session/${session.session_id}`) return;
                     navigate(`/session/${session.session_id}`);
                   }}
-                  className={`flex w-full flex-col gap-0.5 rounded-[8px] px-2.5 py-2 text-left transition-colors ${
+                  className={`flex w-full flex-col gap-1 rounded-[8px] py-2 pr-2.5 text-left transition-colors ${indentClass} ${
                     isActive ? "bg-primary/10" : "hover:bg-secondary/50"
                   }`}
-                  title={agent ? `${title} · ${agent}` : title}
+                  title={meta ? `${title} · ${meta}` : title}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-start gap-2">
+                    {row.isCompanion && (
+                      <span className="mt-[3px] shrink-0 text-[11px] leading-none text-primary/70">
+                        ↳
+                      </span>
+                    )}
                     <SessionStatusDot status={session.execution_status} />
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{title}</span>
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                    <span className="min-w-0 flex-1 whitespace-normal break-words text-[13px] leading-[1.35] text-foreground line-clamp-2">
+                      {title}
+                    </span>
+                    <span className="mt-[1px] shrink-0 text-[10px] tabular-nums text-muted-foreground">{time}</span>
                   </div>
-                  {agent && (
-                    <p className="ml-3.5 truncate text-[11px] text-muted-foreground">{agent}</p>
+                  {meta && (
+                    <p className="ml-3.5 whitespace-normal break-words text-[11px] leading-[1.35] text-muted-foreground line-clamp-2">
+                      {meta}
+                    </p>
                   )}
                 </button>
               );
@@ -589,7 +647,7 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
               <button
                 type="button"
                 onClick={() => navigate("/dashboard/agent")}
-                title={`查看全部会话（还有 ${sorted.length - displayed.length} 个）`}
+                title={`查看全部会话（还有 ${rows.length - displayed.length} 个）`}
                 className="flex w-full items-center justify-center rounded-[8px] py-1 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

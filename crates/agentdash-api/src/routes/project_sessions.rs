@@ -204,7 +204,8 @@ pub async fn list_project_sessions(
                     .filter(|v| !v.is_empty())
                     .unwrap_or(&agent.name)
                     .to_string();
-                map.insert(agent.id.to_string(), name);
+                map.insert(agent.id.to_string(), name.clone());
+                map.insert(agent.name.clone(), name);
             }
         }
         map
@@ -312,16 +313,25 @@ fn resolve_agent_info(
     meta: &agentdash_application::session::SessionMeta,
     agent_display_map: &HashMap<String, String>,
 ) -> (Option<String>, Option<String>) {
+    if let Some(ctx) = &meta.companion_context {
+        let label = normalized_agent_label(ctx.agent_name.as_deref())
+            .or_else(|| normalized_agent_label(Some(&ctx.companion_label)));
+        let display_name = label
+            .as_deref()
+            .and_then(|value| agent_display_map.get(value).cloned())
+            .or_else(|| label.clone());
+        let key = label.clone().or_else(|| {
+            meta.executor_config
+                .as_ref()
+                .map(|config| config.executor.clone())
+        });
+        return (key, display_name);
+    }
+
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
         if let Some(agent_key) = parse_project_agent_session_label(&binding.label) {
             let display_name = agent_display_map.get(agent_key).cloned();
             return (Some(agent_key.to_string()), display_name);
-        }
-        // companion 会话: 用 companion_context.agent_name（真实 agent 名）
-        if let Some(ctx) = &meta.companion_context {
-            if let Some(name) = &ctx.agent_name {
-                return (Some(name.clone()), Some(name.clone()));
-            }
         }
     }
 
@@ -329,9 +339,52 @@ fn resolve_agent_info(
     (agent_key, None)
 }
 
+fn normalized_agent_label(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[cfg(test)]
 mod list_project_sessions_tests {
     use super::*;
+    use agentdash_application::session::{
+        CompanionSessionContext, ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource,
+    };
+    use agentdash_spi::AgentConfig;
+
+    fn test_binding(owner_type: SessionOwnerType) -> SessionBinding {
+        SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-test".to_string(),
+            owner_type,
+            Uuid::new_v4(),
+            "label".to_string(),
+        )
+    }
+
+    fn test_meta() -> SessionMeta {
+        SessionMeta {
+            id: "sess-test".to_string(),
+            title: "Test Session".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: Some(AgentConfig::new("PI_AGENT")),
+            executor_session_id: None,
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        }
+    }
 
     #[test]
     fn project_session_entry_serializes_as_snake_case() {
@@ -364,5 +417,76 @@ mod list_project_sessions_tests {
         assert!(value.get("storyId").is_none());
         assert!(value.get("agentKey").is_none());
         assert!(value.get("parentSessionId").is_none());
+    }
+
+    #[test]
+    fn companion_agent_info_uses_agent_name_for_any_owner_type() {
+        let binding = test_binding(SessionOwnerType::Task);
+        let mut meta = test_meta();
+        meta.companion_context = Some(CompanionSessionContext {
+            dispatch_id: "dispatch-1".to_string(),
+            parent_session_id: "parent-session".to_string(),
+            parent_turn_id: "turn-1".to_string(),
+            companion_label: "review".to_string(),
+            slice_mode: "focused".to_string(),
+            adoption_mode: "manual".to_string(),
+            request_type: None,
+            inherited_fragment_labels: Vec::new(),
+            inherited_constraint_keys: Vec::new(),
+            agent_name: Some("reviewer".to_string()),
+        });
+
+        let (agent_key, agent_display_name) = resolve_agent_info(&binding, &meta, &HashMap::new());
+
+        assert_eq!(agent_key.as_deref(), Some("reviewer"));
+        assert_eq!(agent_display_name.as_deref(), Some("reviewer"));
+    }
+
+    #[test]
+    fn companion_agent_info_prefers_resolved_display_name() {
+        let binding = test_binding(SessionOwnerType::Story);
+        let mut meta = test_meta();
+        meta.companion_context = Some(CompanionSessionContext {
+            dispatch_id: "dispatch-1".to_string(),
+            parent_session_id: "parent-session".to_string(),
+            parent_turn_id: "turn-1".to_string(),
+            companion_label: "review".to_string(),
+            slice_mode: "focused".to_string(),
+            adoption_mode: "manual".to_string(),
+            request_type: None,
+            inherited_fragment_labels: Vec::new(),
+            inherited_constraint_keys: Vec::new(),
+            agent_name: Some("reviewer".to_string()),
+        });
+        let mut display_map = HashMap::new();
+        display_map.insert("reviewer".to_string(), "Code Reviewer".to_string());
+
+        let (agent_key, agent_display_name) = resolve_agent_info(&binding, &meta, &display_map);
+
+        assert_eq!(agent_key.as_deref(), Some("reviewer"));
+        assert_eq!(agent_display_name.as_deref(), Some("Code Reviewer"));
+    }
+
+    #[test]
+    fn companion_agent_info_falls_back_to_companion_label() {
+        let binding = test_binding(SessionOwnerType::Project);
+        let mut meta = test_meta();
+        meta.companion_context = Some(CompanionSessionContext {
+            dispatch_id: "dispatch-1".to_string(),
+            parent_session_id: "parent-session".to_string(),
+            parent_turn_id: "turn-1".to_string(),
+            companion_label: "researcher".to_string(),
+            slice_mode: "focused".to_string(),
+            adoption_mode: "manual".to_string(),
+            request_type: None,
+            inherited_fragment_labels: Vec::new(),
+            inherited_constraint_keys: Vec::new(),
+            agent_name: None,
+        });
+
+        let (agent_key, agent_display_name) = resolve_agent_info(&binding, &meta, &HashMap::new());
+
+        assert_eq!(agent_key.as_deref(), Some("researcher"));
+        assert_eq!(agent_display_name.as_deref(), Some("researcher"));
     }
 }

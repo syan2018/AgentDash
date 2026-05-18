@@ -23,13 +23,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
+import { useMcpProbeStore } from "../../../stores/mcpProbeStore";
 import {
-  bootstrapMcpPresets,
   cloneMcpPreset,
   createMcpPreset,
   deleteMcpPreset,
   fetchProjectMcpPresets,
-  probeMcpTransport,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
 import type {
@@ -44,6 +43,7 @@ import {
   McpTransportConfigEditor,
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
+import { Notice, type NoticeData } from "../_shared/Notice";
 
 /* ─── 表单状态 ─── */
 //
@@ -147,9 +147,10 @@ export function McpPresetCategoryPanel() {
 
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
+  const showError = useCallback((msg: string) => setNotice({ tone: "danger", message: msg }), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
   const [isSaving, setIsSaving] = useState(false);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
@@ -158,17 +159,17 @@ export function McpPresetCategoryPanel() {
   const loadPresets = useCallback(
     async (projectId: string) => {
       setIsLoading(true);
-      setError(null);
+      clearNotice();
       try {
         const next = await fetchProjectMcpPresets(projectId);
         setPresets(next);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "加载 MCP Preset 失败");
+        showError(e instanceof Error ? e.message : "加载 MCP Preset 失败");
       } finally {
         setIsLoading(false);
       }
     },
-    [],
+    [clearNotice, showError],
   );
 
   useEffect(() => {
@@ -176,57 +177,31 @@ export function McpPresetCategoryPanel() {
     void loadPresets(currentProjectId);
   }, [currentProjectId, loadPresets]);
 
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 4000);
-    return () => clearTimeout(t);
-  }, [message]);
-
-  const handleBootstrap = useCallback(async () => {
-    if (!currentProjectId) return;
-    setIsBootstrapping(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const created = await bootstrapMcpPresets(currentProjectId, {});
-      if (created.length === 0) {
-        setMessage("未装载任何内置 Preset（可能已全部装载或后端无内置定义）");
-      } else {
-        setMessage(`已装载 ${created.length} 个内置 Preset：${created.map((p) => p.display_name).join("、")}`);
-      }
-      await loadPresets(currentProjectId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "装载内置 Preset 失败");
-    } finally {
-      setIsBootstrapping(false);
-    }
-  }, [currentProjectId, loadPresets]);
-
   const handleClone = useCallback(
     async (preset: McpPresetDto) => {
       if (!currentProjectId) return;
       setBusyRowId(preset.id);
-      setError(null);
+      clearNotice();
       try {
         const cloned = await cloneMcpPreset(currentProjectId, preset.id, {});
-        setMessage(`已复制为 user Preset：${cloned.display_name}`);
+        showSuccess(`已复制为 user Preset：${cloned.display_name}`);
         await loadPresets(currentProjectId);
       } catch (e) {
-        setError(friendlyError(e, `复制「${preset.display_name}」失败`));
+        showError(friendlyError(e, `复制「${preset.display_name}」失败`));
       } finally {
         setBusyRowId(null);
       }
     },
-    [currentProjectId, loadPresets],
+    [currentProjectId, loadPresets, clearNotice, showSuccess, showError],
   );
 
   const handleConfirmDelete = useCallback(async () => {
     if (!currentProjectId || !confirmDelete) return;
     setBusyRowId(confirmDelete.id);
-    setError(null);
+    clearNotice();
     try {
       await deleteMcpPreset(currentProjectId, confirmDelete.id);
-      setMessage(`已删除：${confirmDelete.display_name}`);
+      showSuccess(`已删除：${confirmDelete.display_name}`);
       setConfirmDelete(null);
       // 如果详情面板正在查看被删的 Preset，关闭它
       if (
@@ -237,11 +212,11 @@ export function McpPresetCategoryPanel() {
       }
       await loadPresets(currentProjectId);
     } catch (e) {
-      setError(friendlyError(e, `删除「${confirmDelete.display_name}」失败`));
+      showError(friendlyError(e, `删除「${confirmDelete.display_name}」失败`));
     } finally {
       setBusyRowId(null);
     }
-  }, [currentProjectId, confirmDelete, detail, loadPresets]);
+  }, [currentProjectId, confirmDelete, detail, loadPresets, clearNotice, showSuccess, showError]);
 
   if (!currentProjectId) {
     return (
@@ -276,15 +251,6 @@ export function McpPresetCategoryPanel() {
           </button>
           <button
             type="button"
-            onClick={() => void handleBootstrap()}
-            disabled={isBootstrapping}
-            className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-            title="从内置 JSON 模板装载常用 MCP Preset 定义（幂等，已装载会跳过）"
-          >
-            {isBootstrapping ? "装载中…" : "装载内置 Preset"}
-          </button>
-          <button
-            type="button"
             onClick={() => setDetail({ kind: "create" })}
             className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
@@ -294,30 +260,7 @@ export function McpPresetCategoryPanel() {
       </header>
 
       {/* 反馈消息 */}
-      {message && (
-        <div className="flex items-center justify-between rounded-[10px] border border-emerald-300/30 bg-emerald-500/5 px-3 py-2">
-          <p className="text-xs text-emerald-600">{message}</p>
-          <button
-            type="button"
-            onClick={() => setMessage(null)}
-            className="ml-2 text-xs text-emerald-600/60 hover:text-emerald-600"
-          >
-            ×
-          </button>
-        </div>
-      )}
-      {error && (
-        <div className="flex items-center justify-between rounded-[10px] border border-destructive/30 bg-destructive/5 px-3 py-2">
-          <p className="text-xs text-destructive">{error}</p>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="ml-2 text-xs text-destructive/60 hover:text-destructive"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      <Notice notice={notice} onDismiss={clearNotice} />
 
       {/* 列表 */}
       {isLoading && presets.length === 0 ? (
@@ -328,7 +271,7 @@ export function McpPresetCategoryPanel() {
         <div className="flex flex-col items-center rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-foreground">当前项目还没有任何 MCP Preset</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            可点击「装载内置 Preset」装载常用模板，或点击下方按钮新建用户 Preset。
+            可从资源市场安装公共模板，或点击下方按钮新建用户 Preset。
           </p>
           <button
             type="button"
@@ -364,14 +307,14 @@ export function McpPresetCategoryPanel() {
           onCreate={async (input) => {
             if (!currentProjectId) return;
             setIsSaving(true);
-            setError(null);
+            clearNotice();
             try {
               const created = await createMcpPreset(currentProjectId, input);
-              setMessage(`已创建 Preset：${created.display_name}`);
+              showSuccess(`已创建 Preset：${created.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
-              setError(friendlyError(e, "创建 Preset 失败"));
+              showError(friendlyError(e, "创建 Preset 失败"));
             } finally {
               setIsSaving(false);
             }
@@ -379,14 +322,14 @@ export function McpPresetCategoryPanel() {
           onUpdate={async (presetId, patch) => {
             if (!currentProjectId) return;
             setIsSaving(true);
-            setError(null);
+            clearNotice();
             try {
               const updated = await updateMcpPreset(currentProjectId, presetId, patch);
-              setMessage(`已更新 Preset：${updated.display_name}`);
+              showSuccess(`已更新 Preset：${updated.display_name}`);
               setDetail({ kind: "closed" });
               await loadPresets(currentProjectId);
             } catch (e) {
-              setError(friendlyError(e, "更新 Preset 失败"));
+              showError(friendlyError(e, "更新 Preset 失败"));
             } finally {
               setIsSaving(false);
             }
@@ -483,35 +426,18 @@ function McpPresetCard({
 }) {
   const isBuiltin = preset.source === "builtin";
 
-  // 卡片挂载即触发 probe；失败/unsupported 状态下的 UI 由 ToolCapsules 自行区分
+  // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
+  // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
+  const probeResult = useMcpProbeStore((state) =>
+    state.getCached(preset.project_id, preset.transport),
+  );
+  const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
-  // 单调递增计数：手动 recheck 触发后 +1，驱动 effect 重跑
-  const [probeTrigger, setProbeTrigger] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const handleRecheck = useCallback(() => {
     setProbing(true);
-    setProbeResult(null);
-    void (async () => {
-      try {
-        const result = await probeMcpTransport(preset.project_id, preset.transport);
-        if (!cancelled) setProbeResult(result);
-      } catch (err) {
-        if (!cancelled) {
-          setProbeResult({
-            status: "error",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } finally {
-        if (!cancelled) setProbing(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [preset.project_id, preset.transport, probeTrigger]);
+    void refreshProbe(preset.project_id, preset.transport).finally(() => setProbing(false));
+  }, [refreshProbe, preset.project_id, preset.transport]);
 
   return (
     <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
@@ -522,7 +448,7 @@ function McpPresetCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <RoutePolicyBadge policy={preset.route_policy} />
-          <SourceBadge source={preset.source} />
+          <SourceBadge source={preset.source} installed={Boolean(preset.installed_source)} />
         </div>
       </header>
 
@@ -535,7 +461,7 @@ function McpPresetCard({
       <ToolCapsules
         probing={probing}
         result={probeResult}
-        onRecheck={() => setProbeTrigger((t) => t + 1)}
+        onRecheck={handleRecheck}
       />
 
       <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
@@ -724,22 +650,25 @@ function McpPresetDetailDialog({
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Probe 状态：使用当前表单里的 transport（所见即所测），
-  // 不依赖 preset id，因此新建模式也可以预先验证。
+  // 不依赖 preset id，因此新建模式也可以预先验证。共享 mcpProbeStore 缓存：
+  // 同一 transport 在卡片上点过"重新检测"，进入详情就能直接看到结果。
+  const cachedProbeResult = useMcpProbeStore((state) =>
+    currentProjectId ? state.getCached(currentProjectId, form.transport) : null,
+  );
+  const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+  // 本地覆盖：用户在 dialog 内点 Test Connection 后的最新结果。
+  // null 时回退到 cachedProbeResult（包括 transport 改动后的缓存命中）。
+  const [localProbeResult, setLocalProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+  const probeResult = localProbeResult ?? cachedProbeResult;
 
   const runProbe = async () => {
     if (!currentProjectId) return;
     setProbing(true);
-    setProbeResult(null);
+    setLocalProbeResult(null);
     try {
-      const result = await probeMcpTransport(currentProjectId, form.transport);
-      setProbeResult(result);
-    } catch (err) {
-      setProbeResult({
-        status: "error",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const result = await refreshProbe(currentProjectId, form.transport);
+      setLocalProbeResult(result);
     } finally {
       setProbing(false);
     }
@@ -1057,7 +986,14 @@ function ConfirmDeleteDialog({
 
 /* ─── Badges ─── */
 
-function SourceBadge({ source }: { source: "builtin" | "user" }) {
+function SourceBadge({ source, installed }: { source: "builtin" | "user"; installed: boolean }) {
+  if (installed) {
+    return (
+      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
   if (source === "builtin") {
     return (
       <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">

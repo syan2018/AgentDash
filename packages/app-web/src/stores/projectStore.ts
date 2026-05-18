@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type {
-  AgentEntity,
   ContextContainerDefinition,
   OpenProjectAgentSessionResult,
   ProjectAgentLink,
@@ -24,16 +23,13 @@ interface ProjectState {
   isLoading: boolean;
   error: string | null;
 
-  // Agent 实体 CRUD（新模型）
-  agents: AgentEntity[];
+  // Project Agent 管理
   agentLinksByProjectId: Record<string, ProjectAgentLink[]>;
-  fetchAgents: () => Promise<AgentEntity[]>;
-  createAgent: (payload: { name: string; agent_type: string; base_config?: Record<string, unknown> }) => Promise<AgentEntity | null>;
-  updateAgent: (id: string, payload: { name?: string; agent_type?: string; base_config?: Record<string, unknown> }) => Promise<AgentEntity | null>;
-  deleteAgent: (id: string) => Promise<boolean>;
   fetchProjectAgentLinks: (projectId: string) => Promise<ProjectAgentLink[]>;
   createProjectAgentLink: (projectId: string, payload: {
-    agent_id: string;
+    name: string;
+    agent_type: string;
+    base_config?: Record<string, unknown>;
     config_override?: Record<string, unknown>;
     default_lifecycle_key?: string;
     default_workflow_key?: string;
@@ -41,6 +37,9 @@ interface ProjectState {
     is_default_for_task?: boolean;
   }) => Promise<ProjectAgentLink | null>;
   updateProjectAgentLink: (projectId: string, agentId: string, payload: {
+    name?: string;
+    agent_type?: string;
+    base_config?: Record<string, unknown>;
     config_override?: Record<string, unknown>;
     default_lifecycle_key?: string;
     default_workflow_key?: string;
@@ -165,53 +164,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  // ─── Agent 实体 CRUD（新模型）───
-  agents: [],
+  // ─── Project Agent 管理 ───
   agentLinksByProjectId: {},
-
-  fetchAgents: async () => {
-    try {
-      const agents = await api.get<AgentEntity[]>('/agents');
-      set({ agents, error: null });
-      return agents;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return [];
-    }
-  },
-
-  createAgent: async (payload) => {
-    try {
-      const agent = await api.post<AgentEntity>('/agents', payload);
-      set((s) => ({ agents: [...s.agents, agent], error: null }));
-      return agent;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  updateAgent: async (id, payload) => {
-    try {
-      const agent = await api.put<AgentEntity>(`/agents/${id}`, payload);
-      set((s) => ({ agents: s.agents.map((a) => (a.id === id ? agent : a)), error: null }));
-      return agent;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  deleteAgent: async (id) => {
-    try {
-      await api.delete(`/agents/${id}`);
-      set((s) => ({ agents: s.agents.filter((a) => a.id !== id), error: null }));
-      return true;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return false;
-    }
-  },
 
   fetchProjectAgentLinks: async (projectId) => {
     try {

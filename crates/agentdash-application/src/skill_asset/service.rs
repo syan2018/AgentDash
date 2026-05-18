@@ -320,8 +320,7 @@ where
                 .await
             }
             DetectedImportSource::SkillsSh { normalized_url } => {
-                let files =
-                    fetch_skills_sh_skill_files(&client, &normalized_url).await?;
+                let files = fetch_skills_sh_skill_files(&client, &normalized_url).await?;
                 self.create_from_remote_files_typed(
                     input.project_id,
                     RemoteSourceType::SkillsSh,
@@ -527,10 +526,7 @@ fn parse_github_skill_source(raw: &str) -> Result<GithubSkillSource, SkillAssetA
         SkillAssetApplicationError::BadRequest("远端 Skill URL 必须是合法 URL".to_string())
     })?;
     if url.scheme() != "https"
-        || !matches!(
-            url.host_str(),
-            Some("github.com") | Some("www.github.com")
-        )
+        || !matches!(url.host_str(), Some("github.com") | Some("www.github.com"))
     {
         return Err(SkillAssetApplicationError::BadRequest(
             "GitHub URL 必须以 https://github.com/ 开头".to_string(),
@@ -844,9 +840,8 @@ struct ClawhubFileEntry {
 }
 
 fn parse_clawhub_slug(raw: &str) -> Result<String, SkillAssetApplicationError> {
-    let url = Url::parse(raw).map_err(|_| {
-        SkillAssetApplicationError::BadRequest("ClawHub URL 格式非法".to_string())
-    })?;
+    let url = Url::parse(raw)
+        .map_err(|_| SkillAssetApplicationError::BadRequest("ClawHub URL 格式非法".to_string()))?;
     let parts: Vec<&str> = url
         .path()
         .trim_matches('/')
@@ -880,9 +875,7 @@ async fn fetch_clawhub_skill_files(
         .map_err(|e| SkillAssetApplicationError::BadRequest(format!("ClawHub 请求失败: {e}")))?
         .error_for_status()
         .map_err(|e| {
-            SkillAssetApplicationError::BadRequest(format!(
-                "ClawHub skill 未找到: {slug} ({e})"
-            ))
+            SkillAssetApplicationError::BadRequest(format!("ClawHub skill 未找到: {slug} ({e})"))
         })?
         .json()
         .await
@@ -1010,9 +1003,7 @@ async fn fetch_skills_sh_skill_files(
 
     // Get default branch
     let default_branch = fetch_skills_sh_default_branch(client, &owner, &repo).await;
-    let raw_prefix = format!(
-        "https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}"
-    );
+    let raw_prefix = format!("https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}");
 
     // Try candidate paths for SKILL.md
     let candidate_dirs = [
@@ -1062,15 +1053,18 @@ async fn fetch_skills_sh_skill_files(
         normalized_url: raw_url.to_string(),
     };
     let mut entries = Vec::new();
-    if collect_github_directory_entries(client, &github_source, &default_branch, &skill_dir, &mut entries)
-        .await
-        .is_ok()
+    if collect_github_directory_entries(
+        client,
+        &github_source,
+        &default_branch,
+        &skill_dir,
+        &mut entries,
+    )
+    .await
+    .is_ok()
     {
         let mut total_size = files[0].content.len();
-        for entry in entries
-            .into_iter()
-            .filter(|e| e.entry_type == "file")
-        {
+        for entry in entries.into_iter().filter(|e| e.entry_type == "file") {
             let relative_path = relative_github_path(&skill_dir, &entry.path);
             if relative_path.is_empty() || relative_path == "SKILL.md" {
                 continue;
@@ -1126,17 +1120,17 @@ async fn fetch_raw_text_file(
             response.status()
         )));
     }
-    let bytes = response.bytes().await.map_err(|e| {
-        SkillAssetApplicationError::BadRequest(format!("读取响应失败: {e}"))
-    })?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("读取响应失败: {e}")))?;
     if bytes.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
         return Err(SkillAssetApplicationError::BadRequest(
             "文件过大".to_string(),
         ));
     }
-    String::from_utf8(bytes.to_vec()).map_err(|_| {
-        SkillAssetApplicationError::BadRequest("文件非 UTF-8 文本".to_string())
-    })
+    String::from_utf8(bytes.to_vec())
+        .map_err(|_| SkillAssetApplicationError::BadRequest("文件非 UTF-8 文本".to_string()))
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -1646,8 +1640,9 @@ mod tests {
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
         let created = service
-            .create_from_remote_files(
+            .create_from_remote_files_typed(
                 project_id,
+                RemoteSourceType::Github,
                 "https://github.com/acme/skills/tree/main/writer".to_string(),
                 vec![
                     skill_file("writer", "写作辅助"),

@@ -51,11 +51,7 @@ mod tests {
         workspace
     }
 
-    fn inline_container(
-        mount_id: &str,
-        path: &str,
-        content: &str,
-    ) -> ContextContainerDefinition {
+    fn inline_container(mount_id: &str, path: &str, content: &str) -> ContextContainerDefinition {
         ContextContainerDefinition {
             mount_id: mount_id.to_string(),
             display_name: mount_id.to_string(),
@@ -308,19 +304,13 @@ mod tests {
     fn build_task_vfs_merges_project_story_and_workspace_policy() {
         let service = RelayVfsService::new(empty_mount_registry());
         let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
-        project.config.context_containers = vec![inline_container(
-            "spec",
-            "backend/spec.md",
-            "# spec",
-        )];
+        project.config.context_containers =
+            vec![inline_container("spec", "backend/spec.md", "# spec")];
 
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
-        story.context.context_containers = vec![inline_container(
-            "brief",
-            "brief.md",
-            "story brief",
-        )];
+        story.context.context_containers =
+            vec![inline_container("brief", "brief.md", "story brief")];
 
         let mut ws = sample_workspace();
         ws.mount_capabilities = vec![MountCapability::Read, MountCapability::List];
@@ -360,11 +350,8 @@ mod tests {
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
         story.context.disabled_container_ids = vec!["km".into()];
-        story.context.context_containers = vec![inline_container(
-            "shared",
-            "spec.md",
-            "story override",
-        )];
+        story.context.context_containers =
+            vec![inline_container("shared", "spec.md", "story override")];
 
         let vfs = service
             .build_vfs(

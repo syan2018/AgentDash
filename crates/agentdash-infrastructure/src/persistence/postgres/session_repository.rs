@@ -310,38 +310,41 @@ impl PostgresSessionRepository {
             return Ok(());
         }
         let now = chrono::Utc::now().timestamp_millis();
-        for command_id in command_ids {
-            let (applied_at_ms, failed_at_ms, last_error) = match status {
-                RuntimeCommandStatus::Applied => (Some(now), None, None),
-                RuntimeCommandStatus::Failed => (None, Some(now), error.clone()),
-                RuntimeCommandStatus::Requested => (None, None, None),
-            };
-            let result = sqlx::query(
-                r#"
-                UPDATE session_runtime_commands
-                SET status = $1,
-                    updated_at_ms = $2,
-                    applied_at_ms = COALESCE($3, applied_at_ms),
-                    failed_at_ms = COALESCE($4, failed_at_ms),
-                    last_error = $5
-                WHERE id = $6
-                "#,
-            )
-            .bind(status.as_str())
-            .bind(now)
-            .bind(applied_at_ms)
-            .bind(failed_at_ms)
-            .bind(last_error)
-            .bind(command_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(sqlx_to_io)?;
-            if result.rows_affected() == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("runtime command {command_id} 不存在"),
-                ));
-            }
+        let (applied_at_ms, failed_at_ms, last_error) = match status {
+            RuntimeCommandStatus::Applied => (Some(now), None, None),
+            RuntimeCommandStatus::Failed => (None, Some(now), error),
+            RuntimeCommandStatus::Requested => (None, None, None),
+        };
+        let id_strings: Vec<String> = command_ids.iter().map(|id| id.to_string()).collect();
+        let result = sqlx::query(
+            r#"
+            UPDATE session_runtime_commands
+            SET status = $1,
+                updated_at_ms = $2,
+                applied_at_ms = COALESCE($3, applied_at_ms),
+                failed_at_ms = COALESCE($4, failed_at_ms),
+                last_error = $5
+            WHERE id = ANY($6)
+            "#,
+        )
+        .bind(status.as_str())
+        .bind(now)
+        .bind(applied_at_ms)
+        .bind(failed_at_ms)
+        .bind(last_error)
+        .bind(&id_strings)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        if (result.rows_affected() as usize) != command_ids.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "部分 runtime command 不存在: 命中 {} / 期望 {}",
+                    result.rows_affected(),
+                    command_ids.len()
+                ),
+            ));
         }
         Ok(())
     }

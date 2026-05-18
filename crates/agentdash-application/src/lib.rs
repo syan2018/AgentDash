@@ -17,6 +17,7 @@ pub mod runtime_bridge;
 pub mod runtime_gateway;
 pub mod scheduling;
 pub mod session;
+pub mod shared_library;
 pub mod skill;
 pub mod skill_asset;
 pub mod story;

@@ -15,6 +15,7 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
+use agentdash_domain::shared_library::LibraryAssetRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
@@ -44,6 +45,7 @@ pub struct RepositorySet {
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
+    pub shared_library_repo: Arc<dyn LibraryAssetRepository>,
     pub llm_provider_repo: Arc<dyn LlmProviderRepository>,
     pub mcp_preset_repo: Arc<dyn McpPresetRepository>,
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,

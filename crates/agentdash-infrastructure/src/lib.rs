@@ -17,6 +17,7 @@ pub use persistence::postgres::PostgresRuntimeHealthRepository;
 pub use persistence::postgres::PostgresSessionBindingRepository;
 pub use persistence::postgres::PostgresSessionRepository;
 pub use persistence::postgres::PostgresSettingsRepository;
+pub use persistence::postgres::PostgresSharedLibraryRepository;
 pub use persistence::postgres::PostgresSkillAssetRepository;
 pub use persistence::postgres::PostgresStateChangeRepository;
 pub use persistence::postgres::PostgresStoryRepository;

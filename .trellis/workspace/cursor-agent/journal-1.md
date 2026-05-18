@@ -665,3 +665,76 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Shared Library 公共配置资产化
+
+**Date**: 2026-05-18
+**Task**: Shared Library 公共配置资产化
+**Branch**: `codex/agent-config-assets`
+
+### Summary
+
+完成 Agent/MCP/Workflow/Skill 公共配置资产化基座：规划收束、Shared Library JSONB 资产表与 seed、项目资源 installed source、Marketplace 安装入口和验证修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1eb47f8` | (see git log) |
+| `a2e5491a` | (see git log) |
+| `49bfa120` | (see git log) |
+| `68afe188` | (see git log) |
+| `fc9ee5d6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 17: Shared Library 资产收束清理
+
+**Date**: 2026-05-18
+**Task**: Shared Library 资产收束清理
+**Branch**: `codex/shared-library-asset-cleanup`
+
+### Summary
+
+收束公共配置资产市场入口，清理旧 builtin/bootstrap 通道，补齐 Agent 安装来源与 Workflow 删除重装闭环。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b15d6134` | (see git log) |
+| `f62f2c73` | (see git log) |
+| `14e529d9` | (see git log) |
+| `f38945e9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
@@ -113,27 +113,31 @@ impl PostgresCanvasRepository {
     ) -> Result<BTreeMap<String, Vec<CanvasFile>>, DomainError> {
         let mut file_map = BTreeMap::<String, Vec<CanvasFile>>::new();
         for canvas_id in canvas_ids {
-            let rows = sqlx::query_as::<_, CanvasFileRow>(
-                r#"
-                SELECT path, content
-                FROM canvas_files
-                WHERE canvas_id = $1
-                ORDER BY path ASC
-                "#,
-            )
-            .bind(canvas_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-            file_map.insert(
-                canvas_id.clone(),
-                rows.into_iter()
-                    .map(|row| CanvasFile::new(row.path, row.content))
-                    .collect(),
-            );
+            file_map.insert(canvas_id.clone(), Vec::new());
+        }
+        if canvas_ids.is_empty() {
+            return Ok(file_map);
         }
 
+        let rows = sqlx::query_as::<_, CanvasFileWithOwnerRow>(
+            r#"
+            SELECT canvas_id, path, content
+            FROM canvas_files
+            WHERE canvas_id = ANY($1)
+            ORDER BY canvas_id ASC, path ASC
+            "#,
+        )
+        .bind(canvas_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        for row in rows {
+            file_map
+                .entry(row.canvas_id)
+                .or_default()
+                .push(CanvasFile::new(row.path, row.content));
+        }
         Ok(file_map)
     }
 
@@ -143,31 +147,35 @@ impl PostgresCanvasRepository {
     ) -> Result<BTreeMap<String, Vec<CanvasDataBinding>>, DomainError> {
         let mut binding_map = BTreeMap::<String, Vec<CanvasDataBinding>>::new();
         for canvas_id in canvas_ids {
-            let rows = sqlx::query_as::<_, CanvasBindingRow>(
-                r#"
-                SELECT alias, source_uri, content_type
-                FROM canvas_bindings
-                WHERE canvas_id = $1
-                ORDER BY alias ASC
-                "#,
-            )
-            .bind(canvas_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-            binding_map.insert(
-                canvas_id.clone(),
-                rows.into_iter()
-                    .map(|row| CanvasDataBinding {
-                        alias: row.alias,
-                        source_uri: row.source_uri,
-                        content_type: row.content_type,
-                    })
-                    .collect(),
-            );
+            binding_map.insert(canvas_id.clone(), Vec::new());
+        }
+        if canvas_ids.is_empty() {
+            return Ok(binding_map);
         }
 
+        let rows = sqlx::query_as::<_, CanvasBindingWithOwnerRow>(
+            r#"
+            SELECT canvas_id, alias, source_uri, content_type
+            FROM canvas_bindings
+            WHERE canvas_id = ANY($1)
+            ORDER BY canvas_id ASC, alias ASC
+            "#,
+        )
+        .bind(canvas_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        for row in rows {
+            binding_map
+                .entry(row.canvas_id)
+                .or_default()
+                .push(CanvasDataBinding {
+                    alias: row.alias,
+                    source_uri: row.source_uri,
+                    content_type: row.content_type,
+                });
+        }
         Ok(binding_map)
     }
 
@@ -182,15 +190,22 @@ impl PostgresCanvasRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        for file in &canvas.files {
-            sqlx::query("INSERT INTO canvas_files (canvas_id, path, content) VALUES ($1, $2, $3)")
-                .bind(canvas.id.to_string())
-                .bind(&file.path)
-                .bind(&file.content)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if canvas.files.is_empty() {
+            return Ok(());
         }
+        let canvas_id = canvas.id.to_string();
+        let mut builder: QueryBuilder<Postgres> =
+            QueryBuilder::new("INSERT INTO canvas_files (canvas_id, path, content) ");
+        builder.push_values(&canvas.files, |mut row, file| {
+            row.push_bind(&canvas_id)
+                .push_bind(&file.path)
+                .push_bind(&file.content);
+        });
+        builder
+            .build()
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         Ok(())
     }
@@ -206,18 +221,24 @@ impl PostgresCanvasRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        for binding in &canvas.bindings {
-            sqlx::query(
-                "INSERT INTO canvas_bindings (canvas_id, alias, source_uri, content_type) VALUES ($1, $2, $3, $4)",
-            )
-            .bind(canvas.id.to_string())
-            .bind(&binding.alias)
-            .bind(&binding.source_uri)
-            .bind(&binding.content_type)
+        if canvas.bindings.is_empty() {
+            return Ok(());
+        }
+        let canvas_id = canvas.id.to_string();
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO canvas_bindings (canvas_id, alias, source_uri, content_type) ",
+        );
+        builder.push_values(&canvas.bindings, |mut row, binding| {
+            row.push_bind(&canvas_id)
+                .push_bind(&binding.alias)
+                .push_bind(&binding.source_uri)
+                .push_bind(&binding.content_type);
+        });
+        builder
+            .build()
             .execute(&mut **tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        }
 
         Ok(())
     }
@@ -434,13 +455,15 @@ struct CanvasRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct CanvasFileRow {
+struct CanvasFileWithOwnerRow {
+    canvas_id: String,
     path: String,
     content: String,
 }
 
 #[derive(sqlx::FromRow)]
-struct CanvasBindingRow {
+struct CanvasBindingWithOwnerRow {
+    canvas_id: String,
     alias: String,
     source_uri: String,
     content_type: String,

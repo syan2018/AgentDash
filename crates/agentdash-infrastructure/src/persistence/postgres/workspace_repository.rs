@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
 use agentdash_domain::common::error::DomainError;
@@ -123,29 +123,43 @@ impl PostgresWorkspaceRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        for binding in bindings {
-            let detected_facts =
-                serde_json::to_string(&binding.detected_facts).map_err(|error| {
-                    DomainError::InvalidConfig(format!("序列化 workspace binding 失败: {error}"))
-                })?;
-            sqlx::query(
-                "INSERT INTO workspace_bindings (id, workspace_id, backend_id, root_ref, status, detected_facts, last_verified_at, priority, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            )
-            .bind(binding.id.to_string())
-            .bind(workspace_id.to_string())
-            .bind(binding.backend_id.trim())
-            .bind(binding.root_ref.trim())
-            .bind(binding_status_to_str(&binding.status))
-            .bind(detected_facts)
-            .bind(binding.last_verified_at.map(|value| value.to_rfc3339()))
-            .bind(binding.priority)
-            .bind(binding.created_at.to_rfc3339())
-            .bind(binding.updated_at.to_rfc3339())
+        if bindings.is_empty() {
+            return Ok(());
+        }
+        let workspace_id_str = workspace_id.to_string();
+        let prepared = bindings
+            .iter()
+            .map(|binding| {
+                let detected_facts = serde_json::to_string(&binding.detected_facts)
+                    .map_err(|error| {
+                        DomainError::InvalidConfig(format!(
+                            "序列化 workspace binding 失败: {error}"
+                        ))
+                    })?;
+                Ok::<_, DomainError>((binding, detected_facts))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO workspace_bindings (id, workspace_id, backend_id, root_ref, status, detected_facts, last_verified_at, priority, created_at, updated_at) ",
+        );
+        builder.push_values(prepared, |mut row, (binding, detected_facts)| {
+            row.push_bind(binding.id.to_string())
+                .push_bind(&workspace_id_str)
+                .push_bind(binding.backend_id.trim().to_string())
+                .push_bind(binding.root_ref.trim().to_string())
+                .push_bind(binding_status_to_str(&binding.status))
+                .push_bind(detected_facts)
+                .push_bind(binding.last_verified_at.map(|value| value.to_rfc3339()))
+                .push_bind(binding.priority)
+                .push_bind(binding.created_at.to_rfc3339())
+                .push_bind(binding.updated_at.to_rfc3339());
+        });
+        builder
+            .build()
             .execute(&mut **tx)
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        }
 
         Ok(())
     }
@@ -238,12 +252,38 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let mut workspaces = Vec::with_capacity(rows.len());
-        for row in rows {
-            let mut workspace = workspace_from_row(&row)?;
-            workspace.bindings = self.load_bindings(workspace.id).await?;
+        let mut workspaces = rows
+            .iter()
+            .map(workspace_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        if workspaces.is_empty() {
+            return Ok(workspaces);
+        }
+
+        let workspace_ids: Vec<String> =
+            workspaces.iter().map(|w| w.id.to_string()).collect();
+        let binding_rows = sqlx::query(
+            "SELECT id, workspace_id, backend_id, root_ref, status, detected_facts, last_verified_at, priority, created_at, updated_at
+             FROM workspace_bindings WHERE workspace_id = ANY($1) ORDER BY priority DESC, created_at ASC",
+        )
+        .bind(&workspace_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        let mut bindings_by_workspace: std::collections::HashMap<Uuid, Vec<WorkspaceBinding>> =
+            std::collections::HashMap::with_capacity(workspaces.len());
+        for row in binding_rows {
+            let binding = workspace_binding_from_row(&row)?;
+            bindings_by_workspace
+                .entry(binding.workspace_id)
+                .or_default()
+                .push(binding);
+        }
+
+        for workspace in workspaces.iter_mut() {
+            workspace.bindings = bindings_by_workspace.remove(&workspace.id).unwrap_or_default();
             workspace.refresh_default_binding();
-            workspaces.push(workspace);
         }
         Ok(workspaces)
     }

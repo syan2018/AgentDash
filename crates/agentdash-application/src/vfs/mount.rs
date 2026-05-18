@@ -4,9 +4,7 @@ use super::lifecycle_catalog::lifecycle_directory_hint;
 use super::path::{normalize_mount_relative_path, validate_vfs};
 use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
-use agentdash_domain::context_container::{
-    ContextContainerDefinition, ContextContainerProvider,
-};
+use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
     agent::ProjectAgentLink,
@@ -279,9 +277,7 @@ fn effective_context_containers_with_origin(
         }
 
         for container in &story.context.context_containers {
-            owned.retain(|(item, _)| {
-                item.mount_id.trim() != container.mount_id.trim()
-            });
+            owned.retain(|(item, _)| item.mount_id.trim() != container.mount_id.trim());
             owned.push((container.clone(), ContextContainerOwnerScope::Story));
         }
     }

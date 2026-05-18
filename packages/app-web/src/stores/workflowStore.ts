@@ -9,12 +9,10 @@ import type {
   WorkflowDefinition,
   WorkflowRun,
   WorkflowTargetKind,
-  WorkflowTemplate,
   WorkflowValidationResult,
 } from "../types";
 import {
   activateWorkflowStep,
-  bootstrapWorkflowTemplate,
   completeWorkflowStep,
   createLifecycleDefinition,
   createWorkflowDefinition,
@@ -24,7 +22,6 @@ import {
   fetchWorkflowDefinitions,
   fetchWorkflowRunsBySession,
   fetchHookPresets,
-  fetchWorkflowTemplates,
   getLifecycleDefinition,
   startWorkflowRun,
   updateLifecycleDefinition,
@@ -210,7 +207,6 @@ function upsertRun(
 // ─── Store ───────────────────────────────────────────────
 
 interface WorkflowState {
-  templates: WorkflowTemplate[];
   definitions: WorkflowDefinition[];
   lifecycleDefinitions: LifecycleDefinition[];
   runsBySessionId: Record<string, WorkflowRun[]>;
@@ -222,10 +218,8 @@ interface WorkflowState {
   lifecycleEditor: LifecycleEditorState;
 
   fetchHookPresets: () => Promise<HookRulePreset[]>;
-  fetchTemplates: () => Promise<WorkflowTemplate[]>;
   fetchDefinitions: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<WorkflowDefinition[]>;
   fetchLifecycles: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<LifecycleDefinition[]>;
-  bootstrapTemplate: (builtinKey: string, projectId: string) => Promise<LifecycleDefinition | null>;
   fetchRunsBySession: (sessionId: string) => Promise<WorkflowRun[]>;
   startRun: (input: {
     lifecycle_id?: string;
@@ -259,7 +253,6 @@ interface WorkflowState {
 }
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
-  templates: [],
   definitions: [],
   lifecycleDefinitions: [],
   runsBySessionId: {},
@@ -276,17 +269,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const presets = await fetchHookPresets();
       set({ hookPresets: presets });
       return presets;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return [];
-    }
-  },
-
-  fetchTemplates: async () => {
-    try {
-      const templates = await fetchWorkflowTemplates();
-      set({ templates });
-      return templates;
     } catch (error) {
       set({ error: (error as Error).message });
       return [];
@@ -324,22 +306,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
       return [];
-    }
-  },
-
-  bootstrapTemplate: async (builtinKey, projectId) => {
-    set({ error: null });
-    try {
-      const lifecycle = await bootstrapWorkflowTemplate(builtinKey, projectId);
-      const [definitions, lifecycleDefinitions] = await Promise.all([
-        fetchWorkflowDefinitions({ projectId }),
-        fetchLifecycleDefinitions({ projectId }),
-      ]);
-      set({ definitions, lifecycleDefinitions });
-      return lifecycle;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
     }
   },
 

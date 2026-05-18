@@ -7,6 +7,8 @@ use agentdash_domain::mcp_preset::{
     McpPreset, McpPresetSource, McpRoutePolicy, McpTransportConfig,
 };
 
+use super::InstalledAssetSourceResponse;
+
 /// MCP Preset HTTP 响应 DTO。
 ///
 /// - `source` 序列化为字符串 `"builtin" | "user"`（前端友好）
@@ -26,6 +28,8 @@ pub struct McpPresetResponse {
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSourceResponse>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -47,6 +51,7 @@ impl From<McpPreset> for McpPresetResponse {
             route_policy: preset.route_policy,
             source,
             builtin_key,
+            installed_source: preset.installed_source.map(Into::into),
             created_at: preset.created_at,
             updated_at: preset.updated_at,
         }
@@ -97,16 +102,6 @@ pub struct CloneMcpPresetRequest {
     pub key: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
-}
-
-/// 装载 builtin Preset 的请求体。
-///
-/// - `builtin_key == None` → 装载全部内置模板（幂等）
-/// - `builtin_key == Some(key)` → 仅装载指定 key 对应模板
-#[derive(Debug, Deserialize, Default)]
-pub struct BootstrapMcpPresetRequest {
-    #[serde(default)]
-    pub builtin_key: Option<String>,
 }
 
 /// 列表查询参数——可按来源筛选。
@@ -219,18 +214,5 @@ mod tests {
         assert!(parsed.description.is_none());
         assert!(parsed.transport.is_none());
         assert!(parsed.route_policy.is_none());
-    }
-
-    #[test]
-    fn bootstrap_request_without_key_parses() {
-        let parsed: BootstrapMcpPresetRequest = serde_json::from_str("{}").expect("parse");
-        assert!(parsed.builtin_key.is_none());
-    }
-
-    #[test]
-    fn bootstrap_request_with_key_parses() {
-        let parsed: BootstrapMcpPresetRequest =
-            serde_json::from_str(r#"{"builtin_key":"fetch"}"#).expect("parse");
-        assert_eq!(parsed.builtin_key.as_deref(), Some("fetch"));
     }
 }

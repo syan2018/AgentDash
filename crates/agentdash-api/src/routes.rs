@@ -1,5 +1,4 @@
 pub mod acp_sessions;
-pub mod agents;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
@@ -17,6 +16,7 @@ pub mod project_sessions;
 pub mod projects;
 pub mod routines;
 pub mod settings;
+pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_sessions;
@@ -85,17 +85,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{id}/grants/groups/{group_id}",
             put(projects::grant_project_group).delete(projects::revoke_project_group),
-        )
-        // Agent CRUD（顶层实体）
-        .route(
-            "/agents",
-            get(agents::list_agents).post(agents::create_agent),
-        )
-        .route(
-            "/agents/{id}",
-            get(agents::get_agent)
-                .put(agents::update_agent)
-                .delete(agents::delete_agent),
         )
         // LLM Provider CRUD
         .route(
@@ -186,10 +175,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(mcp_presets::list_mcp_presets).post(mcp_presets::create_mcp_preset),
         )
         .route(
-            "/projects/{project_id}/mcp-presets/bootstrap",
-            post(mcp_presets::bootstrap_mcp_presets),
-        )
-        .route(
             "/projects/{project_id}/mcp-presets/probe",
             post(mcp_presets::probe_mcp_transport_handler),
         )
@@ -217,18 +202,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(skill_assets::import_remote_skill_asset),
         )
         .route(
-            "/projects/{project_id}/skill-assets/bootstrap",
-            post(skill_assets::bootstrap_skill_assets),
-        )
-        .route(
             "/projects/{project_id}/skill-assets/{id}",
             get(skill_assets::get_skill_asset)
                 .patch(skill_assets::update_skill_asset)
                 .delete(skill_assets::delete_skill_asset),
-        )
-        .route(
-            "/projects/{project_id}/skill-assets/{id}/reset-from-builtin",
-            post(skill_assets::reset_skill_asset_from_builtin),
         )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
@@ -374,14 +351,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/hook-presets/custom/{key}",
             delete(workflows::delete_hook_preset),
         )
-        .route(
-            "/workflow-templates",
-            get(workflows::list_workflow_templates),
-        )
-        .route(
-            "/workflow-templates/{builtin_key}/bootstrap",
-            post(workflows::bootstrap_workflow_template),
-        )
         .route("/lifecycle-runs", post(workflows::start_lifecycle_run))
         .route("/lifecycle-runs/{id}", get(workflows::get_lifecycle_run))
         .route(
@@ -428,6 +397,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(settings::list_settings).put(settings::update_settings),
         )
         .route("/settings/{key}", delete(settings::delete_setting))
+        // Shared Library（公共资源库，Marketplace 的后端资产入口）
+        .route(
+            "/shared-library/assets",
+            get(shared_library::list_library_assets),
+        )
+        .route(
+            "/shared-library/assets/seed-builtin",
+            post(shared_library::seed_builtin_library_assets),
+        )
+        .route(
+            "/shared-library/assets/{id}",
+            get(shared_library::get_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/install",
+            post(shared_library::install_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/source-status",
+            get(shared_library::get_project_asset_source_status),
+        )
         // ACP Sessions — CRUD
         .route(
             "/sessions",

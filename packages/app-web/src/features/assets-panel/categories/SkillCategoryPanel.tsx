@@ -23,7 +23,6 @@ import {
   fetchProjectSkillAssets,
   normalizeSkillExtraPath,
   parseSkillMarkdown,
-  resetSkillAssetFromBuiltin,
   updateSkillMarkdownFrontmatter,
   updateSkillAsset,
   validateSkillAssetDraft,
@@ -31,6 +30,7 @@ import {
 } from "../../../services/skillAsset";
 import type { SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
+import { Notice, type NoticeData } from "../_shared/Notice";
 
 // ─── Detail mode ─────────────────────────────────────────
 
@@ -61,33 +61,29 @@ export function SkillCategoryPanel() {
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
+  const showError = useCallback((msg: string) => setNotice({ tone: "danger", message: msg }), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
 
   // ── Data loading ────────────────────────────────────
 
   const loadSkills = useCallback(async () => {
     if (!currentProjectId) return;
     setIsLoading(true);
-    setError(null);
+    clearNotice();
     try {
       setSkills(await fetchProjectSkillAssets(currentProjectId));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "加载 Skill 资产失败");
+      showError(e instanceof Error ? e.message : "加载 Skill 资产失败");
     } finally {
       setIsLoading(false);
     }
-  }, [currentProjectId]);
+  }, [currentProjectId, clearNotice, showError]);
 
   useEffect(() => {
     void loadSkills();
   }, [loadSkills]);
-
-  useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(null), 4000);
-    return () => clearTimeout(timer);
-  }, [message]);
 
   // ── Stats ───────────────────────────────────────────
 
@@ -104,15 +100,15 @@ export function SkillCategoryPanel() {
 
   const openManualCreate = useCallback(() => {
     setDraft(createEmptySkillAssetDraft());
-    setError(null);
+    clearNotice();
     setDetail({ kind: "create" });
-  }, []);
+  }, [clearNotice]);
 
   const openEdit = useCallback((skill: SkillAssetDto) => {
     setDraft(cloneDraft(draftFromSkillAsset(skill)));
-    setError(null);
+    clearNotice();
     setDetail({ kind: "edit", assetId: skill.id, originalKey: skill.key });
-  }, []);
+  }, [clearNotice]);
 
   const handleSaveDraft = useCallback(async () => {
     if (!currentProjectId || detail.kind === "closed") return;
@@ -134,12 +130,12 @@ export function SkillCategoryPanel() {
         : skills.map((s) => s.key);
     const validation = validateSkillAssetDraft(normalizedDraft, existingKeys);
     if (!validation.ok) {
-      setError(validation.message ?? "Skill 表单校验失败");
+      showError(validation.message ?? "Skill 表单校验失败");
       return;
     }
 
     setIsSaving(true);
-    setError(null);
+    clearNotice();
     try {
       const files = dtoFilesFromDraft(normalizedDraft);
       if (detail.kind === "create") {
@@ -159,60 +155,42 @@ export function SkillCategoryPanel() {
           files,
         });
       }
-      setMessage(`已保存 Skill：${normalizedDraft.key}`);
+      showSuccess(`已保存 Skill：${normalizedDraft.key}`);
       setDetail({ kind: "closed" });
       await loadSkills();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "保存 Skill 资产失败");
+      showError(e instanceof Error ? e.message : "保存 Skill 资产失败");
     } finally {
       setIsSaving(false);
     }
-  }, [currentProjectId, detail, draft, loadSkills, skills]);
+  }, [currentProjectId, detail, draft, loadSkills, skills, clearNotice, showSuccess, showError]);
 
   const handleDelete = useCallback(async () => {
     if (!currentProjectId || !confirmDelete) return;
     setBusyId(confirmDelete.id);
-    setError(null);
+    clearNotice();
     try {
       await deleteSkillAsset(currentProjectId, confirmDelete.id);
-      setMessage(`已删除 Skill：${confirmDelete.key}`);
+      showSuccess(`已删除 Skill：${confirmDelete.key}`);
       if (detail.kind === "edit" && detail.assetId === confirmDelete.id) {
         setDetail({ kind: "closed" });
       }
       setConfirmDelete(null);
       await loadSkills();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除 Skill 资产失败");
+      showError(e instanceof Error ? e.message : "删除 Skill 资产失败");
     } finally {
       setBusyId(null);
     }
-  }, [confirmDelete, currentProjectId, detail, loadSkills]);
-
-  const handleReset = useCallback(
-    async (skill: SkillAssetDto) => {
-      if (!currentProjectId) return;
-      setBusyId(skill.id);
-      setError(null);
-      try {
-        await resetSkillAssetFromBuiltin(currentProjectId, skill.id);
-        setMessage(`已恢复内嵌 Skill：${skill.key}`);
-        await loadSkills();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "恢复内嵌 Skill 失败");
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [currentProjectId, loadSkills],
-  );
+  }, [confirmDelete, currentProjectId, detail, loadSkills, clearNotice, showSuccess, showError]);
 
   const handleCreateDialogCreated = useCallback(
     (msg: string) => {
-      setMessage(msg);
+      showSuccess(msg);
       setShowCreateDialog(false);
       void loadSkills();
     },
-    [loadSkills],
+    [loadSkills, showSuccess],
   );
 
   // ── Guard ───────────────────────────────────────────
@@ -263,8 +241,7 @@ export function SkillCategoryPanel() {
       </header>
 
       {/* ── Notices ── */}
-      {message && <Notice tone="success" message={message} onClose={() => setMessage(null)} />}
-      {error && <Notice tone="danger" message={error} onClose={() => setError(null)} />}
+      <Notice notice={notice} onDismiss={clearNotice} />
 
       {/* ── Grid ── */}
       {isLoading ? (
@@ -277,7 +254,6 @@ export function SkillCategoryPanel() {
           busyId={busyId}
           onEdit={openEdit}
           onDelete={setConfirmDelete}
-          onReset={(skill) => void handleReset(skill)}
         />
       )}
 
@@ -322,31 +298,6 @@ export function SkillCategoryPanel() {
 
 export default SkillCategoryPanel;
 
-// ─── Notice ──────────────────────────────────────────────
-
-function Notice({
-  tone,
-  message,
-  onClose,
-}: {
-  tone: "success" | "danger";
-  message: string;
-  onClose: () => void;
-}) {
-  const cls =
-    tone === "success"
-      ? "border-emerald-300/30 bg-emerald-500/5 text-emerald-600"
-      : "border-destructive/30 bg-destructive/5 text-destructive";
-  return (
-    <div className={`flex items-center justify-between rounded-[8px] border px-3 py-2 ${cls}`}>
-      <p className="text-xs">{message}</p>
-      <button type="button" onClick={onClose} className="ml-2 text-xs opacity-70 hover:opacity-100">
-        x
-      </button>
-    </div>
-  );
-}
-
 // ─── Origin Badge ────────────────────────────────────────
 
 const ORIGIN_STYLE: Record<
@@ -386,6 +337,14 @@ const ORIGIN_STYLE: Record<
 };
 
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {
+  if (skill.installed_source) {
+    return (
+      <span className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
+
   const style = ORIGIN_STYLE[skill.source] ?? ORIGIN_STYLE.user;
   const remoteUrl = skill.remote_source?.url;
 
@@ -418,20 +377,18 @@ function SkillGrid({
   busyId,
   onEdit,
   onDelete,
-  onReset,
 }: {
   skills: SkillAssetDto[];
   busyId: string | null;
   onEdit: (skill: SkillAssetDto) => void;
   onDelete: (skill: SkillAssetDto) => void;
-  onReset: (skill: SkillAssetDto) => void;
 }) {
   if (skills.length === 0) {
     return (
       <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-14 text-center">
         <p className="text-sm text-foreground">暂无 Skill 资产</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          点击上方"新建 Skill"添加手动创建、远端导入或工作区内嵌 Skill
+          点击上方"新建 Skill"添加手动创建、远端导入或本地上传 Skill
         </p>
       </div>
     );
@@ -484,16 +441,6 @@ function SkillGrid({
 
           {/* Card footer: actions */}
           <footer className="mt-3 flex items-center justify-end gap-1 border-t border-border/70 pt-2.5">
-            {skill.source === "builtin_seed" && (
-              <button
-                type="button"
-                onClick={() => onReset(skill)}
-                disabled={busyId === skill.id}
-                className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-              >
-                Reset
-              </button>
-            )}
             <button
               type="button"
               onClick={() => onEdit(skill)}

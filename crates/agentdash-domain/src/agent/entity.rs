@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::common::{AgentPresetConfig, error::DomainError};
+use crate::shared_library::InstalledAssetSource;
 
 /// Agent — 独立的 Agent 实体
 ///
@@ -52,6 +53,9 @@ pub struct ProjectAgentLink {
     /// per-project 配置覆写（与 Agent.base_config 合并）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_override: Option<serde_json::Value>,
+    /// Marketplace / Shared Library 安装来源；手工创建的 Project Agent 为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     /// 此 Agent 在此 Project 下的默认 lifecycle key
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_lifecycle_key: Option<String>,
@@ -81,6 +85,7 @@ impl ProjectAgentLink {
             project_id,
             agent_id,
             config_override: None,
+            installed_source: None,
             default_lifecycle_key: None,
             is_default_for_story: false,
             is_default_for_task: false,

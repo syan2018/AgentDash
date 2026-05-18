@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use agentdash_domain::common::error::DomainError;
@@ -183,30 +183,26 @@ impl InlineFileRepository for PostgresInlineFileRepository {
         }
 
         let now = chrono::Utc::now().to_rfc3339();
-
-        // 逐条 UPSERT — 对 SQLx 兼容性最好
-        for file in files {
-            sqlx::query(
-                r#"
-                INSERT INTO inline_fs_files (id, owner_kind, owner_id, container_id, path, content, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (owner_kind, owner_id, container_id, path)
-                DO UPDATE SET content = EXCLUDED.content, updated_at = EXCLUDED.updated_at
-                "#,
-            )
-            .bind(file.id.to_string())
-            .bind(file.owner_kind.as_str())
-            .bind(file.owner_id.to_string())
-            .bind(&file.container_id)
-            .bind(&file.path)
-            .bind(&file.content)
-            .bind(&now)
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO inline_fs_files (id, owner_kind, owner_id, container_id, path, content, updated_at) ",
+        );
+        builder.push_values(files, |mut row, file| {
+            row.push_bind(file.id.to_string())
+                .push_bind(file.owner_kind.as_str())
+                .push_bind(file.owner_id.to_string())
+                .push_bind(&file.container_id)
+                .push_bind(&file.path)
+                .push_bind(&file.content)
+                .push_bind(&now);
+        });
+        builder.push(
+            " ON CONFLICT (owner_kind, owner_id, container_id, path) DO UPDATE SET content = EXCLUDED.content, updated_at = EXCLUDED.updated_at",
+        );
+        builder
+            .build()
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                DomainError::InvalidConfig(format!("批量写入 inline_fs_files 失败: {e}"))
-            })?;
-        }
+            .map_err(|e| DomainError::InvalidConfig(format!("批量写入 inline_fs_files 失败: {e}")))?;
 
         Ok(())
     }

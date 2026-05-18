@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
 use agentdash_domain::backend::{
@@ -225,51 +225,59 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
     }
 
     async fn upsert_many(&self, items: &[BackendWorkspaceInventory]) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
-        for item in items {
-            let identity_payload = serialize_json(
-                &item.identity_payload,
-                "backend_workspace_inventory.identity_payload",
-            )?;
-            let detected_facts = serialize_json(
-                &item.detected_facts,
-                "backend_workspace_inventory.detected_facts",
-            )?;
-            sqlx::query(
-                "INSERT INTO backend_workspace_inventory
-                 (id, backend_id, root_ref, identity_kind, identity_payload, detected_facts, status, source, last_seen_at, last_error, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                 ON CONFLICT (backend_id, root_ref) DO UPDATE SET
-                    identity_kind = EXCLUDED.identity_kind,
-                    identity_payload = EXCLUDED.identity_payload,
-                    detected_facts = EXCLUDED.detected_facts,
-                    status = EXCLUDED.status,
-                    source = EXCLUDED.source,
-                    last_seen_at = EXCLUDED.last_seen_at,
-                    last_error = EXCLUDED.last_error,
-                    updated_at = EXCLUDED.updated_at",
-            )
-            .bind(item.id.to_string())
-            .bind(item.backend_id.trim())
-            .bind(item.root_ref.trim())
-            .bind(identity_kind_to_str(&item.identity_kind))
-            .bind(identity_payload)
-            .bind(detected_facts)
-            .bind(inventory_status_to_str(item.status))
-            .bind(inventory_source_to_str(item.source))
-            .bind(item.last_seen_at.to_rfc3339())
-            .bind(item.last_error.as_deref())
-            .bind(item.created_at.to_rfc3339())
-            .bind(item.updated_at.to_rfc3339())
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        if items.is_empty() {
+            return Ok(());
         }
-        tx.commit()
+        let prepared = items
+            .iter()
+            .map(|item| {
+                let identity_payload = serialize_json(
+                    &item.identity_payload,
+                    "backend_workspace_inventory.identity_payload",
+                )?;
+                let detected_facts = serialize_json(
+                    &item.detected_facts,
+                    "backend_workspace_inventory.detected_facts",
+                )?;
+                Ok::<_, DomainError>((item, identity_payload, detected_facts))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO backend_workspace_inventory \
+             (id, backend_id, root_ref, identity_kind, identity_payload, detected_facts, status, source, last_seen_at, last_error, created_at, updated_at) ",
+        );
+        builder.push_values(
+            prepared,
+            |mut row, (item, identity_payload, detected_facts)| {
+                row.push_bind(item.id.to_string())
+                    .push_bind(item.backend_id.trim().to_string())
+                    .push_bind(item.root_ref.trim().to_string())
+                    .push_bind(identity_kind_to_str(&item.identity_kind))
+                    .push_bind(identity_payload)
+                    .push_bind(detected_facts)
+                    .push_bind(inventory_status_to_str(item.status))
+                    .push_bind(inventory_source_to_str(item.source))
+                    .push_bind(item.last_seen_at.to_rfc3339())
+                    .push_bind(item.last_error.clone())
+                    .push_bind(item.created_at.to_rfc3339())
+                    .push_bind(item.updated_at.to_rfc3339());
+            },
+        );
+        builder.push(
+            " ON CONFLICT (backend_id, root_ref) DO UPDATE SET \
+                identity_kind = EXCLUDED.identity_kind, \
+                identity_payload = EXCLUDED.identity_payload, \
+                detected_facts = EXCLUDED.detected_facts, \
+                status = EXCLUDED.status, \
+                source = EXCLUDED.source, \
+                last_seen_at = EXCLUDED.last_seen_at, \
+                last_error = EXCLUDED.last_error, \
+                updated_at = EXCLUDED.updated_at",
+        );
+        builder
+            .build()
+            .execute(&self.pool)
             .await
             .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
         Ok(())

@@ -1,7 +1,7 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User, UserDirectoryRepository};
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 pub struct PostgresUserDirectoryRepository {
     pool: PgPool,
@@ -213,23 +213,25 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        for group in groups {
-            sqlx::query(
-                r#"
-                INSERT INTO groups (group_id, display_name, created_at, updated_at)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT(group_id) DO UPDATE SET
-                    display_name = excluded.display_name,
-                    updated_at = excluded.updated_at
-                "#,
-            )
-            .bind(&group.group_id)
-            .bind(&group.display_name)
-            .bind(group.created_at.to_rfc3339())
-            .bind(Utc::now().to_rfc3339())
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let now = Utc::now().to_rfc3339();
+        if !groups.is_empty() {
+            let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+                "INSERT INTO groups (group_id, display_name, created_at, updated_at) ",
+            );
+            builder.push_values(groups, |mut row, group| {
+                row.push_bind(&group.group_id)
+                    .push_bind(&group.display_name)
+                    .push_bind(group.created_at.to_rfc3339())
+                    .push_bind(&now);
+            });
+            builder.push(
+                " ON CONFLICT(group_id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at",
+            );
+            builder
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         }
 
         sqlx::query("DELETE FROM group_memberships WHERE user_id = $1")
@@ -238,21 +240,21 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
             .await
             .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
-        let now = Utc::now().to_rfc3339();
-        for group in groups {
-            sqlx::query(
-                r#"
-                INSERT INTO group_memberships (user_id, group_id, created_at, updated_at)
-                VALUES ($1, $2, $3, $4)
-                "#,
-            )
-            .bind(user_id)
-            .bind(&group.group_id)
-            .bind(&now)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        if !groups.is_empty() {
+            let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+                "INSERT INTO group_memberships (user_id, group_id, created_at, updated_at) ",
+            );
+            builder.push_values(groups, |mut row, group| {
+                row.push_bind(user_id)
+                    .push_bind(&group.group_id)
+                    .push_bind(&now)
+                    .push_bind(&now);
+            });
+            builder
+                .build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
         }
 
         tx.commit()

@@ -23,12 +23,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
+import { useMcpProbeStore } from "../../../stores/mcpProbeStore";
 import {
   cloneMcpPreset,
   createMcpPreset,
   deleteMcpPreset,
   fetchProjectMcpPresets,
-  probeMcpTransport,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
 import type {
@@ -426,35 +426,18 @@ function McpPresetCard({
 }) {
   const isBuiltin = preset.source === "builtin";
 
-  // 卡片挂载即触发 probe；失败/unsupported 状态下的 UI 由 ToolCapsules 自行区分
+  // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
+  // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
+  const probeResult = useMcpProbeStore((state) =>
+    state.getCached(preset.project_id, preset.transport),
+  );
+  const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
-  // 单调递增计数：手动 recheck 触发后 +1，驱动 effect 重跑
-  const [probeTrigger, setProbeTrigger] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const handleRecheck = useCallback(() => {
     setProbing(true);
-    setProbeResult(null);
-    void (async () => {
-      try {
-        const result = await probeMcpTransport(preset.project_id, preset.transport);
-        if (!cancelled) setProbeResult(result);
-      } catch (err) {
-        if (!cancelled) {
-          setProbeResult({
-            status: "error",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } finally {
-        if (!cancelled) setProbing(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [preset.project_id, preset.transport, probeTrigger]);
+    void refreshProbe(preset.project_id, preset.transport).finally(() => setProbing(false));
+  }, [refreshProbe, preset.project_id, preset.transport]);
 
   return (
     <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
@@ -478,7 +461,7 @@ function McpPresetCard({
       <ToolCapsules
         probing={probing}
         result={probeResult}
-        onRecheck={() => setProbeTrigger((t) => t + 1)}
+        onRecheck={handleRecheck}
       />
 
       <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
@@ -667,22 +650,25 @@ function McpPresetDetailDialog({
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Probe 状态：使用当前表单里的 transport（所见即所测），
-  // 不依赖 preset id，因此新建模式也可以预先验证。
+  // 不依赖 preset id，因此新建模式也可以预先验证。共享 mcpProbeStore 缓存：
+  // 同一 transport 在卡片上点过"重新检测"，进入详情就能直接看到结果。
+  const cachedProbeResult = useMcpProbeStore((state) =>
+    currentProjectId ? state.getCached(currentProjectId, form.transport) : null,
+  );
+  const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+  // 本地覆盖：用户在 dialog 内点 Test Connection 后的最新结果。
+  // null 时回退到 cachedProbeResult（包括 transport 改动后的缓存命中）。
+  const [localProbeResult, setLocalProbeResult] = useState<ProbeMcpPresetResponse | null>(null);
+  const probeResult = localProbeResult ?? cachedProbeResult;
 
   const runProbe = async () => {
     if (!currentProjectId) return;
     setProbing(true);
-    setProbeResult(null);
+    setLocalProbeResult(null);
     try {
-      const result = await probeMcpTransport(currentProjectId, form.transport);
-      setProbeResult(result);
-    } catch (err) {
-      setProbeResult({
-        status: "error",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const result = await refreshProbe(currentProjectId, form.transport);
+      setLocalProbeResult(result);
     } finally {
       setProbing(false);
     }

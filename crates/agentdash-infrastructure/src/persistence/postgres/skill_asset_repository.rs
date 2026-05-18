@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use agentdash_domain::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
@@ -164,10 +164,11 @@ impl SkillAssetRepository for PostgresSkillAssetRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
-        let mut assets = Vec::with_capacity(rows.len());
-        for row in rows {
-            assets.push(hydrate_asset(&self.pool, row).await?);
-        }
+        let mut assets = rows
+            .into_iter()
+            .map(SkillAssetRow::try_into_asset)
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        attach_files_to_assets(&self.pool, &mut assets).await?;
         Ok(assets)
     }
 
@@ -262,21 +263,26 @@ async fn replace_files(
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
-    for file in &asset.files {
-        sqlx::query(&format!(
-            "INSERT INTO skill_asset_files ({FILE_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7)"
-        ))
-        .bind(file.id.to_string())
-        .bind(asset.id.to_string())
-        .bind(&file.path)
-        .bind(&file.content)
-        .bind(file.kind.tag())
-        .bind(file.created_at.to_rfc3339())
-        .bind(file.updated_at.to_rfc3339())
+    if asset.files.is_empty() {
+        return Ok(());
+    }
+    let asset_id = asset.id.to_string();
+    let mut builder: QueryBuilder<Postgres> =
+        QueryBuilder::new(format!("INSERT INTO skill_asset_files ({FILE_COLS}) "));
+    builder.push_values(&asset.files, |mut row, file| {
+        row.push_bind(file.id.to_string())
+            .push_bind(&asset_id)
+            .push_bind(&file.path)
+            .push_bind(&file.content)
+            .push_bind(file.kind.tag())
+            .push_bind(file.created_at.to_rfc3339())
+            .push_bind(file.updated_at.to_rfc3339());
+    });
+    builder
+        .build()
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
-    }
     Ok(())
 }
 
@@ -294,6 +300,38 @@ async fn hydrate_asset(pool: &PgPool, row: SkillAssetRow) -> Result<SkillAsset, 
     .collect::<Result<Vec<_>, DomainError>>()?;
     asset.files = files;
     Ok(asset)
+}
+
+/// 为一组已加载的 SkillAsset 批量挂载 files —— 用单次 `ANY($1)` 查询替代 N+1。
+async fn attach_files_to_assets(
+    pool: &PgPool,
+    assets: &mut [SkillAsset],
+) -> Result<(), DomainError> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+    let asset_ids: Vec<String> = assets.iter().map(|asset| asset.id.to_string()).collect();
+    let file_rows = sqlx::query_as::<_, SkillAssetFileRow>(&format!(
+        "SELECT {FILE_COLS} FROM skill_asset_files WHERE skill_asset_id = ANY($1) ORDER BY path ASC"
+    ))
+    .bind(&asset_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+
+    let mut files_by_asset: std::collections::HashMap<uuid::Uuid, Vec<SkillAssetFile>> =
+        std::collections::HashMap::with_capacity(assets.len());
+    for row in file_rows {
+        let file: SkillAssetFile = row.try_into()?;
+        files_by_asset
+            .entry(file.skill_asset_id)
+            .or_default()
+            .push(file);
+    }
+    for asset in assets.iter_mut() {
+        asset.files = files_by_asset.remove(&asset.id).unwrap_or_default();
+    }
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]

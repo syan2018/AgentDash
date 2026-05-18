@@ -31,6 +31,7 @@ import {
 import type { SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { Notice, type NoticeData } from "../_shared/Notice";
+import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
 
 // ─── Detail mode ─────────────────────────────────────────
 
@@ -60,6 +61,7 @@ export function SkillCategoryPanel() {
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
+  const [publishTarget, setPublishTarget] = useState<SkillAssetDto | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
@@ -253,6 +255,7 @@ export function SkillCategoryPanel() {
           skills={skills}
           busyId={busyId}
           onEdit={openEdit}
+          onPublish={setPublishTarget}
           onDelete={setConfirmDelete}
         />
       )}
@@ -290,6 +293,24 @@ export function SkillCategoryPanel() {
           busy={busyId === confirmDelete.id}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => void handleDelete()}
+        />
+      )}
+
+      {publishTarget && (
+        <PublishLibraryAssetDialog
+          projectId={currentProjectId}
+          assetKind="skill_asset"
+          projectAssetId={publishTarget.id}
+          defaults={{
+            key: publishTarget.key,
+            display_name: publishTarget.display_name,
+            description: publishTarget.description,
+          }}
+          onClose={() => setPublishTarget(null)}
+          onPublished={(message) => {
+            showSuccess(message);
+            void loadSkills();
+          }}
         />
       )}
     </div>
@@ -376,11 +397,13 @@ function SkillGrid({
   skills,
   busyId,
   onEdit,
+  onPublish,
   onDelete,
 }: {
   skills: SkillAssetDto[];
   busyId: string | null;
   onEdit: (skill: SkillAssetDto) => void;
+  onPublish: (skill: SkillAssetDto) => void;
   onDelete: (skill: SkillAssetDto) => void;
 }) {
   if (skills.length === 0) {
@@ -447,6 +470,13 @@ function SkillGrid({
               className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
             >
               编辑
+            </button>
+            <button
+              type="button"
+              onClick={() => onPublish(skill)}
+              className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10"
+            >
+              发布
             </button>
             <button
               type="button"

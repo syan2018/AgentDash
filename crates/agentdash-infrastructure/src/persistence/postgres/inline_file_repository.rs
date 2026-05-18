@@ -198,11 +198,9 @@ impl InlineFileRepository for PostgresInlineFileRepository {
         builder.push(
             " ON CONFLICT (owner_kind, owner_id, container_id, path) DO UPDATE SET content = EXCLUDED.content, updated_at = EXCLUDED.updated_at",
         );
-        builder
-            .build()
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(format!("批量写入 inline_fs_files 失败: {e}")))?;
+        builder.build().execute(&self.pool).await.map_err(|e| {
+            DomainError::InvalidConfig(format!("批量写入 inline_fs_files 失败: {e}"))
+        })?;
 
         Ok(())
     }

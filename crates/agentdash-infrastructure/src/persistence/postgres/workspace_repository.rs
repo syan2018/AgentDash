@@ -130,8 +130,8 @@ impl PostgresWorkspaceRepository {
         let prepared = bindings
             .iter()
             .map(|binding| {
-                let detected_facts = serde_json::to_string(&binding.detected_facts)
-                    .map_err(|error| {
+                let detected_facts =
+                    serde_json::to_string(&binding.detected_facts).map_err(|error| {
                         DomainError::InvalidConfig(format!(
                             "序列化 workspace binding 失败: {error}"
                         ))
@@ -260,8 +260,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
             return Ok(workspaces);
         }
 
-        let workspace_ids: Vec<String> =
-            workspaces.iter().map(|w| w.id.to_string()).collect();
+        let workspace_ids: Vec<String> = workspaces.iter().map(|w| w.id.to_string()).collect();
         let binding_rows = sqlx::query(
             "SELECT id, workspace_id, backend_id, root_ref, status, detected_facts, last_verified_at, priority, created_at, updated_at
              FROM workspace_bindings WHERE workspace_id = ANY($1) ORDER BY priority DESC, created_at ASC",
@@ -282,7 +281,9 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         }
 
         for workspace in workspaces.iter_mut() {
-            workspace.bindings = bindings_by_workspace.remove(&workspace.id).unwrap_or_default();
+            workspace.bindings = bindings_by_workspace
+                .remove(&workspace.id)
+                .unwrap_or_default();
             workspace.refresh_default_binding();
         }
         Ok(workspaces)

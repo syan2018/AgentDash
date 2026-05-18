@@ -81,6 +81,25 @@ pub struct InstallLibraryAssetRequest {
     pub overwrite: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PublishLibraryAssetRequest {
+    pub asset_kind: String,
+    pub project_asset_id: Uuid,
+    #[serde(default = "default_user_scope")]
+    pub scope: String,
+    pub key: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub version: String,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+fn default_user_scope() -> String {
+    "user".to_string()
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "asset_kind", rename_all = "snake_case")]
 pub enum InstallLibraryAssetResponse {

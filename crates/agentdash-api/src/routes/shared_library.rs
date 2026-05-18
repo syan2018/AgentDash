@@ -8,9 +8,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::shared_library::{
-    InstallLibraryAssetInput, InstallLibraryAssetOutput, ProjectAssetSourceStatus,
-    ProjectAssetSourceStatusItem, SeedBuiltinLibraryAssetsInput, SharedLibraryService,
-    install_library_asset_to_project, list_project_asset_source_status,
+    InstallLibraryAssetInput, InstallLibraryAssetOutput, ProjectAssetPublishKind,
+    ProjectAssetSourceStatus, ProjectAssetSourceStatusItem, PublishLibraryAssetInput,
+    SeedBuiltinLibraryAssetsInput, SharedLibraryService, install_library_asset_to_project,
+    list_project_asset_source_status, publish_project_asset_to_library,
 };
 use agentdash_domain::shared_library::{
     LibraryAssetListFilter, LibraryAssetScope, LibraryAssetType,
@@ -21,8 +22,8 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceResponse,
     LibraryAssetResponse, ListLibraryAssetsQuery, ProjectAssetSourceStatusItemResponse,
-    ProjectAssetSourceStatusResponse, SeedBuiltinLibraryAssetsRequest, parse_asset_scope,
-    parse_asset_type, source_status_tag,
+    ProjectAssetSourceStatusResponse, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    parse_asset_scope, parse_asset_type, source_status_tag,
 };
 use crate::rpc::ApiError;
 
@@ -108,6 +109,38 @@ pub async fn install_library_asset(
     Ok(Json(install_output_response(output)))
 }
 
+/// POST `/api/projects/:project_id/shared-library/publish`
+pub async fn publish_library_asset(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<ProjectSharedLibraryPath>,
+    Json(req): Json<PublishLibraryAssetRequest>,
+) -> Result<Json<LibraryAssetResponse>, ApiError> {
+    let project_id = parse_project_id(&path.project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let input = PublishLibraryAssetInput {
+        project_id,
+        project_asset_id: req.project_asset_id,
+        asset_kind: parse_publish_asset_kind(&req.asset_kind)?,
+        owner_id: current_user.user_id.clone(),
+        scope: parse_asset_scope(&req.scope).map_err(ApiError::BadRequest)?,
+        key: req.key,
+        display_name: req.display_name,
+        description: req.description,
+        version: req.version,
+        overwrite: req.overwrite,
+    };
+    let asset = publish_project_asset_to_library(&state.repos, input).await?;
+    Ok(Json(asset.into()))
+}
+
 /// GET `/api/projects/:project_id/shared-library/source-status`
 pub async fn get_project_asset_source_status(
     State(state): State<Arc<AppState>>,
@@ -150,6 +183,18 @@ fn parse_optional_scope(raw: Option<String>) -> Result<Option<LibraryAssetScope>
         .map(parse_asset_scope)
         .transpose()
         .map_err(ApiError::BadRequest)
+}
+
+fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiError> {
+    match raw.trim() {
+        "project_agent" => Ok(ProjectAssetPublishKind::ProjectAgent),
+        "mcp_preset" => Ok(ProjectAssetPublishKind::McpPreset),
+        "workflow_bundle" => Ok(ProjectAssetPublishKind::WorkflowBundle),
+        "skill_asset" => Ok(ProjectAssetPublishKind::SkillAsset),
+        other => Err(ApiError::BadRequest(format!(
+            "未知 publish asset_kind: {other}"
+        ))),
+    }
 }
 
 fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryAssetResponse {
@@ -245,5 +290,11 @@ mod tests {
     fn parse_optional_asset_type_rejects_unknown_type() {
         let err = parse_optional_asset_type(Some("catalog".to_string())).expect_err("invalid");
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn parse_publish_asset_kind_accepts_known_type() {
+        let kind = parse_publish_asset_kind("skill_asset").expect("parse");
+        assert_eq!(kind, ProjectAssetPublishKind::SkillAsset);
     }
 }

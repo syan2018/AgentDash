@@ -11,6 +11,7 @@ import type {
   ListLibraryAssetsQuery,
   ProjectAssetSourceStatusDto,
   ProjectAssetSourceStatusItemDto,
+  PublishLibraryAssetRequest,
   SeedBuiltinLibraryAssetsRequest,
   SharedLibrarySourceStatus,
 } from "../types";
@@ -124,6 +125,17 @@ export async function installLibraryAsset(
     `/projects/${encodeURIComponent(projectId)}/shared-library/install`,
     input,
   );
+}
+
+export async function publishLibraryAsset(
+  projectId: string,
+  input: PublishLibraryAssetRequest,
+): Promise<LibraryAssetDto> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/projects/${encodeURIComponent(projectId)}/shared-library/publish`,
+    input,
+  );
+  return mapLibraryAsset(raw);
 }
 
 export async function fetchProjectAssetSourceStatus(

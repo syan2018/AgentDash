@@ -415,6 +415,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(shared_library::install_library_asset),
         )
         .route(
+            "/projects/{project_id}/shared-library/publish",
+            post(shared_library::publish_library_asset),
+        )
+        .route(
             "/projects/{project_id}/shared-library/source-status",
             get(shared_library::get_project_asset_source_status),
         )

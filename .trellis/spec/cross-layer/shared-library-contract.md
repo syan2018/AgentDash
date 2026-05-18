@@ -177,6 +177,18 @@ Marketplace 安装行为：
 - 第一阶段支持手动重装/覆盖。
 - 字段级 diff / 三方合并属于后续增强。
 
+## 发布语义
+
+Project Assets 发布行为：
+
+1. 用户在 Project Agent / MCP Preset / Workflow Lifecycle / SkillAsset 资源入口触发发布。
+2. 前端调用 `POST /api/projects/{project_id}/shared-library/publish`，只传 `asset_kind`、`project_asset_id`、`scope`、`key`、`display_name`、`description`、`version`、`overwrite`。
+3. 后端校验 Project edit 权限，并按 `asset_kind` 读取 Project 资源权威数据。
+4. 后端生成类型化 `LibraryAsset.payload`，写入 `scope=user`、`source=user_authored`、`owner_id=current_user.user_id`。
+5. 发布成功后 Marketplace 通过现有 list/install/source-status 流程处理该资产。
+
+发布请求禁止前端传 raw payload。Project 资源中带 credential、header、env、本机路径、localhost 或私网 URL 的 MCP 连接材料必须在后端 mapper 阶段拒绝。
+
 ## Scenario: Marketplace 安装来源与旧入口清理
 
 ### 1. Scope / Trigger
@@ -188,6 +200,7 @@ Marketplace 安装行为：
 
 - `POST /api/shared-library/assets/seed-builtin`
 - `POST /api/projects/{project_id}/shared-library/install`
+- `POST /api/projects/{project_id}/shared-library/publish`
 - `GET /api/projects/{project_id}/shared-library/source-status`
 - `POST /api/projects/{project_id}/agent-links`
 - `PUT /api/projects/{project_id}/agent-links/{agent_id}`

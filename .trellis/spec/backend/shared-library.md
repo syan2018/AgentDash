@@ -117,6 +117,17 @@ Project 资源不会因 builtin seed 更新而静默变化。
 - `ProjectAgentLink` 也属于 Project 资源，Marketplace 安装 `AgentTemplate` 时必须在 link 上写入 `InstalledAssetSource`。
 - 删除 Marketplace 安装的 Workflow/Lifecycle bundle 时，删除 Lifecycle 后必须清理同一 `library_asset_id` 来源的 workflow definitions；若这些 workflow 被其它 lifecycle 引用，则拒绝删除并返回明确错误。
 
+## Project 资源发布语义
+
+- 用户发布入口从 Project 资源出发：`POST /api/projects/{project_id}/shared-library/publish`。
+- 发布请求只提交资源类型、Project 资源 id、资产元数据和覆盖策略；前端不得直接拼装 `LibraryAsset.payload`。
+- 后端必须重新读取 Project 资源权威状态，并通过类型化 mapper 生成对应 `*Template` payload。
+- 第一阶段发布只支持 `scope = user` 与 `source = user_authored`，`owner_id` 使用当前用户身份。
+- 发布身份沿用 `asset_type + scope + owner_id + key`。同身份存在且 `overwrite=false` 时返回冲突；覆盖发布必须保留原 `LibraryAsset.id` 与 `created_at`，更新 payload、version、digest 与 metadata。
+- `payload_digest` 使用 builtin seed 相同的 JSON sha256 规则，避免 source-status 对同一 payload 产生两套版本判断。
+- MCP Preset 发布必须拒绝 credential、header、env、本机路径、localhost/private network URL 等连接材料；无法证明可共享的连接配置应明确报错。
+- Workflow 发布必须以 lifecycle bundle 为单位，校验 lifecycle 引用的 workflow definitions 都存在后再发布。
+
 ## 迁移原则
 
 - 现有 project-level builtin MCP/Skill/Workflow 视为“已安装副本”，不是公共 builtin 本体。

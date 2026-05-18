@@ -22,6 +22,8 @@ import {
 } from "./agent-preset-editor";
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
+import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
+import { PublishLibraryAssetDialog } from "../assets-panel/categories/PublishLibraryAssetDialog";
 
 const EMPTY_LINKS: ProjectAgentLink[] = [];
 
@@ -372,6 +374,13 @@ export function ProjectAgentView({
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
+  const [publishTarget, setPublishTarget] = useState<{
+    linkId: string;
+    key: string;
+    displayName: string;
+    description: string;
+  } | null>(null);
+  const [notice, setNotice] = useState<NoticeData | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [expandedAgentKeys, setExpandedAgentKeys] = useState<Set<string>>(() => new Set());
@@ -560,6 +569,8 @@ export function ProjectAgentView({
           </div>
         )}
 
+        <Notice notice={notice} onDismiss={() => setNotice(null)} />
+
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <div className="flex flex-col gap-2">
             {visibleAgents.map((agent) => {
@@ -661,6 +672,21 @@ export function ProjectAgentView({
                       </button>
                       <CardMenu items={[
                         { key: "config", label: "编辑配置", onSelect: () => handleOpenEditConfig(agent) },
+                        ...(link
+                          ? [
+                              {
+                                key: "publish",
+                                label: "发布到资源市场",
+                                onSelect: () =>
+                                  setPublishTarget({
+                                    linkId: link.id,
+                                    key: agent.preset_name ?? agent.display_name,
+                                    displayName: agent.display_name,
+                                    description: agent.description,
+                                  }),
+                              },
+                            ]
+                          : []),
                         { key: "---", label: "", onSelect: () => {} },
                         { key: "unlink", label: "解除关联", danger: true, onSelect: () => void handleUnlink(agent.key) },
                       ]} />
@@ -908,6 +934,24 @@ export function ProjectAgentView({
             : undefined
         }
       />
+
+      {publishTarget && (
+        <PublishLibraryAssetDialog
+          projectId={project.id}
+          assetKind="project_agent"
+          projectAssetId={publishTarget.linkId}
+          defaults={{
+            key: publishTarget.key,
+            display_name: publishTarget.displayName,
+            description: publishTarget.description,
+          }}
+          onClose={() => setPublishTarget(null)}
+          onPublished={(message) => {
+            setNotice({ tone: "success", message });
+            void fetchProjectAgents(project.id);
+          }}
+        />
+      )}
     </>
   );
 }

@@ -21,6 +21,7 @@ import type {
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import { Notice, type NoticeData } from "../_shared/Notice";
+import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
 
 type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
 
@@ -38,6 +39,7 @@ export function WorkflowCategoryPanel() {
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
+  const [publishTarget, setPublishTarget] = useState<LifecycleDefinition | null>(null);
 
   useEffect(() => {
     if (!currentProjectId) return;
@@ -100,6 +102,7 @@ export function WorkflowCategoryPanel() {
       <LifecycleAssetGrid
         items={lifecycles}
         onEdit={(lc) => navigate(`/workflow/${lc.id}`)}
+        onPublish={setPublishTarget}
         onDelete={(lc) =>
           setConfirmDelete({ id: lc.id, name: lc.name, source: lc.source })
         }
@@ -142,6 +145,25 @@ export function WorkflowCategoryPanel() {
           </div>
         </div>
       )}
+
+      {publishTarget && (
+        <PublishLibraryAssetDialog
+          projectId={currentProjectId}
+          assetKind="workflow_bundle"
+          projectAssetId={publishTarget.id}
+          defaults={{
+            key: publishTarget.key,
+            display_name: publishTarget.name,
+            description: publishTarget.description,
+          }}
+          onClose={() => setPublishTarget(null)}
+          onPublished={(message) => {
+            setNotice({ tone: "success", message });
+            void fetchDefinitions({ projectId: currentProjectId });
+            void fetchLifecycles({ projectId: currentProjectId });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -153,11 +175,13 @@ export default WorkflowCategoryPanel;
 function LifecycleAssetGrid({
   items,
   onEdit,
+  onPublish,
   onDelete,
   busyKey,
 }: {
   items: LifecycleDefinition[];
   onEdit: (lc: LifecycleDefinition) => void;
+  onPublish: (lc: LifecycleDefinition) => void;
   onDelete: (lc: LifecycleDefinition) => void;
   busyKey: string | null;
 }) {
@@ -181,6 +205,7 @@ function LifecycleAssetGrid({
           key={lc.id}
           item={lc}
           onEdit={onEdit}
+          onPublish={onPublish}
           onDelete={onDelete}
           isDeleting={busyKey === `delete:${lc.id}`}
         />
@@ -192,11 +217,13 @@ function LifecycleAssetGrid({
 function LifecycleAssetCard({
   item,
   onEdit,
+  onPublish,
   onDelete,
   isDeleting,
 }: {
   item: LifecycleDefinition;
   onEdit: (lc: LifecycleDefinition) => void;
+  onPublish: (lc: LifecycleDefinition) => void;
   onDelete: (lc: LifecycleDefinition) => void;
   isDeleting: boolean;
 }) {
@@ -240,6 +267,13 @@ function LifecycleAssetCard({
             className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
           >
             {item.source === "builtin_seed" ? "查看" : "编辑"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onPublish(item)}
+            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10"
+          >
+            发布
           </button>
           <button
             type="button"

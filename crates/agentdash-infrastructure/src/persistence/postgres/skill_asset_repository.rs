@@ -278,11 +278,7 @@ async fn replace_files(
             .push_bind(file.created_at.to_rfc3339())
             .push_bind(file.updated_at.to_rfc3339());
     });
-    builder
-        .build()
-        .execute(&mut **tx)
-        .await
-        .map_err(db_err)?;
+    builder.build().execute(&mut **tx).await.map_err(db_err)?;
     Ok(())
 }
 

@@ -44,6 +44,7 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import { Notice, type NoticeData } from "../_shared/Notice";
+import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
 
 /* ─── 表单状态 ─── */
 //
@@ -155,6 +156,7 @@ export function McpPresetCategoryPanel() {
   const [isSaving, setIsSaving] = useState(false);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<McpPresetDto | null>(null);
+  const [publishTarget, setPublishTarget] = useState<McpPresetDto | null>(null);
 
   const loadPresets = useCallback(
     async (projectId: string) => {
@@ -291,6 +293,7 @@ export function McpPresetCategoryPanel() {
               presetId: preset.id,
             })
           }
+          onPublish={setPublishTarget}
           onClone={(preset) => void handleClone(preset)}
           onDelete={(preset) => setConfirmDelete(preset)}
         />
@@ -346,6 +349,24 @@ export function McpPresetCategoryPanel() {
           onConfirm={() => void handleConfirmDelete()}
         />
       )}
+
+      {publishTarget && (
+        <PublishLibraryAssetDialog
+          projectId={currentProjectId}
+          assetKind="mcp_preset"
+          projectAssetId={publishTarget.id}
+          defaults={{
+            key: publishTarget.key,
+            display_name: publishTarget.display_name,
+            description: publishTarget.description,
+          }}
+          onClose={() => setPublishTarget(null)}
+          onPublished={(message) => {
+            showSuccess(message);
+            void loadPresets(currentProjectId);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -374,6 +395,7 @@ function friendlyError(err: unknown, fallback: string): string {
 
 interface GridCallbacks {
   onEdit: (preset: McpPresetDto) => void;
+  onPublish: (preset: McpPresetDto) => void;
   onClone: (preset: McpPresetDto) => void;
   onDelete: (preset: McpPresetDto) => void;
   busyRowId: string | null;
@@ -382,6 +404,7 @@ interface GridCallbacks {
 function McpPresetGrid({
   presets,
   onEdit,
+  onPublish,
   onClone,
   onDelete,
   busyRowId,
@@ -402,6 +425,7 @@ function McpPresetGrid({
           key={preset.id}
           preset={preset}
           onEdit={() => onEdit(preset)}
+          onPublish={() => onPublish(preset)}
           onClone={() => onClone(preset)}
           onDelete={() => onDelete(preset)}
           isBusy={busyRowId === preset.id}
@@ -414,12 +438,14 @@ function McpPresetGrid({
 function McpPresetCard({
   preset,
   onEdit,
+  onPublish,
   onClone,
   onDelete,
   isBusy,
 }: {
   preset: McpPresetDto;
   onEdit: () => void;
+  onPublish: () => void;
   onClone: () => void;
   onDelete: () => void;
   isBusy: boolean;
@@ -482,6 +508,15 @@ function McpPresetCard({
             title={isBuiltin ? "基于此 builtin Preset 生成可编辑的 user 副本" : "复制一份可独立修改的 user 副本"}
           >
             {isBusy ? "处理中…" : "复制为 user"}
+          </button>
+          <button
+            type="button"
+            onClick={onPublish}
+            disabled={isBusy}
+            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
+            title="发布为个人资源市场中的 MCP Server 模板"
+          >
+            发布
           </button>
           {isBuiltin ? (
             <span

@@ -52,6 +52,23 @@ export interface InstallLibraryAssetRequest {
   overwrite?: boolean;
 }
 
+export type PublishLibraryAssetKind =
+  | "project_agent"
+  | "mcp_preset"
+  | "workflow_bundle"
+  | "skill_asset";
+
+export interface PublishLibraryAssetRequest {
+  asset_kind: PublishLibraryAssetKind;
+  project_asset_id: string;
+  scope?: LibraryAssetScope;
+  key: string;
+  display_name: string;
+  description?: string | null;
+  version: string;
+  overwrite?: boolean;
+}
+
 export type InstallLibraryAssetResponse =
   | { asset_kind: "project_agent"; agent_id: string; project_agent_link_id: string }
   | { asset_kind: "mcp_preset"; id: string }

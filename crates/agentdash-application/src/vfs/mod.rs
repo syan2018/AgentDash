@@ -4,6 +4,7 @@ pub mod inline_persistence;
 pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
+pub(crate) mod mutation_queue;
 pub mod path;
 pub mod provider;
 pub mod provider_canvas;

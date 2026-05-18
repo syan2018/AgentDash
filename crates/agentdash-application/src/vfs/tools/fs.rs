@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_spi::Vfs;
@@ -11,11 +12,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::vfs::build_canvas_mount;
 use crate::vfs::inline_persistence::InlineContentOverlay;
+use crate::vfs::mutation_queue::MutationQueue;
 use crate::vfs::relay_service::RelayVfsService;
 use crate::vfs::rewrite::find_mount_uri_candidates;
 use crate::vfs::{
-    ExecRequest, ListOptions, MaterializationRewrite, ResourceRef, RewriteShellCommandOutput,
-    VfsMaterializationService, capability_name, parse_mount_uri, resolve_mount,
+    ExecRequest, ListOptions, MaterializationRewrite, PatchEntry, ResourceRef,
+    RewriteShellCommandOutput, VfsMaterializationService, capability_name,
+    normalize_mount_relative_path, parse_mount_uri, parse_patch_text, resolve_mount,
+    resolve_mount_id,
 };
 
 /// Resolve a tool parameter path into a `ResourceRef`.
@@ -311,6 +315,7 @@ pub struct FsApplyPatchTool {
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
+    mutation_queue: MutationQueue,
 }
 impl FsApplyPatchTool {
     pub fn new(
@@ -324,6 +329,7 @@ impl FsApplyPatchTool {
             vfs,
             overlay,
             identity,
+            mutation_queue: MutationQueue::default(),
         }
     }
 }
@@ -347,6 +353,7 @@ impl AgentTool for FsApplyPatchTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsApplyPatchParams>()
     }
+
     async fn execute(
         &self,
         _: &str,
@@ -357,14 +364,20 @@ impl AgentTool for FsApplyPatchTool {
         let params: FsApplyPatchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
         let vfs = self.vfs.snapshot().await;
+        let mutation_keys =
+            fs_apply_patch_mutation_keys(&vfs, params.mount.as_deref(), &params.patch)
+                .unwrap_or_default();
         let result = self
-            .service
-            .apply_patch_multi(
-                &vfs,
-                params.mount.as_deref(),
-                &params.patch,
-                self.overlay.as_ref().map(|arc| arc.as_ref()),
-                self.identity.as_ref(),
+            .mutation_queue
+            .with_locks(
+                mutation_keys,
+                self.service.apply_patch_multi(
+                    &vfs,
+                    params.mount.as_deref(),
+                    &params.patch,
+                    self.overlay.as_ref().map(|arc| arc.as_ref()),
+                    self.identity.as_ref(),
+                ),
             )
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
@@ -398,6 +411,64 @@ impl AgentTool for FsApplyPatchTool {
             details: None,
         })
     }
+}
+
+fn fs_apply_patch_mutation_keys(
+    vfs: &Vfs,
+    default_mount_id: Option<&str>,
+    patch: &str,
+) -> Result<Vec<String>, String> {
+    let entries = parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
+    let fallback_mount_id = match default_mount_id {
+        Some(id) if !id.trim().is_empty() => id.to_string(),
+        _ => resolve_mount_id(vfs, None)?,
+    };
+
+    let mut keys = BTreeSet::new();
+    for entry in entries {
+        collect_patch_entry_mutation_keys(&mut keys, &entry, &fallback_mount_id)?;
+    }
+    Ok(keys.into_iter().collect())
+}
+
+fn collect_patch_entry_mutation_keys(
+    keys: &mut BTreeSet<String>,
+    entry: &PatchEntry,
+    fallback_mount_id: &str,
+) -> Result<(), String> {
+    let raw_path = entry.path().to_string_lossy();
+    let (mount_id, relative_path) = mutation_key_parts(&raw_path, fallback_mount_id)?;
+    keys.insert(format!("{mount_id}://{relative_path}"));
+
+    if let PatchEntry::UpdateFile {
+        move_path: Some(move_path),
+        ..
+    } = entry
+    {
+        let raw_move_path = move_path.to_string_lossy();
+        let (move_mount_id, move_relative_path) = mutation_key_parts(&raw_move_path, &mount_id)?;
+        keys.insert(format!("{move_mount_id}://{move_relative_path}"));
+    }
+
+    Ok(())
+}
+
+fn mutation_key_parts(raw: &str, fallback_mount_id: &str) -> Result<(String, String), String> {
+    if let Some((mount_id, relative)) = raw.split_once("://") {
+        let mount_id = mount_id.trim();
+        if mount_id.is_empty() {
+            return Err("patch 路径的 mount ID 不能为空".to_string());
+        }
+        return Ok((
+            mount_id.to_string(),
+            normalize_mount_relative_path(relative.trim_start_matches('/'), false)?,
+        ));
+    }
+
+    Ok((
+        fallback_mount_id.to_string(),
+        normalize_mount_relative_path(raw, false)?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +1031,82 @@ fn unresolved_reserved_vfs_uris(command: &str) -> Vec<String> {
         .into_iter()
         .map(|candidate| candidate.value)
         .collect()
+}
+
+#[cfg(test)]
+mod fs_apply_patch_mutation_tests {
+    use super::*;
+    use agentdash_spi::{Mount, MountCapability, Vfs};
+
+    fn vfs() -> Vfs {
+        Vfs {
+            mounts: vec![
+                Mount {
+                    id: "workspace".to_string(),
+                    provider: crate::vfs::PROVIDER_RELAY_FS.to_string(),
+                    backend_id: "local-dev-1".to_string(),
+                    root_ref: "D:\\workspace".to_string(),
+                    capabilities: vec![MountCapability::Write],
+                    default_write: true,
+                    display_name: "workspace".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+                Mount {
+                    id: "canvas".to_string(),
+                    provider: crate::vfs::PROVIDER_INLINE_FS.to_string(),
+                    backend_id: String::new(),
+                    root_ref: "inline://canvas".to_string(),
+                    capabilities: vec![MountCapability::Write],
+                    default_write: false,
+                    display_name: "canvas".to_string(),
+                    metadata: serde_json::Value::Null,
+                },
+            ],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn apply_patch_mutation_keys_include_default_mount_and_move_target() {
+        let keys = fs_apply_patch_mutation_keys(
+            &vfs(),
+            None,
+            r#"*** Begin Patch
+*** Update File: src/old.rs
+*** Move to: src/new.rs
+@@
+ old
+*** End Patch"#,
+        )
+        .expect("keys should parse");
+
+        assert_eq!(
+            keys,
+            vec!["workspace://src/new.rs", "workspace://src/old.rs"]
+        );
+    }
+
+    #[test]
+    fn apply_patch_mutation_keys_preserve_explicit_mount_prefix() {
+        let keys = fs_apply_patch_mutation_keys(
+            &vfs(),
+            Some("workspace"),
+            r#"*** Begin Patch
+*** Add File: canvas://src/view.tsx
++export const value = 1;
+*** Delete File: src/old.rs
+*** End Patch"#,
+        )
+        .expect("keys should parse");
+
+        assert_eq!(
+            keys,
+            vec!["canvas://src/view.tsx", "workspace://src/old.rs"]
+        );
+    }
 }
 
 #[cfg(test)]

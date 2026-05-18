@@ -31,6 +31,11 @@
 
 - 个人模式不拆分 `personal_interactive` / `personal_managed`。首版只保留 `personal`，避免过早引入“预授权 parent root”等细策略。
 - server 不应直接静默修改个人本机任意可访问根；personal backend 是最终裁决者。
+- backend server-control 信任模式应作为 `BackendConfig.control_mode` 一等字段落库，不只从 `visibility` / `share_scope_kind` 临时推导。首版取值为 `personal`、`project_managed`、`system_managed`。
+- 能力扩展采用 **持久请求 + 在线 relay apply + backend ack** 的混合机制：server 先落库表达期望，在线 backend 可立即收到 apply command；最终生效状态只由 backend ack / reject 决定。
+- personal backend 新增任意绝对路径默认需要本机确认。server 前端只展示请求与结果；确认入口在 Tauri Local Runtime 面板，后续可接系统通知。
+- capability expansion request 支持 `expires_at` / lease 字段，但首版不强制所有请求都有 TTL。持久 policy 用手动撤销；worktree / prepare 类临时请求必须显式 TTL。
+- worktree 创建、workspace prepare 不另起独立授权事实源；首版作为 `capability_expansion_request.source_kind` / `requested_resources` 的一种来源，后续 provision 模型可复用同一 ack 机制。
 
 ## Requirements
 
@@ -122,10 +127,7 @@ personal backend 默认需要本机接受新增任意绝对路径；project/syst
 
 ## Open Questions
 
-- server 侧能力扩展采用“server policy + backend pull/ack”，还是“server relay command + backend ack”，或两者混合？
-- personal backend 的本机确认 UI 放在 Tauri Local Runtime 面板、系统通知，还是前端设置页 bridge？
-- capability expansion request 是否需要支持 TTL / lease 模型，还是首版只做持久 policy + 手动撤销？
-- worktree 创建应作为 backend capability expansion 的一种请求，还是另起 WorkspacePrepare / WorkspaceProvisioning 模型并复用 ack 机制？
+无阻塞问题。剩余实现细节进入 `design.md` / `implement.md`。
 
 ## Notes
 

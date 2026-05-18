@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证新增表/迁移、JSON 字段、Repository round-trip 是否遵守数据库规范。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "验证新增 capability expansion repository 与 application service 依赖方向。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "验证 workspace/browse/detect 与本机能力交互没有绕过 Runtime Gateway。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "验证 Local Runtime personal 确认链路、profile 与 ensure/claim 契约。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验证新增前端类型和服务没有 camelCase 兼容或 any 逃逸。"}

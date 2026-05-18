@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层、数据归属、Repository、数据库与 Runtime Gateway 相关规范入口。"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "ProjectBackendAccess、backend inventory、workspace binding 自动路由与本任务边界。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Tauri Local Runtime profile、ensure/claim、本机确认入口与机器身份约束。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "workspace detect/browse 等 setup action 必须通过 Runtime Gateway，不允许 cloud 直接访问本机文件系统。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO snake_case、运行时 mapper 与类型安全要求。"}

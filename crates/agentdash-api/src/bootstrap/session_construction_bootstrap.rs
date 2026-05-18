@@ -14,7 +14,9 @@ use agentdash_application::context::mount_file_discovery::discover_mount_files;
 use agentdash_application::session::UserPromptInput;
 use agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities;
 use agentdash_application::session::construction::{
-    ConstructionResolutionPlan, SessionConstructionPlan, SessionConstructionTraceEntry,
+    ConstructionResolutionPlan, ExtensionCommandProjection, ExtensionFlagProjection,
+    ExtensionInstallationProjection, ExtensionMessageRendererProjection,
+    ExtensionRuntimeProjection, SessionConstructionPlan, SessionConstructionTraceEntry,
 };
 use agentdash_application::session::construction_provider::{
     CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase, TaskLaunchSource,
@@ -32,7 +34,8 @@ use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
 use agentdash_domain::{
-    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
+    project::Project, session_binding::SessionOwnerType,
+    shared_library::ProjectExtensionInstallation, story::Story, workspace::Workspace,
 };
 use agentdash_spi::hooks::ContextFrame;
 
@@ -405,6 +408,8 @@ pub(crate) async fn finalize_session_construction_projection(
     final_capability_state.vfs.active = Some(effective_vfs.clone());
     final_capability_state.tool.mcp_servers = mcp_servers.clone();
     final_capability_state.skill.skills = session_capabilities.skills.clone();
+    let extension_runtime =
+        build_extension_runtime_projection(state, plan.owner.project_id).await?;
 
     plan.workspace.working_directory = Some(working_directory);
     plan.execution_profile.executor_config = executor_config;
@@ -417,6 +422,7 @@ pub(crate) async fn finalize_session_construction_projection(
     plan.projections.capability_state = Some(final_capability_state);
     plan.projections.session_capabilities = Some(session_capabilities);
     plan.projections.discovered_guidelines = discovered_guidelines;
+    plan.projections.extension_runtime = Some(extension_runtime);
     plan.resolution = ConstructionResolutionPlan {
         vfs_source: Some(if pending_overlay_applied {
             "runtime_command.pending_vfs_overlay".to_string()
@@ -459,11 +465,89 @@ pub(crate) async fn finalize_session_construction_projection(
                 .clone()
                 .unwrap_or_default(),
         },
+        SessionConstructionTraceEntry {
+            stage: "extension_runtime",
+            source: "project.extension_installations".to_string(),
+        },
     ]);
     if mode == SessionConstructionProjectionMode::Launch {
         plan.validate_for_launch().map_err(ApiError::BadRequest)?;
     }
     Ok(plan)
+}
+
+async fn build_extension_runtime_projection(
+    state: &Arc<AppState>,
+    project_id: uuid::Uuid,
+) -> Result<ExtensionRuntimeProjection, ApiError> {
+    let installations = state
+        .repos
+        .project_extension_installation_repo
+        .list_enabled_by_project(project_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(extension_runtime_projection_from_installations(
+        installations,
+    ))
+}
+
+fn extension_runtime_projection_from_installations(
+    installations: Vec<ProjectExtensionInstallation>,
+) -> ExtensionRuntimeProjection {
+    let mut projection = ExtensionRuntimeProjection::default();
+    for installation in installations {
+        let extension_key = installation.extension_key.clone();
+        let extension_id = installation.manifest.extension_id.clone();
+        projection
+            .installations
+            .push(ExtensionInstallationProjection {
+                installation_id: installation.id,
+                extension_key: extension_key.clone(),
+                extension_id: extension_id.clone(),
+                display_name: installation.display_name.clone(),
+                installed_source: installation.installed_source,
+            });
+        projection
+            .commands
+            .extend(installation.manifest.commands.into_iter().map(|command| {
+                ExtensionCommandProjection {
+                    extension_key: extension_key.clone(),
+                    extension_id: extension_id.clone(),
+                    name: command.name,
+                    description: command.description,
+                    handler: command.handler,
+                }
+            }));
+        projection
+            .flags
+            .extend(
+                installation
+                    .manifest
+                    .flags
+                    .into_iter()
+                    .map(|flag| ExtensionFlagProjection {
+                        extension_key: extension_key.clone(),
+                        extension_id: extension_id.clone(),
+                        name: flag.name,
+                        flag_type: flag.flag_type,
+                        default: flag.default,
+                        description: flag.description,
+                    }),
+            );
+        projection.message_renderers.extend(
+            installation
+                .manifest
+                .message_renderers
+                .into_iter()
+                .map(|renderer| ExtensionMessageRendererProjection {
+                    extension_key: extension_key.clone(),
+                    extension_id: extension_id.clone(),
+                    custom_type: renderer.custom_type,
+                    renderer: renderer.renderer,
+                }),
+        );
+    }
+    projection
 }
 
 fn clear_plain_lifecycle_context(
@@ -1021,6 +1105,11 @@ mod tests {
     use agentdash_application::session::ownership::SessionOwnerResolver;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+    use agentdash_domain::shared_library::{
+        ExtensionCommandDefinition, ExtensionCommandHandler, ExtensionFlagDefinition,
+        ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionRendererDeclaration,
+        ExtensionTemplatePayload, InstalledAssetSource, ProjectExtensionInstallation,
+    };
     use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer, Vfs};
 
     use super::*;
@@ -1097,5 +1186,53 @@ mod tests {
                 .and_then(|state| state.vfs.active.as_ref())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn extension_runtime_projection_flattens_enabled_installations() {
+        let source = InstalledAssetSource::new(
+            uuid::Uuid::new_v4(),
+            "plugin:test:extension_template:demo",
+            "0.1.0",
+            "digest",
+        );
+        let manifest = ExtensionTemplatePayload {
+            manifest_version: "1".to_string(),
+            extension_id: "demo".to_string(),
+            commands: vec![ExtensionCommandDefinition {
+                name: "demo:run".to_string(),
+                description: "run demo".to_string(),
+                handler: ExtensionCommandHandler::InjectMessage {
+                    content: "run".to_string(),
+                },
+            }],
+            flags: vec![ExtensionFlagDefinition {
+                name: "demo.verbose".to_string(),
+                flag_type: ExtensionFlagType::Bool,
+                default: serde_json::Value::Bool(false),
+                description: "verbose".to_string(),
+            }],
+            message_renderers: vec![ExtensionMessageRendererDefinition {
+                custom_type: "demo.card".to_string(),
+                renderer: ExtensionRendererDeclaration::JsonCard,
+            }],
+            capability_directives: vec![],
+            asset_refs: vec![],
+        };
+        let installation = ProjectExtensionInstallation::new(
+            uuid::Uuid::new_v4(),
+            "demo",
+            "Demo Extension",
+            manifest,
+            source,
+        )
+        .expect("valid installation");
+
+        let projection = extension_runtime_projection_from_installations(vec![installation]);
+
+        assert_eq!(projection.installations.len(), 1);
+        assert_eq!(projection.commands[0].name, "demo:run");
+        assert_eq!(projection.flags[0].name, "demo.verbose");
+        assert_eq!(projection.message_renderers[0].custom_type, "demo.card");
     }
 }

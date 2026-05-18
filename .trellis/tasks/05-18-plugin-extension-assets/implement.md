@@ -31,11 +31,10 @@
   - Project extension repository
   - API response variant
   - source-status 增加 extension_installations
-- [ ] session construction 投影：
+- [x] session construction 投影：
   - 读取 enabled Project extension installations
-  - 注册 slash commands
-  - 注入 runtime flag defaults
-  - 暴露 extension message renderer metadata
+  - 将 slash commands / runtime flags / message renderers 投影到 `SessionConstructionPlan`
+  - 前端 `/` 菜单注册与 flag runtime 读写入口仍需后续 UI/API 接线
 - [x] 前端类型和 service：
   - `LibraryAssetType` 增加 `extension_template`
   - `LibraryAssetSource` 增加 `plugin_embedded`
@@ -56,7 +55,7 @@
 - [x] `cargo test -p agentdash-api plugins`
 - [x] `cargo test -p agentdash-first-party-plugins`
 - [x] `cargo test -p agentdash-application shared_library`
-- [ ] `cargo test -p agentdash-application session`
+- [x] `cargo test -p agentdash-application session`
 - [x] `pnpm --filter app-web typecheck`
 - [x] `pnpm --filter app-web test`
 - [ ] 手工验证：first-party plugin seed -> Marketplace -> install extension -> 新 session 可见 command/flag。

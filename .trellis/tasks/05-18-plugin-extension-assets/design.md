@@ -9,14 +9,15 @@ Native Host Plugin
   -> Marketplace 展示
   -> 用户安装到 Project
   -> ProjectExtensionInstallation
-  -> session construction / command registry / flag state / renderer registry
+  -> session construction metadata projection
 ```
 
 宿主级能力和运行时资产保持分层：
 
 - `AgentDashPlugin` 负责管理员级扩展、启动期贡献和高权限 provider。
 - `LibraryAsset` 负责可发现、可安装、可版本追踪的配置资产。
-- `ProjectExtensionInstallation` 负责 Project 内启用状态和运行时投影。
+- `ProjectExtensionInstallation` 负责 Project 内启用状态和运行时元数据投影。
+- Shared Library asset 本身不直接影响会话；只有用户安装后的 Project extension installation 才会进入 session construction。
 
 ## Plugin Embedded Assets
 
@@ -143,31 +144,22 @@ source-status 扩展：
 - 现有 `ProjectAssetSourceStatus` 增加 `extension_installations` 数组。
 - Marketplace install summary 聚合包含 extension installation。
 
-## Runtime Projection
+## Runtime Metadata Projection
 
-新 session construction 读取 Project enabled extension installations，生成三个投影：
+新 session construction 读取 Project enabled extension installations，生成只读元数据投影：
 
-- `ExtensionCommandRegistry`
-- `ExtensionFlagDefaults`
-- `ExtensionRendererRegistry`
+- slash command definitions
+- runtime flag definitions
+- message renderer declarations
 
-第一版只保证新 session 生效。运行中 session 变化和 capability delta 后续再做。
+这个 projection 只服务 `04-12-plugin-extension-api` 后续实现，让 command registry、flag store、renderer registry 有稳定输入源。它不等于 Marketplace asset 直接影响会话，也不在本任务内执行 command、修改 prompt、注册前端 `/` 菜单或写入 hook flag state。
 
-Slash command：
+后续独立接线：
 
-- 后端提供 command list / registry。
-- 前端 `/` 菜单展示 extension command。
-- handler 第一版支持 inject message，后续再支持 trigger hook。
-
-Runtime flag：
-
-- 写入 session flag state 或 hook session state。
-- Hook/Rhai 读取接口与 `04-12` 规划保持一致。
-
-Extension message：
-
-- 前端按 `custom_type` 选择 schema-driven renderer。
-- 未识别 renderer 时展示默认 JSON / Markdown 摘要。
+- Slash command registry：从 projection 读取 command，并暴露给前端 `/` 菜单。
+- Command execution：第一版可只支持 `inject_message` handler；`trigger_hook` 后置。
+- Runtime flag store：从 projection 初始化 flag defaults，并暴露给 Hook/Rhai 读取。
+- Renderer registry：从 projection 读取 schema-driven renderer declaration；不加载动态前端代码。
 
 ## UI
 

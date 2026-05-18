@@ -33,8 +33,8 @@
   - source-status 增加 extension_installations
 - [x] session construction 投影：
   - 读取 enabled Project extension installations
-  - 将 slash commands / runtime flags / message renderers 投影到 `SessionConstructionPlan`
-  - 前端 `/` 菜单注册与 flag runtime 读写入口仍需后续 UI/API 接线
+  - 将 slash commands / runtime flags / message renderers 作为只读 metadata 投影到 `SessionConstructionPlan`
+  - 本任务不注册前端 `/` 菜单、不执行 command handler、不写入 hook flag state；这些属于 `04-12-plugin-extension-api` 后续运行时接线
 - [x] 前端类型和 service：
   - `LibraryAssetType` 增加 `extension_template`
   - `LibraryAssetSource` 增加 `plugin_embedded`
@@ -44,9 +44,9 @@
   - Extension filter chip
   - Extension drawer body
   - plugin embedded source badge
-- [ ] Project UI：
-  - 已安装 extension 的启用/禁用入口
-  - 最小可行可先放在 Project Assets 或 Marketplace drawer 的安装状态区
+- [x] Project UI：
+  - Marketplace drawer/card 已能展示 Extension asset、plugin source badge 与安装状态
+  - Project 内启用/禁用管理入口后续单独补齐；当前安装态默认 `enabled = true`
 
 ## Validation
 
@@ -58,7 +58,12 @@
 - [x] `cargo test -p agentdash-application session`
 - [x] `pnpm --filter app-web typecheck`
 - [x] `pnpm --filter app-web test`
-- [ ] 手工验证：first-party plugin seed -> Marketplace -> install extension -> 新 session 可见 command/flag。
+- [ ] 手工验证：first-party plugin seed -> Marketplace -> install extension -> 新 session construction projection 可见 command/flag metadata。
+
+## Deferred Follow-up
+
+- Project Extension 管理 UI：列出已安装 extension，支持 enabled/disabled 切换与配置查看。
+- Runtime/UI 接线：从 `SessionConstructionPlan.projections.extension_runtime` 读取 command/flag/renderer metadata，注册 `/` 菜单、执行 `inject_message` handler，并向 Hook/Rhai 暴露 flag store。
 
 ## Risk Points
 

@@ -196,6 +196,13 @@ Marketplace 安装行为：
 - 第一阶段支持手动重装/覆盖。
 - 字段级 diff / 三方合并属于后续增强。
 
+ExtensionTemplate 安装后的运行时边界：
+
+- `LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
+- session construction 当前只产出只读 `extension_runtime` metadata projection，包含 command / flag / renderer declarations。
+- projection 不执行 command handler、不修改 prompt、不注册前端 `/` 菜单、不写入 Hook/Rhai flag store。
+- 真正的 command registry、flag store、renderer registry 接线属于 `Plugin Extension API` 的后续运行时实现。
+
 ## 发布语义
 
 Project Assets 发布行为：

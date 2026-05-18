@@ -25,6 +25,7 @@ const CATEGORIES: Array<{
   hint: string;
 }> = [
   { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
+  { segment: "marketplace", label: "Marketplace", hint: "公共资源库安装入口" },
   { segment: "canvas", label: "Canvas", hint: "可视化资产" },
   { segment: "mcp-preset", label: "MCP Preset", hint: "MCP Server 模板" },
   { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },

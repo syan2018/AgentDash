@@ -17,8 +17,8 @@ use agentdash_domain::skill_asset::SkillAsset;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    BootstrapSkillAssetRequest, CreateSkillAssetRequest, ImportRemoteSkillAssetRequest,
-    ListSkillAssetQuery, SkillAssetFileDto, SkillAssetResponse, UpdateSkillAssetRequest,
+    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery, SkillAssetFileDto,
+    SkillAssetResponse, UpdateSkillAssetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -228,46 +228,6 @@ pub async fn upload_skill_assets(
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     let assets = service.import_uploaded_files(project_id, files).await?;
     Ok(Json(assets.into_iter().map(Into::into).collect()))
-}
-
-pub async fn bootstrap_skill_assets(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(path): Path<ProjectSkillAssetsPath>,
-    Json(req): Json<BootstrapSkillAssetRequest>,
-) -> Result<Json<Vec<SkillAssetResponse>>, ApiError> {
-    let project_id = parse_project_id(&path.project_id)?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
-    let assets = service
-        .bootstrap_builtins(project_id, req.builtin_key.as_deref())
-        .await?;
-    Ok(Json(assets.into_iter().map(Into::into).collect()))
-}
-
-pub async fn reset_skill_asset_from_builtin(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(path): Path<SkillAssetItemPath>,
-) -> Result<Json<SkillAssetResponse>, ApiError> {
-    let (_project_id, asset) = load_asset_with_project(
-        state.as_ref(),
-        &current_user,
-        &path,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
-    let reset = service.reset_from_builtin(asset.id).await?;
-    Ok(Json(reset.into()))
 }
 
 async fn load_asset_with_project(

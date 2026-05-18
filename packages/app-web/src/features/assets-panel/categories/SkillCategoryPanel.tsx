@@ -23,7 +23,6 @@ import {
   fetchProjectSkillAssets,
   normalizeSkillExtraPath,
   parseSkillMarkdown,
-  resetSkillAssetFromBuiltin,
   updateSkillMarkdownFrontmatter,
   updateSkillAsset,
   validateSkillAssetDraft,
@@ -188,24 +187,6 @@ export function SkillCategoryPanel() {
     }
   }, [confirmDelete, currentProjectId, detail, loadSkills]);
 
-  const handleReset = useCallback(
-    async (skill: SkillAssetDto) => {
-      if (!currentProjectId) return;
-      setBusyId(skill.id);
-      setError(null);
-      try {
-        await resetSkillAssetFromBuiltin(currentProjectId, skill.id);
-        setMessage(`已恢复内嵌 Skill：${skill.key}`);
-        await loadSkills();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "恢复内嵌 Skill 失败");
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [currentProjectId, loadSkills],
-  );
-
   const handleCreateDialogCreated = useCallback(
     (msg: string) => {
       setMessage(msg);
@@ -277,7 +258,6 @@ export function SkillCategoryPanel() {
           busyId={busyId}
           onEdit={openEdit}
           onDelete={setConfirmDelete}
-          onReset={(skill) => void handleReset(skill)}
         />
       )}
 
@@ -386,6 +366,14 @@ const ORIGIN_STYLE: Record<
 };
 
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {
+  if (skill.installed_source) {
+    return (
+      <span className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
+
   const style = ORIGIN_STYLE[skill.source] ?? ORIGIN_STYLE.user;
   const remoteUrl = skill.remote_source?.url;
 
@@ -418,20 +406,18 @@ function SkillGrid({
   busyId,
   onEdit,
   onDelete,
-  onReset,
 }: {
   skills: SkillAssetDto[];
   busyId: string | null;
   onEdit: (skill: SkillAssetDto) => void;
   onDelete: (skill: SkillAssetDto) => void;
-  onReset: (skill: SkillAssetDto) => void;
 }) {
   if (skills.length === 0) {
     return (
       <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-14 text-center">
         <p className="text-sm text-foreground">暂无 Skill 资产</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          点击上方"新建 Skill"添加手动创建、远端导入或工作区内嵌 Skill
+          点击上方"新建 Skill"添加手动创建、远端导入或本地上传 Skill
         </p>
       </div>
     );
@@ -484,16 +470,6 @@ function SkillGrid({
 
           {/* Card footer: actions */}
           <footer className="mt-3 flex items-center justify-end gap-1 border-t border-border/70 pt-2.5">
-            {skill.source === "builtin_seed" && (
-              <button
-                type="button"
-                onClick={() => onReset(skill)}
-                disabled={busyId === skill.id}
-                className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-              >
-                Reset
-              </button>
-            )}
             <button
               type="button"
               onClick={() => onEdit(skill)}

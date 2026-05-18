@@ -47,8 +47,9 @@ use agentdash_infrastructure::{
     PostgresMcpPresetRepository, PostgresProjectBackendAccessRepository, PostgresProjectRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
-    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
+    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -172,6 +173,12 @@ impl AppState {
 
         let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
 
+        let shared_library_repo = Arc::new(PostgresSharedLibraryRepository::new(pool.clone()));
+        shared_library_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("library_assets 表初始化失败: {e}"))?;
+
         let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
         agent_repo
             .initialize()
@@ -230,6 +237,7 @@ impl AppState {
             auth_session_repo: auth_session_repo.clone(),
             user_directory_repo: user_directory_repo.clone(),
             settings_repo: settings_repo.clone(),
+            shared_library_repo: shared_library_repo.clone(),
             llm_provider_repo: llm_provider_repo.clone(),
             mcp_preset_repo: mcp_preset_repo.clone(),
             skill_asset_repo: skill_asset_repo.clone(),

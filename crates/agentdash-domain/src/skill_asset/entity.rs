@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{SkillAssetFileKind, SkillAssetSource};
+use crate::shared_library::InstalledAssetSource;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillAssetFile {
@@ -47,6 +48,8 @@ pub struct SkillAsset {
     pub display_name: String,
     pub description: String,
     pub source: SkillAssetSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     pub disable_model_invocation: bool,
     pub files: Vec<SkillAssetFile>,
     pub created_at: DateTime<Utc>,
@@ -176,6 +179,7 @@ impl SkillAsset {
             display_name: display_name.into(),
             description: description.into(),
             source,
+            installed_source: None,
             disable_model_invocation,
             files: Vec::new(),
             created_at: now,

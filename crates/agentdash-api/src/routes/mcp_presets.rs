@@ -1,7 +1,6 @@
-//! MCP Preset HTTP 路由——Project 级 MCP Server 配置模板的 CRUD + builtin 管理。
+//! MCP Preset HTTP 路由——Project 级 MCP Server 配置模板的 CRUD。
 //!
 //! 路由前缀统一为 `/api/projects/{project_id}/mcp-presets`，与 Canvas 对齐。
-//! 编辑/删除 builtin 会返回 409 Conflict；复制 builtin 为 user 产生可编辑副本。
 
 use std::sync::Arc;
 
@@ -23,8 +22,8 @@ use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    BootstrapMcpPresetRequest, CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery,
-    McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
+    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -224,41 +223,6 @@ pub async fn clone_mcp_preset(
         })
         .await?;
     Ok(Json(cloned.into()))
-}
-
-/// POST `/api/projects/:project_id/mcp-presets/bootstrap`
-///
-/// 装载 builtin 模板。请求体为空时装载全部；指定 `builtin_key` 时仅装载对应模板。
-///
-/// TODO(assets-bootstrap-on-project-create): 当前 builtin 装载是显式端点触发，
-/// 新 Project 创建后不会自动 seed builtin Preset；后续可在 `CreateProjectUseCase`
-/// 里补调 `bootstrap_builtins`（见父 PRD「活引用语义铺垫」章节）。
-pub async fn bootstrap_mcp_presets(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(path): Path<ProjectMcpPresetsPath>,
-    Json(req): Json<BootstrapMcpPresetRequest>,
-) -> Result<Json<Vec<McpPresetResponse>>, ApiError> {
-    let project_id = parse_project_id(&path.project_id)?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
-    let presets = match req.builtin_key {
-        Some(key) if !key.trim().is_empty() => {
-            let preset = service
-                .bootstrap_builtin_by_key(project_id, key.trim())
-                .await?;
-            vec![preset]
-        }
-        _ => service.bootstrap_builtins(project_id).await?,
-    };
-    Ok(Json(presets.into_iter().map(Into::into).collect()))
 }
 
 /// POST `/api/projects/:project_id/mcp-presets/probe`

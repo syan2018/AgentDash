@@ -24,7 +24,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import {
-  bootstrapMcpPresets,
   cloneMcpPreset,
   createMcpPreset,
   deleteMcpPreset,
@@ -147,7 +146,6 @@ export function McpPresetCategoryPanel() {
 
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailMode>({ kind: "closed" });
@@ -181,26 +179,6 @@ export function McpPresetCategoryPanel() {
     const t = setTimeout(() => setMessage(null), 4000);
     return () => clearTimeout(t);
   }, [message]);
-
-  const handleBootstrap = useCallback(async () => {
-    if (!currentProjectId) return;
-    setIsBootstrapping(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const created = await bootstrapMcpPresets(currentProjectId, {});
-      if (created.length === 0) {
-        setMessage("未装载任何内置 Preset（可能已全部装载或后端无内置定义）");
-      } else {
-        setMessage(`已装载 ${created.length} 个内置 Preset：${created.map((p) => p.display_name).join("、")}`);
-      }
-      await loadPresets(currentProjectId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "装载内置 Preset 失败");
-    } finally {
-      setIsBootstrapping(false);
-    }
-  }, [currentProjectId, loadPresets]);
 
   const handleClone = useCallback(
     async (preset: McpPresetDto) => {
@@ -276,15 +254,6 @@ export function McpPresetCategoryPanel() {
           </button>
           <button
             type="button"
-            onClick={() => void handleBootstrap()}
-            disabled={isBootstrapping}
-            className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-            title="从内置 JSON 模板装载常用 MCP Preset 定义（幂等，已装载会跳过）"
-          >
-            {isBootstrapping ? "装载中…" : "装载内置 Preset"}
-          </button>
-          <button
-            type="button"
             onClick={() => setDetail({ kind: "create" })}
             className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
@@ -328,7 +297,7 @@ export function McpPresetCategoryPanel() {
         <div className="flex flex-col items-center rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-foreground">当前项目还没有任何 MCP Preset</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            可点击「装载内置 Preset」装载常用模板，或点击下方按钮新建用户 Preset。
+            可从资源市场安装公共模板，或点击下方按钮新建用户 Preset。
           </p>
           <button
             type="button"
@@ -522,7 +491,7 @@ function McpPresetCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <RoutePolicyBadge policy={preset.route_policy} />
-          <SourceBadge source={preset.source} />
+          <SourceBadge source={preset.source} installed={Boolean(preset.installed_source)} />
         </div>
       </header>
 
@@ -1057,7 +1026,14 @@ function ConfirmDeleteDialog({
 
 /* ─── Badges ─── */
 
-function SourceBadge({ source }: { source: "builtin" | "user" }) {
+function SourceBadge({ source, installed }: { source: "builtin" | "user"; installed: boolean }) {
+  if (installed) {
+    return (
+      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+        marketplace
+      </span>
+    );
+  }
   if (source === "builtin") {
     return (
       <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">

@@ -1,8 +1,8 @@
 import { api, authenticatedFetch } from "../api/client";
 import { buildApiPath } from "../api/origin";
 import { asRecord } from "../api/mappers";
+import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
-  BootstrapSkillAssetRequest,
   CreateSkillAssetRequest,
   ImportRemoteSkillAssetRequest,
   ListSkillAssetQuery,
@@ -85,6 +85,7 @@ export function mapSkillAsset(raw: Record<string, unknown>): SkillAssetDto {
         ? null
         : String(raw.builtin_key),
     remote_source: mapRemoteSource(raw.remote_source),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
     disable_model_invocation: Boolean(raw.disable_model_invocation),
     files,
     created_at: String(raw.created_at ?? new Date().toISOString()),
@@ -544,17 +545,6 @@ export async function deleteSkillAsset(
   );
 }
 
-export async function bootstrapSkillAssets(
-  projectId: string,
-  input: BootstrapSkillAssetRequest = {},
-): Promise<SkillAssetDto[]> {
-  const raw = await api.post<Record<string, unknown>[]>(
-    `/projects/${encodeURIComponent(projectId)}/skill-assets/bootstrap`,
-    input,
-  );
-  return raw.map(mapSkillAsset);
-}
-
 export async function importRemoteSkillAsset(
   projectId: string,
   input: ImportRemoteSkillAssetRequest,
@@ -562,17 +552,6 @@ export async function importRemoteSkillAsset(
   const raw = await api.post<Record<string, unknown>>(
     `/projects/${encodeURIComponent(projectId)}/skill-assets/import`,
     input,
-  );
-  return mapSkillAsset(raw);
-}
-
-export async function resetSkillAssetFromBuiltin(
-  projectId: string,
-  assetId: string,
-): Promise<SkillAssetDto> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/projects/${encodeURIComponent(projectId)}/skill-assets/${encodeURIComponent(assetId)}/reset-from-builtin`,
-    {},
   );
   return mapSkillAsset(raw);
 }

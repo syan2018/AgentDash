@@ -5,6 +5,7 @@ use agentdash_domain::agent::{
     Agent, AgentRepository, ProjectAgentLink, ProjectAgentLinkRepository,
 };
 use agentdash_domain::common::error::DomainError;
+use agentdash_domain::shared_library::InstalledAssetSource;
 
 pub struct PostgresAgentRepository {
     pool: PgPool,
@@ -37,6 +38,11 @@ impl PostgresAgentRepository {
                 project_id TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
                 config_override TEXT,
+                installed_library_asset_id TEXT,
+                installed_source_ref TEXT,
+                installed_source_version TEXT,
+                installed_source_digest TEXT,
+                installed_at TEXT,
                 default_lifecycle_key TEXT,
                 is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
                 is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
@@ -75,6 +81,7 @@ impl PostgresAgentRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        add_installed_source_columns(&self.pool).await?;
 
         Ok(())
     }
@@ -179,6 +186,11 @@ struct LinkRow {
     project_id: String,
     agent_id: String,
     config_override: Option<String>,
+    installed_library_asset_id: Option<String>,
+    installed_source_ref: Option<String>,
+    installed_source_version: Option<String>,
+    installed_source_digest: Option<String>,
+    installed_at: Option<String>,
     default_lifecycle_key: Option<String>,
     is_default_for_story: bool,
     is_default_for_task: bool,
@@ -206,6 +218,13 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
                 .as_deref()
                 .map(|value| parse_json_column(value, "project_agent_links.config_override"))
                 .transpose()?,
+            installed_source: parse_installed_source(
+                row.installed_library_asset_id,
+                row.installed_source_ref,
+                row.installed_source_version,
+                row.installed_source_digest,
+                row.installed_at,
+            )?,
             default_lifecycle_key: row.default_lifecycle_key,
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
@@ -226,7 +245,7 @@ impl TryFrom<LinkRow> for ProjectAgentLink {
     }
 }
 
-const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at";
+const LINK_COLUMNS: &str = "id, project_id, agent_id, config_override, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at";
 
 #[async_trait::async_trait]
 impl ProjectAgentLinkRepository for PostgresAgentRepository {
@@ -240,13 +259,18 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             "project_agent_links.project_container_ids",
         )?;
         sqlx::query(
-            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO project_agent_links (id, project_id, agent_id, config_override, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(link.id.to_string())
         .bind(link.project_id.to_string())
         .bind(link.agent_id.to_string())
         .bind(config_override_json)
+        .bind(installed_library_asset_id(&link.installed_source))
+        .bind(installed_source_ref(&link.installed_source))
+        .bind(installed_source_version(&link.installed_source))
+        .bind(installed_source_digest(&link.installed_source))
+        .bind(installed_at(&link.installed_source))
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
@@ -324,9 +348,14 @@ impl ProjectAgentLinkRepository for PostgresAgentRepository {
             "project_agent_links.project_container_ids",
         )?;
         sqlx::query(
-            "UPDATE project_agent_links SET config_override = $1, default_lifecycle_key = $2, is_default_for_story = $3, is_default_for_task = $4, knowledge_enabled = $5, project_container_ids = $6, updated_at = $7 WHERE id = $8",
+            "UPDATE project_agent_links SET config_override = $1, installed_library_asset_id = $2, installed_source_ref = $3, installed_source_version = $4, installed_source_digest = $5, installed_at = $6, default_lifecycle_key = $7, is_default_for_story = $8, is_default_for_task = $9, knowledge_enabled = $10, project_container_ids = $11, updated_at = $12 WHERE id = $13",
         )
         .bind(config_override_json)
+        .bind(installed_library_asset_id(&link.installed_source))
+        .bind(installed_source_ref(&link.installed_source))
+        .bind(installed_source_version(&link.installed_source))
+        .bind(installed_source_digest(&link.installed_source))
+        .bind(installed_at(&link.installed_source))
         .bind(&link.default_lifecycle_key)
         .bind(link.is_default_for_story)
         .bind(link.is_default_for_task)
@@ -387,4 +416,83 @@ fn serialize_optional_json_column<T: serde::Serialize>(
     value
         .map(|inner| serialize_json_column(inner, field))
         .transpose()
+}
+
+async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for ddl in [
+        "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS installed_library_asset_id TEXT",
+        "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS installed_source_ref TEXT",
+        "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS installed_source_version TEXT",
+        "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS installed_source_digest TEXT",
+        "ALTER TABLE project_agent_links ADD COLUMN IF NOT EXISTS installed_at TEXT",
+    ] {
+        sqlx::query(ddl)
+            .execute(pool)
+            .await
+            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.library_asset_id.to_string())
+}
+
+fn installed_source_ref(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_ref.as_str())
+}
+
+fn installed_source_version(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_version.as_str())
+}
+
+fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str> {
+    source.as_ref().map(|source| source.source_digest.as_str())
+}
+
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
+    source
+        .as_ref()
+        .map(|source| source.installed_at.to_rfc3339())
+}
+
+fn parse_installed_source(
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
+) -> Result<Option<InstalledAssetSource>, DomainError> {
+    let Some(library_asset_id) = library_asset_id else {
+        return Ok(None);
+    };
+    Ok(Some(InstalledAssetSource {
+        library_asset_id: Uuid::parse_str(&library_asset_id).map_err(|_| {
+            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+        })?,
+        source_ref: required_installed_source_field(source_ref, "installed_source.source_ref")?,
+        source_version: required_installed_source_field(
+            source_version,
+            "installed_source.source_version",
+        )?,
+        source_digest: required_installed_source_field(
+            source_digest,
+            "installed_source.source_digest",
+        )?,
+        installed_at: super::parse_pg_timestamp_checked(
+            &required_installed_source_field(installed_at, "installed_source.installed_at")?,
+            "installed_source.installed_at",
+        )?,
+    }))
+}
+
+fn required_installed_source_field(
+    value: Option<String>,
+    field: &str,
+) -> Result<String, DomainError> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| DomainError::InvalidConfig(format!("{field} 为空")))
 }

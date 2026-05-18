@@ -220,7 +220,11 @@ async fn mcp_servers_load(
     let path = mcp_servers_path(&app)?;
     state
         .runtime
-        .record_log("info", "mcp", format!("加载 MCP servers: {}", path.display()))
+        .record_log(
+            "info",
+            "mcp",
+            format!("加载 MCP servers: {}", path.display()),
+        )
         .await;
     if !path.exists() {
         return Ok(Vec::new());
@@ -281,7 +285,10 @@ async fn desktop_browse_directory(path: Option<String>) -> Result<BrowseDirector
         tokio::task::spawn_blocking(move || browse_directory(path.as_deref()))
             .await
             .map_err(|e| format!("目录浏览任务失败: {e}"))??;
-    Ok(BrowseDirectoryResponse { current_path, entries })
+    Ok(BrowseDirectoryResponse {
+        current_path,
+        entries,
+    })
 }
 
 #[tauri::command]

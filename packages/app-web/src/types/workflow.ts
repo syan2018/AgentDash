@@ -1,4 +1,5 @@
 // ─── Workflow ─────────────────────────────────────────
+import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type WorkflowTargetKind = "project" | "story";
 
@@ -320,6 +321,7 @@ export interface WorkflowDefinition {
   description: string;
   target_kinds: WorkflowTargetKind[];
   source: WorkflowDefinitionSource;
+  installed_source?: InstalledAssetSourceDto | null;
   version: number;
   contract: WorkflowContract;
   created_at: string;
@@ -334,6 +336,7 @@ export interface LifecycleDefinition {
   description: string;
   target_kinds: WorkflowTargetKind[];
   source: WorkflowDefinitionSource;
+  installed_source?: InstalledAssetSourceDto | null;
   version: number;
   entry_step_key: string;
   steps: LifecycleStepDefinition[];

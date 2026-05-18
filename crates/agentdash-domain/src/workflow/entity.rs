@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::session_binding::StorySessionId;
+use crate::shared_library::InstalledAssetSource;
 
 use super::value_objects::{
     EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
@@ -20,6 +21,8 @@ pub struct WorkflowDefinition {
     pub description: String,
     pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
     pub contract: WorkflowContract,
     pub created_at: DateTime<Utc>,
@@ -50,6 +53,7 @@ impl WorkflowDefinition {
             description: description.into(),
             binding_kinds,
             source,
+            installed_source: None,
             version: 1,
             contract,
             created_at: now,
@@ -78,6 +82,8 @@ pub struct LifecycleDefinition {
     pub description: String,
     pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
     pub entry_step_key: String,
     pub steps: Vec<LifecycleStepDefinition>,
@@ -115,6 +121,7 @@ impl LifecycleDefinition {
             description: description.into(),
             binding_kinds,
             source,
+            installed_source: None,
             version: 1,
             entry_step_key,
             steps,

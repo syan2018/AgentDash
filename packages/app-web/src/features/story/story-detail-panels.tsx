@@ -1,20 +1,13 @@
-/**
- * Story 详情页的大型子面板：上下文管理面板 + 验收面板
- *
- * 从 StoryPage 提取，减少页面组件体积。
- */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ContextSourceRef,
   ProjectConfig,
   SessionComposition,
   Story,
-  Task,
   Workspace,
 } from "../../types";
 import type { VfsEntry } from "../../services/vfs";
-import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
-import { DetailSection } from "@agentdash/ui";
+import { Button } from "@agentdash/ui";
 import {
   ContextContainersEditor,
   DisabledContainerIdsEditor,
@@ -28,8 +21,6 @@ import { resolveDefaultWorkspaceId } from "../task/agent-binding";
 import { useVfsPicker, VfsEntryPickerInline } from "../context-source";
 import { useStoryStore } from "../../stores/storyStore";
 import { sourceKindMeta } from "./context-source-utils";
-
-// ─── Context source builder helpers ────────────────────
 
 function buildFileContextSource(address: string, label: string, index: number): ContextSourceRef {
   return {
@@ -57,8 +48,6 @@ function buildManualTextSource(text: string, label: string, index: number): Cont
   };
 }
 
-// ─── Override Editors ──────────────────────────────────
-
 function OptionalSessionCompositionEditor({
   value,
   isSaving,
@@ -78,13 +67,9 @@ function OptionalSessionCompositionEditor({
         <p className="text-xs text-muted-foreground">
           当前没有为这个 Story 配置显式会话编排，将仅使用会话内置的默认协作阶段提示。
         </p>
-        <button
-          type="button"
-          onClick={() => setIsCreating(true)}
-          className="agentdash-button-secondary"
-        >
+        <Button onClick={() => setIsCreating(true)} size="sm" variant="secondary">
           新建会话编排
-        </button>
+        </Button>
       </div>
     );
   }
@@ -98,34 +83,32 @@ function OptionalSessionCompositionEditor({
       />
       <div className="flex items-center gap-2">
         {value ? (
-          <button
-            type="button"
+          <Button
             onClick={() => {
               void onClear().then(() => {
                 setIsCreating(false);
               });
             }}
             disabled={isSaving}
-            className="agentdash-button-secondary"
+            size="sm"
+            variant="secondary"
           >
             清空配置
-          </button>
+          </Button>
         ) : (
-          <button
-            type="button"
+          <Button
             onClick={() => setIsCreating(false)}
             disabled={isSaving}
-            className="agentdash-button-secondary"
+            size="sm"
+            variant="secondary"
           >
             取消
-          </button>
+          </Button>
         )}
       </div>
     </div>
   );
 }
-
-// ─── ContextPanel ──────────────────────────────────────
 
 export function ContextPanel({
   story,
@@ -220,7 +203,6 @@ export function ContextPanel({
   return (
     <div className="space-y-2">
 
-      {/* 条目列表 */}
       {sourceRefs.length > 0 && (
         <div className="space-y-1">
           {sourceRefs.map((ref, index) => {
@@ -257,7 +239,7 @@ export function ContextPanel({
         </div>
       )}
 
-      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+      <div className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             Story 追加 VFS Mount
@@ -276,7 +258,7 @@ export function ContextPanel({
         />
       </div>
 
-      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+      <div className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             禁用 Project VFS Mount
@@ -293,7 +275,7 @@ export function ContextPanel({
         />
       </div>
 
-      <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
+      <div className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             会话编排
@@ -310,8 +292,7 @@ export function ContextPanel({
         />
       </div>
 
-      {/* VFS 预览 */}
-      <div className="space-y-2 rounded-[12px] border border-border bg-secondary/20 p-3">
+      <div className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
             地址空间预览
@@ -325,7 +306,6 @@ export function ContextPanel({
         />
       </div>
 
-      {/* 空态 */}
       {sourceRefs.length === 0
         && ctx.context_containers.length === 0
         && ctx.disabled_container_ids.length === 0
@@ -335,7 +315,6 @@ export function ContextPanel({
         </p>
       )}
 
-      {/* 内联添加区（文件选择器 / 文本表单，互斥） */}
       {filePicker.pickerOpen && (
         <VfsEntryPickerInline
           open={filePicker.pickerOpen}
@@ -402,7 +381,6 @@ export function ContextPanel({
         </div>
       )}
 
-      {/* 操作栏 */}
       <div className="flex items-center gap-2 pt-1">
         {!filePicker.pickerOpen && !addingText && (
           <>
@@ -437,85 +415,5 @@ export function ContextPanel({
         {!message && error && <span className="ml-auto text-[11px] text-destructive">{error}</span>}
       </div>
     </div>
-  );
-}
-
-// ─── ReviewPanel ───────────────────────────────────────
-
-export function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
-  const successCount = tasks.filter((task) => task.status === "completed").length;
-  const failedCount = tasks.filter((task) => task.status === "failed").length;
-  const runningCount = tasks.filter((task) => task.status === "running").length;
-  const pendingCount = tasks.filter((task) => task.status === "pending" || task.status === "assigned").length;
-
-  return (
-    <DetailSection title="验收">
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">类型</p>
-            <div className="mt-1">
-              <StoryTypeBadge type={story.story_type} />
-            </div>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">优先级</p>
-            <div className="mt-1">
-              <StoryPriorityBadge priority={story.priority} showLabel />
-            </div>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">状态</p>
-            <div className="mt-1">
-              <StoryStatusBadge status={story.status} />
-            </div>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">任务总数</p>
-            <p className="mt-1 text-sm font-medium text-foreground">{tasks.length}</p>
-          </div>
-        </div>
-
-        {story.tags.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">标签</p>
-            <div className="flex flex-wrap gap-1.5">
-              {story.tags.map((tag, index) => (
-                <span
-                  key={index}
-                  className="inline-flex items-center rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">待执行</p>
-            <p className="mt-1 text-sm font-medium text-muted-foreground">{pendingCount}</p>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">执行中</p>
-            <p className="mt-1 text-sm font-medium text-primary">{runningCount}</p>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">成功</p>
-            <p className="mt-1 text-sm font-medium text-success">{successCount}</p>
-          </div>
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
-            <p className="text-xs text-muted-foreground">失败</p>
-            <p className="mt-1 text-sm font-medium text-destructive">{failedCount}</p>
-          </div>
-        </div>
-
-        <div className="rounded-[12px] border border-border bg-background p-3.5">
-          <p className="mb-2 text-xs font-medium text-muted-foreground">描述</p>
-          <p className="text-sm leading-6 text-foreground">{story.description || "暂无 Story 描述"}</p>
-        </div>
-      </div>
-    </DetailSection>
   );
 }

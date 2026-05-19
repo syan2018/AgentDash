@@ -60,6 +60,7 @@ interface StoryState {
     title: string,
     description?: string,
     options?: {
+      status?: Story["status"];
       priority?: Story["priority"];
       story_type?: Story["story_type"];
       tags?: string[];
@@ -566,6 +567,7 @@ export const useStoryStore = create<StoryState>((set) => ({
         project_id: projectId,
         title,
         description,
+        status: options?.status ? toBackendStoryStatus(options.status) : undefined,
         priority: options?.priority,
         story_type: options?.story_type,
         tags: options?.tags,

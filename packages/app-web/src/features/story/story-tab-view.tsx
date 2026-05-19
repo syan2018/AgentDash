@@ -1,10 +1,3 @@
-/**
- * StoryTabView — Story 看板 Tab 入口
- *
- * 从 store 拉取数据后代理传入 StoryListView，
- * 保持 StoryListView 原有 Props 接口不变。
- */
-
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Story } from "../../types";
@@ -24,7 +17,6 @@ export function StoryTabView() {
     return s.storiesByProjectId[currentProjectId] ?? EMPTY_STORIES;
   });
 
-  // 切换项目或首次渲染时加载 Story 列表
   useEffect(() => {
     if (!currentProjectId) return;
     void fetchStoriesByProject(currentProjectId);

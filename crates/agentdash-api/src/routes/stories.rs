@@ -37,6 +37,7 @@ pub struct CreateStoryRequest {
     pub project_id: String,
     pub title: String,
     pub description: Option<String>,
+    pub status: Option<StoryStatus>,
     pub priority: Option<StoryPriority>,
     pub story_type: Option<StoryType>,
     pub tags: Option<Vec<String>>,
@@ -140,6 +141,7 @@ pub async fn create_story(
         req.description.unwrap_or_default(),
         StoryMutationInput {
             default_workspace_id: Some(default_workspace_id),
+            status: req.status,
             priority: req.priority,
             story_type: req.story_type,
             tags: req.tags,

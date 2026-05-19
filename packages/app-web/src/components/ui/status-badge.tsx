@@ -1,29 +1,29 @@
 import type { StoryStatus, TaskStatus, StoryPriority, StoryType } from "../../types";
 
-const storyStatusConfig: Record<StoryStatus, { label: string; className: string }> = {
-  draft: { label: "草稿", className: "border-border bg-secondary text-muted-foreground" },
-  ready: { label: "就绪", className: "border-info/20 bg-info/10 text-info" },
-  running: { label: "执行中", className: "border-primary/20 bg-primary/10 text-primary" },
-  review: { label: "待验收", className: "border-warning/20 bg-warning/10 text-warning" },
-  completed: { label: "已完成", className: "border-success/20 bg-success/10 text-success" },
-  failed: { label: "失败", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  cancelled: { label: "已取消", className: "border-border bg-secondary text-muted-foreground" },
+const storyStatusConfig: Record<StoryStatus, { label: string; className: string; progress: number }> = {
+  draft: { label: "draft", className: "text-muted-foreground", progress: 0 },
+  ready: { label: "ready", className: "text-info", progress: 0.2 },
+  running: { label: "running", className: "text-primary", progress: 0.55 },
+  review: { label: "review", className: "text-warning", progress: 0.75 },
+  completed: { label: "completed", className: "text-success", progress: 1 },
+  failed: { label: "failed", className: "text-destructive", progress: 0 },
+  cancelled: { label: "cancelled", className: "text-muted-foreground", progress: 0 },
 };
 
-const storyPriorityConfig: Record<StoryPriority, { label: string; className: string; dotColor: string }> = {
-  p0: { label: "P0", className: "border-destructive/20 bg-destructive/10 text-destructive", dotColor: "bg-destructive" },
-  p1: { label: "P1", className: "border-warning/20 bg-warning/10 text-warning", dotColor: "bg-warning" },
-  p2: { label: "P2", className: "border-primary/20 bg-primary/10 text-primary", dotColor: "bg-primary" },
-  p3: { label: "P3", className: "border-border bg-secondary text-muted-foreground", dotColor: "bg-muted-foreground" },
+const storyPriorityConfig: Record<StoryPriority, { label: string; className: string }> = {
+  p0: { label: "P0", className: "border-destructive/20 bg-destructive/10 text-destructive" },
+  p1: { label: "P1", className: "border-warning/20 bg-warning/10 text-warning" },
+  p2: { label: "P2", className: "border-primary/20 bg-primary/10 text-primary" },
+  p3: { label: "P3", className: "border-border bg-secondary text-muted-foreground" },
 };
 
 const storyTypeConfig: Record<StoryType, { label: string; icon: string; className: string }> = {
-  feature: { label: "功能", icon: "FEAT", className: "border-primary/20 bg-primary/10 text-primary" },
-  bugfix: { label: "缺陷", icon: "BUG", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  refactor: { label: "重构", icon: "REF", className: "border-warning/20 bg-warning/10 text-warning" },
-  docs: { label: "文档", icon: "DOC", className: "border-info/20 bg-info/10 text-info" },
-  test: { label: "测试", icon: "TEST", className: "border-success/20 bg-success/10 text-success" },
-  other: { label: "其他", icon: "OTHR", className: "border-border bg-secondary text-muted-foreground" },
+  feature: { label: "feature", icon: "FEAT", className: "border-primary/20 bg-primary/10 text-primary" },
+  bugfix: { label: "bugfix", icon: "BUG", className: "border-destructive/20 bg-destructive/10 text-destructive" },
+  refactor: { label: "refactor", icon: "REF", className: "border-warning/20 bg-warning/10 text-warning" },
+  docs: { label: "docs", icon: "DOC", className: "border-info/20 bg-info/10 text-info" },
+  test: { label: "test", icon: "TEST", className: "border-success/20 bg-success/10 text-success" },
+  other: { label: "other", icon: "OTHR", className: "border-border bg-secondary text-muted-foreground" },
 };
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
@@ -39,12 +39,55 @@ interface BadgeProps {
   className?: string;
 }
 
+function storyStatusPath(progress: number): string {
+  const center = 7;
+  const radius = 3.5;
+  const angle = 2 * Math.PI * progress;
+  const endX = center + radius * Math.sin(angle);
+  const endY = center - radius * Math.cos(angle);
+  const largeArc = progress > 0.5 ? 1 : 0;
+  return `M${center},${center} L${center},${center - radius} A${radius},${radius} 0 ${largeArc},1 ${endX},${endY} Z`;
+}
+
+export function StoryStatusIcon({ status, className = "h-3.5 w-3.5" }: BadgeProps & { status: StoryStatus }) {
+  const config = storyStatusConfig[status];
+
+  return (
+    <svg viewBox="0 0 14 14" fill="none" className={`${className} shrink-0 ${config.className}`} aria-hidden="true">
+      <circle cx="7" cy="7" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      {config.progress === 1 ? (
+        <>
+          <circle cx="7" cy="7" r="6" fill="currentColor" />
+          <path d="M10.8 4.6 6.1 9.3 3.6 6.8" fill="none" stroke="white" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+        </>
+      ) : config.progress > 0 ? (
+        <path d={storyStatusPath(config.progress)} fill="currentColor" />
+      ) : null}
+      {status === "failed" && <path d="M4.8 4.8 9.2 9.2 M9.2 4.8 4.8 9.2" stroke="currentColor" strokeLinecap="round" strokeWidth="1.4" />}
+      {status === "cancelled" && <path d="M4.5 9.5 9.5 4.5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />}
+    </svg>
+  );
+}
+
+export function StoryStatusToken({ status, count, className = "" }: BadgeProps & { status: StoryStatus; count?: number }) {
+  const config = storyStatusConfig[status];
+
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-1.5 text-xs font-semibold ${className}`}>
+      <StoryStatusIcon status={status} className="h-3 w-3" />
+      <span className={`truncate font-mono text-[11px] ${config.className}`}>{config.label}</span>
+      {typeof count === "number" && (
+        <span className="font-mono text-[11px] font-medium text-muted-foreground">{count}</span>
+      )}
+    </span>
+  );
+}
+
 export function StoryStatusBadge({ status, className = "" }: BadgeProps & { status: StoryStatus }) {
   const config = storyStatusConfig[status];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
-      {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
-      {status === "running" && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+    <span className={`inline-flex items-center gap-1.5 rounded-[6px] bg-secondary px-1.5 py-0.5 text-[11px] font-medium ${config.className} ${className}`}>
+      <StoryStatusIcon status={status} className="h-3 w-3" />
       {config.label}
     </span>
   );
@@ -61,22 +104,28 @@ export function TaskStatusBadge({ status, className = "" }: BadgeProps & { statu
   );
 }
 
-export function StoryPriorityBadge({ priority, showLabel = false, className = "" }: BadgeProps & { priority: StoryPriority; showLabel?: boolean }) {
+export function StoryPriorityBadge({ priority, showLabel = true, className = "" }: BadgeProps & { priority: StoryPriority; showLabel?: boolean }) {
   const config = storyPriorityConfig[priority];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] font-semibold ${config.className} ${className}`}>
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${config.dotColor}`} />
-      {showLabel && config.label}
+    <span className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
+      {showLabel ? config.label : null}
     </span>
   );
+}
+
+export function StoryPriorityToken(props: BadgeProps & { priority: StoryPriority }) {
+  return <StoryPriorityBadge {...props} showLabel />;
 }
 
 export function StoryTypeBadge({ type, showIcon = true, className = "" }: BadgeProps & { type: StoryType; showIcon?: boolean }) {
   const config = storyTypeConfig[type];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] font-medium ${config.className} ${className}`}>
-      {showIcon && <span className="text-[9px] font-semibold tracking-[0.12em]">{config.icon}</span>}
-      <span>{config.label}</span>
+    <span className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
+      {showIcon ? config.icon : config.label}
     </span>
   );
+}
+
+export function StoryTypeToken(props: BadgeProps & { type: StoryType }) {
+  return <StoryTypeBadge {...props} />;
 }

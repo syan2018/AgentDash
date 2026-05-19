@@ -1,7 +1,7 @@
 import type { Story } from "../../types";
-import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { StoryPriorityToken, StoryStatusBadge, StoryTypeToken } from "../../components/ui/status-badge";
 
 interface StoryCardProps {
   story: Story;
@@ -10,54 +10,65 @@ interface StoryCardProps {
   isDragging?: boolean;
 }
 
+function formatStoryKey(id: string): string {
+  return `ST-${id.slice(0, 4).toUpperCase()}`;
+}
+
 export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardProps) {
+  const contextCount =
+    story.context.source_refs.length +
+    story.context.context_containers.length +
+    story.context.disabled_container_ids.length +
+    (story.context.session_composition ? 1 : 0);
+
   return (
-    <button
-      type="button"
+    <div
       onClick={onClick}
-      className={`w-full rounded-[12px] border border-border bg-background p-3.5 text-left transition-all hover:border-primary/25 hover:bg-secondary/35 ${
-        isDragging ? "scale-[1.02] ring-2 ring-primary/20" : ""
+      className={`group/card w-full cursor-pointer rounded-[8px] border border-border bg-card px-2.5 py-3 text-left shadow-[0_3px_6px_-2px_rgba(0,0,0,0.02),0_1px_1px_0_rgba(0,0,0,0.04)] transition-colors hover:border-primary/25 hover:bg-accent/40 ${
+        isDragging ? "ring-2 ring-primary/20" : ""
       }`}
     >
-      {/* 顶部：类型和优先级 */}
-      <div className="mb-2.5 flex items-center gap-1.5">
-        <StoryTypeBadge type={story.story_type} />
-        <StoryPriorityBadge priority={story.priority} showLabel />
-        {story.tags.length > 0 && (
-          <div className="ml-auto flex items-center gap-1">
-            {story.tags.slice(0, 2).map((tag, index) => (
-              <span
-                key={index}
-                className="inline-flex max-w-[72px] truncate rounded-[8px] border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground"
-                title={tag}
-              >
-                {tag}
-              </span>
-            ))}
-            {story.tags.length > 2 && (
-              <span className="text-[10px] text-muted-foreground">+{story.tags.length - 2}</span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 标题和描述 */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium leading-6 text-foreground">{story.title}</p>
-          {story.description && (
-            <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">{story.description}</p>
-          )}
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-mono text-[11px] text-muted-foreground">{formatStoryKey(story.id)}</p>
         <StoryStatusBadge status={story.status} />
       </div>
 
-      {/* 底部：任务数和时间 */}
-      <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-xs text-muted-foreground">
-        <span>{taskCount} 个任务</span>
-        <span>{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>
+      <div className="mt-1 min-w-0">
+        <p className="line-clamp-2 text-sm font-medium leading-snug text-foreground group-hover/card:text-foreground">{story.title}</p>
+        {story.description && (
+          <p className="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">{story.description}</p>
+        )}
       </div>
-    </button>
+
+      {(story.tags.length > 0 || contextCount > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {story.tags.slice(0, 2).map((tag, index) => (
+            <span
+              key={index}
+              className="inline-flex max-w-[92px] truncate rounded-[6px] bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              title={tag}
+            >
+              {tag}
+            </span>
+          ))}
+          {story.tags.length > 2 && (
+            <span className="text-[10px] text-muted-foreground">+{story.tags.length - 2}</span>
+          )}
+          {contextCount > 0 && (
+            <span className="inline-flex rounded-[6px] bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {contextCount} Context
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <StoryPriorityToken priority={story.priority} />
+        <StoryTypeToken type={story.story_type} />
+        <span>{taskCount} Task</span>
+        <span className="ml-auto">{new Date(story.updated_at).toLocaleDateString("zh-CN")}</span>
+      </div>
+    </div>
   );
 }
 
@@ -80,7 +91,7 @@ export function SortableStoryCard({ story, taskCount, onClick }: SortableStoryCa
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.42 : 1,
   };
 
   return (

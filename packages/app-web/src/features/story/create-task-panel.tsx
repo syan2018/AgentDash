@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { Button, Field, Select, TextInput, Textarea } from "@agentdash/ui";
 import type {
   AgentBinding,
   ContextSourceRef,
@@ -16,8 +17,6 @@ import {
 import { useStoryStore } from "../../stores/storyStore";
 
 import { sourceKindMeta } from "./context-source-utils";
-
-// ─── CreateTaskPanel ───────────────────────────────────
 
 interface CreateTaskPanelProps {
   story: Story;
@@ -44,20 +43,21 @@ export function CreateTaskPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const availableContexts = story.context.source_refs;
+  const defaultWorkspaceId = resolveDefaultWorkspaceId(projectConfig, workspaces);
 
-  useEffect(() => {
-    if (isExpanded) return;
-    setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
+  const openPanel = useCallback(() => {
+    setWorkspaceId(defaultWorkspaceId);
     setAgentBinding(createDefaultAgentBinding(projectConfig));
     setSelectedContextIndexes([]);
     setFormMessage(null);
-  }, [isExpanded, projectConfig, workspaces]);
+    setIsExpanded(true);
+  }, [defaultWorkspaceId, projectConfig]);
 
-  useEffect(() => {
-    if (!isExpanded) {
-      setSelectedContextIndexes([]);
-    }
-  }, [isExpanded, story.id]);
+  const closePanel = useCallback(() => {
+    setIsExpanded(false);
+    setSelectedContextIndexes([]);
+    setFormMessage(null);
+  }, []);
 
   const toggleContextSelection = useCallback((index: number) => {
     setSelectedContextIndexes((current) =>
@@ -91,7 +91,7 @@ export function CreateTaskPanel({
       onCreated();
       setTitle("");
       setDescription("");
-      setWorkspaceId(resolveDefaultWorkspaceId(projectConfig, workspaces));
+      setWorkspaceId(defaultWorkspaceId);
       setAgentBinding(createDefaultAgentBinding(projectConfig));
       setSelectedContextIndexes([]);
       setIsExpanded(false);
@@ -104,8 +104,8 @@ export function CreateTaskPanel({
     return (
       <button
         type="button"
-        onClick={() => setIsExpanded(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-[12px] border border-dashed border-border bg-secondary/25 py-3.5 text-sm text-muted-foreground transition-colors hover:border-primary/25 hover:bg-secondary/40 hover:text-foreground"
+        onClick={openPanel}
+        className="flex w-full items-center justify-center gap-2 rounded-[8px] border border-dashed border-border bg-secondary/25 py-3.5 text-sm text-muted-foreground transition-colors hover:border-primary/25 hover:bg-secondary/40 hover:text-foreground"
       >
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -116,47 +116,47 @@ export function CreateTaskPanel({
   }
 
   return (
-    <div className="rounded-[12px] border border-border bg-secondary/35 p-4">
+    <div className="rounded-[8px] border border-border bg-secondary/35 p-4">
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-medium">新建 Task</span>
-        <button
-          type="button"
-          onClick={() => setIsExpanded(false)}
-          className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        >
+        <Button onClick={closePanel} size="sm" variant="secondary">
           取消
-        </button>
+        </Button>
       </div>
 
       <div className="space-y-3">
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Task 标题"
-          autoFocus
-          className="agentdash-form-input"
-        />
+        <Field label="Task 标题">
+          <TextInput
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="要交给 Agent 的具体动作"
+            autoFocus
+          />
+        </Field>
 
-        <select
-          value={workspaceId}
-          onChange={(event) => setWorkspaceId(event.target.value)}
-          className="agentdash-form-select"
-        >
-          <option value="">Workspace</option>
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
+        <Field label="Workspace">
+          <Select
+            value={workspaceId}
+            onChange={(event) => setWorkspaceId(event.target.value)}
+          >
+            <option value="">使用 Project 默认</option>
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
 
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          rows={2}
-          placeholder="描述（可选）"
-          className="agentdash-form-textarea"
-        />
+        <Field label="描述">
+          <Textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={2}
+            placeholder="补充验收口径、边界或实现提示"
+            className="min-h-20"
+          />
+        </Field>
 
         <AgentBindingFields
           value={agentBinding}
@@ -165,7 +165,7 @@ export function CreateTaskPanel({
         />
 
         {availableContexts.length > 0 && (
-          <div className="rounded-[12px] border border-border bg-background p-3.5">
+          <div className="rounded-[8px] border border-border bg-background p-3.5">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-medium text-muted-foreground">关联 Story 上下文</p>
@@ -184,7 +184,7 @@ export function CreateTaskPanel({
                 return (
                   <label
                     key={`${context.label ?? "context"}-${index}`}
-                    className={`flex cursor-pointer items-start gap-3 rounded-[10px] border px-3 py-2 transition-colors ${
+                    className={`flex cursor-pointer items-start gap-3 rounded-[8px] border px-3 py-2 transition-colors ${
                       checked
                         ? "border-primary/40 bg-primary/5"
                         : "border-border bg-secondary/20 hover:bg-secondary/35"
@@ -199,7 +199,7 @@ export function CreateTaskPanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         {(() => { const m = sourceKindMeta(context.kind); return (
-                          <span className={`rounded-full border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${m.color}`}>
+                          <span className={`rounded-[6px] border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${m.color}`}>
                             {m.icon} {m.label}
                           </span>
                         ); })()}
@@ -224,14 +224,14 @@ export function CreateTaskPanel({
           ) : (
             <div />
           )}
-          <button
-            type="button"
+          <Button
             onClick={() => void handleSubmit()}
             disabled={isSubmitting || !title.trim()}
-            className="agentdash-button-primary"
+            size="sm"
+            variant="primary"
           >
             {isSubmitting ? "创建中..." : "创建"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -19,96 +19,54 @@ import {
 import { StoryCard, SortableStoryCard } from "./story-card";
 import { useStoryStore } from "../../stores/storyStore";
 import { useDroppable } from "@dnd-kit/core";
+import { StoryStatusToken } from "../../components/ui/status-badge";
 
-// 看板列定义（4列布局）
-type BoardColumnKey = "todo" | "inprogress" | "inreview" | "done";
-
-interface BoardColumn {
-  key: BoardColumnKey;
-  label: string;
-  color: string;
-  bgColor: string;
-  accepts: StoryStatus[];
-}
-
-// 看板列样式与 status-badge 保持一致
-const boardColumns: BoardColumn[] = [
-  {
-    key: "todo",
-    label: "Todo",
-    color: "text-muted-foreground",
-    bgColor: "bg-muted",
-    accepts: ["draft", "ready"],
-  },
-  {
-    key: "inprogress",
-    label: "In Progress",
-    color: "text-primary",
-    bgColor: "bg-primary/15",
-    accepts: ["running"],
-  },
-  {
-    key: "inreview",
-    label: "In Review",
-    color: "text-warning",
-    bgColor: "bg-warning/15",
-    accepts: ["review"],
-  },
-  {
-    key: "done",
-    label: "Done",
-    color: "text-success",
-    bgColor: "bg-success/15",
-    accepts: ["completed", "failed", "cancelled"],
-  },
+const storyStatusOrder: StoryStatus[] = [
+  "draft",
+  "ready",
+  "running",
+  "review",
+  "completed",
+  "failed",
+  "cancelled",
 ];
 
-// Story 状态到看板列的映射
-const statusToColumnMap: Record<StoryStatus, BoardColumnKey> = {
-  draft: "todo",
-  ready: "todo",
-  running: "inprogress",
-  review: "inreview",
-  completed: "done",
-  failed: "done",
-  cancelled: "done",
-};
+interface BoardColumn {
+  status: StoryStatus;
+}
 
-// 看板列到默认状态的映射（用于拖拽时设置新状态）
-const columnToDefaultStatus: Record<BoardColumnKey, StoryStatus> = {
-  todo: "draft",
-  inprogress: "running",
-  inreview: "review",
-  done: "completed",
-};
+const boardColumns: BoardColumn[] = [
+  { status: "draft" },
+  { status: "ready" },
+  { status: "running" },
+  { status: "review" },
+  { status: "completed" },
+  { status: "failed" },
+  { status: "cancelled" },
+];
 
 interface StoryBoardProps {
   stories: Story[];
   taskCountByStoryId: Record<string, number>;
+  onCreateStory?: (status: StoryStatus) => void;
   onOpenStory: (story: Story) => void;
 }
 
-export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBoardProps) {
+export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenStory }: StoryBoardProps) {
   const { updateStory } = useStoryStore();
   const [activeStory, setActiveStory] = useState<Story | null>(null);
-  // 乐观更新：本地状态覆盖 props
   const [localStories, setLocalStories] = useState<Story[]>(stories);
 
-  // 同步外部 stories 到本地
   useEffect(() => {
     setLocalStories(stories);
   }, [stories]);
 
-  // 将 Story 按看板列分组（使用本地状态），并按优先级排序
   const storiesByColumn = useMemo(() => {
-    const result: Record<BoardColumnKey, Story[]> = {
-      todo: [],
-      inprogress: [],
-      inreview: [],
-      done: [],
-    };
+    const result = storyStatusOrder.reduce((acc, status) => {
+      acc[status] = [];
+      return acc;
+    }, {} as Record<StoryStatus, Story[]>);
 
-    // 优先级权重映射
     const priorityWeight: Record<Story['priority'], number> = {
       p0: 0,
       p1: 1,
@@ -116,19 +74,16 @@ export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBo
       p3: 3,
     };
 
-    // 按优先级排序的辅助函数
     const sortByPriority = (a: Story, b: Story) => {
       return priorityWeight[a.priority] - priorityWeight[b.priority];
     };
 
     localStories.forEach((story) => {
-      const columnKey = statusToColumnMap[story.status];
-      result[columnKey].push(story);
+      result[story.status].push(story);
     });
 
-    // 每列内按优先级排序
-    Object.keys(result).forEach((key) => {
-      result[key as BoardColumnKey].sort(sortByPriority);
+    storyStatusOrder.forEach((status) => {
+      result[status].sort(sortByPriority);
     });
 
     return result;
@@ -159,26 +114,23 @@ export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBo
     if (!over) return;
 
     const storyId = active.id as string;
-    const targetColumn = over.id as BoardColumnKey;
+    const overId = over.id as string;
 
-    // 检查是否是有效的列
-    const validColumns: BoardColumnKey[] = ["todo", "inprogress", "inreview", "done"];
-    if (!validColumns.includes(targetColumn)) return;
+    const overStory = localStories.find((s) => s.id === overId);
+    const targetStatus = storyStatusOrder.includes(overId as StoryStatus)
+      ? overId as StoryStatus
+      : overStory?.status;
+    if (!targetStatus) return;
 
     const story = localStories.find((s) => s.id === storyId);
-    const currentColumn = story ? statusToColumnMap[story.status] : null;
 
-    // 只有跨列拖拽时才更新状态
-    if (story && currentColumn !== targetColumn) {
-      const newStatus = columnToDefaultStatus[targetColumn];
+    if (story && story.status !== targetStatus) {
+      setLocalStories((prev) => prev.map((s) => (s.id === storyId ? { ...s, status: targetStatus } : s)));
 
-      // 乐观更新：立即更新本地状态
-      setLocalStories((prev) =>
-        prev.map((s) => (s.id === storyId ? { ...s, status: newStatus } : s))
-      );
-
-      // 异步调用 API（失败时状态会自动回滚，因为 props 会重新同步）
-      await updateStory(storyId, { status: newStatus });
+      const updated = await updateStory(storyId, { status: targetStatus });
+      if (!updated) {
+        setLocalStories(stories);
+      }
     }
   };
 
@@ -189,27 +141,29 @@ export function StoryBoard({ stories, taskCountByStoryId, onOpenStory }: StoryBo
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      {/* 4列网格布局，自适应宽度 */}
-      <div className="grid h-full grid-cols-4 gap-4 overflow-hidden">
+      <div className="flex h-full min-h-0 gap-4 overflow-x-auto p-1">
         {boardColumns.map((column) => (
           <StoryColumn
-            key={column.key}
+            key={column.status}
             column={column}
-            stories={storiesByColumn[column.key]}
+            stories={storiesByColumn[column.status]}
             taskCountByStoryId={taskCountByStoryId}
+            onCreateStory={onCreateStory}
             onOpenStory={onOpenStory}
           />
         ))}
       </div>
 
-      <DragOverlay>
+      <DragOverlay dropAnimation={null}>
         {activeStory ? (
-          <StoryCard
-            story={activeStory}
-            taskCount={taskCountByStoryId[activeStory.id] ?? 0}
-            onClick={() => {}}
-            isDragging
-          />
+          <div className="w-[280px] rotate-2 scale-105 cursor-grabbing opacity-90 shadow-lg shadow-foreground/10">
+            <StoryCard
+              story={activeStory}
+              taskCount={taskCountByStoryId[activeStory.id] ?? 0}
+              onClick={() => {}}
+              isDragging
+            />
+          </div>
         ) : null}
       </DragOverlay>
     </DndContext>
@@ -220,33 +174,41 @@ interface StoryColumnProps {
   column: BoardColumn;
   stories: Story[];
   taskCountByStoryId: Record<string, number>;
+  onCreateStory?: (status: StoryStatus) => void;
   onOpenStory: (story: Story) => void;
 }
 
-function StoryColumn({ column, stories, taskCountByStoryId, onOpenStory }: StoryColumnProps) {
+function StoryColumn({ column, stories, taskCountByStoryId, onCreateStory, onOpenStory }: StoryColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
-    id: column.key,
+    id: column.status,
   });
 
   return (
     <div
       ref={setNodeRef}
-      className={`flex h-full flex-col rounded-lg border border-border bg-secondary/30 ${
-        isOver ? "ring-2 ring-primary ring-inset" : ""
+      className={`flex w-[280px] shrink-0 flex-col rounded-[12px] bg-secondary/20 p-2 transition-colors ${
+        isOver ? "bg-secondary/30 ring-2 ring-primary/50 ring-inset" : ""
       }`}
     >
-      {/* 列标题 */}
-      <div className={`flex items-center justify-between border-b border-border px-3 py-2.5 ${column.bgColor} rounded-t-lg`}>
-        <div className="flex items-center gap-2">
-          <h3 className={`text-sm font-semibold ${column.color}`}>{column.label}</h3>
-          <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-[8px] bg-background px-1.5 text-xs font-medium text-muted-foreground">
-            {stories.length}
-          </span>
-        </div>
+      <div className="mb-2 flex items-center justify-between px-1.5 py-0.5">
+        <StoryStatusToken status={column.status} count={stories.length} />
+        {onCreateStory && (
+          <button
+            type="button"
+            onClick={() => onCreateStory(column.status)}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+            aria-label={`Create ${column.status} story`}
+          >
+            +
+          </button>
+        )}
       </div>
 
-      {/* 卡片列表 */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div
+        className={`min-h-[200px] flex-1 overflow-y-auto rounded-[8px] p-1 transition-colors ${
+          isOver ? "bg-background/50" : ""
+        }`}
+      >
         <SortableContext
           items={stories.map((s) => s.id)}
           strategy={verticalListSortingStrategy}
@@ -262,12 +224,6 @@ function StoryColumn({ column, stories, taskCountByStoryId, onOpenStory }: Story
             ))}
           </div>
         </SortableContext>
-
-        {stories.length === 0 && (
-          <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
-            Drop stories here
-          </div>
-        )}
       </div>
     </div>
   );

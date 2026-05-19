@@ -32,7 +32,6 @@ export function PresetFormFields({
   knowledgeEnabled,
   onToggleKnowledge,
   knowledgeAgentId,
-  knowledgeLinkId,
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
@@ -43,7 +42,6 @@ export function PresetFormFields({
   knowledgeEnabled?: boolean;
   onToggleKnowledge?: (enabled: boolean) => void;
   knowledgeAgentId?: string;
-  knowledgeLinkId?: string;
 }) {
   const [activeTab, setActiveTab] = useState<'basic' | 'capability' | 'memory'>('basic');
   const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'skill' | 'companion'>('tool');
@@ -577,11 +575,10 @@ export function PresetFormFields({
               onToggle={onToggleKnowledge}
               projectId={projectId}
               agentId={knowledgeAgentId}
-              linkId={knowledgeLinkId}
             />
           ) : (
             <p className="text-xs text-muted-foreground/70">
-              该 Agent 尚未在项目中链接，知识库需要 ProjectAgentLink 才能配置。
+              该 Agent 尚未保存为项目实例，保存后即可配置知识库。
             </p>
           )}
         </div>

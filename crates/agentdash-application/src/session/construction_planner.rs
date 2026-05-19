@@ -1,5 +1,5 @@
 use agentdash_domain::{
-    agent::{Agent, ProjectAgentLink},
+    agent::ProjectAgent,
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
     session_binding::SessionOwnerCtx,
@@ -52,7 +52,7 @@ pub struct ResolvedProjectAgentContext {
     pub preset_name: Option<String>,
     pub source: String,
     pub preset_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    pub link: ProjectAgentLink,
+    pub project_agent: ProjectAgent,
 }
 
 impl SessionConstructionPlanner {
@@ -192,7 +192,7 @@ impl SessionConstructionPlanner {
 
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
-                agent_link: repos.agent_link_repo.as_ref(),
+                project_agent: repos.project_agent_repo.as_ref(),
                 lifecycle_def: repos.lifecycle_definition_repo.as_ref(),
                 workflow_def: repos.workflow_definition_repo.as_ref(),
             },
@@ -316,8 +316,8 @@ impl SessionConstructionPlanner {
         };
 
         if let Some(vfs) = vfs.as_mut() {
-            filter_project_containers_by_whitelist(vfs, &project_agent.link);
-            append_agent_knowledge_mounts(vfs, &project_agent.link)?;
+            filter_project_containers_by_whitelist(vfs, &project_agent.project_agent);
+            append_agent_knowledge_mounts(vfs, &project_agent.project_agent)?;
         }
 
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
@@ -348,13 +348,13 @@ impl SessionConstructionPlanner {
         }
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
-                agent_link: repos.agent_link_repo.as_ref(),
+                project_agent: repos.project_agent_repo.as_ref(),
                 lifecycle_def: repos.lifecycle_definition_repo.as_ref(),
                 workflow_def: repos.workflow_definition_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Project {
                 project_id: project.id,
-                agent_id: project_agent.link.agent_id,
+                project_agent_id: project_agent.project_agent.id,
             },
         )
         .await;
@@ -468,39 +468,26 @@ async fn resolve_project_agent_context(
     project_id: Uuid,
     agent_key: &str,
 ) -> Result<Option<ResolvedProjectAgentContext>, String> {
-    let agent_id = match Uuid::parse_str(agent_key) {
-        Ok(agent_id) => agent_id,
+    let project_agent_id = match Uuid::parse_str(agent_key) {
+        Ok(project_agent_id) => project_agent_id,
         Err(_) => return Ok(None),
     };
     let agent = repos
-        .agent_repo
-        .get_by_id(agent_id)
+        .project_agent_repo
+        .get_by_project_and_id(project_id, project_agent_id)
         .await
         .map_err(|error| error.to_string())?;
     let Some(agent) = agent else {
         return Ok(None);
     };
-    let link = repos
-        .agent_link_repo
-        .find_by_project_and_agent(project_id, agent_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    let Some(link) = link else {
-        return Ok(None);
-    };
-    build_project_agent_context(repos, &agent, &link)
-        .await
-        .map(Some)
+    build_project_agent_context(repos, &agent).await.map(Some)
 }
 
 async fn build_project_agent_context(
     repos: &RepositorySet,
-    agent: &Agent,
-    link: &ProjectAgentLink,
+    agent: &ProjectAgent,
 ) -> Result<ResolvedProjectAgentContext, String> {
-    let preset = link
-        .merged_preset_config(agent)
-        .map_err(|error| error.to_string())?;
+    let preset = agent.preset_config().map_err(|error| error.to_string())?;
     let executor_config: AgentConfig = preset.to_agent_config(&agent.agent_type);
     let display_name = preset
         .display_name
@@ -511,11 +498,16 @@ async fn build_project_agent_context(
         .to_string();
     let preset_mcp_servers = resolve_preset_mcp_refs(
         repos.mcp_preset_repo.as_ref(),
-        link.project_id,
+        agent.project_id,
         preset.mcp_preset_keys.as_deref().unwrap_or_default(),
     )
     .await
-    .map_err(|error| format!("Agent `{}` 的 mcp_preset_keys 配置非法: {error}", agent.id))?;
+    .map_err(|error| {
+        format!(
+            "Project Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
+            agent.id
+        )
+    })?;
 
     Ok(ResolvedProjectAgentContext {
         key: agent.id.to_string(),
@@ -523,8 +515,8 @@ async fn build_project_agent_context(
         executor_config,
         preset_config: preset,
         preset_name: Some(agent.name.clone()),
-        source: format!("agents[{}]", agent.id),
+        source: format!("project_agents[{}]", agent.id),
         preset_mcp_servers,
-        link: link.clone(),
+        project_agent: agent.clone(),
     })
 }

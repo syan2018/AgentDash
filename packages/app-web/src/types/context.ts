@@ -67,7 +67,7 @@ export type ResolvedMountOwnerKind =
   | "story"
   | "task"
   | "session"
-  | "project_agent_link"
+  | "project_agent"
   | "canvas"
   | "workspace"
   | "external";
@@ -84,7 +84,7 @@ export type ResolvedVfsSurfaceSource =
   | { source_type: "task_preview"; project_id: string; task_id: string }
   | { source_type: "session_runtime"; session_id: string }
   | { source_type: "project_skill_assets"; project_id: string }
-  | { source_type: "project_agent_knowledge"; project_id: string; agent_id: string; link_id: string };
+  | { source_type: "project_agent_knowledge"; project_id: string; project_agent_id: string };
 
 export interface ResolvedMountSummary {
   id: string;

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type {
   ContextContainerDefinition,
   OpenProjectAgentSessionResult,
-  ProjectAgentLink,
+  ProjectAgent,
   ProjectAgentSession,
   ProjectSessionInfo,
   ProjectRole,
@@ -24,31 +24,29 @@ interface ProjectState {
   error: string | null;
 
   // Project Agent 管理
-  agentLinksByProjectId: Record<string, ProjectAgentLink[]>;
-  fetchProjectAgentLinks: (projectId: string) => Promise<ProjectAgentLink[]>;
-  createProjectAgentLink: (projectId: string, payload: {
+  projectAgentConfigsByProjectId: Record<string, ProjectAgent[]>;
+  fetchProjectAgentConfigs: (projectId: string) => Promise<ProjectAgent[]>;
+  createProjectAgent: (projectId: string, payload: {
     name: string;
     agent_type: string;
-    base_config?: Record<string, unknown>;
-    config_override?: Record<string, unknown>;
+    config?: Record<string, unknown>;
     default_lifecycle_key?: string;
     default_workflow_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
-  }) => Promise<ProjectAgentLink | null>;
-  updateProjectAgentLink: (projectId: string, agentId: string, payload: {
+  }) => Promise<ProjectAgent | null>;
+  updateProjectAgent: (projectId: string, agentId: string, payload: {
     name?: string;
     agent_type?: string;
-    base_config?: Record<string, unknown>;
-    config_override?: Record<string, unknown>;
+    config?: Record<string, unknown>;
     default_lifecycle_key?: string;
     default_workflow_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
     knowledge_enabled?: boolean;
     project_container_ids?: string[];
-  }) => Promise<ProjectAgentLink | null>;
-  deleteProjectAgentLink: (projectId: string, agentId: string) => Promise<boolean>;
+  }) => Promise<ProjectAgent | null>;
+  deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;
 
   // 既有接口
   fetchProjects: () => Promise<void>;
@@ -165,68 +163,71 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   error: null,
 
   // ─── Project Agent 管理 ───
-  agentLinksByProjectId: {},
+  projectAgentConfigsByProjectId: {},
 
-  fetchProjectAgentLinks: async (projectId) => {
+  fetchProjectAgentConfigs: async (projectId) => {
     try {
-      const links = await api.get<ProjectAgentLink[]>(`/projects/${projectId}/agent-links`);
+      const projectAgents = await api.get<ProjectAgent[]>(`/projects/${projectId}/agents`);
       set((s) => ({
-        agentLinksByProjectId: { ...s.agentLinksByProjectId, [projectId]: links },
+        projectAgentConfigsByProjectId: { ...s.projectAgentConfigsByProjectId, [projectId]: projectAgents },
         error: null,
       }));
-      return links;
+      return projectAgents;
     } catch (e) {
       set({ error: (e as Error).message });
       return [];
     }
   },
 
-  createProjectAgentLink: async (projectId, payload) => {
+  createProjectAgent: async (projectId, payload) => {
     try {
-      const link = await api.post<ProjectAgentLink>(`/projects/${projectId}/agent-links`, payload);
+      const projectAgent = await api.post<ProjectAgent>(`/projects/${projectId}/agents`, payload);
       set((s) => {
-        const existing = s.agentLinksByProjectId[projectId] ?? [];
+        const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
         return {
-          agentLinksByProjectId: { ...s.agentLinksByProjectId, [projectId]: [...existing, link] },
-          error: null,
-        };
-      });
-      return link;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  updateProjectAgentLink: async (projectId, agentId, payload) => {
-    try {
-      const link = await api.put<ProjectAgentLink>(`/projects/${projectId}/agent-links/${agentId}`, payload);
-      set((s) => {
-        const existing = s.agentLinksByProjectId[projectId] ?? [];
-        return {
-          agentLinksByProjectId: {
-            ...s.agentLinksByProjectId,
-            [projectId]: existing.map((l) => (l.agent_id === agentId ? link : l)),
+          projectAgentConfigsByProjectId: {
+            ...s.projectAgentConfigsByProjectId,
+            [projectId]: [...existing, projectAgent],
           },
           error: null,
         };
       });
-      return link;
+      return projectAgent;
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
     }
   },
 
-  deleteProjectAgentLink: async (projectId, agentId) => {
+  updateProjectAgent: async (projectId, agentId, payload) => {
     try {
-      await api.delete(`/projects/${projectId}/agent-links/${agentId}`);
+      const projectAgent = await api.put<ProjectAgent>(`/projects/${projectId}/agents/${agentId}`, payload);
       set((s) => {
-        const existing = s.agentLinksByProjectId[projectId] ?? [];
+        const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
         return {
-          agentLinksByProjectId: {
-            ...s.agentLinksByProjectId,
-            [projectId]: existing.filter((l) => l.agent_id !== agentId),
+          projectAgentConfigsByProjectId: {
+            ...s.projectAgentConfigsByProjectId,
+            [projectId]: existing.map((agent) => (agent.id === agentId ? projectAgent : agent)),
+          },
+          error: null,
+        };
+      });
+      return projectAgent;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  deleteProjectAgent: async (projectId, agentId) => {
+    try {
+      await api.delete(`/projects/${projectId}/agents/${agentId}`);
+      set((s) => {
+        const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
+        return {
+          projectAgentConfigsByProjectId: {
+            ...s.projectAgentConfigsByProjectId,
+            [projectId]: existing.filter((l) => l.id !== agentId),
           },
           error: null,
         };
@@ -425,7 +426,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjectAgents: async (projectId) => {
     try {
       const response = await api.get<Record<string, unknown>[]>(
-        `/projects/${projectId}/agent-links/summary`,
+        `/projects/${projectId}/agents/summary`,
       );
       const agents = response.map(mapProjectAgentSummary);
       set((state) => ({
@@ -445,7 +446,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   openProjectAgentSession: async (projectId, agentKey) => {
     try {
       const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/session`,
+        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session`,
         {},
       );
       const result = mapOpenProjectAgentSessionResult(response);
@@ -473,7 +474,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   forceNewProjectAgentSession: async (projectId, agentKey) => {
     try {
       const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/session?force_new=true`,
+        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
         {},
       );
       const result = mapOpenProjectAgentSessionResult(response);
@@ -501,7 +502,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjectAgentSessions: async (projectId, agentKey) => {
     try {
       const response = await api.get<Record<string, unknown>[]>(
-        `/projects/${projectId}/agent-links/${encodeURIComponent(agentKey)}/sessions`,
+        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
       );
       return response.map((raw) => ({
         binding_id: requireStringField(raw, 'binding_id'),
@@ -536,12 +537,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           s.currentProjectId === id ? (remaining[0]?.id ?? null) : s.currentProjectId;
         const nextAgentsByProjectId = { ...s.agentsByProjectId };
         const nextGrantsByProjectId = { ...s.grantsByProjectId };
+        const nextProjectAgentConfigsByProjectId = { ...s.projectAgentConfigsByProjectId };
         delete nextAgentsByProjectId[id];
         delete nextGrantsByProjectId[id];
+        delete nextProjectAgentConfigsByProjectId[id];
         return {
           projects: remaining,
           agentsByProjectId: nextAgentsByProjectId,
           grantsByProjectId: nextGrantsByProjectId,
+          projectAgentConfigsByProjectId: nextProjectAgentConfigsByProjectId,
           currentProjectId: nextCurrentProjectId,
           error: null,
         };

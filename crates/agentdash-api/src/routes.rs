@@ -117,27 +117,26 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/llm-providers/{id}/codex-oauth/start",
             post(llm_providers::start_codex_oauth),
         )
-        // Project-Agent 关联（新模型）
+        // Project Agent 项目实例
         .route(
-            "/projects/{id}/agent-links",
-            get(project_agents::list_project_agent_links)
-                .post(project_agents::create_project_agent_link),
+            "/projects/{id}/agents",
+            get(project_agents::list_project_agent_configs)
+                .post(project_agents::create_project_agent),
         )
         .route(
-            "/projects/{id}/agent-links/summary",
+            "/projects/{id}/agents/summary",
             get(project_agents::list_project_agents),
         )
         .route(
-            "/projects/{id}/agent-links/{agent_id}",
-            put(project_agents::update_project_agent_link)
-                .delete(project_agents::delete_project_agent_link),
+            "/projects/{id}/agents/{project_agent_id}",
+            put(project_agents::update_project_agent).delete(project_agents::delete_project_agent),
         )
         .route(
-            "/projects/{id}/agent-links/{agent_id}/session",
+            "/projects/{id}/agents/{project_agent_id}/session",
             post(project_agents::open_project_agent_session),
         )
         .route(
-            "/projects/{id}/agent-links/{agent_id}/sessions",
+            "/projects/{id}/agents/{project_agent_id}/sessions",
             get(project_agents::list_project_agent_sessions),
         )
         // Routine CRUD（嵌套在 Project 下）

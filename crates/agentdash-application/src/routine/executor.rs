@@ -256,26 +256,13 @@ impl RoutineExecutor {
         let workspace = resolve_project_workspace(&self.repos, &project).await?;
         let agent = self
             .repos
-            .agent_repo
-            .get_by_id(routine.agent_id)
+            .project_agent_repo
+            .get_by_project_and_id(project.id, routine.project_agent_id)
             .await
-            .map_err(|e| format!("查询 Agent 失败: {e}"))?
-            .ok_or_else(|| format!("Agent {} 不存在", routine.agent_id))?;
-        let link = self
-            .repos
-            .agent_link_repo
-            .find_by_project_and_agent(project.id, routine.agent_id)
-            .await
-            .map_err(|e| format!("查询 ProjectAgentLink 失败: {e}"))?
-            .ok_or_else(|| {
-                format!(
-                    "Project {} 未关联 Agent {}，Routine 无法解析执行配置",
-                    project.id, routine.agent_id
-                )
-            })?;
+            .map_err(|e| format!("查询 ProjectAgent 失败: {e}"))?
+            .ok_or_else(|| format!("ProjectAgent {} 不存在", routine.project_agent_id))?;
 
-        link.merged_preset_config(&agent)
-            .map_err(|error| error.to_string())?;
+        agent.preset_config().map_err(|error| error.to_string())?;
 
         Ok(RoutineAgentContext { workspace })
     }
@@ -293,10 +280,10 @@ impl RoutineExecutor {
                     .await
             }
             SessionStrategy::Reuse => {
-                let label = project_agent_session_label(routine.agent_id);
+                let label = project_agent_session_label(routine.project_agent_id);
                 self.find_or_create_project_agent_session(
                     routine.project_id,
-                    routine.agent_id,
+                    routine.project_agent_id,
                     &label,
                 )
                 .await
@@ -372,7 +359,7 @@ impl RoutineExecutor {
     async fn find_or_create_project_agent_session(
         &self,
         project_id: Uuid,
-        agent_id: Uuid,
+        project_agent_id: Uuid,
         label: &str,
     ) -> Result<String, String> {
         if let Some(binding) = self
@@ -407,7 +394,7 @@ impl RoutineExecutor {
             meta.id.clone(),
             SessionOwnerType::Project,
             project_id,
-            project_agent_session_label(agent_id),
+            project_agent_session_label(project_agent_id),
         );
         self.repos
             .session_binding_repo
@@ -484,8 +471,8 @@ async fn check_workspace_dispatch_admission(
     )))
 }
 
-fn project_agent_session_label(agent_id: Uuid) -> String {
-    format!("project_agent:{}", agent_id)
+fn project_agent_session_label(project_agent_id: Uuid) -> String {
+    format!("project_agent:{}", project_agent_id)
 }
 
 fn json_value_to_key_string(value: &serde_json::Value) -> String {

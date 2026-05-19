@@ -13,7 +13,7 @@ import { fetchProjectSkillAssets } from "../../../services/skillAsset";
 import type {
   LifecycleDefinition,
   McpPresetDto,
-  ProjectAgentLink,
+  ProjectAgent,
   PublishLibraryAssetKind,
   SkillAssetDto,
 } from "../../../types";
@@ -37,7 +37,7 @@ export interface AssetPickerDrawerProps {
 }
 
 const KIND_OPTIONS: Array<{ value: PublishLibraryAssetKind; label: string; hint: string }> = [
-  { value: "project_agent", label: "Agent", hint: "已链接的 Project Agent → agent_template" },
+  { value: "project_agent", label: "Agent", hint: "Project Agent → agent_template" },
   { value: "mcp_preset", label: "MCP Server", hint: "Project MCP Preset → mcp_server_template" },
   { value: "workflow_bundle", label: "Workflow", hint: "Project Lifecycle bundle → workflow_template" },
   { value: "skill_asset", label: "Skill", hint: "Project Skill 资产 → skill_template" },
@@ -176,32 +176,32 @@ function AgentList({
   projectId: string;
   onPick: (s: AssetPickerSelection) => void;
 }) {
-  const links = useProjectStore((s) => s.agentLinksByProjectId[projectId]);
-  const fetchLinks = useProjectStore((s) => s.fetchProjectAgentLinks);
+  const projectAgents = useProjectStore((s) => s.projectAgentConfigsByProjectId[projectId]);
+  const fetchProjectAgentConfigs = useProjectStore((s) => s.fetchProjectAgentConfigs);
 
   useEffect(() => {
-    if (!links) void fetchLinks(projectId);
-  }, [fetchLinks, projectId, links]);
+    if (!projectAgents) void fetchProjectAgentConfigs(projectId);
+  }, [fetchProjectAgentConfigs, projectId, projectAgents]);
 
-  if (!links) {
+  if (!projectAgents) {
     return <Hint message="正在加载 Agent…" />;
   }
-  if (links.length === 0) {
-    return <Hint message="项目内暂无可发布的 Agent。请先在 Agent 视图中链接或创建 Agent。" />;
+  if (projectAgents.length === 0) {
+    return <Hint message="项目内暂无可发布的 Agent。请先在 Agent 视图中创建 Agent。" />;
   }
   return (
     <PickList
-      items={links}
-      keyOf={(l) => l.id}
-      titleOf={(l) => l.agent_name}
-      hintOf={(l) => `agent_id: ${l.agent_id}`}
-      onPick={(link) =>
+      items={projectAgents}
+      keyOf={(agent) => agent.id}
+      titleOf={(agent) => agent.name}
+      hintOf={(agent) => `id: ${agent.id}`}
+      onPick={(agent) =>
         onPick({
           assetKind: "project_agent",
-          projectAssetId: link.id,
+          projectAssetId: agent.id,
           defaults: {
-            key: link.agent_name,
-            display_name: link.agent_name,
+            key: agent.name,
+            display_name: agent.name,
             description: null,
           },
         })
@@ -409,5 +409,5 @@ function Hint({ message, tone }: { message: string; tone?: "danger" }) {
   return <p className={className}>{message}</p>;
 }
 
-// 防止 TypeScript 把未引用的类型告警 — 让 ProjectAgentLink 在签名层面被 import 使用
-export type { ProjectAgentLink };
+// 防止 TypeScript 把未引用的类型告警 — 让 ProjectAgent 在签名层面被 import 使用
+export type { ProjectAgent };

@@ -26,7 +26,7 @@ impl PostgresRoutineRepository {
                 project_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 prompt_template TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
+                project_agent_id TEXT NOT NULL,
                 trigger_config TEXT NOT NULL,
                 session_strategy TEXT NOT NULL,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -60,7 +60,7 @@ struct RoutineRow {
     project_id: String,
     name: String,
     prompt_template: String,
-    agent_id: String,
+    project_agent_id: String,
     trigger_config: String,
     session_strategy: String,
     enabled: bool,
@@ -78,7 +78,7 @@ impl TryFrom<RoutineRow> for Routine {
             project_id: parse_uuid(&row.project_id, "routines.project_id")?,
             name: row.name,
             prompt_template: row.prompt_template,
-            agent_id: parse_uuid(&row.agent_id, "routines.agent_id")?,
+            project_agent_id: parse_uuid(&row.project_agent_id, "routines.project_agent_id")?,
             trigger_config: parse_json_column(&row.trigger_config, "routines.trigger_config")?,
             session_strategy: parse_json_column(
                 &row.session_strategy,
@@ -105,14 +105,14 @@ impl RoutineRepository for PostgresRoutineRepository {
             serialize_json_column(&routine.session_strategy, "routines.session_strategy")?;
 
         sqlx::query(
-            "INSERT INTO routines (id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at)
+            "INSERT INTO routines (id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(routine.id.to_string())
         .bind(routine.project_id.to_string())
         .bind(&routine.name)
         .bind(&routine.prompt_template)
-        .bind(routine.agent_id.to_string())
+        .bind(routine.project_agent_id.to_string())
         .bind(trigger_config_json)
         .bind(session_strategy_json)
         .bind(routine.enabled)
@@ -127,7 +127,7 @@ impl RoutineRepository for PostgresRoutineRepository {
 
     async fn get_by_id(&self, id: Uuid) -> Result<Option<Routine>, DomainError> {
         let row: Option<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE id = $1",
         )
         .bind(id.to_string())
@@ -139,7 +139,7 @@ impl RoutineRepository for PostgresRoutineRepository {
 
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Routine>, DomainError> {
         let rows: Vec<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE project_id = $1 ORDER BY name",
         )
         .bind(project_id.to_string())
@@ -156,7 +156,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         // 使用 PostgreSQL JSONB 包含运算符，比 TEXT LIKE 更可靠
         let containment = serde_json::json!({"type": trigger_type}).to_string();
         let rows: Vec<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE enabled = TRUE AND trigger_config::jsonb @> $1::jsonb",
         )
         .bind(containment)
@@ -173,13 +173,13 @@ impl RoutineRepository for PostgresRoutineRepository {
             serialize_json_column(&routine.session_strategy, "routines.session_strategy")?;
 
         sqlx::query(
-            "UPDATE routines SET name=$2, prompt_template=$3, agent_id=$4, trigger_config=$5, session_strategy=$6, enabled=$7, updated_at=$8, last_fired_at=$9
+            "UPDATE routines SET name=$2, prompt_template=$3, project_agent_id=$4, trigger_config=$5, session_strategy=$6, enabled=$7, updated_at=$8, last_fired_at=$9
              WHERE id=$1",
         )
         .bind(routine.id.to_string())
         .bind(&routine.name)
         .bind(&routine.prompt_template)
-        .bind(routine.agent_id.to_string())
+        .bind(routine.project_agent_id.to_string())
         .bind(trigger_config_json)
         .bind(session_strategy_json)
         .bind(routine.enabled)
@@ -204,7 +204,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         // 使用 PostgreSQL JSONB 包含运算符精确匹配 endpoint_id
         let containment = serde_json::json!({"endpoint_id": endpoint_id}).to_string();
         let row: Option<RoutineRow> = sqlx::query_as(
-            "SELECT id, project_id, name, prompt_template, agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
+            "SELECT id, project_id, name, prompt_template, project_agent_id, trigger_config, session_strategy, enabled, created_at, updated_at, last_fired_at
              FROM routines WHERE trigger_config::jsonb @> $1::jsonb LIMIT 1",
         )
         .bind(containment)

@@ -96,7 +96,7 @@ Session 是 Agent 一次完整对话的运行时抽象。通过 `SessionBinding`
 ```
 Project
  ├── Workspace[]           逻辑工作空间（可绑定多个 backend/物理目录）
- ├── Agent[]               通过 ProjectAgentLink 关联，支持 per-project 配置覆写
+ ├── ProjectAgent[]        项目内可运行、可编辑的 Agent 实例
  ├── Story[]               用户价值单元
  │    ├── Task[]           最小执行单元，绑定 Agent 和 Workspace
  │    └── Context          结构化设计上下文（Acceptance Criteria / Design Decisions）
@@ -257,7 +257,7 @@ pnpm run e2e:test:critical # playwright (关键路径)
 
 ### Project
 
-顶层组织单元。一个 Project 关联多个 Agent 和 Story，拥有独立的配置（默认执行器、Workspace、MCP 工具等）。Project 通过 `ProjectAgentLink` 建立与 Agent 的多对多关系，支持 per-project 配置覆写和 Lifecycle 绑定。
+顶层组织单元。一个 Project 拥有多个 ProjectAgent 和 Story，拥有独立的配置（默认执行器、Workspace、MCP 工具等）。ProjectAgent 是项目内可运行、可编辑的 Agent 实例；跨项目复用通过 Shared Library / Marketplace 中的 AgentTemplate 完成。
 
 ### Workspace
 

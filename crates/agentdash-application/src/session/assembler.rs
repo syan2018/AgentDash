@@ -471,34 +471,27 @@ pub async fn load_available_presets(
 
 /// 查询当前 project 可用的 companion agent 候选列表。
 ///
-/// 1. 拉取 project 下所有 agent_links
-/// 2. 读取每个 link 对应的 agent 信息(name / agent_type / display_name)
-/// 3. 如果 caller_agent_id 存在，按其 link config 中 `allowed_companions` 过滤
+/// 1. 拉取 project 下所有 ProjectAgent
+/// 2. 读取每个 ProjectAgent 信息(name / agent_type / display_name)
+/// 3. 如果 caller_agent_id 存在，按其 config 中 `allowed_companions` 过滤
 async fn load_companion_candidates(
     repos: &RepositorySet,
     project_id: Uuid,
     caller_agent_id: Option<Uuid>,
 ) -> Result<Vec<agentdash_spi::context::capability::CompanionAgentEntry>, String> {
-    let links = match repos.agent_link_repo.list_by_project(project_id).await {
-        Ok(l) => l,
+    let agents = match repos.project_agent_repo.list_by_project(project_id).await {
+        Ok(agents) => agents,
         Err(_) => return Ok(Vec::new()),
     };
-    if links.is_empty() {
+    if agents.is_empty() {
         return Ok(Vec::new());
     }
 
     // 解析 caller 的 allowed_companions 过滤列表
     let caller_allowed: Option<Vec<String>> = if let Some(caller_id) = caller_agent_id {
-        let link = links.iter().find(|l| l.agent_id == caller_id);
-        if let Some(link) = link {
-            if let Ok(Some(agent)) = repos.agent_repo.get_by_id(caller_id).await {
-                let preset = link
-                    .merged_preset_config(&agent)
-                    .map_err(|error| error.to_string())?;
-                preset.allowed_companions.filter(|v| !v.is_empty())
-            } else {
-                None
-            }
+        if let Some(agent) = agents.iter().find(|item| item.id == caller_id) {
+            let preset = agent.preset_config().map_err(|error| error.to_string())?;
+            preset.allowed_companions.filter(|v| !v.is_empty())
         } else {
             None
         }
@@ -507,29 +500,25 @@ async fn load_companion_candidates(
     };
 
     let mut entries = Vec::new();
-    for link in &links {
-        if let Ok(Some(agent)) = repos.agent_repo.get_by_id(link.agent_id).await {
-            if let Some(ref allowed) = caller_allowed {
-                if !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name)) {
-                    continue;
-                }
+    for agent in agents {
+        if let Some(ref allowed) = caller_allowed {
+            if !allowed.iter().any(|a| a.eq_ignore_ascii_case(&agent.name)) {
+                continue;
             }
-            let preset = link
-                .merged_preset_config(&agent)
-                .map_err(|error| error.to_string())?;
-            let display = preset
-                .display_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .unwrap_or_else(|| agent.name.clone());
-            entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
-                name: agent.name,
-                executor: agent.agent_type,
-                display_name: display,
-            });
         }
+        let preset = agent.preset_config().map_err(|error| error.to_string())?;
+        let display = preset
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| agent.name.clone());
+        entries.push(agentdash_spi::context::capability::CompanionAgentEntry {
+            name: agent.name,
+            executor: agent.agent_type,
+            display_name: display,
+        });
     }
     Ok(entries)
 }
@@ -1933,10 +1922,10 @@ pub async fn compose_companion_with_workflow_prompt(
 // SECTION 6:内部 helper
 // ═══════════════════════════════════════════════════════════════════
 
-/// Owner bootstrap 阶段解析 workflow tool directives(来自默认 agent_link → lifecycle → entry step workflow)。
+/// Owner bootstrap 阶段解析 workflow tool directives(来自 ProjectAgent → lifecycle → entry step workflow)。
 ///
-/// Story owner 找 project 内 `is_default_for_story=true` 的 agent_link;
-/// Project owner 用 (project_id, agent_id) 直接查 agent_link。
+/// Story owner 找 project 内 `is_default_for_story=true` 的 ProjectAgent;
+/// Project owner 用 (project_id, project_agent_id) 直接查 ProjectAgent。
 /// 找不到任何绑定返回 None。
 async fn resolve_owner_workflow_tool_directives(
     repos: &RepositorySet,
@@ -1944,26 +1933,26 @@ async fn resolve_owner_workflow_tool_directives(
 ) -> Option<Vec<ToolCapabilityDirective>> {
     let project_id = owner.project_id();
 
-    // 1. 找到关联的 agent_link
-    let link_opt = match owner {
+    // 1. 找到 ProjectAgent
+    let agent_opt = match owner {
         OwnerScope::Project { .. } => {
             let agent_id = owner.agent_id()?;
             repos
-                .agent_link_repo
-                .find_by_project_and_agent(project_id, agent_id)
+                .project_agent_repo
+                .get_by_project_and_id(project_id, agent_id)
                 .await
                 .ok()
                 .flatten()
         }
         OwnerScope::Story { .. } => repos
-            .agent_link_repo
+            .project_agent_repo
             .list_by_project(project_id)
             .await
             .ok()
-            .and_then(|links| links.into_iter().find(|l| l.is_default_for_story)),
+            .and_then(|agents| agents.into_iter().find(|agent| agent.is_default_for_story)),
     };
-    let link = link_opt?;
-    let lifecycle_key = link
+    let agent = agent_opt?;
+    let lifecycle_key = agent
         .default_lifecycle_key
         .as_deref()
         .map(str::trim)

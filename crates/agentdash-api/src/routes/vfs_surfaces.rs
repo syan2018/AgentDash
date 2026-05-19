@@ -663,24 +663,18 @@ pub(crate) async fn resolve_surface_bundle(
         }
         ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
             project_id,
-            agent_id,
-            link_id,
+            project_agent_id,
         } => {
             load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                 .await?;
-            let link = state
+            let agent = state
                 .repos
-                .agent_link_repo
-                .find_by_project_and_agent(*project_id, *agent_id)
+                .project_agent_repo
+                .get_by_project_and_id(*project_id, *project_agent_id)
                 .await
                 .map_err(|error| ApiError::Internal(error.to_string()))?
-                .ok_or_else(|| ApiError::NotFound("该 Agent 未关联到此项目".into()))?;
-            if link.id != *link_id {
-                return Err(ApiError::Conflict(
-                    "surface_ref 中的 link_id 与当前 ProjectAgentLink 不匹配".into(),
-                ));
-            }
-            build_project_agent_knowledge_vfs(&link).map_err(|error| {
+                .ok_or_else(|| ApiError::NotFound("Project Agent 不存在".into()))?;
+            build_project_agent_knowledge_vfs(&agent).map_err(|error| {
                 ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}"))
             })?
         }

@@ -54,19 +54,19 @@
 
 ## Acceptance Criteria
 
-- [ ] Domain 层存在清晰的 `ProjectAgent` entity 和 `ProjectAgentRepository`，不存在表达全局 Agent 多对多关系的 `ProjectAgentLinkRepository`。
-- [ ] DB schema 以 `project_agents` 为 Project Agent 权威表；旧 `agents` / `project_agent_links` 不再是运行路径依赖。
-- [ ] Marketplace 安装 `agent_template` 返回 Project Agent 安装结果，且 source-status 中 `project_agents` 使用 `project_agent_id`。
-- [ ] Project Agent 发布入口以 `project_agent_id` 读取项目资源，不再读取 link。
-- [ ] Project Agent CRUD、summary、session open/list API 使用 `/projects/{project_id}/agents...` 风格路径或等价的新命名。
-- [ ] Routine 创建/更新/执行校验绑定的是当前 Project 下存在的 `ProjectAgent`。
-- [ ] Session construction 和 workflow context resolution 不再通过 `(project_id, agent_id)` 查 link。
-- [ ] VFS surface ref 与 inline file owner 不再暴露 `project_agent_link` 或 `link_id`。
-- [ ] 前端 `ProjectAgentLink` 类型、`agentLinksByProjectId` store 字段、`fetchProjectAgentLinks` 等命名迁移完成。
-- [ ] 旧注释和用户可见文案中不再出现“ProjectAgentLink 才能配置”等旧模型描述。
-- [ ] Rust 相关测试通过，至少覆盖 Project Agent route serialization、Shared Library install/publish/source-status、Routine agent 校验、VFS project agent knowledge surface。
-- [ ] 前端 `pnpm --filter app-web typecheck` 和相关测试通过。
-- [ ] 迁移后运行路径不直接消费 `LibraryAsset.payload`，仍遵守先安装成 Project 资源的契约。
+- [x] Domain 层存在清晰的 `ProjectAgent` entity 和 `ProjectAgentRepository`，不存在表达全局 Agent 多对多关系的 `ProjectAgentLinkRepository`。
+- [x] DB schema 以 `project_agents` 为 Project Agent 权威表；旧 `agents` / `project_agent_links` 不再是运行路径依赖。
+- [x] Marketplace 安装 `agent_template` 返回 Project Agent 安装结果，且 source-status 中 `project_agents` 使用 `project_agent_id`。
+- [x] Project Agent 发布入口以 `project_agent_id` 读取项目资源，不再读取 link。
+- [x] Project Agent CRUD、summary、session open/list API 使用 `/projects/{project_id}/agents...` 风格路径或等价的新命名。
+- [x] Routine 创建/更新/执行校验绑定的是当前 Project 下存在的 `ProjectAgent`。
+- [x] Session construction 和 workflow context resolution 不再通过 `(project_id, agent_id)` 查 link。
+- [x] VFS surface ref 与 inline file owner 不再暴露 `project_agent_link` 或 `link_id`。
+- [x] 前端 `ProjectAgentLink` 类型、`agentLinksByProjectId` store 字段、`fetchProjectAgentLinks` 等命名迁移完成。
+- [x] 旧注释和用户可见文案中不再出现“ProjectAgentLink 才能配置”等旧模型描述。
+- [x] Rust 相关测试通过，至少覆盖 Project Agent route serialization、Shared Library install/publish/source-status、Routine agent 校验、VFS project agent knowledge surface。
+- [x] 前端 `pnpm --filter app-web typecheck` 和相关测试通过。
+- [x] 迁移后运行路径不直接消费 `LibraryAsset.payload`，仍遵守先安装成 Project 资源的契约。
 
 ## Out Of Scope
 
@@ -78,5 +78,5 @@
 
 ## Open Questions
 
-- 新 `ProjectAgent.id` 应继承旧 `agents.id`，还是继承旧 `project_agent_links.id`？
-- Project Agent 配置是否在本次迁移中一并拆成更窄类型，还是先保持 `AgentPresetConfig` 作为内部过渡命名再单独治理？
+- 已决定：新 `ProjectAgent.id` 继承旧 `agents.id`，减少 Routine、Session、Project Agent URL 与运行态绑定迁移面。
+- 已决定：本轮先将旧 `base_config + config_override` 合并为 `ProjectAgent.config` 并移除 Link 模型；`AgentPresetConfig` 的命名拆分可作为后续类型治理收尾。

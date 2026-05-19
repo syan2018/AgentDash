@@ -152,28 +152,20 @@ async fn publish_agent_payload(
     repos: &RepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
-    let link = repos
-        .agent_link_repo
+    let agent = repos
+        .project_agent_repo
         .get_by_id(input.project_asset_id)
         .await?
         .ok_or_else(|| DomainError::NotFound {
-            entity: "project_agent_link",
+            entity: "project_agent",
             id: input.project_asset_id.to_string(),
         })?;
-    if link.project_id != input.project_id {
+    if agent.project_id != input.project_id {
         return Err(PublishLibraryAssetError::BadRequest(
             "Project Agent 不属于当前 Project".to_string(),
         ));
     }
-    let agent = repos
-        .agent_repo
-        .get_by_id(link.agent_id)
-        .await?
-        .ok_or_else(|| DomainError::NotFound {
-            entity: "agent",
-            id: link.agent_id.to_string(),
-        })?;
-    let merged = link.merged_preset_config(&agent)?;
+    let merged = agent.preset_config()?;
     let config = AgentTemplateConfig {
         executor: Some(
             merged

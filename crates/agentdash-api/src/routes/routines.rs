@@ -44,7 +44,7 @@ pub struct RoutineResponse {
     pub project_id: String,
     pub name: String,
     pub prompt_template: String,
-    pub agent_id: String,
+    pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
     pub session_strategy: serde_json::Value,
     pub enabled: bool,
@@ -60,7 +60,7 @@ impl From<Routine> for RoutineResponse {
             project_id: r.project_id.to_string(),
             name: r.name,
             prompt_template: r.prompt_template,
-            agent_id: r.agent_id.to_string(),
+            project_agent_id: r.project_agent_id.to_string(),
             trigger_config: serde_json::to_value(&r.trigger_config).unwrap_or_default(),
             session_strategy: serde_json::to_value(&r.session_strategy).unwrap_or_default(),
             enabled: r.enabled,
@@ -111,7 +111,7 @@ impl From<RoutineExecution> for RoutineExecutionResponse {
 pub struct CreateRoutineRequest {
     pub name: String,
     pub prompt_template: String,
-    pub agent_id: String,
+    pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
     #[serde(default)]
     pub session_strategy: Option<serde_json::Value>,
@@ -121,7 +121,7 @@ pub struct CreateRoutineRequest {
 pub struct UpdateRoutineRequest {
     pub name: Option<String>,
     pub prompt_template: Option<String>,
-    pub agent_id: Option<String>,
+    pub project_agent_id: Option<String>,
     pub trigger_config: Option<serde_json::Value>,
     pub session_strategy: Option<serde_json::Value>,
     pub enabled: Option<bool>,
@@ -192,8 +192,8 @@ pub async fn create_routine(
         ProjectPermission::Edit,
     )
     .await?;
-    let agent_id = parse_uuid(&req.agent_id)?;
-    ensure_project_agent_link_exists(state.as_ref(), project_id, agent_id).await?;
+    let project_agent_id = parse_uuid(&req.project_agent_id)?;
+    ensure_project_agent_exists(state.as_ref(), project_id, project_agent_id).await?;
 
     let name = req.name.trim().to_string();
     if name.is_empty() {
@@ -230,7 +230,7 @@ pub async fn create_routine(
         project_id,
         name,
         req.prompt_template,
-        agent_id,
+        project_agent_id,
         trigger_config,
         session_strategy,
     );
@@ -282,10 +282,10 @@ pub async fn update_routine(
     if let Some(template) = req.prompt_template {
         routine.prompt_template = template;
     }
-    if let Some(agent_id) = req.agent_id {
-        let agent_id = parse_uuid(&agent_id)?;
-        ensure_project_agent_link_exists(state.as_ref(), routine.project_id, agent_id).await?;
-        routine.agent_id = agent_id;
+    if let Some(project_agent_id) = req.project_agent_id {
+        let project_agent_id = parse_uuid(&project_agent_id)?;
+        ensure_project_agent_exists(state.as_ref(), routine.project_id, project_agent_id).await?;
+        routine.project_agent_id = project_agent_id;
     }
     if let Some(tc) = req.trigger_config {
         routine.trigger_config = serde_json::from_value(tc)
@@ -486,20 +486,20 @@ async fn load_routine_with_permission(
     Ok(routine)
 }
 
-async fn ensure_project_agent_link_exists(
+async fn ensure_project_agent_exists(
     state: &AppState,
     project_id: Uuid,
-    agent_id: Uuid,
+    project_agent_id: Uuid,
 ) -> Result<(), ApiError> {
-    let link = state
+    let agent = state
         .repos
-        .agent_link_repo
-        .find_by_project_and_agent(project_id, agent_id)
+        .project_agent_repo
+        .get_by_project_and_id(project_id, project_agent_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if link.is_none() {
+    if agent.is_none() {
         return Err(ApiError::BadRequest(format!(
-            "Project {project_id} 未关联 Agent {agent_id}"
+            "Project {project_id} 不存在 Project Agent {project_agent_id}"
         )));
     }
     Ok(())

@@ -5,7 +5,7 @@ import type {
   CapabilityDirective,
   CapabilityKey,
   Project,
-  ProjectAgentLink,
+  ProjectAgent,
   ProjectAgentSession,
   ProjectAgentSummary,
   SessionNavigationState,
@@ -27,7 +27,7 @@ import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
 import { CardMenu } from "@agentdash/ui";
 import { PublishLibraryAssetDialog } from "../assets-panel/publish/PublishLibraryAssetDialog";
 
-const EMPTY_LINKS: ProjectAgentLink[] = [];
+const EMPTY_PROJECT_AGENTS: ProjectAgent[] = [];
 
 export interface ProjectAgentViewProps {
   project: Project;
@@ -157,7 +157,7 @@ function CreateAgentDialog({
   siblingAgents: Array<{ name: string; display_name: string }>;
   onClose: () => void;
 }) {
-  const { createProjectAgentLink, fetchProjectAgents } = useProjectStore();
+  const { createProjectAgent, fetchProjectAgents } = useProjectStore();
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const lifecycles = useWorkflowStore((s) => s.lifecycleDefinitions);
   const definitions = useWorkflowStore((s) => s.definitions);
@@ -177,17 +177,17 @@ function CreateAgentDialog({
     setIsSaving(true);
     try {
       const preset = formToPreset(form);
-      const linkPayload: Parameters<typeof createProjectAgentLink>[1] = {
+      const projectAgentPayload: Parameters<typeof createProjectAgent>[1] = {
         name: preset.name,
         agent_type: preset.agent_type,
-        base_config: preset.config,
+        config: preset.config,
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
-        linkPayload.default_lifecycle_key = selectedLifecycleKey;
+        projectAgentPayload.default_lifecycle_key = selectedLifecycleKey;
       } else if (bindMode === "workflow" && selectedWorkflowKey) {
-        linkPayload.default_workflow_key = selectedWorkflowKey;
+        projectAgentPayload.default_workflow_key = selectedWorkflowKey;
       }
-      await createProjectAgentLink(projectId, linkPayload);
+      await createProjectAgent(projectId, projectAgentPayload);
       await fetchProjectAgents(projectId);
       onClose();
     } finally {
@@ -303,15 +303,15 @@ export function ProjectAgentView({
   onOpenAgent,
   onForceNewSession,
 }: ProjectAgentViewProps) {
-  const { deleteProjectAgentLink, fetchProjectAgents, updateProjectAgentLink } = useProjectStore();
-  const agentLinks = useProjectStore((s) => s.agentLinksByProjectId[project.id]) ?? EMPTY_LINKS;
-  const fetchLinks = useProjectStore((s) => s.fetchProjectAgentLinks);
+  const { deleteProjectAgent, fetchProjectAgents, updateProjectAgent } = useProjectStore();
+  const projectAgentConfigs = useProjectStore((s) => s.projectAgentConfigsByProjectId[project.id]) ?? EMPTY_PROJECT_AGENTS;
+  const fetchProjectAgentConfigs = useProjectStore((s) => s.fetchProjectAgentConfigs);
   const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
   const [publishTarget, setPublishTarget] = useState<{
-    linkId: string;
+    projectAgentId: string;
     key: string;
     displayName: string;
     description: string;
@@ -322,21 +322,21 @@ export function ProjectAgentView({
   const [expandedAgentKeys, setExpandedAgentKeys] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    void fetchLinks(project.id);
-  }, [fetchLinks, project.id]);
+    void fetchProjectAgentConfigs(project.id);
+  }, [fetchProjectAgentConfigs, project.id]);
 
-  const findLinkForAgent = (agent: ProjectAgentSummary): ProjectAgentLink | undefined => {
-    return agentLinks.find((l) => l.agent_id === agent.key);
+  const findProjectAgentConfig = (agent: ProjectAgentSummary): ProjectAgent | undefined => {
+    return projectAgentConfigs.find((item) => item.id === agent.key);
   };
 
   const handleUnlink = async (agentId: string) => {
-    await deleteProjectAgentLink(project.id, agentId);
+    await deleteProjectAgent(project.id, agentId);
     await fetchProjectAgents(project.id);
   };
 
   const handleOpenEditConfig = (agent: ProjectAgentSummary) => {
-    const link = findLinkForAgent(agent);
-    const config = link?.merged_config ?? {};
+    const projectAgentConfig = findProjectAgentConfig(agent);
+    const config = projectAgentConfig?.config ?? {};
     setEditingAgent({
       agentId: agent.key,
       preset: {
@@ -351,10 +351,10 @@ export function ProjectAgentView({
     if (!editingAgent) return;
     setIsEditSaving(true);
     try {
-      await updateProjectAgentLink(project.id, editingAgent.agentId, {
+      await updateProjectAgent(project.id, editingAgent.agentId, {
         name: preset.name,
         agent_type: preset.agent_type,
-        base_config: preset.config,
+        config: preset.config,
       });
       await fetchProjectAgents(project.id);
       setEditingAgent(null);
@@ -368,8 +368,8 @@ export function ProjectAgentView({
     field: "is_default_for_story" | "is_default_for_task",
     current: boolean,
   ) => {
-    await updateProjectAgentLink(project.id, agentId, { [field]: !current });
-    await fetchLinks(project.id);
+    await updateProjectAgent(project.id, agentId, { [field]: !current });
+    await fetchProjectAgentConfigs(project.id);
   };
 
   const sortedAgents = useMemo(() => {
@@ -511,22 +511,22 @@ export function ProjectAgentView({
           <div className="flex flex-col gap-2">
             {visibleAgents.map((agent) => {
               const activity = getActivityLevel(agent.session?.last_activity);
-              const link = findLinkForAgent(agent);
-              const mergedConfig = link?.merged_config ?? {};
-              const rawDirectives = Array.isArray(mergedConfig.capability_directives)
-                ? (mergedConfig.capability_directives as CapabilityDirective[])
+              const projectAgentConfig = findProjectAgentConfig(agent);
+              const config = projectAgentConfig?.config ?? {};
+              const rawDirectives = Array.isArray(config.capability_directives)
+                ? (config.capability_directives as CapabilityDirective[])
                 : [];
               const toolClusters: CapabilityKey[] = rawDirectives
                 .filter((d): d is { add: CapabilityKey } => "add" in d)
                 .map((d) => d.add);
-              const allowedCompanions = Array.isArray(mergedConfig.allowed_companions)
-                ? (mergedConfig.allowed_companions as string[])
+              const allowedCompanions = Array.isArray(config.allowed_companions)
+                ? (config.allowed_companions as string[])
                 : [];
-              const isCompanionTarget = agentLinks.some(
-                (otherLink) =>
-                  otherLink.agent_id !== agent.key &&
-                  Array.isArray(otherLink.merged_config?.allowed_companions) &&
-                  (otherLink.merged_config.allowed_companions as string[]).includes(
+              const isCompanionTarget = projectAgentConfigs.some(
+                (otherAgent) =>
+                  otherAgent.id !== agent.key &&
+                  Array.isArray(otherAgent.config?.allowed_companions) &&
+                  (otherAgent.config.allowed_companions as string[]).includes(
                     agent.preset_name ?? agent.display_name,
                   ),
               );
@@ -608,14 +608,14 @@ export function ProjectAgentView({
                       </button>
                       <CardMenu items={[
                         { key: "config", label: "编辑配置", onSelect: () => handleOpenEditConfig(agent) },
-                        ...(link
+                        ...(projectAgentConfig
                           ? [
                               {
                                 key: "publish",
                                 label: "发布到资源市场",
                                 onSelect: () =>
                                   setPublishTarget({
-                                    linkId: link.id,
+                                    projectAgentId: projectAgentConfig.id,
                                     key: agent.preset_name ?? agent.display_name,
                                     displayName: agent.display_name,
                                     description: agent.description,
@@ -624,7 +624,7 @@ export function ProjectAgentView({
                             ]
                           : []),
                         { key: "---", label: "", onSelect: () => {} },
-                        { key: "unlink", label: "解除关联", danger: true, onSelect: () => void handleUnlink(agent.key) },
+                        { key: "delete", label: "删除 Agent", danger: true, onSelect: () => void handleUnlink(agent.key) },
                       ]} />
                     </div>
                   </div>
@@ -737,23 +737,23 @@ export function ProjectAgentView({
                             → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
                           </span>
                         )}
-                        {link?.default_lifecycle_key && (
+                        {projectAgentConfig?.default_lifecycle_key && (
                           <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
-                            Lifecycle: {link.default_lifecycle_key}
+                            Lifecycle: {projectAgentConfig.default_lifecycle_key}
                           </span>
                         )}
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_story", link?.is_default_for_story ?? false);
+                            void handleToggleLinkDefault(agent.key, "is_default_for_story", projectAgentConfig?.is_default_for_story ?? false);
                           }}
                           className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            link?.is_default_for_story
+                            projectAgentConfig?.is_default_for_story
                               ? "border-primary/30 bg-primary/10 text-primary"
                               : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
                           }`}
-                          title={link?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
+                          title={projectAgentConfig?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
                         >
                           Story 默认
                         </button>
@@ -761,14 +761,14 @@ export function ProjectAgentView({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_task", link?.is_default_for_task ?? false);
+                            void handleToggleLinkDefault(agent.key, "is_default_for_task", projectAgentConfig?.is_default_for_task ?? false);
                           }}
                           className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            link?.is_default_for_task
+                            projectAgentConfig?.is_default_for_task
                               ? "border-primary/30 bg-primary/10 text-primary"
                               : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
                           }`}
-                          title={link?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
+                          title={projectAgentConfig?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
                         >
                           Task 默认
                         </button>
@@ -850,13 +850,13 @@ export function ProjectAgentView({
         siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
         knowledgeEnabled={
           editingAgent
-            ? agentLinks.find((l) => l.agent_id === editingAgent.agentId)?.knowledge_enabled
+            ? projectAgentConfigs.find((item) => item.id === editingAgent.agentId)?.knowledge_enabled
             : undefined
         }
         onToggleKnowledge={
           editingAgent
             ? (enabled) => {
-                void updateProjectAgentLink(project.id, editingAgent.agentId, {
+                void updateProjectAgent(project.id, editingAgent.agentId, {
                   knowledge_enabled: enabled,
                 });
               }
@@ -864,18 +864,13 @@ export function ProjectAgentView({
         }
         knowledgeProjectId={editingAgent ? project.id : undefined}
         knowledgeAgentId={editingAgent?.agentId}
-        knowledgeLinkId={
-          editingAgent
-            ? agentLinks.find((l) => l.agent_id === editingAgent.agentId)?.id
-            : undefined
-        }
       />
 
       {publishTarget && (
         <PublishLibraryAssetDialog
           projectId={project.id}
           assetKind="project_agent"
-          projectAssetId={publishTarget.linkId}
+          projectAssetId={publishTarget.projectAgentId}
           defaults={{
             key: publishTarget.key,
             display_name: publishTarget.displayName,

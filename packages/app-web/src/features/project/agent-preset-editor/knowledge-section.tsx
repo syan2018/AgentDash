@@ -6,13 +6,11 @@ export function KnowledgeSection({
   onToggle,
   projectId,
   agentId,
-  linkId,
 }: {
   enabled: boolean;
   onToggle: (next: boolean) => void;
   projectId?: string;
   agentId?: string;
-  linkId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -50,14 +48,13 @@ export function KnowledgeSection({
       </div>
 
       {/* ── VFS 浏览器 ── */}
-      {enabled && isOpen && projectId && agentId && linkId && (
+      {enabled && isOpen && projectId && agentId && (
         <div className="border-t border-border px-2 py-3">
           <VfsBrowser
             source={{
               source_type: "project_agent_knowledge",
               project_id: projectId,
-              agent_id: agentId,
-              link_id: linkId,
+              project_agent_id: agentId,
             }}
             visibleMountIds={["agent-knowledge"]}
             initialMountId="agent-knowledge"

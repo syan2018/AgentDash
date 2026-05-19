@@ -33,8 +33,8 @@ pub enum ThinkingLevel {
 
 /// Agent 配置存储层的权威类型。
 ///
-/// 统一 `Agent.base_config` / `ProjectAgentLink.config_override` / `AgentPreset.config`
-/// 三处 JSON blob，所有字段均为 Option 以支持字段级合并（override 覆盖 base）。
+/// 统一 ProjectAgent / AgentPreset / AgentTemplate 的配置 JSON blob。
+/// 所有字段均为 Option，方便模板安装、项目实例编辑和运行态解析共享同一结构。
 ///
 /// 消费方通过 `to_agent_config()` 提取运行态执行器配置 [`AgentConfig`]。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

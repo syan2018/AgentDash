@@ -104,8 +104,7 @@ fn default_user_scope() -> String {
 #[serde(tag = "asset_kind", rename_all = "snake_case")]
 pub enum InstallLibraryAssetResponse {
     ProjectAgent {
-        agent_id: Uuid,
-        project_agent_link_id: Uuid,
+        project_agent_id: Uuid,
     },
     McpPreset {
         id: Uuid,

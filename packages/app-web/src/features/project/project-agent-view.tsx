@@ -24,7 +24,7 @@ import {
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
 import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
-import { CardMenu } from "../assets-panel/_shared/CardMenu";
+import { CardMenu } from "@agentdash/ui";
 import { PublishLibraryAssetDialog } from "../assets-panel/publish/PublishLibraryAssetDialog";
 
 const EMPTY_LINKS: ProjectAgentLink[] = [];
@@ -203,7 +203,7 @@ function CreateAgentDialog({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[12px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Agent</span>
             <h3 className="text-base font-semibold text-foreground">新建 Agent 并关联到项目</h3>
@@ -413,7 +413,7 @@ export function ProjectAgentView({
   if (isLoading && agents.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <div className="h-6 w-6 animate-spin rounded-[8px] border-2 border-primary border-t-transparent" />
       </div>
     );
   }
@@ -475,7 +475,7 @@ export function ProjectAgentView({
               <button
                 type="button"
                 onClick={() => setSearchKeyword("")}
-                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+                className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[8px] text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
                 title="清除"
                 aria-label="清除搜索"
               >
@@ -587,7 +587,7 @@ export function ProjectAgentView({
                         }}
                         aria-label="新建会话"
                         title="新建会话"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-secondary/50 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] bg-secondary/50 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
@@ -648,7 +648,7 @@ export function ProjectAgentView({
                       )}
                       {thinkingActive && (
                         <span
-                          className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                          className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] text-warning"
                           title="推理级别"
                         >
                           思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
@@ -682,7 +682,7 @@ export function ProjectAgentView({
                           </span>
                         )}
                         {thinkingActive && (
-                          <span className="rounded-[6px] border border-amber-400/30 bg-amber-500/8 px-1.5 py-0.5 text-amber-600 dark:text-amber-400" title="推理级别">
+                          <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-warning" title="推理级别">
                             思考: {THINKING_LEVEL_OPTIONS.find((o) => o.value === agent.executor.thinking_level)?.label ?? agent.executor.thinking_level}
                           </span>
                         )}
@@ -690,9 +690,9 @@ export function ProjectAgentView({
                           <span
                             className={`rounded-[6px] border px-1.5 py-0.5 ${
                               agent.executor.permission_policy === "AUTO"
-                                ? "border-emerald-400/30 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
+                                ? "border-success/30 bg-success/10 text-success"
                                 : agent.executor.permission_policy === "SUPERVISED"
-                                  ? "border-blue-400/30 bg-blue-500/8 text-blue-600 dark:text-blue-400"
+                                  ? "border-info/30 bg-info/10 text-info"
                                   : "border-border bg-secondary/40 text-muted-foreground"
                             }`}
                             title="权限策略"
@@ -706,7 +706,7 @@ export function ProjectAgentView({
                       <div className="flex flex-wrap gap-1.5">
                         {isCompanionTarget && (
                           <span
-                            className="rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-0.5 text-[11px] text-violet-600 dark:text-violet-400"
+                            className="rounded-[8px] border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
                             title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
                           >
                             Companion
@@ -716,29 +716,29 @@ export function ProjectAgentView({
                           const opt = CAPABILITY_OPTIONS.find((o) => o.value === capKey);
                           if (!opt) return null;
                           const colorCls =
-                            capKey === "file_read" ? "border-sky-400/30 bg-sky-500/8 text-sky-600 dark:text-sky-400"
-                            : capKey === "file_write" ? "border-orange-400/30 bg-orange-500/8 text-orange-600 dark:text-orange-400"
-                            : capKey === "shell_execute" ? "border-red-400/30 bg-red-500/8 text-red-600 dark:text-red-400"
-                            : capKey === "collaboration" ? "border-violet-400/30 bg-violet-500/8 text-violet-600 dark:text-violet-400"
+                            capKey === "file_read" ? "border-info/30 bg-info/10 text-info"
+                            : capKey === "file_write" ? "border-warning/30 bg-warning/10 text-warning"
+                            : capKey === "shell_execute" ? "border-destructive/30 bg-destructive/10 text-destructive"
+                            : capKey === "collaboration" ? "border-primary/30 bg-primary/10 text-primary"
                             : "border-border bg-secondary/40 text-muted-foreground";
                           return (
-                            <span key={capKey} className={`rounded-full border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
+                            <span key={capKey} className={`rounded-[8px] border px-2 py-0.5 text-[10px] ${colorCls}`} title={opt.description}>
                               {opt.label}
                             </span>
                           );
                         }) : (
-                          <span className="rounded-full border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
+                          <span className="rounded-[8px] border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
                         )}
                         {allowedCompanions.length > 0 && (
                           <span
-                            className="rounded-full border border-violet-400/20 bg-violet-500/5 px-2 py-0.5 text-[10px] text-violet-500/70"
+                            className="rounded-[8px] border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary/70"
                             title={`可调用: ${allowedCompanions.join(", ")}`}
                           >
                             → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
                           </span>
                         )}
                         {link?.default_lifecycle_key && (
-                          <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
+                          <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
                             Lifecycle: {link.default_lifecycle_key}
                           </span>
                         )}
@@ -802,7 +802,7 @@ export function ProjectAgentView({
                           <button
                             type="button"
                             onClick={() => onOpenAgent(agent)}
-                            className="flex-1 rounded-[10px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
+                            className="flex-1 rounded-[8px] border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-95"
                           >
                             {agent.session ? "继续对话" : "打开 Agent 会话"}
                           </button>
@@ -811,7 +811,7 @@ export function ProjectAgentView({
                           <button
                             type="button"
                             onClick={() => onForceNewSession(agent)}
-                            className="flex-1 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                            className="flex-1 rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                           >
                             新对话
                           </button>

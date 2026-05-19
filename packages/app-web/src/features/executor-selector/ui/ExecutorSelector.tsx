@@ -171,7 +171,7 @@ export function ExecutorSelector({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         title={expanded ? "收起配置" : "展开配置"}
         aria-label={expanded ? "收起配置" : "展开配置"}
         aria-expanded={expanded}
@@ -193,7 +193,7 @@ export function ExecutorSelector({
   // ── 收起态：只渲染胶囊行 ────────────────────────────
   if (!expanded) {
     return (
-      <div className="rounded-full border border-border bg-secondary/45 px-3 py-1.5">
+      <div className="rounded-[8px] border border-border bg-secondary/45 px-3 py-1.5">
         {summaryRow}
       </div>
     );
@@ -202,7 +202,7 @@ export function ExecutorSelector({
   // ── 展开态：完整配置 ────────────────────────────────
 
   const errorBanner = error ? (
-    <div className="flex items-center gap-2 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div className="flex items-center gap-2 rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
       <span>无法加载执行器列表: {error.message}</span>
       <button
         type="button"
@@ -213,12 +213,12 @@ export function ExecutorSelector({
       </button>
     </div>
   ) : discoveredError ? (
-    <div className="flex items-center gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+    <div className="flex items-center gap-2 rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
       <span className="truncate">模型选项加载失败，可手动输入</span>
       <button
         type="button"
         onClick={onDiscoveredReconnect}
-        className="shrink-0 rounded-[8px] border border-amber-500/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-amber-500/10"
+        className="shrink-0 rounded-[8px] border border-warning/20 bg-background px-2 py-1 text-xs transition-colors hover:bg-warning/10"
       >
         重试
       </button>
@@ -226,7 +226,7 @@ export function ExecutorSelector({
   ) : null;
 
   return (
-    <div className="space-y-3 rounded-[14px] border border-border bg-secondary/45 p-3.5">
+    <div className="space-y-3 rounded-[12px] border border-border bg-secondary/45 p-3.5">
       {/* 胶囊摘要 + 收起按钮 */}
       <div className="border-b border-border/60 pb-3">
         {summaryRow}
@@ -345,19 +345,19 @@ export function ExecutorSelector({
       </div>
 
       {selectedModel && (
-        <div className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 rounded-[8px] border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
           {selectedModel.provider_id && (
-            <span className="rounded-full bg-secondary px-2 py-0.5">
+            <span className="rounded-[6px] bg-secondary px-2 py-0.5">
               provider: {providersById.get(selectedModel.provider_id) ?? selectedModel.provider_id}
             </span>
           )}
-          <span className="rounded-full bg-secondary px-2 py-0.5">
+          <span className="rounded-[6px] bg-secondary px-2 py-0.5">
             context: {Math.round(selectedModel.context_window / 1000)}k
           </span>
           <span
-            className={`rounded-full px-2 py-0.5 ${
+            className={`rounded-[6px] px-2 py-0.5 ${
               selectedModel.reasoning
-                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                ? "bg-success/15 text-success"
                 : "bg-secondary"
             }`}
           >
@@ -434,7 +434,7 @@ function ConfigTag({
   available?: boolean;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-foreground">
+    <span className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-foreground">
       {available !== undefined && <StatusDot available={available} />}
       {label}
     </span>

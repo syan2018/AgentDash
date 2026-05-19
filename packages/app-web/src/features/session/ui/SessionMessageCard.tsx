@@ -109,7 +109,7 @@ export const AcpMessageCard = memo(function AcpMessageCard({
           )}
 
           {isStreaming && (
-            <span className="mt-3 inline-flex h-4 w-[2px] animate-pulse rounded-full bg-primary align-middle" />
+            <span className="mt-3 inline-flex h-4 w-[2px] animate-pulse rounded-[4px] bg-primary align-middle" />
           )}
         </div>
       </div>

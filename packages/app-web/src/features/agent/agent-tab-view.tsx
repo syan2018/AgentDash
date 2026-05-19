@@ -228,7 +228,7 @@ export function AgentTabView() {
                 {currentSession?.session_title ?? "会话"}
               </span>
               {activeRun && (
-                <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                <span className="shrink-0 rounded-[8px] border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
                   {activeLifecycleName}
                   {activeRun.active_node_keys?.[0] ? ` · ${activeRun.active_node_keys?.[0]}` : ""}
                   {activeRun.status === "running" ? " ▶" : activeRun.status === "blocked" ? " ⏸" : ""}

@@ -15,7 +15,12 @@ import {
   Button,
   Card,
   CardHeader,
+  CardMenu,
   CheckboxField,
+  DangerConfirmDialog,
+  DetailMenu,
+  DetailPanel,
+  DetailSection,
   EmptyState,
   Field,
   InspectorRow,
@@ -326,6 +331,8 @@ function SectionPrimitives() {
         <PrimEmptyState />
         <PrimField />
         <PrimFormControls />
+        <PrimCardMenu />
+        <PrimDetailPanel />
       </div>
     </SectionShell>
   );
@@ -985,6 +992,95 @@ function FormDialog({ onClose }: { onClose: () => void }) {
         </footer>
       </div>
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// CardMenu / DetailPanel previews
+// ────────────────────────────────────────────────────────
+
+function PrimCardMenu() {
+  return (
+    <PrimSlot
+      name="CardMenu"
+      importHint='import { CardMenu } from "@agentdash/ui"'
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <CardMenu
+          items={[
+            { key: "edit", label: "编辑", onSelect: () => {} },
+            { key: "duplicate", label: "复制为副本", badge: "user", onSelect: () => {} },
+            { key: "---", label: "", onSelect: () => {} },
+            { key: "delete", label: "删除", danger: true, onSelect: () => {} },
+          ]}
+        />
+        <span className="text-[11px] text-muted-foreground">点击三点图标查看下拉</span>
+      </div>
+    </PrimSlot>
+  );
+}
+
+function PrimDetailPanel() {
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [confirmInput, setConfirmInput] = useState("");
+
+  return (
+    <PrimSlot
+      name="DetailPanel / DetailSection / DetailMenu / DangerConfirmDialog"
+      importHint='import { DetailPanel, DetailSection, DetailMenu, DangerConfirmDialog } from "@agentdash/ui"'
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={() => setPanelOpen(true)}>
+          打开 DetailPanel
+        </Button>
+        <Button variant="danger" size="sm" onClick={() => setDangerOpen(true)}>
+          打开 DangerConfirmDialog
+        </Button>
+        <DetailMenu
+          items={[
+            { key: "rename", label: "重命名", onSelect: () => {} },
+            { key: "archive", label: "归档", onSelect: () => {} },
+            { key: "remove", label: "删除", danger: true, onSelect: () => {} },
+          ]}
+        />
+        <span className="text-[11px] text-muted-foreground">右侧三点为 DetailMenu 触发器</span>
+      </div>
+
+      <DetailPanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        title="DetailPanel 示例"
+        subtitle="右侧抽屉容器，承载详情/编辑表单。"
+      >
+        <div className="space-y-4 p-5">
+          <DetailSection title="基础信息" description="使用默认 padding 的 section。">
+            <p className="text-sm text-muted-foreground">这里放表单或只读字段。</p>
+          </DetailSection>
+          <DetailSection title="紧凑模式" compact extra={<Badge variant="info">compact</Badge>}>
+            <p className="text-xs text-muted-foreground">用于窄容器（DAG 侧栏 w-96）。</p>
+          </DetailSection>
+        </div>
+      </DetailPanel>
+
+      <DangerConfirmDialog
+        open={dangerOpen}
+        title="确认删除"
+        description="此操作不可撤销。请输入名称以确认。"
+        expectedValue="DELETE"
+        inputValue={confirmInput}
+        onInputValueChange={setConfirmInput}
+        confirmLabel="删除"
+        onClose={() => {
+          setDangerOpen(false);
+          setConfirmInput("");
+        }}
+        onConfirm={() => {
+          setDangerOpen(false);
+          setConfirmInput("");
+        }}
+      />
+    </PrimSlot>
   );
 }
 

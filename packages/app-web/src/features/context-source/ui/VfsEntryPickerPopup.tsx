@@ -102,6 +102,7 @@ export function VfsEntryPickerInline({
           className="flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
         />
         {loading && (
+          // eslint-disable-next-line no-restricted-syntax -- 加载旋转器必须为圆形
           <span className="h-3 w-3 animate-spin rounded-full border border-muted-foreground/40 border-t-primary" />
         )}
         <button

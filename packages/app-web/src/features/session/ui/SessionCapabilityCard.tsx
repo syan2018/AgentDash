@@ -60,7 +60,7 @@ export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProp
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-secondary/35"
       >
-        <span className="inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] border-indigo-500/25 bg-indigo-500/8 text-indigo-600 dark:text-indigo-400">
+        <span className="inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] border-info/25 bg-info/10 text-info">
           CAP
         </span>
         <span className="min-w-0 flex-1 truncate text-sm text-foreground/80">

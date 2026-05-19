@@ -248,14 +248,14 @@ export function EventFullCard({
             </div>
           )}
           {debugLines.length > 0 && (
-            <div className="space-y-1 rounded-[10px] border border-border/70 bg-secondary/20 px-3 py-2.5">
+            <div className="space-y-1 rounded-[8px] border border-border/70 bg-secondary/20 px-3 py-2.5">
               {debugLines.map((line) => (
                 <p key={line} className="text-xs leading-5 text-muted-foreground">{line}</p>
               ))}
             </div>
           )}
           {debugRaw && (
-            <pre className="overflow-auto rounded-[10px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
+            <pre className="overflow-auto rounded-[8px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
               {debugRaw}
             </pre>
           )}

@@ -271,7 +271,7 @@ export function MarketplaceCategoryPanel() {
       </header>
 
       {/* 视图 segmented：浏览全部 / 我发布的 */}
-      <div className="flex items-center gap-1 self-start rounded-[10px] border border-border bg-secondary/20 p-1">
+      <div className="flex items-center gap-1 self-start rounded-[8px] border border-border bg-secondary/20 p-1">
         <ViewModeButton
           active={viewMode === "all"}
           onClick={() => setViewMode("all")}
@@ -288,7 +288,7 @@ export function MarketplaceCategoryPanel() {
 
       {/* Toolbar：类型 segmented + 搜索 */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-[10px] border border-border bg-secondary/20 p-1">
+        <div className="flex items-center gap-1 rounded-[8px] border border-border bg-secondary/20 p-1">
           {ASSET_TYPE_OPTIONS.map((option) => {
             const active = assetType === option.value;
             return (
@@ -541,7 +541,7 @@ function MarketplaceAssetCard({
         <div className="flex shrink-0 flex-wrap items-center gap-1">
           <InstallStatusChip summary={installSummary} />
           {asset.deprecated && (
-            <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+            <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
               已废弃
             </span>
           )}

@@ -72,7 +72,7 @@ export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionReques
   const bodyExtra = (
     <div className="space-y-2.5">
       {responded ? (
-        <div className="flex items-center gap-2 rounded-[10px] border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+        <div className="flex items-center gap-2 rounded-[8px] border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
           <span>已回应：{responded}</span>
         </div>
       ) : (
@@ -85,7 +85,7 @@ export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionReques
                   type="button"
                   onClick={() => { void handleRespond(option); }}
                   disabled={isSubmitting}
-                  className="rounded-[10px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                  className="rounded-[8px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
                 >
                   {isSubmitting ? "处理中…" : option}
                 </button>
@@ -100,13 +100,13 @@ export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionReques
                 onKeyDown={(e) => { if (e.key === "Enter") void handleSubmitCustom(); }}
                 placeholder="输入回应…"
                 disabled={isSubmitting}
-                className="min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
+                className="min-w-0 flex-1 rounded-[8px] border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary/50 disabled:opacity-50"
               />
               <button
                 type="button"
                 onClick={() => { void handleSubmitCustom(); }}
                 disabled={isSubmitting || !customInput.trim()}
-                className="rounded-[10px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                className="rounded-[8px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
               >
                 {isSubmitting ? "处理中…" : "提交"}
               </button>
@@ -115,7 +115,7 @@ export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionReques
         </>
       )}
       {error && (
-        <div className="rounded-[10px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+        <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
           {error}
         </div>
       )}

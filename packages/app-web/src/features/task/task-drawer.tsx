@@ -7,7 +7,7 @@ import {
   DetailMenu,
   DetailPanel,
   DetailSection,
-} from "../../components/ui/detail-panel";
+} from "@agentdash/ui";
 import { AgentBindingFields } from "./agent-binding-fields";
 import {
   createDefaultAgentBinding,
@@ -220,13 +220,13 @@ export function TaskDrawer({
                     {editAgentBinding.context_sources.map((context, index) => (
                       <div
                         key={`${context.label ?? "task-context"}-${index}`}
-                        className="rounded-[10px] border border-border bg-secondary/25 px-3 py-2"
+                        className="rounded-[8px] border border-border bg-secondary/25 px-3 py-2"
                       >
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
                             {context.label?.trim() || `上下文 ${index + 1}`}
                           </span>
-                          <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="rounded-[6px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                             {context.slot}
                           </span>
                         </div>

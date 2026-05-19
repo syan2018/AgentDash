@@ -82,7 +82,7 @@ function HookRuleItem({
               </code>
             )}
             {isScript && (
-              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-600">
+              <span className="rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-mono text-warning">
                 rhai
               </span>
             )}
@@ -174,7 +174,7 @@ function NewRuleEditor({
   };
 
   return (
-    <div className="space-y-2.5 rounded-[10px] border border-dashed border-primary/30 bg-primary/5 p-3">
+    <div className="space-y-2.5 rounded-[8px] border border-dashed border-primary/30 bg-primary/5 p-3">
       <div>
         <label className="agentdash-form-label">触发时机</label>
         <select
@@ -376,7 +376,7 @@ function HookRuleGroup({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="w-full rounded-[10px] border border-dashed border-border/70 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary/70"
+          className="w-full rounded-[8px] border border-dashed border-border/70 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary/70"
         >
           + 添加
         </button>

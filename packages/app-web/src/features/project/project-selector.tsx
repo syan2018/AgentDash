@@ -6,7 +6,7 @@ import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import {
   DetailPanel,
   DetailSection,
-} from "../../components/ui/detail-panel";
+} from "@agentdash/ui";
 
 interface ProjectSelectorProps {
   projects: Project[];
@@ -123,7 +123,7 @@ export function ProjectSelector({
         </div>
 
         {projects.length === 0 && (
-          <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">暂无项目</p>
+          <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">暂无项目</p>
         )}
 
         {projects.map((project) => {
@@ -134,7 +134,7 @@ export function ProjectSelector({
           return (
             <div
               key={project.id}
-              className={`flex items-center justify-between rounded-[10px] border px-3 py-2.5 text-sm transition-colors ${
+              className={`flex items-center justify-between rounded-[8px] border px-3 py-2.5 text-sm transition-colors ${
                 isActive
                   ? "border-primary/20 bg-background"
                   : "border-transparent bg-transparent hover:border-border hover:bg-background/80"
@@ -159,15 +159,15 @@ export function ProjectSelector({
                   {project.description || `ID: ${project.id}`}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                     {describeProjectAccess(project)}
                   </span>
                   {project.is_template && (
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+                    <span className="rounded-[8px] border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
                       模板
                     </span>
                   )}
-                  <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                     {PROJECT_VISIBILITY_LABELS[project.visibility]}
                   </span>
                 </div>

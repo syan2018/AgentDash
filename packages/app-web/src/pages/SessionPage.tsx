@@ -470,14 +470,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const ownerBindingBar = sessionOwnerBinding ? (
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-      <span className="rounded-full border border-border bg-background px-2 py-0.5 uppercase">
+      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
         {sessionOwnerBinding.owner_type}
       </span>
       <span>
         已绑定：{sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id}
       </span>
       {sessionOwnerBinding.owner_type === "project" && sessionContextSnapshot?.owner_context.owner_level === "project" && sessionContextSnapshot.owner_context.agent_display_name && (
-        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
+        <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
           Agent · {sessionContextSnapshot.owner_context.agent_display_name}
         </span>
       )}
@@ -542,22 +542,22 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         </div>
         <div className="flex items-center gap-2">
           {effectiveReturnTarget && (
-            <button type="button" onClick={handleBackToOwner} className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+            <button type="button" onClick={handleBackToOwner} className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
               {backButtonLabel}
             </button>
           )}
           {hasSession && (
             <>
-              <span className="hidden rounded-full border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
+              <span className="hidden rounded-[8px] border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
                 {currentSessionId.slice(0, 12)}…
               </span>
-              <button type="button" onClick={() => void handleCopySessionId()} className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="复制 Session ID">
+              <button type="button" onClick={() => void handleCopySessionId()} className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="复制 Session ID">
                 复制
               </button>
             </>
           )}
           {canShowLifecycleView && (
-            <div className="hidden items-center gap-1 rounded-[10px] border border-border bg-secondary/40 p-0.5 md:flex">
+            <div className="hidden items-center gap-1 rounded-[8px] border border-border bg-secondary/40 p-0.5 md:flex">
               <button
                 type="button"
                 onClick={() => setSessionViewMode("chat")}
@@ -582,14 +582,14 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
               </button>
             </div>
           )}
-          <button type="button" onClick={handleNewSession} className="rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
+          <button type="button" onClick={handleNewSession} className="rounded-[8px] border border-border bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/80">
             新会话
           </button>
           {/* 工作空间面板展开/收起 */}
           <button
             type="button"
             onClick={toggleWorkspacePanel}
-            className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             title="展开/收起工作空间面板"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -626,7 +626,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
         {/* 拖拽手柄 */}
         <Separator className="group relative w-1.5 shrink-0 bg-border/30 transition-colors hover:bg-primary/30 active:bg-primary/50 data-[separator]:cursor-col-resize">
-          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-border transition-colors group-hover:bg-primary/50 group-active:bg-primary" />
+          <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-[8px] bg-border transition-colors group-hover:bg-primary/50 group-active:bg-primary" />
         </Separator>
 
         {/* 右栏：工作空间面板（默认折叠） */}

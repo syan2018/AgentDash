@@ -51,7 +51,7 @@ export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
       </button>
 
       {open && creatableTypes.length > 0 && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-[10px] border border-border bg-background py-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-[8px] border border-border bg-background py-1 shadow-lg">
           <p className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
             打开面板
           </p>

@@ -105,6 +105,7 @@ function RouteFallback() {
   return (
     <div className="flex h-full items-center justify-center">
       <div className="text-center">
+        {/* eslint-disable-next-line no-restricted-syntax -- 加载旋转器必须为圆形 */}
         <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         <p className="mt-3 text-sm text-muted-foreground">正在加载页面...</p>
       </div>
@@ -121,13 +122,13 @@ function BootstrapErrorState({
 }) {
   return (
     <div className="flex h-full items-center justify-center bg-background">
-      <div className="max-w-md rounded-[16px] border border-destructive/20 bg-destructive/5 p-6 text-center">
+      <div className="max-w-md rounded-[12px] border border-destructive/20 bg-destructive/5 p-6 text-center">
         <h2 className="text-lg font-semibold text-foreground">无法完成身份初始化</h2>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
         <button
           type="button"
           onClick={onRetry}
-          className="mt-4 rounded-[10px] border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+          className="mt-4 rounded-[8px] border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
         >
           重新加载
         </button>

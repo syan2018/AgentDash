@@ -40,7 +40,7 @@ export function AddressBar({ tab }: AddressBarProps) {
         {tab.uri}
       </button>
       {copied && (
-        <span className="shrink-0 text-[10px] text-emerald-600">已复制</span>
+        <span className="shrink-0 text-[10px] text-success">已复制</span>
       )}
     </div>
   );

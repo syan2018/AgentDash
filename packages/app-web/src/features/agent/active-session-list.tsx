@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { StatusDot as UiStatusDot } from "@agentdash/ui";
 import type { ProjectSessionEntry } from "../../types";
 import {
   groupSessionsByStory,
@@ -69,23 +70,17 @@ function formatRelativeTime(timestamp: number | null): string {
 
 // 状态圆点样式（running 加脉冲动画）
 function StatusDot({ status }: { status: ProjectSessionEntry["execution_status"] }) {
-  const base = "h-2 w-2 shrink-0 rounded-full";
   switch (status) {
     case "running":
-      return (
-        <span className="relative flex h-2 w-2 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-          <span className={`${base} bg-emerald-500`} />
-        </span>
-      );
+      return <UiStatusDot tone="success" size="md" pulse className="shrink-0" />;
     case "completed":
-      return <span className={`${base} bg-blue-500`} />;
+      return <UiStatusDot tone="info" size="md" className="shrink-0" />;
     case "failed":
-      return <span className={`${base} bg-red-500`} />;
+      return <UiStatusDot tone="danger" size="md" className="shrink-0" />;
     case "interrupted":
-      return <span className={`${base} bg-amber-400`} />;
+      return <UiStatusDot tone="warning" size="md" className="shrink-0" />;
     default: // idle
-      return <span className={`${base} bg-muted-foreground/25`} />;
+      return <UiStatusDot tone="muted" size="md" className="shrink-0" />;
   }
 }
 
@@ -98,10 +93,10 @@ const statusLabel: Record<ProjectSessionEntry["execution_status"], string> = {
 };
 
 const statusPillClass: Record<ProjectSessionEntry["execution_status"], string> = {
-  running: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  completed: "bg-blue-500/10 text-blue-500",
-  failed: "bg-red-500/10 text-red-500",
-  interrupted: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  running: "bg-success/10 text-success",
+  completed: "bg-info/10 text-info",
+  failed: "bg-destructive/10 text-destructive",
+  interrupted: "bg-warning/10 text-warning",
   idle: "bg-muted text-muted-foreground",
 };
 
@@ -171,7 +166,7 @@ function SessionRow({
       <div className="flex items-center gap-2">
         {/* 前缀：companion 箭头 */}
         {isCompanion && (
-          <span className="shrink-0 text-[11px] text-violet-400/70">↳</span>
+          <span className="shrink-0 text-[11px] text-primary/70">↳</span>
         )}
 
         {/* 状态圆点 */}
@@ -237,7 +232,7 @@ function SessionRow({
               e.stopPropagation();
               onToggleCompanions();
             }}
-            className="flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex shrink-0 items-center gap-1 rounded-[8px] border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title={
               companionsExpanded
                 ? `折叠 ${companionCount} 个 companion 子会话`
@@ -549,7 +544,7 @@ function SessionFilterBar({
           <button
             type="button"
             onClick={() => onKeywordChange("")}
-            className="absolute right-1 flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
+            className="absolute right-1 flex h-5 w-5 items-center justify-center rounded-[8px] text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
             title="清除搜索"
             aria-label="清除搜索"
           >
@@ -667,6 +662,7 @@ export function ActiveSessionList({
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
+        {/* eslint-disable-next-line no-restricted-syntax -- 加载旋转器必须为圆形 */}
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     );

@@ -2,11 +2,13 @@
  * <Notice> — Assets Panel 共享反馈条。
  *
  * - 4s auto-dismiss + 右上角 × 关闭
- * - tone: success (emerald) / danger (destructive)
+ * - tone: success / danger（视觉走 @agentdash/ui Notice）
  * - notice 为 null 时不渲染
  */
 
 import { useEffect } from "react";
+
+import { Notice as UiNotice, type NoticeTone as UiNoticeTone } from "@agentdash/ui";
 
 export type NoticeTone = "success" | "danger";
 
@@ -22,9 +24,9 @@ export interface NoticeProps {
   autoHideMs?: number;
 }
 
-const TONE_CLASSES: Record<NoticeTone, string> = {
-  success: "border-emerald-300/30 bg-emerald-500/5 text-emerald-600",
-  danger: "border-destructive/30 bg-destructive/5 text-destructive",
+const TONE_TO_UI: Record<NoticeTone, UiNoticeTone> = {
+  success: "success",
+  danger: "danger",
 };
 
 export function Notice({ notice, onDismiss, autoHideMs = 4000 }: NoticeProps) {
@@ -37,11 +39,12 @@ export function Notice({ notice, onDismiss, autoHideMs = 4000 }: NoticeProps) {
   if (!notice) return null;
 
   return (
-    <div
-      className={`flex items-center justify-between rounded-[8px] border px-3 py-2 ${TONE_CLASSES[notice.tone]}`}
+    <UiNotice
+      tone={TONE_TO_UI[notice.tone]}
       role={notice.tone === "danger" ? "alert" : "status"}
+      className="flex items-center justify-between text-xs"
     >
-      <p className="text-xs">{notice.message}</p>
+      <p>{notice.message}</p>
       <button
         type="button"
         onClick={onDismiss}
@@ -50,7 +53,7 @@ export function Notice({ notice, onDismiss, autoHideMs = 4000 }: NoticeProps) {
       >
         ×
       </button>
-    </div>
+    </UiNotice>
   );
 }
 

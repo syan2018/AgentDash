@@ -16,7 +16,7 @@ export function BindingEditor({
   onRemove,
 }: BindingEditorProps) {
   return (
-    <div className="space-y-2.5 rounded-[10px] border border-border bg-background p-3">
+    <div className="space-y-2.5 rounded-[8px] border border-border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
           #{index + 1}

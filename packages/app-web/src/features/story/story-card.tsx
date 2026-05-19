@@ -28,7 +28,7 @@ export function StoryCard({ story, taskCount, onClick, isDragging }: StoryCardPr
             {story.tags.slice(0, 2).map((tag, index) => (
               <span
                 key={index}
-                className="inline-flex max-w-[72px] truncate rounded-full border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground"
+                className="inline-flex max-w-[72px] truncate rounded-[8px] border border-border bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground"
                 title={tag}
               >
                 {tag}

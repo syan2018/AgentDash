@@ -9,7 +9,7 @@ import type {
 } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useRoutineStore } from "../../stores/routineStore";
-import { DetailPanel, DetailMenu, DangerConfirmDialog } from "../../components/ui/detail-panel";
+import { DetailPanel, DetailMenu, DangerConfirmDialog } from "@agentdash/ui";
 
 // ─── 通用工具 ───
 
@@ -148,7 +148,7 @@ function CronScheduleSelector({ value, onChange }: { value: string; onChange: (c
         </div>
       )}
       {isCustom && !showRaw && (
-        <p className="text-[10px] text-amber-600 dark:text-amber-400">
+        <p className="text-[10px] text-warning">
           当前为自定义表达式：<code className="font-mono">{value}</code>
           <button type="button" onClick={() => setShowRaw(true)} className="ml-1 underline hover:no-underline">手动编辑</button>
         </p>
@@ -160,17 +160,17 @@ function CronScheduleSelector({ value, onChange }: { value: string; onChange: (c
 // ─── 触发类型 badge ───
 
 const TRIGGER_TYPE_BADGE: Record<RoutineTriggerType, { label: string; className: string }> = {
-  scheduled: { label: "定时", className: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300" },
-  webhook: { label: "Webhook", className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  plugin: { label: "Plugin", className: "border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300" },
+  scheduled: { label: "定时", className: "border-info/30 bg-info/10 text-info" },
+  webhook: { label: "Webhook", className: "border-success/30 bg-success/10 text-success" },
+  plugin: { label: "Plugin", className: "border-primary/30 bg-primary/10 text-primary" },
 };
 
 const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
   pending: "border-border bg-secondary/50 text-muted-foreground",
-  running: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  completed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  running: "border-info/30 bg-info/10 text-info",
+  completed: "border-success/30 bg-success/10 text-success",
   failed: "border-destructive/30 bg-destructive/10 text-destructive",
-  skipped: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  skipped: "border-warning/30 bg-warning/10 text-warning",
 };
 
 // ─── 表单状态 ───
@@ -298,7 +298,7 @@ function RoutineCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${routine.enabled ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${routine.enabled ? "bg-success" : "bg-muted-foreground/30"}`} />
             <h3 className="truncate text-sm font-medium text-foreground">{routine.name}</h3>
           </div>
 
@@ -329,7 +329,7 @@ function RoutineCard({
             onClick={onToggleEnable}
             className={`rounded-[8px] border px-2.5 py-1 text-[11px] transition-colors ${
               routine.enabled
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+                ? "border-success/30 bg-success/10 text-success hover:bg-success/20"
                 : "border-border bg-secondary text-muted-foreground hover:bg-secondary/80"
             }`}
           >
@@ -374,9 +374,9 @@ function WebhookTokenAlert({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-[16px] border border-amber-500/30 bg-background shadow-2xl">
-          <div className="border-b border-amber-500/20 bg-amber-500/5 px-5 py-4">
-            <span className="inline-block rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+        <div className="w-full max-w-lg rounded-[12px] border border-warning/30 bg-background shadow-2xl">
+          <div className="border-b border-warning/20 bg-warning/5 px-5 py-4">
+            <span className="inline-block rounded-[6px] border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
               Webhook Token
             </span>
             <h4 className="mt-1 text-base font-semibold text-foreground">
@@ -405,7 +405,7 @@ function WebhookTokenAlert({
                 </button>
               </div>
             </div>
-            <p className="rounded-[8px] border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <p className="rounded-[8px] border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-warning">
               此 Token 不会再次展示，请立即复制并安全保管。
             </p>
           </div>
@@ -476,7 +476,7 @@ function RoutineDialog({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[12px] border border-border bg-background shadow-2xl">
           {/* Header */}
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">
@@ -561,7 +561,7 @@ function RoutineDialog({
 
             {/* 触发类型条件字段 */}
             {form.trigger_type === "scheduled" && (
-              <div className="rounded-[10px] border border-border bg-secondary/20 p-4">
+              <div className="rounded-[8px] border border-border bg-secondary/20 p-4">
                 <CronScheduleSelector
                   value={form.cron_expression}
                   onChange={(cron) => patchForm({ cron_expression: cron })}
@@ -570,7 +570,7 @@ function RoutineDialog({
             )}
 
             {form.trigger_type === "webhook" && mode === "create" && (
-              <div className="rounded-[10px] border border-blue-500/20 bg-blue-500/5 p-4">
+              <div className="rounded-[8px] border border-info/20 bg-info/5 p-4">
                 <p className="text-xs text-muted-foreground">
                   Endpoint ID 和 Auth Token 将在创建时自动生成，Token 仅在创建成功后展示一次。
                 </p>
@@ -578,7 +578,7 @@ function RoutineDialog({
             )}
 
             {isWebhookEdit && editingRoutine && (
-              <div className="rounded-[10px] border border-border bg-secondary/20 p-4 space-y-3">
+              <div className="rounded-[8px] border border-border bg-secondary/20 p-4 space-y-3">
                 <div>
                   <p className="text-xs font-medium text-muted-foreground">触发端点</p>
                   <code className="mt-1 block font-mono text-xs text-foreground break-all">
@@ -593,8 +593,8 @@ function RoutineDialog({
                   重新生成 Token
                 </button>
                 {regeneratedToken && (
-                  <div className="rounded-[8px] border border-amber-500/20 bg-amber-500/5 p-3 space-y-1">
-                    <p className="text-xs font-medium text-amber-700 dark:text-amber-300">新 Token（仅此一次可见）</p>
+                  <div className="rounded-[8px] border border-warning/20 bg-warning/5 p-3 space-y-1">
+                    <p className="text-xs font-medium text-warning">新 Token（仅此一次可见）</p>
                     <code className="block font-mono text-xs text-foreground break-all">{regeneratedToken.token}</code>
                   </div>
                 )}
@@ -602,7 +602,7 @@ function RoutineDialog({
             )}
 
             {form.trigger_type === "plugin" && (
-              <div className="space-y-3 rounded-[10px] border border-border bg-secondary/20 p-4">
+              <div className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-4">
                 <div>
                   <label className="agentdash-form-label">Provider Key</label>
                   <input
@@ -704,7 +704,7 @@ function ExecutionHistoryContent({ routineId }: { routineId: string }) {
   return (
     <div className="space-y-2 p-4">
       {executions.map((exec) => (
-        <div key={exec.id} className="rounded-[10px] border border-border bg-background/75 p-3">
+        <div key={exec.id} className="rounded-[8px] border border-border bg-background/75 p-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className={`inline-block rounded-[6px] border px-2 py-0.5 text-[10px] ${EXEC_STATUS_STYLE[exec.status]}`}>

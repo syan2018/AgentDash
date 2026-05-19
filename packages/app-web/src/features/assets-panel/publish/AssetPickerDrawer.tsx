@@ -110,7 +110,7 @@ function KindStep({ onPick }: { onPick: (kind: PublishLibraryAssetKind) => void 
             <button
               type="button"
               onClick={() => onPick(option.value)}
-              className="flex w-full items-start gap-3 rounded-[10px] border border-border bg-background p-3 text-left transition-colors hover:border-primary/30 hover:bg-secondary/30"
+              className="flex w-full items-start gap-3 rounded-[8px] border border-border bg-background p-3 text-left transition-colors hover:border-primary/30 hover:bg-secondary/30"
             >
               <span className="rounded-[6px] border border-border bg-secondary/60 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 {option.label}
@@ -390,7 +390,7 @@ function PickList<T>({
           <button
             type="button"
             onClick={() => onPick(item)}
-            className="flex w-full flex-col rounded-[10px] border border-border bg-background p-3 text-left transition-colors hover:border-primary/30 hover:bg-secondary/30"
+            className="flex w-full flex-col rounded-[8px] border border-border bg-background p-3 text-left transition-colors hover:border-primary/30 hover:bg-secondary/30"
           >
             <span className="text-sm font-medium text-foreground">{titleOf(item)}</span>
             <span className="mt-0.5 text-xs text-muted-foreground">{hintOf(item)}</span>

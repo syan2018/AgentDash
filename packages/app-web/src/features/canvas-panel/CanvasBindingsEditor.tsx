@@ -134,7 +134,7 @@ export function CanvasBindingsEditor({
   };
 
   return (
-    <section className="space-y-3 rounded-[10px] border border-border bg-secondary/20 p-3">
+    <section className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
       <div className="flex items-center justify-between">
         <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
           数据绑定编辑

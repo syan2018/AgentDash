@@ -220,34 +220,34 @@ function WorkflowContextCard({
     >
       <div className="flex flex-wrap gap-2">
         {activeRun && (
-          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             Run · {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
           </span>
         )}
         {activeWorkflow?.workflow_key && (
-          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             Workflow · {activeWorkflow.workflow_key}
           </span>
         )}
         {activeStep && (
-          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             Step · {STEP_STATUS_LABEL[activeStep.status] ?? activeStep.status}
           </span>
         )}
         {totalCount > 0 && (
-          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             进度 {completedCount}/{totalCount}
           </span>
         )}
         {workflowInjections.length > 0 && (
-          <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
+          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
             注入 {workflowInjections.length}
           </span>
         )}
       </div>
 
       {(activeWorkflow || activeStep) && (
-        <div className="mt-3 space-y-1 rounded-[10px] border border-border bg-secondary/20 px-3 py-2 text-xs">
+        <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
           {activeWorkflow && (
             <>
               <p className="font-medium text-foreground">{activeWorkflow.step_title}</p>
@@ -280,7 +280,7 @@ function WorkflowContextCard({
               >
                 {mount.display_name || mount.id}
                 <span className="ml-1 font-mono text-[10px]">/{mount.id}</span>
-                {mount.default_write && <span className="ml-1 text-amber-600">可写</span>}
+                {mount.default_write && <span className="ml-1 text-warning">可写</span>}
               </span>
             ))}
           </div>
@@ -417,7 +417,7 @@ function AgentSummaryCard({
       {executor ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-border bg-secondary/60 px-2 py-1 text-[11px] font-medium text-foreground">
+            <span className="rounded-[8px] border border-border bg-secondary/60 px-2 py-1 text-[11px] font-medium text-foreground">
               {executor.executor ?? "未解析"}
             </span>
             <span className="text-[11px] text-muted-foreground">
@@ -477,14 +477,14 @@ function SharedFoldersCard({
           {folders.map((folder, index) => (
             <span
               key={`${folder.id}-${index}`}
-              className="rounded-[10px] border border-border bg-secondary/40 px-2.5 py-1 text-xs text-foreground/85"
+              className="rounded-[8px] border border-border bg-secondary/40 px-2.5 py-1 text-xs text-foreground/85"
             >
               {folder.title}
               <span className="ml-1 font-mono text-[10px] text-muted-foreground">
                 /{folder.mount}
               </span>
               {folder.writable && (
-                <span className="ml-1 text-[10px] text-amber-600">可写</span>
+                <span className="ml-1 text-[10px] text-warning">可写</span>
               )}
             </span>
           ))}
@@ -575,7 +575,7 @@ function TechnicalBadges({
         {badges.map((badge) => (
           <span
             key={badge}
-            className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground"
+            className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground"
           >
             {badge}
           </span>

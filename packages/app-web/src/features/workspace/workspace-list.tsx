@@ -23,7 +23,7 @@ import {
   DetailMenu,
   DetailPanel,
   DetailSection,
-} from "../../components/ui/detail-panel";
+} from "@agentdash/ui";
 import {
   listProjectBackendAccess,
   listWorkspaceInventoryCandidates,
@@ -270,7 +270,7 @@ function CandidateList({
 }: CandidateListProps) {
   if (candidates.length === 0) {
     return (
-      <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+      <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
         {emptyText}
       </p>
     );
@@ -284,14 +284,14 @@ function CandidateList({
         return (
           <div
             key={key}
-            className={`rounded-[10px] border px-3 py-3 ${
+            className={`rounded-[8px] border px-3 py-3 ${
               active ? "border-primary/30 bg-primary/[0.04]" : "border-border bg-background"
             }`}
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                     {identityKindLabels[candidate.identity_kind]}
                   </span>
                   <span className="truncate font-mono text-xs text-foreground">{candidate.root_ref}</span>
@@ -676,7 +676,7 @@ function WorkspaceEditorDrawer({
                     key={value}
                     type="button"
                     onClick={() => setCreateMode(value)}
-                    className={`rounded-[10px] border px-3 py-2 text-left text-xs transition-colors ${
+                    className={`rounded-[8px] border px-3 py-2 text-left text-xs transition-colors ${
                       createMode === value
                         ? "border-primary/35 bg-primary/10 text-primary"
                         : "border-border bg-background text-muted-foreground hover:bg-secondary"
@@ -688,13 +688,13 @@ function WorkspaceEditorDrawer({
               </div>
 
               {createMode === "candidate" && (
-                <p className="mt-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
                   在下方 Backend 路由中选择一个发现项，确认后会生成 Workspace 身份和初始落点。
                 </p>
               )}
 
               {createMode === "logical" && (
-                <p className="mt-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                <p className="mt-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
                   先创建 logical identity，后续由已授权 backend 的可用目录自动匹配 binding。适合先建 Project contract，再让设备补齐可用目录。
                 </p>
               )}
@@ -744,13 +744,13 @@ function WorkspaceEditorDrawer({
                   </p>
 
                   {fallbackDetectBackends.length === 0 && (
-                    <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                       当前没有已授权且在线的 backend。请先在 Backend Access 中授权本机 backend。
                     </p>
                   )}
 
                   {detectionResult && (
-                    <div className="flex flex-wrap items-start justify-between gap-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
                       <div className="min-w-0 flex-1">
                         <p>
                           识别结果：{identityKindLabels[detectionResult.identity_kind]}
@@ -820,7 +820,7 @@ function WorkspaceEditorDrawer({
               当前摘要：{identitySummary(identityKind, identityPayload)}
             </p>
 
-            <details className="rounded-[10px] border border-border bg-background px-3 py-3">
+            <details className="rounded-[8px] border border-border bg-background px-3 py-3">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                 高级 identity JSON
               </summary>
@@ -840,7 +840,7 @@ function WorkspaceEditorDrawer({
                     setMessage("identity_payload 需要是合法 JSON");
                   }
                 }}
-                className="mt-3 min-h-[132px] w-full rounded-[10px] border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
+                className="mt-3 min-h-[132px] w-full rounded-[8px] border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
               />
             </details>
           </DetailSection>
@@ -850,7 +850,7 @@ function WorkspaceEditorDrawer({
               title="当前路由预览"
               description="展示保存后的配置会落到哪个 backend/root。"
             >
-              <div className="rounded-[10px] border border-border bg-background px-3 py-3">
+              <div className="rounded-[8px] border border-border bg-background px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <ResolutionBadge state={resolutionSummary.state} />
                   <span className="text-sm font-medium text-foreground">{resolutionSummary.label}</span>
@@ -877,14 +877,14 @@ function WorkspaceEditorDrawer({
               <div className="space-y-2">
                 <p className="text-xs font-medium text-foreground">当前落点</p>
                 {dedupeBindings(bindings).length === 0 ? (
-                  <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                  <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                     当前还没有可用落点。请从下方候选项确认一个 backend/root。
                   </p>
                 ) : (
                   dedupeBindings(bindings).map((binding) => (
                     <div
                       key={binding.id ?? `${binding.backend_id}:${binding.root_ref}`}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-background px-3 py-3 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">
@@ -920,7 +920,7 @@ function WorkspaceEditorDrawer({
               </div>
 
               {canManageBindings ? (
-                <details className="rounded-[10px] border border-border bg-background px-3 py-3">
+                <details className="rounded-[8px] border border-border bg-background px-3 py-3">
                   <summary className="cursor-pointer text-xs font-medium text-foreground">
                     登记新的可用目录
                   </summary>
@@ -971,7 +971,7 @@ function WorkspaceEditorDrawer({
                     </p>
 
                     {detectionResult && (
-                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[10px] border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-muted/20 px-3 py-3 text-xs text-muted-foreground">
                         <div className="min-w-0 flex-1">
                           <p>
                             识别结果：{identityKindLabels[detectionResult.identity_kind]}
@@ -999,7 +999,7 @@ function WorkspaceEditorDrawer({
                   </div>
                 </details>
               ) : (
-                <p className="rounded-[10px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
+                <p className="rounded-[8px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
                   无管理员权限时不开放新的可用目录登记入口。
                 </p>
               )}
@@ -1163,7 +1163,7 @@ export function WorkspaceList({
         </div>
 
         {loadError && (
-          <p className="rounded-[10px] border border-destructive/35 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <p className="rounded-[8px] border border-destructive/35 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {loadError}
           </p>
         )}
@@ -1197,12 +1197,12 @@ export function WorkspaceList({
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-medium text-foreground">{workspace.name}</p>
                     {isDefault && (
-                      <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
+                      <span className="inline-flex items-center rounded-[8px] border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
                         Project 默认
                       </span>
                     )}
                     <WorkspaceStatusBadge status={workspace.status} />
-                    <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                    <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                       {identityKindLabels[workspace.identity_kind]}
                     </span>
                     <ResolutionBadge state={resolution.state} />

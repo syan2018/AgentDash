@@ -17,11 +17,11 @@ const POLL_INTERVAL = 5000;
 function nodeStatusBadgeClass(status: WorkflowStepState["status"]) {
   switch (status) {
     case "completed":
-      return "border-emerald-300/40 bg-emerald-500/10 text-emerald-700";
+      return "border-success/40 bg-success/10 text-success";
     case "running":
       return "border-primary/30 bg-primary/10 text-primary animate-pulse";
     case "ready":
-      return "border-amber-300/40 bg-amber-500/10 text-amber-700";
+      return "border-warning/40 bg-warning/10 text-warning";
     case "failed":
       return "border-destructive/30 bg-destructive/10 text-destructive";
     default:
@@ -71,11 +71,11 @@ function LifecycleNodeCard({ stepState, stepDef, isActive }: LifecycleNodeCardPr
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-foreground">{heading}</span>
-            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${nodeStatusBadgeClass(stepState.status)}`}>
+            <span className={`rounded-[8px] border px-2 py-0.5 text-[11px] ${nodeStatusBadgeClass(stepState.status)}`}>
               {STEP_STATUS_LABEL[stepState.status] ?? stepState.status}
             </span>
             {stepDef && (
-              <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+              <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                 {nodeTypeLabel(stepDef)}
               </span>
             )}
@@ -128,9 +128,9 @@ function LifecycleProgressBar({ stepStates }: { stepStates: WorkflowStepState[] 
         <span>{completed}/{total} nodes completed</span>
         <span>{pct}%</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary/40">
+      <div className="h-1.5 w-full overflow-hidden rounded-[8px] bg-secondary/40">
         <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
+          className="h-full rounded-[8px] bg-primary transition-all duration-300"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -208,7 +208,7 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
       <LifecycleProgressBar stepStates={activeRun.step_states} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">
+        <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">
           {lifecycle?.name ?? activeRun.lifecycle_id.slice(0, 8)}
         </span>
         {activeRun.active_node_keys && activeRun.active_node_keys.length > 0 && (

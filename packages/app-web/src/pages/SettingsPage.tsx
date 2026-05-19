@@ -90,7 +90,7 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
   }, [onDone]);
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 animate-fade-in rounded-[10px] border border-border bg-background px-4 py-2.5 text-sm text-foreground shadow-lg">
+    <div className="fixed bottom-6 right-6 z-50 animate-fade-in rounded-[8px] border border-border bg-background px-4 py-2.5 text-sm text-foreground shadow-lg">
       {message}
     </div>
   );
@@ -321,7 +321,7 @@ function LlmProvidersSection({
       {/* Add Provider */}
       <div className="mt-2">
         {createStep === "pick" && (
-          <div className="space-y-1 rounded-[10px] border border-border bg-background/80 p-3">
+          <div className="space-y-1 rounded-[8px] border border-border bg-background/80 p-3">
             <p className="text-xs font-medium text-foreground mb-2">选择预设模板</p>
             {PROVIDER_PRESETS.map((preset) => (
               <button
@@ -356,7 +356,7 @@ function LlmProvidersSection({
         )}
 
         {createStep === "form" && (
-          <div className="rounded-[10px] border border-border bg-background/80 p-3 space-y-3">
+          <div className="rounded-[8px] border border-border bg-background/80 p-3 space-y-3">
             <p className="text-xs font-medium text-foreground">
               创建 Provider{createPreset ? ` — ${createPreset.name}` : ` — ${createProtocol}`}
             </p>
@@ -390,7 +390,7 @@ function LlmProvidersSection({
               </div>
             </div>
             {createError && (
-              <p className="text-xs text-red-500">{createError}</p>
+              <p className="text-xs text-destructive">{createError}</p>
             )}
             <div className="flex justify-end gap-2 pt-1">
               <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={cancelCreate}>
@@ -406,7 +406,7 @@ function LlmProvidersSection({
         {createStep === "idle" && (
           <button
             type="button"
-            className="flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/30"
+            className="flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-dashed border-border px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/30"
             onClick={() => setCreateStep("pick")}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -441,26 +441,26 @@ function LlmProviderRow({
   const configured = provider.api_key_configured;
 
   return (
-    <div className="rounded-[10px] border border-border bg-background/80">
+    <div className="rounded-[8px] border border-border bg-background/80">
       <button
         type="button"
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
         onClick={() => setExpanded((p) => !p)}
       >
         <span
-          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${configured ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+          className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${configured ? "bg-success" : "bg-muted-foreground/30"}`}
         />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground">{provider.name}</p>
           <p className="text-xs text-muted-foreground">{provider.slug} · {provider.protocol}{provider.base_url ? ` · ${provider.base_url}` : ""}</p>
         </div>
         {!provider.enabled && (
-          <span className="rounded-[6px] border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-700 dark:text-yellow-400">
+          <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
             已禁用
           </span>
         )}
         {configured && provider.enabled && (
-          <span className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+          <span className="rounded-[6px] border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success">
             已配置
           </span>
         )}
@@ -887,7 +887,7 @@ function LlmProviderForm({
       <div className="flex justify-between pt-1">
         <button
           type="button"
-          className="text-xs text-red-500 hover:text-red-600"
+          className="text-xs text-destructive hover:text-destructive/80"
           onClick={() => { if (window.confirm(`删除 Provider「${provider.name}」？`)) onDelete(); }}
         >
           删除此 Provider
@@ -1074,7 +1074,7 @@ function ModelManagementSection({
                 isEditing
                   ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
                   : enabled
-                    ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                    ? "border-success/30 bg-success/10 text-success hover:bg-success/15"
                     : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
               }`}
               title={effectiveTooltip}
@@ -1082,13 +1082,14 @@ function ModelManagementSection({
               onPointerEnter={() => handleDragEnter(model.id)}
             >
               <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
-                isEditing ? "bg-primary" : enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
+                isEditing ? "bg-primary" : enabled ? "bg-success" : "bg-muted-foreground/30"
               }`} />
               <span className={enabled ? "" : "line-through opacity-60"}>
                 {(overrideConfig?.name || model.name || model.id)}
               </span>
               {hasOverride && (
-                <span className="inline-block h-1 w-1 rounded-full bg-amber-500" title="已自定义属性" />
+                // eslint-disable-next-line no-restricted-syntax -- 1px 圆点指示
+                <span className="inline-block h-1 w-1 rounded-full bg-warning" title="已自定义属性" />
               )}
               {/* Hover 浮现的编辑按钮 — 不会破坏标签轮廓 */}
               <button
@@ -1233,10 +1234,11 @@ function CustomModelEditRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+    <div className="rounded-[8px] border border-border bg-background/80 p-3">
       {/* ID + Name 行 */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+        {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
+        <span className="inline-block h-2 w-2 rounded-full bg-info" />
         <input
           type="text"
           className={`${inputCls} !w-40 !py-1 !px-2 ${isDiscovered ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -1312,10 +1314,11 @@ function DiscoveredModelEditRow({
   const effectiveImage = override?.supports_image ?? model.supports_image;
 
   return (
-    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+    <div className="rounded-[8px] border border-border bg-background/80 p-3">
       {/* 标题行 */}
       <div className="flex items-center gap-2 mb-3">
-        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
+        <span className="inline-block h-2 w-2 rounded-full bg-success" />
         <span className="text-xs font-medium text-foreground truncate">{model.name || model.id}</span>
         <code className="ml-auto text-[10px] text-muted-foreground/60 font-mono truncate max-w-[180px]">{model.id}</code>
       </div>
@@ -1405,11 +1408,12 @@ function NewCustomModelForm({
   };
 
   return (
-    <div className="rounded-[10px] border border-border bg-background/80 p-3">
+    <div className="rounded-[8px] border border-border bg-background/80 p-3">
       <p className="text-xs font-medium text-foreground mb-3">添加自定义模型</p>
       {/* ID + Name */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <span className="inline-block h-2 w-2 rounded-full bg-blue-500/50" />
+        {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
+        <span className="inline-block h-2 w-2 rounded-full bg-info/50" />
         <input type="text" className={`${inputCls} !w-40 !py-1 !px-2`} value={id} placeholder="模型 ID（必填）" onChange={(e) => setId(e.target.value)} autoFocus />
         <input type="text" className={`${inputCls} !w-32 !py-1 !px-2`} value={name} placeholder="显示名称" onChange={(e) => setName(e.target.value)} />
       </div>
@@ -1587,7 +1591,7 @@ function ExecutorSectionForm({
             value={executor}
             onChange={(e) => setExecutor(e.target.value)}
             disabled={isLoading}
-            className="h-10 w-full appearance-none rounded-[10px] border border-border bg-background pl-3.5 pr-9 text-sm text-foreground outline-none transition-colors ring-ring focus:border-primary/30 focus:ring-1 focus:ring-ring/40 disabled:opacity-50"
+            className="h-10 w-full appearance-none rounded-[8px] border border-border bg-background pl-3.5 pr-9 text-sm text-foreground outline-none transition-colors ring-ring focus:border-primary/30 focus:ring-1 focus:ring-ring/40 disabled:opacity-50"
           >
             <option value="">
               {isLoading ? "加载中…" : "选择执行器…"}
@@ -1633,7 +1637,7 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
       </p>
 
       {backends.length === 0 && (
-        <p className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+        <p className="rounded-[8px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
           暂无已注册后端
         </p>
       )}
@@ -1649,7 +1653,7 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
           const scopeLabel = formatBackendScope(backend);
 
           return (
-            <div key={backend.id} className="rounded-[10px] border border-border bg-background/80">
+            <div key={backend.id} className="rounded-[8px] border border-border bg-background/80">
               <button
                 type="button"
                 className="flex w-full items-center gap-3 px-4 py-3 text-left"
@@ -1950,6 +1954,7 @@ export function SettingsPage() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
+          {/* eslint-disable-next-line no-restricted-syntax -- 圆形 spinner 必须 rounded-full 才能正确旋转 */}
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="mt-3 text-sm text-muted-foreground">正在加载设置…</p>
         </div>
@@ -1964,7 +1969,7 @@ export function SettingsPage() {
           <button
             type="button"
             onClick={handleBack}
-            className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+            className="inline-flex items-center gap-2 rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -2012,7 +2017,7 @@ export function SettingsPage() {
         </SectionCard>
 
         {error && (
-          <div className="rounded-[10px] border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-[8px] border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
         )}
@@ -2020,7 +2025,7 @@ export function SettingsPage() {
         {activePanel === "local-runtime" && <DesktopLocalRuntimePanel />}
 
         {activePanel === "system" && !canManageSystemScope && (
-          <div className="rounded-[10px] border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="rounded-[8px] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
             当前企业身份不是管理员，system scope 设置已被收口。你仍然可以查看和维护 user / project scope。
           </div>
         )}
@@ -2042,7 +2047,7 @@ export function SettingsPage() {
         )}
 
         {activePanel === "project" && !scopeRequest && (
-          <div className="rounded-[10px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+          <div className="rounded-[8px] border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
             还没有选中的 Project，暂时无法进入 project scope。
           </div>
         )}

@@ -544,7 +544,7 @@ function CapabilitiesEditor({
             const isExpanded = expandedCaps.has(key);
             const tools = toolCatalogCache[key] ?? [];
             const badge = mcpName ? (
-              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-mono text-amber-700">
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[9px] font-mono text-warning">
                 mcp
               </span>
             ) : !isWellKnown ? (
@@ -574,7 +574,7 @@ function CapabilitiesEditor({
 
         {/* Picker */}
         {showPicker ? (
-          <div className="mt-2 rounded-[10px] border-2 border-dashed border-primary/30 bg-primary/5 p-3 space-y-3">
+          <div className="mt-2 rounded-[8px] border-2 border-dashed border-primary/30 bg-primary/5 p-3 space-y-3">
             {presetsError && (
               <p className="rounded-[8px] border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] text-destructive">
                 加载 MCP Preset 失败：{presetsError}
@@ -630,7 +630,7 @@ function CapabilitiesEditor({
                         <span
                           className={`rounded px-1 py-0.5 text-[9px] font-mono ${
                             preset.source === "builtin"
-                              ? "bg-amber-500/15 text-amber-700"
+                              ? "bg-warning/15 text-warning"
                               : "bg-secondary text-muted-foreground"
                           }`}
                         >
@@ -657,7 +657,7 @@ function CapabilitiesEditor({
           <button
             type="button"
             onClick={() => setShowPicker(true)}
-            className="mt-2 w-full rounded-[10px] border-2 border-dashed border-border/60 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary/70 transition-colors"
+            className="mt-2 w-full rounded-[8px] border-2 border-dashed border-border/60 py-2 text-sm text-muted-foreground hover:border-primary/40 hover:text-primary/70 transition-colors"
           >
             + 添加能力
           </button>

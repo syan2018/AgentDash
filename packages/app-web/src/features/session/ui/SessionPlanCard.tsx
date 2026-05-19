@@ -30,9 +30,9 @@ export const AcpPlanCard = memo(function AcpPlanCard({
 
   const cardContent = (
     <>
-      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-[8px] bg-secondary">
         <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
+          className="h-full rounded-[8px] bg-primary transition-all duration-300"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -100,7 +100,7 @@ function PlanStepItem({
   const statusConfig = getStatusConfig(step.status);
 
   return (
-    <li className="flex items-start gap-3 rounded-[10px] border border-border/70 bg-secondary/35 px-3 py-2.5">
+    <li className="flex items-start gap-3 rounded-[8px] border border-border/70 bg-secondary/35 px-3 py-2.5">
       <span
         className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] text-xs ${statusConfig.bgClass}`}
       >

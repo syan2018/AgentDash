@@ -24,8 +24,8 @@ import type {
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "../_shared/CardMenu";
-import { SourceBadge, type AssetSourceVariant } from "../_shared/SourceBadge";
+import { CardMenu } from "@agentdash/ui";
+import { OriginBadge, type OriginBadgeTone } from "@agentdash/ui";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
@@ -118,7 +118,7 @@ export function WorkflowCategoryPanel() {
           <button
             type="button"
             onClick={() => navigate("/workflow/new")}
-            className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+            className="h-9 rounded-[8px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
             + Workflow
           </button>
@@ -156,7 +156,7 @@ export function WorkflowCategoryPanel() {
           onClick={() => setConfirmDelete(null)}
         >
           <div
-            className="w-[380px] rounded-[14px] border border-border bg-background p-5 shadow-xl"
+            className="w-[380px] rounded-[12px] border border-border bg-background p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
@@ -280,7 +280,7 @@ function LifecycleAssetCard({
   const isBuiltin = item.source === "builtin_seed";
   // 已经从市场安装回来的资产或 builtin 不允许走"发布"路径，避免循环发布
   const canPublish = !isInstalled && !isBuiltin;
-  const sourceVariant = workflowSourceVariant(item.source, isInstalled);
+  const sourceOrigin = workflowSourceOrigin(item.source, isInstalled);
 
   const menuItems = [
     {
@@ -327,7 +327,7 @@ function LifecycleAssetCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {published && <PublishedBadge version={published.version} />}
-          <SourceBadge variant={sourceVariant} />
+          <OriginBadge tone={sourceOrigin.tone} label={sourceOrigin.label} />
           <CardMenu items={menuItems} />
         </div>
       </header>
@@ -357,11 +357,11 @@ function LifecycleAssetCard({
   );
 }
 
-function workflowSourceVariant(source: WorkflowDefinitionSource, installed: boolean): AssetSourceVariant {
-  if (installed) return "marketplace";
-  if (source === "builtin_seed") return "builtin";
-  if (source === "cloned") return "cloned";
-  return "user";
+function workflowSourceOrigin(source: WorkflowDefinitionSource, installed: boolean): { tone: OriginBadgeTone; label: string } {
+  if (installed) return { tone: "success", label: "marketplace" };
+  if (source === "builtin_seed") return { tone: "warning", label: "builtin" };
+  if (source === "cloned") return { tone: "info", label: "cloned" };
+  return { tone: "neutral", label: "user" };
 }
 
 /* ─── 公共：时间格式化 ─── */

@@ -47,8 +47,8 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "../_shared/CardMenu";
-import { SourceBadge, type AssetSourceVariant } from "../_shared/SourceBadge";
+import { CardMenu } from "@agentdash/ui";
+import { OriginBadge, type OriginBadgeTone } from "@agentdash/ui";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
@@ -284,14 +284,14 @@ export function McpPresetCategoryPanel() {
             type="button"
             onClick={() => void loadPresets(currentProjectId)}
             disabled={isLoading}
-            className="h-9 rounded-[10px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-9 rounded-[8px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? "刷新中…" : "刷新"}
           </button>
           <button
             type="button"
             onClick={() => setDetail({ kind: "create" })}
-            className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+            className="h-9 rounded-[8px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
             + Preset
           </button>
@@ -315,7 +315,7 @@ export function McpPresetCategoryPanel() {
           <button
             type="button"
             onClick={() => setDetail({ kind: "create" })}
-            className="mt-4 rounded-[10px] border border-primary bg-primary px-3.5 py-1.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+            className="mt-4 rounded-[8px] border border-primary bg-primary px-3.5 py-1.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
           >
             + 新建 MCP Preset
           </button>
@@ -500,11 +500,11 @@ function McpPresetCard({
   const isBuiltin = preset.source === "builtin";
   const isInstalled = Boolean(preset.installed_source);
   const canPublish = !isBuiltin && !isInstalled;
-  const sourceVariant: AssetSourceVariant = isInstalled
-    ? "marketplace"
+  const sourceOrigin: { tone: OriginBadgeTone; label: string } = isInstalled
+    ? { tone: "success", label: "marketplace" }
     : isBuiltin
-      ? "builtin"
-      : "user";
+      ? { tone: "warning", label: "builtin" }
+      : { tone: "neutral", label: "user" };
 
   // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
   // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
@@ -565,7 +565,7 @@ function McpPresetCard({
         <div className="flex shrink-0 items-center gap-1">
           {published && <PublishedBadge version={published.version} />}
           <RoutePolicyBadge policy={preset.route_policy} />
-          <SourceBadge variant={sourceVariant} />
+          <OriginBadge tone={sourceOrigin.tone} label={sourceOrigin.label} />
           <CardMenu items={menuItems} />
         </div>
       </header>
@@ -691,11 +691,11 @@ function ToolCapsuleGrid({
   tools: ReadonlyArray<{ name: string; description: string }>;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-[10px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-[8px] border border-border/70 bg-secondary/20 p-2.5 text-[11px]">
       {tools.map((tool) => (
         <span
           key={tool.name}
-          className="max-w-full truncate rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
+          className="max-w-full truncate rounded-[8px] border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
           title={tool.description ? `${tool.name} — ${tool.description}` : tool.name}
         >
           {tool.name}
@@ -813,7 +813,7 @@ function McpPresetDetailDialog({
         onClick={onClose}
       />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[12px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="inline-flex rounded-[6px] border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
               MCP Preset
@@ -973,7 +973,7 @@ function ProbePanel({
       : "实时连接 MCP Server 并调用 tools/list；15 秒超时";
 
   return (
-    <div className="rounded-[10px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
+    <div className="rounded-[8px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-foreground">连通性 & 工具发现</p>
@@ -993,7 +993,7 @@ function ProbePanel({
         <div className="mt-2.5">
           {result.status === "ok" && (
             <div>
-              <p className="text-xs text-emerald-600">
+              <p className="text-xs text-success">
                 ✓ 连接成功（{result.latency_ms} ms）·{" "}
                 {result.tools.length > 0
                   ? `发现 ${result.tools.length} 个工具`
@@ -1039,7 +1039,7 @@ function ConfirmDeleteDialog({
       onClick={onCancel}
     >
       <div
-        className="w-[380px] rounded-[14px] border border-border bg-background p-5 shadow-xl"
+        className="w-[380px] rounded-[12px] border border-border bg-background p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-sm font-semibold text-foreground">确认删除 MCP Preset</h3>

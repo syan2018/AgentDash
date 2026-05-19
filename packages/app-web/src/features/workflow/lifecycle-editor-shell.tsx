@@ -196,6 +196,7 @@ export function LifecycleEditorShell({
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
+          {/* eslint-disable-next-line no-restricted-syntax -- 圆形 spinner，rounded-full 是必需视觉形态 */}
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="mt-3 text-sm text-muted-foreground">正在加载 Workflow...</p>
         </div>
@@ -232,7 +233,7 @@ export function LifecycleEditorShell({
             {mode === "form" ? "Form 模式" : "DAG 模式"}
           </span>
           {isDirty && (
-            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700">
+            <span className="rounded-[8px] bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
               未保存
             </span>
           )}
@@ -373,7 +374,7 @@ function FormLayout(props: {
         )}
 
         {/* Step 升级按钮 */}
-        <div className="flex items-center justify-between rounded-[10px] border border-dashed border-border bg-secondary/20 px-3 py-2">
+        <div className="flex items-center justify-between rounded-[8px] border border-dashed border-border bg-secondary/20 px-3 py-2">
           <p className="text-xs text-muted-foreground">
             当前为单 step 模式。添加第二个 step 即切到 DAG 编辑。
           </p>
@@ -486,7 +487,7 @@ function DagLayout(props: {
           onAddStep={onAddStep}
           bottomLeftOverlay={
             validation && validation.issues.length > 0 ? (
-              <div className="max-h-40 w-96 overflow-y-auto rounded-[10px] border border-border bg-background/95 shadow-sm backdrop-blur-sm">
+              <div className="max-h-40 w-96 overflow-y-auto rounded-[8px] border border-border bg-background/95 shadow-sm backdrop-blur-sm">
                 <ValidationPanel issues={validation.issues} />
               </div>
             ) : null

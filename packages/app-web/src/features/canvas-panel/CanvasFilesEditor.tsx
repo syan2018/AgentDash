@@ -147,7 +147,7 @@ export function CanvasFilesEditor({
   };
 
   return (
-    <section className="space-y-3 rounded-[10px] border border-border bg-secondary/20 p-3">
+    <section className="space-y-3 rounded-[8px] border border-border bg-secondary/20 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">资产文件编辑</p>
@@ -195,7 +195,7 @@ export function CanvasFilesEditor({
       )}
 
       {selectedFile && (
-        <div className="space-y-3 rounded-[10px] border border-border bg-background p-3">
+        <div className="space-y-3 rounded-[8px] border border-border bg-background p-3">
           <div className="flex flex-wrap items-center gap-2">
             <label className="min-w-0 flex-1 space-y-1">
               <span className="text-[11px] text-muted-foreground">文件路径</span>

@@ -118,6 +118,7 @@ export function FilePickerPopup({
           className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
         />
         {loading && (
+          // eslint-disable-next-line no-restricted-syntax -- 加载旋转器必须为圆形
           <span className="h-3.5 w-3.5 animate-spin rounded-full border border-muted-foreground/40 border-t-primary" />
         )}
       </div>

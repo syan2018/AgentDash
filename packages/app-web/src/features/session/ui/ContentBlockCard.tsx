@@ -235,7 +235,7 @@ export const ContentBlockCard = memo(function ContentBlockCard({
           <img
             src={`data:${block.mimeType};base64,${block.data}`}
             alt="嵌入图片"
-            className="max-h-48 max-w-full rounded-[10px] border border-border object-contain"
+            className="max-h-48 max-w-full rounded-[8px] border border-border object-contain"
           />
         </div>
       </div>

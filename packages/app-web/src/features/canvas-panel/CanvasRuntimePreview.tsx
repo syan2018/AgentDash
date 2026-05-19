@@ -203,7 +203,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
           <p className="text-[11px] uppercase tracking-[0.12em] text-destructive/80">Preview</p>
           <h4 className="mt-1 text-sm font-semibold text-destructive">运行时预览构建失败</h4>
         </div>
-        <pre className="overflow-auto whitespace-pre-wrap rounded-[10px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
+        <pre className="overflow-auto whitespace-pre-wrap rounded-[8px] border border-destructive/20 bg-background px-3 py-2 text-xs text-destructive">
           {buildError}
         </pre>
       </div>

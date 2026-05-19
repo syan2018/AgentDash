@@ -713,12 +713,13 @@ export function SessionChatView({
       {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
       {showStatusBar && (
         <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
-          <span className="flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
             {connectionLabel}
           </span>
           {isActionRunning && (
-            <span className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
+            <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
+              {/* eslint-disable-next-line no-restricted-syntax */}
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
               {isConnected ? "接收中" : "执行中"}
             </span>
@@ -751,6 +752,7 @@ export function SessionChatView({
         {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
+              {/* eslint-disable-next-line no-restricted-syntax */}
               <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
             </div>
@@ -774,7 +776,7 @@ export function SessionChatView({
         ) : (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
-              <div className="mx-auto mb-4 w-fit rounded-[10px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              <div className="mx-auto mb-4 w-fit rounded-[8px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
                 Session
               </div>
               <p className="text-sm text-muted-foreground">
@@ -796,7 +798,7 @@ export function SessionChatView({
                   key={tpl.id}
                   type="button"
                   onClick={() => richInputRef.current?.setValue(tpl.content)}
-                  className="rounded-[10px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   {tpl.label}
                 </button>

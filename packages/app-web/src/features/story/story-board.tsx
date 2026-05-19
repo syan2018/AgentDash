@@ -239,7 +239,7 @@ function StoryColumn({ column, stories, taskCountByStoryId, onOpenStory }: Story
       <div className={`flex items-center justify-between border-b border-border px-3 py-2.5 ${column.bgColor} rounded-t-lg`}>
         <div className="flex items-center gap-2">
           <h3 className={`text-sm font-semibold ${column.color}`}>{column.label}</h3>
-          <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-background px-1.5 text-xs font-medium text-muted-foreground">
+          <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-[8px] bg-background px-1.5 text-xs font-medium text-muted-foreground">
             {stories.length}
           </span>
         </div>

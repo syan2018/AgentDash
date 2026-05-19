@@ -4,8 +4,22 @@ export { Button } from './primitives/Button'
 export type { ButtonProps, ButtonSize, ButtonVariant } from './primitives/Button'
 export { Card, CardHeader } from './primitives/Card'
 export type { CardHeaderProps, CardProps } from './primitives/Card'
+export { CardMenu } from './primitives/CardMenu'
+export type { CardMenuItem, CardMenuProps } from './primitives/CardMenu'
 export { CheckboxField } from './primitives/CheckboxField'
 export type { CheckboxFieldProps } from './primitives/CheckboxField'
+export {
+  DangerConfirmDialog,
+  DetailMenu,
+  DetailPanel,
+  DetailSection,
+} from './primitives/DetailPanel'
+export type {
+  DangerConfirmDialogProps,
+  DetailMenuItem,
+  DetailPanelProps,
+  DetailSectionProps,
+} from './primitives/DetailPanel'
 export { EmptyState } from './primitives/EmptyState'
 export type { EmptyStateProps } from './primitives/EmptyState'
 export { Field } from './primitives/Field'

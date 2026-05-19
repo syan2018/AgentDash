@@ -82,7 +82,7 @@ export function MarketplaceAssetDrawer({
               </span>
               <InstallStatusChip summary={installSummary} />
               {asset.deprecated && (
-                <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
                   已废弃
                 </span>
               )}
@@ -427,7 +427,7 @@ function McpServerTemplateBody({ payload }: { payload: unknown }) {
             {parsed.capabilities.map((c) => (
               <span
                 key={c}
-                className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
+                className="rounded-[8px] border border-border bg-background px-2 py-0.5 font-mono text-[10.5px] text-foreground/80"
               >
                 {c}
               </span>
@@ -755,7 +755,7 @@ export function ConfirmOverwriteDialog({
       onClick={onCancel}
     >
       <div
-        className="w-[420px] rounded-[14px] border border-border bg-background p-5 shadow-xl"
+        className="w-[420px] rounded-[12px] border border-border bg-background p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-sm font-semibold text-foreground">确认覆盖更新</h3>

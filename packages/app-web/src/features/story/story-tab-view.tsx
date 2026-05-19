@@ -56,6 +56,7 @@ export function StoryTabView() {
   if (isLoading && stories.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
+        {/* eslint-disable-next-line no-restricted-syntax -- 圆形 loading spinner，rounded-full 是必要形态 */}
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     );

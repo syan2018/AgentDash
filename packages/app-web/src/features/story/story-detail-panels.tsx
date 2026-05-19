@@ -14,7 +14,7 @@ import type {
 } from "../../types";
 import type { VfsEntry } from "../../services/vfs";
 import { StoryStatusBadge, StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
-import { DetailSection } from "../../components/ui/detail-panel";
+import { DetailSection } from "@agentdash/ui";
 import {
   ContextContainersEditor,
   DisabledContainerIdsEditor,
@@ -431,9 +431,9 @@ export function ContextPanel({
           </>
         )}
         {filePicker.spaceError && !filePicker.space && (
-          <span className="text-[10px] text-amber-600">{filePicker.spaceError}</span>
+          <span className="text-[10px] text-warning">{filePicker.spaceError}</span>
         )}
-        {message && <span className="ml-auto text-[11px] text-emerald-600">{message}</span>}
+        {message && <span className="ml-auto text-[11px] text-success">{message}</span>}
         {!message && error && <span className="ml-auto text-[11px] text-destructive">{error}</span>}
       </div>
     </div>
@@ -483,7 +483,7 @@ export function ReviewPanel({ story, tasks }: { story: Story; tasks: Task[] }) {
               {story.tags.map((tag, index) => (
                 <span
                   key={index}
-                  className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                  className="inline-flex items-center rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
                 >
                   {tag}
                 </span>

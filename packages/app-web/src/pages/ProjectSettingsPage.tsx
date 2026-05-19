@@ -25,7 +25,7 @@ import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
 import {
   DangerConfirmDialog,
-} from "../components/ui/detail-panel";
+} from "@agentdash/ui";
 import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
 import {
   createProjectBackendAccess,
@@ -208,7 +208,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
 
   if (error) {
     return (
-      <div className="rounded-[10px] border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+      <div className="rounded-[8px] border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
         {error}
       </div>
     );
@@ -216,7 +216,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
 
   if (mounts.length === 0) {
     return (
-      <p className="rounded-[10px] border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
+      <p className="rounded-[8px] border border-dashed border-border px-4 py-4 text-center text-sm text-muted-foreground">
         当前配置下没有可用的 VFS Mount。请先配置工作空间或项目级 VFS Mount。
       </p>
     );
@@ -246,15 +246,16 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
                     <span
                       className={`inline-block h-2 w-2 shrink-0 rounded-full ${
                         online === true
-                          ? "bg-emerald-500"
+                          ? "bg-success"
                           : online === false
-                            ? "bg-red-400"
+                            ? "bg-destructive"
                             : "bg-muted-foreground/30"
                       }`}
                       title={online === true ? "Backend 在线" : online === false ? "Backend 离线" : "状态未知"}
                     />
                   ) : (
-                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-400" />
+                    // eslint-disable-next-line no-restricted-syntax -- 状态指示圆点
+                    <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-info" />
                   )}
 
                   <p className="truncate text-sm font-medium text-foreground">
@@ -262,16 +263,16 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
                   </p>
 
                   {isDefault && (
-                    <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    <span className="inline-flex items-center rounded-[8px] border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                       默认
                     </span>
                   )}
                   {mount.default_write && (
-                    <span className="inline-flex items-center rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                    <span className="inline-flex items-center rounded-[8px] border border-warning/25 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
                       默认写入
                     </span>
                   )}
-                  <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                     {providerLabel}
                   </span>
                 </div>
@@ -286,7 +287,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
                 {mount.capabilities.map((cap) => (
                   <span
                     key={cap}
-                    className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
+                    className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground"
                   >
                     {CAPABILITY_LABELS[cap] ?? cap}
                   </span>
@@ -574,10 +575,10 @@ function BackendAccessPanel({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-sm font-medium text-foreground">{backendName(access.backend_id)}</p>
-                      <span className="rounded-full border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                         {ACCESS_STATUS_LABELS[access.status]}
                       </span>
-                      <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
                         priority {access.priority}
                       </span>
                     </div>
@@ -606,16 +607,16 @@ function BackendAccessPanel({
                 {inventoryExpanded && (
                   <div className="mt-3 space-y-2 border-t border-border/70 pt-3">
                     {inventoryLoading ? (
-                      <p className="rounded-[10px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
+                      <p className="rounded-[8px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
                         正在加载 inventory...
                       </p>
                     ) : inventory.length === 0 ? (
-                      <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                      <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                         当前还没有可用目录快照。等待 backend 上报，或在 Workspace 详情中登记新的可用目录。
                       </p>
                     ) : (
                       inventory.map((item) => (
-                        <div key={item.id} className="grid gap-2 rounded-[10px] bg-muted/25 px-3 py-2 text-xs md:grid-cols-[120px_minmax(0,1fr)_100px]">
+                        <div key={item.id} className="grid gap-2 rounded-[8px] bg-muted/25 px-3 py-2 text-xs md:grid-cols-[120px_minmax(0,1fr)_100px]">
                           <span className="text-muted-foreground">{item.identity_kind}</span>
                           <span className="truncate font-mono text-foreground">{item.root_ref}</span>
                           <span className="text-muted-foreground">{INVENTORY_STATUS_LABELS[item.status]}</span>
@@ -769,7 +770,7 @@ export function ProjectSettingsPage() {
           <button
             type="button"
             onClick={() => navigate("/dashboard/agent")}
-            className="mt-3 rounded-[10px] border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+            className="mt-3 rounded-[8px] border border-border bg-background px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
           >
             返回 Dashboard
           </button>
@@ -946,13 +947,13 @@ export function ProjectSettingsPage() {
     <>
       <div className="h-full overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-5 px-6 py-8">
-          <div className="rounded-[24px] border border-border bg-background px-6 py-6">
+          <div className="rounded-[12px] border border-border bg-background px-6 py-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-3">
                 <button
                   type="button"
                   onClick={() => navigate("/dashboard/agent")}
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
+                  className="inline-flex items-center gap-2 rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground transition-colors hover:bg-secondary"
                 >
                   返回
                 </button>
@@ -966,17 +967,17 @@ export function ProjectSettingsPage() {
               </div>
 
               <div className="flex max-w-[22rem] flex-wrap gap-2 lg:justify-end">
-                <span className="rounded-full border border-border bg-secondary/20 px-3 py-1 text-xs text-foreground">
+                <span className="rounded-[8px] border border-border bg-secondary/20 px-3 py-1 text-xs text-foreground">
                   权限：{describeProjectAccess(project)}
                 </span>
-                <span className="rounded-full border border-border bg-secondary/20 px-3 py-1 text-xs text-muted-foreground">
+                <span className="rounded-[8px] border border-border bg-secondary/20 px-3 py-1 text-xs text-muted-foreground">
                   可编辑：{canEditProject ? "是" : "否"}
                 </span>
-                <span className="rounded-full border border-border bg-secondary/20 px-3 py-1 text-xs text-muted-foreground">
+                <span className="rounded-[8px] border border-border bg-secondary/20 px-3 py-1 text-xs text-muted-foreground">
                   可管理共享：{canManageSharing ? "是" : "否"}
                 </span>
                 {project.is_template && (
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs text-amber-700">
+                  <span className="rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-1 text-xs text-warning">
                     模板
                   </span>
                 )}
@@ -984,7 +985,7 @@ export function ProjectSettingsPage() {
             </div>
           </div>
 
-          <div className="rounded-[22px] border border-border bg-muted/20 p-2">
+          <div className="rounded-[12px] border border-border bg-muted/20 p-2">
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {SETTINGS_TABS.map((tab) => (
                 <TabButton
@@ -997,7 +998,7 @@ export function ProjectSettingsPage() {
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-border bg-background px-6 py-6 md:px-8 md:py-8">
+          <div className="rounded-[12px] border border-border bg-background px-6 py-6 md:px-8 md:py-8">
             <div className="space-y-2 border-b border-border/70 pb-5">
               <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                 {activeTabMeta.label}
@@ -1044,16 +1045,16 @@ export function ProjectSettingsPage() {
 
                   <ContentGroup title="访问摘要">
                     <div className="flex flex-wrap gap-2">
-                      <span className="rounded-full border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
                         visibility: {PROJECT_VISIBILITY_LABELS[project.visibility]}
                       </span>
-                      <span className="rounded-full border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
                         default workspace: {project.config.default_workspace_id ?? "未设置"}
                       </span>
-                      <span className="rounded-full border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
                         workspaces: {workspaces.length}
                       </span>
-                      <span className="rounded-full border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-xs text-muted-foreground">
                         grants: {grants.length}
                       </span>
                     </div>
@@ -1222,17 +1223,17 @@ export function ProjectSettingsPage() {
                             {grants.map((grant) => (
                               <div
                                 key={`${grant.subject_type}:${grant.subject_id}`}
-                                className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-border bg-background px-3 py-3"
+                                className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3"
                               >
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] uppercase text-muted-foreground">
+                                    <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] uppercase text-muted-foreground">
                                       {grant.subject_type}
                                     </span>
                                     <span className="text-sm font-medium text-foreground">
                                       {resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups)}
                                     </span>
-                                    <span className="rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
+                                    <span className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
                                       {PROJECT_ROLE_LABELS[grant.role]}
                                     </span>
                                   </div>
@@ -1346,7 +1347,7 @@ export function ProjectSettingsPage() {
                           type="button"
                           onClick={() => setIsDeleteConfirmOpen(true)}
                           disabled={!canManageSharing}
-                          className="rounded-[10px] border border-destructive/25 bg-destructive/5 px-4 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-4 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           删除 Project
                         </button>

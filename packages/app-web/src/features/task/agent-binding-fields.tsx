@@ -112,7 +112,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
       )}
 
       {value.agent_type && !hasSelectedAgentType && (
-        <p className="text-xs text-amber-600">
+        <p className="text-xs text-warning">
           当前绑定的 Agent 类型 <span className="font-mono">{value.agent_type}</span> 不在执行器发现结果中，请修正配置。
         </p>
       )}
@@ -160,7 +160,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
       </div>
 
       {error && (
-        <p className="text-xs text-amber-600">
+        <p className="text-xs text-warning">
           Agent 枚举加载失败：{error.message}
         </p>
       )}

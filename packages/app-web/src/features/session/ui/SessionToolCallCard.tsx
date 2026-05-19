@@ -107,7 +107,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
   // ── compact 模式 ──
   if (compact) {
     return (
-      <div className="rounded-[10px] border border-border bg-background px-2.5 py-2 text-xs">
+      <div className="rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs">
         <div className="flex items-center gap-2">
           <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
             {kindConfig.icon}
@@ -159,7 +159,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
       {expanded && (
         <div className="space-y-3 border-t border-border px-3 py-3">
           {isPendingApproval && (
-            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-warning">
                 审批
               </span>
@@ -168,7 +168,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
           )}
 
           {(renderStatus === "declined") && (
-            <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
                 拒绝
               </span>
@@ -182,7 +182,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
                 type="button"
                 onClick={() => { void handleApprove(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[10px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/15 disabled:opacity-50"
+                className="rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/15 disabled:opacity-50"
               >
                 {isSubmittingApproval ? "处理中…" : "批准"}
               </button>
@@ -190,7 +190,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
                 type="button"
                 onClick={() => { void handleReject(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[10px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-sm text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
+                className="rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-sm text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
               >
                 拒绝
               </button>
@@ -198,7 +198,7 @@ export const AcpToolCallCard = memo(function AcpToolCallCard({
           )}
 
           {approvalError && (
-            <div className="rounded-[10px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+            <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
               {approvalError}
             </div>
           )}

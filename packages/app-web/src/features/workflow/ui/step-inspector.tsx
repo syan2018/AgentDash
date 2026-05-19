@@ -268,7 +268,7 @@ export function StepInspector(props: StepInspectorProps) {
             {step.key || "(no key)"}
           </p>
           {isEntry ? (
-            <p className="text-[10px] text-emerald-600">入口节点</p>
+            <p className="text-[10px] text-success">入口节点</p>
           ) : onSetEntry ? (
             <button
               type="button"
@@ -663,7 +663,7 @@ function CloneFromWorkflowButton({
       </button>
       {open && (
         <div
-          className="absolute right-0 left-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-[10px] border border-border bg-background p-1.5 shadow-lg"
+          className="absolute right-0 left-0 z-20 mt-1 max-h-64 overflow-y-auto rounded-[8px] border border-border bg-background p-1.5 shadow-lg"
         >
           {sorted.length === 0 ? (
             <p className="px-2 py-2 text-center text-xs text-muted-foreground">暂无可克隆的 Workflow</p>

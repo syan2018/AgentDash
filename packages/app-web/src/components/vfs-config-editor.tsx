@@ -199,7 +199,7 @@ function ContainerSummaryCard({
       : container.provider.service_id;
 
   return (
-    <div className="relative rounded-[10px] border border-border bg-background px-4 py-3">
+    <div className="relative rounded-[8px] border border-border bg-background px-4 py-3">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -211,19 +211,19 @@ function ContainerSummaryCard({
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="rounded-[5px] bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
+            <span className="rounded-[6px] bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
               {providerLabel}
             </span>
             {container.capabilities.map((cap) => (
               <span
                 key={cap}
-                className="rounded-[5px] border border-border/80 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
+                className="rounded-[6px] border border-border/80 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
               >
                 {CONTEXT_CAPABILITY_OPTIONS.find((o) => o.value === cap)?.label ?? cap}
               </span>
             ))}
             {container.default_write && (
-              <span className="rounded-[5px] border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-600">
+              <span className="rounded-[6px] border border-warning/20 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
                 默认写入
               </span>
             )}
@@ -253,7 +253,7 @@ function ContainerSummaryCard({
       </div>
 
       {menuOpen && !readOnly && (
-        <div className="absolute right-4 top-12 z-10 min-w-28 rounded-[10px] border border-border bg-background p-1 shadow-lg">
+        <div className="absolute right-4 top-12 z-10 min-w-28 rounded-[8px] border border-border bg-background p-1 shadow-lg">
           <button
             type="button"
             onClick={onDelete}
@@ -447,7 +447,7 @@ function ContainerEditorItem({
             {container.mount_id}
           </p>
         </div>
-        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+        <span className="rounded-[8px] border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
           编辑中
         </span>
       </div>
@@ -859,7 +859,7 @@ function SessionCompositionEditorForm({
         {draft.required_context_blocks.map((block, index) => (
           <div
             key={`required-context-block-${index}`}
-            className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3"
+            className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3"
           >
             <div className="flex items-center justify-between gap-2">
               <input

@@ -42,7 +42,8 @@ interface BadgeProps {
 export function StoryStatusBadge({ status, className = "" }: BadgeProps & { status: StoryStatus }) {
   const config = storyStatusConfig[status];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
+      {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
       {status === "running" && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
       {config.label}
     </span>
@@ -52,7 +53,8 @@ export function StoryStatusBadge({ status, className = "" }: BadgeProps & { stat
 export function TaskStatusBadge({ status, className = "" }: BadgeProps & { status: TaskStatus }) {
   const config = taskStatusConfig[status];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs font-medium ${config.className} ${className}`}>
+      {/* eslint-disable-next-line no-restricted-syntax -- 状态指示圆点 */}
       {status === "running" && <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
       {config.label}
     </span>
@@ -62,7 +64,7 @@ export function TaskStatusBadge({ status, className = "" }: BadgeProps & { statu
 export function StoryPriorityBadge({ priority, showLabel = false, className = "" }: BadgeProps & { priority: StoryPriority; showLabel?: boolean }) {
   const config = storyPriorityConfig[priority];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${config.className} ${className}`}>
+    <span className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] font-semibold ${config.className} ${className}`}>
       <span className={`inline-block h-1.5 w-1.5 rounded-full ${config.dotColor}`} />
       {showLabel && config.label}
     </span>
@@ -72,7 +74,7 @@ export function StoryPriorityBadge({ priority, showLabel = false, className = ""
 export function StoryTypeBadge({ type, showIcon = true, className = "" }: BadgeProps & { type: StoryType; showIcon?: boolean }) {
   const config = storyTypeConfig[type];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${config.className} ${className}`}>
+    <span className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] font-medium ${config.className} ${className}`}>
       {showIcon && <span className="text-[9px] font-semibold tracking-[0.12em]">{config.icon}</span>}
       <span>{config.label}</span>
     </span>

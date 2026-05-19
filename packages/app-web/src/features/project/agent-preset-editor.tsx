@@ -163,7 +163,7 @@ function ToolCapabilitiesField({
       {/* ── extended: vertical rows with toggle switches ── */}
       <div>
         <label className="agentdash-form-label">扩展能力</label>
-        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
+        <div className="rounded-[8px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
           {extOpts.map((opt) => {
             const on = has(opt.value);
             return (
@@ -182,7 +182,9 @@ function ToolCapabilitiesField({
                     onChange={() => toggle(opt.value)}
                     className="peer sr-only"
                   />
+                  {/* eslint-disable-next-line no-restricted-syntax -- 开关轨道为药丸形态 */}
                   <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+                  {/* eslint-disable-next-line no-restricted-syntax -- 开关旋钮为圆形 */}
                   <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
                 </span>
                 <span className="text-xs font-medium text-foreground">{opt.label}</span>
@@ -226,7 +228,7 @@ function FormSection({
         </svg>
         <span className="text-xs font-semibold uppercase tracking-[0.1em] text-foreground/80">{title}</span>
         {badge && (
-          <span className="ml-auto rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+          <span className="ml-auto rounded-[8px] bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
             {badge}
           </span>
         )}
@@ -570,14 +572,14 @@ export function PresetFormFields({
             <p className="text-[10px] text-muted-foreground/60">
               勾选此 Agent 可调用的 companion，不选则默认可调用全部项目 Agent
             </p>
-            <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
+            <div className="rounded-[8px] border border-border bg-secondary/20 p-2.5 space-y-0.5">
               {siblingAgents!.filter((a) => a.name !== form.name).map((agent) => {
                 const checked = form.allowed_companions.includes(agent.name);
                 return (
                   <label
                     key={agent.name}
                     className={`flex cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] transition-all duration-160 ${
-                      checked ? "bg-violet-500/6" : "opacity-50 hover:opacity-70"
+                      checked ? "bg-primary/10" : "opacity-50 hover:opacity-70"
                     }`}
                   >
                     <span className="relative inline-flex h-[18px] w-[32px] shrink-0">
@@ -592,7 +594,9 @@ export function PresetFormFields({
                         }}
                         className="peer sr-only"
                       />
-                      <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-violet-500" />
+                      {/* eslint-disable-next-line no-restricted-syntax -- 开关轨道为药丸形态 */}
+                      <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+                      {/* eslint-disable-next-line no-restricted-syntax -- 开关旋钮为圆形 */}
                       <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
                     </span>
                     <span className="text-xs font-medium text-foreground">{agent.name}</span>
@@ -770,7 +774,7 @@ function McpPresetPicker({
           当前项目还没有 MCP Preset
         </div>
       ) : (
-        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-1">
+        <div className="rounded-[8px] border border-border bg-secondary/20 p-2.5 space-y-1">
           {presets
             .slice()
             .sort((a, b) => a.display_name.localeCompare(b.display_name, "zh-CN"))
@@ -966,7 +970,7 @@ function SkillAssetPicker({
           当前项目还没有 Skill 资产
         </div>
       ) : (
-        <div className="rounded-[10px] border border-border bg-secondary/20 p-2.5 space-y-1">
+        <div className="rounded-[8px] border border-border bg-secondary/20 p-2.5 space-y-1">
           {skills
             .slice()
             .sort((a, b) => a.display_name.localeCompare(b.display_name, "zh-CN"))
@@ -1095,7 +1099,7 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
   return (
     <div className="space-y-2.5">
       {presets.length === 0 && !isFormOpen && (
-        <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground">
+        <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground">
           暂无 Agent 预设，点击下方按钮添加
         </p>
       )}
@@ -1133,7 +1137,7 @@ export function AgentPresetEditor({ presets, onSave, isSaving = false }: AgentPr
       ))}
 
       {isFormOpen && (
-        <div className="space-y-3 rounded-[14px] border border-primary/30 bg-background p-4">
+        <div className="space-y-3 rounded-[12px] border border-primary/30 bg-background p-4">
           <p className="text-sm font-medium text-foreground">
             {isCreating ? "新建 Agent 预设" : `编辑预设: ${presets[editingIndex!]?.name}`}
           </p>
@@ -1203,7 +1207,9 @@ function KnowledgeSection({
               onChange={(e) => onToggle(e.target.checked)}
               className="peer sr-only"
             />
+            {/* eslint-disable-next-line no-restricted-syntax -- 开关轨道为药丸形态 */}
             <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+            {/* eslint-disable-next-line no-restricted-syntax -- 开关旋钮为圆形 */}
             <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
           </span>
           <span className="text-xs font-medium text-foreground">启用知识库</span>
@@ -1303,7 +1309,7 @@ export function SinglePresetDialog({
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-2xl rounded-[12px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Agent</span>
             <h4 className="text-base font-semibold text-foreground">

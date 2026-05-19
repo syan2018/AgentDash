@@ -24,14 +24,14 @@ const NODE_TYPE_LABEL: Record<LifecycleNodeType, string> = {
 
 const NODE_TYPE_COLOR: Record<LifecycleNodeType, string> = {
   agent_node: "bg-primary/10 text-primary border-primary/30",
-  phase_node: "bg-amber-500/10 text-amber-700 border-amber-300/40",
+  phase_node: "bg-warning/10 text-warning border-warning/40",
 };
 
 const RUNTIME_STATUS_RING: Record<string, string> = {
   pending: "ring-muted-foreground/30",
-  ready: "ring-blue-400/50",
+  ready: "ring-info/50",
   running: "ring-primary/60 animate-pulse",
-  completed: "ring-emerald-500/50",
+  completed: "ring-success/50",
   failed: "ring-destructive/50",
 };
 
@@ -93,7 +93,7 @@ export function DagNode({ data, selected }: NodeProps) {
       <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
         <div className="flex items-center gap-2 overflow-hidden">
           {d.isEntryNode && (
-            <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+            <span className="shrink-0 rounded-[8px] bg-success/15 px-1.5 py-0.5 text-[9px] font-semibold text-success">
               ENTRY
             </span>
           )}
@@ -102,7 +102,7 @@ export function DagNode({ data, selected }: NodeProps) {
           </span>
         </div>
         <span
-          className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${NODE_TYPE_COLOR[nodeType]}`}
+          className={`shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[9px] font-semibold ${NODE_TYPE_COLOR[nodeType]}`}
         >
           {NODE_TYPE_LABEL[nodeType]}
         </span>

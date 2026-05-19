@@ -134,7 +134,7 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
           </div>
         )}
         {error && (
-          <div className="m-4 rounded-[10px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="m-4 rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {error}
           </div>
         )}
@@ -202,7 +202,7 @@ export function CanvasSessionPanel({ canvasId, sessionId, onClose, onBrowseFiles
           {isDetailOpen && (
             <div className="max-h-[45vh] overflow-y-auto px-3 py-3">
               <div className="space-y-3">
-                <section className="space-y-2 rounded-[10px] border border-border bg-secondary/20 p-3">
+                <section className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
                   <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
                   {snapshot.bindings.length === 0 && (
                     <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>

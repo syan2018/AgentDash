@@ -71,6 +71,7 @@ export function LoginPage() {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <div className="text-center">
+          {/* eslint-disable-next-line no-restricted-syntax -- 圆形 spinner 必须 rounded-full 才能正确旋转 */}
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="mt-3 text-sm text-muted-foreground">正在加载认证信息...</p>
         </div>
@@ -81,7 +82,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
-        <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
+        <div className="rounded-[12px] border border-border bg-card p-8 shadow-sm">
           <div className="mb-6 text-center">
             <h1 className="text-xl font-semibold text-foreground">
               {metadata?.display_name ?? 'AgentDash'}

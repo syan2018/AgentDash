@@ -203,14 +203,14 @@ export function VfsCodeEditor({
             <MarkdownModeControl value={viewMode} onChange={setViewMode} />
           )}
           {isDirty && (
-            <span className="text-[10px] text-amber-600">已修改</span>
+            <span className="text-[10px] text-warning">已修改</span>
           )}
           {!readOnly && onSave && (
             <button
               type="button"
               onClick={() => void handleSave()}
               disabled={saving || !isDirty}
-              className="rounded-[4px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+              className="rounded-[4px] border border-success/30 bg-success/10 px-1.5 py-0.5 text-[10px] text-success transition-colors hover:bg-success/20 disabled:opacity-50"
             >
               {saving ? "保存中…" : "保存"}
             </button>
@@ -265,7 +265,7 @@ function MarkdownModeControl({
   onChange: (value: MarkdownViewMode) => void;
 }) {
   return (
-    <div className="inline-flex h-6 items-center overflow-hidden rounded-[5px] border border-border bg-background text-[10px]">
+    <div className="inline-flex h-6 items-center overflow-hidden rounded-[6px] border border-border bg-background text-[10px]">
       <MarkdownModeButton value="edit" current={value} onChange={onChange}>
         编辑
       </MarkdownModeButton>

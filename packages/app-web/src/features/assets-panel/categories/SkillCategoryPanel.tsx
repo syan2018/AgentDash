@@ -33,7 +33,7 @@ import {
 import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "../_shared/CardMenu";
+import { CardMenu } from "@agentdash/ui";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import {

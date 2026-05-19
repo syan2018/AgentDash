@@ -16,10 +16,11 @@ import { useStoryStore, findStoryById } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import {
+  Badge,
   DangerConfirmDialog,
   DetailMenu,
   DetailSection,
-} from "../components/ui/detail-panel";
+} from "@agentdash/ui";
 import { CreateTaskPanel } from "../features/story/create-task-panel";
 import { sourceKindMeta } from "../features/story/context-source-utils";
 import { ContextPanel, ReviewPanel } from "../features/story/story-detail-panels";
@@ -298,6 +299,7 @@ export function StoryPage() {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
+          {/* eslint-disable-next-line no-restricted-syntax -- 圆形 spinner 必须 rounded-full 才能正确旋转 */}
           <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="mt-3 text-sm text-muted-foreground">正在加载 Story...</p>
         </div>
@@ -336,7 +338,7 @@ export function StoryPage() {
           <button
             type="button"
             onClick={() => navigate("/")}
-            className="rounded-[10px] border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             ← 返回看板
           </button>
@@ -499,7 +501,7 @@ export function StoryPage() {
                       {story.tags.map((tag, index) => (
                         <span
                           key={index}
-                          className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                          className="inline-flex items-center rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
                         >
                           {tag}
                         </span>
@@ -552,18 +554,18 @@ export function StoryPage() {
                 {Array.from(contextSummary(story.context.source_refs)).map(([kind, count]) => {
                   const meta = sourceKindMeta(kind);
                   return (
-                    <span key={kind} className={`rounded-full border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${meta.color}`}>
+                    <span key={kind} className={`rounded-[8px] border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${meta.color}`}>
                       {meta.icon} {count} {meta.label}
                     </span>
                   );
                 })}
                 {story.context.context_containers.length > 0 && (
-                  <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600">
+                  <Badge variant="accent" className="min-h-0 px-1.5 py-0.5 text-[10px]">
                     {story.context.context_containers.length} 容器
-                  </span>
+                  </Badge>
                 )}
                 {story.context.session_composition && (
-                  <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-600">
+                  <span className="rounded-[8px] border border-info/30 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
                     会话编排
                   </span>
                 )}

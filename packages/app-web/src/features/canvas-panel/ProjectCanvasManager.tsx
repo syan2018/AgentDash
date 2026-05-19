@@ -131,7 +131,7 @@ export function ProjectCanvasManager({
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <section className="space-y-4 rounded-[18px] border border-border bg-background p-4">
+      <section className="space-y-4 rounded-[12px] border border-border bg-background p-4">
         <div className="space-y-1">
           <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Canvas Assets</p>
           <h3 className="text-base font-semibold text-foreground">项目级 Canvas 列表</h3>
@@ -140,7 +140,7 @@ export function ProjectCanvasManager({
           </p>
         </div>
 
-        <div className="space-y-3 rounded-[14px] border border-border bg-secondary/20 p-3">
+        <div className="space-y-3 rounded-[12px] border border-border bg-secondary/20 p-3">
           <div className="space-y-1">
             <p className="text-xs font-medium text-foreground">新建 Canvas</p>
             <p className="text-xs text-muted-foreground">
@@ -175,7 +175,7 @@ export function ProjectCanvasManager({
           <div className={`rounded-[12px] border px-3 py-2 text-xs ${
             error
               ? "border-destructive/40 bg-destructive/10 text-destructive"
-              : "border-emerald-300/40 bg-emerald-50 text-emerald-700"
+              : "border-success/40 bg-success/10 text-success"
           }`}>
             {error ?? message}
           </div>
@@ -234,7 +234,7 @@ export function ProjectCanvasManager({
                           </p>
                         </div>
                         {isSelected && (
-                          <span className="rounded-full border border-foreground/10 bg-background px-2 py-1 text-[11px] text-foreground">
+                          <span className="rounded-[8px] border border-foreground/10 bg-background px-2 py-1 text-[11px] text-foreground">
                             当前
                           </span>
                         )}
@@ -242,13 +242,13 @@ export function ProjectCanvasManager({
                     </button>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                         mount: {canvas.mount_id}
                       </span>
-                      <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                         files: {canvas.files.length}
                       </span>
-                      <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                      <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                         bindings: {canvas.bindings.length}
                       </span>
                     </div>
@@ -274,9 +274,9 @@ export function ProjectCanvasManager({
         </div>
       </section>
 
-      <section className="min-w-0 rounded-[18px] border border-border bg-background">
+      <section className="min-w-0 rounded-[12px] border border-border bg-background">
         {selectedCanvas ? (
-          <div className="flex h-[920px] flex-col overflow-hidden rounded-[18px]">
+          <div className="flex h-[920px] flex-col overflow-hidden rounded-[12px]">
             <div className="border-b border-border px-4 py-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -287,16 +287,16 @@ export function ProjectCanvasManager({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     mount: {selectedCanvas.mount_id}
                   </span>
-                  <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     files: {selectedCanvas.files.length}
                   </span>
-                  <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     bindings: {selectedCanvas.bindings.length}
                   </span>
-                  <span className="rounded-full border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     更新于 {formatDateTime(selectedCanvas.updated_at)}
                   </span>
                 </div>
@@ -311,7 +311,7 @@ export function ProjectCanvasManager({
             </div>
           </div>
         ) : (
-          <div className="flex h-[920px] items-center justify-center rounded-[18px] bg-secondary/10 px-6 text-center">
+          <div className="flex h-[920px] items-center justify-center rounded-[12px] bg-secondary/10 px-6 text-center">
             <div className="max-w-sm space-y-3">
               <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Canvas Detail</p>
               <h3 className="text-lg font-semibold text-foreground">选择一个 Canvas 开始编辑</h3>

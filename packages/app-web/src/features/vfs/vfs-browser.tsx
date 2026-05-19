@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { StatusDot } from "@agentdash/ui";
 import type {
   ExecutionVfs,
   ResolvedMountSummary,
@@ -280,14 +281,14 @@ function MountSummaryItem({
 function MountStatusDot({ mount }: { mount: ResolvedMountSummary | ExecutionVfs["mounts"][number] }) {
   if (mount.provider === "relay_fs" && "backend_online" in mount) {
     if (mount.backend_online === true) {
-      return <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" title="Backend 在线" />;
+      return <StatusDot tone="success" title="Backend 在线" />;
     }
     if (mount.backend_online === false) {
-      return <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400" title="Backend 离线" />;
+      return <StatusDot tone="danger" title="Backend 离线" />;
     }
   }
   if (mount.provider === "inline_fs") {
-    return <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="内联文件" />;
+    return <StatusDot tone="info" title="内联文件" />;
   }
-  return <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />;
+  return <StatusDot tone="muted" />;
 }

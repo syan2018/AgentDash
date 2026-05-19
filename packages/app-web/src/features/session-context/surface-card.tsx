@@ -13,7 +13,7 @@ export function SurfaceCard({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[14px] border border-border bg-background/75 px-4 py-3">
+    <section className="rounded-[12px] border border-border bg-background/75 px-4 py-3">
       <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
         {eyebrow}
       </p>

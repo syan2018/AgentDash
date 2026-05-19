@@ -84,6 +84,7 @@ export function SessionList(props: SessionListProps) {
       <div className={`flex h-full items-center justify-center ${className}`}>
         {loadingState ?? (
           <div className="text-center">
+            {/* eslint-disable-next-line no-restricted-syntax */}
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             <p className="mt-2 text-sm text-muted-foreground">加载中...</p>
           </div>

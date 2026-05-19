@@ -173,7 +173,7 @@ export function CreateTaskPanel({
                   勾选后会把这些上下文源分配给 Task Agent，并在执行时由后端解析注入。
                 </p>
               </div>
-              <span className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+              <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
                 已选 {selectedContextIndexes.length}
               </span>
             </div>

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Story, StoryPriority, StoryType } from "../../types";
 import { StoryBoard } from "./story-board";
 import { useStoryStore } from "../../stores/storyStore";
-import { DetailPanel, DetailSection } from "../../components/ui/detail-panel";
+import { DetailPanel, DetailSection } from "@agentdash/ui";
 import { StoryPriorityBadge, StoryTypeBadge } from "../../components/ui/status-badge";
 
 
@@ -160,7 +160,7 @@ function CreateStoryDrawer({ open, projectId, onClose }: CreateStoryDrawerProps)
                 .map((tag, index) => (
                   <span
                     key={index}
-                    className="inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
+                    className="inline-flex items-center rounded-[8px] border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
                   >
                     {tag}
                   </span>
@@ -221,12 +221,12 @@ export function StoryListView({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索 Story..."
-              className="h-9 w-56 rounded-[10px] border border-border bg-background px-3.5 text-sm outline-none ring-ring transition-colors focus:border-primary/30 focus:ring-1 focus:ring-ring/40"
+              className="h-9 w-56 rounded-[8px] border border-border bg-background px-3.5 text-sm outline-none ring-ring transition-colors focus:border-primary/30 focus:ring-1 focus:ring-ring/40"
             />
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
-              className="h-9 rounded-[10px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+              className="h-9 rounded-[8px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
             >
               + 创建
             </button>

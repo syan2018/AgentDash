@@ -93,7 +93,7 @@ export function PortViewCard({
   onRemove?: () => void;
 }) {
   return (
-    <div className="flex items-start gap-2 rounded-[10px] border border-border bg-background/60 p-2.5">
+    <div className="flex items-start gap-2 rounded-[8px] border border-border bg-background/60 p-2.5">
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-center gap-1.5">
           <code className="truncate font-mono text-xs text-foreground">
@@ -150,7 +150,7 @@ function PortEditCard({
   onRemove?: () => void;
 }) {
   return (
-    <div className="space-y-2.5 rounded-[10px] border border-primary/40 bg-background p-3">
+    <div className="space-y-2.5 rounded-[8px] border border-primary/40 bg-background p-3">
       {children}
       <div className="flex justify-end gap-1.5 pt-0.5">
         {onRemove && (

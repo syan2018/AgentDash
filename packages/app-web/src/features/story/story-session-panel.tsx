@@ -139,7 +139,7 @@ export function StorySessionPanel({ story }: StorySessionPanelProps) {
                   : "border-border bg-background text-muted-foreground hover:border-primary/20 hover:text-foreground"
               }`}
             >
-              <span className="rounded-full border border-border bg-secondary px-1.5 py-0.5 text-[10px]">
+              <span className="rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px]">
                 {labelText(binding.label)}
               </span>
               <span className="max-w-[120px] truncate">

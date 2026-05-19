@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+
+import { cn } from '../utils/cn'
 
 export interface DetailPanelProps {
-  open: boolean;
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  children: ReactNode;
-  headerExtra?: ReactNode;
-  widthClassName?: string;
-  overlayClassName?: string;
-  panelClassName?: string;
+  open: boolean
+  title: string
+  subtitle?: string
+  onClose: () => void
+  children: ReactNode
+  headerExtra?: ReactNode
+  widthClassName?: string
+  overlayClassName?: string
+  panelClassName?: string
 }
 
 export function DetailPanel({
@@ -19,20 +21,24 @@ export function DetailPanel({
   onClose,
   children,
   headerExtra,
-  widthClassName = "max-w-3xl",
-  overlayClassName = "z-40",
-  panelClassName = "z-50",
+  widthClassName = 'max-w-3xl',
+  overlayClassName = 'z-40',
+  panelClassName = 'z-50',
 }: DetailPanelProps) {
-  if (!open) return null;
+  if (!open) return null
 
   return (
     <>
       <div
-        className={`fixed inset-0 ${overlayClassName} bg-foreground/18 backdrop-blur-[2px]`}
+        className={cn('fixed inset-0 bg-foreground/18 backdrop-blur-[2px]', overlayClassName)}
         onClick={onClose}
       />
       <aside
-        className={`fixed inset-y-0 right-0 ${panelClassName} flex w-full ${widthClassName} flex-col border-l border-border bg-background shadow-2xl`}
+        className={cn(
+          'fixed inset-y-0 right-0 flex w-full flex-col border-l border-border bg-background shadow-2xl',
+          widthClassName,
+          panelClassName,
+        )}
       >
         <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="min-w-0">
@@ -47,7 +53,7 @@ export function DetailPanel({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] border border-border bg-background text-base leading-none text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-border bg-background text-base leading-none text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               aria-label="关闭"
               title="关闭"
             >
@@ -58,21 +64,18 @@ export function DetailPanel({
         <div className="flex-1 overflow-y-auto">{children}</div>
       </aside>
     </>
-  );
+  )
 }
 
 export interface DetailSectionProps {
-  title: string;
-  description?: string;
-  children: ReactNode;
-  extra?: ReactNode;
+  title: string
+  description?: string
+  children: ReactNode
+  extra?: ReactNode
   /**
    * 紧凑模式：窄容器（如 DAG 侧栏 w-96）下使用。
-   * - title + extra 同行（title 用 flex-1 min-w-0 防挤压）
-   * - description 独占第二行，不与 extra 抢空间
-   * - section 内边距略收紧
    */
-  compact?: boolean;
+  compact?: boolean
 }
 
 export function DetailSection({ title, description, children, extra, compact = false }: DetailSectionProps) {
@@ -90,7 +93,7 @@ export function DetailSection({ title, description, children, extra, compact = f
         </div>
         {children}
       </section>
-    );
+    )
   }
 
   return (
@@ -104,51 +107,51 @@ export function DetailSection({ title, description, children, extra, compact = f
       </div>
       {children}
     </section>
-  );
+  )
 }
 
 export interface DetailMenuItem {
-  key: string;
-  label: string;
-  onSelect: () => void;
-  danger?: boolean;
-  disabled?: boolean;
+  key: string
+  label: string
+  onSelect: () => void
+  danger?: boolean
+  disabled?: boolean
 }
 
 export function DetailMenu({ items }: { items: DetailMenuItem[] }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
 
     const handlePointerDown = (event: PointerEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+        setOpen(false)
       }
-    };
+    }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
+      if (event.key === 'Escape') {
+        setOpen(false)
       }
-    };
+    }
 
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
 
     return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
 
   return (
     <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] border border-border bg-background text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-border bg-background text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         title="详情菜单"
       >
         ⋯
@@ -160,15 +163,16 @@ export function DetailMenu({ items }: { items: DetailMenuItem[] }) {
               key={item.key}
               type="button"
               onClick={() => {
-                setOpen(false);
-                item.onSelect();
+                setOpen(false)
+                item.onSelect()
               }}
               disabled={item.disabled}
-              className={`w-full rounded-[8px] px-2.5 py-2 text-left text-sm transition-colors ${
+              className={cn(
+                'w-full rounded-[8px] px-2.5 py-2 text-left text-sm transition-colors disabled:opacity-50',
                 item.danger
-                  ? "text-destructive hover:bg-destructive/10"
-                  : "text-foreground hover:bg-secondary"
-              } disabled:opacity-50`}
+                  ? 'text-destructive hover:bg-destructive/10'
+                  : 'text-foreground hover:bg-secondary',
+              )}
             >
               {item.label}
             </button>
@@ -176,20 +180,20 @@ export function DetailMenu({ items }: { items: DetailMenuItem[] }) {
         </div>
       )}
     </div>
-  );
+  )
 }
 
 export interface DangerConfirmDialogProps {
-  open: boolean;
-  title: string;
-  description: string;
-  expectedValue?: string;
-  inputValue?: string;
-  onInputValueChange?: (value: string) => void;
-  confirmLabel: string;
-  onClose: () => void;
-  onConfirm: () => void;
-  isConfirming?: boolean;
+  open: boolean
+  title: string
+  description: string
+  expectedValue?: string
+  inputValue?: string
+  onInputValueChange?: (value: string) => void
+  confirmLabel: string
+  onClose: () => void
+  onConfirm: () => void
+  isConfirming?: boolean
 }
 
 export function DangerConfirmDialog({
@@ -197,23 +201,23 @@ export function DangerConfirmDialog({
   title,
   description,
   expectedValue,
-  inputValue = "",
+  inputValue = '',
   onInputValueChange,
   confirmLabel,
   onClose,
   onConfirm,
   isConfirming = false,
 }: DangerConfirmDialogProps) {
-  if (!open) return null;
+  if (!open) return null
 
-  const needInputMatch = Boolean(expectedValue);
-  const canConfirm = needInputMatch ? inputValue.trim() === expectedValue : true;
+  const needInputMatch = Boolean(expectedValue)
+  const canConfirm = needInputMatch ? inputValue.trim() === expectedValue : true
 
   return (
     <>
       <div className="fixed inset-0 z-[90] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
       <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
-        <div className="w-full max-w-lg rounded-[16px] border border-border bg-background shadow-2xl">
+        <div className="w-full max-w-lg rounded-[12px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Danger</span>
             <h4 className="text-base font-semibold text-foreground">{title}</h4>
@@ -223,7 +227,7 @@ export function DangerConfirmDialog({
             {needInputMatch && (
               <>
                 <p className="text-xs text-muted-foreground">
-                  请输入 <span className="font-mono text-foreground">{expectedValue}</span>{" "}
+                  请输入 <span className="font-mono text-foreground">{expectedValue}</span>{' '}
                   进行确认
                 </p>
                 <input
@@ -236,11 +240,7 @@ export function DangerConfirmDialog({
             )}
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="agentdash-button-secondary"
-            >
+            <button type="button" onClick={onClose} className="agentdash-button-secondary">
               取消
             </button>
             <button
@@ -249,11 +249,11 @@ export function DangerConfirmDialog({
               disabled={!canConfirm || isConfirming}
               className="agentdash-button-danger"
             >
-              {isConfirming ? "处理中..." : confirmLabel}
+              {isConfirming ? '处理中...' : confirmLabel}
             </button>
           </div>
         </div>
       </div>
     </>
-  );
+  )
 }

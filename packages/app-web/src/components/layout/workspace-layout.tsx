@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useMatch, useNavigate, type NavLinkRenderProps } from "react-router-dom";
+import { StatusDot } from "@agentdash/ui";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
@@ -333,15 +334,15 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
             {project.description || `ID: ${project.id}`}
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+            <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
               {describeProjectAccess(project)}
             </span>
             {project.is_template && (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+              <span className="rounded-[8px] border border-warning/20 bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
                 模板
               </span>
             )}
-            <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+            <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
               {PROJECT_VISIBILITY_LABELS[project.visibility]}
             </span>
           </div>
@@ -416,7 +417,7 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
       {current ? (
         renderCard(current, true)
       ) : (
-        <p className="rounded-[10px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+        <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
           {projects.length === 0 ? "暂无项目" : "未选择项目"}
         </p>
       )}
@@ -665,23 +666,17 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
 }
 
 function SessionStatusDot({ status }: { status: ProjectSessionEntry["execution_status"] }) {
-  const base = "h-1.5 w-1.5 shrink-0 rounded-full";
   switch (status) {
     case "running":
-      return (
-        <span className="relative flex h-1.5 w-1.5 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-          <span className={`${base} bg-emerald-500`} />
-        </span>
-      );
+      return <StatusDot tone="success" pulse className="shrink-0" />;
     case "completed":
-      return <span className={`${base} bg-blue-500`} />;
+      return <StatusDot tone="info" className="shrink-0" />;
     case "failed":
-      return <span className={`${base} bg-red-500`} />;
+      return <StatusDot tone="danger" className="shrink-0" />;
     case "interrupted":
-      return <span className={`${base} bg-amber-400`} />;
+      return <StatusDot tone="warning" className="shrink-0" />;
     default:
-      return <span className={`${base} bg-muted-foreground/25`} />;
+      return <StatusDot tone="muted" className="shrink-0" />;
   }
 }
 
@@ -933,6 +928,7 @@ function UserCard() {
 
   return (
     <div className="flex items-center gap-2 px-3 py-2">
+      {/* eslint-disable-next-line no-restricted-syntax -- 用户头像 */}
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-foreground">
         {initial}
       </span>
@@ -944,7 +940,7 @@ function UserCard() {
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {currentUser.is_admin && (
-          <span className="rounded-[4px] border border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[9px] text-amber-700 dark:text-amber-300">
+          <span className="rounded-[4px] border border-warning/30 bg-warning/10 px-1 py-0.5 text-[9px] text-warning">
             Admin
           </span>
         )}

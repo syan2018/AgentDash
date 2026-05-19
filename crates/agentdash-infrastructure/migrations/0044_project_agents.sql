@@ -37,6 +37,19 @@ CREATE TABLE IF NOT EXISTS project_agents (
     UNIQUE(project_id, name)
 );
 
+-- 旧表的 installed source 列曾由 repository initialize 补齐；迁移先于 repository initialize 运行，
+-- 因此这里必须显式补齐，保证 0044 可独立从既有 schema 迁移。
+ALTER TABLE project_agent_links
+    ADD COLUMN IF NOT EXISTS installed_library_asset_id TEXT;
+ALTER TABLE project_agent_links
+    ADD COLUMN IF NOT EXISTS installed_source_ref TEXT;
+ALTER TABLE project_agent_links
+    ADD COLUMN IF NOT EXISTS installed_source_version TEXT;
+ALTER TABLE project_agent_links
+    ADD COLUMN IF NOT EXISTS installed_source_digest TEXT;
+ALTER TABLE project_agent_links
+    ADD COLUMN IF NOT EXISTS installed_at TEXT;
+
 INSERT INTO project_agents (
     id,
     project_id,

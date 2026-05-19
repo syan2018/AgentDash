@@ -24,8 +24,8 @@ import type {
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "@agentdash/ui";
-import { OriginBadge, type OriginBadgeTone } from "@agentdash/ui";
+import { CardMenu, DangerConfirmDialog, OriginBadge } from "@agentdash/ui";
+import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
@@ -118,7 +118,7 @@ export function WorkflowCategoryPanel() {
           <button
             type="button"
             onClick={() => navigate("/workflow/new")}
-            className="h-9 rounded-[8px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+            className="agentdash-button-primary"
           >
             + Workflow
           </button>
@@ -150,41 +150,19 @@ export function WorkflowCategoryPanel() {
       />
 
       {/* 删除确认 */}
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-[380px] rounded-[12px] border border-border bg-background p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              确定要删除 Workflow{" "}
-              <span className="font-medium text-foreground">{confirmDelete.name}</span> 吗？
-              <span className="mt-1 block">此操作不可撤销。</span>
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDelete()}
-                disabled={busyKey != null}
-                className="rounded-[8px] border border-destructive/30 bg-destructive px-3 py-1.5 text-xs text-destructive-foreground transition-colors hover:opacity-90 disabled:opacity-50"
-              >
-                {busyKey != null ? "删除中…" : "删除"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DangerConfirmDialog
+        open={confirmDelete != null}
+        title="确认删除"
+        description={
+          confirmDelete
+            ? `确定要删除 Workflow ${confirmDelete.name} 吗？此操作不可撤销。`
+            : ""
+        }
+        confirmLabel={busyKey != null ? "删除中…" : "删除"}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => void handleDelete()}
+        isConfirming={busyKey != null}
+      />
 
       {publishTarget && (
         <PublishLibraryAssetDialog
@@ -357,11 +335,8 @@ function LifecycleAssetCard({
   );
 }
 
-function workflowSourceOrigin(source: WorkflowDefinitionSource, installed: boolean): { tone: OriginBadgeTone; label: string } {
-  if (installed) return { tone: "success", label: "marketplace" };
-  if (source === "builtin_seed") return { tone: "warning", label: "builtin" };
-  if (source === "cloned") return { tone: "info", label: "cloned" };
-  return { tone: "neutral", label: "user" };
+function workflowSourceOrigin(source: WorkflowDefinitionSource, installed: boolean) {
+  return resolveOriginBadge(source, installed);
 }
 
 /* ─── 公共：时间格式化 ─── */

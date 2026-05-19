@@ -40,8 +40,8 @@ import {
   InspectorRow as UiInspectorRow,
   OriginBadge as UiOriginBadge,
   SectionTitle as UiSectionTitle,
-  type OriginBadgeTone,
 } from "@agentdash/ui";
+import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 
 // ─── Detail mode ─────────────────────────────────────────
 
@@ -366,20 +366,8 @@ export default SkillCategoryPanel;
 
 // ─── Origin Badge ────────────────────────────────────────
 
-const ORIGIN_TONE: Record<string, { label: string; tone: OriginBadgeTone }> = {
-  builtin_seed: { label: "builtin", tone: "neutral" },
-  user: { label: "user", tone: "accent" },
-  github: { label: "github", tone: "info" },
-  clawhub: { label: "clawhub", tone: "success" },
-  skills_sh: { label: "skills.sh", tone: "warning" },
-};
-
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {
-  if (skill.installed_source) {
-    return <UiOriginBadge label="marketplace" tone="success" />;
-  }
-
-  const { label, tone } = ORIGIN_TONE[skill.source] ?? ORIGIN_TONE.user;
+  const { label, tone } = resolveOriginBadge(skill.source, Boolean(skill.installed_source));
   return <UiOriginBadge label={label} tone={tone} url={skill.remote_source?.url ?? null} />;
 }
 

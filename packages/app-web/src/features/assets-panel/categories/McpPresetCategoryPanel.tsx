@@ -47,8 +47,8 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "@agentdash/ui";
-import { OriginBadge, type OriginBadgeTone } from "@agentdash/ui";
+import { CardMenu, OriginBadge } from "@agentdash/ui";
+import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
@@ -284,14 +284,14 @@ export function McpPresetCategoryPanel() {
             type="button"
             onClick={() => void loadPresets(currentProjectId)}
             disabled={isLoading}
-            className="h-9 rounded-[8px] border border-border bg-background px-3.5 text-sm text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            className="agentdash-button-secondary"
           >
             {isLoading ? "刷新中…" : "刷新"}
           </button>
           <button
             type="button"
             onClick={() => setDetail({ kind: "create" })}
-            className="h-9 rounded-[8px] border border-primary bg-primary px-3.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
+            className="agentdash-button-primary"
           >
             + Preset
           </button>
@@ -500,11 +500,7 @@ function McpPresetCard({
   const isBuiltin = preset.source === "builtin";
   const isInstalled = Boolean(preset.installed_source);
   const canPublish = !isBuiltin && !isInstalled;
-  const sourceOrigin: { tone: OriginBadgeTone; label: string } = isInstalled
-    ? { tone: "success", label: "marketplace" }
-    : isBuiltin
-      ? { tone: "warning", label: "builtin" }
-      : { tone: "neutral", label: "user" };
+  const sourceOrigin = resolveOriginBadge(preset.source, isInstalled);
 
   // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
   // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。

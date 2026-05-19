@@ -9,7 +9,7 @@ export interface FieldProps extends HTMLAttributes<HTMLLabelElement> {
 
 export function Field({ children, className, label, ...props }: FieldProps) {
   return (
-    <label className={cn('grid gap-1.5 text-xs font-semibold text-muted-foreground', className)} {...props}>
+    <label className={cn('grid gap-1.5 text-xs font-medium text-muted-foreground', className)} {...props}>
       <span>{label}</span>
       {children}
     </label>

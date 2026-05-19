@@ -723,9 +723,12 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
 
   if (!isSkillDocument || !parsed) {
     return (
-      <aside className="space-y-4 p-4">
-        <InspectorHeader title="文件" badge={context.mount?.displayName ?? context.mountId ?? "mount"} />
-        <dl className="space-y-3 text-xs">
+      <aside className="flex h-full flex-col">
+        <InspectorTitleBar
+          title="文件"
+          subtitle={context.mount?.displayName ?? context.mountId ?? "mount"}
+        />
+        <dl className="flex-1 space-y-3 overflow-y-auto px-4 py-4 text-xs">
           <InspectorRow label="path" value={context.displayPath ?? context.filePath} mono />
           <InspectorRow label="mount" value={context.mountId ?? "-"} mono />
           <InspectorRow label="provider" value={context.mount?.provider ?? "-"} />
@@ -736,83 +739,104 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
     );
   }
 
+  const statusLabel = saving ? "保存中…" : dirty ? "保存 meta" : "已同步";
+
   return (
-    <aside className="space-y-4 p-4">
-      <InspectorHeader title="YAML meta" badge="SKILL.md" />
+    <aside className="flex h-full flex-col">
+      <InspectorTitleBar title="YAML meta" subtitle="SKILL.md">
+        <button
+          type="button"
+          onClick={() => void saveMeta()}
+          disabled={context.readOnly || saving || !dirty}
+          className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-transparent disabled:text-muted-foreground"
+        >
+          {statusLabel}
+        </button>
+      </InspectorTitleBar>
 
-      <section className="space-y-3 rounded-[8px] border border-border bg-background p-3">
-        <label className="block space-y-1.5">
-          <span className="agentdash-form-label">name</span>
-          <input value={parsed.name ?? ""} readOnly className="agentdash-form-input font-mono text-[12px] opacity-80" />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="agentdash-form-label">description</span>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            readOnly={context.readOnly}
-            className="agentdash-form-textarea min-h-24"
-            rows={4}
-          />
-        </label>
-        <label className="flex items-center gap-2 rounded-[7px] border border-border bg-secondary/20 px-3 py-2">
-          <input
-            type="checkbox"
-            checked={disableModelInvocation}
-            disabled={context.readOnly}
-            onChange={(e) => setDisableModelInvocation(e.target.checked)}
-          />
-          <span className="text-xs text-foreground">disable-model-invocation</span>
-        </label>
-        {saveError && (
-          <p className="rounded-[6px] border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
-            {saveError}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-3">
-          <span className="text-[10px] text-muted-foreground">{dirty ? "已修改" : "已同步"}</span>
-          <button
-            type="button"
-            onClick={() => void saveMeta()}
-            disabled={context.readOnly || saving || !dirty}
-            className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
-          >
-            {saving ? "保存中..." : "保存 meta"}
-          </button>
+      <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
+        <div className="space-y-3">
+          <label className="block space-y-1.5">
+            <span className="agentdash-form-label">name</span>
+            <input
+              value={parsed.name ?? ""}
+              readOnly
+              className="agentdash-form-input font-mono text-[12px] opacity-80"
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="agentdash-form-label">description</span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              readOnly={context.readOnly}
+              className="agentdash-form-textarea min-h-24"
+              rows={4}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <input
+              type="checkbox"
+              checked={disableModelInvocation}
+              disabled={context.readOnly}
+              onChange={(e) => setDisableModelInvocation(e.target.checked)}
+            />
+            <span>disable-model-invocation</span>
+          </label>
+          {saveError && (
+            <p className="rounded-[6px] border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
         </div>
-      </section>
 
-      <section className="space-y-2 rounded-[8px] border border-border bg-background p-3">
-        <div className="flex items-center justify-between">
-          <p className="agentdash-form-label">Frontmatter</p>
-          <span className="text-[10px] text-muted-foreground">{formatBytes(parsed.frontmatter?.length ?? 0)}</span>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <p className="agentdash-form-label">frontmatter</p>
+            <span className="text-[10px] text-muted-foreground">
+              {formatBytes(parsed.frontmatter?.length ?? 0)}
+            </span>
+          </div>
+          <pre className="max-h-48 overflow-auto rounded-[6px] border border-border/70 bg-background px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+            {parsed.frontmatter ?? ""}
+          </pre>
         </div>
-        <pre className="max-h-48 overflow-auto rounded-[7px] border border-border bg-secondary/20 px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
-          {parsed.frontmatter ?? ""}
-        </pre>
-      </section>
 
-      <section className="space-y-2 rounded-[8px] border border-border bg-background p-3">
-        <p className="agentdash-form-label">File</p>
-        <dl className="space-y-2 text-xs">
-          <InspectorRow label="path" value={context.displayPath ?? context.filePath} mono />
-          <InspectorRow label="mode" value={context.readOnly ? "readonly" : "editable"} />
-          <InspectorRow label="size" value={formatBytes(context.fileContent?.length ?? 0)} />
-        </dl>
-      </section>
+        <div className="space-y-2">
+          <p className="agentdash-form-label">file</p>
+          <dl className="space-y-2 text-xs">
+            <InspectorRow label="path" value={context.displayPath ?? context.filePath} mono />
+            <InspectorRow label="mode" value={context.readOnly ? "readonly" : "editable"} />
+            <InspectorRow label="size" value={formatBytes(context.fileContent?.length ?? 0)} />
+          </dl>
+        </div>
+      </div>
     </aside>
   );
 }
 
 // ─── Inspector Helpers ───────────────────────────────────
 
-function InspectorHeader({ title, badge }: { title: string; badge: string }) {
+function InspectorTitleBar({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children?: ReactNode;
+}) {
   return (
-    <header className="flex items-center justify-between gap-3">
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
-      <span className="max-w-[160px] truncate rounded-[6px] border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-        {badge}
-      </span>
+    <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border/60 bg-secondary/10 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-secondary/30">
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </p>
+        <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/80">
+          {subtitle}
+        </p>
+      </div>
+      {children}
     </header>
   );
 }

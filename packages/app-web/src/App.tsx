@@ -37,6 +37,11 @@ const ProjectSettingsPage = lazy(async () => {
   return { default: module.ProjectSettingsPage };
 });
 
+const DesignSystemPage = lazy(async () => {
+  const module = await import("./pages/DesignSystemPage");
+  return { default: module.DesignSystemPage };
+});
+
 const AgentTabView = lazy(async () => {
   const m = await import("./features/agent/agent-tab-view");
   return { default: m.AgentTabView };
@@ -252,6 +257,9 @@ function AppContent() {
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
+        {/* 设计语言预览页：独立路由，不挂业务壳；任务 05-19-frontend-design-language */}
+        <Route path="/dev/design-system" element={<DesignSystemPage />} />
+
         <Route element={<WorkspaceLayout />}>
           <Route index element={<Navigate to="/dashboard/agent" replace />} />
 

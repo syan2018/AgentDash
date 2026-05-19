@@ -7,7 +7,6 @@
  * - 类型 segmented control + 前端搜索过滤
  * - 详情抽屉按 asset_type 自适应 manifest 展示
  * - 更新覆写走 ConfirmOverwriteDialog
- * - seed 入口仅在 empty-state 出现
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -18,7 +17,6 @@ import {
   fetchLibraryAssets,
   fetchProjectAssetSourceStatus,
   installLibraryAsset,
-  seedBuiltinLibraryAssets,
 } from "../../../services/sharedLibrary";
 import type {
   LibraryAssetDto,
@@ -179,22 +177,6 @@ export function MarketplaceCategoryPanel() {
     void load();
   }, [load]);
 
-  const seedBuiltins = async () => {
-    setBusyAssetId("__seed__");
-    clearNotice();
-    try {
-      const seeded = await seedBuiltinLibraryAssets(
-        assetType === "all" ? {} : { asset_type: assetType },
-      );
-      showSuccess(`已加载 ${seeded.length} 个内置示例`);
-      await load();
-    } catch (err) {
-      showError(err instanceof Error ? err.message : "加载内置示例失败");
-    } finally {
-      setBusyAssetId(null);
-    }
-  };
-
   const performInstall = useCallback(
     async (asset: LibraryAssetDto, doOverwrite: boolean) => {
       if (!currentProjectId) return;
@@ -325,11 +307,7 @@ export function MarketplaceCategoryPanel() {
             正在加载公共资源…
           </div>
         ) : assets.length === 0 && viewMode === "all" ? (
-          <EmptyState
-            assetType={assetType}
-            busy={busyAssetId === "__seed__"}
-            onSeed={() => void seedBuiltins()}
-          />
+          <EmptyState assetType={assetType} />
         ) : visibleAssets.length === 0 ? (
           <PublishedOrSearchEmpty
             viewMode={viewMode}
@@ -480,28 +458,16 @@ export default MarketplaceCategoryPanel;
 
 function EmptyState({
   assetType,
-  busy,
-  onSeed,
 }: {
   assetType: LibraryAssetType | "all";
-  busy: boolean;
-  onSeed: () => void;
 }) {
   const typeLabel = assetType === "all" ? "类目" : `${ASSET_TYPE_LABELS[assetType]} 类目`;
   return (
     <div className="col-span-full flex flex-col items-center rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-12 text-center">
-      <p className="text-sm text-foreground">当前{typeLabel}暂无资源</p>
+      <p className="text-sm text-foreground">当前 {typeLabel} 暂无资源</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        可点击下方按钮加载内置示例，不影响项目数据
+        系统内置资产会在服务启动时自动同步。若这里为空，请刷新或检查后端启动日志。
       </p>
-      <button
-        type="button"
-        onClick={onSeed}
-        disabled={busy}
-        className="agentdash-button-primary mt-4"
-      >
-        {busy ? "加载中…" : "加载内置示例"}
-      </button>
     </div>
   );
 }

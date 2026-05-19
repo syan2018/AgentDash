@@ -180,6 +180,17 @@ impl AppState {
             .initialize()
             .await
             .map_err(|e| anyhow::anyhow!("library_assets 表初始化失败: {e}"))?;
+        {
+            let service = SharedLibraryService::new(shared_library_repo.as_ref());
+            let seeded = service
+                .seed_builtin_assets(Default::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
+            tracing::info!(
+                seeded = seeded.len(),
+                "已同步 builtin Shared Library assets"
+            );
+        }
 
         let project_extension_installation_repo = Arc::new(
             PostgresProjectExtensionInstallationRepository::new(pool.clone()),

@@ -320,4 +320,46 @@ mod tests {
         );
         assert!(asset.payload_digest.starts_with("sha256:"));
     }
+
+    #[tokio::test]
+    async fn builtin_seeds_are_idempotent_and_filterable() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+
+        let first = service
+            .seed_builtin_assets(Default::default())
+            .await
+            .expect("builtin seeds should load");
+        let second = service
+            .seed_builtin_assets(Default::default())
+            .await
+            .expect("builtin seeds should upsert");
+
+        assert_eq!(first.len(), second.len());
+        let ids_by_identity = first
+            .iter()
+            .map(|asset| ((asset.asset_type, asset.key.clone()), asset.id))
+            .collect::<std::collections::HashMap<_, _>>();
+        for asset in &second {
+            assert_eq!(
+                ids_by_identity.get(&(asset.asset_type, asset.key.clone())),
+                Some(&asset.id),
+                "builtin seed upsert 应保留资产 identity 的稳定 id"
+            );
+        }
+
+        let skill_templates = service
+            .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
+                asset_type: Some(LibraryAssetType::SkillTemplate),
+                key: None,
+            })
+            .await
+            .expect("skill template seeds should load");
+        assert!(!skill_templates.is_empty());
+        assert!(
+            skill_templates
+                .iter()
+                .all(|asset| asset.asset_type == LibraryAssetType::SkillTemplate)
+        );
+    }
 }

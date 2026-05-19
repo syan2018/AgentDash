@@ -12,7 +12,6 @@ import type {
   ProjectAssetSourceStatusDto,
   ProjectAssetSourceStatusItemDto,
   PublishLibraryAssetRequest,
-  SeedBuiltinLibraryAssetsRequest,
   SharedLibrarySourceStatus,
 } from "../types";
 
@@ -105,16 +104,6 @@ export async function fetchLibraryAssets(query: ListLibraryAssetsQuery = {}): Pr
   if (query.include_deprecated) params.set("include_deprecated", "true");
   const qs = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/shared-library/assets${qs}`);
-  return raw.map(mapLibraryAsset);
-}
-
-export async function seedBuiltinLibraryAssets(
-  input: SeedBuiltinLibraryAssetsRequest = {},
-): Promise<LibraryAssetDto[]> {
-  const raw = await api.post<Record<string, unknown>[]>(
-    "/shared-library/assets/seed-builtin",
-    input,
-  );
   return raw.map(mapLibraryAsset);
 }
 

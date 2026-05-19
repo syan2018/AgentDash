@@ -1,0 +1,91 @@
+import type { CapabilityKey } from "../../../types";
+import { CAPABILITY_OPTIONS } from "../../../types";
+
+export function ToolCapabilitiesField({
+  capabilities,
+  onChange,
+}: {
+  capabilities: CapabilityKey[];
+  onChange: (next: CapabilityKey[]) => void;
+}) {
+  const isAll = capabilities.length === 0;
+  const has = (v: CapabilityKey) => isAll || capabilities.includes(v);
+
+  const toggle = (v: CapabilityKey) => {
+    if (isAll) {
+      onChange(CAPABILITY_OPTIONS.map((o) => o.value).filter((c) => c !== v));
+      return;
+    }
+    const next = capabilities.includes(v)
+      ? capabilities.filter((c) => c !== v)
+      : [...capabilities, v];
+    onChange(next.length >= CAPABILITY_OPTIONS.length ? [] : next);
+  };
+
+  const basicOpts = CAPABILITY_OPTIONS.filter((o) => o.group === "basic");
+  const extOpts = CAPABILITY_OPTIONS.filter((o) => o.group === "extended");
+
+  return (
+    <div className="space-y-3">
+      {/* ── basic: horizontal pill toggles ── */}
+      <div>
+        <label className="agentdash-form-label">基础能力</label>
+        <div className="flex flex-wrap gap-1.5">
+          {basicOpts.map((opt) => {
+            const on = has(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className={`rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-all duration-160 ${
+                  on
+                    ? "border-primary/30 bg-primary/8 text-primary"
+                    : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                }`}
+                title={opt.description}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── extended: vertical rows with toggle switches ── */}
+      <div>
+        <label className="agentdash-form-label">扩展能力</label>
+        <div className="grid grid-cols-1 gap-0.5 rounded-[8px] border border-border bg-secondary/20 p-2.5 md:grid-cols-2 md:gap-x-2">
+          {extOpts.map((opt) => {
+            const on = has(opt.value);
+            return (
+              <label
+                key={opt.value}
+                className={`flex cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] transition-all duration-160 ${
+                  on
+                    ? "bg-primary/6"
+                    : "opacity-45 hover:opacity-70"
+                }`}
+              >
+                <span className="relative inline-flex h-[18px] w-[32px] shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggle(opt.value)}
+                    className="peer sr-only"
+                  />
+                  {/* eslint-disable-next-line no-restricted-syntax -- 开关轨道为药丸形态 */}
+                  <span className="absolute inset-0 rounded-full bg-border transition-colors duration-160 peer-checked:bg-primary" />
+                  {/* eslint-disable-next-line no-restricted-syntax -- 开关旋钮为圆形 */}
+                  <span className="absolute left-[3px] top-[3px] h-3 w-3 rounded-full bg-background shadow-sm transition-transform duration-160 peer-checked:translate-x-[14px]" />
+                </span>
+                <span className="text-xs font-medium text-foreground">{opt.label}</span>
+                <span className="text-[10px] text-muted-foreground">{opt.description}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}

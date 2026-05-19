@@ -5,12 +5,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
+import { authenticatedFetch } from "../../../api/client";
+import { asRecord, requireStringField } from "../../../api/mappers";
+import { buildApiPath } from "../../../api/origin";
+import type { TerminalSpawnResult } from "../../../types/terminal";
 import type { TabTypeDescriptor } from "../tab-type-registry";
 import { TerminalIcon } from "./icons";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
-
-const API_BASE = "/api";
 
 const XTERM_THEME = {
   background: "#ffffff",
@@ -85,7 +87,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
     term.onData((data) => {
       const id = realIdRef.current;
       if (!id || id === "new") return;
-      void fetch(`${API_BASE}/terminals/${id}/input`, {
+      void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/input`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data }),
@@ -95,7 +97,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
     term.onResize(({ cols, rows }) => {
       const id = realIdRef.current;
       if (!id || id === "new") return;
-      void fetch(`${API_BASE}/terminals/${id}/resize`, {
+      void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/resize`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cols, rows }),
@@ -210,7 +212,7 @@ async function spawnTerminal(
 ) {
   try {
     const dims = fitAddon.proposeDimensions();
-    const resp = await fetch(`${API_BASE}/sessions/${sessionId}/terminals`, {
+    const resp = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/terminals`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -219,13 +221,13 @@ async function spawnTerminal(
       }),
     });
     if (!resp.ok) {
-      const err = await resp.json();
-      term.write(`\r\n\x1b[31mFailed to spawn terminal: ${err.error}\x1b[0m\r\n`);
+      const message = await readErrorMessage(resp);
+      term.write(`\r\n\x1b[31mFailed to spawn terminal: ${message}\x1b[0m\r\n`);
       setStatus("error");
       return;
     }
-    const data = (await resp.json()) as { terminalId: string; processId?: number };
-    const realId = data.terminalId;
+    const data = mapTerminalSpawnResult(await readJsonRecord(resp));
+    const realId = data.terminal_id;
 
     if (realIdRef) realIdRef.current = realId;
 
@@ -234,7 +236,7 @@ async function spawnTerminal(
       sessionId,
       cwd: ".",
       state: "running",
-      processId: data.processId,
+      processId: data.process_id,
       createdAt: Date.now(),
     });
 
@@ -247,9 +249,61 @@ async function spawnTerminal(
 
     setStatus("running");
   } catch (e) {
-    term.write(`\r\n\x1b[31mNetwork error: ${e}\x1b[0m\r\n`);
+    term.write(`\r\n\x1b[31mNetwork error: ${errorMessage(e)}\x1b[0m\r\n`);
     setStatus("error");
   }
+}
+
+async function readJsonRecord(resp: Response): Promise<Record<string, unknown>> {
+  const text = await resp.text();
+  if (!text.trim()) {
+    throw new Error(`HTTP ${resp.status} ${resp.statusText || "empty response body"}`);
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(`HTTP ${resp.status} returned invalid JSON: ${text.slice(0, 200)}`);
+  }
+
+  const record = asRecord(raw);
+  if (!record) {
+    throw new Error(`HTTP ${resp.status} returned non-object JSON`);
+  }
+  return record;
+}
+
+async function readErrorMessage(resp: Response): Promise<string> {
+  const text = await resp.text();
+  if (!text.trim()) {
+    return `HTTP ${resp.status} ${resp.statusText || "empty response body"}`;
+  }
+
+  try {
+    const raw: unknown = JSON.parse(text) as unknown;
+    const record = asRecord(raw);
+    const error = record?.error;
+    if (typeof error === "string" && error.trim()) {
+      return error;
+    }
+  } catch {
+    return text.slice(0, 200);
+  }
+
+  return text.slice(0, 200);
+}
+
+function mapTerminalSpawnResult(raw: Record<string, unknown>): TerminalSpawnResult {
+  const processId = raw.process_id;
+  return {
+    terminal_id: requireStringField(raw, "terminal_id"),
+    process_id: typeof processId === "number" && Number.isFinite(processId) ? processId : undefined,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export const terminalTabType: TabTypeDescriptor = {

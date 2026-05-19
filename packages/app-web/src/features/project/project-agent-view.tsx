@@ -24,7 +24,7 @@ import {
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
 import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
-import { CardMenu } from "@agentdash/ui";
+import { CardMenu, StatusDot, type StatusDotTone } from "@agentdash/ui";
 import { PublishLibraryAssetDialog } from "../assets-panel/publish/PublishLibraryAssetDialog";
 
 const EMPTY_PROJECT_AGENTS: ProjectAgent[] = [];
@@ -65,11 +65,11 @@ function getActivityLevel(timestamp: number | null | undefined): ActivityLevel {
   return "idle";
 }
 
-const activityDotClass: Record<ActivityLevel, string> = {
-  active: "bg-emerald-500",
-  recent: "bg-amber-400",
-  idle: "bg-muted-foreground/30",
-  none: "bg-muted-foreground/15",
+const activityDotTone: Record<ActivityLevel, StatusDotTone> = {
+  active: "success",
+  recent: "warning",
+  idle: "muted",
+  none: "muted",
 };
 
 function SessionHistoryPanel({
@@ -554,8 +554,10 @@ export function ProjectAgentView({
                 >
                   {/* ── 卡片头部：状态点 + 名称 + 操作按钮组 ── */}
                   <div className="flex items-start gap-2">
-                    <span
-                      className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${activityDotClass[activity]}`}
+                    <StatusDot
+                      tone={activityDotTone[activity]}
+                      size="md"
+                      className="mt-1.5 shrink-0"
                       title={formatRelativeTime(agent.session?.last_activity)}
                     />
                     <div className="min-w-0 flex-1">

@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { StatusDot as UiStatusDot } from "@agentdash/ui";
+import { SessionStatusDot } from "../../components/ui/session-status-dot";
 import type { ProjectSessionEntry } from "../../types";
 import {
   groupSessionsByStory,
@@ -66,22 +66,6 @@ function formatRelativeTime(timestamp: number | null): string {
   if (hours < 24) return `${hours} 小时前`;
   const date = new Date(ts);
   return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
-}
-
-// 状态圆点样式（running 加脉冲动画）
-function StatusDot({ status }: { status: ProjectSessionEntry["execution_status"] }) {
-  switch (status) {
-    case "running":
-      return <UiStatusDot tone="success" size="md" pulse className="shrink-0" />;
-    case "completed":
-      return <UiStatusDot tone="info" size="md" className="shrink-0" />;
-    case "failed":
-      return <UiStatusDot tone="danger" size="md" className="shrink-0" />;
-    case "interrupted":
-      return <UiStatusDot tone="warning" size="md" className="shrink-0" />;
-    default: // idle
-      return <UiStatusDot tone="muted" size="md" className="shrink-0" />;
-  }
 }
 
 const statusLabel: Record<ProjectSessionEntry["execution_status"], string> = {
@@ -170,7 +154,7 @@ function SessionRow({
         )}
 
         {/* 状态圆点 */}
-        <StatusDot status={session.execution_status} />
+        <SessionStatusDot status={session.execution_status} size="md" />
 
         {/* 标题 */}
         <span

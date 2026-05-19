@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useMatch, useNavigate, type NavLinkRenderProps } from "react-router-dom";
-import { StatusDot } from "@agentdash/ui";
+import { SessionStatusDot } from "../ui/session-status-dot";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
@@ -663,21 +663,6 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
       )}
     </div>
   );
-}
-
-function SessionStatusDot({ status }: { status: ProjectSessionEntry["execution_status"] }) {
-  switch (status) {
-    case "running":
-      return <StatusDot tone="success" pulse className="shrink-0" />;
-    case "completed":
-      return <StatusDot tone="info" className="shrink-0" />;
-    case "failed":
-      return <StatusDot tone="danger" className="shrink-0" />;
-    case "interrupted":
-      return <StatusDot tone="warning" className="shrink-0" />;
-    default:
-      return <StatusDot tone="muted" className="shrink-0" />;
-  }
 }
 
 function formatRelativeTime(timestamp: number | null): string {

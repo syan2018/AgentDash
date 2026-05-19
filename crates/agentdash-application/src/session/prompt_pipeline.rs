@@ -24,7 +24,7 @@ use super::hub::SessionRuntimeInner;
 use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
-use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchStrictness};
+use super::launch::{LaunchCommand, LaunchCommandOutcome, LaunchFollowUpSource, LaunchStrictness};
 use super::launch_planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
 use super::pending_action_context_frame::build_pending_action_context_frame;
 use super::persistence::{SessionRuntimeCommandStore, SessionStoreSet};
@@ -502,13 +502,22 @@ impl SessionLaunchExecutor {
             )
             .await;
 
-        let identity_frame = build_identity_context_frame(&IdentityFrameInput {
-            base_system_prompt: &deps.base_system_prompt,
-            agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
-            agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
-            user_preferences: &deps.user_preferences,
-            discovered_guidelines: &discovered_guidelines,
-        });
+        let include_connector_startup_context = should_include_connector_startup_context(
+            launch_execution.summary.lifecycle,
+            had_existing_runtime,
+            &launch_execution.summary.follow_up_source,
+        );
+        let identity_frame = if include_connector_startup_context {
+            build_identity_context_frame(&IdentityFrameInput {
+                base_system_prompt: &deps.base_system_prompt,
+                agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
+                agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
+                user_preferences: &deps.user_preferences,
+                discovered_guidelines: &discovered_guidelines,
+            })
+        } else {
+            None
+        };
 
         let compose_fragments = context_bundle
             .as_ref()
@@ -1067,6 +1076,21 @@ fn dedupe_context_frames(frames: Vec<ContextFrame>) -> Vec<ContextFrame> {
     deduped
 }
 
+fn should_include_connector_startup_context(
+    lifecycle: SessionPromptLifecycle,
+    had_existing_runtime: bool,
+    follow_up_source: &LaunchFollowUpSource,
+) -> bool {
+    match lifecycle {
+        SessionPromptLifecycle::OwnerBootstrap | SessionPromptLifecycle::RepositoryRehydrate(_) => {
+            true
+        }
+        SessionPromptLifecycle::Plain => {
+            !had_existing_runtime && matches!(follow_up_source, LaunchFollowUpSource::None)
+        }
+    }
+}
+
 /// 统一将已组装的 ContextFrame 投递到 Hook session transform_context 队列。
 ///
 /// 排除规则（与原 executor 层行为一致）：
@@ -1151,6 +1175,37 @@ mod tests {
         }]);
         assert_eq!(caps.skills.len(), 1);
         assert_eq!(caps.skills[0].name, "my-skill");
+    }
+
+    #[test]
+    fn connector_startup_context_is_only_sent_when_connector_needs_initializing() {
+        assert!(should_include_connector_startup_context(
+            SessionPromptLifecycle::OwnerBootstrap,
+            true,
+            &LaunchFollowUpSource::SessionMeta,
+        ));
+        assert!(should_include_connector_startup_context(
+            SessionPromptLifecycle::RepositoryRehydrate(
+                SessionRepositoryRehydrateMode::ExecutorState
+            ),
+            false,
+            &LaunchFollowUpSource::None,
+        ));
+        assert!(should_include_connector_startup_context(
+            SessionPromptLifecycle::Plain,
+            false,
+            &LaunchFollowUpSource::None,
+        ));
+        assert!(!should_include_connector_startup_context(
+            SessionPromptLifecycle::Plain,
+            true,
+            &LaunchFollowUpSource::None,
+        ));
+        assert!(!should_include_connector_startup_context(
+            SessionPromptLifecycle::Plain,
+            false,
+            &LaunchFollowUpSource::SessionMeta,
+        ));
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 39
+- **Total Sessions**: 40
 - **Last Active**: 2026-05-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~449 | Active |
+| `journal-2.md` | ~485 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 40 | 2026-05-19 | 前端设计语言收敛 + 共用 UI primitive | `8e5d4729`, `18133347`, `940dc2e9`, `b608dbaa` | `main` |
 | 39 | 2026-05-19 | Marketplace 收口发布流程并统一资产卡片交互 | `d08a2dc6` | `main` |
 | 38 | 2026-05-18 | Plugin Extension Asset 化 | `580c8a3f`, `d4e9ab4a`, `ce89a83d` | `main` |
 | 37 | 2026-05-18 | Marketplace 用户发布配置资产 | `578b2466` | `main` |

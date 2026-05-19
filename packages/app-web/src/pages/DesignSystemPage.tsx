@@ -6,10 +6,7 @@
  * 用途：集中展示 token / radius / primitive / surface / 嵌套对比 / form 综合，
  *      作为本任务及后续设计调整的视觉验收基准。
  *
- * 注意：
- *   - Section 3 中标 "TODO: swap to @agentdash/ui import" 的 primitive 是临时模拟版，
- *     等 S5-S8 落地后用真实 import 替换。
- *   - 本页面不接 store / API，所有数据为 mock。
+ * 本页不接 store / API，所有数据为 mock。
  */
 
 import { useState, type ReactNode } from "react";
@@ -21,8 +18,13 @@ import {
   CheckboxField,
   EmptyState,
   Field,
+  InspectorRow,
   Notice,
+  OriginBadge,
+  type OriginBadgeTone,
+  SectionTitle,
   Select,
+  StatusDot,
   TextInput,
   Textarea,
   cn,
@@ -50,7 +52,7 @@ const COLOR_TOKENS = [
 ];
 
 // ────────────────────────────────────────────────────────
-// 临时 primitive 模拟（S5-S8 落地后替换为 @agentdash/ui import）
+// 预览适配器：把页面用到的语义参数映射到 @agentdash/ui primitive
 // ────────────────────────────────────────────────────────
 
 type OriginKind =
@@ -61,13 +63,10 @@ type OriginKind =
   | "skills_sh"
   | "marketplace";
 
-const ORIGIN_PREVIEW: Record<
-  OriginKind,
-  { label: string; tone: "neutral" | "primary" | "info" | "success" | "warning" | "danger" }
-> = {
+const ORIGIN_PREVIEW: Record<OriginKind, { label: string; tone: OriginBadgeTone }> = {
   builtin_seed: { label: "builtin", tone: "neutral" },
-  user: { label: "user", tone: "primary" }, // accent 待 Badge 扩展
-  github: { label: "github", tone: "primary" },
+  user: { label: "user", tone: "accent" },
+  github: { label: "github", tone: "info" },
   clawhub: { label: "clawhub", tone: "success" },
   skills_sh: { label: "skills.sh", tone: "warning" },
   marketplace: { label: "marketplace", tone: "success" },
@@ -81,12 +80,8 @@ function OriginBadgePreview({
   subText?: string;
 }) {
   const { label, tone } = ORIGIN_PREVIEW[origin];
-  return (
-    <Badge variant={tone}>
-      {label}
-      {subText && <span className="ml-1 opacity-70">· {subText}</span>}
-    </Badge>
-  );
+  const display = subText ? `${label} · ${subText}` : label;
+  return <OriginBadge label={display} tone={tone} />;
 }
 
 type DotTone = "success" | "warning" | "danger" | "info" | "muted";
@@ -102,34 +97,7 @@ function StatusDotPreview({
   pulse?: boolean;
   title?: string;
 }) {
-  const toneClass: Record<DotTone, string> = {
-    success: "bg-success",
-    warning: "bg-warning",
-    danger: "bg-destructive",
-    info: "bg-info",
-    muted: "bg-muted-foreground/30",
-  };
-  const sizeClass = size === "md" ? "h-2 w-2" : "h-1.5 w-1.5";
-  return (
-    <span className="relative inline-flex" title={title}>
-      {pulse && (
-        <span
-          className={cn(
-            "absolute inline-flex rounded-full opacity-60 animate-ping",
-            sizeClass,
-            toneClass[tone],
-          )}
-        />
-      )}
-      <span
-        className={cn(
-          "relative inline-block rounded-full",
-          sizeClass,
-          toneClass[tone],
-        )}
-      />
-    </span>
-  );
+  return <StatusDot tone={tone} size={size} pulse={pulse} title={title} />;
 }
 
 function InspectorRowPreview({
@@ -144,26 +112,15 @@ function InspectorRowPreview({
   tone?: "default" | "muted" | "success" | "warning" | "danger";
 }) {
   const toneClass = {
-    default: "text-foreground/85",
+    default: "",
     muted: "text-muted-foreground",
     success: "text-success",
     warning: "text-warning",
     danger: "text-destructive",
   }[tone];
-  return (
-    <div className="space-y-1">
-      <dt className="agentdash-form-label">{label}</dt>
-      <dd
-        className={cn(
-          "break-words",
-          toneClass,
-          mono && "font-mono text-[11px]",
-        )}
-      >
-        {value}
-      </dd>
-    </div>
-  );
+  const wrapped =
+    tone === "default" ? value : <span className={toneClass}>{value}</span>;
+  return <InspectorRow label={label} value={wrapped} mono={mono} />;
 }
 
 function SectionTitlePreview({
@@ -180,30 +137,13 @@ function SectionTitlePreview({
   sticky?: boolean;
 }) {
   return (
-    <header
-      className={cn(
-        "flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3",
-        sticky &&
-          "sticky top-0 z-10 bg-secondary/10 backdrop-blur supports-[backdrop-filter]:bg-secondary/30",
-      )}
-    >
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {title}
-        </p>
-        {subtitle && (
-          <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/80">
-            {subtitle}
-          </p>
-        )}
-      </div>
-      {(actions || badge) && (
-        <div className="flex shrink-0 items-center gap-2">
-          {badge}
-          {actions}
-        </div>
-      )}
-    </header>
+    <SectionTitle
+      title={title}
+      subtitle={subtitle}
+      badge={badge}
+      actions={actions}
+      sticky={sticky}
+    />
   );
 }
 
@@ -432,8 +372,8 @@ function PrimBadge() {
         <Badge variant="success">success · 已就绪</Badge>
         <Badge variant="warning">warning · 待审核</Badge>
         <Badge variant="danger">danger · 失败</Badge>
-        <Badge variant="warning">[TODO] info</Badge>
-        <Badge variant="primary">[TODO] accent</Badge>
+        <Badge variant="info">info</Badge>
+        <Badge variant="accent">accent · 已发布</Badge>
       </div>
       <p className="mt-3 text-[11px] text-muted-foreground">
         本任务将扩 <code className="font-mono">info</code> /{" "}
@@ -871,7 +811,7 @@ function NestingOld() {
                 rows={3}
               />
             </label>
-            <label className="flex items-center gap-2 rounded-[7px] border border-border bg-secondary/20 px-3 py-2">
+            <label className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/20 px-3 py-2">
               <input type="checkbox" disabled />
               <span className="text-xs text-foreground">
                 disable-model-invocation
@@ -881,7 +821,7 @@ function NestingOld() {
               <span className="text-[10px] text-muted-foreground">已同步</span>
               <button
                 disabled
-                className="rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-600 opacity-50"
+                className="rounded-[6px] border border-success/30 bg-success/10 px-2 py-1 text-[11px] text-success opacity-50"
               >
                 保存 meta
               </button>

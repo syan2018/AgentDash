@@ -30,6 +30,23 @@ export default defineConfig([
           destructuredArrayIgnorePattern: '^_',
         },
       ],
+      // 设计语言：在 className 字面量里劝阻硬编码颜色 / 非 4|6|8|12 半径。
+      // 这些命中是 warn 级别，提示迁移到语义 token 或 primitive。
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector: "JSXAttribute[name.name='className'] > Literal[value=/(^|\\s)(border|bg|text|ring)-(violet|sky|emerald|orange|amber|rose|red|blue|green|yellow|fuchsia|purple|pink|indigo|cyan|teal|lime)-/]",
+          message: '请使用语义 token（primary/success/warning/destructive/info）或 OriginBadge/StatusDot/Badge primitive，而非 Tailwind 调色板字面色。',
+        },
+        {
+          selector: "JSXAttribute[name.name='className'] > Literal[value=/(^|\\s)rounded-\\[(?!(4|6|8|12)px\\])[0-9]+px\\]/]",
+          message: '请使用约定的半径档位 4 / 6 / 8 / 12，而非任意数值。',
+        },
+        {
+          selector: "JSXAttribute[name.name='className'] > Literal[value=/(^|\\s)rounded-(xl|2xl|3xl|full)(\\s|$)/]",
+          message: '请优先使用 rounded-[8px]（默认 md）/ rounded-[12px]（lg），仅在极少数场景使用 rounded-full（StatusDot/Avatar 等）。',
+        },
+      ],
     },
   },
 ])

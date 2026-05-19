@@ -36,6 +36,12 @@ import { Notice, type NoticeData } from "../_shared/Notice";
 import { CardMenu } from "../_shared/CardMenu";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
+import {
+  InspectorRow as UiInspectorRow,
+  OriginBadge as UiOriginBadge,
+  SectionTitle as UiSectionTitle,
+  type OriginBadgeTone,
+} from "@agentdash/ui";
 
 // ─── Detail mode ─────────────────────────────────────────
 
@@ -360,74 +366,21 @@ export default SkillCategoryPanel;
 
 // ─── Origin Badge ────────────────────────────────────────
 
-const ORIGIN_STYLE: Record<
-  string,
-  { label: string; border: string; bg: string; text: string }
-> = {
-  builtin_seed: {
-    label: "builtin",
-    border: "border-border",
-    bg: "bg-secondary/50",
-    text: "text-muted-foreground",
-  },
-  user: {
-    label: "user",
-    border: "border-violet-500/30",
-    bg: "bg-violet-500/10",
-    text: "text-violet-700 dark:text-violet-300",
-  },
-  github: {
-    label: "github",
-    border: "border-sky-500/30",
-    bg: "bg-sky-500/10",
-    text: "text-sky-700 dark:text-sky-300",
-  },
-  clawhub: {
-    label: "clawhub",
-    border: "border-emerald-500/30",
-    bg: "bg-emerald-500/10",
-    text: "text-emerald-700 dark:text-emerald-300",
-  },
-  skills_sh: {
-    label: "skills.sh",
-    border: "border-orange-500/30",
-    bg: "bg-orange-500/10",
-    text: "text-orange-700 dark:text-orange-300",
-  },
+const ORIGIN_TONE: Record<string, { label: string; tone: OriginBadgeTone }> = {
+  builtin_seed: { label: "builtin", tone: "neutral" },
+  user: { label: "user", tone: "accent" },
+  github: { label: "github", tone: "info" },
+  clawhub: { label: "clawhub", tone: "success" },
+  skills_sh: { label: "skills.sh", tone: "warning" },
 };
 
 function OriginBadge({ skill }: { skill: SkillAssetDto }) {
   if (skill.installed_source) {
-    return (
-      <span className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300">
-        marketplace
-      </span>
-    );
+    return <UiOriginBadge label="marketplace" tone="success" />;
   }
 
-  const style = ORIGIN_STYLE[skill.source] ?? ORIGIN_STYLE.user;
-  const remoteUrl = skill.remote_source?.url;
-
-  const shortUrl = remoteUrl
-    ? remoteUrl
-        .replace(/^https?:\/\//, "")
-        .replace(/^github\.com\//, "")
-        .slice(0, 36)
-    : null;
-
-  return (
-    <span
-      title={remoteUrl ?? undefined}
-      className={`inline-flex max-w-[180px] items-center gap-1 truncate rounded-[6px] border px-1.5 py-0.5 text-[10px] ${style.border} ${style.bg} ${style.text}`}
-    >
-      {style.label}
-      {shortUrl && (
-        <span className="truncate opacity-70" title={remoteUrl ?? undefined}>
-          · {shortUrl}
-        </span>
-      )}
-    </span>
-  );
+  const { label, tone } = ORIGIN_TONE[skill.source] ?? ORIGIN_TONE.user;
+  return <UiOriginBadge label={label} tone={tone} url={skill.remote_source?.url ?? null} />;
 }
 
 // ─── Skill Grid ──────────────────────────────────────────
@@ -529,7 +482,7 @@ function SkillGrid({
                 {skill.files.length} file{skill.files.length !== 1 ? "s" : ""}
               </span>
               {skill.disable_model_invocation && (
-                <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+                <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-warning">
                   explicit only
                 </span>
               )}
@@ -748,7 +701,7 @@ function SkillVfsInspector({ context }: { context: VfsBrowserPanelInspectorConte
           type="button"
           onClick={() => void saveMeta()}
           disabled={context.readOnly || saving || !dirty}
-          className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-transparent disabled:text-muted-foreground"
+          className="shrink-0 rounded-[6px] border border-success/30 bg-success/10 px-2.5 py-1 text-[11px] text-success transition-colors hover:bg-success/20 disabled:cursor-not-allowed disabled:border-border disabled:bg-transparent disabled:text-muted-foreground"
         >
           {statusLabel}
         </button>
@@ -826,28 +779,11 @@ function InspectorTitleBar({
   subtitle: string;
   children?: ReactNode;
 }) {
-  return (
-    <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border/60 bg-secondary/10 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-secondary/30">
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {title}
-        </p>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/80">
-          {subtitle}
-        </p>
-      </div>
-      {children}
-    </header>
-  );
+  return <UiSectionTitle title={title} subtitle={subtitle} actions={children} sticky />;
 }
 
 function InspectorRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="space-y-1">
-      <dt className="agentdash-form-label">{label}</dt>
-      <dd className={`break-words text-foreground/85 ${mono ? "font-mono text-[11px]" : ""}`}>{value}</dd>
-    </div>
-  );
+  return <UiInspectorRow label={label} value={value} mono={mono} />;
 }
 
 function formatBytes(value: number): string {
@@ -895,7 +831,7 @@ function SkillYamlMetaPanel({
           rows={3}
         />
       </label>
-      <label className="flex items-center gap-2 rounded-[7px] border border-border bg-background px-3 py-2">
+      <label className="flex items-center gap-2 rounded-[8px] border border-border bg-background px-3 py-2">
         <input
           type="checkbox"
           checked={draft.disable_model_invocation}
@@ -903,7 +839,7 @@ function SkillYamlMetaPanel({
         />
         <span className="text-xs text-foreground">disable-model-invocation</span>
       </label>
-      <pre className="max-h-40 overflow-auto rounded-[7px] border border-border bg-background px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+      <pre className="max-h-40 overflow-auto rounded-[8px] border border-border bg-background px-3 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
         {buildSkillYamlFrontmatter(draft)}
       </pre>
     </section>

@@ -392,7 +392,7 @@
   .agentdash-form-textarea {
     width: 100%;
     border: 1px solid hsl(var(--border));
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     background: hsl(var(--background));
     color: hsl(var(--foreground));
     font-size: 0.875rem;
@@ -462,7 +462,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 0.625rem;
+    border-radius: 0.5rem;
     font-size: 0.875rem;
     font-weight: 500;
     transition:

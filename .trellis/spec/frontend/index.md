@@ -67,6 +67,7 @@ Agent 执行是异步的，前端需要：
 | [状态管理](./state-management.md) | Zustand 5、15 个 Store 清单 | ✅ 已更新 |
 | [质量规范](./quality-guidelines.md) | 代码标准、禁止模式 | ✅ 已更新 |
 | [类型安全](./type-safety.md) | snake_case 直接映射、类型守卫 | ✅ 已更新 |
+| [设计语言](./design-language.md) | Token / Radius / Surface / Primitive 总览 | ✅ 已更新 |
 
 ---
 

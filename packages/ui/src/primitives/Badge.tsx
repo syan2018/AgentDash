@@ -2,7 +2,7 @@ import type { HTMLAttributes, ReactNode } from 'react'
 
 import { cn } from '../utils/cn'
 
-export type BadgeVariant = 'neutral' | 'primary' | 'success' | 'warning' | 'danger'
+export type BadgeVariant = 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'accent'
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   children: ReactNode
@@ -15,6 +15,8 @@ const variantClass: Record<BadgeVariant, string> = {
   success: 'border-success/25 bg-success/10 text-success',
   warning: 'border-warning/30 bg-warning/10 text-warning',
   danger: 'border-destructive/25 bg-destructive/10 text-destructive',
+  info: 'border-info/25 bg-info/10 text-info',
+  accent: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300',
 }
 
 export function Badge({ children, className, variant = 'neutral', ...props }: BadgeProps) {

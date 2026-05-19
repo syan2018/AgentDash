@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
+use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     LifecycleDefinition, LifecycleDefinitionRepository, ValidationIssue, ValidationSeverity,
@@ -135,6 +136,69 @@ where
 
         self.lifecycle_repo.create(&lifecycle).await?;
         Ok(lifecycle)
+    }
+
+    pub async fn delete_lifecycle_definition_with_workflows(
+        &self,
+        lifecycle_id: Uuid,
+    ) -> Result<Vec<WorkflowDefinition>, WorkflowApplicationError> {
+        let lifecycle = self
+            .lifecycle_repo
+            .get_by_id(lifecycle_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::NotFound(format!(
+                    "lifecycle_definition 不存在: {lifecycle_id}"
+                ))
+            })?;
+
+        let workflow_keys_to_delete = lifecycle
+            .steps
+            .iter()
+            .filter_map(|step| step.effective_workflow_key().map(str::to_string))
+            .collect::<BTreeSet<_>>();
+        if workflow_keys_to_delete.is_empty() {
+            self.lifecycle_repo.delete(lifecycle.id).await?;
+            return Ok(Vec::new());
+        }
+
+        let external_references = self
+            .lifecycle_repo
+            .list_by_project(lifecycle.project_id)
+            .await?
+            .into_iter()
+            .filter(|other| other.id != lifecycle.id)
+            .flat_map(|other| {
+                let lifecycle_key = other.key.clone();
+                let workflow_keys_to_delete = workflow_keys_to_delete.clone();
+                other.steps.into_iter().filter_map(move |step| {
+                    step.effective_workflow_key()
+                        .filter(|workflow_key| workflow_keys_to_delete.contains(*workflow_key))
+                        .map(|_| format!("{lifecycle_key}.{}", step.key))
+                })
+            })
+            .collect::<Vec<_>>();
+        if !external_references.is_empty() {
+            return Err(WorkflowApplicationError::BadRequest(format!(
+                "lifecycle 引用的 workflow 仍被其它 Lifecycle step 引用，不能删除：{}",
+                external_references.join("、")
+            )));
+        }
+
+        let workflows_to_delete = self
+            .definition_repo
+            .list_by_project(lifecycle.project_id)
+            .await?
+            .into_iter()
+            .filter(|workflow| workflow_keys_to_delete.contains(&workflow.key))
+            .collect::<Vec<_>>();
+
+        self.lifecycle_repo.delete(lifecycle.id).await?;
+        for workflow in &workflows_to_delete {
+            self.definition_repo.delete(workflow.id).await?;
+        }
+
+        Ok(workflows_to_delete)
     }
 
     pub async fn validate_lifecycle_definition(
@@ -879,6 +943,141 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn delete_lifecycle_definition_with_workflows_removes_referenced_workflows() {
+        let project_id = Uuid::new_v4();
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let owned_workflow = workflow_with_ports_in_project(project_id, "wf_owned", &[], &[]);
+        let standalone_workflow =
+            workflow_with_ports_in_project(project_id, "wf_standalone", &[], &[]);
+        workflow_repo.seed(owned_workflow.clone());
+        workflow_repo.seed(standalone_workflow.clone());
+
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        let lifecycle = LifecycleDefinition::new(
+            project_id,
+            "lc_owned",
+            "Owned lifecycle",
+            "desc",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::UserAuthored,
+            "start",
+            vec![LifecycleStepDefinition {
+                key: "start".to_string(),
+                description: "start".to_string(),
+                workflow_key: Some("wf_owned".to_string()),
+                node_type: LifecycleNodeType::AgentNode,
+                output_ports: vec![],
+                input_ports: vec![],
+                capability_config: Default::default(),
+            }],
+            vec![],
+        )
+        .expect("lifecycle definition");
+        lifecycle_repo
+            .create(&lifecycle)
+            .await
+            .expect("seed lifecycle");
+
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+        let deleted_workflows = service
+            .delete_lifecycle_definition_with_workflows(lifecycle.id)
+            .await
+            .expect("delete lifecycle and workflows");
+
+        assert_eq!(deleted_workflows.len(), 1);
+        assert_eq!(deleted_workflows[0].id, owned_workflow.id);
+        assert!(
+            workflow_repo
+                .get_by_id(owned_workflow.id)
+                .await
+                .expect("load owned workflow")
+                .is_none()
+        );
+        assert!(
+            workflow_repo
+                .get_by_id(standalone_workflow.id)
+                .await
+                .expect("load standalone workflow")
+                .is_some()
+        );
+        assert!(
+            lifecycle_repo
+                .get_by_id(lifecycle.id)
+                .await
+                .expect("load lifecycle")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_lifecycle_definition_with_workflows_rejects_shared_workflow_reference() {
+        let project_id = Uuid::new_v4();
+        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let shared_workflow = workflow_with_ports_in_project(project_id, "wf_shared", &[], &[]);
+        workflow_repo.seed(shared_workflow.clone());
+
+        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
+        for lifecycle_key in ["lc_owner", "lc_other"] {
+            let lifecycle = LifecycleDefinition::new(
+                project_id,
+                lifecycle_key,
+                lifecycle_key,
+                "desc",
+                vec![WorkflowBindingKind::Story],
+                WorkflowDefinitionSource::UserAuthored,
+                "start",
+                vec![LifecycleStepDefinition {
+                    key: "start".to_string(),
+                    description: "start".to_string(),
+                    workflow_key: Some("wf_shared".to_string()),
+                    node_type: LifecycleNodeType::AgentNode,
+                    output_ports: vec![],
+                    input_ports: vec![],
+                    capability_config: Default::default(),
+                }],
+                vec![],
+            )
+            .expect("lifecycle definition");
+            lifecycle_repo
+                .create(&lifecycle)
+                .await
+                .expect("seed lifecycle");
+        }
+        let owner_lifecycle = lifecycle_repo
+            .get_by_key("lc_owner")
+            .await
+            .expect("load lifecycle")
+            .expect("owner lifecycle");
+
+        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+        let error = service
+            .delete_lifecycle_definition_with_workflows(owner_lifecycle.id)
+            .await
+            .expect_err("shared workflow reference should block delete");
+
+        match error {
+            WorkflowApplicationError::BadRequest(message) => {
+                assert!(message.contains("lc_other.start"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(
+            workflow_repo
+                .get_by_id(shared_workflow.id)
+                .await
+                .expect("load shared workflow")
+                .is_some()
+        );
+        assert!(
+            lifecycle_repo
+                .get_by_id(owner_lifecycle.id)
+                .await
+                .expect("load owner lifecycle")
+                .is_some()
+        );
     }
 
     #[tokio::test]

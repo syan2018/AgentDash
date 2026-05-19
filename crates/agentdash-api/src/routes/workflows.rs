@@ -619,76 +619,20 @@ pub async fn delete_lifecycle_definition(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
-    let lifecycle = state
-        .repos
-        .lifecycle_definition_repo
-        .get_by_id(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_definition 不存在: {id}")))?;
-
-    let installed_library_asset_id = lifecycle
-        .installed_source
-        .as_ref()
-        .map(|source| source.library_asset_id);
-    let workflow_ids_to_delete = if let Some(library_asset_id) = installed_library_asset_id {
-        let workflows = state
-            .repos
-            .workflow_definition_repo
-            .list_by_project(lifecycle.project_id)
-            .await?;
-        let installed_workflows = workflows
-            .into_iter()
-            .filter(|workflow| {
-                workflow
-                    .installed_source
-                    .as_ref()
-                    .is_some_and(|source| source.library_asset_id == library_asset_id)
-            })
-            .collect::<Vec<_>>();
-        let installed_workflow_keys = installed_workflows
-            .iter()
-            .map(|workflow| workflow.key.clone())
-            .collect::<HashSet<_>>();
-        let external_references = state
-            .repos
-            .lifecycle_definition_repo
-            .list_by_project(lifecycle.project_id)
-            .await?
-            .into_iter()
-            .filter(|other| other.id != lifecycle.id)
-            .flat_map(|other| {
-                let lifecycle_key = other.key.clone();
-                let installed_workflow_keys = installed_workflow_keys.clone();
-                other.steps.into_iter().filter_map(move |step| {
-                    step.effective_workflow_key()
-                        .filter(|workflow_key| installed_workflow_keys.contains(*workflow_key))
-                        .map(|_| format!("{lifecycle_key}.{}", step.key))
-                })
-            })
-            .collect::<Vec<_>>();
-        if !external_references.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "Marketplace 安装包中的 workflow 仍被其它 Lifecycle step 引用，不能删除：{}",
-                external_references.join("、")
-            )));
-        }
-        installed_workflows
+    let service = WorkflowCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.lifecycle_definition_repo.as_ref(),
+    );
+    let deleted_workflows = service
+        .delete_lifecycle_definition_with_workflows(id)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "deleted_workflow_ids": deleted_workflows
             .into_iter()
             .map(|workflow| workflow.id)
             .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-
-    state.repos.lifecycle_definition_repo.delete(id).await?;
-    for workflow_id in workflow_ids_to_delete {
-        state
-            .repos
-            .workflow_definition_repo
-            .delete(workflow_id)
-            .await?;
-    }
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    })))
 }
 
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {

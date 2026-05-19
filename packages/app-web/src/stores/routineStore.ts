@@ -21,7 +21,7 @@ interface RoutineState {
     payload: {
       name: string;
       prompt_template: string;
-      agent_id: string;
+      project_agent_id: string;
       trigger_config: Record<string, unknown>;
       session_strategy?: Record<string, unknown>;
     },
@@ -80,7 +80,7 @@ export const useRoutineStore = create<RoutineState>((set) => ({
         project_id: result.project_id,
         name: result.name,
         prompt_template: result.prompt_template,
-        agent_id: result.agent_id,
+        project_agent_id: result.project_agent_id,
         trigger_config: result.trigger_config,
         session_strategy: result.session_strategy,
         enabled: result.enabled,

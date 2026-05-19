@@ -37,8 +37,7 @@ pub enum ResolvedVfsSurfaceSource {
     },
     ProjectAgentKnowledge {
         project_id: Uuid,
-        agent_id: Uuid,
-        link_id: Uuid,
+        project_agent_id: Uuid,
     },
 }
 
@@ -63,9 +62,8 @@ impl ResolvedVfsSurfaceSource {
             }
             Self::ProjectAgentKnowledge {
                 project_id,
-                agent_id,
-                link_id,
-            } => format!("project-agent-knowledge:{project_id}:{agent_id}:{link_id}"),
+                project_agent_id,
+            } => format!("project-agent-knowledge:{project_id}:{project_agent_id}"),
         }
     }
 
@@ -131,10 +129,7 @@ impl ResolvedVfsSurfaceSource {
             let project_id = parts
                 .next()
                 .ok_or_else(|| format!("无效的 agent knowledge surface_ref: {trimmed}"))?;
-            let agent_id = parts
-                .next()
-                .ok_or_else(|| format!("无效的 agent knowledge surface_ref: {trimmed}"))?;
-            let link_id = parts
+            let project_agent_id = parts
                 .next()
                 .ok_or_else(|| format!("无效的 agent knowledge surface_ref: {trimmed}"))?;
             if parts.next().is_some() {
@@ -143,10 +138,9 @@ impl ResolvedVfsSurfaceSource {
             return Ok(Self::ProjectAgentKnowledge {
                 project_id: Uuid::parse_str(project_id)
                     .map_err(|_| format!("无效的 agent knowledge project_id: {project_id}"))?,
-                agent_id: Uuid::parse_str(agent_id)
-                    .map_err(|_| format!("无效的 agent knowledge agent_id: {agent_id}"))?,
-                link_id: Uuid::parse_str(link_id)
-                    .map_err(|_| format!("无效的 agent knowledge link_id: {link_id}"))?,
+                project_agent_id: Uuid::parse_str(project_agent_id).map_err(|_| {
+                    format!("无效的 agent knowledge project_agent_id: {project_agent_id}")
+                })?,
             });
         }
 
@@ -202,7 +196,7 @@ pub enum ResolvedMountOwnerKind {
     Story,
     Task,
     Session,
-    ProjectAgentLink,
+    ProjectAgent,
     Canvas,
     Workspace,
     External,
@@ -217,13 +211,13 @@ mod tests {
         let source = ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
             project_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111")
                 .expect("project uuid"),
-            agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").expect("agent uuid"),
-            link_id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").expect("link uuid"),
+            project_agent_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222")
+                .expect("agent uuid"),
         };
 
         assert_eq!(
             source.surface_ref(),
-            "project-agent-knowledge:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222:33333333-3333-3333-3333-333333333333"
+            "project-agent-knowledge:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222"
         );
     }
 

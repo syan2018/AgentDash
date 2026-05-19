@@ -13,8 +13,8 @@ pub struct Routine {
     pub name: String,
     /// 每次触发时执行的 prompt 模板（Tera/Jinja2 语法）
     pub prompt_template: String,
-    /// 绑定的执行 Agent
-    pub agent_id: Uuid,
+    /// 绑定的 Project Agent
+    pub project_agent_id: Uuid,
     /// 触发器配置（按类型存储不同字段）
     pub trigger_config: RoutineTriggerConfig,
     /// Session 生命周期策略
@@ -31,7 +31,7 @@ impl Routine {
         project_id: Uuid,
         name: impl Into<String>,
         prompt_template: impl Into<String>,
-        agent_id: Uuid,
+        project_agent_id: Uuid,
         trigger_config: RoutineTriggerConfig,
         session_strategy: SessionStrategy,
     ) -> Self {
@@ -41,7 +41,7 @@ impl Routine {
             project_id,
             name: name.into(),
             prompt_template: prompt_template.into(),
-            agent_id,
+            project_agent_id,
             trigger_config,
             session_strategy,
             enabled: true,

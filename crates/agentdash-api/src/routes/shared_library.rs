@@ -199,13 +199,9 @@ fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiErr
 
 fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryAssetResponse {
     match output {
-        InstallLibraryAssetOutput::ProjectAgent {
-            agent_id,
-            project_agent_link_id,
-        } => InstallLibraryAssetResponse::ProjectAgent {
-            agent_id,
-            project_agent_link_id,
-        },
+        InstallLibraryAssetOutput::ProjectAgent { project_agent_id } => {
+            InstallLibraryAssetResponse::ProjectAgent { project_agent_id }
+        }
         InstallLibraryAssetOutput::McpPreset { id } => {
             InstallLibraryAssetResponse::McpPreset { id }
         }

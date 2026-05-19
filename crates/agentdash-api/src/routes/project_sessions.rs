@@ -183,30 +183,28 @@ pub async fn list_project_sessions(
         return Ok(Json(vec![]));
     }
 
-    // ── Step 1.5: 构建 agent_id → display_name 映射 ─────────────────────────
+    // ── Step 1.5: 构建 project_agent_id → display_name 映射 ─────────────────
     let agent_display_map = {
-        let links = state
+        let agents = state
             .repos
-            .agent_link_repo
+            .project_agent_repo
             .list_by_project(project_uuid)
             .await
             .unwrap_or_default();
         let mut map = HashMap::new();
-        for link in &links {
-            if let Ok(Some(agent)) = state.repos.agent_repo.get_by_id(link.agent_id).await {
-                let preset = link
-                    .merged_preset_config(&agent)
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-                let name = preset
-                    .display_name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or(&agent.name)
-                    .to_string();
-                map.insert(agent.id.to_string(), name.clone());
-                map.insert(agent.name.clone(), name);
-            }
+        for agent in &agents {
+            let preset = agent
+                .preset_config()
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            let name = preset
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(&agent.name)
+                .to_string();
+            map.insert(agent.id.to_string(), name.clone());
+            map.insert(agent.name.clone(), name);
         }
         map
     };

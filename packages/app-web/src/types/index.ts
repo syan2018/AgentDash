@@ -209,25 +209,14 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   allowed_companions?: string[];
 }
 
-// ─── Agent 独立实体（新模型）───
+// ─── Project Agent 项目实例 ───
 
-export interface AgentEntity {
-  id: string;
-  name: string;
-  agent_type: string;
-  base_config: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProjectAgentLink {
+export interface ProjectAgent {
   id: string;
   project_id: string;
-  agent_id: string;
-  agent_name: string;
+  name: string;
   agent_type: string;
-  merged_config: AgentPresetConfig;
-  config_override: Record<string, unknown> | null;
+  config: AgentPresetConfig;
   default_lifecycle_key: string | null;
   is_default_for_story: boolean;
   is_default_for_task: boolean;
@@ -515,7 +504,7 @@ export interface Routine {
   project_id: string;
   name: string;
   prompt_template: string;
-  agent_id: string;
+  project_agent_id: string;
   trigger_config: RoutineTriggerConfig;
   session_strategy: RoutineSessionStrategy;
   enabled: boolean;

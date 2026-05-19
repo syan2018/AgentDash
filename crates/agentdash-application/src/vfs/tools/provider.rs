@@ -241,8 +241,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
             ) {
                 tools.push(Arc::new(CompanionRequestTool::new(
                     self.repos.session_binding_repo.clone(),
-                    self.repos.agent_repo.clone(),
-                    self.repos.agent_link_repo.clone(),
+                    self.repos.project_agent_repo.clone(),
                     self.repos.clone(),
                     self.session_services_handle.clone(),
                     context,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
+use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::{
     BackendRepository, BackendWorkspaceInventoryRepository, ProjectBackendAccessRepository,
@@ -52,8 +52,7 @@ pub struct RepositorySet {
     pub llm_provider_repo: Arc<dyn LlmProviderRepository>,
     pub mcp_preset_repo: Arc<dyn McpPresetRepository>,
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
-    pub agent_repo: Arc<dyn AgentRepository>,
-    pub agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+    pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,

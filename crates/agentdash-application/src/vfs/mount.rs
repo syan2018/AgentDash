@@ -7,7 +7,7 @@ use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::{
-    agent::ProjectAgentLink,
+    agent::ProjectAgent,
     canvas::Canvas,
     project::Project,
     story::Story,
@@ -95,8 +95,8 @@ pub fn build_derived_vfs(
 /// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
 ///
 /// 知识容器定义由系统自动派生：mount_id = "agent-knowledge"，
-/// container_id = "knowledge"，按 ProjectAgentLink 隔离。
-fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String> {
+/// container_id = "knowledge"，按 ProjectAgent 隔离。
+fn build_agent_knowledge_mount(agent: &ProjectAgent) -> Result<Mount, String> {
     let container = ContextContainerDefinition {
         mount_id: "agent-knowledge".to_string(),
         display_name: "Agent 知识库".to_string(),
@@ -112,18 +112,18 @@ fn build_agent_knowledge_mount(link: &ProjectAgentLink) -> Result<Mount, String>
     let mut mount = build_context_container_mount(&container)?;
     annotate_context_mount_owner(
         &mut mount,
-        InlineFileOwnerKind::ProjectAgentLink.as_str(),
-        link.id,
+        InlineFileOwnerKind::ProjectAgent.as_str(),
+        agent.id,
     );
     Ok(mount)
 }
 
 /// 将 Agent 知识 mount 追加到已有 VFS（仅当 knowledge_enabled=true）
-pub fn append_agent_knowledge_mounts(vfs: &mut Vfs, link: &ProjectAgentLink) -> Result<(), String> {
-    if !link.knowledge_enabled {
+pub fn append_agent_knowledge_mounts(vfs: &mut Vfs, agent: &ProjectAgent) -> Result<(), String> {
+    if !agent.knowledge_enabled {
         return Ok(());
     }
-    let mount = build_agent_knowledge_mount(link)?;
+    let mount = build_agent_knowledge_mount(agent)?;
     if !vfs.mounts.iter().any(|m| m.id == mount.id) {
         vfs.mounts.push(mount);
     }
@@ -133,15 +133,15 @@ pub fn append_agent_knowledge_mounts(vfs: &mut Vfs, link: &ProjectAgentLink) -> 
 /// 构建仅包含 Agent 私有知识库的 VFS。
 ///
 /// 该 surface 只用于 Agent 页知识库浏览，不混入 project/workspace/lifecycle/canvas mounts。
-pub fn build_project_agent_knowledge_vfs(link: &ProjectAgentLink) -> Result<Vfs, String> {
+pub fn build_project_agent_knowledge_vfs(agent: &ProjectAgent) -> Result<Vfs, String> {
     let mut vfs = Vfs {
         mounts: Vec::new(),
         default_mount_id: None,
-        source_project_id: Some(link.project_id.to_string()),
+        source_project_id: Some(agent.project_id.to_string()),
         source_story_id: None,
         links: Vec::new(),
     };
-    append_agent_knowledge_mounts(&mut vfs, link)?;
+    append_agent_knowledge_mounts(&mut vfs, agent)?;
     vfs.default_mount_id = vfs.mounts.first().map(|mount| mount.id.clone());
     validate_vfs(&vfs)?;
     Ok(vfs)
@@ -149,10 +149,10 @@ pub fn build_project_agent_knowledge_vfs(link: &ProjectAgentLink) -> Result<Vfs,
 
 /// 按白名单过滤 VFS 中的项目级容器
 ///
-/// 仅保留 `link.project_container_ids` 中列出的项目容器 mount。
+/// 仅保留 `agent.project_container_ids` 中列出的项目容器 mount。
 /// 非项目级容器（workspace / canvas / lifecycle 等）不受影响。
-pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgentLink) {
-    if link.project_container_ids.is_empty() {
+pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, agent: &ProjectAgent) {
+    if agent.project_container_ids.is_empty() {
         // 空白名单 = 移除所有项目级容器
         vfs.mounts.retain(|mount| {
             mount
@@ -161,7 +161,7 @@ pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, link: &ProjectAgent
                 .is_none_or(|kind| kind != "project")
         });
     } else {
-        let allowed: BTreeSet<&str> = link
+        let allowed: BTreeSet<&str> = agent
             .project_container_ids
             .iter()
             .map(|s| s.as_str())
@@ -423,8 +423,8 @@ pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
         Some("story") => ResolvedMountOwnerKind::Story,
         Some("task") => ResolvedMountOwnerKind::Task,
         Some("session") => ResolvedMountOwnerKind::Session,
-        Some(value) if value == InlineFileOwnerKind::ProjectAgentLink.as_str() => {
-            ResolvedMountOwnerKind::ProjectAgentLink
+        Some(value) if value == InlineFileOwnerKind::ProjectAgent.as_str() => {
+            ResolvedMountOwnerKind::ProjectAgent
         }
         Some("canvas") => ResolvedMountOwnerKind::Canvas,
         Some("workspace") => ResolvedMountOwnerKind::Workspace,
@@ -453,7 +453,7 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
         PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
             ResolvedMountOwnerKind::Project => ResolvedMountPurpose::ProjectContainer,
             ResolvedMountOwnerKind::Story => ResolvedMountPurpose::StoryContainer,
-            ResolvedMountOwnerKind::ProjectAgentLink => ResolvedMountPurpose::AgentKnowledge,
+            ResolvedMountOwnerKind::ProjectAgent => ResolvedMountPurpose::AgentKnowledge,
             _ => ResolvedMountPurpose::ExternalService,
         },
         _ => ResolvedMountPurpose::ExternalService,

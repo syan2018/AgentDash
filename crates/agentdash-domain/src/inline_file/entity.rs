@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// - Context Container inline files（owner_kind = "project" / "story"）
 /// - Lifecycle VFS port outputs（owner_kind = "lifecycle_run"）
 /// - Lifecycle record artifact content（owner_kind = "lifecycle_run"）
-/// - Agent Knowledge files（owner_kind = "project_agent_link"）
+/// - Agent Knowledge files（owner_kind = "project_agent"）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineFile {
     pub id: Uuid,
@@ -55,8 +55,8 @@ pub enum InlineFileOwnerKind {
     Story,
     /// Lifecycle run 的 port outputs / record artifacts
     LifecycleRun,
-    /// ProjectAgentLink 级 knowledge container
-    ProjectAgentLink,
+    /// ProjectAgent 级 knowledge container
+    ProjectAgent,
 }
 
 impl InlineFileOwnerKind {
@@ -65,7 +65,7 @@ impl InlineFileOwnerKind {
             Self::Project => "project",
             Self::Story => "story",
             Self::LifecycleRun => "lifecycle_run",
-            Self::ProjectAgentLink => "project_agent_link",
+            Self::ProjectAgent => "project_agent",
         }
     }
 }
@@ -78,7 +78,7 @@ impl std::str::FromStr for InlineFileOwnerKind {
             "project" => Ok(Self::Project),
             "story" => Ok(Self::Story),
             "lifecycle_run" => Ok(Self::LifecycleRun),
-            "project_agent_link" => Ok(Self::ProjectAgentLink),
+            "project_agent" => Ok(Self::ProjectAgent),
             _ => Err(()),
         }
     }

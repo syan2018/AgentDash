@@ -43,9 +43,9 @@ use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::{
-    PostgresAgentRepository, PostgresAuthSessionRepository, PostgresBackendRepository,
-    PostgresCanvasRepository, PostgresInlineFileRepository, PostgresLlmProviderRepository,
-    PostgresMcpPresetRepository, PostgresProjectBackendAccessRepository,
+    PostgresAuthSessionRepository, PostgresBackendRepository, PostgresCanvasRepository,
+    PostgresInlineFileRepository, PostgresLlmProviderRepository, PostgresMcpPresetRepository,
+    PostgresProjectAgentRepository, PostgresProjectBackendAccessRepository,
     PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
     PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
@@ -189,11 +189,11 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("project_extension_installations 表初始化失败: {e}"))?;
 
-        let agent_repo = Arc::new(PostgresAgentRepository::new(pool.clone()));
-        agent_repo
+        let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
+        project_agent_repo
             .initialize()
             .await
-            .map_err(|e| anyhow::anyhow!("agents 表初始化失败: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("project_agents 表初始化失败: {e}"))?;
 
         let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
         routine_repo
@@ -252,8 +252,7 @@ impl AppState {
             llm_provider_repo: llm_provider_repo.clone(),
             mcp_preset_repo: mcp_preset_repo.clone(),
             skill_asset_repo: skill_asset_repo.clone(),
-            agent_repo: agent_repo.clone(),
-            agent_link_repo: agent_repo.clone(),
+            project_agent_repo: project_agent_repo.clone(),
             workflow_definition_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo.clone(),

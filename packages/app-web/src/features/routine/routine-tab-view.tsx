@@ -5,7 +5,7 @@ import type {
   RoutineExecutionStatus,
   RoutineSessionMode,
   RoutineTriggerType,
-  ProjectAgentLink,
+  ProjectAgent,
 } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useRoutineStore } from "../../stores/routineStore";
@@ -178,7 +178,7 @@ const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
 interface RoutineFormState {
   name: string;
   prompt_template: string;
-  agent_id: string;
+  project_agent_id: string;
   trigger_type: RoutineTriggerType;
   cron_expression: string;
   provider_key: string;
@@ -190,7 +190,7 @@ interface RoutineFormState {
 const INITIAL_FORM: RoutineFormState = {
   name: "",
   prompt_template: "",
-  agent_id: "",
+  project_agent_id: "",
   trigger_type: "scheduled",
   cron_expression: "*/10 * * * *",
   provider_key: "",
@@ -203,7 +203,7 @@ function routineToForm(r: Routine): RoutineFormState {
   return {
     name: r.name,
     prompt_template: r.prompt_template,
-    agent_id: r.agent_id,
+    project_agent_id: r.project_agent_id,
     trigger_type: r.trigger_config.type,
     cron_expression: r.trigger_config.cron_expression ?? "*/10 * * * *",
     provider_key: r.trigger_config.provider_key ?? "",
@@ -216,7 +216,7 @@ function routineToForm(r: Routine): RoutineFormState {
 function formToPayload(form: RoutineFormState): {
   name: string;
   prompt_template: string;
-  agent_id: string;
+  project_agent_id: string;
   trigger_config: Record<string, unknown>;
   session_strategy: Record<string, unknown>;
 } {
@@ -245,7 +245,7 @@ function formToPayload(form: RoutineFormState): {
   return {
     name: form.name,
     prompt_template: form.prompt_template,
-    agent_id: form.agent_id,
+    project_agent_id: form.project_agent_id,
     trigger_config,
     session_strategy,
   };
@@ -254,7 +254,7 @@ function formToPayload(form: RoutineFormState): {
 function validateForm(form: RoutineFormState): string | null {
   if (!form.name.trim()) return "名称不能为空";
   if (!form.prompt_template.trim()) return "Prompt 模板不能为空";
-  if (!form.agent_id) return "请选择执行 Agent";
+  if (!form.project_agent_id) return "请选择执行 Agent";
   if (form.trigger_type === "scheduled" && !form.cron_expression.trim()) return "请配置定时表达式";
   if (form.trigger_type === "plugin" && !form.provider_key.trim()) return "请输入 provider_key";
   if (form.session_mode === "per_entity" && !form.entity_key_path.trim()) return "Per-Entity 模式需要指定 entity_key_path";
@@ -265,22 +265,22 @@ function validateForm(form: RoutineFormState): string | null {
 
 function RoutineCard({
   routine,
-  agentLinks,
+  projectAgents,
   onEdit,
   onToggleEnable,
   onViewHistory,
   onDelete,
 }: {
   routine: Routine;
-  agentLinks: ProjectAgentLink[];
+  projectAgents: ProjectAgent[];
   onEdit: () => void;
   onToggleEnable: () => void;
   onViewHistory: () => void;
   onDelete: () => void;
 }) {
   const badge = TRIGGER_TYPE_BADGE[routine.trigger_config.type];
-  const agentLink = agentLinks.find((l) => l.agent_id === routine.agent_id);
-  const agentName = agentLink?.agent_name || routine.agent_id;
+  const projectAgent = projectAgents.find((agent) => agent.id === routine.project_agent_id);
+  const agentName = projectAgent?.name || routine.project_agent_id;
 
   const triggerDetail = (() => {
     switch (routine.trigger_config.type) {
@@ -425,14 +425,14 @@ function WebhookTokenAlert({
 function RoutineDialog({
   mode,
   initial,
-  agentLinks,
+  projectAgents,
   editingRoutine,
   onSave,
   onClose,
 }: {
   mode: "create" | "edit";
   initial: RoutineFormState;
-  agentLinks: ProjectAgentLink[];
+  projectAgents: ProjectAgent[];
   editingRoutine?: Routine;
   onSave: (payload: ReturnType<typeof formToPayload>) => Promise<void>;
   onClose: () => void;
@@ -513,14 +513,14 @@ function RoutineDialog({
             <div>
               <label className="agentdash-form-label">执行 Agent</label>
               <select
-                value={form.agent_id}
-                onChange={(e) => patchForm({ agent_id: e.target.value })}
+                value={form.project_agent_id}
+                onChange={(e) => patchForm({ project_agent_id: e.target.value })}
                 className="agentdash-form-select"
               >
                 <option value="">请选择 Agent</option>
-                {agentLinks.map((link) => (
-                  <option key={link.agent_id} value={link.agent_id}>
-                    {link.agent_name}
+                {projectAgents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
                   </option>
                 ))}
               </select>
@@ -744,7 +744,7 @@ function ExecutionHistoryContent({ routineId }: { routineId: string }) {
 // ─── RoutineTabView ───
 
 export function RoutineTabView() {
-  const { currentProjectId, agentLinksByProjectId, fetchProjectAgentLinks } = useProjectStore();
+  const { currentProjectId, projectAgentConfigsByProjectId, fetchProjectAgentConfigs } = useProjectStore();
   const { routinesByProjectId, fetchRoutines, createRoutine, updateRoutine, deleteRoutine, enableRoutine } =
     useRoutineStore();
 
@@ -755,8 +755,8 @@ export function RoutineTabView() {
   const [tokenAlert, setTokenAlert] = useState<{ token: string; endpointId: string; name: string } | null>(null);
 
   const routines = currentProjectId ? routinesByProjectId[currentProjectId] ?? [] : [];
-  const agentLinks: ProjectAgentLink[] = currentProjectId
-    ? agentLinksByProjectId[currentProjectId] ?? []
+  const projectAgents: ProjectAgent[] = currentProjectId
+    ? projectAgentConfigsByProjectId[currentProjectId] ?? []
     : [];
   const editingRoutine = editingId ? routines.find((r) => r.id === editingId) : undefined;
   const deletingRoutine = deletingId ? routines.find((r) => r.id === deletingId) : undefined;
@@ -765,9 +765,9 @@ export function RoutineTabView() {
   useEffect(() => {
     if (currentProjectId) {
       void fetchRoutines(currentProjectId);
-      void fetchProjectAgentLinks(currentProjectId);
+      void fetchProjectAgentConfigs(currentProjectId);
     }
-  }, [currentProjectId, fetchRoutines, fetchProjectAgentLinks]);
+  }, [currentProjectId, fetchRoutines, fetchProjectAgentConfigs]);
 
   const handleCreate = useCallback(
     async (payload: ReturnType<typeof formToPayload>) => {
@@ -862,7 +862,7 @@ export function RoutineTabView() {
               <RoutineCard
                 key={routine.id}
                 routine={routine}
-                agentLinks={agentLinks}
+                projectAgents={projectAgents}
                 onEdit={() => setEditingId(routine.id)}
                 onToggleEnable={() => void handleToggleEnable(routine)}
                 onViewHistory={() => setHistoryId(routine.id)}
@@ -877,8 +877,8 @@ export function RoutineTabView() {
       {showCreate && (
         <RoutineDialog
           mode="create"
-          initial={{ ...INITIAL_FORM, agent_id: agentLinks[0]?.agent_id ?? "" }}
-          agentLinks={agentLinks}
+          initial={{ ...INITIAL_FORM, project_agent_id: projectAgents[0]?.id ?? "" }}
+          projectAgents={projectAgents}
           onSave={handleCreate}
           onClose={() => setShowCreate(false)}
         />
@@ -889,7 +889,7 @@ export function RoutineTabView() {
         <RoutineDialog
           mode="edit"
           initial={routineToForm(editingRoutine)}
-          agentLinks={agentLinks}
+          projectAgents={projectAgents}
           editingRoutine={editingRoutine}
           onSave={handleUpdate}
           onClose={() => setEditingId(null)}

@@ -71,7 +71,7 @@ export interface PublishLibraryAssetRequest {
 }
 
 export type InstallLibraryAssetResponse =
-  | { asset_kind: "project_agent"; agent_id: string; project_agent_link_id: string }
+  | { asset_kind: "project_agent"; project_agent_id: string }
   | { asset_kind: "mcp_preset"; id: string }
   | { asset_kind: "workflow_template"; workflow_ids: string[]; lifecycle_id: string }
   | { asset_kind: "skill_asset"; id: string }

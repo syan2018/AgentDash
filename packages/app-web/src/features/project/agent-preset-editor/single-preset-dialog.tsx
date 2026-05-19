@@ -19,7 +19,6 @@ export interface SinglePresetDialogProps {
   /** 用于加载知识库文件的 project/agent ID */
   knowledgeProjectId?: string;
   knowledgeAgentId?: string;
-  knowledgeLinkId?: string;
 }
 
 export function SinglePresetDialog({
@@ -34,7 +33,6 @@ export function SinglePresetDialog({
   onToggleKnowledge,
   knowledgeProjectId,
   knowledgeAgentId,
-  knowledgeLinkId,
 }: SinglePresetDialogProps) {
   const { agentTypeOptions, isDiscoveryLoading } = useAgentTypeOptions();
   const [form, setForm] = useState<PresetFormState>(presetToForm(initialPreset));
@@ -88,7 +86,6 @@ export function SinglePresetDialog({
               knowledgeEnabled={knowledgeEnabled}
               onToggleKnowledge={onToggleKnowledge}
               knowledgeAgentId={knowledgeAgentId}
-              knowledgeLinkId={knowledgeLinkId}
             />
 
             {validationError && (

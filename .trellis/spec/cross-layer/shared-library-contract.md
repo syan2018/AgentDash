@@ -228,18 +228,18 @@ Project Assets 发布行为：
 - `POST /api/projects/{project_id}/shared-library/install`
 - `POST /api/projects/{project_id}/shared-library/publish`
 - `GET /api/projects/{project_id}/shared-library/source-status`
-- `POST /api/projects/{project_id}/agent-links`
-- `PUT /api/projects/{project_id}/agent-links/{agent_id}`
+- `GET /api/projects/{project_id}/agents`
+- `POST /api/projects/{project_id}/agents`
+- `PUT /api/projects/{project_id}/agents/{project_agent_id}`
 - `DELETE /api/lifecycle-definitions/{id}`
-- DB: `project_agent_links.installed_library_asset_id/source_ref/source_version/source_digest/installed_at`
+- DB: `project_agents.installed_library_asset_id/source_ref/source_version/source_digest/installed_at`
 
 ### 3. Contracts
 
 - Project Agent 创建请求必须直接包含项目私有配置：
   - `name`
   - `agent_type`
-  - `base_config?`
-  - `config_override?`
+  - `config?`
   - `default_lifecycle_key?`
   - `default_workflow_key?`
   - `is_default_for_story?`
@@ -265,7 +265,7 @@ Project Assets 发布行为：
 
 ### 5. Good/Base/Bad Cases
 
-- Good: 从 Marketplace 安装 AgentTemplate，Project Agent link 写入 `InstalledAssetSource`，Marketplace 状态页显示 `project_agents` 且为 `up_to_date`。
+- Good: 从 Marketplace 安装 AgentTemplate，ProjectAgent 写入 `InstalledAssetSource`，Marketplace 状态页显示 `project_agents` 且为 `up_to_date`。
 - Base: 用户手工新建 MCP/Skill/Workflow/Agent，项目资源可编辑但无 `installed_source`，不出现在 source-status 列表。
 - Bad: 在 MCP/Skill/Workflow 各自 Assets 页提供独立 builtin bootstrap/reset；这会绕过 Shared Library 版本状态，禁止恢复。
 

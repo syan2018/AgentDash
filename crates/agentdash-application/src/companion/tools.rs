@@ -7,7 +7,7 @@ use crate::session::{
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
-use agentdash_domain::agent::{AgentRepository, ProjectAgentLinkRepository};
+use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::session_binding::{
     SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
 };
@@ -62,8 +62,7 @@ pub struct CompanionRequestParams {
 #[derive(Clone)]
 pub struct CompanionRequestTool {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
-    agent_repo: Arc<dyn AgentRepository>,
-    agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+    project_agent_repo: Arc<dyn ProjectAgentRepository>,
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: Option<String>,
@@ -76,16 +75,14 @@ pub struct CompanionRequestTool {
 impl CompanionRequestTool {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
-        agent_repo: Arc<dyn AgentRepository>,
-        agent_link_repo: Arc<dyn ProjectAgentLinkRepository>,
+        project_agent_repo: Arc<dyn ProjectAgentRepository>,
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             session_binding_repo,
-            agent_repo,
-            agent_link_repo,
+            project_agent_repo,
             repos,
             session_services_handle,
             current_session_id: context
@@ -974,32 +971,22 @@ impl CompanionRequestTool {
                 )
             })?;
 
-        let links = self
-            .agent_link_repo
+        let agents = self
+            .project_agent_repo
             .list_by_project(project_id)
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
-        for link in &links {
-            if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
-                if agent.name.eq_ignore_ascii_case(agent_name) {
-                    let preset = link
-                        .merged_preset_config(&agent)
-                        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-                    return Ok(preset.to_agent_config(&agent.agent_type));
-                }
+        for agent in &agents {
+            if agent.name.eq_ignore_ascii_case(agent_name) {
+                let preset = agent
+                    .preset_config()
+                    .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+                return Ok(preset.to_agent_config(&agent.agent_type));
             }
         }
 
-        let available: Vec<String> = {
-            let mut names = Vec::new();
-            for link in &links {
-                if let Ok(Some(agent)) = self.agent_repo.get_by_id(link.agent_id).await {
-                    names.push(agent.name.clone());
-                }
-            }
-            names
-        };
+        let available: Vec<String> = agents.into_iter().map(|agent| agent.name).collect();
         Err(AgentToolError::InvalidArguments(format!(
             "当前项目中未找到名为 `{agent_name}` 的 agent。可用 agent: [{}]",
             available.join(", ")

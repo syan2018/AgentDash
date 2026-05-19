@@ -99,7 +99,7 @@ pub(crate) fn parse_pg_timestamp_checked(
     )))
 }
 
-pub use agent_repository::PostgresAgentRepository;
+pub use agent_repository::PostgresProjectAgentRepository;
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;

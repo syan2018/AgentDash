@@ -1,5 +1,5 @@
 mod entity;
 mod repository;
 
-pub use entity::{Agent, ProjectAgentLink};
-pub use repository::{AgentRepository, ProjectAgentLinkRepository};
+pub use entity::ProjectAgent;
+pub use repository::ProjectAgentRepository;

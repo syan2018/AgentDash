@@ -15,13 +15,13 @@ CREATE TABLE IF NOT EXISTS library_assets (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     CONSTRAINT library_assets_type_check CHECK (
-        asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template', 'extension_template')
+        asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template')
     ),
     CONSTRAINT library_assets_scope_check CHECK (
         scope IN ('builtin', 'system', 'org', 'user')
     ),
     CONSTRAINT library_assets_source_check CHECK (
-        source IN ('builtin', 'user_authored', 'remote_imported', 'plugin_embedded')
+        source IN ('builtin', 'user_authored', 'remote_imported')
     )
 );
 

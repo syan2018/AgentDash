@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useMcpProbeStore } from "../../../stores/mcpProbeStore";
+import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import {
   cloneMcpPreset,
   createMcpPreset,
@@ -31,8 +32,10 @@ import {
   fetchProjectMcpPresets,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
+import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import type {
   CreateMcpPresetRequest,
+  LibraryAssetDto,
   McpPresetDto,
   McpRoutePolicy,
   McpTransportConfig,
@@ -44,7 +47,10 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
+import { CardMenu } from "../_shared/CardMenu";
+import { SourceBadge, type AssetSourceVariant } from "../_shared/SourceBadge";
+import { PublishedBadge } from "../_shared/PublishedBadge";
+import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 /* ─── 表单状态 ─── */
 //
@@ -145,6 +151,7 @@ type DetailMode =
 
 export function McpPresetCategoryPanel() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
 
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -157,6 +164,8 @@ export function McpPresetCategoryPanel() {
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<McpPresetDto | null>(null);
   const [publishTarget, setPublishTarget] = useState<McpPresetDto | null>(null);
+  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
+  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
 
   const loadPresets = useCallback(
     async (projectId: string) => {
@@ -178,6 +187,34 @@ export function McpPresetCategoryPanel() {
     if (!currentProjectId) return;
     void loadPresets(currentProjectId);
   }, [currentProjectId, loadPresets]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    fetchLibraryAssets({ asset_type: "mcp_server_template", owner_id: currentUserId })
+      .then((list) => {
+        if (!cancelled) setPublishedAssets(list);
+      })
+      .catch(() => {
+        if (!cancelled) setPublishedAssets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, publishedReloadTick]);
+
+  const publishedByKey = useMemo(() => {
+    if (!currentUserId) return new Map<string, LibraryAssetDto>();
+    const map = new Map<string, LibraryAssetDto>();
+    for (const a of publishedAssets) {
+      if (a.source === "user_authored") map.set(a.key, a);
+    }
+    return map;
+  }, [publishedAssets, currentUserId]);
+
+  const reloadPublished = useCallback(() => {
+    setPublishedReloadTick((tick) => tick + 1);
+  }, []);
 
   const handleClone = useCallback(
     async (preset: McpPresetDto) => {
@@ -286,6 +323,7 @@ export function McpPresetCategoryPanel() {
       ) : (
         <McpPresetGrid
           presets={presets}
+          publishedByKey={publishedByKey}
           busyRowId={busyRowId}
           onEdit={(preset) =>
             setDetail({
@@ -360,10 +398,12 @@ export function McpPresetCategoryPanel() {
             display_name: publishTarget.display_name,
             description: publishTarget.description,
           }}
+          currentUserId={currentUserId}
           onClose={() => setPublishTarget(null)}
           onPublished={(message) => {
             showSuccess(message);
             void loadPresets(currentProjectId);
+            reloadPublished();
           }}
         />
       )}
@@ -403,12 +443,16 @@ interface GridCallbacks {
 
 function McpPresetGrid({
   presets,
+  publishedByKey,
   onEdit,
   onPublish,
   onClone,
   onDelete,
   busyRowId,
-}: { presets: McpPresetDto[] } & GridCallbacks) {
+}: {
+  presets: McpPresetDto[];
+  publishedByKey: Map<string, LibraryAssetDto>;
+} & GridCallbacks) {
   const sorted = useMemo(() => {
     return presets.slice().sort((a, b) => {
       if (a.source !== b.source) {
@@ -424,6 +468,7 @@ function McpPresetGrid({
         <McpPresetCard
           key={preset.id}
           preset={preset}
+          published={publishedByKey.get(preset.key) ?? null}
           onEdit={() => onEdit(preset)}
           onPublish={() => onPublish(preset)}
           onClone={() => onClone(preset)}
@@ -437,6 +482,7 @@ function McpPresetGrid({
 
 function McpPresetCard({
   preset,
+  published,
   onEdit,
   onPublish,
   onClone,
@@ -444,6 +490,7 @@ function McpPresetCard({
   isBusy,
 }: {
   preset: McpPresetDto;
+  published: LibraryAssetDto | null;
   onEdit: () => void;
   onPublish: () => void;
   onClone: () => void;
@@ -451,6 +498,13 @@ function McpPresetCard({
   isBusy: boolean;
 }) {
   const isBuiltin = preset.source === "builtin";
+  const isInstalled = Boolean(preset.installed_source);
+  const canPublish = !isBuiltin && !isInstalled;
+  const sourceVariant: AssetSourceVariant = isInstalled
+    ? "marketplace"
+    : isBuiltin
+      ? "builtin"
+      : "user";
 
   // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
   // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
@@ -465,16 +519,54 @@ function McpPresetCard({
     void refreshProbe(preset.project_id, preset.transport).finally(() => setProbing(false));
   }, [refreshProbe, preset.project_id, preset.transport]);
 
+  const menuItems = [
+    { key: "edit", label: isBuiltin ? "查看" : "编辑", onSelect: onEdit },
+    {
+      key: "clone",
+      label: isBusy ? "处理中…" : "复制为 user",
+      onSelect: onClone,
+    },
+    ...(canPublish
+      ? [
+          {
+            key: "publish",
+            label: published ? "更新发布" : "发布到资源市场",
+            onSelect: onPublish,
+          },
+        ]
+      : []),
+    ...(isBuiltin
+      ? []
+      : [
+          { key: "---", label: "", onSelect: () => {} },
+          { key: "delete", label: "删除", danger: true, onSelect: onDelete },
+        ]),
+  ];
+
   return (
-    <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onEdit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onEdit();
+        }
+      }}
+      title={isBuiltin ? "查看" : "编辑"}
+      className="flex cursor-pointer flex-col rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium leading-6 text-foreground">{preset.display_name}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">key: {preset.key}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {published && <PublishedBadge version={published.version} />}
           <RoutePolicyBadge policy={preset.route_policy} />
-          <SourceBadge source={preset.source} installed={Boolean(preset.installed_source)} />
+          <SourceBadge variant={sourceVariant} />
+          <CardMenu items={menuItems} />
         </div>
       </header>
 
@@ -490,52 +582,8 @@ function McpPresetCard({
         onRecheck={handleRecheck}
       />
 
-      <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
-        <span>更新于 {formatDateTime(preset.updated_at)}</span>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            {isBuiltin ? "查看" : "编辑"}
-          </button>
-          <button
-            type="button"
-            onClick={onClone}
-            disabled={isBusy}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-sky-600 transition-colors hover:bg-sky-500/10 disabled:opacity-50 dark:text-sky-300"
-            title={isBuiltin ? "基于此 builtin Preset 生成可编辑的 user 副本" : "复制一份可独立修改的 user 副本"}
-          >
-            {isBusy ? "处理中…" : "复制为 user"}
-          </button>
-          <button
-            type="button"
-            onClick={onPublish}
-            disabled={isBusy}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
-            title="发布为个人资源市场中的 MCP Server 模板"
-          >
-            发布
-          </button>
-          {isBuiltin ? (
-            <span
-              className="cursor-not-allowed rounded-[6px] px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-50"
-              title="内置 Preset 不可删除，请使用“复制为 user”生成可编辑副本"
-            >
-              删除
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={onDelete}
-              disabled={isBusy}
-              className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-            >
-              删除
-            </button>
-          )}
-        </div>
+      <footer className="mt-3 border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
+        更新于 {formatDateTime(preset.updated_at)}
       </footer>
     </article>
   );
@@ -564,7 +612,10 @@ function ToolCapsules({
         </span>
         <button
           type="button"
-          onClick={onRecheck}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRecheck();
+          }}
           disabled={probing}
           className="rounded-[6px] px-1.5 py-0.5 text-[10px] text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
           title="重新检测连通性并刷新工具列表"
@@ -1020,28 +1071,6 @@ function ConfirmDeleteDialog({
 }
 
 /* ─── Badges ─── */
-
-function SourceBadge({ source, installed }: { source: "builtin" | "user"; installed: boolean }) {
-  if (installed) {
-    return (
-      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-        marketplace
-      </span>
-    );
-  }
-  if (source === "builtin") {
-    return (
-      <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-        builtin
-      </span>
-    );
-  }
-  return (
-    <span className="shrink-0 rounded-[6px] border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      user
-    </span>
-  );
-}
 
 function RoutePolicyBadge({ policy }: { policy: McpRoutePolicy }) {
   const style =

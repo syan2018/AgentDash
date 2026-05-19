@@ -30,7 +30,7 @@ const PRIMARY_CATEGORIES: CategoryItem[] = [
 ];
 
 const SOURCE_CATEGORIES: CategoryItem[] = [
-  { segment: "marketplace", label: "资源市场", hint: "从公共库安装资产" },
+  { segment: "marketplace", label: "资源市场", hint: "浏览、安装与发布共享资产" },
 ];
 
 export function AssetsTabView() {

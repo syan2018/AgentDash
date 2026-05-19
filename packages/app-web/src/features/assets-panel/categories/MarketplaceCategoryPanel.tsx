@@ -11,7 +11,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useProjectStore } from "../../../stores/projectStore";
+import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import {
   fetchLibraryAssets,
   fetchProjectAssetSourceStatus,
@@ -22,9 +24,15 @@ import type {
   LibraryAssetDto,
   LibraryAssetType,
   ProjectAssetSourceStatusDto,
+  PublishLibraryAssetKind,
   SharedLibrarySourceStatus,
 } from "../../../types";
 import { Notice, type NoticeData } from "../_shared/Notice";
+import {
+  AssetPickerDrawer,
+  type AssetPickerSelection,
+} from "../publish/AssetPickerDrawer";
+import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import {
   ConfirmOverwriteDialog,
   InstallStatusChip,
@@ -53,9 +61,31 @@ type DrawerState = { kind: "closed" } | { kind: "open"; assetId: string };
 type OverwriteState =
   | { kind: "closed" }
   | { kind: "open"; asset: LibraryAssetDto; installedVersion: string };
+type ViewMode = "all" | "published";
+type PublishFlow =
+  | { kind: "closed" }
+  | { kind: "picker" }
+  | {
+      kind: "dialog";
+      assetKind: PublishLibraryAssetKind;
+      projectAssetId: string;
+      defaults: { key: string; display_name: string; description?: string | null };
+    };
 
 export function MarketplaceCategoryPanel() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
+  const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewMode: ViewMode = searchParams.get("view") === "published" ? "published" : "all";
+  const setViewMode = useCallback(
+    (next: ViewMode) => {
+      const params = new URLSearchParams(searchParams);
+      if (next === "published") params.set("view", "published");
+      else params.delete("view");
+      setSearchParams(params, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
 
   const [assetType, setAssetType] = useState<LibraryAssetType | "all">("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -66,6 +96,7 @@ export function MarketplaceCategoryPanel() {
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const [drawer, setDrawer] = useState<DrawerState>({ kind: "closed" });
   const [overwrite, setOverwrite] = useState<OverwriteState>({ kind: "closed" });
+  const [publishFlow, setPublishFlow] = useState<PublishFlow>({ kind: "closed" });
 
   const showSuccess = useCallback((m: string) => setNotice({ tone: "success", message: m }), []);
   const showError = useCallback((m: string) => setNotice({ tone: "danger", message: m }), []);
@@ -106,14 +137,22 @@ export function MarketplaceCategoryPanel() {
   }, [sourceStatus]);
 
   const visibleAssets = useMemo(() => {
+    let pool = assets;
+    if (viewMode === "published") {
+      pool = pool.filter(
+        (a) =>
+          a.source === "user_authored" &&
+          (currentUserId ? a.owner_id === currentUserId : true),
+      );
+    }
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return assets;
-    return assets.filter((a) =>
+    if (!term) return pool;
+    return pool.filter((a) =>
       a.display_name.toLowerCase().includes(term) ||
       (a.description ?? "").toLowerCase().includes(term) ||
       a.key.toLowerCase().includes(term),
     );
-  }, [assets, searchTerm]);
+  }, [assets, viewMode, currentUserId, searchTerm]);
 
   const load = useCallback(async () => {
     if (!currentProjectId) return;
@@ -212,15 +251,40 @@ export function MarketplaceCategoryPanel() {
           </p>
           <h2 className="text-lg font-semibold text-foreground">资源市场</h2>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="agentdash-button-secondary"
-        >
-          {loading ? "刷新中…" : "刷新"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="agentdash-button-secondary"
+          >
+            {loading ? "刷新中…" : "刷新"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPublishFlow({ kind: "picker" })}
+            className="agentdash-button-primary"
+          >
+            发布资产 →
+          </button>
+        </div>
       </header>
+
+      {/* 视图 segmented：浏览全部 / 我发布的 */}
+      <div className="flex items-center gap-1 self-start rounded-[10px] border border-border bg-secondary/20 p-1">
+        <ViewModeButton
+          active={viewMode === "all"}
+          onClick={() => setViewMode("all")}
+          label="浏览全部"
+        />
+        <ViewModeButton
+          active={viewMode === "published"}
+          onClick={() => setViewMode("published")}
+          label="我发布的"
+          disabled={!currentUserId}
+          title={currentUserId ? undefined : "请先登录后查看自己发布的资产"}
+        />
+      </div>
 
       {/* Toolbar：类型 segmented + 搜索 */}
       <div className="flex flex-wrap items-center gap-2">
@@ -260,16 +324,18 @@ export function MarketplaceCategoryPanel() {
           <div className="col-span-full rounded-[8px] border border-border p-6 text-sm text-muted-foreground">
             正在加载公共资源…
           </div>
-        ) : assets.length === 0 ? (
+        ) : assets.length === 0 && viewMode === "all" ? (
           <EmptyState
             assetType={assetType}
             busy={busyAssetId === "__seed__"}
             onSeed={() => void seedBuiltins()}
           />
         ) : visibleAssets.length === 0 ? (
-          <div className="col-span-full rounded-[8px] border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            没有匹配「{searchTerm}」的资源
-          </div>
+          <PublishedOrSearchEmpty
+            viewMode={viewMode}
+            searchTerm={searchTerm}
+            onPublish={() => setPublishFlow({ kind: "picker" })}
+          />
         ) : (
           visibleAssets.map((asset) => (
             <MarketplaceAssetCard
@@ -306,6 +372,104 @@ export function MarketplaceCategoryPanel() {
           onConfirm={() => void performInstall(overwrite.asset, true)}
         />
       )}
+
+      {/* 发布主流程：picker → dialog */}
+      {publishFlow.kind === "picker" && (
+        <AssetPickerDrawer
+          projectId={currentProjectId}
+          onClose={() => setPublishFlow({ kind: "closed" })}
+          onPick={(selection: AssetPickerSelection) => {
+            setPublishFlow({
+              kind: "dialog",
+              assetKind: selection.assetKind,
+              projectAssetId: selection.projectAssetId,
+              defaults: selection.defaults,
+            });
+          }}
+        />
+      )}
+      {publishFlow.kind === "dialog" && (
+        <PublishLibraryAssetDialog
+          projectId={currentProjectId}
+          assetKind={publishFlow.assetKind}
+          projectAssetId={publishFlow.projectAssetId}
+          defaults={publishFlow.defaults}
+          currentUserId={currentUserId}
+          onClose={() => setPublishFlow({ kind: "closed" })}
+          onPublished={(message) => {
+            setPublishFlow({ kind: "closed" });
+            showSuccess(message);
+            setViewMode("published");
+            void load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ViewModeButton({
+  active,
+  onClick,
+  label,
+  disabled,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`h-7 rounded-[7px] px-3 text-xs transition-colors ${
+        active
+          ? "bg-background font-medium text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground disabled:opacity-50"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function PublishedOrSearchEmpty({
+  viewMode,
+  searchTerm,
+  onPublish,
+}: {
+  viewMode: ViewMode;
+  searchTerm: string;
+  onPublish: () => void;
+}) {
+  if (searchTerm) {
+    return (
+      <div className="col-span-full rounded-[8px] border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        没有匹配「{searchTerm}」的资源
+      </div>
+    );
+  }
+  if (viewMode === "published") {
+    return (
+      <div className="col-span-full flex flex-col items-center rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-12 text-center">
+        <p className="text-sm text-foreground">还没有发布过资产</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          可以从项目里挑一个 Agent / MCP / Workflow / Skill 发布到资源市场。
+        </p>
+        <button type="button" onClick={onPublish} className="agentdash-button-primary mt-4">
+          发布资产 →
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="col-span-full rounded-[8px] border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+      暂无可见资源
     </div>
   );
 }

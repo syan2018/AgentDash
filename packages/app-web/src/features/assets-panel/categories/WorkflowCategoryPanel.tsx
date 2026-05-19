@@ -10,18 +10,24 @@
  *   - 删除：走 removeLifecycle；Marketplace 安装包的级联清理由后端负责。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
+import { useCurrentUserStore } from "../../../stores/currentUserStore";
+import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import type {
+  LibraryAssetDto,
   LifecycleDefinition,
   WorkflowDefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
+import { CardMenu } from "../_shared/CardMenu";
+import { SourceBadge, type AssetSourceVariant } from "../_shared/SourceBadge";
+import { PublishedBadge } from "../_shared/PublishedBadge";
+import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
 
@@ -36,16 +42,49 @@ export function WorkflowCategoryPanel() {
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const removeLifecycle = useWorkflowStore((s) => s.removeLifecycle);
 
+  const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
+
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [publishTarget, setPublishTarget] = useState<LifecycleDefinition | null>(null);
+  // 当前用户已发布的 workflow 模板列表，用于在卡片上展示"已发布"徽章
+  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
+  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
 
   useEffect(() => {
     if (!currentProjectId) return;
     void fetchDefinitions({ projectId: currentProjectId });
     void fetchLifecycles({ projectId: currentProjectId });
   }, [currentProjectId, fetchDefinitions, fetchLifecycles]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    fetchLibraryAssets({ asset_type: "workflow_template", owner_id: currentUserId })
+      .then((list) => {
+        if (!cancelled) setPublishedAssets(list);
+      })
+      .catch(() => {
+        if (!cancelled) setPublishedAssets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, publishedReloadTick]);
+
+  const publishedByKey = useMemo(() => {
+    if (!currentUserId) return new Map<string, LibraryAssetDto>();
+    const map = new Map<string, LibraryAssetDto>();
+    for (const a of publishedAssets) {
+      if (a.source === "user_authored") map.set(a.key, a);
+    }
+    return map;
+  }, [publishedAssets, currentUserId]);
+
+  const reloadPublished = useCallback(() => {
+    setPublishedReloadTick((tick) => tick + 1);
+  }, []);
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
@@ -101,6 +140,7 @@ export function WorkflowCategoryPanel() {
       {/* 统一列表 */}
       <LifecycleAssetGrid
         items={lifecycles}
+        publishedByKey={publishedByKey}
         onEdit={(lc) => navigate(`/workflow/${lc.id}`)}
         onPublish={setPublishTarget}
         onDelete={(lc) =>
@@ -156,11 +196,13 @@ export function WorkflowCategoryPanel() {
             display_name: publishTarget.name,
             description: publishTarget.description,
           }}
+          currentUserId={currentUserId}
           onClose={() => setPublishTarget(null)}
           onPublished={(message) => {
             setNotice({ tone: "success", message });
             void fetchDefinitions({ projectId: currentProjectId });
             void fetchLifecycles({ projectId: currentProjectId });
+            reloadPublished();
           }}
         />
       )}
@@ -174,12 +216,14 @@ export default WorkflowCategoryPanel;
 
 function LifecycleAssetGrid({
   items,
+  publishedByKey,
   onEdit,
   onPublish,
   onDelete,
   busyKey,
 }: {
   items: LifecycleDefinition[];
+  publishedByKey: Map<string, LibraryAssetDto>;
   onEdit: (lc: LifecycleDefinition) => void;
   onPublish: (lc: LifecycleDefinition) => void;
   onDelete: (lc: LifecycleDefinition) => void;
@@ -204,6 +248,7 @@ function LifecycleAssetGrid({
         <LifecycleAssetCard
           key={lc.id}
           item={lc}
+          published={publishedByKey.get(lc.key) ?? null}
           onEdit={onEdit}
           onPublish={onPublish}
           onDelete={onDelete}
@@ -216,12 +261,14 @@ function LifecycleAssetGrid({
 
 function LifecycleAssetCard({
   item,
+  published,
   onEdit,
   onPublish,
   onDelete,
   isDeleting,
 }: {
   item: LifecycleDefinition;
+  published: LibraryAssetDto | null;
   onEdit: (lc: LifecycleDefinition) => void;
   onPublish: (lc: LifecycleDefinition) => void;
   onDelete: (lc: LifecycleDefinition) => void;
@@ -229,15 +276,60 @@ function LifecycleAssetCard({
 }) {
   const stepCount = item.steps.length;
   const edgeCount = (item.edges ?? []).length;
+  const isInstalled = Boolean(item.installed_source);
+  const isBuiltin = item.source === "builtin_seed";
+  // 已经从市场安装回来的资产或 builtin 不允许走"发布"路径，避免循环发布
+  const canPublish = !isInstalled && !isBuiltin;
+  const sourceVariant = workflowSourceVariant(item.source, isInstalled);
+
+  const menuItems = [
+    {
+      key: "edit",
+      label: isBuiltin ? "查看" : "编辑",
+      onSelect: () => onEdit(item),
+    },
+    ...(canPublish
+      ? [
+          {
+            key: "publish",
+            label: published ? "更新发布" : "发布到资源市场",
+            onSelect: () => onPublish(item),
+          },
+        ]
+      : []),
+    { key: "---", label: "", onSelect: () => {} },
+    {
+      key: "delete",
+      label: isDeleting ? "删除中…" : "删除",
+      danger: true,
+      onSelect: () => onDelete(item),
+    },
+  ];
 
   return (
-    <article className="flex flex-col rounded-[12px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30">
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onEdit(item)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onEdit(item);
+        }
+      }}
+      title={isBuiltin ? "查看" : "编辑"}
+      className="flex cursor-pointer flex-col rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+    >
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium leading-6 text-foreground">{item.name}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.key}</p>
         </div>
-        <SourceBadge source={item.source} installed={Boolean(item.installed_source)} />
+        <div className="flex shrink-0 items-center gap-1">
+          {published && <PublishedBadge version={published.version} />}
+          <SourceBadge variant={sourceVariant} />
+          <CardMenu items={menuItems} />
+        </div>
       </header>
 
       {item.description && (
@@ -258,66 +350,18 @@ function LifecycleAssetCard({
         </span>
       </div>
 
-      <footer className="mt-3 flex items-center justify-between border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
-        <span>更新于 {formatDateTime(item.updated_at)}</span>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => onEdit(item)}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            {item.source === "builtin_seed" ? "查看" : "编辑"}
-          </button>
-          <button
-            type="button"
-            onClick={() => onPublish(item)}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10"
-          >
-            发布
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(item)}
-            disabled={isDeleting}
-            className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-          >
-            {isDeleting ? "删除中…" : "删除"}
-          </button>
-        </div>
+      <footer className="mt-3 border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
+        更新于 {formatDateTime(item.updated_at)}
       </footer>
     </article>
   );
 }
 
-/* ─── 公共：来源 chip ─── */
-
-function SourceBadge({ source, installed }: { source: WorkflowDefinitionSource; installed: boolean }) {
-  if (installed) {
-    return (
-      <span className="shrink-0 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-        marketplace
-      </span>
-    );
-  }
-  if (source === "builtin_seed") {
-    return (
-      <span className="shrink-0 rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-        builtin
-      </span>
-    );
-  }
-  if (source === "cloned") {
-    return (
-      <span className="shrink-0 rounded-[6px] border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
-        cloned
-      </span>
-    );
-  }
-  return (
-    <span className="shrink-0 rounded-[6px] border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      user
-    </span>
-  );
+function workflowSourceVariant(source: WorkflowDefinitionSource, installed: boolean): AssetSourceVariant {
+  if (installed) return "marketplace";
+  if (source === "builtin_seed") return "builtin";
+  if (source === "cloned") return "cloned";
+  return "user";
 }
 
 /* ─── 公共：时间格式化 ─── */

@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
+import { useCurrentUserStore } from "../../../stores/currentUserStore";
+import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import { VfsBrowser, VfsCodeEditor, type VfsBrowserPanelInspectorContext } from "../../vfs";
 import {
   buildSkillYamlFrontmatter,
@@ -28,10 +30,12 @@ import {
   validateSkillAssetDraft,
   type SkillAssetDraft,
 } from "../../../services/skillAsset";
-import type { SkillAssetDto } from "../../../types";
+import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { PublishLibraryAssetDialog } from "./PublishLibraryAssetDialog";
+import { CardMenu } from "../_shared/CardMenu";
+import { PublishedBadge } from "../_shared/PublishedBadge";
+import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 // ─── Detail mode ─────────────────────────────────────────
 
@@ -54,6 +58,8 @@ export function SkillCategoryPanel() {
     [currentProjectId, projects],
   );
 
+  const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
+
   const [skills, setSkills] = useState<SkillAssetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -62,6 +68,8 @@ export function SkillCategoryPanel() {
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
   const [publishTarget, setPublishTarget] = useState<SkillAssetDto | null>(null);
+  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
+  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
@@ -86,6 +94,34 @@ export function SkillCategoryPanel() {
   useEffect(() => {
     void loadSkills();
   }, [loadSkills]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+    fetchLibraryAssets({ asset_type: "skill_template", owner_id: currentUserId })
+      .then((list) => {
+        if (!cancelled) setPublishedAssets(list);
+      })
+      .catch(() => {
+        if (!cancelled) setPublishedAssets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, publishedReloadTick]);
+
+  const publishedByKey = useMemo(() => {
+    if (!currentUserId) return new Map<string, LibraryAssetDto>();
+    const map = new Map<string, LibraryAssetDto>();
+    for (const a of publishedAssets) {
+      if (a.source === "user_authored") map.set(a.key, a);
+    }
+    return map;
+  }, [publishedAssets, currentUserId]);
+
+  const reloadPublished = useCallback(() => {
+    setPublishedReloadTick((tick) => tick + 1);
+  }, []);
 
   // ── Stats ───────────────────────────────────────────
 
@@ -253,6 +289,7 @@ export function SkillCategoryPanel() {
       ) : (
         <SkillGrid
           skills={skills}
+          publishedByKey={publishedByKey}
           busyId={busyId}
           onEdit={openEdit}
           onPublish={setPublishTarget}
@@ -306,10 +343,12 @@ export function SkillCategoryPanel() {
             display_name: publishTarget.display_name,
             description: publishTarget.description,
           }}
+          currentUserId={currentUserId}
           onClose={() => setPublishTarget(null)}
           onPublished={(message) => {
             showSuccess(message);
             void loadSkills();
+            reloadPublished();
           }}
         />
       )}
@@ -395,12 +434,14 @@ function OriginBadge({ skill }: { skill: SkillAssetDto }) {
 
 function SkillGrid({
   skills,
+  publishedByKey,
   busyId,
   onEdit,
   onPublish,
   onDelete,
 }: {
   skills: SkillAssetDto[];
+  publishedByKey: Map<string, LibraryAssetDto>;
   busyId: string | null;
   onEdit: (skill: SkillAssetDto) => void;
   onPublish: (skill: SkillAssetDto) => void;
@@ -419,76 +460,91 @@ function SkillGrid({
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {skills.map((skill) => (
-        <article
-          key={skill.id}
-          className="flex flex-col rounded-[8px] border border-border bg-background p-3.5 transition-colors hover:border-primary/25 hover:bg-secondary/30"
-        >
-          {/* Card header: name + origin badge */}
-          <header className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium leading-6 text-foreground">
-                {skill.display_name}
-              </p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                skills/{skill.key}/SKILL.md
-              </p>
+      {skills.map((skill) => {
+        const isInstalled = Boolean(skill.installed_source);
+        const isBuiltin = skill.source === "builtin_seed";
+        const canPublish = !isInstalled && !isBuiltin;
+        const published = publishedByKey.get(skill.key) ?? null;
+        const isBusy = busyId === skill.id;
+        const menuItems = [
+          { key: "edit", label: "编辑", onSelect: () => onEdit(skill) },
+          ...(canPublish
+            ? [
+                {
+                  key: "publish",
+                  label: published ? "更新发布" : "发布到资源市场",
+                  onSelect: () => onPublish(skill),
+                },
+              ]
+            : []),
+          { key: "---", label: "", onSelect: () => {} },
+          {
+            key: "delete",
+            label: isBusy ? "处理中…" : "删除",
+            danger: true,
+            onSelect: () => onDelete(skill),
+          },
+        ];
+
+        return (
+          <article
+            key={skill.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onEdit(skill)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onEdit(skill);
+              }
+            }}
+            title="编辑"
+            className="flex cursor-pointer flex-col rounded-[8px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            {/* Card header: name + badges + menu */}
+            <header className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium leading-6 text-foreground">
+                  {skill.display_name}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  skills/{skill.key}/SKILL.md
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {published && <PublishedBadge version={published.version} />}
+                <OriginBadge skill={skill} />
+                <CardMenu items={menuItems} />
+              </div>
+            </header>
+
+            {/* Description */}
+            <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              {skill.description}
+            </p>
+
+            {/* Meta tags */}
+            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+              <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
+                {skill.files.length} file{skill.files.length !== 1 ? "s" : ""}
+              </span>
+              {skill.disable_model_invocation && (
+                <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+                  explicit only
+                </span>
+              )}
+              {skill.remote_source?.digest && (
+                <span
+                  title={`digest: ${skill.remote_source.digest}`}
+                  className="rounded-[6px] border border-border bg-secondary/30 px-1.5 py-0.5 text-muted-foreground/70"
+                >
+                  imported
+                </span>
+              )}
             </div>
-            <OriginBadge skill={skill} />
-          </header>
-
-          {/* Description */}
-          <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-            {skill.description}
-          </p>
-
-          {/* Meta tags */}
-          <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-              {skill.files.length} file{skill.files.length !== 1 ? "s" : ""}
-            </span>
-            {skill.disable_model_invocation && (
-              <span className="rounded-[6px] border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
-                explicit only
-              </span>
-            )}
-            {skill.remote_source?.digest && (
-              <span
-                title={`digest: ${skill.remote_source.digest}`}
-                className="rounded-[6px] border border-border bg-secondary/30 px-1.5 py-0.5 text-muted-foreground/70"
-              >
-                imported
-              </span>
-            )}
-          </div>
-
-          {/* Card footer: actions */}
-          <footer className="mt-3 flex items-center justify-end gap-1 border-t border-border/70 pt-2.5">
-            <button
-              type="button"
-              onClick={() => onEdit(skill)}
-              className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              onClick={() => onPublish(skill)}
-              className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-500/10"
-            >
-              发布
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(skill)}
-              disabled={busyId === skill.id}
-              className="rounded-[6px] px-1.5 py-0.5 text-[11px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-            >
-              {busyId === skill.id ? "处理中..." : "删除"}
-            </button>
-          </footer>
-        </article>
-      ))}
+          </article>
+        );
+      })}
     </div>
   );
 }

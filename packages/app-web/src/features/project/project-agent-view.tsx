@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type {
   AgentPreset,
@@ -13,6 +13,7 @@ import type {
 import { CAPABILITY_OPTIONS, THINKING_LEVEL_OPTIONS } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
+import { useCurrentUserStore } from "../../stores/currentUserStore";
 import {
   PresetFormFields,
   useAgentTypeOptions,
@@ -23,7 +24,8 @@ import {
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
 import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
-import { PublishLibraryAssetDialog } from "../assets-panel/categories/PublishLibraryAssetDialog";
+import { CardMenu } from "../assets-panel/_shared/CardMenu";
+import { PublishLibraryAssetDialog } from "../assets-panel/publish/PublishLibraryAssetDialog";
 
 const EMPTY_LINKS: ProjectAgentLink[] = [];
 
@@ -136,73 +138,6 @@ function SessionHistoryPanel({
               <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{formatRelativeTime(s.last_activity)}</span>
             </button>
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── CardMenu 下拉菜单 ───
-
-function CardMenu({
-  items,
-}: {
-  items: Array<{ key: string; label: string; danger?: boolean; badge?: string; onSelect: () => void }>;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] border border-border bg-background text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        title="操作菜单"
-      >
-        &#x22EF;
-      </button>
-      {open && (
-        <div className="absolute right-0 top-9 z-[80] min-w-[9rem] rounded-[10px] border border-border bg-background p-1 shadow-xl">
-          {items.map((item) =>
-            item.key === "---" ? (
-              <div key={item.key} className="my-1 border-t border-border/60" />
-            ) : (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => { setOpen(false); item.onSelect(); }}
-                className={`flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors ${
-                  item.danger
-                    ? "text-destructive hover:bg-destructive/10"
-                    : "text-foreground hover:bg-secondary"
-                }`}
-              >
-                {item.label}
-                {item.badge && (
-                  <span className="ml-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-600 dark:text-amber-400">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            ),
-          )}
         </div>
       )}
     </div>
@@ -371,6 +306,7 @@ export function ProjectAgentView({
   const { deleteProjectAgentLink, fetchProjectAgents, updateProjectAgentLink } = useProjectStore();
   const agentLinks = useProjectStore((s) => s.agentLinksByProjectId[project.id]) ?? EMPTY_LINKS;
   const fetchLinks = useProjectStore((s) => s.fetchProjectAgentLinks);
+  const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
@@ -945,6 +881,7 @@ export function ProjectAgentView({
             display_name: publishTarget.displayName,
             description: publishTarget.description,
           }}
+          currentUserId={currentUserId}
           onClose={() => setPublishTarget(null)}
           onPublished={(message) => {
             setNotice({ tone: "success", message });

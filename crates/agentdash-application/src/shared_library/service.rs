@@ -169,3 +169,155 @@ impl<'a> SharedLibraryService<'a> {
         Ok(seeded)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct InMemoryLibraryAssetRepository {
+        assets: Mutex<Vec<LibraryAsset>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LibraryAssetRepository for InMemoryLibraryAssetRepository {
+        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
+            asset.typed_payload()?;
+            self.assets.lock().expect("lock").push(asset.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .expect("lock")
+                .iter()
+                .find(|asset| asset.id == id)
+                .cloned())
+        }
+
+        async fn find_by_identity(
+            &self,
+            asset_type: LibraryAssetType,
+            scope: LibraryAssetScope,
+            owner_id: Option<&str>,
+            key: &str,
+        ) -> Result<Option<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .expect("lock")
+                .iter()
+                .find(|asset| {
+                    asset.asset_type == asset_type
+                        && asset.scope == scope
+                        && asset.owner_id.as_deref() == owner_id
+                        && asset.key == key
+                })
+                .cloned())
+        }
+
+        async fn list(
+            &self,
+            filter: LibraryAssetListFilter,
+        ) -> Result<Vec<LibraryAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .expect("lock")
+                .iter()
+                .filter(|asset| {
+                    filter
+                        .asset_type
+                        .is_none_or(|value| value == asset.asset_type)
+                        && filter.scope.is_none_or(|value| value == asset.scope)
+                        && filter
+                            .owner_id
+                            .as_deref()
+                            .is_none_or(|value| asset.owner_id.as_deref() == Some(value))
+                        && (filter.include_deprecated || !asset.deprecated)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
+            asset.typed_payload()?;
+            let mut assets = self.assets.lock().expect("lock");
+            let existing = assets
+                .iter_mut()
+                .find(|existing| existing.id == asset.id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "library_asset",
+                    id: asset.id.to_string(),
+                })?;
+            *existing = asset.clone();
+            Ok(())
+        }
+
+        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
+            asset.typed_payload()?;
+            let mut assets = self.assets.lock().expect("lock");
+            if let Some(existing) = assets.iter_mut().find(|existing| {
+                existing.asset_type == asset.asset_type
+                    && existing.scope == asset.scope
+                    && existing.owner_id == asset.owner_id
+                    && existing.key == asset.key
+            }) {
+                let mut merged = asset.clone();
+                merged.id = existing.id;
+                merged.created_at = existing.created_at;
+                merged.updated_at = chrono::Utc::now();
+                *existing = merged.clone();
+                return Ok(merged);
+            }
+
+            assets.push(asset.clone());
+            Ok(asset.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_embedded_seeds_can_register_marketplace_builtin_asset_types() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+
+        let seeded = service
+            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
+                plugin_name: "corp.catalog".to_string(),
+                seed: PluginLibraryAssetSeed {
+                    asset_type: LibraryAssetType::McpServerTemplate,
+                    key: "corp-search".to_string(),
+                    display_name: "Corp Search".to_string(),
+                    description: Some("企业搜索 MCP 模板".to_string()),
+                    version: "0.2.0".to_string(),
+                    payload: json!({
+                        "transport": {
+                            "type": "http",
+                            "url": "https://mcp.example.com/search"
+                        },
+                        "route_policy": "direct",
+                        "capabilities": ["search"]
+                    }),
+                },
+            }])
+            .await
+            .expect("plugin seed should be accepted");
+
+        assert_eq!(seeded.len(), 1);
+        let asset = &seeded[0];
+        assert_eq!(asset.asset_type, LibraryAssetType::McpServerTemplate);
+        assert_eq!(asset.scope, LibraryAssetScope::System);
+        assert_eq!(asset.source, LibraryAssetSource::PluginEmbedded);
+        assert_eq!(
+            asset.source_ref.as_deref(),
+            Some("plugin:corp.catalog:mcp_server_template:corp-search")
+        );
+        assert!(asset.payload_digest.starts_with("sha256:"));
+    }
+}

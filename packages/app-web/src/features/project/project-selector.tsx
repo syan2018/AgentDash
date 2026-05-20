@@ -4,6 +4,7 @@ import type { Project, ProjectRole } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import {
+  CreateButton,
   DetailPanel,
   DetailSection,
 } from "@agentdash/ui";
@@ -113,13 +114,11 @@ export function ProjectSelector({
       <div className="space-y-2 rounded-[12px] border border-border bg-secondary/35 p-2.5">
         <div className="flex items-center justify-between px-1">
           <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">项目</p>
-          <button
-            type="button"
+          <CreateButton
+            entity="Project"
+            variant="secondary"
             onClick={() => setIsCreateOpen(true)}
-            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            + 新建
-          </button>
+          />
         </div>
 
         {projects.length === 0 && (

@@ -47,7 +47,7 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, OriginBadge } from "@agentdash/ui";
+import { CardMenu, CreateButton, OriginBadge } from "@agentdash/ui";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
@@ -279,23 +279,7 @@ export function McpPresetCategoryPanel() {
             {builtinCount} 个 builtin · {userCount} 个 user · project 级 MCP 引用模板，供 agent 装配复用
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void loadPresets(currentProjectId)}
-            disabled={isLoading}
-            className="agentdash-button-secondary"
-          >
-            {isLoading ? "刷新中…" : "刷新"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setDetail({ kind: "create" })}
-            className="agentdash-button-primary"
-          >
-            + Preset
-          </button>
-        </div>
+        <CreateButton entity="Preset" onClick={() => setDetail({ kind: "create" })} />
       </header>
 
       {/* 反馈消息 */}
@@ -310,15 +294,13 @@ export function McpPresetCategoryPanel() {
         <div className="flex flex-col items-center rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-foreground">当前项目还没有任何 MCP Preset</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            可从资源市场安装公共模板，或点击下方按钮新建用户 Preset。
+            可从资源市场安装公共模板，或点击下方"+ Preset"新建用户 Preset。
           </p>
-          <button
-            type="button"
+          <CreateButton
+            entity="Preset"
+            className="mt-4"
             onClick={() => setDetail({ kind: "create" })}
-            className="mt-4 rounded-[8px] border border-primary bg-primary px-3.5 py-1.5 text-sm text-primary-foreground transition-colors hover:opacity-95"
-          >
-            + 新建 MCP Preset
-          </button>
+          />
         </div>
       ) : (
         <McpPresetGrid

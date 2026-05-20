@@ -25,6 +25,7 @@ import type {
   PublishLibraryAssetKind,
   SharedLibrarySourceStatus,
 } from "../../../types";
+import { Button } from "@agentdash/ui";
 import { Notice, type NoticeData } from "../_shared/Notice";
 import {
   AssetPickerDrawer,
@@ -234,21 +235,21 @@ export function MarketplaceCategoryPanel() {
           <h2 className="text-lg font-semibold text-foreground">资源市场</h2>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => void load()}
             disabled={loading}
-            className="agentdash-button-secondary"
           >
             {loading ? "刷新中…" : "刷新"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => setPublishFlow({ kind: "picker" })}
-            className="agentdash-button-primary"
           >
             发布资产 →
-          </button>
+          </Button>
         </div>
       </header>
 

@@ -33,7 +33,7 @@ import {
 import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu } from "@agentdash/ui";
+import { CardMenu, CreateButton } from "@agentdash/ui";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import {
@@ -265,23 +265,7 @@ export function SkillCategoryPanel() {
               : "0 个 Skill · Agent preset 可按 key 装载"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void loadSkills()}
-            disabled={isLoading}
-            className="agentdash-button-secondary"
-          >
-            {isLoading ? "刷新中…" : "刷新"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowCreateDialog(true)}
-            className="agentdash-button-primary"
-          >
-            新建 Skill
-          </button>
-        </div>
+        <CreateButton entity="Skill" onClick={() => setShowCreateDialog(true)} />
       </header>
 
       {/* ── Notices ── */}
@@ -393,7 +377,7 @@ function SkillGrid({
       <div className="rounded-[8px] border border-dashed border-border bg-secondary/20 px-6 py-14 text-center">
         <p className="text-sm text-foreground">暂无 Skill 资产</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          点击上方"新建 Skill"添加手动创建、远端导入或本地上传 Skill
+          点击上方"+ Skill"添加手动创建、远端导入或本地上传 Skill
         </p>
       </div>
     );

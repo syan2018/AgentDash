@@ -4,6 +4,7 @@ import { StoryBoard } from "./story-board";
 import { useStoryStore } from "../../stores/storyStore";
 import {
   Button,
+  CreateButton,
   DetailPanel,
   EmptyState,
   SectionTitle,
@@ -400,9 +401,7 @@ export function StoryListView({
                 </p>
               </div>
             </div>
-            <Button type="button" variant="primary" size="sm" onClick={() => openCreate()}>
-              New Story
-            </Button>
+            <CreateButton entity="Story" onClick={() => openCreate()} />
           </div>
 
           <StoryToolbar filterCount={filterCount} hasFilters={hasFilters} />
@@ -426,9 +425,7 @@ export function StoryListView({
                   清空筛选
                 </Button>
               ) : (
-                <Button type="button" variant="primary" size="sm" onClick={() => openCreate()}>
-                  创建 Story
-                </Button>
+                <CreateButton entity="Story" onClick={() => openCreate()} />
               )}
             </EmptyState>
           ) : viewMode === "board" ? (

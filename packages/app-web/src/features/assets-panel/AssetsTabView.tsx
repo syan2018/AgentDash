@@ -3,8 +3,9 @@
  *
  * 布局：
  * - 顶部：页面 header（标题 + 项目上下文）
- * - 左侧侧栏分两区：
- *   - 主类目（项目内已有的资产）：Workflow / Canvas / MCP Preset / Skill
+ * - 左侧侧栏分三区：
+ *   - 可共享类目（资源市场可发布）：Workflow / MCP / Skill
+ *   - 本地类目（不进入资源市场）：Canvas
  *   - 安装入口（栏底固定）：资源市场 — 专属样式区分语义
  * - 右侧：`<Outlet />` 渲染选中类目对应的 CategoryPanel
  *
@@ -22,11 +23,14 @@ interface CategoryItem {
   hint: string;
 }
 
-const PRIMARY_CATEGORIES: CategoryItem[] = [
+const SHAREABLE_CATEGORIES: CategoryItem[] = [
   { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
-  { segment: "canvas", label: "Canvas", hint: "可视化资产" },
-  { segment: "mcp-preset", label: "MCP Preset", hint: "MCP Server 模板" },
+  { segment: "mcp-preset", label: "MCP", hint: "MCP Server 模板" },
   { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
+];
+
+const LOCAL_CATEGORIES: CategoryItem[] = [
+  { segment: "canvas", label: "Canvas", hint: "项目本地可视化资产" },
 ];
 
 const SOURCE_CATEGORIES: CategoryItem[] = [
@@ -64,7 +68,7 @@ export function AssetsTabView() {
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-foreground">项目资产</h2>
             <p className="text-xs text-muted-foreground">
-              {currentProject.name} · 统一管理 Workflow / Canvas / MCP Preset / Skill 等项目级可复用资产
+              {currentProject.name} · 统一管理 Workflow / MCP / Skill / Canvas 等项目级可复用资产
             </p>
           </div>
         </div>
@@ -76,7 +80,11 @@ export function AssetsTabView() {
           {/* 主类目 */}
           <p className="px-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">类目</p>
           <nav className="flex flex-col gap-1">
-            {PRIMARY_CATEGORIES.map((cat) => (
+            {SHAREABLE_CATEGORIES.map((cat) => (
+              <NavItem key={cat.segment} item={cat} variant="primary" />
+            ))}
+            <div className="my-1 border-t border-border/60" aria-hidden />
+            {LOCAL_CATEGORIES.map((cat) => (
               <NavItem key={cat.segment} item={cat} variant="primary" />
             ))}
           </nav>

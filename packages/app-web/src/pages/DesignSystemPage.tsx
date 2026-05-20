@@ -16,6 +16,7 @@ import {
   Card,
   CardHeader,
   CardMenu,
+  CreateButton,
   CheckboxField,
   DangerConfirmDialog,
   DetailMenu,
@@ -326,6 +327,7 @@ function SectionPrimitives() {
         <PrimInspectorRow />
         <PrimSectionTitle />
         <PrimButton />
+        <PrimCreateButton />
         <PrimCard />
         <PrimNotice />
         <PrimEmptyState />
@@ -561,6 +563,40 @@ function PrimButton() {
         </div>
         <p className="text-[11px] text-muted-foreground">
           注意：本任务 S3 会把 Button radius 从 10 → 8，预计观感更紧凑。
+        </p>
+      </div>
+    </PrimSlot>
+  );
+}
+
+function PrimCreateButton() {
+  return (
+    <PrimSlot
+      name="CreateButton"
+      importHint='import { CreateButton } from "@agentdash/ui"'
+    >
+      <div className="space-y-3">
+        <p className="text-[11px] text-muted-foreground">
+          统一的"创建实体"入口按钮，渲染为 <code>+ {"{entity}"}</code>。entity 使用英文实体名（Story / Skill / Workflow / Preset / Routine / Project / Agent）。
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <CreateButton entity="Story" />
+          <CreateButton entity="Skill" />
+          <CreateButton entity="Workflow" />
+          <CreateButton entity="Preset" />
+          <CreateButton entity="Routine" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <CreateButton entity="Project" variant="secondary" />
+          <CreateButton entity="Agent" variant="ghost" />
+          <CreateButton entity="Story" disabled />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          使用规约：列表/资产页头部主入口、空状态引导按钮统一用 <code>CreateButton</code>。
+          <br />
+          Dialog/Drawer footer 的"提交创建"按钮属于表单确认，仍用 <code>Button variant="primary"</code>，文案保留"创建 X"。
+          <br />
+          Kanban 列内联快加（如 Story Board 的 <code>+ Create in this column</code> 文本按钮、column 头部纯 <code>+</code> 触发器）保留各自形态。
         </p>
       </div>
     </PrimSlot>

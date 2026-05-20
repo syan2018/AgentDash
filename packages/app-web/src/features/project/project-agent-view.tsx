@@ -24,7 +24,7 @@ import {
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
 import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
-import { CardMenu, StatusDot, type StatusDotTone } from "@agentdash/ui";
+import { CardMenu, CreateButton, StatusDot, type StatusDotTone } from "@agentdash/ui";
 import { PublishLibraryAssetDialog } from "../assets-panel/publish/PublishLibraryAssetDialog";
 
 const EMPTY_PROJECT_AGENTS: ProjectAgent[] = [];
@@ -435,13 +435,7 @@ export function ProjectAgentView({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setIsCreateOpen(true)}
-              className="h-8 rounded-[8px] border border-primary bg-primary px-2.5 text-xs text-primary-foreground transition-colors hover:opacity-95"
-            >
-              + 新建 Agent
-            </button>
+            <CreateButton entity="Agent" onClick={() => setIsCreateOpen(true)} />
           </div>
         </header>
 

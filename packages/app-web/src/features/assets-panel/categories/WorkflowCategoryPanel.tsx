@@ -24,7 +24,7 @@ import type {
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, DangerConfirmDialog, OriginBadge } from "@agentdash/ui";
+import { CardMenu, CreateButton, DangerConfirmDialog, OriginBadge } from "@agentdash/ui";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
@@ -115,13 +115,7 @@ export function WorkflowCategoryPanel() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate("/workflow/new")}
-            className="agentdash-button-primary"
-          >
-            + Workflow
-          </button>
+          <CreateButton entity="Workflow" onClick={() => navigate("/workflow/new")} />
         </div>
       </header>
 

@@ -9,7 +9,7 @@ import type {
 } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useRoutineStore } from "../../stores/routineStore";
-import { DetailPanel, DetailMenu, DangerConfirmDialog } from "@agentdash/ui";
+import { CreateButton, DetailPanel, DetailMenu, DangerConfirmDialog } from "@agentdash/ui";
 
 // ─── 通用工具 ───
 
@@ -831,13 +831,7 @@ export function RoutineTabView() {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="agentdash-button-primary text-sm"
-        >
-          创建 Routine
-        </button>
+        <CreateButton entity="Routine" onClick={() => setShowCreate(true)} />
       </header>
 
       {/* Content */}
@@ -848,13 +842,12 @@ export function RoutineTabView() {
             <p className="text-xs text-muted-foreground">
               创建 Routine 来定时触发 Agent 或通过 Webhook 接收外部事件
             </p>
-            <button
-              type="button"
+            <CreateButton
+              entity="Routine"
+              variant="secondary"
+              className="mt-2"
               onClick={() => setShowCreate(true)}
-              className="agentdash-button-secondary mt-2 text-sm"
-            >
-              创建第一个 Routine
-            </button>
+            />
           </div>
         ) : (
           <div className="space-y-3 p-4">

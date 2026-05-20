@@ -1,6 +1,8 @@
 use uuid::Uuid;
 
-use super::entity::{LifecycleDefinition, LifecycleRun, WorkflowDefinition};
+use super::entity::{
+    ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun, WorkflowDefinition,
+};
 use super::value_objects::WorkflowBindingKind;
 use crate::common::error::DomainError;
 
@@ -24,6 +26,24 @@ pub trait WorkflowDefinitionRepository: Send + Sync {
         binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<WorkflowDefinition>, DomainError>;
     async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait ActivityLifecycleDefinitionRepository: Send + Sync {
+    async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid)
+    -> Result<Option<ActivityLifecycleDefinition>, DomainError>;
+    async fn get_by_project_and_key(
+        &self,
+        project_id: Uuid,
+        key: &str,
+    ) -> Result<Option<ActivityLifecycleDefinition>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError>;
+    async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 

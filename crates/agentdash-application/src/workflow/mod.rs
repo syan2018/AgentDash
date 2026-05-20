@@ -12,7 +12,7 @@ pub mod step_activation;
 pub mod tools;
 
 pub use agentdash_domain::workflow::WorkflowSessionTerminalState;
-pub use catalog::WorkflowCatalogService;
+pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,

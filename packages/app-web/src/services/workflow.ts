@@ -2,6 +2,14 @@ import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray, optString, optStringField } from "../api/mappers";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
+  ActivityCompletionPolicy,
+  ActivityDefinition,
+  ActivityExecutorSpec,
+  ActivityJoinPolicy,
+  ActivityLifecycleDefinition,
+  ActivityTransition,
+  ArtifactAliasPolicy,
+  ArtifactBinding,
   CapabilityDirective,
   HookRulePreset,
   ContextStrategy,
@@ -14,6 +22,7 @@ import type {
   LifecycleNodeType,
   LifecycleStepDefinition,
   ToolDescriptor,
+  TransitionCondition,
   WorkflowContextBinding,
   WorkflowContract,
   WorkflowDefinition,
@@ -48,6 +57,9 @@ const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
 const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);
 const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
 const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", "custom"]);
+const AGENT_SESSION_POLICIES = new Set<string>(["spawn_child", "continue_root", "attach_existing"]);
+const ARTIFACT_ALIAS_POLICIES = new Set<string>(["latest", "per_attempt", "latest_and_history"]);
+const ACTIVITY_TRANSITION_KINDS = new Set<string>(["flow", "artifact"]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "step_activated", "step_completed", "artifact_appended", "context_injected",
 ]);
@@ -252,6 +264,167 @@ function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
   };
 }
 
+function mapArtifactAliasPolicy(raw: unknown): ArtifactAliasPolicy {
+  return normalizeEnum<ArtifactAliasPolicy>(raw ?? "latest", ARTIFACT_ALIAS_POLICIES, "artifact alias policy");
+}
+
+function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
+  const value = asRecord(raw);
+  if (!value) throw new Error("activity executor 缺失或不是对象");
+  const kind = requireStringField(value, "kind");
+  if (kind === "agent") {
+    return {
+      kind: "agent",
+      workflow_key: requireStringField(value, "workflow_key"),
+      session_policy: value.session_policy != null
+        ? normalizeEnum(value.session_policy, AGENT_SESSION_POLICIES, "agent session policy")
+        : "spawn_child",
+    };
+  }
+  if (kind === "function") {
+    const type = requireStringField(value, "type");
+    if (type === "api_request") {
+      return {
+        kind: "function",
+        type: "api_request",
+        method: requireStringField(value, "method"),
+        url_template: requireStringField(value, "url_template"),
+        body_template: asRecord(value.body_template),
+      };
+    }
+    if (type === "bash_exec") {
+      return {
+        kind: "function",
+        type: "bash_exec",
+        command: requireStringField(value, "command"),
+        args: asStringArray(value.args),
+        working_directory: optString(value.working_directory),
+      };
+    }
+  }
+  if (kind === "human") {
+    const type = requireStringField(value, "type");
+    if (type === "approval") {
+      return {
+        kind: "human",
+        type: "approval",
+        form_schema_key: requireStringField(value, "form_schema_key"),
+        title: optString(value.title),
+      };
+    }
+  }
+  throw new Error(`未知的 activity executor: ${kind}`);
+}
+
+function mapActivityCompletionPolicy(raw: unknown): ActivityCompletionPolicy {
+  const value = asRecord(raw);
+  if (!value) return { kind: "executor_terminal" };
+  const kind = requireStringField(value, "kind");
+  if (kind === "output_ports") {
+    return { kind, required_ports: asStringArray(value.required_ports) };
+  }
+  if (kind === "executor_terminal") {
+    return { kind };
+  }
+  if (kind === "human_decision") {
+    return { kind, decision_port: requireStringField(value, "decision_port") };
+  }
+  if (kind === "hook_gate") {
+    return { kind, hook_key: requireStringField(value, "hook_key") };
+  }
+  throw new Error(`未知的 activity completion policy: ${kind}`);
+}
+
+function mapActivityJoinPolicy(raw: unknown): ActivityJoinPolicy {
+  if (raw == null) return "all";
+  if (typeof raw === "string") {
+    if (raw === "all" || raw === "any" || raw === "first") return raw;
+    throw new Error(`未知的 activity join policy: ${raw}`);
+  }
+  const value = asRecord(raw);
+  const nOfM = value ? asRecord(value.n_of_m) : null;
+  if (nOfM && typeof nOfM.n === "number") {
+    return { n_of_m: { n: nOfM.n } };
+  }
+  throw new Error("activity join policy 非法");
+}
+
+function mapActivityDefinition(raw: unknown): ActivityDefinition {
+  const value = asRecord(raw);
+  if (!value) throw new Error("activity definition 缺失或不是对象");
+  const iteration = asRecord(value.iteration_policy);
+  return {
+    key: requireStringField(value, "key"),
+    description: optStringField(value, "description"),
+    executor: mapActivityExecutorSpec(value.executor),
+    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
+    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
+    completion_policy: mapActivityCompletionPolicy(value.completion_policy),
+    iteration_policy: {
+      max_attempts: typeof iteration?.max_attempts === "number" ? iteration.max_attempts : optString(iteration?.max_attempts) == null ? null : Number(iteration?.max_attempts),
+      artifact_alias: mapArtifactAliasPolicy(iteration?.artifact_alias),
+    },
+    join_policy: mapActivityJoinPolicy(value.join_policy),
+  };
+}
+
+function mapTransitionCondition(raw: unknown): TransitionCondition {
+  const value = asRecord(raw);
+  if (!value) return { kind: "always" };
+  const kind = requireStringField(value, "kind");
+  if (kind === "always") return { kind };
+  if (kind === "artifact_field_equals") {
+    return {
+      kind,
+      activity: requireStringField(value, "activity"),
+      port: requireStringField(value, "port"),
+      path: requireStringField(value, "path"),
+      value: value.value,
+    };
+  }
+  if (kind === "human_decision_equals") {
+    return {
+      kind,
+      activity: requireStringField(value, "activity"),
+      decision_port: requireStringField(value, "decision_port"),
+      value: requireStringField(value, "value"),
+    };
+  }
+  if (kind === "agent_signal_equals") {
+    return {
+      kind,
+      activity: requireStringField(value, "activity"),
+      signal_key: requireStringField(value, "signal_key"),
+      value: value.value,
+    };
+  }
+  throw new Error(`未知的 transition condition: ${kind}`);
+}
+
+function mapArtifactBinding(raw: unknown): ArtifactBinding {
+  const value = asRecord(raw);
+  if (!value) throw new Error("artifact binding 缺失或不是对象");
+  return {
+    from_activity: optString(value.from_activity),
+    from_port: requireStringField(value, "from_port"),
+    to_port: requireStringField(value, "to_port"),
+    alias: mapArtifactAliasPolicy(value.alias),
+  };
+}
+
+function mapActivityTransition(raw: unknown): ActivityTransition {
+  const value = asRecord(raw);
+  if (!value) throw new Error("activity transition 缺失或不是对象");
+  return {
+    from: requireStringField(value, "from"),
+    to: requireStringField(value, "to"),
+    kind: normalizeEnum(value.kind ?? "flow", ACTIVITY_TRANSITION_KINDS, "activity transition kind"),
+    condition: mapTransitionCondition(value.condition),
+    artifact_bindings: asRecordArray(value.artifact_bindings).map(mapArtifactBinding),
+    max_traversals: typeof value.max_traversals === "number" ? value.max_traversals : null,
+  };
+}
+
 function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
   return {
     step_key: requireStringField(raw, "step_key"),
@@ -316,6 +489,25 @@ export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleD
   };
 }
 
+export function mapActivityLifecycleDefinition(raw: Record<string, unknown>): ActivityLifecycleDefinition {
+  return {
+    id: requireStringField(raw, "id"),
+    project_id: requireStringField(raw, "project_id"),
+    key: requireStringField(raw, "key"),
+    name: requireStringField(raw, "name"),
+    description: optStringField(raw, "description"),
+    target_kinds: normalizeTargetKinds(raw.binding_kinds, "activity lifecycle target kinds"),
+    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "activity lifecycle definition source"),
+    installed_source: mapInstalledAssetSource(raw.installed_source),
+    version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
+    entry_activity_key: requireStringField(raw, "entry_activity_key"),
+    activities: Array.isArray(raw.activities) ? raw.activities.map(mapActivityDefinition) : [],
+    transitions: Array.isArray(raw.transitions) ? raw.transitions.map(mapActivityTransition) : [],
+    created_at: requireStringField(raw, "created_at"),
+    updated_at: requireStringField(raw, "updated_at"),
+  };
+}
+
 export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   return {
     id: requireStringField(raw, "id"),
@@ -354,6 +546,18 @@ export async function fetchLifecycleDefinitions(opts?: {
   const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/lifecycle-definitions${query}`);
   return raw.map(mapLifecycleDefinition);
+}
+
+export async function fetchActivityLifecycleDefinitions(opts?: {
+  projectId?: string;
+  targetKind?: WorkflowTargetKind;
+}): Promise<ActivityLifecycleDefinition[]> {
+  const params = new URLSearchParams();
+  if (opts?.projectId) params.set("project_id", opts.projectId);
+  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
+  const query = params.toString() ? `?${params}` : "";
+  const raw = await api.get<Record<string, unknown>[]>(`/activity-lifecycle-definitions${query}`);
+  return raw.map(mapActivityLifecycleDefinition);
 }
 
 export async function createLifecycleDefinition(input: {
@@ -441,6 +645,93 @@ export async function validateLifecycleDefinition(input: {
 
 export async function deleteLifecycleDefinition(id: string): Promise<void> {
   await api.delete(`/lifecycle-definitions/${id}`);
+}
+
+export async function createActivityLifecycleDefinition(input: {
+  project_id: string;
+  key: string;
+  name: string;
+  description?: string;
+  target_kinds: WorkflowTargetKind[];
+  entry_activity_key: string;
+  activities: ActivityDefinition[];
+  transitions: ActivityTransition[];
+}): Promise<ActivityLifecycleDefinition> {
+  const raw = await api.post<Record<string, unknown>>("/activity-lifecycle-definitions", {
+    project_id: input.project_id,
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kinds: input.target_kinds,
+    entry_activity_key: input.entry_activity_key,
+    activities: input.activities,
+    transitions: input.transitions,
+  });
+  return mapActivityLifecycleDefinition(raw);
+}
+
+export async function getActivityLifecycleDefinition(id: string): Promise<ActivityLifecycleDefinition> {
+  const raw = await api.get<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`);
+  return mapActivityLifecycleDefinition(raw);
+}
+
+export async function updateActivityLifecycleDefinition(
+  id: string,
+  input: {
+    name?: string;
+    description?: string;
+    binding_kinds?: WorkflowTargetKind[];
+    entry_activity_key?: string;
+    activities?: ActivityDefinition[];
+    transitions?: ActivityTransition[];
+  },
+): Promise<ActivityLifecycleDefinition> {
+  const raw = await api.put<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`, {
+    name: input.name,
+    description: input.description,
+    binding_kinds: input.binding_kinds,
+    entry_activity_key: input.entry_activity_key,
+    activities: input.activities,
+    transitions: input.transitions,
+  });
+  return mapActivityLifecycleDefinition(raw);
+}
+
+export async function validateActivityLifecycleDefinition(input: {
+  project_id: string;
+  key: string;
+  name: string;
+  description?: string;
+  target_kinds: WorkflowTargetKind[];
+  entry_activity_key: string;
+  activities: ActivityDefinition[];
+  transitions: ActivityTransition[];
+}): Promise<WorkflowValidationResult> {
+  const raw = await api.post<Record<string, unknown>>("/activity-lifecycle-definitions/validate", {
+    project_id: input.project_id,
+    key: input.key,
+    name: input.name,
+    description: input.description,
+    binding_kinds: input.target_kinds,
+    entry_activity_key: input.entry_activity_key,
+    activities: input.activities,
+    transitions: input.transitions,
+  });
+  return {
+    valid: Boolean(raw.valid),
+    issues: Array.isArray(raw.issues)
+      ? raw.issues.map((item, index) => {
+          if (!item || typeof item !== "object") {
+            throw new Error(`activity lifecycle validation issue[${index}] 必须是对象`);
+          }
+          return mapValidationIssue(item as Record<string, unknown>);
+        })
+      : [],
+  };
+}
+
+export async function deleteActivityLifecycleDefinition(id: string): Promise<void> {
+  await api.delete(`/activity-lifecycle-definitions/${id}`);
 }
 
 export async function fetchWorkflowRunsBySession(

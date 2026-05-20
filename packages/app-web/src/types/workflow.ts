@@ -345,6 +345,118 @@ export interface LifecycleDefinition {
   updated_at: string;
 }
 
+export type AgentSessionPolicy = "spawn_child" | "continue_root" | "attach_existing";
+
+export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history";
+
+export type ActivityJoinPolicy =
+  | "all"
+  | "any"
+  | "first"
+  | { n_of_m: { n: number } };
+
+export type ActivityCompletionPolicy =
+  | { kind: "output_ports"; required_ports: string[] }
+  | { kind: "executor_terminal" }
+  | { kind: "human_decision"; decision_port: string }
+  | { kind: "hook_gate"; hook_key: string };
+
+export type ActivityExecutorSpec =
+  | {
+      kind: "agent";
+      workflow_key: string;
+      session_policy: AgentSessionPolicy;
+    }
+  | {
+      kind: "function";
+      type: "api_request";
+      method: string;
+      url_template: string;
+      body_template?: Record<string, unknown> | null;
+    }
+  | {
+      kind: "function";
+      type: "bash_exec";
+      command: string;
+      args: string[];
+      working_directory?: string | null;
+    }
+  | {
+      kind: "human";
+      type: "approval";
+      form_schema_key: string;
+      title?: string | null;
+    };
+
+export interface ActivityDefinition {
+  key: string;
+  description: string;
+  executor: ActivityExecutorSpec;
+  input_ports: InputPortDefinition[];
+  output_ports: OutputPortDefinition[];
+  completion_policy: ActivityCompletionPolicy;
+  iteration_policy: {
+    max_attempts?: number | null;
+    artifact_alias: ArtifactAliasPolicy;
+  };
+  join_policy: ActivityJoinPolicy;
+}
+
+export type TransitionCondition =
+  | { kind: "always" }
+  | {
+      kind: "artifact_field_equals";
+      activity: string;
+      port: string;
+      path: string;
+      value: unknown;
+    }
+  | {
+      kind: "human_decision_equals";
+      activity: string;
+      decision_port: string;
+      value: string;
+    }
+  | {
+      kind: "agent_signal_equals";
+      activity: string;
+      signal_key: string;
+      value: unknown;
+    };
+
+export interface ArtifactBinding {
+  from_activity?: string | null;
+  from_port: string;
+  to_port: string;
+  alias: ArtifactAliasPolicy;
+}
+
+export interface ActivityTransition {
+  from: string;
+  to: string;
+  kind: "flow" | "artifact";
+  condition: TransitionCondition;
+  artifact_bindings: ArtifactBinding[];
+  max_traversals?: number | null;
+}
+
+export interface ActivityLifecycleDefinition {
+  id: string;
+  project_id: string;
+  key: string;
+  name: string;
+  description: string;
+  target_kinds: WorkflowTargetKind[];
+  source: WorkflowDefinitionSource;
+  installed_source?: InstalledAssetSourceDto | null;
+  version: number;
+  entry_activity_key: string;
+  activities: ActivityDefinition[];
+  transitions: ActivityTransition[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkflowStepState {
   step_key: string;
   status: WorkflowStepExecutionStatus;

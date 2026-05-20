@@ -2,9 +2,13 @@ mod entity;
 mod repository;
 mod value_objects;
 
-pub use entity::{LifecycleDefinition, LifecycleRun, WorkflowDefinition, build_effective_contract};
+pub use entity::{
+    ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun, WorkflowDefinition,
+    build_effective_contract,
+};
 pub use repository::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleDefinitionRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository,
 };
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

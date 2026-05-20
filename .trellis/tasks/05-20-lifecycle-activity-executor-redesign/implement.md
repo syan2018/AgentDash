@@ -49,7 +49,7 @@
 - [ ] API route 单测或集成测试覆盖无权限不能读取 / 修改 lifecycle definition。
 - [ ] 空库初始化后可以创建 lifecycle run。
 - [ ] `cargo test -p agentdash-application workflow`
-- [ ] `cargo test -p agentdash-api workflow`
+- [x] `cargo test -p agentdash-api workflow`
 - [x] `cargo check -p agentdash-infrastructure`
 
 出口标准：
@@ -107,25 +107,25 @@
 
 范围：
 
-- [ ] 新增 migration：
-  - [ ] `lifecycle_definitions.activities_json`
-  - [ ] `lifecycle_definitions.transitions_json`
+- [x] 新增 migration：
+  - [x] `lifecycle_definitions.activities`
+  - [x] `lifecycle_definitions.transitions`
   - [ ] 必要时新增 `lifecycle_runs.attempts_json`
   - [ ] 新增 `activity_execution_claims` 表。
-- [ ] Repository 读写 Activity definition。
-- [ ] API DTO 与 domain schema 对齐。
-- [ ] `WorkflowCatalogService::validate_lifecycle_definition` 使用 Activity validation。
+- [x] Repository 读写 Activity definition。
+- [x] API DTO 与 domain schema 对齐。
+- [x] `WorkflowCatalogService::validate_lifecycle_definition` 使用 Activity validation。
 - [ ] builtin JSON seed 迁移为 Activity graph。
-- [ ] 前端 TS 类型先补齐，不要求 UI 完整可编辑。
+- [x] 前端 TS 类型先补齐，不要求 UI 完整可编辑。
 
 验证：
 
 - [ ] migration 在空库通过。
 - [ ] seed bootstrap 通过。
-- [ ] API create / update / validate 可保存 Activity lifecycle。
-- [ ] `cargo test -p agentdash-infrastructure workflow`
+- [x] API create / update / validate 可保存 Activity lifecycle。
+- [x] `cargo test -p agentdash-infrastructure workflow`
 - [ ] `cargo test -p agentdash-api workflow`
-- [ ] `pnpm --filter app-web typecheck`
+- [x] `pnpm --filter app-web typecheck`
 
 出口标准：
 

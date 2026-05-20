@@ -9,13 +9,14 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand, CompleteLifecycleStepCommand, LifecycleOrchestrator,
-    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
+    ActivateLifecycleStepCommand, ActivityLifecycleCatalogService, CompleteLifecycleStepCommand,
+    LifecycleOrchestrator, LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
     build_step_projector_from_repos,
 };
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+    ActivityDefinition, ActivityLifecycleDefinition, ActivityTransition, LifecycleDefinition,
+    LifecycleEdge, LifecycleRun, LifecycleStepDefinition, ValidationSeverity, WorkflowBindingKind,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
     normalize_workflow_binding_kinds,
 };
 
@@ -115,6 +116,44 @@ pub struct ValidateLifecycleDefinitionRequest {
     pub edges: Vec<LifecycleEdge>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateActivityLifecycleDefinitionRequest {
+    pub project_id: String,
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    #[serde(default)]
+    pub transitions: Vec<ActivityTransition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateActivityLifecycleDefinitionRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
+    pub entry_activity_key: Option<String>,
+    pub activities: Option<Vec<ActivityDefinition>>,
+    pub transitions: Option<Vec<ActivityTransition>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateActivityLifecycleDefinitionRequest {
+    pub project_id: String,
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    #[serde(default)]
+    pub transitions: Vec<ActivityTransition>,
+}
+
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -194,6 +233,213 @@ pub async fn create_lifecycle_definition(
     );
     let saved = service.upsert_lifecycle_definition(definition).await?;
     Ok(Json(saved))
+}
+
+pub async fn list_activity_lifecycles(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Query(query): Query<ListWorkflowsQuery>,
+) -> Result<Json<Vec<ActivityLifecycleDefinition>>, ApiError> {
+    let project_id = parse_project_id_query(query.project_id.as_deref())?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let mut definitions = state
+        .repos
+        .activity_lifecycle_definition_repo
+        .list_by_project(project_id)
+        .await?;
+    if let Some(binding_kind) = query.binding_kind {
+        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
+    }
+    Ok(Json(definitions))
+}
+
+pub async fn create_activity_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<CreateActivityLifecycleDefinitionRequest>,
+) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let definition = ActivityLifecycleDefinition::new(
+        project_id,
+        req.key,
+        req.name,
+        req.description,
+        req.binding_kinds,
+        WorkflowDefinitionSource::UserAuthored,
+        req.entry_activity_key,
+        req.activities,
+        req.transitions,
+    )
+    .map_err(ApiError::BadRequest)?;
+    let service = ActivityLifecycleCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
+    );
+    let saved = service
+        .upsert_activity_lifecycle_definition(definition)
+        .await?;
+    Ok(Json(saved))
+}
+
+pub async fn get_activity_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+    let id = parse_uuid(&id, "activity_lifecycle_id")?;
+    let definition = state
+        .repos
+        .activity_lifecycle_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    Ok(Json(definition))
+}
+
+pub async fn update_activity_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateActivityLifecycleDefinitionRequest>,
+) -> Result<Json<ActivityLifecycleDefinition>, ApiError> {
+    let id = parse_uuid(&id, "activity_lifecycle_id")?;
+    let mut definition = state
+        .repos
+        .activity_lifecycle_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    if let Some(name) = req.name {
+        definition.name = name;
+    }
+    if let Some(description) = req.description {
+        definition.description = description;
+    }
+    if let Some(binding_kinds) = req.binding_kinds {
+        definition.binding_kinds =
+            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
+    }
+    if let Some(entry_activity_key) = req.entry_activity_key {
+        definition.entry_activity_key = entry_activity_key;
+    }
+    if let Some(activities) = req.activities {
+        definition.activities = activities;
+    }
+    if let Some(transitions) = req.transitions {
+        definition.transitions = transitions;
+    }
+    let service = ActivityLifecycleCatalogService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
+    );
+    let saved = service
+        .upsert_activity_lifecycle_definition(definition)
+        .await?;
+    Ok(Json(saved))
+}
+
+pub async fn validate_activity_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<ValidateActivityLifecycleDefinitionRequest>,
+) -> Result<Json<WorkflowValidationResponse>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    match ActivityLifecycleDefinition::new(
+        project_id,
+        req.key,
+        req.name,
+        req.description,
+        req.binding_kinds,
+        WorkflowDefinitionSource::UserAuthored,
+        req.entry_activity_key,
+        req.activities,
+        req.transitions,
+    ) {
+        Ok(definition) => {
+            let service = ActivityLifecycleCatalogService::new(
+                state.repos.workflow_definition_repo.as_ref(),
+                state.repos.activity_lifecycle_definition_repo.as_ref(),
+            );
+            let issues = service
+                .validate_activity_lifecycle_definition(&definition)
+                .await?;
+            Ok(Json(WorkflowValidationResponse {
+                valid: !issues
+                    .iter()
+                    .any(|item| item.severity == ValidationSeverity::Error),
+                issues,
+            }))
+        }
+        Err(error) => Ok(Json(WorkflowValidationResponse {
+            valid: false,
+            issues: vec![agentdash_domain::workflow::ValidationIssue::error(
+                "construction_error",
+                error,
+                "activities",
+            )],
+        })),
+    }
+}
+
+pub async fn delete_activity_lifecycle_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = parse_uuid(&id, "activity_lifecycle_id")?;
+    let definition = state
+        .repos
+        .activity_lifecycle_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("activity_lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    state
+        .repos
+        .activity_lifecycle_definition_repo
+        .delete(id)
+        .await?;
+    Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
 pub async fn start_lifecycle_run(

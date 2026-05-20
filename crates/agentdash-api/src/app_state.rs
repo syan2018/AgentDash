@@ -266,6 +266,7 @@ impl AppState {
             project_agent_repo: project_agent_repo.clone(),
             workflow_definition_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
+            activity_lifecycle_definition_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo.clone(),
             routine_repo: routine_repo.clone(),
             routine_execution_repo: routine_execution_repo.clone(),

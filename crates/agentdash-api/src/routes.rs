@@ -327,12 +327,21 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_lifecycles).post(workflows::create_lifecycle_definition),
         )
         .route(
+            "/activity-lifecycle-definitions",
+            get(workflows::list_activity_lifecycles)
+                .post(workflows::create_activity_lifecycle_definition),
+        )
+        .route(
             "/workflow-definitions/validate",
             post(workflows::validate_workflow_definition),
         )
         .route(
             "/lifecycle-definitions/validate",
             post(workflows::validate_lifecycle_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/validate",
+            post(workflows::validate_activity_lifecycle_definition),
         )
         .route(
             "/workflow-definitions/{id}",
@@ -345,6 +354,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::get_lifecycle_definition)
                 .put(workflows::update_lifecycle_definition)
                 .delete(workflows::delete_lifecycle_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/{id}",
+            get(workflows::get_activity_lifecycle_definition)
+                .put(workflows::update_activity_lifecycle_definition)
+                .delete(workflows::delete_activity_lifecycle_definition),
         )
         .route("/tool-catalog", get(workflows::query_tool_catalog))
         .route("/hook-presets", get(workflows::list_hook_presets))

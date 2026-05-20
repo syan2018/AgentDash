@@ -6,10 +6,12 @@ use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
 use super::value_objects::{
-    EffectiveSessionContract, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
-    normalize_workflow_binding_kinds, validate_lifecycle_definition, validate_workflow_definition,
+    ActivityDefinition, ActivityTransition, EffectiveSessionContract, LifecycleEdge,
+    LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
+    WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
+    normalize_workflow_binding_kinds, validate_activity_lifecycle_definition,
+    validate_lifecycle_definition, validate_workflow_definition,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +70,87 @@ impl WorkflowDefinition {
                 "workflow_definition_invalid",
                 error,
                 "contract",
+            )],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityLifecycleDefinition {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub binding_kinds: Vec<WorkflowBindingKind>,
+    pub source: WorkflowDefinitionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
+    pub version: i32,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<ActivityTransition>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ActivityLifecycleDefinition {
+    pub fn new(
+        project_id: Uuid,
+        key: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        binding_kinds: Vec<WorkflowBindingKind>,
+        source: WorkflowDefinitionSource,
+        entry_activity_key: impl Into<String>,
+        activities: Vec<ActivityDefinition>,
+        transitions: Vec<ActivityTransition>,
+    ) -> Result<Self, String> {
+        let key = key.into();
+        let name = name.into();
+        let entry_activity_key = entry_activity_key.into();
+        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
+        validate_activity_lifecycle_definition(
+            &key,
+            &name,
+            &entry_activity_key,
+            &activities,
+            &transitions,
+        )?;
+
+        let now = Utc::now();
+        Ok(Self {
+            id: Uuid::new_v4(),
+            project_id,
+            key,
+            name,
+            description: description.into(),
+            binding_kinds,
+            source,
+            installed_source: None,
+            version: 1,
+            entry_activity_key,
+            activities,
+            transitions,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub fn validate_full(&self) -> Vec<ValidationIssue> {
+        match validate_activity_lifecycle_definition(
+            &self.key,
+            &self.name,
+            &self.entry_activity_key,
+            &self.activities,
+            &self.transitions,
+        ) {
+            Ok(()) => Vec::new(),
+            Err(error) => vec![ValidationIssue::error(
+                "activity_lifecycle_definition_invalid",
+                error,
+                "activities",
             )],
         }
     }

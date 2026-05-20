@@ -1,9 +1,9 @@
 {
-  "id": "inline-fs-image-assets",
-  "name": "inline-fs-image-assets",
-  "title": "inline_fs 图片资产支持",
+  "id": "fs-read-image-block",
+  "name": "fs-read-image-block",
+  "title": "fs_read 图片 Block 返回能力",
   "description": "",
-  "status": "in_progress",
+  "status": "planning",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -18,11 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "05-20-fs-read-image-block",
-    "05-20-skill-asset-binary-content"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "05-20-inline-fs-image-assets",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

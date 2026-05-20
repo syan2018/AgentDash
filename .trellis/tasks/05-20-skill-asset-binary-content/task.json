@@ -1,13 +1,13 @@
 {
-  "id": "inline-fs-image-assets",
-  "name": "inline-fs-image-assets",
-  "title": "inline_fs 图片资产支持",
+  "id": "skill-asset-binary-content",
+  "name": "skill-asset-binary-content",
+  "title": "Skill asset 二进制资产存储收敛",
   "description": "",
-  "status": "in_progress",
+  "status": "planning",
   "dev_type": null,
   "scope": null,
   "package": null,
-  "priority": "P2",
+  "priority": "P1",
   "creator": "claude-agent",
   "assignee": "claude-agent",
   "createdAt": "2026-05-20",
@@ -18,11 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "05-20-fs-read-image-block",
-    "05-20-skill-asset-binary-content"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "05-20-inline-fs-image-assets",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

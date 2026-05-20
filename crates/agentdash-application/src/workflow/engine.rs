@@ -60,6 +60,12 @@ pub enum ActivityEvent {
         activity_key: String,
         attempt: u32,
     },
+    SchedulerStartFailed {
+        activity_key: String,
+        attempt: u32,
+        error: String,
+        retryable: bool,
+    },
     ExecutorStarted {
         activity_key: String,
         attempt: u32,
@@ -206,6 +212,26 @@ impl LifecycleEngine {
                 let attempt_state = find_attempt_mut(state, &activity_key, attempt)?;
                 expect_status(attempt_state, ActivityAttemptStatus::Ready, "ready attempt")?;
                 attempt_state.status = ActivityAttemptStatus::Claiming;
+            }
+            ActivityEvent::SchedulerStartFailed {
+                activity_key,
+                attempt,
+                error,
+                retryable,
+            } => {
+                let attempt_state = find_attempt_mut(state, &activity_key, attempt)?;
+                expect_status(
+                    attempt_state,
+                    ActivityAttemptStatus::Claiming,
+                    "claiming attempt",
+                )?;
+                if retryable {
+                    attempt_state.status = ActivityAttemptStatus::Ready;
+                } else {
+                    attempt_state.status = ActivityAttemptStatus::Failed;
+                    attempt_state.completed_at = Some(Utc::now());
+                }
+                attempt_state.summary = Some(error);
             }
             ActivityEvent::ExecutorStarted {
                 activity_key,
@@ -1041,6 +1067,39 @@ mod tests {
             attempt.activity_key == "plan"
                 && attempt.attempt == 1
                 && attempt.status == ActivityAttemptStatus::Running
+        }));
+    }
+
+    #[test]
+    fn scheduler_start_failure_can_retry_claiming_attempt() {
+        let definition = approval_definition();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::SchedulerClaimAccepted {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+            },
+        )
+        .expect("claim");
+
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::SchedulerStartFailed {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                error: "prompt rejected".to_string(),
+                retryable: true,
+            },
+        )
+        .expect("start failed");
+
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Ready
         }));
     }
 

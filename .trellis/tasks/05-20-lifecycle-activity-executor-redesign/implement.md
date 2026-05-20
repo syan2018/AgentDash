@@ -192,13 +192,13 @@
   - [x] `abandoned`
 - [x] 实现 idempotency key。
 - [x] 实现 claiming 超时恢复策略。
-- [ ] Scheduler 启动成功后提交 `ExecutorStarted` event。
-- [ ] Scheduler 启动失败时按可重试 / 不可重试更新 attempt。
+- [x] Scheduler 启动成功后提交 `ExecutorStarted` event。
+- [x] Scheduler 启动失败时按可重试 / 不可重试更新 attempt。
 
 验证：
 
 - [ ] 并发 schedule 同一 ready attempt 只产生一个 executor start。
-- [ ] prompt 未 accepted 不会留下 running attempt。
+- [x] prompt 未 accepted 不会留下 running attempt。
 - [ ] claiming 超时后可恢复。
 - [x] `cargo test -p agentdash-application workflow::scheduler`
 - [x] `cargo test -p agentdash-infrastructure workflow_claim`

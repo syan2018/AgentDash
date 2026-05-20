@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityExecutionClaim, ActivityExecutionClaimRepository,
-    ActivityExecutionClaimStatus, ActivityLifecycleDefinition,
+    ActivityExecutionClaimStatus, ActivityLifecycleDefinition, ExecutorRunRef,
 };
 use uuid::Uuid;
 
@@ -66,6 +66,58 @@ where
             }
         }
         Ok(claims)
+    }
+
+    pub async fn record_executor_started(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        state: &mut ActivityLifecycleRunState,
+        claim: &ActivityExecutionClaim,
+        executor_run_ref: ExecutorRunRef,
+    ) -> Result<ActivityExecutionClaim, WorkflowApplicationError> {
+        let mut updated = claim.clone();
+        updated.status = ActivityExecutionClaimStatus::Running;
+        updated.executor_run_ref = Some(executor_run_ref.clone());
+        updated.updated_at = chrono::Utc::now();
+        self.claim_repo.update(&updated).await?;
+        LifecycleEngine::apply_event(
+            definition,
+            state,
+            ActivityEvent::ExecutorStarted {
+                activity_key: updated.activity_key.clone(),
+                attempt: updated.attempt,
+                executor_run: executor_run_ref,
+            },
+        )
+        .map_err(map_engine_error)?;
+        Ok(updated)
+    }
+
+    pub async fn record_executor_start_failed(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        state: &mut ActivityLifecycleRunState,
+        claim: &ActivityExecutionClaim,
+        error: impl Into<String>,
+        retryable: bool,
+    ) -> Result<ActivityExecutionClaim, WorkflowApplicationError> {
+        let error = error.into();
+        let mut updated = claim.clone();
+        updated.status = ActivityExecutionClaimStatus::Failed;
+        updated.updated_at = chrono::Utc::now();
+        self.claim_repo.update(&updated).await?;
+        LifecycleEngine::apply_event(
+            definition,
+            state,
+            ActivityEvent::SchedulerStartFailed {
+                activity_key: updated.activity_key.clone(),
+                attempt: updated.attempt,
+                error,
+                retryable,
+            },
+        )
+        .map_err(map_engine_error)?;
+        Ok(updated)
     }
 }
 
@@ -343,6 +395,93 @@ mod tests {
             attempt.activity_key == "implement"
                 && attempt.attempt == 1
                 && attempt.status == ActivityAttemptStatus::Claiming
+        }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_records_executor_started() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let claim = scheduler
+            .claim_ready_attempts(run_id, &definition, &mut state)
+            .await
+            .expect("claim")
+            .pop()
+            .expect("claim");
+
+        let updated = scheduler
+            .record_executor_started(
+                &definition,
+                &mut state,
+                &claim,
+                agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                    session_id: "plan-child".to_string(),
+                },
+            )
+            .await
+            .expect("started");
+
+        assert_eq!(updated.status, ActivityExecutionClaimStatus::Running);
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Running
+        }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_retryable_start_failure_returns_attempt_to_ready() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let claim = scheduler
+            .claim_ready_attempts(run_id, &definition, &mut state)
+            .await
+            .expect("claim")
+            .pop()
+            .expect("claim");
+
+        let updated = scheduler
+            .record_executor_start_failed(&definition, &mut state, &claim, "prompt rejected", true)
+            .await
+            .expect("failed");
+
+        assert_eq!(updated.status, ActivityExecutionClaimStatus::Failed);
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Ready
+        }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_non_retryable_start_failure_marks_attempt_failed() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let claim = scheduler
+            .claim_ready_attempts(run_id, &definition, &mut state)
+            .await
+            .expect("claim")
+            .pop()
+            .expect("claim");
+
+        scheduler
+            .record_executor_start_failed(&definition, &mut state, &claim, "bad config", false)
+            .await
+            .expect("failed");
+
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Failed
         }));
     }
 }

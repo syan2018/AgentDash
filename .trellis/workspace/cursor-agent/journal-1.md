@@ -738,3 +738,40 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Lifecycle Activity 迁移收口
+
+**Date**: 2026-05-21
+**Task**: Lifecycle Activity 迁移收口
+**Branch**: `codex/lifecycle-activity-executor-redesign`
+
+### Summary
+
+完成 Lifecycle Activity/Executor 重构收口：Function Activity 执行器、Activity runtime 推进入口、外部定义契约、资源市场 workflow template payload 迁移、安装事务、session/hook/Task 投影 Activity 化，并验证前后端与资源市场可用性。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4846b8f` | (see git log) |
+| `954c8774` | (see git log) |
+| `0a7ae7cc` | (see git log) |
+| `3d1d6805` | (see git log) |
+| `55479a80` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

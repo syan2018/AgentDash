@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-05-18
+- **Total Sessions**: 18
+- **Last Active**: 2026-05-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~740 | Active |
+| `journal-1.md` | ~777 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-05-21 | Lifecycle Activity 迁移收口 | `f4846b8f`, `954c8774`, `0a7ae7cc`, `3d1d6805`, `55479a80` | `codex/lifecycle-activity-executor-redesign` |
 | 17 | 2026-05-18 | Shared Library 资产收束清理 | `b15d6134`, `f62f2c73`, `14e529d9`, `f38945e9` | `codex/shared-library-asset-cleanup` |
 | 16 | 2026-05-18 | Shared Library 公共配置资产化 | `f1eb47f8`, `a2e5491a`, `49bfa120`, `68afe188`, `fc9ee5d6` | `codex/agent-config-assets` |
 | 15 | 2026-05-17 | 收敛 ToolSchema 提示与 Responses schema | `51449cfd` | `main` |

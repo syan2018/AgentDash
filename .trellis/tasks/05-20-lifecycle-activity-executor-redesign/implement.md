@@ -257,7 +257,8 @@
   - [x] 创建 lifecycle activity binding。
   - [x] 继承 executor config。
   - [x] launch prompt accepted 后提交 `ExecutorStarted`。
-  - [ ] session terminal / `complete_lifecycle_node` 转为 ActivityEvent。
+  - [x] session terminal 转为 ActivityEvent。
+  - [ ] `complete_lifecycle_node` 转为 ActivityEvent。
 - [ ] `Agent + ContinueRoot` 映射现有 PhaseNode：
   - [ ] 限制同一 root session 仅一个 running ContinueRoot attempt。
   - [ ] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
@@ -272,7 +273,9 @@
 - [ ] ContinueRoot capability transition 生效。
 - [ ] 并行 ContinueRoot 被拒绝。
 - [ ] session terminal failed 转为 attempt failed。
+- [x] activity 子 session label 可稳定反查 run / activity / attempt。
 - [x] `cargo test -p agentdash-application workflow::agent_executor`
+- [x] `cargo test -p agentdash-application workflow::session_association`
 
 出口标准：
 

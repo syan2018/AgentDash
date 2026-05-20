@@ -214,7 +214,7 @@ where
                 session_id.clone(),
                 owner_binding.owner_type,
                 owner_binding.owner_id,
-                build_lifecycle_activity_label(&claim.activity_key, claim.attempt),
+                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
             )
         } else {
             SessionBinding::new(
@@ -222,7 +222,7 @@ where
                 session_id.clone(),
                 SessionOwnerType::Project,
                 self.context.project_id,
-                build_lifecycle_activity_label(&claim.activity_key, claim.attempt),
+                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
             )
         };
         self.port
@@ -409,8 +409,9 @@ mod tests {
             port,
         );
         let definition = definition(project_id);
+        let run_id = uuid::Uuid::new_v4();
         let claim = ActivityExecutionClaim {
-            run_id: uuid::Uuid::new_v4(),
+            run_id,
             activity_key: "plan".to_string(),
             attempt: 1,
             claim_id: uuid::Uuid::new_v4(),
@@ -436,7 +437,7 @@ mod tests {
         let bindings = launcher.port.bindings.lock().unwrap();
         let activity_binding = bindings
             .iter()
-            .find(|binding| binding.label == "lifecycle_activity:plan#1")
+            .find(|binding| binding.label == format!("lifecycle_activity:{run_id}:plan#1"))
             .expect("activity binding");
         assert_eq!(activity_binding.owner_type, SessionOwnerType::Story);
         assert_eq!(activity_binding.owner_id, root_owner_id);

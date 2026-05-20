@@ -63,7 +63,9 @@ pub use scheduler::{
     ActivityExecutorStartError,
 };
 pub use session_association::{
-    LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label,
+    LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
+    build_lifecycle_node_label, lifecycle_activity_parts_from_label,
+    resolve_activity_session_association,
 };
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,

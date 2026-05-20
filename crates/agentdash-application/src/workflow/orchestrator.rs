@@ -10,8 +10,9 @@
 
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleEdge, LifecycleNodeType, LifecycleRun, LifecycleStepDefinition,
-    LifecycleStepExecutionStatus, WorkflowDefinition,
+    ExecutorRunRef, LifecycleDefinition, LifecycleEdge, LifecycleNodeType, LifecycleRun,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
+    WorkflowSessionTerminalState,
 };
 use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookSessionRuntime};
 use tracing::{info, warn};
@@ -23,7 +24,8 @@ use crate::session::hub::PendingRuntimeContextTransitionInput;
 use crate::session::{LaunchCommand, UserPromptInput};
 
 use super::session_association::{
-    LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_node_session_association,
+    LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label, resolve_activity_session_association,
+    resolve_node_session_association,
 };
 use crate::session::SessionTerminalCallback;
 use crate::session::{
@@ -31,10 +33,12 @@ use crate::session::{
 };
 use crate::workflow::step_activation::apply_to_running_session;
 use crate::workflow::{
-    ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
-    CompleteLifecycleStepCommand, FailLifecycleStepCommand, LifecycleRunService,
-    RecordGateCollisionCommand, activate_step_with_platform, agent_mcp_entries_from_servers,
-    build_capability_state_for_activation, build_step_projector_from_repos, load_port_output_map,
+    ActivateLifecycleStepCommand, ActivityEvent, ActivityLifecycleRunService,
+    AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
+    BindAndActivateLifecycleStepCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
+    LifecycleRunService, RecordGateCollisionCommand, activate_step_with_platform,
+    agent_mcp_entries_from_servers, build_capability_state_for_activation,
+    build_step_projector_from_repos, load_port_output_map, session_terminal_summary,
 };
 
 #[derive(Debug)]
@@ -131,6 +135,23 @@ impl LifecycleOrchestrator {
     pub async fn on_session_terminal(
         &self,
         session_id: &str,
+        terminal_state: &str,
+    ) -> Result<Option<OrchestrationResult>, String> {
+        if let Some(result) = self
+            .on_activity_session_terminal(session_id, terminal_state)
+            .await?
+        {
+            return Ok(Some(result));
+        }
+        if terminal_state != "completed" {
+            return Ok(None);
+        }
+        self.on_node_session_terminal(session_id).await
+    }
+
+    async fn on_node_session_terminal(
+        &self,
+        session_id: &str,
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_node_session_association(
             session_id,
@@ -150,6 +171,84 @@ impl LifecycleOrchestrator {
 
         self.activate_ready_nodes(association.run.id, association.run.project_id)
             .await
+    }
+
+    async fn on_activity_session_terminal(
+        &self,
+        session_id: &str,
+        terminal_state: &str,
+    ) -> Result<Option<OrchestrationResult>, String> {
+        let Some(association) = resolve_activity_session_association(
+            session_id,
+            self.repos.session_binding_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        let Some(event) = activity_terminal_event(
+            terminal_state,
+            &association.activity_key,
+            association.attempt,
+        ) else {
+            return Ok(None);
+        };
+
+        info!(
+            run_id = %association.run.id,
+            activity_key = %association.activity_key,
+            attempt = association.attempt,
+            terminal_state = terminal_state,
+            "Orchestrator: activity session terminal, applying ActivityEvent"
+        );
+
+        let service = ActivityLifecycleRunService::new(
+            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.activity_execution_claim_repo.as_ref(),
+        );
+        let run = service
+            .apply_event(association.run.id, event)
+            .await
+            .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id: run.project_id,
+                lifecycle_key: String::new(),
+                root_session_id: run.session_id.clone(),
+            },
+            AgentActivityRuntimePort::new(
+                self.session_core.clone(),
+                self.session_launch.clone(),
+                self.repos.clone(),
+            ),
+        );
+        let (_run, outcomes) = service
+            .launch_ready_attempts(run.id, &launcher)
+            .await
+            .map_err(|error| format!("启动后继 activity executor 失败: {error}"))?;
+        let activated_nodes = outcomes
+            .into_iter()
+            .filter_map(|outcome| {
+                if !outcome.started {
+                    return None;
+                }
+                match outcome.claim.executor_run_ref {
+                    Some(ExecutorRunRef::AgentSession { session_id }) => Some(ActivatedNode {
+                        node_key: outcome.claim.activity_key,
+                        session_id,
+                    }),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(Some(OrchestrationResult {
+            run_id: run.id,
+            activated_nodes,
+            activated_phase_nodes: Vec::new(),
+        }))
     }
 
     /// 在 complete_lifecycle_node tool / start_run 后调用。
@@ -888,12 +987,7 @@ impl LifecycleOrchestrator {
 #[async_trait::async_trait]
 impl SessionTerminalCallback for LifecycleOrchestrator {
     async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
-        // 仅对正常完成的 session 触发后继评估；
-        // failed / interrupted 的 session 不自动推进 DAG。
-        if terminal_state != "completed" {
-            return;
-        }
-        match self.on_session_terminal(session_id).await {
+        match self.on_session_terminal(session_id, terminal_state).await {
             Ok(Some(result)) => {
                 info!(
                     run_id = %result.run_id,
@@ -937,6 +1031,35 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
                 );
             }
         }
+    }
+}
+
+fn activity_terminal_event(
+    terminal_state: &str,
+    activity_key: &str,
+    attempt: u32,
+) -> Option<ActivityEvent> {
+    match terminal_state {
+        "completed" => Some(ActivityEvent::ActivityCompleted {
+            activity_key: activity_key.to_string(),
+            attempt,
+            outputs: Vec::new(),
+            summary: Some(session_terminal_summary(
+                WorkflowSessionTerminalState::Completed,
+                None,
+            )),
+        }),
+        "failed" => Some(ActivityEvent::ActivityFailed {
+            activity_key: activity_key.to_string(),
+            attempt,
+            error: session_terminal_summary(WorkflowSessionTerminalState::Failed, None),
+        }),
+        "interrupted" => Some(ActivityEvent::ActivityFailed {
+            activity_key: activity_key.to_string(),
+            attempt,
+            error: session_terminal_summary(WorkflowSessionTerminalState::Interrupted, None),
+        }),
+        _ => None,
     }
 }
 

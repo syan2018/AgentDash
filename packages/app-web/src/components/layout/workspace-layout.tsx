@@ -260,6 +260,7 @@ function describeProjectAccess(project: Project): string {
 
 function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdownProps) {
   const navigate = useNavigate();
+  const projectSettingsMatch = useMatch("/projects/:projectId/settings");
   const [open, setOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
@@ -269,6 +270,14 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
 
   const current = projects.find((p) => p.id === currentProjectId) ?? null;
   const otherProjects = projects.filter((p) => p.id !== currentProjectId);
+
+  const handleSelectProject = (project: Project, isActive: boolean) => {
+    onSelect(project.id);
+    if (projectSettingsMatch && !isActive) {
+      navigate(`/projects/${project.id}/settings`);
+    }
+    if (!isActive) setOpen(false);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -323,10 +332,7 @@ function ProjectDropdown({ projects, currentProjectId, onSelect }: ProjectDropdo
       >
         <button
           type="button"
-          onClick={() => {
-            onSelect(project.id);
-            if (!isActive) setOpen(false);
-          }}
+          onClick={() => handleSelectProject(project, isActive)}
           className="min-w-0 flex-1 text-left text-foreground"
         >
           <p className="truncate font-medium">{project.name}</p>
